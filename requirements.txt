@@ -33,8 +33,6 @@ geopy
 django-regex-field
 python-doctr
 pytesseract
-python-doctr[tf]
 uszipcode
 pyarrow
-transformers[torch]
 packaging>=20.0
