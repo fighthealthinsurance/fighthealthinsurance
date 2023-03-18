@@ -1,23 +1,31 @@
 import * as pdfjsLib from 'pdfjs-dist';
 import Tesseract from 'tesseract.js';
+const memoizeOne = require('async-memoize-one')
 
-function addText(text) {
-    document.getElementById("denial_text").value += text;
-}
+// Globals
 const node_module_path = "/static/js/node_modules/"
-const worker = await Tesseract.createWorker({
-    corePath: node_module_path + "/tesseract.js-core/tesseract-core.wasm.js",
-    workerPath: node_module_path + "/tesseract.js/dist/worker.min.js",
-    logger: function(m){console.log(m);}
-});
 
+// Tesseract
+async function getTesseractWorkerRaw() {
+    console.log("Loading tesseract worker.")
+    const worker = await Tesseract.createWorker({
+	corePath: node_module_path + "/tesseract.js-core/tesseract-core.wasm.js",
+	workerPath: node_module_path + "/tesseract.js/dist/worker.min.js",
+	logger: function(m){console.log(m);}
+    });
+    await worker.loadLanguage('eng');
+    await worker.initialize('eng');
+    await worker.setParameters({
+	tessedit_pageseg_mode: Tesseract.PSM.PSM_AUTO_OSD,
+    });
+    return worker;
+}
+
+const getTesseractWorker = memoizeOne(getTesseractWorkerRaw)
+
+// pdf.js
 pdfjsLib.GlobalWorkerOptions.workerSrc = node_module_path + "pdfjs-dist/build/pdf.worker.js";
 
-await worker.loadLanguage('eng');
-await worker.initialize('eng');
-await worker.setParameters({
-    tessedit_pageseg_mode: Tesseract.PSM.PSM_AUTO_OSD,
-});
 
 async function getPDFPageText (pdf, pageNo) {
     const page = await pdf.getPage(pageNo);
@@ -41,6 +49,35 @@ async function getPDFText(pdf) {
     const pageTexts = await Promise.all(pageTextPromises);
     return pageTexts.join(" ");
 };
+
+// Main
+export function validateScrubForm(event) {
+    const form = document.getElementById("fuck_health_insurance");
+    if(!form.privacy.checked) {
+	document.getElementById('agree_chk_error').style.visibility='visible';
+    } else {
+	document.getElementById('agree_chk_error').style.visibility='hidden';
+    }
+    if (!form.pii.checked) {
+	document.getElementById('pii_error').style.visibility='visible';
+    } else {
+	document.getElementById('pii_error').style.visibility='hidden';
+    }
+    if (form.pii.checked && form.privacy.checked) {
+	document.getElementById('agree_chk_error').style.visibility='hidden';
+	document.getElementById('pii_error').style.visibility='hidden';
+	// YOLO
+	return true;
+    } else {
+	// Bad news no submit
+	event.preventDefault();
+    }
+}
+
+function addText(text) {
+    document.getElementById("denial_text").value += text;
+}
+
 
 function isPDF(file) {
     return file.type.match('application/pdf');
@@ -70,6 +107,7 @@ const recognize = async function(evt){
 	reader.readAsArrayBuffer(file);
     } else {
 	console.log("Assuming image...")
+	worker = await getTesseractWorker()
 	const ret = await worker.recognize(files[0]);
 	console.log("Recognize done!")
 	console.log(ret.data.text);
@@ -89,7 +127,8 @@ var scrubRegex = [
 ];
 export function scrubText(text) {
     var reservedTokens = [];
-    for (var i=0; i<nodes.length; i++) {
+    var nodes = document.querySelectorAll('input');
+    for (var i=0; i < nodes.length; i++) {
 	var node = nodes[i];
 	if (node.id.startsWith('store_') && node.value != "") {
 	    reservedTokens.push(
@@ -130,27 +169,6 @@ export const storeLocal = async function(evt) {
     window.localStorage.setItem(name, value);
 }
 
-export function validateForm(form)
-{
-    if(!form.privacy.checked) {
-	document.getElementById('agree_chk_error').style.visibility='visible';
-    } else {
-	document.getElementById('agree_chk_error').style.visibility='hidden';
-    }
-    if (!form.pii.checked) {
-	document.getElementById('pii_error').style.visibility='visible';
-    } else {
-	document.getElementById('pii_error').style.visibility='hidden';
-    }
-    if (form.pii.checked && form.privacy.checked) {
-	document.getElementById('agree_chk_error').style.visibility='hidden';
-	document.getElementById('pii_error').style.visibility='hidden';
-	return true;
-    } else {
-	return false;
-    }
-}
-
 export function setupScrub()
 {
     // Restore previous local values
@@ -172,6 +190,10 @@ export function setupScrub()
     if (elm != null) {
 	elm.addEventListener('change', recognize);
     }
+    const scrub = document.getElementById('scrub');
+    scrub.onclick = clean;
+    const form = document.getElementById("fuck_health_insurance");
+    form.addEventListener("submit", validateScrubForm);
 }
 
 setupScrub();

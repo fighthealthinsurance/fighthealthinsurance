@@ -7,6 +7,8 @@ Upload your Health Insurance Denial
 {% block scriptmagic %}
 <script type="module">
   import * as main from '{% static "js/dist/main.js" %}';
+  window.clean = main.clean;
+  window.validateForm = main.validateForm;
 </script>
 {% endblock scriptmagic %}
 {% block content %}
@@ -24,8 +26,7 @@ Clear Page Local Storage
 <input type="text" id="store_lname" name="lname"><br>
 <label for="street">Your street Address (e.g. 283 24th st)</label><br>
 <input type="text" id="store_street" name="street"><br>
-<button id="scrub"
-       onclick="clean();">
+<button id="scrub">
 Scrub Scanned Text
 </button>
 {% if upload_more %}
@@ -37,7 +38,7 @@ Scrub Scanned Text
 {% endif %}
 <!-- Changing Label Text -->
 
-<form onsubmit="return main.validateForm(this);" method="post" action="{% url 'process' %}" id="fuck_health_insurance">
+<form method="post" action="{% url 'process' %}" id="fuck_health_insurance">
   {% csrf_token %}
   <h2>Transfered to server -- we store* </h2><br>
   <label for="email">Your email</label><br>
@@ -62,7 +63,7 @@ Scrub Scanned Text
   <div style="visibility:hidden; color:red" id="pii_error">
   Can't proceed as you didn't check that you had removed your PII from the text area.
   </div>
-  <input type="submit">
+  <input type="submit" id="submit_scrubbed">
 </form>
 
 

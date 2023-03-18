@@ -4,8 +4,8 @@
   "description": "Fuck Around and Find Out",
   "main": "index.js",
   "scripts": {
-      "test": "echo \"Error: no test specified\" && exit 1",
-      "build": "webpack"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "webpack"
   },
   "author": "",
   "license": "Apache-2.0",
@@ -13,7 +13,7 @@
     "@pdfme/generator": "^1.1.9",
     "@tensorflow-models/coco-ssd": "^2.2.2",
     "@tensorflow/tfjs": "^4.2.0",
-    "awesome-typescript-loader": "^5.2.1",
+    "async-memoize-one": "^1.1.2",
     "pdf.js": "^0.1.0",
     "pdfjs-dist": "^3.3.122",
     "source-map-loader": "^4.0.1",
@@ -21,6 +21,8 @@
     "tesseract.js": "^4.0.2"
   },
   "devDependencies": {
+    "ts-loader": "^9.4.2",
+    "typescript": "^5.0.2",
     "webpack": "^5.76.1",
     "webpack-cli": "^5.0.1"
   }
