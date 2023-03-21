@@ -161,7 +161,6 @@ class FindNextSteps(View):
                 'categorize.html',
                 context = {
                     'post_infered_form': form,
-                    'upload_more': True,
                 })
 
 
@@ -333,7 +332,6 @@ class ProcessView(View):
                 'categorize.html',
                 context = {
                     'post_infered_form': form,
-                    'upload_more': True,
                 })
         else:
             return render(
@@ -341,5 +339,6 @@ class ProcessView(View):
                 'scrub.html',
                 context={
                     'error': form.errors,
-                    '': request.POST.get('denial_text', ''),
+                    'ocr_result': request.POST.get('denial_text', ''),
+                    'upload_more': True,
                 })

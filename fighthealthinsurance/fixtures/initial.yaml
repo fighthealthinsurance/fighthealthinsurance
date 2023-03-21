@@ -151,8 +151,8 @@
   fields:
     parent: 20
     name: Prep denial, medically necessary
-    regex: "(PrEP|high risk homosexual behavior)"
-    appeal_text: "The ACA requires that PrEP be covered -- https://www.cdc.gov/hiv/basics/prep/paying-for-prep/index.html"
+    regex: "(PrEP|high risk homosexual behavior|Z20\\.?6|Z20\\.?2|Z20\\.?5)"
+    appeal_text: "The ACA generally requires that PrEP be covered with no out of pocket cost. If you are unfamiliar with this requirement please see the CDC consumer website https://www.cdc.gov/hiv/basics/prep/paying-for-prep/index.html and the DOL/HHS & Treasurery FAQS ABOUT AFFORDABLE CARE ACT IMPLEMENTATION PART 47 https://www.dol.gov/sites/dolgov/files/EBSA/about-ebsa/our-activities/resource-center/faqs/aca-part-47.pdf. For coding guidelines see  NY DPH ( https://www.health.ny.gov/diseases/aids/general/prep/docs/icd_codes.pdf ) , LA county http://publichealth.lacounty.gov/dhsp/Providers/PrEP-PEPBillingCodes.pdf SC DPH https://scdhec.gov/sites/default/files/media/document/PrEP-Billing-Codes.pdf HIV MA https://www.hivma.org/globalassets/prep-april-2018-1.pdf or HRSA documents state https://bphc.hrsa.gov/sites/default/files/bphc/data-reporting/hiv-prep-codes.pdf. As you may be aware the enforcement waiver has long since expired (2021) so inappropriate use of medical management techniques with regards to PrEP may be subject to enforcement action."
 - model: fighthealthinsurance.denialtypes
   pk: 17
   fields:

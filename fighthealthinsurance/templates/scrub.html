@@ -6,9 +6,7 @@ Upload your Health Insurance Denial
 {% load static %}
 {% block scriptmagic %}
 <script type="module">
-  import * as main from '{% static "js/dist/main.js" %}';
-  window.clean = main.clean;
-  window.validateForm = main.validateForm;
+  import * as main from '{% static "js/dist/scrub.bundle.js" %}';
 </script>
 {% endblock scriptmagic %}
 {% block content %}
