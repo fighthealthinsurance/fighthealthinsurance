@@ -65,8 +65,9 @@ class DenialTypes(models.Model):
 
     def get_form(self):
         if self.form is None:
-            if self.parent is not None:
-                return self.parent.get_froms()
+            parent = self.parent
+            if parent is not None:
+                return parent.get_form()
             else:
                 return None
         else:

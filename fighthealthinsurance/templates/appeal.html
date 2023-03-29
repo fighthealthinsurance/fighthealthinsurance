@@ -1,7 +1,8 @@
 {% extends 'base.html' %}
+{% load static %}
 {% block scriptmagic %}
 <script type="module">
-  const main = require('{% static "js/dist/main.js" %}');
+  const main = require('{% static "js/dist/appel.bundle.js" %}');
   main.setupAppeal();
 </script>
 {% endblock scriptmagic %}
