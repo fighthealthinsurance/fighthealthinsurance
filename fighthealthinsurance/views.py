@@ -161,6 +161,7 @@ class FindNextSteps(View):
                     new_form = new_form(
                         initial = {
                             'medical_reason': dt.appeal_text})
+                    print(new_form)
                     question_forms.append(new_form)
             print(f"Questions {question_forms}")
             denial_ref_form = DenialRefForm(

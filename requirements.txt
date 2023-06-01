@@ -36,3 +36,4 @@ pytesseract
 uszipcode
 pyarrow
 packaging>=20.0
+PyPDF2

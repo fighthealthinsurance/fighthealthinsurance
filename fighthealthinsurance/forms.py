@@ -159,7 +159,7 @@ class PreventiveCareQuestions(InsuranceQuestions):
         if "trans_gender" in self.cleaned_data:
             r.append(
                 "I am trans so it is important that preventive coverage for both genders be " +
-                "covered as I am at risk of both.")
+                "covered.")
         if self.cleaned_data["medical_reason"]:
             r.append(self.cleaned_data["medical_reason"])
         return r
@@ -198,5 +198,7 @@ def magic_combined_form(forms_to_merge):
         for field_name, field in f.fields.items():
             if field_name not in combined_form.fields:
                 combined_form.fields[field_name] = field
+            elif field.initial is not None:
+                combined_form.fields[field_name].initial += field.initial
     return combined_form
         
