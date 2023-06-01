@@ -1,0 +1,29 @@
+{% extends 'base.html' %}
+{% block title %}
+Delete Your Data
+{% endblock title %}
+{% block content %}
+
+<!-- HOME -->
+<section id="delete-data" data-stellar-background-ratio="0.5">
+    <div class="row mt-5 mb-5">
+        <div class="caption d-flex flex-column align-items-center justify-content-center">
+            <div class="col-md-offset-1 col-md-10 text-align-center d-flex flex-column align-items-center justify-content-center">
+                <h2>Delete your Data</h2>
+                <p>Please enter the e-mail you used when submitting your data and we will delete your data.</p>
+                <form action="{% url 'remove_data' %}" method="post" class="d-flex flex-column align-items-start">
+                    {% csrf_token %}
+                    <div class="form-group d-flex flex-column align-items-start">
+                        <label for="email" class="">Email Address</label>
+                        <input type="email" name="email" id="email" class="form-control" required>
+                    </div>
+                    <div class="form-group mt-2">
+                        <button type="submit" class="btn btn-green">Delete</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</section>
+
+{% endblock content %}

@@ -1,0 +1,50 @@
+a.link {
+    color: #a5c422 !important;
+    transition: all 1s !important;
+    display: inline-block;
+    position: relative;
+}
+
+a.link::after {
+    content: '';
+    position: absolute;
+    width: 100%;
+    transform: scaleX(0);
+    height: 2px;
+    bottom: 0;
+    left: 0;
+    background-color: #a5c422;
+    transform-origin: bottom right;
+    transition: transform 0.25s ease-out;
+}
+
+a.link:hover::after {
+    transform: scaleX(1);
+    transform-origin: bottom left;
+}
+
+.font-weight-bold {
+    font-weight: bold;
+}
+
+.btn-green, .btn-green:focus {
+    background-color: #a5c422;
+    color: #fff;
+    transition: all 0.6s;
+}
+.btn-green:hover {
+    background-color: #000;
+    color: #fff;
+}
+
+.logo {
+    width: 75px;
+}
+
+.section-btn {
+    transition: all 0.4s ease-in-out;
+}
+
+.section-btn:hover {
+    background-color: #4267b2;
+}

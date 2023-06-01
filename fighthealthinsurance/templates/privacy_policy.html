@@ -2,37 +2,206 @@
 {% load static %}
 {% load absolute %}
 
-{% block extra_style %}
-    table { border-collapse:collapse; border-spacing:0; empty-cells:show }
-    td, th { vertical-align:top; font-size:12pt;}
-    h1, h2, h3, h4, h5, h6 { clear:both;}
-    ol, ul { margin:0; padding:0;}
-    li { list-style: none; margin:0; padding:0;}
-    span.footnodeNumber { padding-right:1em; }
-    span.annotation_style_by_filter { font-size:95%; font-family:Arial; background-color:#fff000;  margin:0; border:0; padding:0;  }
-    span.heading_numbering { margin-right: 0.8rem; }* { margin:0;}
-    .P1 { font-size:12pt; margin-bottom:0.1945in; margin-top:0.1945in; font-family:'Liberation Serif'; writing-mode:horizontal-tb; direction:ltr;text-align:center ! important; }
-    .P2 { font-size:12pt; margin-bottom:0in; margin-top:0in; font-family:'Liberation Serif'; writing-mode:horizontal-tb; direction:ltr;line-height:200%; }
-    .P3 { font-size:12pt; margin-bottom:0in; margin-top:0in; font-family:'Liberation Serif'; writing-mode:horizontal-tb; direction:ltr;margin-left:0.4862in; margin-right:0in; line-height:200%; text-indent:-0.1945in; }
-    .P4 { font-size:12pt; margin-bottom:0in; margin-top:0in; font-family:'Liberation Serif'; writing-mode:horizontal-tb; direction:ltr;margin-left:0in; margin-right:0in; line-height:200%; text-indent:0.5in; }
-    .P5 { font-size:12pt; margin-bottom:0in; margin-top:0in; font-family:'Liberation Serif'; writing-mode:horizontal-tb; direction:ltr;line-height:200%; }
-    .P6 { font-size:11.5pt; margin-bottom:0in; margin-top:0in; font-family:Arial; writing-mode:horizontal-tb; direction:ltr;line-height:200%; color:#000000; }
-    .P7 { font-size:12pt; margin-bottom:0in; margin-top:0in; font-family:'Liberation Serif'; writing-mode:horizontal-tb; direction:ltr;line-height:200%; }
-    .P8 { font-size:12pt; margin-bottom:0in; margin-top:0in; font-family:'Liberation Serif'; writing-mode:horizontal-tb; direction:ltr;line-height:200%; }
-    .P9 { font-size:12pt; font-family:'Liberation Serif'; writing-mode:horizontal-tb; direction:ltr;}
-    .Internet_20_link { color:#000080; text-decoration:underline; }
-    .T1 { color:#000000; font-family:Arial; font-size:14pt; font-weight:bold; }
-    .T10 { color:#000000; font-size:7pt; }
-    .T2 { color:#000000; font-family:Arial; font-size:11.5pt; }
-    .T3 { color:#000000; font-family:Arial; font-size:11.5pt; }
-    .T4 { color:#000000; font-family:Arial; font-size:11.5pt; font-style:italic; }
-    .T5 { color:#000000; font-family:Arial; font-size:11.5pt; background-color:transparent; }
-    .T6 { color:#000000; font-family:Arial; font-size:11.5pt; background-color:transparent; }
-    .T7 { color:#000000; font-family:Arial; font-size:11pt; }
-    .T8 { color:#000000; font-family:Arial; font-size:11pt; }
-    .T9 { color:#000000; font-family:Arial; font-size:11pt; font-weight:bold; }
-{% endblock extra_style %}
-
 {% block content %}
-  <p class="P9"><span class="T1">Privacy Policy Template for a Basic Website with User-Generated Content</span></p><p class="P9"> </p><p class="P9"> </p><p class="P2"><span class="T3">Totally Legit Co</span><span class="T2"> PRIVACY POLICY</span></p><p class="P6"> </p><p class="P2"><span class="T3">Totally Legit Co</span><span class="T2"> (the “Company”) is committed to maintaining robust privacy protections for its users.  Our Privacy Policy (“Privacy Policy”) is designed to help you understand how we collect, use and safeguard the information you provide to us and to assist you in making informed decisions when using our Service.  </span></p><p class="P9"> </p><p class="P2"><span class="T2">For purposes of this Agreement, “Site” refers to the Company’s website, which can be accessed at </span><span class="T3">totallylegitco.com, fighthealthinsurance.com, appealhealthinsurance.com, or fuckhealthinsurance.com</span></p><p class="P2"><span class="T2">“Service” refers to the Company’s services accessed via the Site, in which users can </span><span class="T3">generate and send health care appeals</span><span class="T2">. </span></p><p class="P2"><span class="T2">The terms “we,” “us,” and “our” refer to the Company.</span></p><p class="P2"><span class="T2">“You” refers to you, as a user of our Site or our Service. </span></p><p class="P2"><span class="T2">By accessing our Site or our Service, you accept our Privacy Policy and Terms of Use (found here: </span><span class="T3">fighthealthinsurance.com/privacy_policy</span><span class="T2">), and you consent to our collection, storage, use and disclosure of your Personal Information as described in this Privacy Policy.</span></p><p class="P9"> </p><p class="P2"><span class="T3">1</span><span class="T2">.               INFORMATION WE COLLECT</span></p><p class="P2"><span class="T7">We collect “Non-Personal Information” and “Personal Information.” </span><span class="T9">Non-Personal Information</span><span class="T7"> includes information that cannot be used to personally identify you, such as anonymous usage data, general demographic information we may collect, </span><span class="T8">anonyomized </span><span class="T7">, referring/exit pages and URLs, platform types, preferences you submit and preferences that are generated based on the data you submit and number of clicks. </span><span class="T9">Personal Information</span><span class="T7"> includes your email, </span><span class="T8">and mailing address</span><span class="T7">, which you submit to us through the registration process at the Site.</span></p><p class="P9"/><p class="P3"><span class="T7">1.</span><span class="T10">   </span><span class="T4">Information collected via Technology</span></p><p class="P2"><span class="T2">To activate the Service you do not need to submit any Personal Information other than your email address. To use the Service thereafter, you </span><span class="T3">do not</span><span class="T2"> need to submit further Personal Information. However, in an effort to improve the quality of the Service, we track information provided to us by your browser or by our software application when you view or use the Service, such as the website you came from (known as the “referring URL”), the type of browser you use, the device from which you connected to the Service, the time and date of access, and other information that does not personally identify you. We track this information using cookies, or small text files which include an anonymous unique identifier. Cookies are sent to a user’s browser from our servers and are stored on the user’s computer hard drive. Sending a cookie to a user’s browser enables us to collect Non-Personal information about that user and keep a record of the user’s preferences when utilizing our services, both on an individual and aggregate basis.</span></p><p class="P2"><span class="T2"/></p><p class="P2"><span class="T2">The Company may use both persistent and session cookies; persistent cookies remain on your computer after you close your session and until you delete them, while session cookies expire when you close your browser. </span></p><p class="P2"><span class="T2"/></p><p class="P7"><span class="T2">The company may utilize local storage, which remains on your computer after you close your session, but unlike cookies are not automatically transmitted to our servers. We use these to </span></p><p class="P7"><span class="T2">anonymize your health insurance data before transmission to our server as well as generate your final health insurance appeal.</span></p><p class="P7"><span class="T2"/></p><p class="P7"><span class="T2"/></p><p class="P3"><span class="T7">2.</span><span class="T10">   </span><span class="T4">Information you provide us by registering for an account</span></p><p class="P2"><span class="T2">In addition to the information provided automatically by your browser when you visit the Site, to become a subscriber to the Service you will need to create a personal profile. You can create a profile by registering with the Service and entering your email address, and creating a user name and a password. By registering, you are authorizing us to collect, store and use your email address in accordance with this Privacy Policy.</span></p><p class="P9"> </p><p class="P4"><span class="T2">3. </span><span class="T4">Children’s Privacy</span></p><p class="P2"><span class="T2">The Site and the Service are not directed to anyone under the age of 13. The Site does not knowingly collect or solicit information from anyone under the age of 13, or allow anyone under the age of 13 to sign up for the Service. In the event that we learn that we have gathered personal information from anyone under the age of 13 without the consent of a parent or guardian, we will delete that information as soon as possible. If you believe we have collected such information, please contact us at </span><span class="T3">support@pigscanfly.ca</span></p><p class="P9"> </p><p class="P2"><span class="T3">2</span><span class="T2">.             HOW WE USE AND SHARE INFORMATION</span></p><p class="P2"><span class="T4">Personal Information:</span></p><p class="P2"><span class="T2">Except as otherwise stated in this Privacy Policy, we do not sell, trade, rent or otherwise share for marketing purposes your Personal Information with third parties without your consent. We do share Personal Information with vendors who are performing services for the Company, such as the servers for our email communications who are provided access to user’s email address for purposes of sending emails from us. Those vendors use your Personal Information only at our direction and in accordance with our Privacy Policy.</span></p><p class="P2"><span class="T2">In general, the Personal Information you provide to us is used to help us communicate with you. For example, we use Personal Information to contact users in response to questions, solicit feedback from users, provide technical support, and inform users about promotional offers.</span></p><p class="P2"><span class="T2">We may share Personal Information with outside parties if we have a good-faith belief that access, use, preservation or disclosure of the information is reasonably necessary to meet any </span><span class="T2">applicable legal process or enforceable governmental request; to enforce applicable Terms of Service, including investigation of potential violations; address fraud, security or technical concerns; or to protect against harm to the rights, property, or safety of our users or the public as required or permitted by law. </span></p><p class="P9"> </p><p class="P2"><span class="T4">Non-Personal Information</span></p><p class="P2"><span class="T2">In general, we use Non-Personal Information to help us improve the Service and customize the user experience. We also aggregate Non-Personal Information in order to track trends and analyze use patterns on the Site. This Privacy Policy does not limit in any way our use or disclosure of Non-Personal Information and we reserve the right to use and disclose such Non-Personal Information to our partners, advertisers and other third parties at our discretion.</span></p><p class="P2"><span class="T2">In the event we undergo a business transaction such as a merger, acquisition by another company, or sale of all or a portion of our assets, your Personal Information may be among the assets transferred. You acknowledge and consent that such transfers may occur and are permitted by this Privacy Policy, and that any acquirer of our assets may continue to process your Personal Information as set forth in this Privacy Policy. If our information practices change at any time in the future, we will post the policy changes to the Site so that you may opt out of the new information practices. We suggest that you check the Site periodically if you are concerned about how your information is used.</span></p><p class="P9"> </p><p class="P2"><span class="T3">3</span><span class="T2">.           HOW WE PROTECT INFORMATION</span></p><p class="P2"><span class="T2">We implement security measures designed to protect your information from unauthorized access. Your account is protected by your account password and we urge you to take steps to keep your personal information safe by not disclosing your password and by logging out of your account after each use. We further protect your information from potential security breaches by implementing certain technological security measures including encryption, firewalls and secure socket layer technology. However, these measures do not guarantee that your information will not </span><span class="T2">be accessed, disclosed, altered or destroyed by breach of such firewalls and secure server software. By using our Service, you acknowledge that you understand and agree to assume these risks.</span></p><p class="P9"> </p><p class="P2"><span class="T3">4</span><span class="T2">.           YOUR RIGHTS REGARDING THE USE OF YOUR PERSONAL INFORMATION</span></p><p class="P5"><span class="T2">You have the right at any time to prevent us from contacting you for marketing purposes.  When we send a promotional communication to a user, the user can opt out of further promotional communications by following the unsubscribe instructions provided in each promotional e-mail. You can also indicate that you do not wish to receive marketing communications from us in the </span><span class="T5">{% absolute_url 'opt_out' %}</span><span class="T6"> </span><span class="T2">of the Site. Please note that notwithstanding the promotional preferences you indicate by either unsubscribing or opting out in the </span><span class="T5">{% absolute_url 'opt_out' %}</span><span class="T6"> </span><span class="T2"> of the Site, we may continue to send you administrative emails including, for example, periodic updates to our Privacy Policy. </span><span class="T3">You can request removal of your data at {% absolute_url 'remove_data' %}</span></p><p class="P9"> </p><p class="P2"><span class="T3">5</span><span class="T2">.             LINKS TO OTHER WEBSITES</span></p><p class="P2"><span class="T2">As part of the Service, we may provide links to or compatibility with other websites or applications. However, we are not responsible for the privacy practices employed by those websites or the information or content they contain. This Privacy Policy applies solely to information collected by us through the Site and the Service. Therefore, this Privacy Policy does not apply to your use of a third party website accessed by selecting a link on our Site or via our Service. To the extent that you access or use the Service through or on another website or application, then the privacy policy of that other website or application will apply to your access or use of that site or application. We encourage our users to read the privacy statements of other websites before proceeding to use them.</span></p><p class="P9"> </p><p class="P2"><span class="T3">6</span><span class="T2">.           CHANGES TO OUR PRIVACY POLICY</span></p><p class="P2"><span class="T2">The Company reserves the right to change this policy and our Terms of Service at any time.  We will notify you of significant changes to our Privacy Policy by sending a notice to the primary email address specified in your account or by placing a prominent notice on our site. Significant changes will go into effect 30 days following such notification. Non-material changes or clarifications will take effect immediately. You should periodically check the Site and this privacy page for updates.</span></p><p class="P9"> </p><p class="P2"><span class="T3">7</span><span class="T2">.         CONTACT US</span></p><p class="P2"><span class="T2">If you have any questions regarding this Privacy Policy or the practices of this Site, please contact us by sending an email to </span><a href="mailto:support@pigscanfly.ca" class="Internet_20_link"><span class="T3">support@pigscanfly.ca</span></a></p><p class="P2"><span class="T3"/></p><p class="P7"><span class="T2">8. Remove Data</span></p><p class="P7"><span class="T2"/></p><p class="P7"><span class="T2">You can request removal of your data at {% absolute_url 'remove_data' %}.</span></p><p class="P7"><span class="T2"/></p><p class="P8"><span class="T2">9. Transmission of PII (at your request)</span></p><p class="P8"><span class="T2">At your request our service generates health insurance appeals. These appeals contain your PII. We attempt to store the PII locally on your device (computer or phone). If you opt to have us mail, fax, or e-mail your health insurance appeal we will (temporarily) have your full appeal present on our servers. We will do our best to delete this PII as quickly as possible (after successful mail, fax, or e-mail) but there may be some delay for processing.</span></p><p class="P7"><span class="T2"/></p><p class="P2"><span class="T2">Last Updated: This Privacy Policy was last updated on </span><span class="T3">Feb 14 2023</span></p><p class="P1"> </p>
+<section id="privacy-policy">
+    <div class="container">
+        <div class="section-header text-align-center">
+            <h2>Privacy Policy</h2>
+        </div>
+        
+        <p>
+            <span class="font-weight-bold">Totally Legit Co (the “Company”)</span>
+            is committed to maintaining
+            robust privacy protections for its users. 
+            <span class="font-weight-bold">Our Privacy Policy (“Privacy Policy”)</span> is designed to help you
+            understand
+            how we collect, use and safeguard the information you provide to us and to assist you in making informed
+            decisions
+            when using our Service. 
+        </p>
+
+        <p>
+            For purposes of this Agreement, <span class="font-weight-bold">“Site”</span> refers to the Company's website, which can be
+            accessed at totallylegitco.com, fighthealthinsurance.com, appealhealthinsurance.com, or
+            fuckhealthinsurance.com
+        </p>
+        <p>
+            <span class="font-weight-bold">“Service”</span> refers to the Company's services accessed via the Site, in which users can
+            generate and send health care appeals
+        </p>
+        <p>
+            The terms “we,” “us,” and “our” refer to the Company.
+        </p>
+        <p>
+            “You” refers to you, as a user of our Site or our Service.
+        </p>
+        <p>
+            By accessing our Site or our Service, you accept our Privacy Policy and Terms of Use
+            (found here: 
+            <a class="link" href="https://www.fighthealthinsurance.com/privacy_policy">
+                fighthealthinsurance.com/privacy_policy
+            </a>), and you
+            consent to our collection, storage, use and disclosure of your Personal Information as described in this Privacy
+            Policy.
+        </p>
+
+        <h4>1. INFORMATION WE COLLECT</h4>
+
+        <p>
+            We collect “Non-Personal Information” and “Personal Information.” Non-Personal Information includes information 
+            that cannot be used to personally identify you, such as anonymous usage data, general demographic information 
+            we may collect, anonyomized, referring/exit pages and URLs, platform types, preferences you submit and 
+            preferences that are generated based on the data you submit and number of clicks. Personal Information includes 
+            your email, and mailing address, which you submit to us through the registration process at the Site.
+        </p>
+        <h5>1.Information collected via Technology</h5>
+        <p>
+            To activate the Service you do not need to submit any Personal Information other than
+            your email address. To use the Service thereafter, you do not
+            need
+            to submit further Personal Information. However, in an effort to improve the quality of the Service, we track
+            information provided to us by your browser or by our software application when you view or use the Service, such
+            as
+            the website you came from (known as the “referring URL”), the type of browser you use, the device from which you
+            connected to the Service, the time and date of access, and other information that does not personally identify
+            you.
+            We track this information using cookies, or small text files which include an anonymous unique identifier.
+            Cookies
+            are sent to a user's browser from our servers and are stored on the user's computer hard drive. Sending a cookie
+            to
+            a user's browser enables us to collect Non-Personal information about that user and keep a record of the user's
+            preferences when utilizing our services, both on an individual and aggregate basis.
+        </p>
+        <p>
+            The Company may use both persistent and session cookies; persistent cookies remain on
+            your computer after you close your session and until you delete them, while session cookies expire when you
+            close
+            your browser.
+            </p>
+        <p>
+            The company may utilize local storage, which remains on your computer after you close
+                your session, but unlike cookies are not automatically transmitted to our servers. We use these to 
+        </p>
+        <p>
+            anonymize your health insurance data before transmission to our server as well as
+                generate your final health insurance appeal.
+        </p>
+        <h5>2. Information you provide us by registering for an account</h5>
+        <p>In addition to the information provided automatically by your browser when you visit the
+                Site, to become a subscriber to the Service you will need to create a personal profile. You can create a profile
+                by
+                registering with the Service and entering your email address, and creating a user name and a password. By
+                registering, you are authorizing us to collect, store and use your email address in accordance with this Privacy
+                Policy.</p>
+        <h5>3. Children's Privacy</h5>
+        <p>The Site and the Service are not directed to anyone under the age of 13. The Site does
+                not knowingly collect or solicit information from anyone under the age of 13, or allow anyone under the age of
+                13 to
+                sign up for the Service. In the event that we learn that we have gathered personal information from anyone under
+                the
+                age of 13 without the consent of a parent or guardian, we will delete that information as soon as possible. If
+                you
+                believe we have collected such information, please contact us at support@pigscanfly.ca</p>
+        <h4>2. HOW WE USE AND SHARE INFORMATION</h4>
+        <h5>Personal Information:</h5>
+        <p>Except as otherwise stated in this Privacy Policy, we do not sell, trade, rent or
+                otherwise share for marketing purposes your Personal Information with third parties without your consent. We do
+                share Personal Information with vendors who are performing services for the Company, such as the servers for our
+                email communications who are provided access to user's email address for purposes of sending emails from us.
+                Those
+                vendors use your Personal Information only at our direction and in accordance with our Privacy Policy.
+        </p>
+        <p>In general, the Personal Information you provide to us is used to help us communicate
+                with you. For example, we use Personal Information to contact users in response to questions, solicit feedback
+                from
+                users, provide technical support, and inform users about promotional offers.</p>
+        <p>We may share Personal Information with outside parties if we have a good-faith belief
+                that access, use, preservation or disclosure of the information is reasonably necessary to meet any applicable 
+                legal process or enforceable governmental request; to enforce applicable Terms of Service,
+                including investigation of potential violations; address fraud, security or technical concerns; or to protect
+                against harm to the rights, property, or safety of our users or the public as required or permitted by law.
+            
+        </p>
+        <h5>Non-Personal Information</h5>
+        <p>In general, we use Non-Personal Information to help us improve the Service and customize
+                the user experience. We also aggregate Non-Personal Information in order to track trends and analyze use
+                patterns on
+                the Site. This Privacy Policy does not limit in any way our use or disclosure of Non-Personal Information and we
+                reserve the right to use and disclose such Non-Personal Information to our partners, advertisers and other third
+                parties at our discretion.</p>
+        <p>In the event we undergo a business transaction such as a merger, acquisition by another
+                company, or sale of all or a portion of our assets, your Personal Information may be among the assets
+                transferred.
+                You acknowledge and consent that such transfers may occur and are permitted by this Privacy Policy, and that any
+                acquirer of our assets may continue to process your Personal Information as set forth in this Privacy Policy. If
+                our
+                information practices change at any time in the future, we will post the policy changes to the Site so that you
+                may
+                opt out of the new information practices. We suggest that you check the Site periodically if you are concerned
+                about
+                how your information is used.</p>
+        <h4>3. HOW WE PROTECT INFORMATION</h4>
+        <p>We implement security measures designed to protect your information from unauthorized
+                access. Your account is protected by your account password and we urge you to take steps to keep your personal
+                information safe by not disclosing your password and by logging out of your account after each use. We further
+                protect your information from potential security breaches by implementing certain technological security
+                measures
+                including encryption, firewalls and secure socket layer technology. However, these measures do not guarantee
+                that
+                your information will not be accessed, disclosed, altered or destroyed by breach of such
+                firewalls and secure server software. By using our Service, you acknowledge that you understand and agree to
+                assume
+                these risks.</p>
+        <h4>4. YOUR RIGHTS REGARDING THE USE OF YOUR PERSONAL INFORMATION</h4>
+        <p>You have the right at any time to prevent us from contacting you for marketing purposes.
+                When we send a promotional communication to a user, the user can opt out of further promotional communications
+                by
+                following the unsubscribe instructions provided in each promotional e-mail. You can also indicate that you do
+                not
+                wish to receive marketing communications from us in the {% absolute_url 'opt_out'
+                %} of the Site. Please note that notwithstanding the promotional
+                preferences you indicate by either unsubscribing or opting out in the {% absolute_url
+                'opt_out' %} of the Site, we may continue to send you
+                administrative emails including, for example, periodic updates to our Privacy Policy. You
+                can request removal of your data at <a class="link" href="{% absolute_url 'remove_data' %}">{% absolute_url 'remove_data' %}</a></p>
+        <h4>5. LINKS TO OTHER WEBSITES</h4>
+        <p>As part of the Service, we may provide links to or compatibility with other websites or
+                applications. However, we are not responsible for the privacy practices employed by those websites or the
+                information or content they contain. This Privacy Policy applies solely to information collected by us through
+                the
+                Site and the Service. Therefore, this Privacy Policy does not apply to your use of a third party website
+                accessed by
+                selecting a link on our Site or via our Service. To the extent that you access or use the Service through or on
+                another website or application, then the privacy policy of that other website or application will apply to your
+                access or use of that site or application. We encourage our users to read the privacy statements of other
+                websites
+                before proceeding to use them.</p>
+        <h4>6. CHANGES TO OUR PRIVACY POLICY</h4>
+        <p>The Company reserves the right to change this policy and our Terms of Service at any
+                time. We will notify you of significant changes to our Privacy Policy by sending a notice to the primary email
+                address specified in your account or by placing a prominent notice on our site. Significant changes will go into
+                effect 30 days following such notification. Non-material changes or clarifications will take effect immediately.
+                You
+                should periodically check the Site and this privacy page for updates.</p>
+        <h4>7. CONTACT US</h4>
+        <p>If you have any questions regarding this Privacy Policy or the practices of this Site,
+                please contact us by sending an email to <a href="mailto:support@pigscanfly.ca"
+                class="Internet_20_link">support@pigscanfly.ca</a></p>
+        <h4>8. Remove Data</h4>
+        <p>You can request removal of your data at {% absolute_url 'remove_data' %}.</p>
+        <h4>9. Transmission of PII (at your request)</h4>
+        <p>At your request our service generates health insurance appeals. These appeals contain
+                your PII. We attempt to store the PII locally on your device (computer or phone). If you opt to have us mail,
+                fax,
+                or e-mail your health insurance appeal we will (temporarily) have your full appeal present on our servers. We
+                will
+                do our best to delete this PII as quickly as possible (after successful mail, fax, or e-mail) but there may be
+                some
+                delay for processing.</p>
+        <p>
+            Last Updated: This Privacy Policy was last updated on Feb 14 2023
+        </p>
+    </div>
+</section>
+
 {% endblock content %}
