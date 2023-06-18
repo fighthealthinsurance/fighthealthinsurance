@@ -469,7 +469,7 @@ header span i {
 }
 
 .slider .item-first {
-    background-image: url(../images/slider1.jpg);
+    background-image: url(../images/letter.jpeg);
 }
 
 .slider .item-second {
@@ -477,7 +477,7 @@ header span i {
 }
 
 .slider .item-third {
-    background-image: url(../images/slider3.jpg);
+    background-image: url(../images/alpaca-laptop.jpg);
 }
 
 
@@ -486,7 +486,7 @@ header span i {
   -----------------------------------------*/
 
 #about {
-    background: url('../images/about-bg.jpg') no-repeat top center;
+    background: url('../images/about-bg-alpaca.jpg') no-repeat top center;
     background-size: cover;
     padding-top: 150px;
     padding-bottom: 150px;
