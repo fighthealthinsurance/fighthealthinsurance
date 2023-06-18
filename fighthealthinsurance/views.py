@@ -200,11 +200,11 @@ class GenerateAppeal(View):
 
     def post(self, request):
         def make_prompt(cleaned_data):
-            if "treatment" in cleaned_data:
+            if "procedure" in cleaned_data:
                 if "diagnosis" in form.cleaned_data:
-                    return "{treatment} is medically necessary for {diagnosis} because"
+                    return "{procedure} is medically necessary for {diagnosis} because"
                 else:
-                    return "{treatment} is medically necessary because"
+                    return "{procedure} is medically necessary because"
             else:
                 return None
         form = DenialRefForm(request.POST)
@@ -213,10 +213,15 @@ class GenerateAppeal(View):
             email = form.cleaned_data['email']
             bio_gpt_prompt = make_prompt(form.cleaned_data)
             hashed_email = hashlib.sha512(email.encode("utf-8")).hexdigest()
-            print(f"di {denial_id} he {hashed_email}")
+
+            # Update the denial with the procedure and diagnosis
             denial = Denial.objects.filter(
                 denial_id = denial_id,
                 hashed_email = hashed_email).get()
+            denial.procedure = form.cleaned_data["procedure"]
+            denial.diagnosis = form.cleaned_data["diagnosis"]
+            denial.save()
+            
             insurance_company = denial.insurance_company or "insurance company;"
             claim_id = denial.claim_id or "YOURCLAIMIDGOESHERE"
             denial_date_info = ""
@@ -370,7 +375,7 @@ class ProcessView(View):
                 state = self.zip_engine.by_zipcode(
                     form.cleaned_data['zip']).state
             procedure = self.regex_denial_processor.get_procedure(denial_text)
-            treatment = self.regex_denial_processor.get_treatment(denial_text)
+            diagnosis = self.regex_denial_processor.get_diagnosis(denial_text)
             form = PostInferedForm(
                 initial = {
                     'denial_type': denial_type,
@@ -378,7 +383,7 @@ class ProcessView(View):
                     'email': email,
                     'your_state': state,
                     'procedure': procedure,
-                    'treatment': treatment,
+                    'diagnosis': diagnosis,
                 })
             return render(
                 request,

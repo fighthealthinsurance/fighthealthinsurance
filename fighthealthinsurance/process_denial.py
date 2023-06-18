@@ -2,7 +2,7 @@ import csv
 import icd10
 import re
 from abc import ABC, abstractmethod
-from fighthealthinsurance.models import DenialTypes, PlanType, Regulator
+from fighthealthinsurance.models import DenialTypes, PlanType, Regulator, Diagnosis, Procedures
 
 # Process all of our "expert system" rules.
 

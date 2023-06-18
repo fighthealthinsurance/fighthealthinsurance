@@ -120,7 +120,7 @@ class Denial(models.Model):
     insurance_company = models.CharField(max_length=300, primary_key=False, null=True)
     claim_id =  models.CharField(max_length=300, primary_key=False, null=True)
     procedure = models.CharField(max_length=300, primary_key=False, null=True)
-    treatment = models.CharField(max_length=300, primary_key=False, null=True)
+    diagnosis = models.CharField(max_length=300, primary_key=False, null=True)
     
 
     def __str__(self):
