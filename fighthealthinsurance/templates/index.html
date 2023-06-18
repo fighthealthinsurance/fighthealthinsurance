@@ -5,6 +5,42 @@ Fight Your Health Insurnace Denial
 {% load compress %}
 {% load static %}
 {% block content %}
-Hi Friends!<br>
-The first step to scan your denial, and you can either do the optical character recognition (making in understandable to machines) on <a href='{% url "scan" %}'>your device/phone</a> or <a href='{% url "server_side_ocr" %}'>on our server</a>.
+
+<!-- HOME -->
+<section id="home" class="slider" data-stellar-background-ratio="0.5">
+    <div class="row">
+        <div class="item item-first">
+            <div class="caption d-flex flex-column align-items-center justify-content-center">
+                <div class="col-md-offset-1 col-md-10">
+                    <h3>Lorem ipsum dolor sit amet.</h3>
+                    <h1>Fight Health Insurance</h1>
+                    <a href="{% url 'scan' %}" class="section-btn btn btn-default smoothScroll">Generate a Health Insurance Appeal</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section id="about">
+    <div class="container">
+        <div class="row">
+
+            <div class="col-md-6 col-sm-6">
+                <div class="about-info">
+                    <h2>Hi Friends!</h2>
+                    <div>
+                        The first step to scan your denial, and you can either do the optical character recognition
+                        (making in understandable to
+                        machines) on
+                        <a class="link" href='{% url "scan" %}'>your device/phone</a> or
+                        <a class="link" href='{% url "server_side_ocr" %}'>on our
+                            server</a>.
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+</section>
+
 {% endblock content %}

@@ -26,6 +26,16 @@ class IndexView(View):
         return render(
             request,
             'index.html')
+    
+
+class AboutView(View):
+    def get(self, request):
+        return render(request, 'about_us.html')
+    
+
+class OtherResourcesView(View):
+    def get(self, request):
+        return render(request, 'other_resources.html')
 
 
 class ScanView(View):
@@ -70,6 +80,17 @@ class OptOutView(View):
             })
 
 
+class ShareDenialView(View):
+    def get(self, request):
+        return render(
+            request,
+            'share_denial.html',
+            context={
+                'title': 'Share Denial'
+            }
+        )
+
+
 class RemoveDataView(View):
     def get(self, request):
         return render(
@@ -78,6 +99,10 @@ class RemoveDataView(View):
             context={
                 'title': "Remove My Data",
             })
+    
+    def post(self, request):
+        email = request.POST.get('email')
+        # ... handle further logic here.
 
 
 class RecommendAppeal(View):
@@ -162,6 +187,7 @@ class FindNextSteps(View):
                 'categorize.html',
                 context = {
                     'post_infered_form': form,
+                    'upload_more': True,
                 })
 
 
@@ -333,6 +359,7 @@ class ProcessView(View):
                 'categorize.html',
                 context = {
                     'post_infered_form': form,
+                    'upload_more': True,
                 })
         else:
             return render(
@@ -340,6 +367,5 @@ class ProcessView(View):
                 'scrub.html',
                 context={
                     'error': form.errors,
-                    'ocr_result': request.POST.get('denial_text', ''),
-                    'upload_more': True,
+                    '': request.POST.get('denial_text', ''),
                 })

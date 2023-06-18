@@ -1,0 +1,49 @@
+{% extends 'base.html' %}
+{% block title %}
+Share your Denial
+{% endblock title %}
+{% block content %}
+
+<!-- HOME -->
+<section id="share-denial" data-stellar-background-ratio="0.5">
+    <div class="row mt-5 mb-5">
+        <div class="caption d-flex flex-column align-items-center justify-content-center">
+            <div class="col-md-offset-1 col-md-10 text-align-center d-flex flex-column align-items-center justify-content-center">
+                <h2>Share your Denial</h2>
+                <p>
+                    Don't need help with your appeal, but want to help us get better at helping others? 
+                    You can upload your denial letter (and if you want to go the extra mile you can include your appeal), 
+                    pseudo-anonymize it, and then we'll put it in our database for training and improvement.
+                    <br><br>
+
+                    If you later change your mind, you can request we 
+                    <a href="{% url 'remove_data' %}" class="link">remove your denial</a> 
+                    from our database.
+                </p>
+                <form action="{% url 'share_denial' %}" method="post" class="col-md-12 d-flex flex-column align-items-center">
+                    {% csrf_token %}
+                    <div class="d-flex flex-column align-items-start">
+                        <div class="d-flex">
+                            <div class="form-group d-flex flex-column align-items-start" style="margin-right: 1em;">
+                                <label for="letter">Denial Letter*</label>
+                                <input type="file" name="letter" id="letter" class="form-control" required>
+                            </div>
+        
+                            <div class="form-group d-flex flex-column align-items-start">
+                                <label for="appeal">Appeal</label>
+                                <input type="file" name="appeal" id="appeal" class="form-control">
+                            </div>
+                        </div>
+
+                        <div class="form-group mt-2">
+                            <button type="submit" class="btn btn-green">Upload and Share</button>
+                        </div>
+                    </div>
+
+                </form>
+            </div>
+        </div>
+    </div>
+</section>
+
+{% endblock content %}
