@@ -19,7 +19,12 @@ from fighthealthinsurance.forms import *
 from fighthealthinsurance.models import *
 from fighthealthinsurance.process_denial import *
 from fighthealthinsurance.utils import *
+from transformers import (
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    pipeline)
 
+biogpt_pipeline = pipeline(model="microsoft/BioGPT-Large-PubMedQA", max_new_tokens=250)
 
 class IndexView(View):
     def get(self, request):
@@ -194,10 +199,19 @@ class FindNextSteps(View):
 class GenerateAppeal(View):
 
     def post(self, request):
+        def make_prompt(cleaned_data):
+            if "treatment" in cleaned_data:
+                if "diagnosis" in form.cleaned_data:
+                    return "{treatment} is medically necessary for {diagnosis} because"
+                else:
+                    return "{treatment} is medically necessary because"
+            else:
+                return None
         form = DenialRefForm(request.POST)
         if form.is_valid():
             denial_id = form.cleaned_data["denial_id"]
             email = form.cleaned_data['email']
+            bio_gpt_prompt = make_prompt(form.cleaned_data)
             hashed_email = hashlib.sha512(email.encode("utf-8")).hexdigest()
             print(f"di {denial_id} he {hashed_email}")
             denial = Denial.objects.filter(
@@ -212,6 +226,8 @@ class GenerateAppeal(View):
             prefaces = []
             main = []
             footer = []
+            # Apply all of our 'expert system'
+            # (aka six regexes in a trench coat hiding behind a database).
             for dt in denial.denial_type.all():
                 form = dt.get_form()
                 if form is not None:
@@ -233,6 +249,12 @@ class GenerateAppeal(View):
                 else:
                     if dt.appeal_text is not None:
                         main += [dt.appeal_text]
+            # If we have infered a bio gpt prompt call it
+            if bio_gpt_prompt is not None:
+                main.append(
+                    f"From looking at pubmed data: {bio_gpt_pipeline(bio_gpt_prompt)}"
+                )
+
             appeal_text = "\n".join(prefaces + main + footer)
 
             return render(
@@ -347,12 +369,16 @@ class ProcessView(View):
                 print(f"zip {zip}")
                 state = self.zip_engine.by_zipcode(
                     form.cleaned_data['zip']).state
+            procedure = self.regex_denial_processor.get_procedure(denial_text)
+            treatment = self.regex_denial_processor.get_treatment(denial_text)
             form = PostInferedForm(
                 initial = {
                     'denial_type': denial_type,
                     'denial_id': denial.denial_id,
                     'email': email,
                     'your_state': state,
+                    'procedure': procedure,
+                    'treatment': treatment,
                 })
             return render(
                 request,

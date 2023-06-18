@@ -2,9 +2,9 @@ import csv
 import icd10
 import re
 from abc import ABC, abstractmethod
-
 from fighthealthinsurance.models import DenialTypes, PlanType, Regulator
 
+# Process all of our "expert system" rules.
 
 class DenialBase(ABC):
     @abstractmethod
@@ -77,7 +77,33 @@ class ProcessDenialRegex(DenialBase):
         self.planTypes = PlanType.objects.all()
         self.regulators = Regulator.objects.all()
         self.denialTypes = DenialTypes.objects.all()
-        
+        self.diagnosis = Diagnosis.objects.all()
+        self.procedures = Procedures.objects.all()
+
+    def get_procedure(self, text):
+        print(f"Getting procedure types for {text}")
+        procedure = None
+        for d in self.procedures:
+            print(f"Exlporing {d} w/ {d.regex}")
+            if (d.regex.pattern != ''):
+                s = d.regex.search(text)
+                if s is not None:
+                    print("positive regex match")
+                    return s.groups("procedure")
+        return None
+
+    def get_diagnosis(self, text):
+        print(f"Getting procedure types for {text}")
+        procedure = None
+        for d in self.diagnosis:
+            print(f"Exlporing {d} w/ {d.regex} & {d.negative_regex}")
+            if (d.regex.pattern != ''):
+                s = d.regex.search(text)
+                if s is not None:
+                    print("positive regex match")
+                    return s.groups("diagnosis")
+        return None
+
     def get_denialtype(self, text):
         print(f"Getting denial types for {text}")
         denials = []

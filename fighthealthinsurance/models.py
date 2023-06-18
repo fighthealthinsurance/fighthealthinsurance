@@ -52,6 +52,18 @@ class Regulator(models.Model):
         return self.name
 
 
+class Diagnosis(models.Model):
+    id = models.AutoField(primary_key=True)
+    name = models.CharField(max_length=300, primary_key=False)
+    regex = RegexField(max_length=400, re_flags=re.IGNORECASE | re.UNICODE | re.M)
+
+
+class Procedures(models.Model):
+    id = models.AutoField(primary_key=True)
+    name = models.CharField(max_length=300, primary_key=False)
+    regex = RegexField(max_length=400, re_flags=re.IGNORECASE | re.UNICODE | re.M)
+
+
 class DenialTypes(models.Model):
     id = models.AutoField(primary_key=True)
     # for the many different sub-variants.
@@ -107,6 +119,9 @@ class Denial(models.Model):
     denial_date = models.DateField(auto_now=False, null=True)
     insurance_company = models.CharField(max_length=300, primary_key=False, null=True)
     claim_id =  models.CharField(max_length=300, primary_key=False, null=True)
+    procedure = models.CharField(max_length=300, primary_key=False, null=True)
+    treatment = models.CharField(max_length=300, primary_key=False, null=True)
+    
 
     def __str__(self):
         return f"{self.denial_id}: {self.denial_text[0:100]}"

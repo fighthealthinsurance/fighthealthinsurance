@@ -72,11 +72,17 @@ My name is $your_name_here and I am writing you regarding claim {claim_id}{denia
 
 class MedicalNeccessaryQuestions(InsuranceQuestions):
     """Questions to ask for medical necessiety."""
-    medical_reason = forms.CharField(max_length=3000)
-    request_contact_dr = forms.BooleanField(
-        required=False,
-        label="Technically peer to peer quests are supposed to come from your doctor, but you can ask your health insurance company contact your doctor. We recommend you contact your doctor instead and ask for the medical reasoning and a peer to peer appeal, since insurance companies tend to \"not be able\" to contact anyone who might disagree with them.")
-
+    procedure = forms.CharField(
+        max_length=200,
+        label="What is the procedure/treatment you had denied?")
+    medical_reason = forms.CharField(
+        max_length=200,
+        label="Why is this medically necessary (if you know)?")
+    diagnosis = forms.CharField(
+        max_length=200,
+        label="What is the diagnosis (if any) associated with the request." +
+        "Does not need to be a diseas it can be any number of personal factors, "+
+        "including things like \"high risk homosexual behaviour\" (yeah that's a real one)")
 
     def main(self):
         return [self.cleaned_data["medical_reason"]]
@@ -86,7 +92,7 @@ class ExperimentalQuestions(MedicalNeccessaryQuestions):
         max_length=200,
         label="Insurance companies love to claim anything expensive is experimental." +
         " Some good ways to show something is not experimental: look for " +
-        " documents like the \"standards of care\" or any medical journals (including the NIH).")
+        " documents like the \"standards of care\" or any medical journals (including the NIH or pubmed).")
 
 
 class NotCoveredQuestions(MedicalNeccessaryQuestions):

@@ -174,3 +174,43 @@
     name: Preventive Care
     appeal_text: "The ACA (and equivalent regulations for many non-ACA plans) requires that many types of preventive care be covered, in many cases without any out of pocket expense. See https://www.healthcare.gov/coverage/preventive-care-benefits/ https://www.kff.org/womens-health-policy/fact-sheet/preventive-services-covered-by-private-health-plans/ ."
     form: PreventiveCareQuestions
+- model: fighthealthinsurance.diagnosis
+  pk: 1
+  fields:
+    name: Generic diangosis
+    regex: "is not indicated for (?P<diagnosis>[^.]*)"
+- model: fighthealthinsurance.diagnosis
+  pk: 2
+  fields:
+    name: Generic diangosis x2
+    regex: "patients diagnosed with (?P<diagnosis>[^.]*)"
+- model: fighthealthinsurance.diagnosis
+  pk: 3
+  fields:
+    name: used to treat
+    regex: "used to treat your:*\s*(?P<diagnosis>[^.]*)"
+- model: fighthealthinsurance.procedure
+  pk: 1
+  fields:
+    name: Generic procedure is not covered
+    regex: "(?P<procedure>[^.]*) is not covered"
+- model: fighthealthinsurance.procedure
+  pk: 2
+  fields:
+    name: Generic procedure is denied
+    regex: "for (?P<procedure>[^.]*) is denied"
+- model: fighthealthinsurance.procedure
+  pk: 3
+  fields:
+    name: asked for
+    regex: "asked for\s*:*\s*(?P<procedure>[^.]*)"
+- model: fighthealthinsurance.procedure
+  pk: 4
+  fields:
+    name: doctor ordered
+    regex: "Your doctor (ordered|requested)(?P<procedure>[^.]*)"
+- model: fighthealthinsurance.procedure
+  pk: 5
+  fields:
+    name: request for benefits
+    regex: "request for benefits for\s*(?P<procedure>[^.]*)"
