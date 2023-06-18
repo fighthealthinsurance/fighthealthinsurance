@@ -11,5 +11,6 @@ fi
 export DJANGO_CONFIGURATION=${DJANGO_CONFIGURATION:-"Prod"}
 export DJANGO_SETTINGS_MODULE=${DJANGO_SETTINGS_MODULE:-"fighthealthinsurance.settings"}
 gunicorn fighthealthinsurance.wsgi --user www-data --bind 0.0.0.0:8010 --workers 4 2>&1 | grep -v kube-probe &
+wget localhost:8010/start
 # And nginx to proxy & serve static files
 nginx -g "daemon off;" 2>&1 |grep -v kube-proxy

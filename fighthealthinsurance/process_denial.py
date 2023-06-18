@@ -2,6 +2,7 @@ import csv
 import icd10
 import re
 from abc import ABC, abstractmethod
+from transformers import pipeline
 from fighthealthinsurance.models import DenialTypes, PlanType, Regulator, Diagnosis, Procedures
 
 # Process all of our "expert system" rules.
@@ -69,6 +70,21 @@ class ProcessDenialCodes(DenialBase):
         return []
 
 
+class BioGPT():
+    """Use BioGPT for denial magic."""
+
+    biogpt_pipeline = None
+
+    @classmethod
+    def load(cls):
+        if cls.biogpt_pipeline is None:
+            cls.biogpt_pipeline = pipeline(model="microsoft/BioGPT-Large-PubMedQA", max_new_tokens=250)
+        return cls.biogpt_pipeline
+
+    @classmethod
+    def infer(cls, prompt):
+        cls.load()(prompt)
+
 
 class ProcessDenialRegex(DenialBase):
     """Process the denial type based on the regexes stored in the database."""
@@ -89,19 +105,19 @@ class ProcessDenialRegex(DenialBase):
                 s = d.regex.search(text)
                 if s is not None:
                     print("positive regex match")
-                    return s.groups("procedure")
+                    return s.groups("procedure")[0]
         return None
 
     def get_diagnosis(self, text):
         print(f"Getting procedure types for {text}")
         procedure = None
         for d in self.diagnosis:
-            print(f"Exlporing {d} w/ {d.regex} & {d.negative_regex}")
+            print(f"Exlporing {d} w/ {d.regex}")
             if (d.regex.pattern != ''):
                 s = d.regex.search(text)
                 if s is not None:
                     print("positive regex match")
-                    return s.groups("diagnosis")
+                    return s.groups("diagnosis")[0]
         return None
 
     def get_denialtype(self, text):

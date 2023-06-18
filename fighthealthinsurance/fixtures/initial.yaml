@@ -188,29 +188,44 @@
   pk: 3
   fields:
     name: used to treat
-    regex: "used to treat your:*\s*(?P<diagnosis>[^.]*)"
-- model: fighthealthinsurance.procedure
+    regex: "used to treat your:*\\s*(?P<diagnosis>[^.]*)"
+- model: fighthealthinsurance.procedures
   pk: 1
   fields:
     name: Generic procedure is not covered
     regex: "(?P<procedure>[^.]*) is not covered"
-- model: fighthealthinsurance.procedure
+- model: fighthealthinsurance.procedures
   pk: 2
   fields:
     name: Generic procedure is denied
     regex: "for (?P<procedure>[^.]*) is denied"
-- model: fighthealthinsurance.procedure
+- model: fighthealthinsurance.procedures
   pk: 3
   fields:
     name: asked for
-    regex: "asked for\s*:*\s*(?P<procedure>[^.]*)"
-- model: fighthealthinsurance.procedure
+    regex: "asked for\\s*:*\\s*(?P<procedure>[^.]*)"
+- model: fighthealthinsurance.procedures
   pk: 4
   fields:
     name: doctor ordered
     regex: "Your doctor (ordered|requested)(?P<procedure>[^.]*)"
-- model: fighthealthinsurance.procedure
+- model: fighthealthinsurance.procedures
   pk: 5
   fields:
     name: request for benefits
-    regex: "request for benefits for\s*(?P<procedure>[^.]*)"
+    regex: "request for benefits for\\s*(?P<procedure>[^.]*)"
+- model: fighthealthinsurance.procedures
+  pk: 6
+  fields:
+    name: Generic procedure is not covered
+    regex: "for (?P<procedure>[^.]*) (will|is) not covered"
+- model: fighthealthinsurance.procedures
+  pk: 6
+  fields:
+    name: Looser procedure is not covered
+    regex: "(?P<procedure>[^.]*) (will|is) (not covered|not elegible)"
+- model: fighthealthinsurance.procedures
+  pk: 7
+  fields:
+    name: Looser procedure is denied
+    regex: "(?P<procedure>[^.]*) (will|is) denied"

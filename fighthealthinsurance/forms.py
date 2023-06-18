@@ -32,6 +32,15 @@ class PostInferedForm(forms.Form):
 #    plan_type_text = forms.CharField(required=False)
     denial_date = forms.DateField(required=False)
     your_state = forms.CharField(max_length=2, required=False)
+    procedure = forms.CharField(
+        max_length=200,
+        label="What is the procedure/treatment you had denied?")
+    diagnosis = forms.CharField(
+        max_length=200,
+        label="What is the diagnosis (if any) associated with the request." +
+        "Does not need to be a diseas it can be any number of personal factors, "+
+        "including things like \"high risk homosexual behaviour\" (yeah that's a real one)")
+
 
 class InsuranceQuestions(forms.Form):
     """Insurance Questions"""
@@ -72,17 +81,10 @@ My name is $your_name_here and I am writing you regarding claim {claim_id}{denia
 
 class MedicalNeccessaryQuestions(InsuranceQuestions):
     """Questions to ask for medical necessiety."""
-    procedure = forms.CharField(
-        max_length=200,
-        label="What is the procedure/treatment you had denied?")
     medical_reason = forms.CharField(
         max_length=200,
-        label="Why is this medically necessary (if you know)?")
-    diagnosis = forms.CharField(
-        max_length=200,
-        label="What is the diagnosis (if any) associated with the request." +
-        "Does not need to be a diseas it can be any number of personal factors, "+
-        "including things like \"high risk homosexual behaviour\" (yeah that's a real one)")
+        label="Why is this medically necessary (if you know)?",
+        required=False)
 
     def main(self):
         return [self.cleaned_data["medical_reason"]]

@@ -1,5 +1,6 @@
 from typing import *
 
+import asyncio
 import uszipcode
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required
@@ -19,12 +20,8 @@ from fighthealthinsurance.forms import *
 from fighthealthinsurance.models import *
 from fighthealthinsurance.process_denial import *
 from fighthealthinsurance.utils import *
-from transformers import (
-    AutoModelForCausalLM,
-    AutoTokenizer,
-    pipeline)
 
-biogpt_pipeline = pipeline(model="microsoft/BioGPT-Large-PubMedQA", max_new_tokens=250)
+BioGPT.load()
 
 class IndexView(View):
     def get(self, request):
@@ -32,6 +29,13 @@ class IndexView(View):
             request,
             'index.html')
     
+
+class StartView(View):
+    """A special view called to load models and friends, kind of a hack."""
+    
+    def get(self, request):
+        BioGPT.load()
+        return render(request, 'index.html')
 
 class AboutView(View):
     def get(self, request):
@@ -130,10 +134,18 @@ class FindNextSteps(View):
             denial_id = form.cleaned_data["denial_id"]
             email = form.cleaned_data['email']
             hashed_email = hashlib.sha512(email.encode("utf-8")).hexdigest()
+
+            # Update the denial
             print(f"di {denial_id} he {hashed_email}")
             denial = Denial.objects.filter(
                 denial_id = denial_id,
+                # Include the hashed e-mail so folks can't brute force denial_id
                 hashed_email = hashed_email).get()
+
+            denial.procedure = form.cleaned_data["procedure"]
+            denial.diagnosis = form.cleaned_data["diagnosis"]
+            denial.save()
+
 
             outside_help_details = ""
             state = form.cleaned_data["your_state"]
@@ -199,9 +211,9 @@ class FindNextSteps(View):
 class GenerateAppeal(View):
 
     def post(self, request):
-        def make_prompt(cleaned_data):
-            if "procedure" in cleaned_data:
-                if "diagnosis" in form.cleaned_data:
+        def make_prompt(procedure=None, diagnosis=None):
+            if procedure is not None:
+                if diagnosis is not None:
                     return "{procedure} is medically necessary for {diagnosis} because"
                 else:
                     return "{procedure} is medically necessary because"
@@ -211,17 +223,14 @@ class GenerateAppeal(View):
         if form.is_valid():
             denial_id = form.cleaned_data["denial_id"]
             email = form.cleaned_data['email']
-            bio_gpt_prompt = make_prompt(form.cleaned_data)
             hashed_email = hashlib.sha512(email.encode("utf-8")).hexdigest()
 
-            # Update the denial with the procedure and diagnosis
+            # Get the current info
             denial = Denial.objects.filter(
                 denial_id = denial_id,
                 hashed_email = hashed_email).get()
-            denial.procedure = form.cleaned_data["procedure"]
-            denial.diagnosis = form.cleaned_data["diagnosis"]
-            denial.save()
-            
+
+            bio_gpt_prompt = make_prompt(procedure=denial.procedure, diagnosis=denial.diagnosis)
             insurance_company = denial.insurance_company or "insurance company;"
             claim_id = denial.claim_id or "YOURCLAIMIDGOESHERE"
             denial_date_info = ""
@@ -256,8 +265,9 @@ class GenerateAppeal(View):
                         main += [dt.appeal_text]
             # If we have infered a bio gpt prompt call it
             if bio_gpt_prompt is not None:
+                generated = BioGPT.infer(bio_gpt_prompt)
                 main.append(
-                    f"From looking at pubmed data: {bio_gpt_pipeline(bio_gpt_prompt)}"
+                    f"From looking at pubmed data: {generated}"
                 )
 
             appeal_text = "\n".join(prefaces + main + footer)
