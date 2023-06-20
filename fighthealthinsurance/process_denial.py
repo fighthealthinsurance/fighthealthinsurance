@@ -2,7 +2,6 @@ import csv
 import icd10
 import re
 from abc import ABC, abstractmethod
-from transformers import pipeline
 from fighthealthinsurance.models import DenialTypes, PlanType, Regulator, Diagnosis, Procedures
 
 # Process all of our "expert system" rules.
@@ -70,21 +69,8 @@ class ProcessDenialCodes(DenialBase):
         return []
 
 
-class BioGPT():
-    """Use BioGPT for denial magic."""
-
-    biogpt_pipeline = None
-
-    @classmethod
-    def load(cls):
-        if cls.biogpt_pipeline is None:
-            cls.biogpt_pipeline = pipeline(model="microsoft/BioGPT-Large-PubMedQA", max_new_tokens=250)
-        return cls.biogpt_pipeline
-
-    @classmethod
-    def infer(cls, prompt):
-        cls.load()(prompt)
-
+class RemoteBioGPT():
+    """Use BioGPT for denial magic calls a service"""
 
 class ProcessDenialRegex(DenialBase):
     """Process the denial type based on the regexes stored in the database."""

@@ -24,7 +24,6 @@ urlpatterns = [
     path('server_side_ocr', views.OCRView.as_view(), name="server_side_ocr"),
     
     path('', views.IndexView.as_view(), name="root"),
-    path('start', views.StartView.as_view(), name="start"),
     path('about-us', views.AboutView.as_view(), name="about"),
     path('other-resources', views.OtherResourcesView.as_view(), name="other-resources"),
 

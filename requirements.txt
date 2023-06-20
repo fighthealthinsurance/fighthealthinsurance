@@ -6,7 +6,6 @@ django
 django-configurations
 mypy
 gunicorn
-git+https://github.com/jazzband/django-newsletter.git#egg=django-newsletter
 git+https://github.com/jazzband/django-cookie-consent.git#egg=django-cookie-consent
 sorl-thumbnail
 django_compressor
@@ -19,16 +18,12 @@ django-cms
 django-celery-beat
 django-treebeard
 celery
-# Wait for a 3.10 compatible version
-# django-categories
 djangocms-attributes-field
 easy_thumbnails
 Pillow
 django-pipeline
 git+https://github.com/holdenk/static-thumbnails.git
 easy_thumbnails
-django-compressor
-django-compressor-toolkit
 geopy
 django-regex-field
 python-doctr
@@ -37,8 +32,4 @@ uszipcode
 pyarrow
 packaging>=20.0
 PyPDF2
-accelerate>=0.16.0
-transformers[torch]
-datasets>=2.10.0,<3
-protobuf<3.20
-sacremoses
+

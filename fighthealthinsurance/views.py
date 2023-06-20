@@ -21,21 +21,12 @@ from fighthealthinsurance.models import *
 from fighthealthinsurance.process_denial import *
 from fighthealthinsurance.utils import *
 
-BioGPT.load()
-
 class IndexView(View):
     def get(self, request):
         return render(
             request,
             'index.html')
     
-
-class StartView(View):
-    """A special view called to load models and friends, kind of a hack."""
-    
-    def get(self, request):
-        BioGPT.load()
-        return render(request, 'index.html')
 
 class AboutView(View):
     def get(self, request):
