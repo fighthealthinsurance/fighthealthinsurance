@@ -121,6 +121,7 @@ class Denial(models.Model):
     claim_id =  models.CharField(max_length=300, primary_key=False, null=True)
     procedure = models.CharField(max_length=300, primary_key=False, null=True)
     diagnosis = models.CharField(max_length=300, primary_key=False, null=True)
+    appeal_text = models.CharField(max_length=3000000000, primary_key=False, null=True)
     
 
     def __str__(self):

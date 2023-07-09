@@ -2,6 +2,10 @@ from django import forms
 
 from fighthealthinsurance.models import DenialTypes, PlanType
 
+class ShareAppealForm(forms.Form):
+    denial_id = forms.IntegerField(required=True, widget=forms.HiddenInput())
+    email = forms.CharField(required=True, widget=forms.HiddenInput())
+    appeal_text = forms.CharField(required=True)
 
 class DenialForm(forms.Form):
     zip = forms.CharField(required=False)

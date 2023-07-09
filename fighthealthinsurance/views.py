@@ -90,7 +90,38 @@ class ShareDenialView(View):
             }
         )
 
+    def post(self, request):
+        form = ShareDenailForm(request.POST)
 
+
+class ShareAppealView(View):
+    def get(self, request):
+        return render(
+            request,
+            'share_denial.html',
+            context={
+                'title': 'Share Denial'
+            }
+        )
+
+    def post(self, request):
+        form = ShareAppealForm(request.POST)
+        if form.is_valid():
+            denial_id = form.cleaned_data["denial_id"]
+            email = form.cleaned_data['email']
+            hashed_email = hashlib.sha512(email.encode("utf-8")).hexdigest()
+
+            # Update the denial
+            print(f"di {denial_id} he {hashed_email}")
+            denial = Denial.objects.filter(
+                denial_id = denial_id,
+                # Include the hashed e-mail so folks can't brute force denial_id
+                hashed_email = hashed_email).get()
+            denial.appeal = form.cleaned_data["appeal"]
+            denial.save()
+
+
+    
 class RemoveDataView(View):
     def get(self, request):
         return render(
@@ -256,10 +287,11 @@ class GenerateAppeal(View):
                         main += [dt.appeal_text]
             # If we have infered a bio gpt prompt call it
             if bio_gpt_prompt is not None:
-                generated = BioGPT.infer(bio_gpt_prompt)
-                main.append(
-                    f"From looking at pubmed data: {generated}"
-                )
+                generated = RemoteBioGPT.infer(bio_gpt_prompt)
+                if generated is not None:
+                    main.append(
+                        f"From looking at pubmed data: {generated}"
+                    )
 
             appeal_text = "\n".join(prefaces + main + footer)
 
@@ -267,7 +299,9 @@ class GenerateAppeal(View):
                 request,
                 'appeal.html',
                 context={
-                    "appeal": appeal_text
+                    "appeal": appeal_text,
+                    "user_email": email,
+                    "denial_id": denial_id,
                 })
 
 

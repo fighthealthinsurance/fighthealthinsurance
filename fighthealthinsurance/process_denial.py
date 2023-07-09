@@ -1,3 +1,4 @@
+import requests
 import csv
 import icd10
 import re
@@ -71,6 +72,28 @@ class ProcessDenialCodes(DenialBase):
 
 class RemoteBioGPT():
     """Use BioGPT for denial magic calls a service"""
+
+    biogpt_pipeline = None
+
+    @classmethod
+    def infer(cls, prompt):
+        try:
+            requests.post(
+                "http://model-backend-svc/biogpt/infer",
+                json={"prompt": prompt})
+        except:
+            run_local = True
+            if run_local:
+                try:
+                    from transformers import pipeline
+                    if cls.biogpt_pipeline is None:
+                        cls.biogpt_pipeline = pipeline(
+                            model="microsoft/BioGPT-Large-PubMedQA", max_new_tokens=250)
+                        return cls.biogpt_pipeline(prompt)
+                except:
+                    return None
+            else:
+                return "Something Very Smart. Maybe."
 
 class ProcessDenialRegex(DenialBase):
     """Process the denial type based on the regexes stored in the database."""

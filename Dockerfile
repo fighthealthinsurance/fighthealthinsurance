@@ -27,7 +27,6 @@ COPY scripts/start-server.sh /opt/app/
 COPY *.py /opt/app/
 WORKDIR /opt/app/
 RUN chown -R www-data:www-data /opt/app
-
 # start server
 EXPOSE 80
 STOPSIGNAL SIGTERM

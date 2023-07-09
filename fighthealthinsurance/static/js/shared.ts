@@ -199,7 +199,7 @@ function setupScrub()
 
 async function generateAppealPDF() {
 
-    const text = document.getElementById("denial_text").value;
+    const text = document.getElementById("appeal_text").value;
 
     const fileName = "appeal.pdf"; // the desired name of the PDF file
 
@@ -231,8 +231,8 @@ async function generateAppealPDF() {
 }
 
 function setupAppeal() {
-    const scrub = document.getElementById('generate_pdf');
-    scrub.onclick = async () => {
+    const generate_button = document.getElementById('generate_pdf');
+    generate_button.onclick = async () => {
 	await generateAppealPDF();
     }
 }

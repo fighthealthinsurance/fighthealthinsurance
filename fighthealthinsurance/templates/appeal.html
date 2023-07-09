@@ -13,17 +13,26 @@ Fight Your Health Insurnace Denial
 {% block content %}
 Huzzah! We have a <b>draft</b> appeal for you to edit bellow:
 
-<textarea style="width:100%" rows="20" name="appeal_text" id="appeal_text">
-{{appeal}}
-</textarea>
+<form action="{% url 'share_appeal' %}" method="post" class="col-md-12 d-flex flex-column align-items-center">
 
+  <input type="hidden" name="email" value="{% user_email %}">
+  <input type="hidden" name="denial_id" value="{% denial_id %}">
+  
+  <textarea style="width:100%" rows="20" name="appeal_text" id="appeal_text">
+    {{appeal}}
+  </textarea>
+
+  <button type="submit" class="btn btn-green">(Optional) Upload and Share</button>
+</form>
+  
 <p>
   Once your satisified it's time to send in your appeal! Your denial should include the mailing address, fax number, or e-mail to submit your appeal to.
 </p>
 <p>
   Many health insurance companies choose these because they <i>believe</i> you don't have a fax machine or the time to send a letter by post mail. Thankfully there are many low cost ways to send faxes OR even mail letters directly from your phone.
 </p>
-<button id="Generate PDF" onclick="generate();">
-  Generate PDF.
+<!-- Put this back once we write that java script. -->
+<button id="Generate PDF">
+  Generate PDF
 </button>
 {% endblock content %}
