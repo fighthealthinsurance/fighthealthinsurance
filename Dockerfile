@@ -18,11 +18,9 @@ RUN mkdir -p /opt/app/libs/cal-sync-magic
 COPY requirements.txt /opt/app/
 RUN pip install --upgrade pip && pip install -r /opt/app/requirements.txt
 RUN mkdir -p /opt/app/pip_cache
-COPY main /opt/app/main
 COPY static /opt/app/static
-COPY fight-health-insurance /opt/app/fight-health-insurnace
-RUN cd /opt/app/fight-health-insurnace/fighthealthinsurance/static/js; npm i; npm run build
-COPY templates /opt/app/templates
+COPY fighthealthinsurance /opt/app/
+RUN cd /opt/app/static/js; npm i; npm run build
 COPY scripts/start-server.sh /opt/app/
 COPY *.py /opt/app/
 WORKDIR /opt/app/

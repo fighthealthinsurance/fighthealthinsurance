@@ -1,3 +1,5 @@
+icd10-cm
+types-requests
 stripe
 urllib3
 requests
