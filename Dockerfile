@@ -1,11 +1,13 @@
-FROM l4t-pytorch:r35.2.1-pth2.0-py3 as base-arm74
+# FROM l4t-pytorch:r35.2.1-pth2.0-py3 as base-arm64
+
+FROM python:3.9-buster as base-arm64
 
 FROM python:3.9-buster as base-amd64
 
 FROM base-${TARGETARCH}
 
 # install nginx
-RUN apt-get update && apt-get install nginx vim emacs libmariadbclient-dev default-libmysqlclient-dev libssl-dev nodejs -y
+RUN apt-get update && apt-get install nginx vim emacs libmariadbclient-dev default-libmysqlclient-dev libssl-dev nodejs npm -y
 COPY /conf/nginx.default /etc/nginx/sites-available/default
 RUN ln -sf /dev/stdout /var/log/nginx/access.log \
     && ln -sf /dev/stderr /var/log/nginx/error.log

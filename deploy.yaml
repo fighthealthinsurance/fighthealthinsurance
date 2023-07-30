@@ -21,7 +21,7 @@ spec:
             secretName: client-secret
             optional: false
       containers:
-        - image: holdenk/fight-health-insurance:v0.9.8
+        - image: holdenk/fight-health-insurance:v0.0.2
           name: fight-health-insurance
           volumeMounts:
             - name: client-secret
@@ -78,7 +78,7 @@ spec:
             secretName: client-secret
             optional: false
       containers:
-        - image: holdenk/fight-health-insurance:v0.9.8
+        - image: holdenk/fight-health-insurance:v0.0.2
           name: fight-health-insurance
           volumeMounts:
             - name: client-secret
