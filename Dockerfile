@@ -21,7 +21,7 @@ COPY requirements.txt /opt/app/
 RUN pip install --upgrade pip && pip install -r /opt/app/requirements.txt
 RUN mkdir -p /opt/app/pip_cache
 COPY static /opt/app/static
-COPY fighthealthinsurance /opt/app/
+COPY fighthealthinsurance/ /opt/app/
 COPY scripts/start-server.sh /opt/app/
 COPY *.py /opt/app/
 WORKDIR /opt/app/

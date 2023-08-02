@@ -16,7 +16,7 @@ spec:
         app: web-primary
     spec:
       containers:
-        - image: holdenk/fight-health-insurance:v0.0.2
+        - image: holdenk/fight-health-insurance:v0.0.4
           name: totallylegitco
           env:
           - name: PRIMARY
@@ -64,7 +64,7 @@ spec:
         app: fight-health-insurance
     spec:
       containers:
-        - image: holdenk/fight-health-insurance:v0.0.2
+        - image: holdenk/fight-health-insurance:v0.0.4
           name: totallylegitco
           env:
           - name: OAUTHLIB_RELAX_TOKEN_SCOPE
