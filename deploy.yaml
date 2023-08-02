@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: web-primary
-  namespace: fight-health-insurance
+  namespace: totallylegitco
   labels:
     app: web-primary
 spec:
@@ -15,18 +15,9 @@ spec:
       labels:
         app: web-primary
     spec:
-      volumes:
-        - name: client-secret
-          secret:
-            secretName: client-secret
-            optional: false
       containers:
         - image: holdenk/fight-health-insurance:v0.0.2
-          name: fight-health-insurance
-          volumeMounts:
-            - name: client-secret
-              mountPath: "/opt/app/client_secret/"
-              readOnly: true
+          name: totallylegitco
           env:
           - name: PRIMARY
             value: "1"
@@ -59,7 +50,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: web
-  namespace: fight-health-insurance
+  namespace: totallylegitco
   labels:
     app: fight-health-insurance
 spec:
@@ -72,18 +63,9 @@ spec:
       labels:
         app: fight-health-insurance
     spec:
-      volumes:
-        - name: client-secret
-          secret:
-            secretName: client-secret
-            optional: false
       containers:
         - image: holdenk/fight-health-insurance:v0.0.2
-          name: fight-health-insurance
-          volumeMounts:
-            - name: client-secret
-              mountPath: "/opt/app/client_secret/"
-              readOnly: true
+          name: totallylegitco
           env:
           - name: OAUTHLIB_RELAX_TOKEN_SCOPE
             value: "1"
@@ -118,7 +100,7 @@ metadata:
   labels:
     app: fight-health-insurance
   name: web-svc
-  namespace: fight-health-insurance
+  namespace: totallylegitco
 spec:
   ports:
   - name: http
@@ -134,7 +116,7 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: fight-health-insurance-ingress
-  namespace: fight-health-insurance
+  namespace: totallylegitco
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt
     cert-manager.io/issue-temporary-certificate: "true"
