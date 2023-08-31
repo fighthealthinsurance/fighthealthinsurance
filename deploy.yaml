@@ -9,14 +9,17 @@ spec:
   replicas: 1
   selector:
     matchLabels:
-      app: web-primary
+      special: web-primary-pod
+  strategy:
+    type: Recreate
   template:
     metadata:
       labels:
-        app: web-primary
+        group: fight-health-insurance-webbackend
+        special: web-primary-pod
     spec:
       containers:
-        - image: holdenk/fight-health-insurance:v0.0.5
+        - image: holdenk/fight-health-insurance:v0.0.8b
           name: totallylegitco
           env:
           - name: PRIMARY
@@ -54,7 +57,7 @@ metadata:
   labels:
     app: fight-health-insurance
 spec:
-  replicas: 3
+  replicas: 2
   selector:
     matchLabels:
       app: fight-health-insurance
@@ -62,13 +65,11 @@ spec:
     metadata:
       labels:
         app: fight-health-insurance
+        group: fight-health-insurance-webbackend
     spec:
       containers:
-        - image: holdenk/fight-health-insurance:v0.0.5
+        - image: holdenk/fight-health-insurance:v0.0.8b
           name: totallylegitco
-          env:
-          - name: OAUTHLIB_RELAX_TOKEN_SCOPE
-            value: "1"
           envFrom:
           - secretRef:
               name: fight-health-insurance-secret
@@ -98,7 +99,7 @@ apiVersion: v1
 kind: Service
 metadata:
   labels:
-    app: fight-health-insurance
+    group: fight-health-insurance
   name: web-svc
   namespace: totallylegitco
 spec:
@@ -108,7 +109,7 @@ spec:
     protocol: TCP
     targetPort: web
   selector:
-    app: fight-health-insurance
+    group: fight-health-insurance-webbackend
   sessionAffinity: None
   type: ClusterIP
 ---
@@ -128,7 +129,7 @@ spec:
       - www.fighthealthinsurance.com
       - www.fuckhealthinsurance.com
       - www.appealhealthinsurance.com
-    secretName: pcf-tls-secret
+    secretName: combined-tls-secret
   rules:
     - host: www.fuckhealthinsurance.com
       http:

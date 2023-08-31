@@ -11,7 +11,7 @@ class FollowUpType(models.Model):
     id = models.AutoField(primary_key=True)
     name = models.CharField(max_length=300, primary_key=False, default="")
     subject = models.CharField(max_length=300, primary_key=False)
-    text = models.CharField(max_length=30000, primary_key=False)
+    text = models.TextField(max_length=30000, primary_key=False)
     duration = models.DurationField()
 
     def __str__(self):
@@ -72,7 +72,7 @@ class DenialTypes(models.Model):
     name = models.CharField(max_length=300, primary_key=False)
     regex = RegexField(max_length=400, re_flags=re.IGNORECASE | re.UNICODE | re.M)
     negative_regex = RegexField(max_length=400, re_flags=re.IGNORECASE | re.UNICODE | re.M)
-    appeal_text = models.CharField(max_length=300, primary_key=False, blank=True)
+    appeal_text = models.TextField(max_length=3000, primary_key=False, blank=True)
     form = models.CharField(max_length=300, null=True)
 
     def get_form(self):
@@ -109,7 +109,7 @@ class PlanTypesRelation(models.Model):
 class Denial(models.Model):
     denial_id = models.AutoField(primary_key=True)
     hashed_email = models.CharField(max_length=300, primary_key=False)
-    denial_text = models.CharField(max_length=30000000, primary_key=False)
+    denial_text = models.TextField(max_length=30000000, primary_key=False)
     date = models.DateField(auto_now=False, auto_now_add=True)
     denial_type = models.ManyToManyField(DenialTypes, through=DenialTypesRelation)
     plan_type = models.ManyToManyField(PlanType, through=PlanTypesRelation)
@@ -121,7 +121,7 @@ class Denial(models.Model):
     claim_id =  models.CharField(max_length=300, primary_key=False, null=True)
     procedure = models.CharField(max_length=300, primary_key=False, null=True)
     diagnosis = models.CharField(max_length=300, primary_key=False, null=True)
-    appeal_text = models.CharField(max_length=3000000000, primary_key=False, null=True)
+    appeal_text = models.TextField(max_length=3000000000, primary_key=False, null=True)
     
 
     def __str__(self):

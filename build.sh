@@ -10,5 +10,6 @@ mypy -p fighthealthinsurance
 pushd ./static/js; npm i; npm run build; popd
 # Hack, for now.
 #docker buildx build --platform=linux/amd64,linux/arm64 -t holdenk/fight-health-insurance:0.0.1 . --push
-docker buildx build --platform=linux/amd64,linux/arm64 -t holdenk/fight-health-insurance:v0.0.5 . --push
+IMAGE=holdenk/fight-health-insurance:v0.0.8b
+docker pull "${IMAGE}" || docker buildx build --platform=linux/amd64,linux/arm64 -t "${IMAGE}" . --push
 kubectl apply -f deploy.yaml

@@ -233,12 +233,28 @@ class FindNextSteps(View):
 class GenerateAppeal(View):
 
     def post(self, request):
-        def make_prompt(procedure=None, diagnosis=None):
+        def make_open_prompt(denial_text=None, procedure=None, diagnosis=None):
+            start = "Write a health insurance appeal for the following denial:"
+            if procedure is not None and diagnosis is not None:
+                start = f"Write a health insurance appeal for procedure {procedure} with diagnosis {diagnosis} given the following denial:"
+            elif procedure is not None:
+                start = f"Write a health insurance appeal for procedure {procedure} given the following denial:"
+
+        def make_open_llama_med_prompt(procedure=None, diagnosis=None):
             if procedure is not None:
                 if diagnosis is not None:
-                    return "{procedure} is medically necessary for {diagnosis} because"
+                    return f"Why is {procedure} medically necessary for {diagnosis}?"
                 else:
-                    return "{procedure} is medically necessary because"
+                    return f"Why is {procedure} is medically necessary?"
+            else:
+                return None
+            
+        def make_biogpt_prompt(procedure=None, diagnosis=None):
+            if procedure is not None:
+                if diagnosis is not None:
+                    return f"{procedure} is medically necessary for {diagnosis} because"
+                else:
+                    return f"{procedure} is medically necessary because"
             else:
                 return None
         form = DenialRefForm(request.POST)
@@ -252,7 +268,7 @@ class GenerateAppeal(View):
                 denial_id = denial_id,
                 hashed_email = hashed_email).get()
 
-            bio_gpt_prompt = make_prompt(procedure=denial.procedure, diagnosis=denial.diagnosis)
+            bio_gpt_prompt = make_bio_prompt(procedure=denial.procedure, diagnosis=denial.diagnosis)
             insurance_company = denial.insurance_company or "insurance company;"
             claim_id = denial.claim_id or "YOURCLAIMIDGOESHERE"
             denial_date_info = ""

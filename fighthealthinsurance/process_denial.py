@@ -33,14 +33,18 @@ class ProcessDenialCodes(DenialBase):
                                       re.M | re.UNICODE)
         self.preventive_regex = re.compile(
             "(exposure to human immunodeficiency virus|preventive|high risk homosexual)", re.M | re.UNICODE | re.IGNORECASE)
-        with open('./data/preventitivecodes.csv') as f:
-            rows = csv.reader(f)
-            self.preventive_codes = {k:v for k, v in rows}
-        with open('./data/preventive_diagnosis.csv') as f:
-            rows = csv.reader(f)
-            self.preventive_diagnosis = {k:v for k, v in rows}
-        print(self.preventive_codes)
-        print(self.preventive_diagnosis)
+        try:
+            with open('./data/preventitivecodes.csv') as f:
+                rows = csv.reader(f)
+                self.preventive_codes = {k:v for k, v in rows}
+        except Exception:
+            self.preventive_codes = {}
+        try:
+            with open('./data/preventive_diagnosis.csv') as f:
+                rows = csv.reader(f)
+                self.preventive_diagnosis = {k:v for k, v in rows}
+        except:
+            self.preventive_diagnosis = {}
         
     def get_denialtype(self, text):
         """Get the denial type. For now short circuit logic."""
