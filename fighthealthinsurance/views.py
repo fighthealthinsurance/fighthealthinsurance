@@ -98,9 +98,9 @@ class ShareAppealView(View):
     def get(self, request):
         return render(
             request,
-            'share_denial.html',
+            'share_appeal.html',
             context={
-                'title': 'Share Denial'
+                'title': 'Share Appeal'
             }
         )
 
@@ -229,6 +229,31 @@ class FindNextSteps(View):
                     'upload_more': True,
                 })
 
+class ChooseAppeal(View):
+
+    def post(self, request):
+        form = ChooseAppealForm(request.POST):
+        if form.is_valid():
+            denial_id = form.cleaned_data["denial_id"]
+            email = form.cleaned_data['email']
+            hashed_email = hashlib.sha512(email.encode("utf-8")).hexdigest()
+            appeal_text = form.cleaned_data["appeal_text"]
+
+            # Get the current info
+            denial = Denial.objects.filter(
+                denial_id = denial_id,
+                hashed_email = hashed_email).get()
+            denial.appeal_text = appeal_text
+            denial.save()
+            return render(
+                request,
+                'appeal.html',
+                context={
+                    "appeal": appeal,
+                    "user_email": email,
+                    "denial_id": denial_id,
+                })
+
 
 class GenerateAppeal(View):
 
@@ -257,6 +282,7 @@ class GenerateAppeal(View):
                     return f"{procedure} is medically necessary because"
             else:
                 return None
+
         form = DenialRefForm(request.POST)
         if form.is_valid():
             denial_id = form.cleaned_data["denial_id"]
@@ -268,7 +294,6 @@ class GenerateAppeal(View):
                 denial_id = denial_id,
                 hashed_email = hashed_email).get()
 
-            bio_gpt_prompt = make_bio_prompt(procedure=denial.procedure, diagnosis=denial.diagnosis)
             insurance_company = denial.insurance_company or "insurance company;"
             claim_id = denial.claim_id or "YOURCLAIMIDGOESHERE"
             denial_date_info = ""
@@ -301,21 +326,52 @@ class GenerateAppeal(View):
                 else:
                     if dt.appeal_text is not None:
                         main += [dt.appeal_text]
-            # If we have infered a bio gpt prompt call it
-            if bio_gpt_prompt is not None:
-                generated = RemoteBioGPT.infer(bio_gpt_prompt)
-                if generated is not None:
-                    main.append(
-                        f"From looking at pubmed data: {generated}"
-                    )
+            # Use LLMS
+            bio_gpt_prompt = make_bio_prompt(
+                procedure=denial.procedure,
+                diagnosis=denial.diagnosis)
+            llama_med_prompt = make_open_llama_med_prompt(
+                procedure=denial.procedure,
+                diagnosis=denial.diagnosis)
+            open_prompt = make_open_prompt(
+                denial_text=denial.denial_text,
+                procedure=denial.procedure,
+                diagnosis=denial.diagnosis)
 
-            appeal_text = "\n".join(prefaces + main + footer)
+            medical_reasons = []
+            appeals = []
+            with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+                # If we have infered a bio gpt prompt call it
+                if bio_gpt_prompt is not None:
+                    generated_futures = (
+                        "med_reason",
+                        executor.submit(RemoteBioGPT.infer, bio_gpt_prompt))
+                if llama_med_prompt is not None:
+                    generated_futures = (
+                        "med_reason",
+                        executor.submit(RemoteMed.infer, bio_gpt_prompt))
+                if open_prompt is not None:
+                    generated_futures = (
+                        "full",
+                        executor.submit(RemoteOpen, open_prompt))
+                for (k, f) in generated_futures:
+                    text = concurrent.futures.as_completed(f)
+                    appeal_text = ""
+                    if k == "full":
+                        appeal_text = text
+                    else:
+                        appeal_text = "\n".join(prefaces + main + [text] + footer)
+                    appeals += appeal_text
+                    pa = ProposedAppeal(
+                        appeal_text=appeal_text,
+                        for_denial=denial)
+                        
 
             return render(
                 request,
-                'appeal.html',
+                'appeals.html',
                 context={
-                    "appeal": appeal_text,
+                    "appeals": appeals,
                     "user_email": email,
                     "denial_id": denial_id,
                 })

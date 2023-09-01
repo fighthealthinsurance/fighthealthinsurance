@@ -1,0 +1,24 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}
+Fight Your Health Insurnace Denial
+{% endblock title %}
+
+{% block content %}
+Huzzah! We have a few different <b>draft</b> appeal for you to choose from:
+
+<p>
+  When you choose a specific appeal we <b>save that appeal to our database for model training and review</b>.
+</p>
+<form action="{% url 'choose_appeal' %}" method="post" class="col-md-12 d-flex flex-column align-items-center">
+
+  <input type="hidden" name="email" value="{{ user_email }}">
+  <input type="hidden" name="denial_id" value="{{ denial_id }}">
+  
+  <textarea style="width:100%" rows="20" name="appeal_text" id="appeal_text">
+    {{appeal}}
+  </textarea>
+
+  <button type="submit" class="btn btn-green">Choose This One</button>
+</form>
+{% endblock content %}

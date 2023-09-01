@@ -235,6 +235,12 @@ function setupAppeal() {
     generate_button.onclick = async () => {
 	await generateAppealPDF();
     }
+
+    const target = document.getElementById("subbed_appeal_text");
+    const appeal_text = document.getElementById("appeal_text");
+    appeal_text.oninput = async () => {
+	target.value = appeal_text.value;
+    }
 }
 
 export { setupScrub, setupAppeal, clean };
