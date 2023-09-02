@@ -106,10 +106,6 @@ class PlanTypesRelation(models.Model):
     src = models.ForeignKey(DataSource, on_delete=models.SET_NULL, null=True)
 
 
-class ProposedAppeal(models.Model):
-    appeal_text = models.TextField(max_length=3000000000, primary_key=False, null=True)
-    for_denial = models.ForeignKey(Denial)
-
 class Denial(models.Model):
     denial_id = models.AutoField(primary_key=True)
     hashed_email = models.CharField(max_length=300, primary_key=False)
@@ -126,7 +122,12 @@ class Denial(models.Model):
     procedure = models.CharField(max_length=300, primary_key=False, null=True)
     diagnosis = models.CharField(max_length=300, primary_key=False, null=True)
     appeal_text = models.TextField(max_length=3000000000, primary_key=False, null=True)
-    
+
+
+class ProposedAppeal(models.Model):
+    appeal_text = models.TextField(max_length=3000000000, primary_key=False, null=True)
+    for_denial = models.ForeignKey(Denial, on_delete=models.CASCADE)
+
 
     def __str__(self):
         return f"{self.denial_id}: {self.denial_text[0:100]}"

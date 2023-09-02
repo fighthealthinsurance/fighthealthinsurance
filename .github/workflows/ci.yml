@@ -12,10 +12,10 @@ jobs:
     strategy:
       matrix:
         python: ['3.9', '3.10']
-        django: ['4.0', '4.1']
+        django: ['4.1', '4.2']
         include:
           - python: '3.9'
-            django: '4.0'
+            django: '4.1'
      
     name: Run the test suite (Python ${{ matrix.python }}, Django ${{ matrix.django }})
     steps:

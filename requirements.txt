@@ -4,8 +4,8 @@ stripe
 urllib3
 requests
 pytz
-django
-django-configurations
+django>=4.1.7
+django-configurations>=2.4
 mypy
 gunicorn
 git+https://github.com/jazzband/django-cookie-consent.git#egg=django-cookie-consent

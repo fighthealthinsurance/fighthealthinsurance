@@ -232,7 +232,7 @@ class FindNextSteps(View):
 class ChooseAppeal(View):
 
     def post(self, request):
-        form = ChooseAppealForm(request.POST):
+        form = ChooseAppealForm(request.POST)
         if form.is_valid():
             denial_id = form.cleaned_data["denial_id"]
             email = form.cleaned_data['email']
