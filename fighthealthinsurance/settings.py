@@ -15,10 +15,8 @@ from typing import *
 
 from configurations import Configuration
 
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'fighthealthinsurance.settings')
-os.environ.setdefault(
-    'DJANGO_CONFIGURATION',
-    os.getenv("ENVIRONMENT", 'Dev'))
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "fighthealthinsurance.settings")
+os.environ.setdefault("DJANGO_CONFIGURATION", os.getenv("ENVIRONMENT", "Dev"))
 
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -28,54 +26,53 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 class Base(Configuration):
     COOKIE_CONSENT_ENABLED = True
     COOKIE_CONSENT_LOG_ENABLED = True
-    LOGIN_URL = 'login'
-    LOGIN_REDIRECT_URL = '/'
+    LOGIN_URL = "login"
+    LOGIN_REDIRECT_URL = "/"
     THUMBNAIL_DEBUG = True
 
     # Quick-start development settings - unsuitable for production
     # See https://docs.djangoproject.com/en/4.0/howto/deployment/checklist/
 
     # SECURITY WARNING: keep the secret key used in production secret!
-    SECRET_KEY = 'django-insecure-4b6t3cnic_(g*0cexqe8w)=1&vyb#(erhad#7@y4sv)jzb2kaf'
+    SECRET_KEY = "django-insecure-4b6t3cnic_(g*0cexqe8w)=1&vyb#(erhad#7@y4sv)jzb2kaf"
 
     # SECURITY WARNING: don't run with debug turned on in production!
     DEBUG = True
 
     MEDIA_ROOT = "media"
-    MEDIA_URL = '/media/'
+    MEDIA_URL = "/media/"
 
-    NEWSLETTER_THUMBNAIL = 'sorl-thumbnail'
+    NEWSLETTER_THUMBNAIL = "sorl-thumbnail"
 
-    ALLOWED_HOSTS: List[str] = ['*']
+    ALLOWED_HOSTS: List[str] = ["*"]
 
     # Application definition
 
-    SITE_ID=1
+    SITE_ID = 1
 
-    TEMPLATE_CONTEXT_PROCESSORS = [
-        'django.template.context_processors.request']
+    TEMPLATE_CONTEXT_PROCESSORS = ["django.template.context_processors.request"]
 
     INSTALLED_APPS = [
-        'django.contrib.admin',
-        'django.contrib.auth',
-        'django.contrib.contenttypes',
-        'django.contrib.sessions',
-        'django.contrib.messages',
-        'django.contrib.staticfiles',
-        'django.contrib.sites',
+        "django.contrib.admin",
+        "django.contrib.auth",
+        "django.contrib.contenttypes",
+        "django.contrib.sessions",
+        "django.contrib.messages",
+        "django.contrib.staticfiles",
+        "django.contrib.sites",
         "fighthealthinsurance",
-        'sorl.thumbnail',
-        'easy_thumbnails',
-        'cookie_consent',
+        "sorl.thumbnail",
+        "easy_thumbnails",
+        "cookie_consent",
         "compressor",
         "compressor_toolkit",
-        'django_extensions',
+        "django_extensions",
         "static_thumbnails",
     ]
 
     COMPRESS_JS_FILTERS = [
-        'compressor.filters.jsmin.JSMinFilter',
-        'compressor.filters.yuglify.YUglifyJSFilter',
+        "compressor.filters.jsmin.JSMinFilter",
+        "compressor.filters.yuglify.YUglifyJSFilter",
     ]
 
     STATICFILES_FINDERS = (
@@ -88,53 +85,53 @@ class Base(Configuration):
     COMPRESS_YUGLIFY_BINARY = "yuglify"
     COMPRESS_YUGLIFY_JS_ARGUMENTS = "--mangle"
     COMPRESS_PRECOMPILERS = (
-        ('module', 'compressor_toolkit.precompilers.ES6Compiler'),
-        ('css', 'compressor_toolkit.precompilers.SCSSCompiler'),
+        ("module", "compressor_toolkit.precompilers.ES6Compiler"),
+        ("css", "compressor_toolkit.precompilers.SCSSCompiler"),
     )
 
     MIDDLEWARE = [
-        'django.middleware.security.SecurityMiddleware',
-        'django.contrib.sessions.middleware.SessionMiddleware',
-        'django.middleware.common.CommonMiddleware',
-        'django.middleware.csrf.CsrfViewMiddleware',
-        'django.contrib.auth.middleware.AuthenticationMiddleware',
-        'django.contrib.messages.middleware.MessageMiddleware',
-        'django.middleware.clickjacking.XFrameOptionsMiddleware',
+        "django.middleware.security.SecurityMiddleware",
+        "django.contrib.sessions.middleware.SessionMiddleware",
+        "django.middleware.common.CommonMiddleware",
+        "django.middleware.csrf.CsrfViewMiddleware",
+        "django.contrib.auth.middleware.AuthenticationMiddleware",
+        "django.contrib.messages.middleware.MessageMiddleware",
+        "django.middleware.clickjacking.XFrameOptionsMiddleware",
         "cookie_consent.middleware.CleanCookiesMiddleware",
-        'django_user_agents.middleware.UserAgentMiddleware',
+        "django_user_agents.middleware.UserAgentMiddleware",
     ]
 
     GOOGLE_ANALYTICS = {
-        'google_analytics_id': 'G-2EDT623L0V',
+        "google_analytics_id": "G-2EDT623L0V",
     }
 
-    ROOT_URLCONF = 'fighthealthinsurance.urls'
+    ROOT_URLCONF = "fighthealthinsurance.urls"
 
     TEMPLATES = [
         {
-            'BACKEND': 'django.template.backends.django.DjangoTemplates',
-            'DIRS': [BASE_DIR / "templates"],
-            'APP_DIRS': True,
-            'OPTIONS': {
-                'context_processors': [
-                    'django.template.context_processors.debug',
-                    'django.template.context_processors.request',
-                    'django.contrib.auth.context_processors.auth',
-                    'django.contrib.messages.context_processors.messages',
+            "BACKEND": "django.template.backends.django.DjangoTemplates",
+            "DIRS": [BASE_DIR / "templates"],
+            "APP_DIRS": True,
+            "OPTIONS": {
+                "context_processors": [
+                    "django.template.context_processors.debug",
+                    "django.template.context_processors.request",
+                    "django.contrib.auth.context_processors.auth",
+                    "django.contrib.messages.context_processors.messages",
                 ],
             },
         },
     ]
 
-    WSGI_APPLICATION = 'fighthealthinsurance.wsgi.application'
+    WSGI_APPLICATION = "fighthealthinsurance.wsgi.application"
 
     # Database
     # https://docs.djangoproject.com/en/4.0/ref/settings/#databases
 
     DATABASES = {
-        'default': {
-            'ENGINE': 'django.db.backends.sqlite3',
-            'NAME': BASE_DIR / 'db.sqlite3',
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": BASE_DIR / "db.sqlite3",
         }
     }
 
@@ -143,25 +140,25 @@ class Base(Configuration):
 
     AUTH_PASSWORD_VALIDATORS = [
         {
-            'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
+            "NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator",
         },
         {
-            'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
+            "NAME": "django.contrib.auth.password_validation.MinimumLengthValidator",
         },
         {
-            'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
+            "NAME": "django.contrib.auth.password_validation.CommonPasswordValidator",
         },
         {
-            'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
+            "NAME": "django.contrib.auth.password_validation.NumericPasswordValidator",
         },
     ]
 
     # Internationalization
     # https://docs.djangoproject.com/en/4.0/topics/i18n/
 
-    LANGUAGE_CODE = 'en-us'
+    LANGUAGE_CODE = "en-us"
 
-    TIME_ZONE = 'UTC'
+    TIME_ZONE = "UTC"
 
     USE_I18N = True
 
@@ -170,23 +167,23 @@ class Base(Configuration):
     # Static files (CSS, JavaScript, Images)
     # https://docs.djangoproject.com/en/4.0/howto/static-files/
 
-    STATIC_URL = 'static/'
-    STATIC_ROOT = os.path.join(BASE_DIR, 'static')
+    STATIC_URL = "static/"
+    STATIC_ROOT = os.path.join(BASE_DIR, "static")
 
     # MEDIA FILE SETTINGS
 
-    MEDIA_URL = 'media/'
-    MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+    MEDIA_URL = "media/"
+    MEDIA_ROOT = os.path.join(BASE_DIR, "media")
 
     # Default primary key field type
     # https://docs.djangoproject.com/en/4.0/ref/settings/#default-auto-field
 
-    DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+    DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
     # Default primary key field type
     # https://docs.djangoproject.com/en/4.0/ref/settings/#default-auto-field
 
-    DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+    DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
     # STRIPE SETTINGS
     STRIPE_API_KEY = "sk_test_51MGgqqH3tqhFx4rg3scW0nEbQgv4aXCCvjdWkSYcCA5F15akyusRbkU6lzlIqW6XQmCSDvW9CKgKWmWFqyav5zs100rcmjUUDL"
@@ -199,15 +196,14 @@ class Dev(Base):
     EMAIL_FILE_PATH = os.path.join(BASE_DIR, "sent_emails")
 
     DATABASES = {
-        'default': {
-            'ENGINE': 'django.db.backends.sqlite3',
-            'NAME': BASE_DIR / 'db.sqlite3',
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": BASE_DIR / "db.sqlite3",
         }
     }
 
 
 class Prod(Base):
-
     @property
     def SECRET_KEY(self):
         return os.getenv("SECRET_KEY")
@@ -230,7 +226,7 @@ class Prod(Base):
             }
         }
 
-    EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+    EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
     EMAIL_HOST = os.getenv("EMAIL_HOST", "pigscanfly.ca")
     EMAIL_USE_TLS = True
     EMAIL_PORT = 25

@@ -34,7 +34,9 @@ class PlanType(models.Model):
     name = models.CharField(max_length=300, primary_key=False)
     alt_name = models.CharField(max_length=300, primary_key=False)
     regex = RegexField(max_length=400, re_flags=re.IGNORECASE | re.UNICODE | re.M)
-    negative_regex = RegexField(max_length=400, re_flags=re.IGNORECASE | re.UNICODE | re.M)
+    negative_regex = RegexField(
+        max_length=400, re_flags=re.IGNORECASE | re.UNICODE | re.M
+    )
 
     def __str__(self):
         return self.name
@@ -46,7 +48,9 @@ class Regulator(models.Model):
     website = models.CharField(max_length=300, primary_key=False)
     alt_name = models.CharField(max_length=300, primary_key=False)
     regex = RegexField(max_length=400, re_flags=re.IGNORECASE | re.UNICODE | re.M)
-    negative_regex = RegexField(max_length=400, re_flags=re.IGNORECASE | re.UNICODE | re.M)
+    negative_regex = RegexField(
+        max_length=400, re_flags=re.IGNORECASE | re.UNICODE | re.M
+    )
 
     def __str__(self):
         return self.name
@@ -67,11 +71,18 @@ class Procedures(models.Model):
 class DenialTypes(models.Model):
     id = models.AutoField(primary_key=True)
     # for the many different sub-variants.
-    parent = models.ForeignKey('self', blank=True, null=True, related_name='children',
-                               on_delete=models.SET_NULL)
+    parent = models.ForeignKey(
+        "self",
+        blank=True,
+        null=True,
+        related_name="children",
+        on_delete=models.SET_NULL,
+    )
     name = models.CharField(max_length=300, primary_key=False)
     regex = RegexField(max_length=400, re_flags=re.IGNORECASE | re.UNICODE | re.M)
-    negative_regex = RegexField(max_length=400, re_flags=re.IGNORECASE | re.UNICODE | re.M)
+    negative_regex = RegexField(
+        max_length=400, re_flags=re.IGNORECASE | re.UNICODE | re.M
+    )
     appeal_text = models.TextField(max_length=3000, primary_key=False, blank=True)
     form = models.CharField(max_length=300, null=True)
 
@@ -118,7 +129,7 @@ class Denial(models.Model):
     pre_service = models.BooleanField(default=False)
     denial_date = models.DateField(auto_now=False, null=True)
     insurance_company = models.CharField(max_length=300, primary_key=False, null=True)
-    claim_id =  models.CharField(max_length=300, primary_key=False, null=True)
+    claim_id = models.CharField(max_length=300, primary_key=False, null=True)
     procedure = models.CharField(max_length=300, primary_key=False, null=True)
     diagnosis = models.CharField(max_length=300, primary_key=False, null=True)
     appeal_text = models.TextField(max_length=3000000000, primary_key=False, null=True)
@@ -127,7 +138,6 @@ class Denial(models.Model):
 class ProposedAppeal(models.Model):
     appeal_text = models.TextField(max_length=3000000000, primary_key=False, null=True)
     for_denial = models.ForeignKey(Denial, on_delete=models.CASCADE)
-
 
     def __str__(self):
         return f"{self.denial_id}: {self.denial_text[0:100]}"
