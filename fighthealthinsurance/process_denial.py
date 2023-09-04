@@ -103,7 +103,6 @@ class RemoteModel:
     def infer(cls, prompt) -> Optional[str]:
         pass
 
-
     @classmethod
     def model_type(cls) -> str:
         pass
@@ -121,10 +120,10 @@ class RemoteBioGPT:
         except:
             return None
 
-
     @classmethod
     def model_type(cls) -> str:
         return "med_reason"
+
 
 class RemoteMed:
     """Use RemoteMed for denial magic calls a service"""
@@ -141,6 +140,7 @@ class RemoteMed:
     @classmethod
     def model_type(cls) -> str:
         return "med_reason"
+
 
 class RemoteOpen:
     """Use RemoteOpen for denial magic calls a service"""
@@ -181,10 +181,10 @@ class RemoteOpen:
         except Exception as e:
             print(f"Error {e} processing {json_result} from anyscale.")
 
-
     @classmethod
     def model_type(cls) -> str:
         return "full"
+
 
 class ProcessDenialRegex(DenialBase):
     """Process the denial type based on the regexes stored in the database."""

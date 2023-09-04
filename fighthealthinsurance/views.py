@@ -64,17 +64,6 @@ class TermsOfServiceView(View):
         )
 
 
-class OptOutView(View):
-    def get(self, request):
-        return render(
-            request,
-            "opt_out.html",
-            context={
-                "title": "Opt Out",
-            },
-        )
-
-
 class ShareDenialView(View):
     def get(self, request):
         return render(request, "share_denial.html", context={"title": "Share Denial"})
@@ -95,7 +84,6 @@ class ShareAppealView(View):
             hashed_email = hashlib.sha512(email.encode("utf-8")).hexdigest()
 
             # Update the denial
-            print(f"di {denial_id} he {hashed_email}")
             denial = Denial.objects.filter(
                 denial_id=denial_id,
                 # Include the hashed e-mail so folks can't brute force denial_id
@@ -171,7 +159,6 @@ class FindNextSteps(View):
             hashed_email = hashlib.sha512(email.encode("utf-8")).hexdigest()
 
             # Update the denial
-            print(f"di {denial_id} he {hashed_email}")
             denial = Denial.objects.filter(
                 denial_id=denial_id,
                 # Include the hashed e-mail so folks can't brute force denial_id
@@ -213,9 +200,7 @@ class FindNextSteps(View):
                 new_form = dt.get_form()
                 if new_form is not None:
                     new_form = new_form(initial={"medical_reason": dt.appeal_text})
-                    print(new_form)
                     question_forms.append(new_form)
-            print(f"Questions {question_forms}")
             denial_ref_form = DenialRefForm(
                 initial={
                     "denial_id": denial.denial_id,
@@ -233,7 +218,6 @@ class FindNextSteps(View):
                 },
             )
         else:
-            print(f"Invalid form. {form}")
             # If not valid take the user back.
             return render(
                 request,
@@ -281,7 +265,6 @@ class GenerateAppeal(View):
                 start = f"Write a health insurance appeal for procedure {procedure} given the following denial:"
             return f"{start}\n{denial_text}"
 
-
         def make_open_llama_med_prompt(procedure=None, diagnosis=None) -> Optional[str]:
             if procedure is not None:
                 if diagnosis is not None:
@@ -327,7 +310,6 @@ class GenerateAppeal(View):
                 if form is not None:
                     parsed = form(request.POST)
                     if parsed.is_valid():
-                        print(parsed)
                         new_prefaces = parsed.preface()
                         for p in new_prefaces:
                             if p not in prefaces:
@@ -361,13 +343,14 @@ class GenerateAppeal(View):
             # The "vanilla" expert system only appeal:
             raw_appeal = "\n".join(prefaces + main + footer)
             if raw_appeal is not None:
-                appeals.append(
-                    raw_appeal
-                )
+                appeals.append(raw_appeal)
             with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
                 generated_futures = []
+
                 # For any model that we have a prompt for try to call it
-                def get_model_result(model: RemoteModel, prompt: str) -> (str, Optional[str]):
+                def get_model_result(
+                    model: RemoteModel, prompt: str
+                ) -> (str, Optional[str]):
                     if prompt is None:
                         return (model.model_type(), None)
                     return (model.model_type(), model.infer(prompt))
@@ -375,12 +358,14 @@ class GenerateAppeal(View):
                 calls = [
                     [RemoteBioGPT, bio_gpt_prompt],
                     [RemoteMed, llama_med_prompt],
-                    [RemoteOpen, open_prompt]
+                    [RemoteOpen, open_prompt],
                 ]
                 # Executor map wants a list for each parameter.
                 model_calls = list(zip(*calls))
                 # We don't get back futures using executor.map but they are still called in parallel.
-                generated: List[(str, Optional[str])] = executor.map(get_model_result, *model_calls)
+                generated: List[(str, Optional[str])] = executor.map(
+                    get_model_result, *model_calls
+                )
 
                 # Get the futures as the become available.
                 for k_text in generated:
@@ -391,13 +376,11 @@ class GenerateAppeal(View):
                     if k == "full":
                         appeal_text = text
                     else:
-                        print(f"Making appeal out of {prefaces}, {main}, {text}, and {footer}.")
                         appeal_text = "\n".join(prefaces + main + [text] + footer)
                     appeals.append(appeal_text)
                     # Save all of the proposed appeals, so we can use RL later.
                     pa = ProposedAppeal(appeal_text=appeal_text, for_denial=denial)
 
-            print(f"Using appeals {appeals}!")
             return render(
                 request,
                 "appeals.html",
@@ -477,11 +460,9 @@ class ProcessView(View):
             email = form.cleaned_data["email"]
             hashed_email = hashlib.sha512(email.encode("utf-8")).hexdigest()
             denial_text = form.cleaned_data["denial_text"]
-            print(denial_text)
             denial = Denial(denial_text=denial_text, hashed_email=hashed_email)
             denial.save()
             denial_types = self.regex_denial_processor.get_denialtype(denial_text)
-            print(f"mmmk {denial_types}")
             denial_type = []
             for dt in denial_types:
                 DenialTypesRelation(
@@ -489,19 +470,15 @@ class ProcessView(View):
                 ).save()
                 denial_type.append(dt)
             denial_types = self.codes_denial_processor.get_denialtype(denial_text)
-            print(f"mmmk {denial_types}")
             for dt in denial_types:
                 DenialTypesRelation(
                     denial=denial, denial_type=dt, src=self.codes_src
                 ).save()
                 denial_type.append(dt)
-            print(f"denial_type {denial_type}")
             plan_type = self.codes_denial_processor.get_plan_type(denial_text)
-            print(f"plan {plan_type}")
             state = None
             zip = form.cleaned_data["zip"]
             if zip is not None and zip != "":
-                print(f"zip {zip}")
                 state = self.zip_engine.by_zipcode(form.cleaned_data["zip"]).state
             procedure = self.regex_denial_processor.get_procedure(denial_text)
             diagnosis = self.regex_denial_processor.get_diagnosis(denial_text)
