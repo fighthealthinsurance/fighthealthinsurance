@@ -15,7 +15,6 @@ for model in models:
         and "newsletter" not in model.__module__
         and "cookie_consent" not in model.__module__
     ):
-
         print(f"Registering {model}")
         try:
             admin.site.register(model)

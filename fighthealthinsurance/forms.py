@@ -35,8 +35,8 @@ class PostInferedForm(forms.Form):
     denial_id = forms.IntegerField(required=True, widget=forms.HiddenInput())
     email = forms.CharField(required=True, widget=forms.HiddenInput())
     denial_type = forms.ModelMultipleChoiceField(
-        queryset=DenialTypes.objects.all(),
-        required=False)
+        queryset=DenialTypes.objects.all(), required=False
+    )
     denial_type_text = forms.CharField(
         required=False,
         label="Denial Type (text, you can type if the categories don't match the denial type)",
@@ -49,15 +49,16 @@ class PostInferedForm(forms.Form):
     denial_date = forms.DateField(required=False)
     your_state = forms.CharField(max_length=2, required=False)
     procedure = forms.CharField(
-        max_length=200, label="What is the procedure/treatment you had denied?",
-        required=False
+        max_length=200,
+        label="What is the procedure/treatment you had denied?",
+        required=False,
     )
     diagnosis = forms.CharField(
         max_length=200,
         label="What is the diagnosis (if any) associated with the request."
         + "Does not need to be a diseas it can be any number of personal factors, "
         + 'including things like "high risk homosexual behaviour" (yeah that\'s a real one)',
-        required=False
+        required=False,
     )
 
 

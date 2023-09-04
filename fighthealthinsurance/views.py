@@ -359,21 +359,27 @@ class GenerateAppeal(View):
                 generated_futures = []
                 # If we have infered a bio gpt prompt call it
                 if bio_gpt_prompt is not None:
-                    generated_futures.append((
-                        "med_reason",
-                        executor.submit(RemoteBioGPT.infer, bio_gpt_prompt),
-                    ))
+                    generated_futures.append(
+                        (
+                            "med_reason",
+                            executor.submit(RemoteBioGPT.infer, bio_gpt_prompt),
+                        )
+                    )
                 if llama_med_prompt is not None:
-                    generated_futures.append((
-                        "med_reason",
-                        executor.submit(RemoteMed.infer, llama_med_prompt),
-                    ))
+                    generated_futures.append(
+                        (
+                            "med_reason",
+                            executor.submit(RemoteMed.infer, llama_med_prompt),
+                        )
+                    )
                 if open_prompt is not None:
-                    generated_futures.append((
-                        "full",
-                        executor.submit(RemoteOpen, open_prompt),
-                    ))
-                for (k, f) in generated_futures:
+                    generated_futures.append(
+                        (
+                            "full",
+                            executor.submit(RemoteOpen, open_prompt),
+                        )
+                    )
+                for k, f in generated_futures:
                     text = concurrent.futures.as_completed(f)
                     if text is None:
                         continue
