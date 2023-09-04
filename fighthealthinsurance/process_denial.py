@@ -10,6 +10,7 @@ from fighthealthinsurance.models import (
     Diagnosis,
     Procedures,
 )
+from typing import Optional
 
 # Process all of our "expert system" rules.
 
@@ -93,11 +94,11 @@ class RemoteBioGPT:
     """Use BioGPT for denial magic calls a service"""
 
     @classmethod
-    def infer(cls, prompt):
+    def infer(cls, prompt) -> Optional[str]:
         try:
             return requests.post(
                 "http://model-backend-svc/biogpt/infer", json={"prompt": prompt}
-            )
+            ).content
         except:
             return None
 
@@ -106,11 +107,11 @@ class RemoteMed:
     """Use RemoteMed for denial magic calls a service"""
 
     @classmethod
-    def infer(cls, prompt):
+    def infer(cls, prompt) -> Optional[str]:
         try:
             return requests.post(
                 "http://model-backend-svc/openllamamed/infer", json={"prompt": prompt}
-            )
+            ).content
         except:
             return None
 
@@ -119,7 +120,7 @@ class RemoteOpen:
     """Use RemoteOpen for denial magic calls a service"""
 
     @classmethod
-    def infer(cls, prompt):
+    def infer(cls, prompt) -> Optional[str]:
         try:
             api_base = os.getenv("OPENAI_API_BASE")
             token = os.getenv("OPENAI_API_KEY")

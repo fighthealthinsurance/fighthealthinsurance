@@ -14,6 +14,7 @@ from django.views import View
 
 from io import BytesIO
 import cv2
+import concurrent
 import numpy as np
 import hashlib
 from fighthealthinsurance.forms import *
@@ -338,9 +339,9 @@ class GenerateAppeal(View):
                                 footer.append(f)
                 else:
                     if dt.appeal_text is not None:
-                        main += [dt.appeal_text]
+                        main.append(dt.appeal_text)
             # Use LLMS
-            bio_gpt_prompt = make_bio_prompt(
+            bio_gpt_prompt = make_biogpt_prompt(
                 procedure=denial.procedure, diagnosis=denial.diagnosis
             )
             llama_med_prompt = make_open_llama_med_prompt(
@@ -355,24 +356,27 @@ class GenerateAppeal(View):
             medical_reasons = []
             appeals = []
             with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+                generated_futures = []
                 # If we have infered a bio gpt prompt call it
                 if bio_gpt_prompt is not None:
-                    generated_futures = (
+                    generated_futures.append((
                         "med_reason",
                         executor.submit(RemoteBioGPT.infer, bio_gpt_prompt),
-                    )
+                    ))
                 if llama_med_prompt is not None:
-                    generated_futures = (
+                    generated_futures.append((
                         "med_reason",
-                        executor.submit(RemoteMed.infer, bio_gpt_prompt),
-                    )
+                        executor.submit(RemoteMed.infer, llama_med_prompt),
+                    ))
                 if open_prompt is not None:
-                    generated_futures = (
+                    generated_futures.append((
                         "full",
                         executor.submit(RemoteOpen, open_prompt),
-                    )
+                    ))
                 for (k, f) in generated_futures:
                     text = concurrent.futures.as_completed(f)
+                    if text is None:
+                        continue
                     appeal_text = ""
                     if k == "full":
                         appeal_text = text
