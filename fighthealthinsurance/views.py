@@ -1,5 +1,6 @@
 from typing import *
 
+import os
 import asyncio
 import uszipcode
 from django.contrib.auth import authenticate, login, logout
@@ -272,14 +273,16 @@ class ChooseAppeal(View):
 
 class GenerateAppeal(View):
     def post(self, request):
-        def make_open_prompt(denial_text=None, procedure=None, diagnosis=None):
+        def make_open_prompt(denial_text=None, procedure=None, diagnosis=None) -> str:
             start = "Write a health insurance appeal for the following denial:"
             if procedure is not None and diagnosis is not None:
                 start = f"Write a health insurance appeal for procedure {procedure} with diagnosis {diagnosis} given the following denial:"
             elif procedure is not None:
                 start = f"Write a health insurance appeal for procedure {procedure} given the following denial:"
+            return f"{start}\n{denial_text}"
 
-        def make_open_llama_med_prompt(procedure=None, diagnosis=None):
+
+        def make_open_llama_med_prompt(procedure=None, diagnosis=None) -> Optional[str]:
             if procedure is not None:
                 if diagnosis is not None:
                     return f"Why is {procedure} medically necessary for {diagnosis}?"
@@ -288,7 +291,7 @@ class GenerateAppeal(View):
             else:
                 return None
 
-        def make_biogpt_prompt(procedure=None, diagnosis=None):
+        def make_biogpt_prompt(procedure=None, diagnosis=None) -> Optional[str]:
             if procedure is not None:
                 if diagnosis is not None:
                     return f"{procedure} is medically necessary for {diagnosis} because"
@@ -355,42 +358,46 @@ class GenerateAppeal(View):
 
             medical_reasons = []
             appeals = []
+            # The "vanilla" expert system only appeal:
+            raw_appeal = "\n".join(prefaces + main + footer)
+            if raw_appeal is not None:
+                appeals.append(
+                    raw_appeal
+                )
             with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
                 generated_futures = []
-                # If we have infered a bio gpt prompt call it
-                if bio_gpt_prompt is not None:
-                    generated_futures.append(
-                        (
-                            "med_reason",
-                            executor.submit(RemoteBioGPT.infer, bio_gpt_prompt),
-                        )
-                    )
-                if llama_med_prompt is not None:
-                    generated_futures.append(
-                        (
-                            "med_reason",
-                            executor.submit(RemoteMed.infer, llama_med_prompt),
-                        )
-                    )
-                if open_prompt is not None:
-                    generated_futures.append(
-                        (
-                            "full",
-                            executor.submit(RemoteOpen, open_prompt),
-                        )
-                    )
-                for k, f in generated_futures:
-                    text = concurrent.futures.as_completed(f)
+                # For any model that we have a prompt for try to call it
+                def get_model_result(model: RemoteModel, prompt: str) -> (str, Optional[str]):
+                    if prompt is None:
+                        return (model.model_type(), None)
+                    return (model.model_type(), model.infer(prompt))
+
+                calls = [
+                    [RemoteBioGPT, bio_gpt_prompt],
+                    [RemoteMed, llama_med_prompt],
+                    [RemoteOpen, open_prompt]
+                ]
+                # Executor map wants a list for each parameter.
+                model_calls = list(zip(*calls))
+                # We don't get back futures using executor.map but they are still called in parallel.
+                generated: List[(str, Optional[str])] = executor.map(get_model_result, *model_calls)
+
+                # Get the futures as the become available.
+                for k_text in generated:
+                    k, text = k_text
                     if text is None:
                         continue
                     appeal_text = ""
                     if k == "full":
                         appeal_text = text
                     else:
+                        print(f"Making appeal out of {prefaces}, {main}, {text}, and {footer}.")
                         appeal_text = "\n".join(prefaces + main + [text] + footer)
-                    appeals += appeal_text
+                    appeals.append(appeal_text)
+                    # Save all of the proposed appeals, so we can use RL later.
                     pa = ProposedAppeal(appeal_text=appeal_text, for_denial=denial)
 
+            print(f"Using appeals {appeals}!")
             return render(
                 request,
                 "appeals.html",

@@ -68,6 +68,7 @@ class Base(Configuration):
         "compressor_toolkit",
         "django_extensions",
         "static_thumbnails",
+        "memoize",
     ]
 
     COMPRESS_JS_FILTERS = [

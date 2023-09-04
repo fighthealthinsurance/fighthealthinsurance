@@ -35,4 +35,6 @@ uszipcode
 pyarrow
 packaging>=20.0
 PyPDF2
-
+django-memoize
+# See https://github.com/mindee/doctr/issues/1186
+RapidFuzz==2.15.1

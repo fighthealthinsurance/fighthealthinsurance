@@ -1,3 +1,4 @@
+import os
 import requests
 import csv
 import icd10
@@ -11,6 +12,7 @@ from fighthealthinsurance.models import (
     Procedures,
 )
 from typing import Optional
+from memoize import memoize
 
 # Process all of our "expert system" rules.
 
@@ -90,6 +92,23 @@ class ProcessDenialCodes(DenialBase):
         return []
 
 
+class RemoteModel:
+    """
+    For models which produce a "full" appeal tag them with "full"
+    For medical reason (e.g. ones where we hybrid with our "expert system"
+    ) tag them with "med_reason".
+    """
+
+    @classmethod
+    def infer(cls, prompt) -> Optional[str]:
+        pass
+
+
+    @classmethod
+    def model_type(cls) -> str:
+        pass
+
+
 class RemoteBioGPT:
     """Use BioGPT for denial magic calls a service"""
 
@@ -103,6 +122,10 @@ class RemoteBioGPT:
             return None
 
 
+    @classmethod
+    def model_type(cls) -> str:
+        return "med_reason"
+
 class RemoteMed:
     """Use RemoteMed for denial magic calls a service"""
 
@@ -115,17 +138,32 @@ class RemoteMed:
         except:
             return None
 
+    @classmethod
+    def model_type(cls) -> str:
+        return "med_reason"
 
 class RemoteOpen:
     """Use RemoteOpen for denial magic calls a service"""
 
     @classmethod
     def infer(cls, prompt) -> Optional[str]:
+        api_base = os.getenv("OPENAI_API_BASE")
+        token = os.getenv("OPENAI_API_KEY")
+        if api_base is None:
+            print("Error no API base provided for anyscale")
+        if token is None:
+            print("Error no Token provided for anyscale.")
+        if prompt is None:
+            print("Error: must supply a prompt.")
+            return None
+        url = f"{api_base}/chat/completions"
         try:
-            api_base = os.getenv("OPENAI_API_BASE")
-            token = os.getenv("OPENAI_API_KEY")
-            requests.post(
-                "https://api.endpoints.anyscale.com/v1",
+            import requests
+
+            s = requests.Session()
+            json_result = s.post(
+                url,
+                headers={"Authorization": f"Bearer {token}"},
                 json={
                     "model": "meta-llama/Llama-2-70b-chat-hf",
                     "messages": [
@@ -134,11 +172,19 @@ class RemoteOpen:
                     ],
                     "temperature": 0.7,
                 },
-            ).json()["choices"][0]["message"]["content"]
+            ).json()
         except Exception as e:
             print(f"Error {e} calling anyscale")
             return None
+        try:
+            return json_result["choices"][0]["message"]["content"]
+        except Exception as e:
+            print(f"Error {e} processing {json_result} from anyscale.")
 
+
+    @classmethod
+    def model_type(cls) -> str:
+        return "full"
 
 class ProcessDenialRegex(DenialBase):
     """Process the denial type based on the regexes stored in the database."""
