@@ -2,8 +2,7 @@
 {% load static %}
 {% block scriptmagic %}
 <script type="module">
-  const main = require('{% static "js/dist/appel.bundle.js" %}');
-  main.setupAppeal();
+  import * as main from '{% static "js/dist/appeal.bundle.js" %}';
 </script>
 {% endblock scriptmagic %}
 {% block title %}

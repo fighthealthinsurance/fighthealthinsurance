@@ -12,7 +12,7 @@ from fighthealthinsurance.models import (
     Procedures,
 )
 from typing import Optional
-from memoize import memoize
+from functools import cache
 
 # Process all of our "expert system" rules.
 
@@ -92,7 +92,7 @@ class ProcessDenialCodes(DenialBase):
         return []
 
 
-class RemoteModel:
+class RemoteModel(object):
     """
     For models which produce a "full" appeal tag them with "full"
     For medical reason (e.g. ones where we hybrid with our "expert system"
@@ -108,10 +108,11 @@ class RemoteModel:
         pass
 
 
-class RemoteBioGPT:
+class RemoteBioGPT(RemoteModel):
     """Use BioGPT for denial magic calls a service"""
 
     @classmethod
+    @cache
     def infer(cls, prompt) -> Optional[str]:
         try:
             return requests.post(
@@ -125,10 +126,11 @@ class RemoteBioGPT:
         return "med_reason"
 
 
-class RemoteMed:
+class RemoteMed(RemoteModel):
     """Use RemoteMed for denial magic calls a service"""
 
     @classmethod
+    @cache
     def infer(cls, prompt) -> Optional[str]:
         try:
             return requests.post(
@@ -146,6 +148,7 @@ class RemoteOpen:
     """Use RemoteOpen for denial magic calls a service"""
 
     @classmethod
+    @cache
     def infer(cls, prompt) -> Optional[str]:
         api_base = os.getenv("OPENAI_API_BASE")
         token = os.getenv("OPENAI_API_KEY")

@@ -248,7 +248,7 @@ class ChooseAppeal(View):
                 request,
                 "appeal.html",
                 context={
-                    "appeal": appeal,
+                    "appeal": appeal_text,
                     "user_email": email,
                     "denial_id": denial_id,
                 },
