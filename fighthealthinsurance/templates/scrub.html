@@ -8,7 +8,8 @@ Upload your Health Insurance Denial
 
 {% block scriptmagic %}
 <script type="module">
-  import * as main from '{% static "js/dist/main.js" %}';
+  const main = require('{% static "js/dist/scrub.bundle.js" %}');
+  main.setupScrub();
 </script>
 {% endblock scriptmagic %}
 
