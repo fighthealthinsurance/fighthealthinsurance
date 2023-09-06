@@ -144,10 +144,7 @@ function setupScrub()
     form.addEventListener("submit", validateScrubForm);
 }
 
-const memoizeOne = require('async-memoize-one')
-
-// Globals
-const node_module_path = "/static/js/node_modules/"
+const memoizeOne = require('async-memoize-one');
 
 // Tesseract
 async function getTesseractWorkerRaw() {
@@ -165,7 +162,7 @@ async function getTesseractWorkerRaw() {
     return worker;
 }
 
-const getTesseractWorker = memoizeOne(getTesseractWorkerRaw)
+const getTesseractWorker = memoizeOne(getTesseractWorkerRaw);
 
 async function getPDFPageText (pdf, pageNo) {
     const page = await pdf.getPage(pageNo);
@@ -192,6 +189,3 @@ async function getPDFText(pdf) {
 
 
 setupScrub();
-
-
-
