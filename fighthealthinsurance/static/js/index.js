@@ -87,17 +87,26 @@ var scrubRegex = [
     [new RegExp("^\\W*dear\\s+\\w+\\s+\\w+\\s*\.?\\w+\\W?$", "gmi"), "Dear patient_name"],
     [new RegExp("^\\W*dear\\s+\\w+\\W?$", "gmi"), "Dear patient_name"],
 ];
+
 export function scrubText(text) {
     var reservedTokens = [];
+    // Get all of the nodes which we are storing using local storage and have a non-empty value.
+    var nodes = document.querySelectorAll('input');
+    console.log("Searching :")
+    console.log(nodes)
+
     for (var i=0; i<nodes.length; i++) {
 	var node = nodes[i];
 	if (node.id.startsWith('store_') && node.value != "") {
-	    reservedTokens.push(
-		[new RegExp(node.value, "gi"),
-		 node.id]);
-	    for (var j=0; j<nodes.length; j++) {
+	    if (node.value.length > 3) {
+		reservedTokens.push(
+		    [new RegExp(node.value, "gi"),
+		     node.id]);
+	    }
+	    // If someone has a short enough first name we might only want to scrub F + L
+	    for (var j=0; j < nodes.length; j++) {
 		var secondNode = nodes[j];
-		if (secondNode.value != "") {
+		if (secondNode.value != "" && i != j) {
 		    reservedTokens.push(
 			[new RegExp(node.value + secondNode.value, "gi"),
 			 node.id + "_" + secondNode.id]);
@@ -120,10 +129,12 @@ export function scrubText(text) {
     }
     return text;
 }
+
 export function clean() {
     document.getElementById("denial_text").value = scrubText(
 	document.getElementById("denial_text").value);
 }
+
 export const storeLocal = async function(evt) {
     const name = evt.target.id;
     const value = evt.target.value;
@@ -132,6 +143,7 @@ export const storeLocal = async function(evt) {
 
 export function validateForm(form)
 {
+    console.log("Validating form.")
     if(!form.privacy.checked) {
 	document.getElementById('agree_chk_error').style.visibility='visible';
     } else {
@@ -172,6 +184,14 @@ export function setupScrub()
     if (elm != null) {
 	elm.addEventListener('change', recognize);
     }
+
+    const scrub = document.getElementById("scrub");
+    scrub.onclick = clean;
+
+    const form = document.getElementById("fuck_health_insurance_form")
+    form.addEventListener('submit', e => {
+	validateForm(e.target) || e.preventDefault();
+    })
 }
 
 setupScrub();

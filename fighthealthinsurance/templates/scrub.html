@@ -8,113 +8,113 @@ Upload your Health Insurance Denial
 
 {% block scriptmagic %}
 <script type="module">
-    import * as main from '{% static "js/dist/main.js" %}';
+  import * as main from '{% static "js/dist/main.js" %}';
 </script>
 {% endblock scriptmagic %}
 
 {% block content %}
 <section class="scan-section mt-2">
     <div class="container">
-        <div style="color:red">
-            {{ error }}
-        </div>
-        <button id="clear_local" class="btn btn-green" onclick="window.localStorage.clear()">
-            Clear Page Local Storage
-        </button>
-        <h4>Not transfered to server (uses JS local storage)</h4>
-        <div class="form-group">
-            <div class="row">
-                <div class="col-md-4">
-                    <label for="fname" class="form-label">First name:</label><br>
-                    <input type="text" id="store_fname" name="fname" class="form-control"><br>
-                </div>
-                <div class="col-md-4">
-                    <label for="lname" class="form-label">Last name:</label><br>
-                    <input type="text" id="store_lname" name="lname" class="form-control"><br>
-                </div>
-                <div class="col-md-8">
-                    <label for="street" class="form-label">Your street Address (e.g. 283 24th st)</label><br>
-                    <input type="text" id="store_street" name="street" class="form-control"><br>
-                </div>
-            </div>
+	<div style="color:red">
+	    {{ error }}
+	</div>
+	<button id="clear_local" class="btn btn-green" onclick="window.localStorage.clear()">
+	    Clear Page Local Storage
+	</button>
+	<h4>Not transfered to server (uses JS local storage)</h4>
+	<div class="form-group">
+	    <div class="row">
+		<div class="col-md-4">
+		    <label for="fname" class="form-label">First name:</label><br>
+		    <input type="text" id="store_fname" name="fname" class="form-control"><br>
+		</div>
+		<div class="col-md-4">
+		    <label for="lname" class="form-label">Last name:</label><br>
+		    <input type="text" id="store_lname" name="lname" class="form-control"><br>
+		</div>
+		<div class="col-md-8">
+		    <label for="street" class="form-label">Your street Address (e.g. 283 24th st)</label><br>
+		    <input type="text" id="store_street" name="street" class="form-control"><br>
+		</div>
+	    </div>
 
-            <button id="scrub" onclick="clean();" class="btn btn-green">
-                Scrub Scanned Text
-            </button>
-        </div>
-        {% if upload_more %}
-        <div id="image_select_magic" style="visibility:visible">
-            <h4>Not transfered, we do not store (but your phone/computer may store picture)</h4>
-            <label class="custom-file-label" for="uploader">Scan & OCR your health insurance denial (select all
-                pages)</label><br>
-            <div class="col-md-6">
-                <input id="uploader" type="file" name="uploader" multiple="true" class="form-control mt-2">
-            </div>
-        </div>
-        {% endif %}
-        <!-- Changing Label Text -->
-        
-        <form onsubmit="return main.validateForm(this);" method="post" action="{% url 'process' %}" id="fuck_health_insurance">
-            {% csrf_token %}
-            <h4>Transfered to server -- we store* </h4>
-            
-            <div class="form-group">
-                <div class="col-md-6">
-                    <label for="email" class="form-label">Your email</label><br>
-                    <input type="email" id="email" name="email" class="form-control"><br>
-                </div>
-            </div>
-            
-            <h4>Transfered to server -- REMOVE PII FIRST! -- we store for ML + may review</h4>
-            
-            <textarea name="denial_text" id="denial_text" style="width:100%" rows="20" form="fuck_health_insurance"
-                placeholder="Health Insurance Denial Goes Here" class="form-control">
-                {{ocr_result}}
-            </textarea>
-            
-            <h4>Transfered to server, we do not store outside of session (we do store the state)</h4>
+	    <button id="scrub" class="btn btn-green">
+		Scrub Scanned Text
+	    </button>
+	</div>
+	{% if upload_more %}
+	<div id="image_select_magic" style="visibility:visible">
+	    <h4>Not transfered, we do not store (but your phone/computer may store picture)</h4>
+	    <label class="custom-file-label" for="uploader">Scan & OCR your health insurance denial (select all
+		pages)</label><br>
+	    <div class="col-md-6">
+		<input id="uploader" type="file" name="uploader" multiple="true" class="form-control mt-2">
+	    </div>
+	</div>
+	{% endif %}
+	<!-- Changing Label Text -->
 
-            <div class="form-group">
-                <div class="col-md-4">
-                    <label for="zip" class="form-label">Your Zip code</label><br>
-                    <input type="text" id="store_zip" name="zip" class="form-control"><br>
-                </div>
-            </div>
+	<form method="post" action="{% url 'process' %}" id="fuck_health_insurance_form">
+	    {% csrf_token %}
+	    <h4>Transfered to server -- we store* </h4>
 
-            <h4>Policies</h4>
-            
-            <div class="form-group">
-                <input type="checkbox" id="privacy" name="privacy" class="form-check-input">
-                <label for="privacy" class="form-check-label">I have read and understand the <a class="link" href="{% url 'privacy_policy' %}">privacy
-                    policy</a>
-                </label>
-                <br>
-                <input type="checkbox" id="pii" name="pii" class="form-check-input">
-                <label for="pii" class="form-check-label">I have removed my PII from the text area above</label>
-                <br>
-                <input type="checkbox" id="store_raw_email" name="store_raw_email" value="checked" class="form-check-input">
-                <label for="store_raw_email" class="form-check-label">
-                    Store my raw e-mail to follow up with me (for the duration of automated follow ups + 30 days)
-                </label>
-                <br>
-            </div>
-            <div style="visibility:hidden; color:red" id="agree_chk_error">
-                Can't proceed as you didn't agree to the terms.
-            </div>
-            <div style="visibility:hidden; color:red" id="pii_error">
-                Can't proceed as you didn't check that you had removed your PII from the text area.
-            </div>
-            <button type="submit" class="btn btn-green">Submit</button>
-        </form>
+	    <div class="form-group">
+		<div class="col-md-6">
+		    <label for="email" class="form-label">Your email</label><br>
+		    <input type="email" id="email" name="email" class="form-control"><br>
+		</div>
+	    </div>
 
-        <p>
-            *We store your raw e-mail to follow up after insurance company timelines may have expired so you can "remind" them. We
-            also store a hashed version of your e-mail linked to your (cleaned) denial so you can request removal from our database
-            (should you wish). If you opt-in, we may follow up by e-mail after reviewing your denial with a better template if our
-            ML model does not find a good model on the first pass through. You may choose to use a different or temporary e-mail
-            service, like <a href="https://proton.me/">proton mail.</a> Please review our <a
-                href="{% url 'privacy_policy' %}">privacy policy for more details</a>
-        </p>
+	    <h4>Transfered to server -- REMOVE PII FIRST! -- we store for ML + may review</h4>
+
+	    <textarea name="denial_text" id="denial_text" style="width:100%" rows="20" form="fuck_health_insurance"
+		placeholder="Health Insurance Denial Goes Here" class="form-control">
+		{{ocr_result}}
+	    </textarea>
+
+	    <h4>Transfered to server, we do not store outside of session (we do store the state)</h4>
+
+	    <div class="form-group">
+		<div class="col-md-4">
+		    <label for="zip" class="form-label">Your Zip code</label><br>
+		    <input type="text" id="store_zip" name="zip" class="form-control"><br>
+		</div>
+	    </div>
+
+	    <h4>Policies</h4>
+
+	    <div class="form-group">
+		<input type="checkbox" id="privacy" name="privacy" class="form-check-input">
+		<label for="privacy" class="form-check-label">I have read and understand the <a class="link" href="{% url 'privacy_policy' %}">privacy
+		    policy</a>
+		</label>
+		<br>
+		<input type="checkbox" id="pii" name="pii" class="form-check-input">
+		<label for="pii" class="form-check-label">I have removed my PII from the text area above</label>
+		<br>
+		<input type="checkbox" id="store_raw_email" name="store_raw_email" value="checked" class="form-check-input">
+		<label for="store_raw_email" class="form-check-label">
+		    Store my raw e-mail to follow up with me (for the duration of automated follow ups + 30 days)
+		</label>
+		<br>
+	    </div>
+	    <div style="visibility:hidden; color:red" id="agree_chk_error">
+		Can't proceed as you didn't agree to the terms.
+	    </div>
+	    <div style="visibility:hidden; color:red" id="pii_error">
+		Can't proceed as you didn't check that you had removed your PII from the text area.
+	    </div>
+	    <button type="submit" class="btn btn-green">Submit</button>
+	</form>
+
+	<p>
+	    *We store your raw e-mail to follow up after insurance company timelines may have expired so you can "remind" them. We
+	    also store a hashed version of your e-mail linked to your (cleaned) denial so you can request removal from our database
+	    (should you wish). If you opt-in, we may follow up by e-mail after reviewing your denial with a better template if our
+	    ML model does not find a good model on the first pass through. You may choose to use a different or temporary e-mail
+	    service, like <a href="https://proton.me/">proton mail.</a> Please review our <a
+		href="{% url 'privacy_policy' %}">privacy policy for more details</a>
+	</p>
     </div>
 </section>
 
