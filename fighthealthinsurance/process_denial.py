@@ -100,11 +100,11 @@ class RemoteModel(object):
     """
 
     @classmethod
-    def infer(cls, prompt) -> Optional[str]:
+    def infer(cls, prompt):
         pass
 
     @classmethod
-    def model_type(cls) -> str:
+    def model_type(cls):
         pass
 
 
@@ -117,7 +117,7 @@ class RemoteBioGPT(RemoteModel):
         try:
             return requests.post(
                 "http://model-backend-svc/biogpt/infer", json={"prompt": prompt}
-            ).content
+            ).text
         except:
             return None
 
@@ -135,7 +135,7 @@ class RemoteMed(RemoteModel):
         try:
             return requests.post(
                 "http://model-backend-svc/openllamamed/infer", json={"prompt": prompt}
-            ).content
+            ).text
         except:
             return None
 
@@ -183,6 +183,7 @@ class RemoteOpen:
             return json_result["choices"][0]["message"]["content"]
         except Exception as e:
             print(f"Error {e} processing {json_result} from anyscale.")
+            return None
 
     @classmethod
     def model_type(cls) -> str:
