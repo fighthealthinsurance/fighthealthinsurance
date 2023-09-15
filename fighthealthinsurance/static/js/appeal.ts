@@ -1,5 +1,3 @@
-import { storeLocal, pdfjsLib } from "./shared.ts"
-
 async function generateAppealPDF() {
 
     const text = document.getElementById("appeal_text").value;
@@ -7,7 +5,7 @@ async function generateAppealPDF() {
     const fileName = "appeal.pdf"; // the desired name of the PDF file
 
     // create a new PDF document
-    const doc = new pdfjsLib.Document();
+    const doc = new pdfjsLib.PDFDocument();
 
     // add a new page to the document
     const page = doc.addPage();
@@ -33,17 +31,28 @@ async function generateAppealPDF() {
     downloadLink.click();
 }
 
+function descrub() {
+    const appeal_text = document.getElementById("scrubbed_appeal_text");
+    const target = document.getElementById("appeal_text");
+    var text = appeal_text.value;
+    const fname = window.localStorage.getItem("store_fname");
+    const lname = window.localStorage.getItem("store_lname");
+    const name = fname + " " + lname;
+    text = text.replace("fname", fname);
+    text = text.replace("lname", fname);
+    text = text.replace("[Your Name]", fname);
+    target.value = text;
+}
+
 function setupAppeal() {
     const generate_button = document.getElementById('generate_pdf');
     generate_button.onclick = async () => {
 	await generateAppealPDF();
     }
 
-    const target = document.getElementById("subbed_appeal_text");
-    const appeal_text = document.getElementById("appeal_text");
-    appeal_text.oninput = async () => {
-	target.value = appeal_text.value;
-    }
+    appeal_text.oninput = descrub
+    const descrub_button = document.getElementById('descrub');
+    descrub_button.onclick = descrub
 }
 
 

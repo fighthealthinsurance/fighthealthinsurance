@@ -342,8 +342,6 @@ class GenerateAppeal(View):
             appeals = []
             # The "vanilla" expert system only appeal:
             raw_appeal = "\n".join(prefaces + main + footer)
-            if raw_appeal is not None:
-                appeals.append(raw_appeal)
             with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
                 generated_futures = []
 
@@ -356,10 +354,18 @@ class GenerateAppeal(View):
                     return (model.model_type(), model.infer(prompt))
 
                 calls = [
-                    [RemoteBioGPT, bio_gpt_prompt],
-                    [RemoteMed, llama_med_prompt],
                     [RemoteOpen, open_prompt],
                 ]
+                # If we need to know the medical reason ask our friendly LLMs
+                if "{medical_reason}" in raw_appeal:
+                    calls.extend([
+                        [RemoteBioGPT, bio_gpt_prompt],
+                        [RemoteMed, llama_med_prompt]])
+                else:
+                    # Otherwise just put in as is.
+                    if raw_appeal != "":
+                        appeals.append(raw_appeal)
+
                 # Executor map wants a list for each parameter.
                 model_calls = list(zip(*calls))
                 # We don't get back futures using executor.map but they are still called in parallel.
@@ -376,7 +382,8 @@ class GenerateAppeal(View):
                     if k == "full":
                         appeal_text = text
                     else:
-                        appeal_text = "\n".join(prefaces + main + [text] + footer)
+                        appeal_text = "\n".join(prefaces + main + footer)
+                        appeal_text = appeal_text.replace("{medical_reason}", text)
                     appeals.append(appeal_text)
                     # Save all of the proposed appeals, so we can use RL later.
                     pa = ProposedAppeal(appeal_text=appeal_text, for_denial=denial)

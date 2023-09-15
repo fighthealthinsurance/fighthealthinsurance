@@ -82,7 +82,7 @@ My name is $your_name_here and I am writing you regarding claim {claim_id}{denia
         return []
 
     def footer(self):
-        common = "Additionally, I request all documents involved in this claim, including but not limited to plan documents, qualifications of individuals involved (both in the decision and in creation of policies), any policies policies, procedures, and any related communications. If you are not the plan administrator, forward this request to the plan administrator (and tell me who is the plan administrator so I may follow up with them)."
+        common = "Additionally, I request all documents involved in this claim, including but not limited to plan documents, qualifications of individuals involved (both in the decision and in creation of policies), any policies, procedures, and any related communications. If you are not the plan administrator, forward this request to the plan administrator (and tell me who is the plan administrator so I may follow up with them)."
         if (
             "urgent" in self.cleaned_data
             and "pre_service" in self.cleaned_data
@@ -101,7 +101,7 @@ My name is $your_name_here and I am writing you regarding claim {claim_id}{denia
         else:
             return [
                 common,
-                "As a post-service claim I believe you have ~60 days to respond.",
+                # "As a post-service claim I believe you have ~60 days to respond.",
             ]
 
 
@@ -114,8 +114,18 @@ class MedicalNeccessaryQuestions(InsuranceQuestions):
         required=False,
     )
 
+    def generate_reason(self):
+        """Return the reason OR the special tag {medical_reason} where we will ask the LLM why it might be medically necessary."""
+        if self.cleaned_data["medical_reason"] == "":
+            return "{medical_reason}"
+        else:
+            return [
+                self.cleaned_data["medical_reason"]
+            ]
+    
     def main(self):
-        return [self.cleaned_data["medical_reason"]]
+        reason = self.generate_reason()
+        return f"I understand that my claim was denied as not medically necessary, however I believe it is for {reason}."
 
 
 class ExperimentalQuestions(MedicalNeccessaryQuestions):

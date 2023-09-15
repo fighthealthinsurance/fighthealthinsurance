@@ -17,13 +17,17 @@ Huzzah! We have a <b>draft</b> appeal for you to edit bellow:
   <input type="hidden" name="email" value="{{ user_email }}">
   <input type="hidden" name="denial_id" value="{{ denial_id }}">
   
-  <textarea style="width:100%" rows="20" name="appeal_text" id="appeal_text">
+  <textarea style="width:100%" rows="20" name="appeal_text" id="scrubbed_appeal_text">
     {{appeal}}
   </textarea>
 
   <button type="submit" class="btn btn-green">(Optional) Upload and Share (do not include PII)</button>
 </form>
-  
+<button id="descrub" class="btn btn-green">
+  Fill in your PII
+</button>
+
+
 <p>
   Once your satisified it's time to send in your appeal! Your denial should include the mailing address, fax number, or e-mail to submit your appeal to.
 </p>
@@ -31,7 +35,10 @@ Huzzah! We have a <b>draft</b> appeal for you to edit bellow:
   Many health insurance companies choose these because they <i>believe</i> you don't have a fax machine or the time to send a letter by post mail. Thankfully there are many low cost ways to send faxes OR even mail letters directly from your phone.
 </p>
 <!-- Put this back once we write that java script. -->
-<button id="Generate PDF">
+<textarea style="width:100%" rows="20" name="appeal_text" id="appeal_text">
+
+</textarea>
+<button id="generate_pdf">
   Generate PDF
 </button>
 {% endblock content %}

@@ -16,11 +16,11 @@ Huzzah! We have a few different <b>draft</b> appeal for you to choose from:
   <input type="hidden" name="email" value="{{ user_email }}">
   <input type="hidden" name="denial_id" value="{{ denial_id }}">
 
-  <textarea style="width:100%" rows="20" name="appeal_text" id="appeal_text">
+  <textarea style="width:100%" rows="20" name="appeal_text" id="appeal_text_{{ forloop.counter }}">
     {{appeal}}
   </textarea>
 
-  <button type="submit" class="btn btn-green">Choose This One</button>
+  <button type="submit_{{ forloop.counter }}" class="btn btn-green">Choose This One</button>
 </form>
 {% endfor %}
 {% endblock content %}
