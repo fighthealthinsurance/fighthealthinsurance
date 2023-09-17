@@ -358,9 +358,9 @@ class GenerateAppeal(View):
                 ]
                 # If we need to know the medical reason ask our friendly LLMs
                 if "{medical_reason}" in raw_appeal:
-                    calls.extend([
-                        [RemoteBioGPT, bio_gpt_prompt],
-                        [RemoteMed, llama_med_prompt]])
+                    calls.extend(
+                        [[RemoteBioGPT, bio_gpt_prompt], [RemoteMed, llama_med_prompt]]
+                    )
                 else:
                     # Otherwise just put in as is.
                     if raw_appeal != "":
