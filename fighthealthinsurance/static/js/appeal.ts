@@ -38,10 +38,33 @@ function descrub() {
     target.value = text;
 }
 
+function printAppeal() {
+    console.log("Starting to print.")
+    const childWindow = window.open('','_blank','');
+    childWindow.document.open();
+    childWindow.document.write('<html><head></head><body>');
+    childWindow.document.write(document.getElementById('appeal_text').value.replace(/\n/gi,'<br>'));
+    childWindow.document.write('</body></html>');
+    // Wait 1 second for chrome.
+    setTimeout(function(){
+	console.log("Executed after 1 second");
+    }, 1000);
+    // Does not seem to work on chrome still? But user can print from the window themselves.
+    childWindow.print();
+    console.log("Done!")
+//    childWindow.document.close();
+//    childWindow.close();
+}
+
 function setupAppeal() {
     const generate_button = document.getElementById('generate_pdf');
     generate_button.onclick = async () => {
 	await generateAppealPDF();
+    }
+
+    const print_button = document.getElementById('print_appeal');
+    print_button.onclick = async () => {
+	await printAppeal();
     }
 
     appeal_text.oninput = descrub
