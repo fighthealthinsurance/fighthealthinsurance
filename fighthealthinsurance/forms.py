@@ -182,7 +182,7 @@ class PriorAuthQuestions(InsuranceQuestions):
     contact_insurance_before = forms.BooleanField(required=False)
     told_prior_auth_not_needed = forms.BooleanField(required=False)
     prior_auth_obtained = forms.BooleanField(required=False)
-    prior_auth_id = forms.CharField(max_length=300)
+    prior_auth_id = forms.CharField(max_length=300, required=False)
 
     def main(self):
         r = []

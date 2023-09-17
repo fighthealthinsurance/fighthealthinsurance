@@ -1,34 +1,28 @@
+import { jsPDF } from 'jspdf';
+
+
 async function generateAppealPDF() {
 
-    const text = document.getElementById("appeal_text").value;
+  const options = {
+      orientation: 'p',
+      unit: 'px',
+      format: 'letter',
+      };
 
-    const fileName = "appeal.pdf"; // the desired name of the PDF file
+  const text = document.getElementById("appeal_text").value;
 
-    // create a new PDF document
-    const doc = new pdfjsLib.PDFDocument();
+  // Create a new jsPDF document
+  const doc = new jsPDF(options);
 
-    // add a new page to the document
-    const page = doc.addPage();
+  // Add the text box contents to the PDF document
+  doc.text(20, 20, text, { maxWidth: 300 });
 
-    // add the text to the page
-    const textWidth = page.drawText(text, {
-	size: 12,
-    });
+  doc.setProperties({
+	title: 'Health Insurance Appeal'
+   });
 
-    // set the size of the document based on the text width and height
-    const width = textWidth + 100;
-    const height = page.getY() + 50;
-
-    // convert the document to a PDF blob
-    const blob = await doc.saveAsBlob();
-
-    // create a download link for the PDF file
-    const downloadLink = document.createElement("a");
-    downloadLink.href = URL.createObjectURL(blob);
-    downloadLink.download = fileName;
-
-    // click the download link to download the file
-    downloadLink.click();
+  // Save the PDF document and download it
+  doc.save('appeal.pdf');
 }
 
 function descrub() {
