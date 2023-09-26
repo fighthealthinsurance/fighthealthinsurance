@@ -72,6 +72,8 @@ var scrubRegex = [
     [new RegExp("^\\W*patents?:?\\s+\\w+", "gmi"), "Patient: patient_name"],
     [new RegExp("^\\W*patients?:?\\s+\\w+", "gmi"), "Patient: patient_name"],
     [new RegExp("^\\W*member:\\s+\\w+", "gmi"), "Member: member_name"],
+    [new RegExp("^\\W*Subscriber ID #\\s+\\w+", "gmi"), "Subscriber ID # id"],
+    [new RegExp("^\\W*Subscriber ID #:\\s+\\w+", "gmi"), "Subscriber ID #: id"],
     [new RegExp("^\\W*member:\\s+\\w+\\s+\\w+", "gmi"), "Member: member_name"],
     [new RegExp("^\\W*dear\\s+\\w+\\s+\\w+\\W?$", "gmi"), "Dear patient_name"],
     [new RegExp("^\\W*dear\\s+\\w+\\s+\\w+\\s*\.?\\w+\\W?$", "gmi"), "Dear patient_name"],

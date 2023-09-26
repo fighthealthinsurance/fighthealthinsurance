@@ -100,6 +100,16 @@ class DenialTypes(models.Model):
         return self.name
 
 
+class AppealTemplates(models.Model):
+    id = models.AutoField(primary_key=True)
+    name = models.CharField(max_length=300, primary_key=False)
+    regex = RegexField(max_length=400, re_flags=re.IGNORECASE | re.UNICODE | re.M)
+    negative_regex = RegexField(
+        max_length=400, re_flags=re.IGNORECASE | re.UNICODE | re.M
+    )
+    appeal_text = models.TextField(max_length=3000, primary_key=False, blank=True)
+
+
 class DataSource(models.Model):
     id = models.AutoField(primary_key=True)
     name = models.CharField(max_length=100)

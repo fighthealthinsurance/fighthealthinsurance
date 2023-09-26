@@ -10,6 +10,7 @@ from fighthealthinsurance.models import (
     Regulator,
     Diagnosis,
     Procedures,
+    AppealTemplates,
 )
 from typing import Optional
 from functools import cache
@@ -199,6 +200,7 @@ class ProcessDenialRegex(DenialBase):
         self.denialTypes = DenialTypes.objects.all()
         self.diagnosis = Diagnosis.objects.all()
         self.procedures = Procedures.objects.all()
+        self.templates = AppealTemplates.objects.all()
 
     def get_procedure(self, text):
         print(f"Getting procedure types for {text}")
@@ -247,7 +249,7 @@ class ProcessDenialRegex(DenialBase):
                 r.regex.search(text) is not None
                 and r.negative_regex.search(text) is None
             ):
-                regulators.push(r)
+                regulators.append(r)
         return regulators
 
     def get_plan_type(self, text):
@@ -256,7 +258,17 @@ class ProcessDenialRegex(DenialBase):
             if p.regex.pattern != "" and p.regex.search(text) is not None:
                 print(f"positive regex match for plan {p}")
                 if p.negative_regex != "" or p.negative_regex.search(text) is None:
-                    plans.push(p)
+                    plans.append(p)
             else:
                 print(f"no match {p}")
         return plans
+
+    def get_appeal_templates(self, text):
+        templates = []
+        for t in self.templates:
+            if t.regex.pattern != "" and t.regex.search(text) is not None:
+                templates.append(t)
+                print("yay match")
+            else:
+                print(f"no match on {t.regex.pattern}")
+        return templates

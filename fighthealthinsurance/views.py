@@ -14,6 +14,7 @@ from django.utils.decorators import method_decorator
 from django.views import View
 
 from io import BytesIO
+from string import Template
 import cv2
 import concurrent
 import numpy as np
@@ -256,6 +257,9 @@ class ChooseAppeal(View):
 
 
 class GenerateAppeal(View):
+    def __init__(self):
+        self.regex_denial_processor = ProcessDenialRegex()
+
     def post(self, request):
         def make_open_prompt(denial_text=None, procedure=None, diagnosis=None) -> str:
             start = "Write a health insurance appeal for the following denial:"
@@ -293,6 +297,10 @@ class GenerateAppeal(View):
             denial = Denial.objects.filter(
                 denial_id=denial_id, hashed_email=hashed_email
             ).get()
+
+            appeals = list(map(
+                lambda t: t.appeal_text,
+                self.regex_denial_processor.get_appeal_templates(denial.denial_text)))
 
             insurance_company = denial.insurance_company or "insurance company;"
             claim_id = denial.claim_id or "YOURCLAIMIDGOESHERE"
@@ -339,7 +347,6 @@ class GenerateAppeal(View):
             )
 
             medical_reasons = []
-            appeals = []
             # The "vanilla" expert system only appeal:
             raw_appeal = "\n".join(prefaces + main + footer)
             with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
@@ -387,6 +394,16 @@ class GenerateAppeal(View):
                     appeals.append(appeal_text)
                     # Save all of the proposed appeals, so we can use RL later.
                     pa = ProposedAppeal(appeal_text=appeal_text, for_denial=denial)
+
+            def sub_in_appeals(appeal: str) -> str:
+                s = Template(appeal)
+                return s.safe_substitute(
+                    {"insurance_company": denial.insurance_company or "{insurance_company}",
+                     "diagnosis": denial.diagnosis or "{diagnosis}",
+                     "procedure": denial.procedure or "{procedure}",
+                     })
+
+            appeals = list(map(sub_in_appeals, appeals))
 
             return render(
                 request,
