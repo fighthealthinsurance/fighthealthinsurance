@@ -69,15 +69,15 @@ const recognize = async function(evt){
 
 
 var scrubRegex = [
-    [new RegExp("^\\W*patents?:?\\s+\\w+", "gmi"), "Patient: patient_name"],
-    [new RegExp("^\\W*patients?:?\\s+\\w+", "gmi"), "Patient: patient_name"],
-    [new RegExp("^\\W*member:\\s+\\w+", "gmi"), "Member: member_name"],
-    [new RegExp("^\\W*Subscriber ID #\\s+\\w+", "gmi"), "Subscriber ID # id"],
-    [new RegExp("^\\W*Subscriber ID #:\\s+\\w+", "gmi"), "Subscriber ID #: id"],
-    [new RegExp("^\\W*member:\\s+\\w+\\s+\\w+", "gmi"), "Member: member_name"],
-    [new RegExp("^\\W*dear\\s+\\w+\\s+\\w+\\W?$", "gmi"), "Dear patient_name"],
-    [new RegExp("^\\W*dear\\s+\\w+\\s+\\w+\\s*\.?\\w+\\W?$", "gmi"), "Dear patient_name"],
-    [new RegExp("^\\W*dear\\s+\\w+\\W?$", "gmi"), "Dear patient_name"],
+    [new RegExp("patents?:?\\s+(?<token>\\w+)", "gmi"), "name", "Patient: patient_name"],
+    [new RegExp("patients?:?\\s+(?<token>\\w+)", "gmi"), "name", "Patient: patient_name"],
+    [new RegExp("member:\\s+(?<token>\\w+)", "gmi"), "name", "Member: member_name"],
+    [new RegExp("member:\\s+(?<token>\\w+\\s+\\w+)", "gmi"), "name", "Member: member_name"],
+    [new RegExp("dear\\s+(?<token>\\w+\\s+\\w+)", "gmi"), "name", "Dear patient_name"],
+    [new RegExp("dear\\s+(?<token>\\w+\\s+\\w+)\\s*\.?\\w+", "gmi"), "name", "Dear patient_name"],
+    [new RegExp("dear\\s+(?<token>\\w+)", "gmi"), "name", "Dear patient_name"],
+    [new RegExp("Subscriber\\s*I?D?\\s*#?:?\\s*(?<token>\\w+)", "gmi"), "subscriber_id", "Subscriber ID: subscribed_id"],
+    [new RegExp("Subscriber\\s*ID\\s*.\\s*.\\s*(?<token>\\w+)", "gmi"), "subscriber_id", "Subscriber ID: subscribed_id"],
 ];
 
 function scrubText(text) {
@@ -105,7 +105,12 @@ function scrubText(text) {
     console.log(reservedTokens)
     console.log(scrubRegex)
     for (var i=0; i < scrubRegex.length; i++) {
-	text = text.replace(scrubRegex[i][0], scrubRegex[i][1]);
+	const match = scrubRegex[i][0].exec(text)
+	if (match != null && match.length > 0) {
+	    console.log("Storing " + match[0].token + " for " + scrubRegex[i][1])
+	    window.localStorage.setItem(scrubRegex[i][1], match[0].token)
+	}
+	text = text.replace(scrubRegex[i][0], scrubRegex[i][2]);
     }
     for (var i=0; i < reservedTokens.length; i++) {
 	text = text.replace(

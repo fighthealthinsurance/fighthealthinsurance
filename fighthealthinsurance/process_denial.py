@@ -171,7 +171,10 @@ class RemoteOpen:
                 json={
                     "model": "meta-llama/Llama-2-70b-chat-hf",
                     "messages": [
-                        {"role": "system", "content": "You are a helpful assistant."},
+                        {
+                            "role": "system",
+                            "content": "You are a helpful assistant with a deep medical knowledge helping people write appeals for health insurance denials.",
+                        },
                         {"role": "user", "content": prompt},
                     ],
                     "temperature": 0.7,
