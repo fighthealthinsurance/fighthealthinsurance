@@ -1,5 +1,7 @@
 import { jsPDF } from 'jspdf';
 
+import {getLocalStorageItemOrDefault, getLocalStorageItemOrDefaultEQ} from './shared.ts';
+
 
 async function generateAppealPDF() {
 
@@ -29,12 +31,16 @@ function descrub() {
     const appeal_text = document.getElementById("scrubbed_appeal_text");
     const target = document.getElementById("appeal_text");
     var text = appeal_text.value;
-    const fname = window.localStorage.getItem("store_fname");
-    const lname = window.localStorage.getItem("store_lname");
+    const fname = getLocalStorageItemOrDefault("store_fname", "FirstName");
+    const lname = getLocalStorageItemOrDefault("store_lname", "LastName");
+    const subscriber_id = getLocalStorageItemOrDefaultEQ("subscriber_id");
+    const group_id = getLocalStorageItemOrDefaultEQ("group_id");
     const name = fname + " " + lname;
     text = text.replace("fname", fname);
     text = text.replace("lname", fname);
     text = text.replace("[Your Name]", fname);
+    text = text.replace("subscriber_id", subscriber_id);
+    text = text.replace("group_id", group_id);
     target.value = text;
 }
 

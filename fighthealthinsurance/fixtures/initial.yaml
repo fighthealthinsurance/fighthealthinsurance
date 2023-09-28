@@ -233,14 +233,17 @@
   pk: 1
   fields:
     name: COVID-19 Vaccine Denial
-    appeal_text: "My COVID-19 Vaccine coverage was denied by $insurance_company on $DATE. I do not believe this denial follows the ACA requirements, and since the majourity of health plans are non-granfathered plans (including self-insured plans even though not otherwise covered by many other ACA provisions) I request a review of my claim [CLAIM_NUMBER]."
+    appeal_text: "
+To Whom it May Concern at $insurance_company:
+
+My name is [Your Name] and my subscriber id is subscriber_id with group id group_id. My COVID-19 Vaccine coverage was denied by $insurance_company on $DATE. I do not believe this denial follows the ACA requirements, and since the majourity of health plans are non-granfathered plans (including self-insured plans even though not otherwise covered by many other ACA provisions) I request a review of my claim [CLAIM_NUMBER]."
     regex: "covid\\s*v\\s*a\\s*c\\s*c\\s*i\\s*n\\s*e"
 - model: fighthealthinsurance.appealtemplates
   pk: 2
   fields:
     name: Migrane Denial
     appeal_text: "To Whom it May Concern at $insurance_company:
-My name is [Your Name] and I am a policyholder of $insurance_company. I wish to file an appeal concerning
+My name is [Your Name], subscriber id subscriber_id group id group_id, and I am a policyholder of $insurance_company. I wish to file an appeal concerning
 $insurance_company denial of a claim for $procedure. I received an Explanation of Benefits dated
 [provide date] stating [provide denial reason directly from letter].
 As is evident from my previous medical claims, I was diagnosed with $diagnosis on [diagnosis date].

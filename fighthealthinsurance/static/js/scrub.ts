@@ -76,8 +76,11 @@ var scrubRegex = [
     [new RegExp("dear\\s+(?<token>\\w+\\s+\\w+)", "gmi"), "name", "Dear patient_name"],
     [new RegExp("dear\\s+(?<token>\\w+\\s+\\w+)\\s*\.?\\w+", "gmi"), "name", "Dear patient_name"],
     [new RegExp("dear\\s+(?<token>\\w+)", "gmi"), "name", "Dear patient_name"],
-    [new RegExp("Subscriber\\s*I?D?\\s*#?:?\\s*(?<token>\\w+)", "gmi"), "subscriber_id", "Subscriber ID: subscribed_id"],
-    [new RegExp("Subscriber\\s*ID\\s*.\\s*.\\s*(?<token>\\w+)", "gmi"), "subscriber_id", "Subscriber ID: subscribed_id"],
+    [new RegExp("Subscriber\\s*ID\\s*.?\\s*.?\\s*(?<token>\\w+)", "gmi"), "subscriber_id", "Subscriber ID: subscribed_id"],
+    [new RegExp("Group\\s*ID\\s*.?\\s*.?\\s*(?<token>\\w+)", "gmi"), "group_id", "Group ID: group_id"],
+    [new RegExp("Group\\s*.?\\s*:\\s*(?<token>\\w+)", "gmi"), "group_id", "Group ID: group_id"],
+    [new RegExp("Subscriber\\s*number\\s*.?\\s*.?\\s*(?<token>\\w+)", "gmi"), "subscriber_id", "Subscriber ID: subscribed_id"],
+    [new RegExp("Group\\s*number\\s*.?\\s*.?\\s*(?<token>\\w+)", "gmi"), "group_id", "Group ID: group_id"],
 ];
 
 function scrubText(text) {
@@ -106,9 +109,11 @@ function scrubText(text) {
     console.log(scrubRegex)
     for (var i=0; i < scrubRegex.length; i++) {
 	const match = scrubRegex[i][0].exec(text)
-	if (match != null && match.length > 0) {
-	    console.log("Storing " + match[0].token + " for " + scrubRegex[i][1])
-	    window.localStorage.setItem(scrubRegex[i][1], match[0].token)
+	if (match != null) {
+	    // I want to use the groups syntax here but it is not working so just index in I guess.
+	    console.log("Match " + match + " groups " + match[1]);
+	    console.log("Storing " + match[1] + " for " + scrubRegex[i][1]);
+	    window.localStorage.setItem(scrubRegex[i][1], match[1]);
 	}
 	text = text.replace(scrubRegex[i][0], scrubRegex[i][2]);
     }
