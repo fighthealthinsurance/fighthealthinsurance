@@ -9,14 +9,34 @@ Updating denial with your feedback & checking for resources
 <p>
   <H1>Thank you for your submission! There are some possible next steps:</H1>
 </p>
-<p>
-  One option is to request all of the records associated with your denial. The folks at <a href="https://www.propublica.org/article/find-out-why-health-insurance-claim-denied">propublica have a guide on how to request your file associated with a claim</a>
-</p>
-<p>
+<table>
+  <tr>
+    <td>
+	One option is to request all of the records associated with your denial. The folks at <a href="https://www.propublica.org/article/find-out-why-health-insurance-claim-denied">propublica have a guide on how to request your file associated with a claim</a>
+    </td>
+    <td>
+    </td>
+  </tr>
+  {% for d in outside_help_details %}
   {% autoescape off %}
-  {{outside_help_details}}
+  <tr>
+    <td>
+      {{d[0]}}
+    </td>
+    <td>
+      {{d[1]}}
+    </td>
+  </tr>
   {% endautoescape %}
-</p>
+  <tr>
+    <td>
+      Submit a health insurance appeal
+    </td>
+    <td>
+      Fill out the form bellow :)
+    </td>
+  </tr>
+</table>
 
 {% if combined %}
 We have a few more questions for you to help us generate the appeal.
