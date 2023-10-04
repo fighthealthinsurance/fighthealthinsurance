@@ -69,6 +69,7 @@ class Base(Configuration):
         "django_extensions",
         "static_thumbnails",
         "memoize",
+        "captcha",
     ]
 
     COMPRESS_JS_FILTERS = [
@@ -235,3 +236,5 @@ class Prod(Base):
     EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "support")
     EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
     DEFAULT_FROM_EMAIL = "support@pigscanfly.ca"
+    RECAPTCHA_PUBLIC_KEY = os.getenv("RECAPTCHA_PUBLIC_KEY", "")
+    RECAPTCHA_PRIVATE_KEY = os.getenv("RECAPTCHA_PUBLIC_KEY", "")

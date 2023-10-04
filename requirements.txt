@@ -40,3 +40,4 @@ django-memoize
 RapidFuzz==2.15.1
 pyOpenSSL
 python-Levenshtein
+django-recaptcha
