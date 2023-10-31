@@ -144,19 +144,15 @@ class RemoteMed(RemoteModel):
     def model_type(cls) -> str:
         return "med_reason"
 
-
-class RemoteOpen:
-    """Use RemoteOpen for denial magic calls a service"""
+class RemoteOpenLike(RemoteModel):
 
     @classmethod
     @cache
-    def infer(cls, prompt) -> Optional[str]:
-        api_base = os.getenv("OPENAI_API_BASE")
-        token = os.getenv("OPENAI_API_KEY")
-        if api_base is None:
-            print("Error no API base provided for anyscale")
+    def infer(cls, api_base, token, model, prompt) -> Optional[str]:
+        api_base = "https://api.perplexity.ai"
+        token = os.getenv("PERPLEXITY_API")
         if token is None:
-            print("Error no Token provided for anyscale.")
+            print("Error no Token provided for perplexity.")
         if prompt is None:
             print("Error: must supply a prompt.")
             return None
@@ -169,7 +165,7 @@ class RemoteOpen:
                 url,
                 headers={"Authorization": f"Bearer {token}"},
                 json={
-                    "model": "meta-llama/Llama-2-70b-chat-hf",
+                    "model": model,
                     "messages": [
                         {
                             "role": "system",
@@ -188,6 +184,36 @@ class RemoteOpen:
         except Exception as e:
             print(f"Error {e} processing {json_result} from anyscale.")
             return None
+
+    @classmethod
+    def model_type(cls) -> str:
+        return "full"
+
+class RemotePerplexity(RemoteOpenLike):
+    """Use RemotePerplexity for denial magic calls a service"""
+
+    @classmethod
+    @cache
+    def infer(cls, prompt) -> Optional[str]:
+        api_base = "https://api.perplexity.ai"
+        token = os.getenv("PERPLEXITY_API")
+        model = "mistral-7b-instruct"
+        self.infer(api_base, token, model, prompt)
+
+    @classmethod
+    def model_type(cls) -> str:
+        return "full"
+
+class RemoteOpen(RemoteOpenLike):
+    """Use RemoteOpen for denial magic calls a service"""
+
+    @classmethod
+    @cache
+    def infer(cls, prompt) -> Optional[str]:
+        api_base = os.getenv("OPENAI_API_BASE")
+        token = os.getenv("OPENAI_API_KEY")
+        model = "meta-llama/Llama-2-70b-chat-hf"
+        self.infer(api_base, token, model, prompt)
 
     @classmethod
     def model_type(cls) -> str:

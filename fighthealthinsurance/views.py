@@ -362,6 +362,7 @@ class GenerateAppeal(View):
 
                 calls = [
                     [RemoteOpen, open_prompt],
+                    [RemotePerplexity, open_prompt]
                 ]
                 # If we need to know the medical reason ask our friendly LLMs
                 if "{medical_reason}" in raw_appeal:
