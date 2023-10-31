@@ -1,5 +1,6 @@
 from django import forms
 from captcha.fields import ReCaptchaField
+import os
 
 from fighthealthinsurance.models import DenialTypes, PlanType
 
@@ -61,7 +62,9 @@ class PostInferedForm(forms.Form):
         + 'including things like "high risk homosexual behaviour" (yeah that\'s a real one)',
         required=False,
     )
-    captcha = ReCaptchaField()
+
+    if 'RECAPTCHA_TESTING' not in os.environ or os.environ['RECAPTCHA_TESTING'].lower() != "true":
+        captcha = ReCaptchaField()
 
 
 class InsuranceQuestions(forms.Form):

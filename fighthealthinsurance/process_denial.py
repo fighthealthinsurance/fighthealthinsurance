@@ -235,7 +235,7 @@ class ProcessDenialRegex(DenialBase):
         print(f"Getting procedure types for {text}")
         procedure = None
         for d in self.procedures:
-            print(f"Exlporing {d} w/ {d.regex}")
+            print(f"Exploring {d} w/ {d.regex}")
             if d.regex.pattern != "":
                 s = d.regex.search(text)
                 if s is not None:
@@ -247,7 +247,7 @@ class ProcessDenialRegex(DenialBase):
         print(f"Getting procedure types for {text}")
         procedure = None
         for d in self.diagnosis:
-            print(f"Exlporing {d} w/ {d.regex}")
+            print(f"Exploring {d} w/ {d.regex}")
             if d.regex.pattern != "":
                 s = d.regex.search(text)
                 if s is not None:
@@ -259,7 +259,7 @@ class ProcessDenialRegex(DenialBase):
         print(f"Getting denial types for {text}")
         denials = []
         for d in self.denialTypes:
-            print(f"Exlporing {d} w/ {d.regex} & {d.negative_regex}")
+            print(f"Exploring {d} w/ {d.regex} & {d.negative_regex}")
             if d.regex.pattern != "" and d.regex.search(text) is not None:
                 print("positive regex match")
                 if (

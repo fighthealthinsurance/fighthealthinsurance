@@ -173,20 +173,20 @@ class FindNextSteps(View):
             outside_help_details = []
             state = form.cleaned_data["your_state"]
             if state in states_with_caps:
-                outside_help_details += ((
+                outside_help_details.append(((
                     "<a href='https://www.cms.gov/CCIIO/Resources/Consumer-Assistance-Grants/"
                     + state
                     + "'>"
-                    + f"Your state {state} participates in a"
+                    + f"Your state {state} participates in a "
                     + f"Consumer Assistance Program(CAP), and you may be able to get help "
                     + f"through them.</a>"
-                ), "https://www.cms.gov/CCIIO/Resources/Consumer-Assistance-Grants/")
+                ), "Visit <a href='https://www.cms.gov/CCIIO/Resources/Consumer-Assistance-Grants/'>CMS for more info</a>"))
             if denial.regulator == Regulator.objects.filter(alt_name="ERISA").get():
-                outside_help_details += ((
+                outside_help_details.append(((
                     "Your plan looks to be an ERISA plan which means your employer <i>may</i>"
                     + " have more input into plan decisions. If your are on good terms with HR "
                     + " it could be worth it to ask them for advice."
-                ), "")
+                ), "Talk to your employer's HR if you are on good terms with them."))
             denial.insurance_company = form.cleaned_data["insurance_company"]
             denial.plan_id = form.cleaned_data["plan_id"]
             denial.claim_id = form.cleaned_data["claim_id"]

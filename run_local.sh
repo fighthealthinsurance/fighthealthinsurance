@@ -10,4 +10,4 @@ pushd fighthealthinsurance/static/js/
 npm i || echo "Can't install?"
 npm run build
 popd
-OAUTHLIB_RELAX_TOKEN_SCOPE=1 python manage.py runserver_plus --cert-file cert.pem --key-file key.pem
+RECAPTCHA_TESTING=true OAUTHLIB_RELAX_TOKEN_SCOPE=1 python manage.py runserver_plus --cert-file cert.pem --key-file key.pem

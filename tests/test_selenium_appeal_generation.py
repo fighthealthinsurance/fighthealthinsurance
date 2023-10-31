@@ -2,6 +2,7 @@
 import pytest
 from django.contrib.staticfiles.testing import StaticLiveServerTestCase
 from seleniumbase import BaseCase
+import time
 BaseCase.main(__name__, __file__)
 
 
@@ -27,7 +28,7 @@ class SeleniumTestAppealGeneration(BaseCase, StaticLiveServerTestCase):
         self.click('a[id="scanlink"]')
         self.assert_title("Upload your Health Insurance Denial")
         self.type("input#store_fname", "First NameTest")
-        # Should fail
+        # pii error should not be present (we have not clicked submit)
         with pytest.raises(Exception) as ex:
             self.assert_element("div#pii_error")
 
@@ -38,7 +39,7 @@ class SeleniumTestAppealGeneration(BaseCase, StaticLiveServerTestCase):
         self.assert_title("Upload your Health Insurance Denial")
         self.type("input#store_fname", "First NameTest")
         self.click("button#submit")
-        # Now we should not have changed pages
+        # Now we should not have changed pages and pii error should show up
         self.assert_element("div#pii_error")
         self.assert_title("Upload your Health Insurance Denial")
 
@@ -55,7 +56,7 @@ class SeleniumTestAppealGeneration(BaseCase, StaticLiveServerTestCase):
 Your claim for Truvada has been denied as not medically necessary.
 
 Sincerely,
-Some Jerk""")
+Cheap-O-Insurance-Corp""")
         self.click("input#pii")
         self.click("input#privacy")
         self.click("button#submit")
