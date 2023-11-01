@@ -101,21 +101,18 @@ class RemoteModel(object):
     ) tag them with "med_reason".
     """
 
-    @classmethod
-    def infer(cls, prompt):
+    def infer(self, prompt):
         pass
 
-    @classmethod
-    def model_type(cls):
+    def model_type(self):
         pass
 
 
 class RemoteBioGPT(RemoteModel):
     """Use BioGPT for denial magic calls a service"""
 
-    @classmethod
     @cache
-    def infer(cls, prompt) -> Optional[str]:
+    def infer(self, prompt) -> Optional[str]:
         try:
             return requests.post(
                 "http://model-backend-svc/biogpt/infer", json={"prompt": prompt}
@@ -123,17 +120,15 @@ class RemoteBioGPT(RemoteModel):
         except:
             return None
 
-    @classmethod
-    def model_type(cls) -> str:
+    def model_type(self) -> str:
         return "med_reason"
 
 
 class RemoteMed(RemoteModel):
     """Use RemoteMed for denial magic calls a service"""
 
-    @classmethod
     @cache
-    def infer(cls, prompt) -> Optional[str]:
+    def infer(self, prompt) -> Optional[str]:
         try:
             return requests.post(
                 "http://model-backend-svc/openllamamed/infer", json={"prompt": prompt}
@@ -141,16 +136,14 @@ class RemoteMed(RemoteModel):
         except:
             return None
 
-    @classmethod
-    def model_type(cls) -> str:
+    def model_type(self) -> str:
         return "med_reason"
 
 
 class RemoteOpenLike(RemoteModel):
-    @classmethod
     @cache
-    def infer(cls, api_base, token, model, prompt) -> Optional[str]:
-        api_base = "https://api.perplexity.ai"
+    def infer(self, api_base, token, model, prompt) -> Optional[str]:
+        print(f"Looking up model {model} using {api_base}")
         token = os.getenv("PERPLEXITY_API")
         if token is None:
             print("Error no Token provided for perplexity.")
@@ -170,7 +163,7 @@ class RemoteOpenLike(RemoteModel):
                     "messages": [
                         {
                             "role": "system",
-                            "content": "You are a helpful assistant with a deep medical knowledge helping people write appeals for health insurance denials.",
+                            "content": "You have a deep medical knowledge write appeals for health insurance denials. You are a patient, not a doctor. You are writing on behalf of yourself. You write directly, in the style of patio11 or a bureaucrat but never get mad at the insurance companies. Feel free to speculate why it might be megically necessary. Use YourNameMagic in place of your name, SCSID for the subscriber id, and GPID as the group id.",
                         },
                         {"role": "user", "content": prompt},
                     ],
@@ -178,48 +171,45 @@ class RemoteOpenLike(RemoteModel):
                 },
             ).json()
         except Exception as e:
-            print(f"Error {e} calling anyscale")
+            print(f"Error {e} calling {api_base}")
             return None
         try:
-            return json_result["choices"][0]["message"]["content"]
+            r = json_result["choices"][0]["message"]["content"]
+            print(f"Got back yoooo: {r}")
+            return r
         except Exception as e:
-            print(f"Error {e} processing {json_result} from anyscale.")
+            print(f"Error {e} processing {json_result} from {api_base}.")
             return None
 
-    @classmethod
-    def model_type(cls) -> str:
+    def model_type(self) -> str:
         return "full"
 
 
 class RemotePerplexity(RemoteOpenLike):
     """Use RemotePerplexity for denial magic calls a service"""
 
-    @classmethod
     @cache
-    def infer(cls, prompt) -> Optional[str]:
+    def infer(self, prompt) -> Optional[str]:
         api_base = "https://api.perplexity.ai"
         token = os.getenv("PERPLEXITY_API")
         model = "mistral-7b-instruct"
-        self.infer(api_base, token, model, prompt)
+        return super(RemotePerplexity, self).infer(api_base, token, model, prompt)
 
-    @classmethod
-    def model_type(cls) -> str:
+    def model_type(self) -> str:
         return "full"
 
 
 class RemoteOpen(RemoteOpenLike):
     """Use RemoteOpen for denial magic calls a service"""
 
-    @classmethod
     @cache
-    def infer(cls, prompt) -> Optional[str]:
+    def infer(self, prompt) -> Optional[str]:
         api_base = os.getenv("OPENAI_API_BASE")
         token = os.getenv("OPENAI_API_KEY")
         model = "meta-llama/Llama-2-70b-chat-hf"
-        self.infer(api_base, token, model, prompt)
+        return super(RemoteOpen, self).infer(api_base, token, model, prompt)
 
-    @classmethod
-    def model_type(cls) -> str:
+    def model_type(self) -> str:
         return "full"
 
 

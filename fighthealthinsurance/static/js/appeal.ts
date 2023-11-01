@@ -38,9 +38,15 @@ function descrub() {
     const name = fname + " " + lname;
     text = text.replace("fname", fname);
     text = text.replace("lname", fname);
+    text = text.replace("YourNameMagic", fname);
     text = text.replace("[Your Name]", fname);
     text = text.replace("subscriber_id", subscriber_id);
+    text = text.replace("SCSID: 123456789", subscriber_id);
+    text = text.replace("GPID: 987654321", group_id);
     text = text.replace("group_id", group_id);
+    text = text.replace("GPID", group_id);
+    text = text.replace("subscriber\\_id", subscriber_id);
+    text = text.replace("group\\_id", group_id);
     target.value = text;
 }
 
