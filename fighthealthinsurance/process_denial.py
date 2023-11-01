@@ -1,19 +1,20 @@
-import os
-import requests
 import csv
-import icd10
+import os
 import re
 from abc import ABC, abstractmethod
-from fighthealthinsurance.models import (
-    DenialTypes,
-    PlanType,
-    Regulator,
-    Diagnosis,
-    Procedures,
-    AppealTemplates,
-)
-from typing import Optional
 from functools import cache
+from typing import Optional
+
+import icd10
+import requests
+from fighthealthinsurance.models import (
+    AppealTemplates,
+    DenialTypes,
+    Diagnosis,
+    PlanType,
+    Procedures,
+    Regulator,
+)
 
 # Process all of our "expert system" rules.
 
@@ -144,8 +145,8 @@ class RemoteMed(RemoteModel):
     def model_type(cls) -> str:
         return "med_reason"
 
-class RemoteOpenLike(RemoteModel):
 
+class RemoteOpenLike(RemoteModel):
     @classmethod
     @cache
     def infer(cls, api_base, token, model, prompt) -> Optional[str]:
@@ -189,6 +190,7 @@ class RemoteOpenLike(RemoteModel):
     def model_type(cls) -> str:
         return "full"
 
+
 class RemotePerplexity(RemoteOpenLike):
     """Use RemotePerplexity for denial magic calls a service"""
 
@@ -203,6 +205,7 @@ class RemotePerplexity(RemoteOpenLike):
     @classmethod
     def model_type(cls) -> str:
         return "full"
+
 
 class RemoteOpen(RemoteOpenLike):
     """Use RemoteOpen for denial magic calls a service"""

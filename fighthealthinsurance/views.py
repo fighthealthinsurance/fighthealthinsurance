@@ -1,8 +1,11 @@
+import asyncio
+import concurrent
+import hashlib
+import os
+from io import BytesIO
+from string import Template
 from typing import *
 
-import os
-import asyncio
-import uszipcode
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
@@ -13,12 +16,9 @@ from django.urls import reverse
 from django.utils.decorators import method_decorator
 from django.views import View
 
-from io import BytesIO
-from string import Template
 import cv2
-import concurrent
 import numpy as np
-import hashlib
+import uszipcode
 from fighthealthinsurance.forms import *
 from fighthealthinsurance.models import *
 from fighthealthinsurance.process_denial import *
@@ -173,20 +173,30 @@ class FindNextSteps(View):
             outside_help_details = []
             state = form.cleaned_data["your_state"]
             if state in states_with_caps:
-                outside_help_details.append(((
-                    "<a href='https://www.cms.gov/CCIIO/Resources/Consumer-Assistance-Grants/"
-                    + state
-                    + "'>"
-                    + f"Your state {state} participates in a "
-                    + f"Consumer Assistance Program(CAP), and you may be able to get help "
-                    + f"through them.</a>"
-                ), "Visit <a href='https://www.cms.gov/CCIIO/Resources/Consumer-Assistance-Grants/'>CMS for more info</a>"))
+                outside_help_details.append(
+                    (
+                        (
+                            "<a href='https://www.cms.gov/CCIIO/Resources/Consumer-Assistance-Grants/"
+                            + state
+                            + "'>"
+                            + f"Your state {state} participates in a "
+                            + f"Consumer Assistance Program(CAP), and you may be able to get help "
+                            + f"through them.</a>"
+                        ),
+                        "Visit <a href='https://www.cms.gov/CCIIO/Resources/Consumer-Assistance-Grants/'>CMS for more info</a>",
+                    )
+                )
             if denial.regulator == Regulator.objects.filter(alt_name="ERISA").get():
-                outside_help_details.append(((
-                    "Your plan looks to be an ERISA plan which means your employer <i>may</i>"
-                    + " have more input into plan decisions. If your are on good terms with HR "
-                    + " it could be worth it to ask them for advice."
-                ), "Talk to your employer's HR if you are on good terms with them."))
+                outside_help_details.append(
+                    (
+                        (
+                            "Your plan looks to be an ERISA plan which means your employer <i>may</i>"
+                            + " have more input into plan decisions. If your are on good terms with HR "
+                            + " it could be worth it to ask them for advice."
+                        ),
+                        "Talk to your employer's HR if you are on good terms with them.",
+                    )
+                )
             denial.insurance_company = form.cleaned_data["insurance_company"]
             denial.plan_id = form.cleaned_data["plan_id"]
             denial.claim_id = form.cleaned_data["claim_id"]
@@ -298,9 +308,14 @@ class GenerateAppeal(View):
                 denial_id=denial_id, hashed_email=hashed_email
             ).get()
 
-            appeals = list(map(
-                lambda t: t.appeal_text,
-                self.regex_denial_processor.get_appeal_templates(denial.denial_text)))
+            appeals = list(
+                map(
+                    lambda t: t.appeal_text,
+                    self.regex_denial_processor.get_appeal_templates(
+                        denial.denial_text
+                    ),
+                )
+            )
 
             insurance_company = denial.insurance_company or "insurance company;"
             claim_id = denial.claim_id or "YOURCLAIMIDGOESHERE"
@@ -360,10 +375,7 @@ class GenerateAppeal(View):
                         return (model.model_type(), None)
                     return (model.model_type(), model.infer(prompt))
 
-                calls = [
-                    [RemoteOpen, open_prompt],
-                    [RemotePerplexity, open_prompt]
-                ]
+                calls = [[RemoteOpen, open_prompt], [RemotePerplexity, open_prompt]]
                 # If we need to know the medical reason ask our friendly LLMs
                 if "{medical_reason}" in raw_appeal:
                     calls.extend(
@@ -399,10 +411,13 @@ class GenerateAppeal(View):
             def sub_in_appeals(appeal: str) -> str:
                 s = Template(appeal)
                 return s.safe_substitute(
-                    {"insurance_company": denial.insurance_company or "{insurance_company}",
-                     "diagnosis": denial.diagnosis or "{diagnosis}",
-                     "procedure": denial.procedure or "{procedure}",
-                     })
+                    {
+                        "insurance_company": denial.insurance_company
+                        or "{insurance_company}",
+                        "diagnosis": denial.diagnosis or "{diagnosis}",
+                        "procedure": denial.procedure or "{procedure}",
+                    }
+                )
 
             appeals = list(map(sub_in_appeals, appeals))
 

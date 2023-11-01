@@ -1,7 +1,8 @@
-from django import forms
-from captcha.fields import ReCaptchaField
 import os
 
+from django import forms
+
+from captcha.fields import ReCaptchaField
 from fighthealthinsurance.models import DenialTypes, PlanType
 
 
@@ -63,7 +64,10 @@ class PostInferedForm(forms.Form):
         required=False,
     )
 
-    if 'RECAPTCHA_TESTING' not in os.environ or os.environ['RECAPTCHA_TESTING'].lower() != "true":
+    if (
+        "RECAPTCHA_TESTING" not in os.environ
+        or os.environ["RECAPTCHA_TESTING"].lower() != "true"
+    ):
         captcha = ReCaptchaField()
 
 
