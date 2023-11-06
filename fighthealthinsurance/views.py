@@ -271,37 +271,6 @@ class GenerateAppeal(View):
         self.regex_denial_processor = ProcessDenialRegex()
 
     def post(self, request):
-        def make_open_prompt(denial_text=None, procedure=None, diagnosis=None) -> str:
-            start = "Write a health insurance appeal for the following denial:"
-            if (
-                procedure is not None
-                and procedure != ""
-                and diagnosis is not None
-                and diagnosis != ""
-            ):
-                start = f"Write a health insurance appeal for procedure {procedure} with diagnosis {diagnosis} given the following denial:"
-            elif procedure is not None and procedure != "":
-                start = f"Write a health insurance appeal for procedure {procedure} given the following denial:"
-            return f"{start}\n{denial_text}"
-
-        def make_open_llama_med_prompt(procedure=None, diagnosis=None) -> Optional[str]:
-            if procedure is not None:
-                if diagnosis is not None:
-                    return f"Why is {procedure} medically necessary for {diagnosis}?"
-                else:
-                    return f"Why is {procedure} is medically necessary?"
-            else:
-                return None
-
-        def make_biogpt_prompt(procedure=None, diagnosis=None) -> Optional[str]:
-            if procedure is not None:
-                if diagnosis is not None:
-                    return f"{procedure} is medically necessary for {diagnosis} because"
-                else:
-                    return f"{procedure} is medically necessary because"
-            else:
-                return None
-
         form = DenialRefForm(request.POST)
         if form.is_valid():
             denial_id = form.cleaned_data["denial_id"]
@@ -324,10 +293,6 @@ class GenerateAppeal(View):
 
             insurance_company = denial.insurance_company or "insurance company;"
             claim_id = denial.claim_id or "YOURCLAIMIDGOESHERE"
-            denial_date_info = ""
-            if denial.denial_date is not None:
-                denial_date_info = "on or about {denial.denial_date}"
-
             prefaces = []
             main = []
             footer = []
@@ -353,74 +318,16 @@ class GenerateAppeal(View):
                 else:
                     if dt.appeal_text is not None:
                         main.append(dt.appeal_text)
-            # Use LLMS
-            bio_gpt_prompt = make_biogpt_prompt(
-                procedure=denial.procedure, diagnosis=denial.diagnosis
+
+            appeals = AppealGenerator(
+                denial_txt,
+                denial.procedure,
+                denial.diagnosis,
+                AppealTemplateGenerator(prefaces, main, footer),
             )
-            llama_med_prompt = make_open_llama_med_prompt(
-                procedure=denial.procedure, diagnosis=denial.diagnosis
-            )
-            open_prompt = make_open_prompt(
-                denial_text=denial.denial_text,
-                procedure=denial.procedure,
-                diagnosis=denial.diagnosis,
-            )
-
-            medical_reasons = []
-            # The "vanilla" expert system only appeal:
-            raw_appeal = "\n".join(prefaces + main + footer)
-            with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-                generated_futures = []
-
-                # For any model that we have a prompt for try to call it
-                def get_model_result(
-                    model: RemoteModel, prompt: str
-                ) -> (str, Optional[str]):
-                    print(f"Looking up on {model}")
-                    if prompt is None:
-                        print(f"No prompt for {model} skipping")
-                        return (model.model_type(), None)
-                    infered = model.infer(prompt)
-                    t = model.model_type()
-                    print(f"Infered {infered} for {model} using {prompt}")
-                    return (t, infered)
-
-                calls = [[RemoteOpen(), open_prompt], [RemotePerplexity(), open_prompt]]
-                # If we need to know the medical reason ask our friendly LLMs
-                if "{medical_reason}" in raw_appeal:
-                    calls.extend(
-                        [
-                            [RemoteBioGPT(), bio_gpt_prompt],
-                            [RemoteMed(), llama_med_prompt],
-                        ]
-                    )
-                else:
-                    # Otherwise just put in as is.
-                    if raw_appeal != "":
-                        appeals.append(raw_appeal)
-
-                # Executor map wants a list for each parameter.
-                model_calls = list(zip(*calls))
-
-                # We don't get back futures using executor.map but they are still called in parallel.
-                generated: List[(str, Optional[str])] = list(
-                    executor.map(get_model_result, *model_calls)
-                )
-
-                # Get the futures as the become available.
-                for k_text in generated:
-                    k, text = k_text
-                    if text is None:
-                        continue
-                    appeal_text = ""
-                    if k == "full":
-                        appeal_text = text
-                    else:
-                        appeal_text = "\n".join(prefaces + main + footer)
-                        appeal_text = appeal_text.replace("{medical_reason}", text)
-                    appeals.append(appeal_text)
-                    # Save all of the proposed appeals, so we can use RL later.
-                    pa = ProposedAppeal(appeal_text=appeal_text, for_denial=denial)
+            for appeal_text in appeals:
+                # Save all of the proposed appeals, so we can use RL later.
+                pa = ProposedAppeal(appeal_text=appeal_text, for_denial=denial)
 
             def sub_in_appeals(appeal: str) -> str:
                 s = Template(appeal)
