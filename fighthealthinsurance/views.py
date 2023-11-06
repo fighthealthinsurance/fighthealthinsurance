@@ -273,7 +273,12 @@ class GenerateAppeal(View):
     def post(self, request):
         def make_open_prompt(denial_text=None, procedure=None, diagnosis=None) -> str:
             start = "Write a health insurance appeal for the following denial:"
-            if procedure is not None and procedure != "" and diagnosis is not None and diagnosis != "":
+            if (
+                procedure is not None
+                and procedure != ""
+                and diagnosis is not None
+                and diagnosis != ""
+            ):
                 start = f"Write a health insurance appeal for procedure {procedure} with diagnosis {diagnosis} given the following denial:"
             elif procedure is not None and procedure != "":
                 start = f"Write a health insurance appeal for procedure {procedure} given the following denial:"
@@ -380,14 +385,14 @@ class GenerateAppeal(View):
                     print(f"Infered {infered} for {model} using {prompt}")
                     return (t, infered)
 
-                calls = [
-                    [RemoteOpen(), open_prompt],
-                    [RemotePerplexity(), open_prompt]
-                ]
+                calls = [[RemoteOpen(), open_prompt], [RemotePerplexity(), open_prompt]]
                 # If we need to know the medical reason ask our friendly LLMs
                 if "{medical_reason}" in raw_appeal:
                     calls.extend(
-                        [[RemoteBioGPT(), bio_gpt_prompt], [RemoteMed(), llama_med_prompt]]
+                        [
+                            [RemoteBioGPT(), bio_gpt_prompt],
+                            [RemoteMed(), llama_med_prompt],
+                        ]
                     )
                 else:
                     # Otherwise just put in as is.
@@ -398,9 +403,9 @@ class GenerateAppeal(View):
                 model_calls = list(zip(*calls))
 
                 # We don't get back futures using executor.map but they are still called in parallel.
-                generated: List[(str, Optional[str])] = list(executor.map(
-                    get_model_result, *model_calls
-                ))
+                generated: List[(str, Optional[str])] = list(
+                    executor.map(get_model_result, *model_calls)
+                )
 
                 # Get the futures as the become available.
                 for k_text in generated:

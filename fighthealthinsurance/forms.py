@@ -132,7 +132,9 @@ class MedicalNeccessaryQuestions(InsuranceQuestions):
 
     def main(self):
         reason = self.generate_reason()
-        return [f"I understand that my claim was denied as not medically necessary, however I believe it is for {reason}."]
+        return [
+            f"I understand that my claim was denied as not medically necessary, however I believe it is for {reason}."
+        ]
 
 
 class ExperimentalQuestions(MedicalNeccessaryQuestions):
