@@ -111,6 +111,7 @@ class RemoveDataView(View):
             email = form.cleaned_data["email"]
             hashed_email = hashlib.sha512(email.encode("utf-8")).hexdigest()
             denials = Denial.objects.filter(hashed_email=hashed_email).delete()
+            FollowUpSched.objects.filter(email=email).delete()
             return render(
                 request,
                 "removed_data.html",

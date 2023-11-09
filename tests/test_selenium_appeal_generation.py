@@ -4,6 +4,7 @@ import pytest
 from django.contrib.staticfiles.testing import StaticLiveServerTestCase
 from seleniumbase import BaseCase
 import time
+from fighthealthinsurance.models import *
 BaseCase.main(__name__, __file__)
 
 
@@ -94,10 +95,10 @@ Cheap-O-Insurance-Corp""")
             hashed_email=hashed_email).count()
         assert(denials_for_user_count > 0)
         self.click('a[id="removedata"]')
-        self.assert_title("Delete your Data")
-        self.type("input#email", email)
+        self.assert_title("Delete Your Data")
+        self.type("input#id_email", email)
         self.click("button#submit")
-        self.assert_title("Deleted")
+        self.assert_title("Deleted Your Data")
         denials_for_user_count = Denial.objects.filter(
             hashed_email=hashed_email).count()
         assert(denials_for_user_count == 0)
