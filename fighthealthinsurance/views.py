@@ -101,12 +101,34 @@ class RemoveDataView(View):
             "remove_data.html",
             context={
                 "title": "Remove My Data",
+                "form": DeleteDataForm(),
             },
         )
 
     def post(self, request):
-        email = request.POST.get("email")
-        # ... handle further logic here.
+        form = DeleteDataForm(request.POST)
+        if form.is_valid():
+            email = form.cleaned_data["email"]
+            hashed_email = hashlib.sha512(email.encode("utf-8")).hexdigest()
+            denials = Denial.objects.filter(
+                hashed_email=hashed_email).delete()
+            return render(
+                request,
+                "removed_data.html",
+                context={
+                    "title": "Remove My Data",
+                },
+            )
+        else: 
+            return render(
+                request,
+                "remove_data.html",
+                context={
+                    "title": "Remove My Data",
+                    "form": form,
+                },
+            )
+           
 
 
 class RecommendAppeal(View):

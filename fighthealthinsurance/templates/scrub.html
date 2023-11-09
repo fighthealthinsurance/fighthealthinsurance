@@ -90,7 +90,10 @@ Upload your Health Insurance Denial
 		</label>
 		<br>
 		<input type="checkbox" id="pii" name="pii" class="form-check-input">
-		<label for="pii" class="form-check-label">I have removed my PII from the text area above</label>
+		<label for="pii" class="form-check-label">I have removed my PII (Personal Identifiable Information) from the text area above</label>
+		<br>
+		<input type="checkbox" id="tos" name="tos" class="form-check-input">
+		<label for="tos" class="form-check-label">I <a href="{% url 'tos' %}">agree to the terms of service</a> and will only use this website to generate my own health insurance appeals and will not use this website to to treat, diagnose any disease or condition or asist in either of those.</label>
 		<br>
 		<input type="checkbox" id="store_raw_email" name="store_raw_email" value="checked" class="form-check-input">
 		<label for="store_raw_email" class="form-check-label">

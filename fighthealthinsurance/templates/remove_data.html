@@ -12,11 +12,10 @@ Delete Your Data
                 <h2>Delete your Data</h2>
                 <p>Please enter the e-mail you used when submitting your data and we will delete your data.</p>
                 <form action="{% url 'remove_data' %}" method="post" class="d-flex flex-column align-items-start">
-                    {% csrf_token %}
-                    <div class="form-group d-flex flex-column align-items-start">
-                        <label for="email" class="">Email Address</label>
-                        <input type="email" name="email" id="email" class="form-control" required>
-                    </div>
+                  {% csrf_token %}
+		  <table>
+		    {{ form.as_table }}
+		  </table>
                     <div class="form-group mt-2">
                         <button type="submit" class="btn btn-green">Delete</button>
                     </div>

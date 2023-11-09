@@ -6,6 +6,10 @@ from captcha.fields import ReCaptchaField
 from fighthealthinsurance.models import DenialTypes, PlanType
 
 
+class DeleteDataForm(forms.Form):
+    email = forms.CharField(required=True)
+
+
 class ShareAppealForm(forms.Form):
     denial_id = forms.IntegerField(required=True, widget=forms.HiddenInput())
     email = forms.CharField(required=True, widget=forms.HiddenInput())
@@ -21,6 +25,7 @@ class ChooseAppealForm(forms.Form):
 class DenialForm(forms.Form):
     zip = forms.CharField(required=False)
     pii = forms.BooleanField(required=True)
+    tos = forms.BooleanField(required=True)
     privacy = forms.BooleanField(required=True)
     store_raw_email = forms.BooleanField(required=False)
     denial_text = forms.CharField(required=True)
