@@ -327,7 +327,7 @@ class AppealGenerator(object):
         self.regex_denial_processor = ProcessDenialRegex()
         self.perplexity = RemotePerplexityInstruct()
         self.anyscale = RemoteOpen()
-        self.biogpt = 
+        self.biogpt = RemoteBioGPT()
 
     def make_open_prompt(self, denial_text=None, procedure=None, diagnosis=None) -> str:
         start = "Write a health insurance appeal for the following denial:"
