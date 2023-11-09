@@ -110,8 +110,7 @@ class RemoveDataView(View):
         if form.is_valid():
             email = form.cleaned_data["email"]
             hashed_email = hashlib.sha512(email.encode("utf-8")).hexdigest()
-            denials = Denial.objects.filter(
-                hashed_email=hashed_email).delete()
+            denials = Denial.objects.filter(hashed_email=hashed_email).delete()
             return render(
                 request,
                 "removed_data.html",
@@ -119,7 +118,7 @@ class RemoveDataView(View):
                     "title": "Remove My Data",
                 },
             )
-        else: 
+        else:
             return render(
                 request,
                 "remove_data.html",
@@ -128,7 +127,6 @@ class RemoveDataView(View):
                     "form": form,
                 },
             )
-           
 
 
 class RecommendAppeal(View):
