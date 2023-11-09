@@ -146,7 +146,7 @@ class RemoteOpenLike(RemoteModel):
         self.token = token
         self.model = model
         self.system_message = system_message
-    
+
     @cache
     def infer(self, prompt) -> Optional[str]:
         print(f"Looking up model {self.model} using {self.api_base}")
@@ -190,7 +190,6 @@ class RemoteFullOpenLike(RemoteOpenLike):
     def __init__(self, api_base, token, model):
         system_message = "You have a deep medical knowledge write appeals for health insurance denials. You are a patient, not a doctor. You are writing on behalf of yourself. You write directly, in the style of patio11 or a bureaucrat but never get mad at the insurance companies. Feel free to speculate why it might be megically necessary. Use YourNameMagic in place of your name, SCSID for the subscriber id, and GPID as the group id."
         return super(self).__init__(api_base, token, model, system_message)
-
 
     def model_type(self) -> str:
         return "full"
@@ -320,7 +319,7 @@ class AppealTemplateGenerator(object):
 
     def generate(self, medical_reason):
         return self.combined.replace("{medical_reason}", medical_reason)
-        
+
 
 class AppealGenerator(object):
     def __init__(self):
@@ -331,16 +330,20 @@ class AppealGenerator(object):
 
     def make_open_prompt(self, denial_text=None, procedure=None, diagnosis=None) -> str:
         start = "Write a health insurance appeal for the following denial:"
-        if (procedure is not None
+        if (
+            procedure is not None
             and procedure != ""
             and diagnosis is not None
-            and diagnosis != ""):
+            and diagnosis != ""
+        ):
             start = f"Write a health insurance appeal for procedure {procedure} with diagnosis {diagnosis} given the following denial:"
         elif procedure is not None and procedure != "":
             start = f"Write a health insurance appeal for procedure {procedure} given the following denial:"
         return f"{start}\n{denial_text}"
 
-    def make_open_llama_med_prompt(self, procedure=None, diagnosis=None) -> Optional[str]:
+    def make_open_llama_med_prompt(
+        self, procedure=None, diagnosis=None
+    ) -> Optional[str]:
         if procedure is not None:
             if diagnosis is not None:
                 return f"Why is {procedure} medically necessary for {diagnosis}?"
@@ -357,7 +360,6 @@ class AppealGenerator(object):
                 return f"{procedure} is medically necessary because"
         else:
             return None
-
 
     def make_appeals(self, denial_text, insurnace_company, claim_id, denial_date, t):
         denial_date_info = ""
@@ -384,7 +386,7 @@ class AppealGenerator(object):
 
             # For any model that we have a prompt for try to call it
             def get_model_result(
-                    model: RemoteModel, prompt: str
+                model: RemoteModel, prompt: str
             ) -> (str, Optional[str]):
                 print(f"Looking up on {model}")
                 if prompt is None:
