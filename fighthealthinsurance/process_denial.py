@@ -425,6 +425,7 @@ class AppealGenerator(object):
         )
 
         medical_reasons = []
+        # TODO: use the streaming and cancellable APIs (maybe some fancy JS on the client side?)
         with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
             generated_futures = []
 
