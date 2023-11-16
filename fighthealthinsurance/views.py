@@ -342,7 +342,7 @@ class GenerateAppeal(View):
                     if dt.appeal_text is not None:
                         main.append(dt.appeal_text)
 
-            appeals = appealGenerator.make_appeals(
+            appeals += appealGenerator.make_appeals(
                 denial,
                 AppealTemplateGenerator(prefaces, main, footer),
             )

@@ -3,7 +3,7 @@ import csv
 import os
 import re
 from abc import ABC, abstractmethod
-from functools import cache
+from functools import cache, lru_cache
 from typing import Optional
 
 import icd10
@@ -144,9 +144,12 @@ class RemoteRunPod(RemoteModel):
     def __init__(self):
         self.model_name = os.getenv("RUNPOD_ENDPOINT", "")
         self.token = os.getenv("RUNPOD_API_KEY", "")
+        self.internal_cache = {}
 
-    @cache
     def infer(self, prompt) -> Optional[str]:
+        if prompt in self.internal_cache and self.internal_cache[prompt] is not None:
+            print(f"Using cached value for f{prompt} to avoid runpod.")
+            return self.internal_cache[prompt]
         print(f"Looking up runpod {self.model_name}")
         if self.token is None:
             print("Error no Token provided for runpod.")
@@ -174,6 +177,7 @@ class RemoteRunPod(RemoteModel):
             return None
         try:
             r = json_result["output"]["result"]
+            self.internal_cache[prompt] = r
             return r
         except Exception as e:
             print(f"Error {e} processing {json_result} from runpod.")
@@ -354,9 +358,11 @@ class AppealTemplateGenerator(object):
         self.prefaces = prefaces
         self.main = main
         self.footer = footer
-        self.combined = "\n".join(prefaces + main + footer)
+        self.combined = str("\n".join(prefaces + main + footer))
+        print(f"Template {self.combined} on {self} ")
 
     def generate_static(self):
+        print(f"Generating static on {self} sending back {self.combined}")
         if "{medical_reason}" not in self.combined:
             return self.combined
         else:
@@ -442,7 +448,7 @@ class AppealGenerator(object):
             # If we need to know the medical reason ask our friendly LLMs
             static_appeal = t.generate_static()
             appeals = []
-            if static_appeal is not None:
+            if static_appeal is None:
                 calls.extend(
                     [
                         [self.biogpt, bio_gpt_prompt],
@@ -472,5 +478,6 @@ class AppealGenerator(object):
                     appeal_text = t.generate(text)
                 if appeal_text is not None:
                     appeals.append(appeal_text)
+            print(f"Sending back {appeals}")
             return appeals
 
