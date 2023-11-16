@@ -140,6 +140,7 @@ class RemoteMed(RemoteModel):
     def model_type(self) -> str:
         return "med_reason"
 
+
 class RemoteRunPod(RemoteModel):
     def __init__(self):
         self.model_name = os.getenv("RUNPOD_ENDPOINT", "")
@@ -165,11 +166,7 @@ class RemoteRunPod(RemoteModel):
             json_result = s.post(
                 url,
                 headers={"Authorization": f"Bearer {self.token}"},
-                json={
-                    "input": {
-                        "prompt": prompt
-                    }
-                }
+                json={"input": {"prompt": prompt}},
             ).json()
             print(f"jr {json_result} on runpod.")
         except Exception as e:
@@ -480,4 +477,3 @@ class AppealGenerator(object):
                     appeals.append(appeal_text)
             print(f"Sending back {appeals}")
             return appeals
-
