@@ -230,7 +230,7 @@ class RemoteOpenLike(RemoteModel):
 class RemoteFullOpenLike(RemoteOpenLike):
     def __init__(self, api_base, token, model):
         system_message = "You have a deep medical knowledge write appeals for health insurance denials. You are a patient, not a doctor. You are writing on behalf of yourself. You write directly, in the style of patio11 or a bureaucrat but never get mad at the insurance companies. Feel free to speculate why it might be megically necessary. Use YourNameMagic in place of your name, SCSID for the subscriber id, and GPID as the group id."
-        return super(self).__init__(api_base, token, model, system_message)
+        return super().__init__(api_base, token, model, system_message)
 
     def model_type(self) -> str:
         return "full"
@@ -239,7 +239,7 @@ class RemoteFullOpenLike(RemoteOpenLike):
 class RemoteMedicalNecessaryOpenLike(RemoteOpenLike):
     def __init__(self, api_base, token, model):
         system_message = "You have a deep medical knowledge write appeals for health insurance denials. You have a health insurance denial, what is the treatment and why is it medically necessary?"
-        return super(self).__init__(api_base, token, model, system_message)
+        super().__init__(api_base, token, model, system_message)
 
 
 class RemotePerplexityInstruct(RemoteFullOpenLike):
@@ -249,7 +249,7 @@ class RemotePerplexityInstruct(RemoteFullOpenLike):
         api_base = "https://api.perplexity.ai"
         token = os.getenv("PERPLEXITY_API")
         model = "mistral-7b-instruct"
-        return super(self).__init__(api_base, token, model)
+        super().__init__(api_base, token, model)
 
 
 class RemoteOpen(RemoteFullOpenLike):
@@ -259,7 +259,7 @@ class RemoteOpen(RemoteFullOpenLike):
         api_base = os.getenv("OPENAI_API_BASE")
         token = os.getenv("OPENAI_API_KEY")
         model = "meta-llama/Llama-2-70b-chat-hf"
-        return super(self).__init__(api_base, token, model)
+        super().__init__(api_base, token, model)
 
 
 class ProcessDenialRegex(DenialBase):
@@ -476,3 +476,4 @@ class AppealGenerator(object):
             if appeal_text is not None:
                 appeals.append(appeal_text)
             return appeals
+
