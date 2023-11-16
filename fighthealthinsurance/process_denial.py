@@ -139,6 +139,47 @@ class RemoteMed(RemoteModel):
     def model_type(self) -> str:
         return "med_reason"
 
+class RemoteRunPod(RemoteModel):
+    def __init__(self):
+        self.model_name = os.getenv("RUNPOD_ENDPOINT", ""))
+        self.token = os.getenv("RUNPOD_API_KEY", "")
+
+    @cache
+    def infer(self, prompt) -> Optional[str]:
+        print(f"Looking up model {self.model} using {self.api_base}")
+        if self.token is None:
+            print("Error no Token provided for runpod.")
+
+        if prompt is None:
+            print("Error: must supply a prompt.")
+            return None
+        url = f"https://api.runpod.ai/v2/{model_name}/runsync"
+        try:
+            import requests
+
+            s = requests.Session()
+            json_result = s.post(
+                url,
+                headers={"Authorization": f"Bearer {self.token}"},
+                json={
+                    "input": {
+                        "prompt": prompt
+                    }
+                }
+            ).json()
+        except Exception as e:
+            print(f"Error {e} calling runpod")
+            return None
+        try:
+            r = json_result["result"]
+            return r
+        except Exception as e:
+            print(f"Error {e} processing {json_result} from runpod.")
+            return None
+
+    def model_type(self) -> str:
+        return "full"
+
 
 class RemoteOpenLike(RemoteModel):
     def __init__(self, api_base, token, model, system_message):
@@ -327,6 +368,7 @@ class AppealGenerator(object):
         self.perplexity = RemotePerplexityInstruct()
         self.anyscale = RemoteOpen()
         self.biogpt = RemoteBioGPT()
+        self.runpod = RemoteRunPod()
 
     def make_open_prompt(self, denial_text=None, procedure=None, diagnosis=None) -> str:
         start = "Write a health insurance appeal for the following denial:"
@@ -397,13 +439,12 @@ class AppealGenerator(object):
                 print(f"Infered {infered} for {model} using {prompt}")
                 return (t, infered)
 
-            calls = [[RemoteOpen(), open_prompt], [RemotePerplexity(), open_prompt]]
+            calls = [[self.perplexity, open_prompt], [self.runpod, open_prompt]]
             # If we need to know the medical reason ask our friendly LLMs
             if "{medical_reason}" in raw_appeal:
                 calls.extend(
                     [
-                        [RemoteBioGPT(), bio_gpt_prompt],
-                        [RemoteMed(), llama_med_prompt],
+                        [self.biogpt, bio_gpt_prompt],
                     ]
                 )
             else:
