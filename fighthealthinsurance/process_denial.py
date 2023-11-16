@@ -1,3 +1,4 @@
+import concurrent
 import csv
 import os
 import re
@@ -141,19 +142,19 @@ class RemoteMed(RemoteModel):
 
 class RemoteRunPod(RemoteModel):
     def __init__(self):
-        self.model_name = os.getenv("RUNPOD_ENDPOINT", ""))
+        self.model_name = os.getenv("RUNPOD_ENDPOINT", "")
         self.token = os.getenv("RUNPOD_API_KEY", "")
 
     @cache
     def infer(self, prompt) -> Optional[str]:
-        print(f"Looking up model {self.model} using {self.api_base}")
+        print(f"Looking up runpod {self.model_name}")
         if self.token is None:
             print("Error no Token provided for runpod.")
 
         if prompt is None:
             print("Error: must supply a prompt.")
             return None
-        url = f"https://api.runpod.ai/v2/{model_name}/runsync"
+        url = f"https://api.runpod.ai/v2/{self.model_name}/runsync"
         try:
             import requests
 
@@ -167,11 +168,12 @@ class RemoteRunPod(RemoteModel):
                     }
                 }
             ).json()
+            print(f"jr {json_result} on runpod.")
         except Exception as e:
             print(f"Error {e} calling runpod")
             return None
         try:
-            r = json_result["result"]
+            r = json_result["output"]["result"]
             return r
         except Exception as e:
             print(f"Error {e} processing {json_result} from runpod.")
@@ -201,11 +203,11 @@ class RemoteOpenLike(RemoteModel):
             import requests
 
             s = requests.Session()
-            json_result = s.post(
+            result = s.post(
                 url,
                 headers={"Authorization": f"Bearer {self.token}"},
                 json={
-                    "model": model,
+                    "model": self.model,
                     "messages": [
                         {
                             "role": "system",
@@ -215,7 +217,9 @@ class RemoteOpenLike(RemoteModel):
                     ],
                     "temperature": 0.7,
                 },
-            ).json()
+            )
+            print(f"Got {result} on {self.api_base}")
+            json_result = result.json()
         except Exception as e:
             print(f"Error {e} calling {self.api_base}")
             return None
@@ -403,26 +407,21 @@ class AppealGenerator(object):
         else:
             return None
 
-    def make_appeals(self, denial_text, insurnace_company, claim_id, denial_date, t):
-        denial_date_info = ""
-        if denial_date is not None:
-            denial_date_info = "on or about {denial_date}"
+    def make_appeals(self, denial, t):
         # Use LLMS
-        bio_gpt_prompt = make_biogpt_prompt(
+        bio_gpt_prompt = self.make_biogpt_prompt(
             procedure=denial.procedure, diagnosis=denial.diagnosis
         )
-        llama_med_prompt = make_open_llama_med_prompt(
+        llama_med_prompt = self.make_open_llama_med_prompt(
             procedure=denial.procedure, diagnosis=denial.diagnosis
         )
-        open_prompt = make_open_prompt(
+        open_prompt = self.make_open_prompt(
             denial_text=denial.denial_text,
             procedure=denial.procedure,
             diagnosis=denial.diagnosis,
         )
 
         medical_reasons = []
-        # The "vanilla" expert system only appeal:
-        raw_appeal = "\n".join(prefaces + main + footer)
         with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
             generated_futures = []
 
@@ -441,7 +440,9 @@ class AppealGenerator(object):
 
             calls = [[self.perplexity, open_prompt], [self.runpod, open_prompt]]
             # If we need to know the medical reason ask our friendly LLMs
-            if "{medical_reason}" in raw_appeal:
+            static_appeal = t.generate_static()
+            appeals = []
+            if static_appeal is not None:
                 calls.extend(
                     [
                         [self.biogpt, bio_gpt_prompt],
@@ -449,8 +450,7 @@ class AppealGenerator(object):
                 )
             else:
                 # Otherwise just put in as is.
-                if raw_appeal != "":
-                    appeals.append(raw_appeal)
+                appeals.append(static_appeal)
 
             # Executor map wants a list for each parameter.
             model_calls = list(zip(*calls))
@@ -472,8 +472,5 @@ class AppealGenerator(object):
                     appeal_text = t.generate(text)
                 if appeal_text is not None:
                     appeals.append(appeal_text)
-            appeal_text = appeals.generate_static()
-            if appeal_text is not None:
-                appeals.append(appeal_text)
             return appeals
 

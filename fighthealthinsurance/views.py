@@ -24,6 +24,8 @@ from fighthealthinsurance.models import *
 from fighthealthinsurance.process_denial import *
 from fighthealthinsurance.utils import *
 
+appealGenerator = AppealGenerator()
+
 
 class IndexView(View):
     def get(self, request):
@@ -340,10 +342,8 @@ class GenerateAppeal(View):
                     if dt.appeal_text is not None:
                         main.append(dt.appeal_text)
 
-            appeals = AppealGenerator(
-                denial_txt,
-                denial.procedure,
-                denial.diagnosis,
+            appeals = appealGenerator.make_appeals(
+                denial,
                 AppealTemplateGenerator(prefaces, main, footer),
             )
             for appeal_text in appeals:
@@ -361,13 +361,14 @@ class GenerateAppeal(View):
                     }
                 )
 
-            appeals = list(map(sub_in_appeals, appeals))
+            filtered_appeals = filter(lambda x: x is not None, appeals)
+            subbed_appeals = list(map(sub_in_appeals, filtered_appeals))
 
             return render(
                 request,
                 "appeals.html",
                 context={
-                    "appeals": appeals,
+                    "appeals": subbed_appeals,
                     "user_email": email,
                     "denial_id": denial_id,
                 },
