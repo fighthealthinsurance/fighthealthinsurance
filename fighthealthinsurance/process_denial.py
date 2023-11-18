@@ -1,3 +1,4 @@
+import itertools
 import concurrent
 import csv
 import os
@@ -16,6 +17,9 @@ from fighthealthinsurance.models import (
     Procedures,
     Regulator,
 )
+
+executor = concurrent.futures.ThreadPoolExecutor(max_workers=50)
+
 
 # Process all of our "expert system" rules.
 
@@ -426,55 +430,58 @@ class AppealGenerator(object):
 
         medical_reasons = []
         # TODO: use the streaming and cancellable APIs (maybe some fancy JS on the client side?)
-        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-            generated_futures = []
+        generated_futures = []
 
-            # For any model that we have a prompt for try to call it
-            def get_model_result(
+        # For any model that we have a prompt for try to call it
+        def get_model_result(
                 model: RemoteModel, prompt: str
-            ) -> (str, Optional[str]):
-                print(f"Looking up on {model}")
-                if prompt is None:
-                    print(f"No prompt for {model} skipping")
-                    return (model.model_type(), None)
-                infered = model.infer(prompt)
-                t = model.model_type()
-                print(f"Infered {infered} for {model} using {prompt}")
-                return (t, infered)
+        ) -> (str, Optional[str]):
+            print(f"Looking up on {model}")
+            if prompt is None:
+                print(f"No prompt for {model} skipping")
+                return (model.model_type(), None)
+            infered = model.infer(prompt)
+            t = model.model_type()
+            print(f"Infered {infered} for {model} using {prompt}")
+            return (t, infered)
 
-            calls = [[self.perplexity, open_prompt], [self.runpod, open_prompt]]
-            # If we need to know the medical reason ask our friendly LLMs
-            static_appeal = t.generate_static()
-            appeals = []
-            if static_appeal is None:
-                calls.extend(
-                    [
-                        [self.biogpt, bio_gpt_prompt],
-                    ]
+        calls = [[self.perplexity, open_prompt], [self.runpod, open_prompt]]
+        # If we need to know the medical reason ask our friendly LLMs
+        static_appeal = t.generate_static()
+        appeals = []
+        if static_appeal is None:
+            calls.extend(
+                [
+                    [self.biogpt, bio_gpt_prompt],
+                ]
                 )
+        else:
+            # Otherwise just put in as is.
+            appeals.append(static_appeal)
+
+        # Executor map wants a list for each parameter.
+
+        print(f"Calling models: {calls}")
+        generated_futures = map(
+            lambda x: executor.submit(get_model_result, *x),
+            calls)
+
+        def generated_to_appeals_text(k_text):
+            k, text = k_text.result()
+            if text is None:
+                return text
+            appeal_text = ""
+            # It's either full or a reason to plug into a template
+            if k == "full":
+                appeal_text = text
             else:
-                # Otherwise just put in as is.
-                appeals.append(static_appeal)
+                appeal_text = t.generate(text)
+            return appeal_text
 
-            # Executor map wants a list for each parameter.
-            model_calls = list(zip(*calls))
+        generated_text = map(
+            generated_to_appeals_text,
+            concurrent.futures.as_completed(generated_futures))
 
-            # We don't get back futures using executor.map but they are still called in parallel.
-            generated: List[(str, Optional[str])] = list(
-                executor.map(get_model_result, *model_calls)
-            )
-
-            # Get the futures as the become available.
-            for k_text in generated:
-                k, text = k_text
-                if text is None:
-                    continue
-                appeal_text = ""
-                if k == "full":
-                    appeal_text = text
-                else:
-                    appeal_text = t.generate(text)
-                if appeal_text is not None:
-                    appeals.append(appeal_text)
-            print(f"Sending back {appeals}")
-            return appeals
+        appeals = itertools.chain(appeals, generated_text)
+        print(f"Sending back {appeals}")
+        return appeals

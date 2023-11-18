@@ -4,23 +4,130 @@
 Fight Your Health Insurnace Denial
 {% endblock title %}
 
+{% block pre-roll %}
+<!-- This JS is partiall writen by AI -->
+<script>
+$(document).ready(function() {
+    // Where the forms go
+    var outputContainer = $('#output-container');
+    var resp_buffer = '';
+    var appeal_id = 0;
+    var appeals_so_far = [];
+
+    let process_chunk = function(chunk) {
+ 	resp_buffer += chunk;
+	if (resp_buffer.includes('\n')) {
+	    let lastIndex = resp_buffer.lastIndexOf('\n');
+	    let current = resp_buffer.substring(0, lastIndex);
+	    resp_buffer = resp_buffer.substring(lastIndex);
+	    let lines = current.split('\n');
+	    lines.forEach(function(line) {
+		console.log("Parsing line:")
+		console.log(line)
+		if (line == "" || line == "\n") {
+		    console.log("Skipping");
+		    return;
+		}
+		appeal_id = appeal_id + 1
+		let j = JSON.parse(line);
+		if (appeals_so_far.includes(j)) {
+		    console.log("Already have this one.");
+		    return;
+		} else {
+		    appeals_so_far.push(j);
+		}
+		// Clone the base form template
+		var $clonedForm = $('#base-form').clone().prop(
+		    "id", "magic" + appeal_id);
+		console.log("Cloned form:");
+		console.log($clonedForm);
+		outputContainer.append( $clonedForm );
+		var clonedForm = $("#" + "magic" + appeal_id);
+		console.log("Found");
+		console.log(clonedForm);
+		
+		// Display the cloned form
+		clonedForm.removeAttr('style');  // Remove the "display: none" style
+		// $('#form-container' + appeal_id).html(clonedForm);
+		// Fill in the textarea value from the response
+		appealTextElem = clonedForm.find("textarea");
+		// WTF javascript why don't you work?
+		form = clonedForm.find("form");
+		form.prop("id", "form_" + appeal_id);
+		console.log("Looking for our friend:");
+		console.log(appealTextElem);
+		appealTextElem.text(j);
+		appealTextElem.val(j);
+		appealTextElem.value = j;
+		appealTextElem.prop("form", "form_" + appeal_id);
+		appealTextElem.prop("textContent", j);
+		console.log("Value should now be:");
+		console.log(j);
+		console.log("We have:");
+		console.log(appealTextElem);
+	    })
+	} else {
+	    console.log("Waiting for a full line")
+	}
+    };
+
+    // Make AJAX request to Django endpoint with the specified ID
+    $.ajax({
+        url: "{% url 'appeals_json_backend' %}",
+        type: 'POST',
+        data: {
+	    'denial_id': "{{ denial_id }}",
+	    'email': "{{ email }}",
+	    'csrfmiddlewaretoken': '{{ csrf_token }}',
+	    'timbit': 'is awesome'},
+	contentType: 'application/x-www-form-urlencoded',
+	dataType: "text", // dataType is response.
+	processData: true,
+	xhr: function() {
+	    console.log("Registering xhr function!");
+	    var xhr = new XMLHttpRequest();
+	    
+	    xhr.addEventListener(
+		'progress',
+		function(event) {
+		    var chunk = event.currentTarget.responseText;
+		    process_chunk(chunk);
+		}
+	    )
+	    console.log("Registered XHR func :D");
+	    return xhr;
+	},
+	success: function(response) {
+	    console.log("Sucess?");
+            console.log(response);
+	    process_chunk(response);
+        },
+	error: function(err) {
+	    console.log("Error :(");
+	    console.log(err);
+	}});
+});
+</script>
+{% endblock pre-roll %}
+
 {% block content %}
 Huzzah! We have a few different <b>draft</b> appeal for you to choose from:
 
 <p>
   When you choose a specific appeal we <b>save that appeal to our database for model training and review</b>.
 </p>
-{% for appeal in appeals %}
-<form action="{% url 'choose_appeal' %}" method="post" class="col-md-12 d-flex flex-column align-items-center">
+<div id="base-form" style="display: none;">
+<form action="{% url 'choose_appeal' %}" method="post" class="col-md-12 d-flex flex-column align-items-center" id="form">
   {% csrf_token %}
   <input type="hidden" name="email" value="{{ user_email }}">
   <input type="hidden" name="denial_id" value="{{ denial_id }}">
 
-  <textarea style="width:100%" rows="20" name="appeal_text" id="appeal_text_{{ forloop.counter }}">
-    {{appeal}}
+  <textarea style="width:100%" rows="20" name="appeal_text" id="appeal_text" form="nope">
   </textarea>
 
-  <button type="submit_{{ forloop.counter }}" class="btn btn-green">Choose This One</button>
+  <button type="submit" class="btn btn-green">Choose This One</button>
 </form>
-{% endfor %}
+</div>
+<div id="output-container">
+</div>
 {% endblock content %}

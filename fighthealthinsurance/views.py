@@ -6,11 +6,19 @@ from io import BytesIO
 from string import Template
 from typing import *
 
+import time
+
+import itertools
+
+from asgiref.sync import async_to_sync
+import json
+
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
 from django.contrib.staticfiles import finders
 from django.contrib.staticfiles.storage import staticfiles_storage
+from django.http import StreamingHttpResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils.decorators import method_decorator
@@ -288,13 +296,39 @@ class ChooseAppeal(View):
                 },
             )
 
-
 class GenerateAppeal(View):
+    def post(self, request):
+        form = DenialRefForm(request.POST)
+        if form.is_valid():
+            denial_id = form.cleaned_data["denial_id"]
+            email = form.cleaned_data["email"]
+            hashed_email = hashlib.sha512(email.encode("utf-8")).hexdigest()
+            return render(
+                request,
+                "appeals.html",
+                context={
+                    "user_email": email,
+                    "email": email,
+                    "denial_id": denial_id,
+                })
+        else:
+            # TODO: Send user back to fix the form.
+            pass
+
+class AppealsBackend(View):
+    """Streaming back the appeals as json :D"""
     def __init__(self):
         self.regex_denial_processor = ProcessDenialRegex()
 
     def post(self, request):
         form = DenialRefForm(request.POST)
+        return self.handle_for_form(request, form)
+
+    def get(self, request):
+        form = DenialRefForm(request.GET)
+        return self.handle_for_form(request, form)
+        
+    def handle_for_form(self, request, form):
         if form.is_valid():
             denial_id = form.cleaned_data["denial_id"]
             email = form.cleaned_data["email"]
@@ -305,7 +339,7 @@ class GenerateAppeal(View):
                 denial_id=denial_id, hashed_email=hashed_email
             ).get()
 
-            appeals = list(
+            non_ai_appeals = list(
                 map(
                     lambda t: t.appeal_text,
                     self.regex_denial_processor.get_appeal_templates(
@@ -342,17 +376,26 @@ class GenerateAppeal(View):
                     if dt.appeal_text is not None:
                         main.append(dt.appeal_text)
 
-            appeals += appealGenerator.make_appeals(
-                denial,
-                AppealTemplateGenerator(prefaces, main, footer),
-            )
-            for appeal_text in appeals:
+            appeals = itertools.chain(
+                non_ai_appeals,
+                ["test"],
+                appealGenerator.make_appeals(
+                    denial,
+                    AppealTemplateGenerator(prefaces, main, footer),
+                ))
+            
+            def save_appeal(appeal_text):
                 # Save all of the proposed appeals, so we can use RL later.
+                t = time.time()
+                print(f"{t}: Saving {appeal_text}")
                 pa = ProposedAppeal(appeal_text=appeal_text, for_denial=denial)
+                return appeal_text
+
+            saved_appeals = map(save_appeal, appeals)
 
             def sub_in_appeals(appeal: str) -> str:
                 s = Template(appeal)
-                return s.safe_substitute(
+                ret = s.safe_substitute(
                     {
                         "insurance_company": denial.insurance_company
                         or "{insurance_company}",
@@ -360,19 +403,19 @@ class GenerateAppeal(View):
                         "procedure": denial.procedure or "{procedure}",
                     }
                 )
+                return ret
 
-            filtered_appeals = filter(lambda x: x is not None, appeals)
-            subbed_appeals = list(map(sub_in_appeals, filtered_appeals))
+            filtered_appeals = filter(lambda x: x != None, saved_appeals)
+            subbed_appeals = map(sub_in_appeals, filtered_appeals)
+            subbed_appeals_json = map(
+                lambda e: json.dumps(e) + "\n",
+                subbed_appeals)
+            return StreamingHttpResponse(
+                subbed_appeals_json,
+                content_type="application/json")
+        else:
+            print(f"form {form} is not valid")
 
-            return render(
-                request,
-                "appeals.html",
-                context={
-                    "appeals": subbed_appeals,
-                    "user_email": email,
-                    "denial_id": denial_id,
-                },
-            )
 
 
 class OCRView(View):
