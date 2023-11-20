@@ -13,6 +13,7 @@ $(document).ready(function() {
     var resp_buffer = '';
     var appeal_id = 0;
     var appeals_so_far = [];
+    document.getElementById('loading-spinner').style.display = '';
 
     let process_chunk = function(chunk) {
  	resp_buffer += chunk;
@@ -101,6 +102,7 @@ $(document).ready(function() {
 	    console.log("Sucess?");
             console.log(response);
 	    process_chunk(response);
+	    document.getElementById('loading-spinner').style.display = 'none';
         },
 	error: function(err) {
 	    console.log("Error :(");
@@ -111,7 +113,35 @@ $(document).ready(function() {
 {% endblock pre-roll %}
 
 {% block content %}
-Huzzah! We have a few different <b>draft</b> appeal for you to choose from:
+
+
+<!-- This code is partial written by AI -->
+  <!-- Loading Spinner -->
+  <div id="loading-spinner">
+    <i class="fas fa-spinner fa-spin fa-3x"></i>
+    Loading
+  </div>
+
+  <!-- Main Content -->
+  <div id="main-content">
+    <h2>Page Loading: Health Insurance Appeals</h2>
+    <p>Thank you for submitting your health insurance appeal. We're currently working to generate the necessary details for your appeal, and this process may take a few moments.</p>
+
+    <h3>Why the Delay?</h3>
+    <p>To ensure the accuracy and completeness of your appeal information, we're retrieving the latest data from our systems. This requires a bit of time, but it's an essential step in providing you with the most up-to-date and relevant information regarding your health insurance appeal.</p>
+
+    <h3>What to Expect:</h3>
+    <ul>
+      <li><strong>Loading Spinner:</strong> You may notice a loading spinner on the page. This indicates that the appeal details are being processed in the background.</li>
+      <li><strong>Please Wait:</strong> Your patience is greatly appreciated. Rest assured, we're working diligently to gather the necessary information for your appeal.</li>
+      <li><strong>Completion Notification:</strong> Once the appeal details are ready, you'll be promptly notified, and the relevant information will be displayed on this page.</li>
+    </ul>
+
+    <h3>Important Note:</h3>
+    <p><strong>Do Not Refresh:</strong> To ensure the smooth processing of your appeal, please avoid refreshing the page while the loading spinner is visible. Doing so may interrupt the appeal generation process.</p>
+
+    <p>Thank you for your understanding and patience.</p>
+  </div>
 
 <p>
   When you choose a specific appeal we <b>save that appeal to our database for model training and review</b>.

@@ -6,6 +6,7 @@ import re
 from abc import ABC, abstractmethod
 from functools import cache, lru_cache
 from typing import Optional
+import time
 
 import icd10
 import requests
@@ -176,6 +177,18 @@ class RemoteRunPod(RemoteModel):
         except Exception as e:
             print(f"Error {e} calling runpod")
             return None
+        print(f"Initial result {json_result}")
+        # When the backedn takes more than 60 seconds
+        while "status" in json_result and json_result["status"] == "IN_QUEUE":
+            job_id = json_result["id"]
+            url = f"https://api.runpod.ai/v2/{self.model_name}/status/{job_id}"
+            s = requests.Session()
+            json_result = s.post(
+                url,
+                headers={"Authorization": f"Bearer {self.token}"}
+            ).json()
+            print(f"jr {json_result} on runpod.")
+            time.sleep(4)
         try:
             r = json_result["output"]["result"]
             self.internal_cache[prompt] = r
