@@ -127,11 +127,22 @@ spec:
   tls:
   - hosts:
       - www.fighthealthinsurance.com
+      - fighthealthinsurance.com
       - www.fuckhealthinsurance.com
       - www.appealhealthinsurance.com
     secretName: combined-tls-secret
   rules:
     - host: www.fuckhealthinsurance.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name:  web-svc
+                port:
+                  number: 80
+    - host: fuckhealthinsurance.com
       http:
         paths:
           - path: /
