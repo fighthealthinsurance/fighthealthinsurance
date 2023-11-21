@@ -184,8 +184,7 @@ class RemoteRunPod(RemoteModel):
             url = f"https://api.runpod.ai/v2/{self.model_name}/status/{job_id}"
             s = requests.Session()
             json_result = s.post(
-                url,
-                headers={"Authorization": f"Bearer {self.token}"}
+                url, headers={"Authorization": f"Bearer {self.token}"}
             ).json()
             print(f"jr {json_result} on runpod.")
             time.sleep(4)
@@ -457,9 +456,7 @@ class AppealGenerator(object):
         generated_futures = []
 
         # For any model that we have a prompt for try to call it
-        def get_model_result(
-                model: RemoteModel, prompt: str
-        ) -> (str, Optional[str]):
+        def get_model_result(model: RemoteModel, prompt: str) -> (str, Optional[str]):
             print(f"Looking up on {model}")
             if prompt is None:
                 print(f"No prompt for {model} skipping")
@@ -473,7 +470,8 @@ class AppealGenerator(object):
             [self.perplexity, open_prompt],
             [self.anyscale, open_prompt],
             [self.anyscale2, open_prompt],
-            [self.runpod, open_prompt]]
+            [self.runpod, open_prompt],
+        ]
         # If we need to know the medical reason ask our friendly LLMs
         static_appeal = t.generate_static()
         appeals = []
@@ -482,7 +480,7 @@ class AppealGenerator(object):
                 [
                     [self.biogpt, bio_gpt_prompt],
                 ]
-                )
+            )
         else:
             # Otherwise just put in as is.
             appeals.append(static_appeal)
@@ -490,9 +488,7 @@ class AppealGenerator(object):
         # Executor map wants a list for each parameter.
 
         print(f"Calling models: {calls}")
-        generated_futures = map(
-            lambda x: executor.submit(get_model_result, *x),
-            calls)
+        generated_futures = map(lambda x: executor.submit(get_model_result, *x), calls)
 
         def generated_to_appeals_text(k_text):
             k, text = k_text.result()
@@ -508,7 +504,8 @@ class AppealGenerator(object):
 
         generated_text = map(
             generated_to_appeals_text,
-            concurrent.futures.as_completed(generated_futures))
+            concurrent.futures.as_completed(generated_futures),
+        )
 
         appeals = itertools.chain(appeals, generated_text)
         print(f"Sending back {appeals}")

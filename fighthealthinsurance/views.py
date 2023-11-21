@@ -296,6 +296,7 @@ class ChooseAppeal(View):
                 },
             )
 
+
 class GenerateAppeal(View):
     def post(self, request):
         form = DenialRefForm(request.POST)
@@ -310,13 +311,16 @@ class GenerateAppeal(View):
                     "user_email": email,
                     "email": email,
                     "denial_id": denial_id,
-                })
+                },
+            )
         else:
             # TODO: Send user back to fix the form.
             pass
 
+
 class AppealsBackend(View):
     """Streaming back the appeals as json :D"""
+
     def __init__(self):
         self.regex_denial_processor = ProcessDenialRegex()
 
@@ -327,7 +331,7 @@ class AppealsBackend(View):
     def get(self, request):
         form = DenialRefForm(request.GET)
         return self.handle_for_form(request, form)
-        
+
     def handle_for_form(self, request, form):
         if form.is_valid():
             denial_id = form.cleaned_data["denial_id"]
@@ -382,8 +386,9 @@ class AppealsBackend(View):
                 appealGenerator.make_appeals(
                     denial,
                     AppealTemplateGenerator(prefaces, main, footer),
-                ))
-            
+                ),
+            )
+
             def save_appeal(appeal_text):
                 # Save all of the proposed appeals, so we can use RL later.
                 t = time.time()
@@ -406,15 +411,12 @@ class AppealsBackend(View):
             filtered_appeals = filter(lambda x: x != None, appeals)
             saved_appeals = map(save_appeal, filtered_appeals)
             subbed_appeals = map(sub_in_appeals, filtered_appeals)
-            subbed_appeals_json = map(
-                lambda e: json.dumps(e) + "\n",
-                subbed_appeals)
+            subbed_appeals_json = map(lambda e: json.dumps(e) + "\n", subbed_appeals)
             return StreamingHttpResponse(
-                subbed_appeals_json,
-                content_type="application/json")
+                subbed_appeals_json, content_type="application/json"
+            )
         else:
             print(f"form {form} is not valid")
-
 
 
 class OCRView(View):
