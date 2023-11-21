@@ -13,7 +13,6 @@ $(document).ready(function() {
     var resp_buffer = '';
     var appeal_id = 0;
     var appeals_so_far = [];
-    document.getElementById('loading-spinner').style.display = '';
 
     let process_chunk = function(chunk) {
  	resp_buffer += chunk;
@@ -52,7 +51,7 @@ $(document).ready(function() {
 		// $('#form-container' + appeal_id).html(clonedForm);
 		// Fill in the textarea value from the response
 		appealTextElem = clonedForm.find("textarea");
-		// WTF javascript why don't you work?
+		// WTF javascript why.
 		form = clonedForm.find("form");
 		form.prop("id", "form_" + appeal_id);
 		console.log("Looking for our friend:");
@@ -102,7 +101,8 @@ $(document).ready(function() {
 	    console.log("Sucess?");
             console.log(response);
 	    process_chunk(response);
-	    document.getElementById('loading-spinner').style.display = 'none';
+            document.getElementById('loading-spinner').style.display = 'none';
+            document.getElementById('loading-text').style.display = 'none';
         },
 	error: function(err) {
 	    console.log("Error :(");
@@ -116,11 +116,13 @@ $(document).ready(function() {
 
 
 <!-- This code is partial written by AI -->
-  <!-- Loading Spinner -->
-  <div id="loading-spinner">
-    <i class="fas fa-spinner fa-spin fa-3x"></i>
-    Loading
-  </div>
+<!-- Loading Spinner -->
+<div id="loading-text">
+  <h1>Loading appeals (please wait)...</h1>
+</div>
+<div id="loading-spinner">
+  <i class="fas fa-spinner fa-spin fa-3x"></i>
+</div>
 
   <!-- Main Content -->
   <div id="main-content">

@@ -391,8 +391,6 @@ class AppealsBackend(View):
                 pa = ProposedAppeal(appeal_text=appeal_text, for_denial=denial)
                 return appeal_text
 
-            saved_appeals = map(save_appeal, appeals)
-
             def sub_in_appeals(appeal: str) -> str:
                 s = Template(appeal)
                 ret = s.safe_substitute(
@@ -405,7 +403,8 @@ class AppealsBackend(View):
                 )
                 return ret
 
-            filtered_appeals = filter(lambda x: x != None, saved_appeals)
+            filtered_appeals = filter(lambda x: x != None, appeals)
+            saved_appeals = map(save_appeal, filtered_appeals)
             subbed_appeals = map(sub_in_appeals, filtered_appeals)
             subbed_appeals_json = map(
                 lambda e: json.dumps(e) + "\n",

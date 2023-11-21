@@ -280,7 +280,17 @@ class RemoteOpen(RemoteFullOpenLike):
     def __init__(self):
         api_base = os.getenv("OPENAI_API_BASE")
         token = os.getenv("OPENAI_API_KEY")
-        model = "meta-llama/Llama-2-70b-chat-hf"
+        model = "HuggingFaceH4/zephyr-7b-beta"
+        super().__init__(api_base, token, model)
+
+
+class RemoteOpenInst(RemoteFullOpenLike):
+    """Use RemoteOpen for denial magic calls a service"""
+
+    def __init__(self):
+        api_base = os.getenv("OPENAI_API_BASE")
+        token = os.getenv("OPENAI_API_KEY")
+        model = "mistralai/Mistral-7B-Instruct-v0.1"
         super().__init__(api_base, token, model)
 
 
@@ -391,6 +401,7 @@ class AppealGenerator(object):
         self.regex_denial_processor = ProcessDenialRegex()
         self.perplexity = RemotePerplexityInstruct()
         self.anyscale = RemoteOpen()
+        self.anyscale2 = RemoteOpenInst()
         self.biogpt = RemoteBioGPT()
         self.runpod = RemoteRunPod()
 
@@ -458,7 +469,11 @@ class AppealGenerator(object):
             print(f"Infered {infered} for {model} using {prompt}")
             return (t, infered)
 
-        calls = [[self.perplexity, open_prompt], [self.runpod, open_prompt]]
+        calls = [
+            [self.perplexity, open_prompt],
+            [self.anyscale, open_prompt],
+            [self.anyscale2, open_prompt],
+            [self.runpod, open_prompt]]
         # If we need to know the medical reason ask our friendly LLMs
         static_appeal = t.generate_static()
         appeals = []
