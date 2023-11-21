@@ -1,3 +1,4 @@
+typing-extensions
 icd10-cm
 types-requests
 stripe
