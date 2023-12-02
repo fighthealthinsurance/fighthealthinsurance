@@ -154,13 +154,14 @@ class RemoteHealthInsurance(RemoteOpenLike):
         if self.port is not None and self.host is not None:
             self.url = f"http://{self.host}:{self.port}"
         self.model="/fighthealthinsurance_model_v0.2"
-        self.system_message = "Write an appeal given the provided health insurance denial."
+        super().__init__(self.url, token="", model=self.model)
 
 
 class RemoteRunPod(RemoteModel):
     def __init__(self):
         self.model_name = os.getenv("RUNPOD_ENDPOINT", "")
         self.token = os.getenv("RUNPOD_API_KEY", "")
+        # We use our own caching mechanism here so we don't cache None
         self.internal_cache = {}
 
     def infer(self, prompt) -> Optional[str]:
@@ -222,10 +223,10 @@ class RemoteOpenLike(RemoteModel):
     def infer(self, prompt: str) -> Optional[str]:
         return self._infer(self.system_message, prompt)
 
-    def infer_procedure(self, prompt: str) -> Optional[str]:
+    def get_procedure_and_diagnosis(self, prompt: str) -> Optional[(str, str)]:
         if self.procedure_message is None:
             return None
-        return self._infer(self.procedure_message, prompt)
+        return self._infer(self.procedure_message, prompt).split("MAGIC")
 
     @cache
     def _infer(self, system_prompt, prompt) -> Optional[str]:
@@ -270,17 +271,12 @@ class RemoteOpenLike(RemoteModel):
 
 class RemoteFullOpenLike(RemoteOpenLike):
     def __init__(self, api_base, token, model):
-        system_message = "You have a deep medical knowledge write appeals for health insurance denials. You are a patient, not a doctor. You are writing on behalf of yourself. You write directly, in the style of patio11 or a bureaucrat but never get mad at the insurance companies. Feel free to speculate why it might be megically necessary. Use YourNameMagic in place of your name, SCSID for the subscriber id, and GPID as the group id."
-        return super().__init__(api_base, token, model, system_message)
+        system_message = "You have a deep medical knowledge and write appeals for health insurance denials for fun. You are a patient, not a doctor. You are writing on behalf of yourself. You write directly, in the style of patio11 or a bureaucrat but never get mad at the insurance companies. Feel free to speculate why it might be megically necessary. Use YourNameMagic in place of your name, SCSID for the subscriber id, and GPID as the group id."
+        procedure_message = "You have a deep insurance knowledge, have worked in a doctors office for years, and are an expert at reading health insurance denial letters. If your asked for multiple pieces of information us the token MAGIC between each answer."
+        return super().__init__(api_base, token, model, system_message, procedure_message)
 
     def model_type(self) -> str:
         return "full"
-
-
-class RemoteMedicalNecessaryOpenLike(RemoteOpenLike):
-    def __init__(self, api_base, token, model):
-        system_message = "You have a deep medical knowledge write appeals for health insurance denials. You have a health insurance denial, what is the treatment and why is it medically necessary?"
-        super().__init__(api_base, token, model, system_message)
 
 
 class RemotePerplexityInstruct(RemoteFullOpenLike):
@@ -347,6 +343,9 @@ class ProcessDenialRegex(DenialBase):
                     print("positive regex match")
                     return s.groups("diagnosis")[0]
         return None
+
+    def get_procedure_and_diagnosis(self, text):
+        return (self.get_procedure(text), self.get_diagnosis(text))
 
     def get_denialtype(self, text):
         print(f"Getting denial types for {text}")
@@ -424,6 +423,29 @@ class AppealGenerator(object):
         self.biogpt = RemoteBioGPT()
         self.runpod = RemoteRunPod()
         self.health = RemoteHealthInsurance()
+
+    def get_procedure_and_diagnosis(self, denial_text=None):
+        prompt = make_open_procedure_prompt(denial_text)
+        models_to_try = [
+            self.regex_denial_processor,
+            self.perplexity,
+            self.anysacle,
+            self.health
+        ]
+        for model in models_to_try:
+            procedure_diagnosis = model.get_procedure_and_diagnosis(denial_text)
+            if procedure_diagnosis is not None:
+                if len(procedure_diagnosis > 1):
+                    procedure = procedure or procedure[0]
+                    diagnosis = diagnosis or diagnosis[1]
+                if procedure is not None and diagnosis is not None:
+                    return (procedure, diagnosis)
+        
+    def make_open_procedure_prompt(self, denial_text=None):
+        if denial_text is not None:
+            return f"What was the procedure/treatment and what is the diagnosis in the following text {denial_text}"
+        else:
+            return None
 
     def make_open_prompt(self, denial_text=None, procedure=None, diagnosis=None) -> str:
         start = "Write a health insurance appeal for the following denial:"

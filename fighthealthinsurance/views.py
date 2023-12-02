@@ -507,8 +507,7 @@ class ProcessView(View):
             zip = form.cleaned_data["zip"]
             if zip is not None and zip != "":
                 state = self.zip_engine.by_zipcode(form.cleaned_data["zip"]).state
-            procedure = self.regex_denial_processor.get_procedure(denial_text)
-            diagnosis = self.regex_denial_processor.get_diagnosis(denial_text)
+            (procedure, diagnosis) =  appealGenerator.get_procedure_and_diagnosis(denial_text)
             form = PostInferedForm(
                 initial={
                     "denial_type": denial_type,
