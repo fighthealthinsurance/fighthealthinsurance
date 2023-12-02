@@ -153,7 +153,7 @@ class RemoteHealthInsurance(RemoteOpenLike):
         self.url = None
         if self.port is not None and self.host is not None:
             self.url = f"http://{self.host}:{self.port}"
-        self.model="/fighthealthinsurance_model_v0.2"
+        self.model = "/fighthealthinsurance_model_v0.2"
         super().__init__(self.url, token="", model=self.model)
 
 
@@ -213,7 +213,7 @@ class RemoteRunPod(RemoteModel):
 
 
 class RemoteOpenLike(RemoteModel):
-    def __init__(self, api_base, token, model, system_message, procedure_message = None):
+    def __init__(self, api_base, token, model, system_message, procedure_message=None):
         self.api_base = api_base
         self.token = token
         self.model = model
@@ -273,7 +273,9 @@ class RemoteFullOpenLike(RemoteOpenLike):
     def __init__(self, api_base, token, model):
         system_message = "You have a deep medical knowledge and write appeals for health insurance denials for fun. You are a patient, not a doctor. You are writing on behalf of yourself. You write directly, in the style of patio11 or a bureaucrat but never get mad at the insurance companies. Feel free to speculate why it might be megically necessary. Use YourNameMagic in place of your name, SCSID for the subscriber id, and GPID as the group id."
         procedure_message = "You have a deep insurance knowledge, have worked in a doctors office for years, and are an expert at reading health insurance denial letters. If your asked for multiple pieces of information us the token MAGIC between each answer."
-        return super().__init__(api_base, token, model, system_message, procedure_message)
+        return super().__init__(
+            api_base, token, model, system_message, procedure_message
+        )
 
     def model_type(self) -> str:
         return "full"
@@ -430,7 +432,7 @@ class AppealGenerator(object):
             self.regex_denial_processor,
             self.perplexity,
             self.anysacle,
-            self.health
+            self.health,
         ]
         for model in models_to_try:
             procedure_diagnosis = model.get_procedure_and_diagnosis(denial_text)
@@ -440,7 +442,7 @@ class AppealGenerator(object):
                     diagnosis = diagnosis or diagnosis[1]
                 if procedure is not None and diagnosis is not None:
                     return (procedure, diagnosis)
-        
+
     def make_open_procedure_prompt(self, denial_text=None):
         if denial_text is not None:
             return f"What was the procedure/treatment and what is the diagnosis in the following text {denial_text}"
