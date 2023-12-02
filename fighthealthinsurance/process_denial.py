@@ -146,6 +146,17 @@ class RemoteMed(RemoteModel):
         return "med_reason"
 
 
+class RemoteHealthInsurance(RemoteOpenLike):
+    def __init__(self):
+        self.port = os.getenv("HEALTH_BACKEND_PORT")
+        self.host = os.getenv("HEALTH_BACKEND_HOST")
+        self.url = None
+        if self.port is not None and self.host is not None:
+            self.url = f"http://{self.host}:{self.port}"
+        self.model="/fighthealthinsurance_model_v0.2"
+        self.system_message = "Write an appeal given the provided health insurance denial."
+
+
 class RemoteRunPod(RemoteModel):
     def __init__(self):
         self.model_name = os.getenv("RUNPOD_ENDPOINT", "")
@@ -403,6 +414,7 @@ class AppealGenerator(object):
         self.anyscale2 = RemoteOpenInst()
         self.biogpt = RemoteBioGPT()
         self.runpod = RemoteRunPod()
+        self.health = RemoteHealthInsurance()
 
     def make_open_prompt(self, denial_text=None, procedure=None, diagnosis=None) -> str:
         start = "Write a health insurance appeal for the following denial:"
@@ -467,6 +479,7 @@ class AppealGenerator(object):
             return (t, infered)
 
         calls = [
+            [self.remotehealth, open_prompt],
             [self.perplexity, open_prompt],
             [self.anyscale, open_prompt],
             [self.anyscale2, open_prompt],
