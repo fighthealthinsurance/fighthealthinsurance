@@ -212,14 +212,23 @@ class RemoteRunPod(RemoteModel):
 
 
 class RemoteOpenLike(RemoteModel):
-    def __init__(self, api_base, token, model, system_message):
+    def __init__(self, api_base, token, model, system_message, procedure_message = None):
         self.api_base = api_base
         self.token = token
         self.model = model
         self.system_message = system_message
+        self.procedure_message = procedure_message
+
+    def infer(self, prompt: str) -> Optional[str]:
+        return self._infer(self.system_message, prompt)
+
+    def infer_procedure(self, prompt: str) -> Optional[str]:
+        if self.procedure_message is None:
+            return None
+        return self._infer(self.procedure_message, prompt)
 
     @cache
-    def infer(self, prompt) -> Optional[str]:
+    def _infer(self, system_prompt, prompt) -> Optional[str]:
         print(f"Looking up model {self.model} using {self.api_base}")
         if self.token is None:
             print("Error no Token provided for perplexity.")
@@ -239,7 +248,7 @@ class RemoteOpenLike(RemoteModel):
                     "messages": [
                         {
                             "role": "system",
-                            "content": self.system_message,
+                            "content": system_prompt,
                         },
                         {"role": "user", "content": prompt},
                     ],
