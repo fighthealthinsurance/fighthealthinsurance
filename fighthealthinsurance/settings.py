@@ -195,7 +195,10 @@ class Dev(Base):
     Debug = True
     RECAPTCHA_TESTING = True
     os.environ["RECAPTCHA_TESTING"] = "True"
-    SILENCED_SYSTEM_CHECKS = ["captcha.recaptcha_test_key_error"]
+    SILENCED_SYSTEM_CHECKS = [
+        "captcha.recaptcha_test_key_error",
+        "django_recaptcha.recaptcha_test_key_error"
+    ]
 
     EMAIL_BACKEND = "django.core.mail.backends.filebased.EmailBackend"
     EMAIL_FILE_PATH = os.path.join(BASE_DIR, "sent_emails")
