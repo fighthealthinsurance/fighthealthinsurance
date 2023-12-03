@@ -146,17 +146,6 @@ class RemoteMed(RemoteModel):
         return "med_reason"
 
 
-class RemoteHealthInsurance(RemoteOpenLike):
-    def __init__(self):
-        self.port = os.getenv("HEALTH_BACKEND_PORT")
-        self.host = os.getenv("HEALTH_BACKEND_HOST")
-        self.url = None
-        if self.port is not None and self.host is not None:
-            self.url = f"http://{self.host}:{self.port}"
-        self.model = "/fighthealthinsurance_model_v0.2"
-        super().__init__(self.url, token="", model=self.model)
-
-
 class RemoteRunPod(RemoteModel):
     def __init__(self):
         self.model_name = os.getenv("RUNPOD_ENDPOINT", "")
@@ -223,9 +212,9 @@ class RemoteOpenLike(RemoteModel):
     def infer(self, prompt: str) -> Optional[str]:
         return self._infer(self.system_message, prompt)
 
-    def get_procedure_and_diagnosis(self, prompt: str) -> Optional[(str, str)]:
+    def get_procedure_and_diagnosis(self, prompt: str) -> (Optional[str], Optional[str]):
         if self.procedure_message is None:
-            return None
+            return (None, None)
         return self._infer(self.procedure_message, prompt).split("MAGIC")
 
     @cache
@@ -279,6 +268,17 @@ class RemoteFullOpenLike(RemoteOpenLike):
 
     def model_type(self) -> str:
         return "full"
+
+
+class RemoteHealthInsurance(RemoteFullOpenLike):
+    def __init__(self):
+        self.port = os.getenv("HEALTH_BACKEND_PORT")
+        self.host = os.getenv("HEALTH_BACKEND_HOST")
+        self.url = None
+        if self.port is not None and self.host is not None:
+            self.url = f"http://{self.host}:{self.port}"
+        self.model = "/fighthealthinsurance_model_v0.2"
+        super().__init__(self.url, token="", model=self.model)
 
 
 class RemotePerplexityInstruct(RemoteFullOpenLike):
