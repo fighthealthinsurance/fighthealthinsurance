@@ -161,13 +161,14 @@ const memoizeOne = require('async-memoize-one');
 // Tesseract
 async function getTesseractWorkerRaw() {
     console.log("Loading tesseract worker.")
-    const worker = await Tesseract.createWorker({
-	corePath: node_module_path + "/tesseract.js-core/tesseract-core.wasm.js",
-	workerPath: node_module_path + "/tesseract.js/dist/worker.min.js",
-	logger: function(m){console.log(m);}
-    });
-    await worker.loadLanguage('eng');
-    await worker.initialize('eng');
+    const worker = await Tesseract.createWorker(
+	'eng',
+	1,
+	{
+	    corePath: node_module_path + "/tesseract.js-core/tesseract-core.wasm.js",
+	    workerPath: node_module_path + "/tesseract.js/dist/worker.min.js",
+	    logger: function(m){console.log(m);}
+	});
     await worker.setParameters({
 	tessedit_pageseg_mode: Tesseract.PSM.PSM_AUTO_OSD,
     });
