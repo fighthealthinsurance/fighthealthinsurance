@@ -212,7 +212,9 @@ class RemoteOpenLike(RemoteModel):
     def infer(self, prompt: str) -> Optional[str]:
         return self._infer(self.system_message, prompt)
 
-    def get_procedure_and_diagnosis(self, prompt: str) -> (Optional[str], Optional[str]):
+    def get_procedure_and_diagnosis(
+        self, prompt: str
+    ) -> (Optional[str], Optional[str]):
         if self.procedure_message is None:
             return (None, None)
         return self._infer(self.procedure_message, prompt).split("MAGIC")

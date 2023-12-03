@@ -197,7 +197,7 @@ class Dev(Base):
     os.environ["RECAPTCHA_TESTING"] = "True"
     SILENCED_SYSTEM_CHECKS = [
         "captcha.recaptcha_test_key_error",
-        "django_recaptcha.recaptcha_test_key_error"
+        "django_recaptcha.recaptcha_test_key_error",
     ]
 
     EMAIL_BACKEND = "django.core.mail.backends.filebased.EmailBackend"
