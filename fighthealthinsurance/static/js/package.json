@@ -29,7 +29,6 @@
     "pdf.js": "^0.1.0",
     "pdfjs-dist": "^3.3.122",
     "source-map-loader": "^4.0.1",
-    "tensorflow.js": "^0.0.0",
     "tesseract.js": "^4.0.2"
   },
   "devDependencies": {
