@@ -208,16 +208,41 @@ class RemoteOpenLike(RemoteModel):
         self.model = model
         self.system_message = system_message
         self.procedure_message = procedure_message
+        self.max_len = 4096 * 2
+        self.procedure_response_regex = re.compile(r"\s*procedure\s*:?\s*", re.IGNORECASE)
+        self.diagnosis_response_regex = re.compile(r"\s*diagnosis\s*:?\s*", re.IGNORECASE)
 
     def infer(self, prompt: str) -> Optional[str]:
         return self._infer(self.system_message, prompt)
+
+    def _clean_procedure_response(self, response):
+        return self.procedure_response_regex.sub("", response)
+
+    def _clean_procedure_response(self, response):
+        return self.diagnosis_response_regex.sub("", response)
 
     def get_procedure_and_diagnosis(
         self, prompt: str
     ) -> (Optional[str], Optional[str]):
         if self.procedure_message is None:
+            print(f"No procedure message for {self.model} skipping")
             return (None, None)
-        return self._infer(self.procedure_message, prompt).split("MAGIC")
+        model_response = self._infer(self.procedure_message, prompt)
+        if model_response is not None:
+            responses = model_response.split("\n")
+            if len(responses) == 2:
+                r = (
+                    self._clean_procedure_response(responses[0]),
+                    self._clean_diagnosis_response(responses[1]))
+                return r
+            elif len(responses) == 1:
+                r = (self._clean_procedure_response(responses[0]), None)
+                return r
+            else:
+                print(f"Non-understood response {model_response} for procedure/diagnsosis.")
+        else:
+            print(f"No model response for {self.model}")
+        return (None, None)
 
     @cache
     def _infer(self, system_prompt, prompt) -> Optional[str]:
@@ -242,7 +267,7 @@ class RemoteOpenLike(RemoteModel):
                             "role": "system",
                             "content": system_prompt,
                         },
-                        {"role": "user", "content": prompt},
+                        {"role": "user", "content": prompt[0:self.max_len]},
                     ],
                     "temperature": 0.7,
                 },
@@ -263,7 +288,7 @@ class RemoteOpenLike(RemoteModel):
 class RemoteFullOpenLike(RemoteOpenLike):
     def __init__(self, api_base, token, model):
         system_message = "You have a deep medical knowledge and write appeals for health insurance denials for fun. You are a patient, not a doctor. You are writing on behalf of yourself. You write directly, in the style of patio11 or a bureaucrat but never get mad at the insurance companies. Feel free to speculate why it might be megically necessary. Use YourNameMagic in place of your name, SCSID for the subscriber id, and GPID as the group id."
-        procedure_message = "You have a deep insurance knowledge, have worked in a doctors office for years, and are an expert at reading health insurance denial letters. If your asked for multiple pieces of information us the token MAGIC between each answer."
+        procedure_message = "You have a deep insurance knowledge, have worked in a doctors office for years, and are an expert at reading health insurance denial letters. Your job is to figure out what procedure is being requested and for what diagnosis (if available). Answer consicely with the procedure on one line and diagnosis on the next line."
         return super().__init__(
             api_base, token, model, system_message, procedure_message
         )
@@ -349,6 +374,7 @@ class ProcessDenialRegex(DenialBase):
         return None
 
     def get_procedure_and_diagnosis(self, text):
+        print("Getting procedure and diagnosis")
         return (self.get_procedure(text), self.get_diagnosis(text))
 
     def get_denialtype(self, text):
@@ -429,25 +455,33 @@ class AppealGenerator(object):
         self.health = RemoteHealthInsurance()
 
     def get_procedure_and_diagnosis(self, denial_text=None):
-        prompt = make_open_procedure_prompt(denial_text)
+        prompt = self.make_open_procedure_prompt(denial_text)
         models_to_try = [
             self.regex_denial_processor,
             self.perplexity,
-            self.anysacle,
+            self.anyscale,
             self.health,
         ]
+        procedure = None
+        diagnosis = None
         for model in models_to_try:
+            print(f"Exploring model {model}")
             procedure_diagnosis = model.get_procedure_and_diagnosis(denial_text)
             if procedure_diagnosis is not None:
-                if len(procedure_diagnosis > 1):
-                    procedure = procedure or procedure[0]
-                    diagnosis = diagnosis or diagnosis[1]
+                if len(procedure_diagnosis) > 1:
+                    procedure = procedure or procedure_diagnosis[0]
+                    diagnosis = diagnosis or procedure_diagnosis[1]
+                else:
+                    print(f"Unexpected procedure diagnosis len on {procedure_diagnosis}")
                 if procedure is not None and diagnosis is not None:
+                    print(f"Return with procedure {procedure} and {diagnosis}")
                     return (procedure, diagnosis)
+        print(f"Fell through :/ could not fully populate.")
+        return (procedure, diagnosis)
 
     def make_open_procedure_prompt(self, denial_text=None):
         if denial_text is not None:
-            return f"What was the procedure/treatment and what is the diagnosis in the following text {denial_text}"
+            return f"What was the procedure/treatment and what is the diagnosis from the following denial (remember to provide two strings seperated by MAGIC as your response): {denial_text}"
         else:
             return None
 
