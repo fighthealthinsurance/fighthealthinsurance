@@ -209,8 +209,12 @@ class RemoteOpenLike(RemoteModel):
         self.system_message = system_message
         self.procedure_message = procedure_message
         self.max_len = 4096 * 2
-        self.procedure_response_regex = re.compile(r"\s*procedure\s*:?\s*", re.IGNORECASE)
-        self.diagnosis_response_regex = re.compile(r"\s*diagnosis\s*:?\s*", re.IGNORECASE)
+        self.procedure_response_regex = re.compile(
+            r"\s*procedure\s*:?\s*", re.IGNORECASE
+        )
+        self.diagnosis_response_regex = re.compile(
+            r"\s*diagnosis\s*:?\s*", re.IGNORECASE
+        )
 
     @cache
     def infer(self, prompt: str) -> Optional[str]:
@@ -238,7 +242,8 @@ class RemoteOpenLike(RemoteModel):
             if len(responses) == 2:
                 r = (
                     self._clean_procedure_response(responses[0]),
-                    self._clean_diagnosis_response(responses[1]))
+                    self._clean_diagnosis_response(responses[1]),
+                )
                 return r
             elif len(responses) == 1:
                 r = (self._clean_procedure_response(responses[0]), None)
@@ -253,7 +258,9 @@ class RemoteOpenLike(RemoteModel):
                         procedure = self._clean_procedure_response(r)
                 return (procedure, diagnosis)
             else:
-                print(f"Non-understood response {model_response} for procedure/diagnsosis.")
+                print(
+                    f"Non-understood response {model_response} for procedure/diagnsosis."
+                )
         else:
             print(f"No model response for {self.model}")
         return (None, None)
@@ -280,7 +287,7 @@ class RemoteOpenLike(RemoteModel):
                             "role": "system",
                             "content": system_prompt,
                         },
-                        {"role": "user", "content": prompt[0:self.max_len]},
+                        {"role": "user", "content": prompt[0 : self.max_len]},
                     ],
                     "temperature": 0.7,
                 },
@@ -485,7 +492,9 @@ class AppealGenerator(object):
                     procedure = procedure or procedure_diagnosis[0]
                     diagnosis = diagnosis or procedure_diagnosis[1]
                 else:
-                    print(f"Unexpected procedure diagnosis len on {procedure_diagnosis}")
+                    print(
+                        f"Unexpected procedure diagnosis len on {procedure_diagnosis}"
+                    )
                 if procedure is not None and diagnosis is not None:
                     print(f"Return with procedure {procedure} and {diagnosis}")
                     return (procedure, diagnosis)
