@@ -496,12 +496,7 @@ class ProcessView(View):
                     denial=denial, denial_type=dt, src=self.regex_src
                 ).save()
                 denial_type.append(dt)
-            denial_types = self.codes_denial_processor.get_denialtype(denial_text)
-            for dt in denial_types:
-                DenialTypesRelation(
-                    denial=denial, denial_type=dt, src=self.codes_src
-                ).save()
-                denial_type.append(dt)
+
             plan_type = self.codes_denial_processor.get_plan_type(denial_text)
             state = None
             zip = form.cleaned_data["zip"]
@@ -534,6 +529,6 @@ class ProcessView(View):
                 "scrub.html",
                 context={
                     "error": form.errors,
-                    "": request.POST.get("denial_text", ""),
+                    "ocr_result": request.POST.get("denial_text", ""),
                 },
             )
