@@ -1,4 +1,4 @@
-import { storeLocal, pdfjsLib } from "./shared.ts"
+import { storeLocal, pdfjsLib, node_module_path } from "./shared.ts"
 
 import Tesseract from 'tesseract.js';
 
