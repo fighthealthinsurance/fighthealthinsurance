@@ -212,15 +212,17 @@ class RemoteOpenLike(RemoteModel):
         self.procedure_response_regex = re.compile(r"\s*procedure\s*:?\s*", re.IGNORECASE)
         self.diagnosis_response_regex = re.compile(r"\s*diagnosis\s*:?\s*", re.IGNORECASE)
 
+    @cache
     def infer(self, prompt: str) -> Optional[str]:
         return self._infer(self.system_message, prompt)
 
     def _clean_procedure_response(self, response):
         return self.procedure_response_regex.sub("", response)
 
-    def _clean_procedure_response(self, response):
+    def _clean_diagnosis_response(self, response):
         return self.diagnosis_response_regex.sub("", response)
 
+    @cache
     def get_procedure_and_diagnosis(
         self, prompt: str
     ) -> (Optional[str], Optional[str]):
@@ -228,6 +230,9 @@ class RemoteOpenLike(RemoteModel):
             print(f"No procedure message for {self.model} skipping")
             return (None, None)
         model_response = self._infer(self.procedure_message, prompt)
+        if model_response is None or "Diagnosis" not in model_response:
+            print("Retrying query.")
+            model_response = self._infer(self.procedure_message, prompt)
         if model_response is not None:
             responses = model_response.split("\n")
             if len(responses) == 2:
@@ -238,13 +243,21 @@ class RemoteOpenLike(RemoteModel):
             elif len(responses) == 1:
                 r = (self._clean_procedure_response(responses[0]), None)
                 return r
+            elif len(responses) > 2:
+                procedure = None
+                diagnosis = None
+                for r in responses:
+                    if "Diagnosis" in r:
+                        diagnosis = self._clean_diagnosis_response(r)
+                    if "Procedure" in r:
+                        procedure = self._clean_procedure_response(r)
+                return (procedure, diagnosis)
             else:
                 print(f"Non-understood response {model_response} for procedure/diagnsosis.")
         else:
             print(f"No model response for {self.model}")
         return (None, None)
 
-    @cache
     def _infer(self, system_prompt, prompt) -> Optional[str]:
         print(f"Looking up model {self.model} using {self.api_base}")
         if self.token is None:
