@@ -1,10 +1,13 @@
 """Use SeleniumBase to test Submitting an appeal"""
 import hashlib
+import os
+import time
+
 import pytest
 from django.contrib.staticfiles.testing import StaticLiveServerTestCase
-from seleniumbase import BaseCase
-import time
 from fighthealthinsurance.models import *
+from seleniumbase import BaseCase
+
 BaseCase.main(__name__, __file__)
 
 
@@ -44,7 +47,14 @@ class SeleniumTestAppealGeneration(BaseCase, StaticLiveServerTestCase):
         # Now we should not have changed pages and pii error should show up
         self.assert_element("div#pii_error")
         self.assert_title("Upload your Health Insurance Denial")
-
+    def test_server_side_ocr_workflow(self):
+        self.open(f"{self.live_server_url}/server_side_ocr")
+        self.assert_title("Upload your Health Insurance Denial - Server Side Processing")
+        file_input = self.find_element("input#uploader")
+        file_input.send_keys("/mnt/data/sample_ocr_image.png")
+        self.click("button#submit")
+        time.sleep(5)  # wait for OCR process to complete
+        self.assert_text("known text from the sample image", "div#ocr_result")
     def test_submit_an_appeal_with_enough(self):
         self.open(f"{self.live_server_url}/")
         self.assert_title("Fight Your Health Insurance Denial")
