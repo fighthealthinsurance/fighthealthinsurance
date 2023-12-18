@@ -24,7 +24,6 @@ from django.urls import reverse
 from django.utils.decorators import method_decorator
 from django.views import View
 
-import cv2
 import numpy as np
 import uszipcode
 from fighthealthinsurance.forms import *
@@ -421,54 +420,42 @@ class AppealsBackend(View):
 
 class OCRView(View):
     def __init__(self):
-        from doctr.models import ocr_predictor
+        # Load easy ocr reader if possible
+        try:
+            import easyocr
 
-        self.model = ocr_predictor(
-            det_arch="db_resnet50", reco_arch="crnn_vgg16_bn", pretrained=True
-        )
+            self._easy_ocr_reader = easyocr.Reader(["en"], gpu=False)
+        except:
+            pass
 
     def get(self, request):
         return render(request, "server_side_ocr.html")
 
     def post(self, request):
-        from doctr.io import DocumentFile
-
         txt = ""
         print(request.FILES)
         files = dict(request.FILES.lists())
         uploader = files["uploader"]
-        doc_txt = self.ocr_with_tesseract(uploader)
+        doc_txt = self._ocr(uploader)
         return render(
             request, "scrub.html", context={"ocr_result": doc_txt, "upload_more": False}
         )
 
-    def ocr_with_kraken(self, uploader):
-        from kraken import binarization
-        from kraken.lib import models
+    def _ocr(self, uploader):
         from PIL import Image
 
-        images = list(map(lambda x: Image(x.read())), uploader)
-        return ""
+        def ocr_upload(x):
+            try:
+                import pytesseract
 
-    def ocr_with_tesseract(self, uploader):
-        np_files = list(
-            map(lambda x: np.frombuffer(x.read(), dtype=np.uint8), uploader)
-        )
-        imgs = list(map(lambda npa: cv2.imdecode(npa, cv2.IMREAD_COLOR), np_files))
-        result = self.model(imgs)
-        print(result)
-        words = map(
-            lambda words: words["value"],
-            flat_map(
-                lambda lines: lines["words"],
-                flat_map(
-                    lambda block: block["lines"],
-                    flat_map(lambda page: page["blocks"], result.export()["pages"]),
-                ),
-            ),
-        )
-        doc_txt = " ".join(words)
-        return doc_txt
+                img = Image.open(x)
+                return pytesseract.image_to_string(img)
+            except:
+                result = self._easy_ocr_reader.readtext(x.read())
+                return " ".join([text for _, text, _ in result])
+
+        texts = map(ocr_upload, uploader)
+        return "\n".join(texts)
 
 
 class ProcessView(View):

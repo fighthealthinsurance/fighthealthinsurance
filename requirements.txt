@@ -30,7 +30,6 @@ git+https://github.com/holdenk/static-thumbnails.git
 easy_thumbnails
 geopy
 django-regex-field
-python-doctr
 pytesseract
 uszipcode
 pyarrow
@@ -42,3 +41,7 @@ RapidFuzz==2.15.1
 pyOpenSSL
 python-Levenshtein
 django-recaptcha==4.0.0
+# We either need easyocr + opencv-python OR pytesseract + tesseract
+# easyocr
+# opencv-python
+pyyaml

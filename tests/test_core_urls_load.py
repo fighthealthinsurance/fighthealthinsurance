@@ -14,9 +14,10 @@ class TestCoreURLsLoad(TestCase):
             "about",
             "other-resources",
             "share_denial",
-#            "share_appeal",
+            #            "share_appeal",
             "remove_data",
-            "tos"]
+            "tos",
+        ]
         for e in simple_endpoints:
             url = reverse(e)
             result = self.client.get(url)
