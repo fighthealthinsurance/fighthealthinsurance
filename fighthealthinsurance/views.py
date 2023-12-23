@@ -381,7 +381,6 @@ class AppealsBackend(View):
 
             appeals = itertools.chain(
                 non_ai_appeals,
-                ["test"],
                 appealGenerator.make_appeals(
                     denial,
                     AppealTemplateGenerator(prefaces, main, footer),

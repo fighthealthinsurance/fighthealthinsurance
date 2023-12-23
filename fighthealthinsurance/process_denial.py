@@ -328,6 +328,16 @@ class RemoteHealthInsurance(RemoteFullOpenLike):
         super().__init__(self.url, token="", model=self.model)
 
 
+class RemoteTogetherAI(RemoteFullOpenLike):
+    """Use RemotePerplexity for denial magic calls a service"""
+
+    def __init__(self):
+        api_base = "https://api.together.xyz"
+        token = os.getenv("TOGHER_KEY")
+        model = "mistralai/Mixtral-8x7B-Instruct-v0.1"
+        super().__init__(api_base, token, model)
+
+
 class RemotePerplexityInstruct(RemoteFullOpenLike):
     """Use RemotePerplexity for denial magic calls a service"""
 
@@ -472,15 +482,17 @@ class AppealGenerator(object):
         self.anyscale2 = RemoteOpenInst()
         self.biogpt = RemoteBioGPT()
         self.runpod = RemoteRunPod()
-        self.health = RemoteHealthInsurance()
+        self.remotehealth = RemoteHealthInsurance()
+        self.together = RemoteTogetherAI()
 
     def get_procedure_and_diagnosis(self, denial_text=None):
         prompt = self.make_open_procedure_prompt(denial_text)
         models_to_try = [
             self.regex_denial_processor,
+            self.together,
             self.perplexity,
             self.anyscale,
-            self.health,
+            self.remotehealth,
         ]
         procedure = None
         diagnosis = None
@@ -572,6 +584,10 @@ class AppealGenerator(object):
         calls = [
             [self.remotehealth, open_prompt],
             [self.perplexity, open_prompt],
+            [self.together, open_prompt],
+        ]
+
+        backup_calls = [
             [self.anyscale, open_prompt],
             [self.anyscale2, open_prompt],
             [self.runpod, open_prompt],
@@ -591,26 +607,36 @@ class AppealGenerator(object):
 
         # Executor map wants a list for each parameter.
 
-        print(f"Calling models: {calls}")
-        generated_futures = map(lambda x: executor.submit(get_model_result, *x), calls)
+        def make_calls_async(calls):
+            print(f"Calling models: {calls}")
+            generated_futures = map(
+                lambda x: executor.submit(get_model_result, *x), calls
+            )
 
-        def generated_to_appeals_text(k_text):
-            k, text = k_text.result()
-            if text is None:
-                return text
-            appeal_text = ""
-            # It's either full or a reason to plug into a template
-            if k == "full":
-                appeal_text = text
-            else:
-                appeal_text = t.generate(text)
-            return appeal_text
+            def generated_to_appeals_text(k_text):
+                k, text = k_text.result()
+                if text is None:
+                    return text
+                appeal_text = ""
+                # It's either full or a reason to plug into a template
+                if k == "full":
+                    appeal_text = text
+                else:
+                    appeal_text = t.generate(text)
+                return appeal_text
 
-        generated_text = map(
-            generated_to_appeals_text,
-            concurrent.futures.as_completed(generated_futures),
-        )
+            generated_text = map(
+                generated_to_appeals_text,
+                concurrent.futures.as_completed(generated_futures),
+            )
+            return generated_text
 
+        generated_text = make_calls_async(calls)
         appeals = itertools.chain(appeals, generated_text)
+        # Check and make sure we have a result
+        try:
+            appeals = itertools.chain([appeals.__next__()], appeals)
+        except StopIteration:
+            appeals = make_calls_async(backup_calls)
         print(f"Sending back {appeals}")
         return appeals
