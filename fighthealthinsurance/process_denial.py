@@ -5,7 +5,7 @@ import os
 import re
 from abc import ABC, abstractmethod
 from functools import cache, lru_cache
-from typing import Optional
+from typing import Tuple, Optional
 import time
 
 import icd10
@@ -229,7 +229,7 @@ class RemoteOpenLike(RemoteModel):
     @cache
     def get_procedure_and_diagnosis(
         self, prompt: str
-    ) -> (Optional[str], Optional[str]):
+    ) -> tuple[Optional[str], Optional[str]]:
         if self.procedure_message is None:
             print(f"No procedure message for {self.model} skipping")
             return (None, None)
@@ -238,7 +238,7 @@ class RemoteOpenLike(RemoteModel):
             print("Retrying query.")
             model_response = self._infer(self.procedure_message, prompt)
         if model_response is not None:
-            responses = model_response.split("\n")
+            responses: list[str] = model_response.split("\n")
             if len(responses) == 2:
                 r = (
                     self._clean_procedure_response(responses[0]),
@@ -251,11 +251,11 @@ class RemoteOpenLike(RemoteModel):
             elif len(responses) > 2:
                 procedure = None
                 diagnosis = None
-                for r in responses:
-                    if "Diagnosis" in r:
-                        diagnosis = self._clean_diagnosis_response(r)
-                    if "Procedure" in r:
-                        procedure = self._clean_procedure_response(r)
+                for ra in responses:
+                    if "Diagnosis" in ra:
+                        diagnosis = self._clean_diagnosis_response(ra)
+                    if "Procedure" in ra:
+                        procedure = self._clean_procedure_response(ra)
                 return (procedure, diagnosis)
             else:
                 print(
