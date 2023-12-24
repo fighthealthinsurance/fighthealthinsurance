@@ -368,6 +368,16 @@ class RemotePerplexityInstruct(RemoteFullOpenLike):
         super().__init__(api_base, token, model)
 
 
+class RemotePerplexityMedReason(RemoteOpenLike):
+    """Use RemotePerplexity for denial magic calls a service"""
+
+    def __init__(self):
+        api_base = "https://api.perplexity.ai"
+        token = os.getenv("PERPLEXITY_API")
+        model = "mistral-7b-instruct"
+        medical_reason_message = "You are a doctor answering a friends question as to why a procedure is medically necessary."
+        super().__init__(api_base, token, model, medical_reason_message)
+
 class RemoteOpen(RemoteFullOpenLike):
     """Use RemoteOpen for denial magic calls a service"""
 
@@ -502,6 +512,7 @@ class AppealGenerator(object):
     def __init__(self):
         self.regex_denial_processor = ProcessDenialRegex()
         self.perplexity = RemotePerplexityInstruct()
+        self.perplexity_med = RemotePerplexityMedReason()
         self.anyscale = RemoteOpen()
         self.anyscale2 = RemoteOpenInst()
         self.biogpt = RemoteBioGPT()
@@ -624,6 +635,7 @@ class AppealGenerator(object):
             calls.extend(
                 [
                     [self.biogpt, bio_gpt_prompt],
+                    [self.perplexity_med, bio_gpt_prompt],
                 ]
             )
         else:
