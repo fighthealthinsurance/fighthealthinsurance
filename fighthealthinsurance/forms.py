@@ -96,7 +96,7 @@ My name is $your_name_here and I am writing you regarding claim {claim_id}{denia
         return []
 
     def footer(self):
-        common = "Additionally, I request all documents involved in this claim, including but not limited to plan documents, qualifications of individuals involved (both in the decision and in creation of policies), any policies, procedures, and any related communications. If you are not the plan administrator, forward this request to the plan administrator (and tell me who is the plan administrator so I may follow up with them)."
+        common = ""
         if (
             "urgent" in self.cleaned_data
             and "pre_service" in self.cleaned_data

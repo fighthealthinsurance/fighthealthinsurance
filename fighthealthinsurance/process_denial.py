@@ -194,7 +194,7 @@ class RemoteRunPod(RemoteModel):
             self.internal_cache[prompt] = r
             return r
         except Exception as e:
-            print(f"Error {e} processing {json_result} from runpod.")
+            print(f"Error197 exception: {e} processing {json_result} from {self}.")
             return None
 
     def model_type(self) -> str:
@@ -216,9 +216,24 @@ class RemoteOpenLike(RemoteModel):
             r"\s*diagnosis\s*:?\s*", re.IGNORECASE
         )
 
+    def bad_result(self, result: str) -> bool:
+        bad = "Therefore, the Health Plans denial should be overturned."
+        if result is None:
+            return True
+        if bad in result:
+            return True
+        if len(result.strip(' ')) < 5:
+            return True
+        return False
+
     @cache
     def infer(self, prompt: str) -> Optional[str]:
-        return self._infer(self.system_message, prompt)
+        result = self._infer(self.system_message, prompt)
+        if self.bad_result(result):
+            result = self._infer(self.system_message, prompt)
+        if self.bad_result(result):
+            result = None
+        return result
 
     def _clean_procedure_response(self, response):
         return self.procedure_response_regex.sub("", response)
@@ -268,9 +283,9 @@ class RemoteOpenLike(RemoteModel):
     def _infer(self, system_prompt, prompt) -> Optional[str]:
         print(f"Looking up model {self.model} using {self.api_base}")
         if self.token is None:
-            print("Error no Token provided for perplexity.")
+            print(f"Error no Token provided for {self.model}.")
         if prompt is None:
-            print("Error: must supply a prompt.")
+            print(f"Error: must supply a prompt.")
             return None
         url = f"{self.api_base}/chat/completions"
         try:
@@ -292,16 +307,17 @@ class RemoteOpenLike(RemoteModel):
                     "temperature": 0.7,
                 },
             )
-            print(f"Got {result} on {self.api_base}")
+            print(f"Got {result} on {self.api_base} {self}")
             json_result = result.json()
         except Exception as e:
             print(f"Error {e} calling {self.api_base}")
             return None
         try:
             r = json_result["choices"][0]["message"]["content"]
+            print(f"Got {r} from {self.model} w/ {self.api_base} {self}")
             return r
         except Exception as e:
-            print(f"Error {e} processing {json_result} from {self.api_base}.")
+            print(f"Error {e} processing {json_result} from {self.api_base} w/ url {url} --  {self}")
             return None
 
 
@@ -319,12 +335,16 @@ class RemoteFullOpenLike(RemoteOpenLike):
 
 class RemoteHealthInsurance(RemoteFullOpenLike):
     def __init__(self):
-        self.port = os.getenv("HEALTH_BACKEND_PORT")
+        self.port = os.getenv("HEALTH_BACKEND_PORT", "80")
         self.host = os.getenv("HEALTH_BACKEND_HOST")
         self.url = None
         if self.port is not None and self.host is not None:
-            self.url = f"http://{self.host}:{self.port}"
-        self.model = "/fighthealthinsurance_model_v0.2"
+            self.url = f"http://{self.host}:{self.port}/v1"
+        else:
+            print(f"Error setting up remote health {self.host}:{self.port}")
+        self.model = os.getenv(
+            "HEALTH_BACKEND_MODEL",
+            "/fighthealthinsurance_model_v0.2")
         super().__init__(self.url, token="", model=self.model)
 
 
@@ -333,7 +353,7 @@ class RemoteTogetherAI(RemoteFullOpenLike):
 
     def __init__(self):
         api_base = "https://api.together.xyz"
-        token = os.getenv("TOGHER_KEY")
+        token = os.getenv("TOGETHER_KEY")
         model = "mistralai/Mixtral-8x7B-Instruct-v0.1"
         super().__init__(api_base, token, model)
 
@@ -465,13 +485,17 @@ class AppealTemplateGenerator(object):
 
     def generate_static(self):
         print(f"Generating static on {self} sending back {self.combined}")
-        if "{medical_reason}" not in self.combined:
+        if "{medical_reason}" not in self.combined and self.combined != "":
             return self.combined
         else:
             return None
 
     def generate(self, medical_reason):
-        return self.combined.replace("{medical_reason}", medical_reason)
+        result = self.combined.replace("{medical_reason}", medical_reason)
+        if result != "":
+            return result
+        else:
+            return None
 
 
 class AppealGenerator(object):
@@ -489,8 +513,8 @@ class AppealGenerator(object):
         prompt = self.make_open_procedure_prompt(denial_text)
         models_to_try = [
             self.regex_denial_processor,
-            self.together,
             self.perplexity,
+            self.together,
             self.anyscale,
             self.remotehealth,
         ]
@@ -552,7 +576,7 @@ class AppealGenerator(object):
         else:
             return None
 
-    def make_appeals(self, denial, t):
+    def make_appeals(self, denial, template_generator):
         # Use LLMS
         bio_gpt_prompt = self.make_biogpt_prompt(
             procedure=denial.procedure, diagnosis=denial.diagnosis
@@ -579,21 +603,22 @@ class AppealGenerator(object):
             infered = model.infer(prompt)
             t = model.model_type()
             print(f"Infered {infered} for {model} using {prompt}")
+            print("Yay!")
             return (t, infered)
 
         calls = [
             [self.remotehealth, open_prompt],
-            [self.perplexity, open_prompt],
             [self.together, open_prompt],
         ]
 
         backup_calls = [
+            [self.perplexity, open_prompt],
             [self.anyscale, open_prompt],
             [self.anyscale2, open_prompt],
             [self.runpod, open_prompt],
         ]
         # If we need to know the medical reason ask our friendly LLMs
-        static_appeal = t.generate_static()
+        static_appeal = template_generator.generate_static()
         appeals = []
         if static_appeal is None:
             calls.extend(
@@ -622,7 +647,7 @@ class AppealGenerator(object):
                 if k == "full":
                     appeal_text = text
                 else:
-                    appeal_text = t.generate(text)
+                    appeal_text = template_generator.generate(text)
                 return appeal_text
 
             generated_text = map(
