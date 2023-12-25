@@ -272,7 +272,7 @@ class RemoteOpenLike(RemoteModel):
         return self.procedure_response_regex.sub("", response)
 
     def _clean_diagnosis_response(self, response):
-        if "Not available in" in response:
+        if "Not available in" in response or "Not provided" in response:
             return None
         return self.diagnosis_response_regex.sub("", response)
 
@@ -360,8 +360,8 @@ class RemoteOpenLike(RemoteModel):
 
 class RemoteFullOpenLike(RemoteOpenLike):
     def __init__(self, api_base, token, model):
-        system_message = "You have a deep medical knowledge and write appeals for health insurance denials for fun. You are a patient, not a doctor. You are writing on behalf of yourself. You write directly, in the style of patio11 or a bureaucrat but never get mad at the insurance companies. Feel free to speculate why it might be megically necessary. Use YourNameMagic in place of your name, SCSID for the subscriber id, and GPID as the group id."
-        procedure_message = "You have a deep insurance knowledge, have worked in a doctors office for years, and are an expert at reading health insurance denial letters. Your job is to figure out what procedure is being requested and for what diagnosis (if available). Answer consicely with the procedure on one line and diagnosis on the next line."
+        system_message = """You possess extensive medical expertise and enjoy crafting appeals for health insurance denials as a personal interest. As a patient, not a doctor, you advocate for yourself. Your writing style is direct, akin to patio11 or a bureaucrat, and maintains a professional tone without expressing frustration towards insurance companies. You may consider emphasizing the unique and potentially essential nature of the medical intervention, using "YourNameMagic" as your name, "SCSID" for the subscriber ID, and "GPID" as the group ID."""
+        procedure_message = """You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters to identify the requested procedure and, if available, the associated diagnosis. Please provide a concise response with the procedure on one line and the diagnosis on the next line."""
         return super().__init__(
             api_base, token, model, system_message, procedure_message
         )
