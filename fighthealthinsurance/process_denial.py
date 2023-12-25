@@ -214,6 +214,9 @@ class PalmAPI(RemoteModel):
             result = None
         return result
 
+    def get_procedure_and_diagnosis(self, prompt):
+        return (None, None)
+
     def _infer(self, prompt) -> Optional[str]:
         API_KEY = os.getenv("PALM_KEY")
         if API_KEY is None:
