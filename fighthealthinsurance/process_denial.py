@@ -200,6 +200,42 @@ class RemoteRunPod(RemoteModel):
     def model_type(self) -> str:
         return "full"
 
+class PalmAPI(RemoteModel):
+    def bad_result(self, result) -> Optional[str]:
+        return result is not None
+
+    @cache
+    def infer(self, prompt: str) -> Optional[str]:
+        result = self._infer(prompt)
+        if self.bad_result(result):
+            result = self._infer(prompt)
+        if self.bad_result(result):
+            result = None
+        return result
+
+    def _infer(self, prompt) -> Optional[str]:
+        API_KEY = os.getenv("PALM_KEY")
+        if API_KEY is None:
+            return None
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={API_KEY}"
+        print(f"Looking up model {self} w/prompt {prompt}")
+        try:
+            import requests
+
+            s = requests.Session()
+            result = s.post(
+                url,
+                json={"contents":
+                      [{"parts":[{"text":
+                                  prompt}]}]
+                      })
+            json_result = result.json()
+            candidates = json_result["candidates"]
+            return candidates[0]["content"]["parts"][0]["text"]
+        except Exception as e:
+            print(f"Error exception: {e} from {self} w/PaLM")
+            return None
+
 
 class RemoteOpenLike(RemoteModel):
     def __init__(self, api_base, token, model, system_message, procedure_message=None):
@@ -216,7 +252,7 @@ class RemoteOpenLike(RemoteModel):
             r"\s*diagnosis\s*:?\s*", re.IGNORECASE
         )
 
-    def bad_result(self, result: str) -> bool:
+    def bad_result(self, result: Optional[str]) -> bool:
         bad = "Therefore, the Health Plans denial should be overturned."
         if result is None:
             return True
@@ -239,6 +275,8 @@ class RemoteOpenLike(RemoteModel):
         return self.procedure_response_regex.sub("", response)
 
     def _clean_diagnosis_response(self, response):
+        if "Not available in" in response:
+            return None
         return self.diagnosis_response_regex.sub("", response)
 
     @cache
@@ -519,6 +557,7 @@ class AppealGenerator(object):
         self.runpod = RemoteRunPod()
         self.remotehealth = RemoteHealthInsurance()
         self.together = RemoteTogetherAI()
+        self.palm = PalmAPI()
 
     def get_procedure_and_diagnosis(self, denial_text=None):
         prompt = self.make_open_procedure_prompt(denial_text)
@@ -528,6 +567,7 @@ class AppealGenerator(object):
             self.together,
             self.anyscale,
             self.remotehealth,
+            self.palm
         ]
         procedure = None
         diagnosis = None
@@ -620,6 +660,7 @@ class AppealGenerator(object):
         calls = [
             [self.remotehealth, open_prompt],
             [self.together, open_prompt],
+            [self.palm, open_prompt],
         ]
 
         backup_calls = [
