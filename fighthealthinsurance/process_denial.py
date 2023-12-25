@@ -200,8 +200,9 @@ class RemoteRunPod(RemoteModel):
     def model_type(self) -> str:
         return "full"
 
+
 class PalmAPI(RemoteModel):
-    def bad_result(self, result) -> Optional[str]:
+    def bad_result(self, result) -> bool:
         return result is not None
 
     @cache
@@ -223,12 +224,7 @@ class PalmAPI(RemoteModel):
             import requests
 
             s = requests.Session()
-            result = s.post(
-                url,
-                json={"contents":
-                      [{"parts":[{"text":
-                                  prompt}]}]
-                      })
+            result = s.post(url, json={"contents": [{"parts": [{"text": prompt}]}]})
             json_result = result.json()
             candidates = json_result["candidates"]
             return candidates[0]["content"]["parts"][0]["text"]
@@ -258,7 +254,7 @@ class RemoteOpenLike(RemoteModel):
             return True
         if bad in result:
             return True
-        if len(result.strip(' ')) < 5:
+        if len(result.strip(" ")) < 5:
             return True
         return False
 
@@ -355,7 +351,9 @@ class RemoteOpenLike(RemoteModel):
             print(f"Got {r} from {self.model} w/ {self.api_base} {self}")
             return r
         except Exception as e:
-            print(f"Error {e} processing {json_result} from {self.api_base} w/ url {url} --  {self}")
+            print(
+                f"Error {e} processing {json_result} from {self.api_base} w/ url {url} --  {self}"
+            )
             return None
 
 
@@ -381,8 +379,8 @@ class RemoteHealthInsurance(RemoteFullOpenLike):
         else:
             print(f"Error setting up remote health {self.host}:{self.port}")
         self.model = os.getenv(
-            "HEALTH_BACKEND_MODEL",
-            "/fighthealthinsurance_model_v0.2")
+            "HEALTH_BACKEND_MODEL", "/fighthealthinsurance_model_v0.2"
+        )
         super().__init__(self.url, token="", model=self.model)
 
 
@@ -415,6 +413,7 @@ class RemotePerplexityMedReason(RemoteOpenLike):
         model = "mistral-7b-instruct"
         medical_reason_message = "You are a doctor answering a friends question as to why a procedure is medically necessary."
         super().__init__(api_base, token, model, medical_reason_message)
+
 
 class RemoteOpen(RemoteFullOpenLike):
     """Use RemoteOpen for denial magic calls a service"""
@@ -567,7 +566,7 @@ class AppealGenerator(object):
             self.together,
             self.anyscale,
             self.remotehealth,
-            self.palm
+            self.palm,
         ]
         procedure = None
         diagnosis = None
