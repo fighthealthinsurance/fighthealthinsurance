@@ -210,8 +210,6 @@ class PalmAPI(RemoteModel):
         result = self._infer(prompt)
         if self.bad_result(result):
             result = self._infer(prompt)
-        if self.bad_result(result):
-            result = None
         return result
 
     def get_procedure_and_diagnosis(self, prompt):
