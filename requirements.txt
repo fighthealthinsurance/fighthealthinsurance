@@ -45,3 +45,4 @@ django-recaptcha==4.0.0
 # easyocr
 # opencv-python
 pyyaml
+mypy
