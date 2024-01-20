@@ -16,16 +16,16 @@ RUN pip install mysqlclient
 
 # copy source and install dependencies
 RUN mkdir -p /opt/app
-RUN mkdir -p /opt/app/libs/cal-sync-magic
 COPY requirements.txt /opt/app/
 RUN pip install --upgrade pip && pip install -r /opt/app/requirements.txt
-RUN mkdir -p /opt/app/pip_cache
-COPY static /opt/app/static
 ADD fighthealthinsurance /opt/app/fighthealthinsurance
+RUN ln -s /opt/app/fighthealthinsurance/static /opt/app/static
 COPY scripts/start-server.sh /opt/app/
 COPY *.py /opt/app/
 WORKDIR /opt/app/
+RUN ls
 RUN chown -R www-data:www-data /opt/app
+RUN ls
 # start server
 EXPOSE 80
 STOPSIGNAL SIGTERM
