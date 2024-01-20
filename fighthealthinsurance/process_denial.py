@@ -380,7 +380,7 @@ class RemoteHealthInsurance(RemoteFullOpenLike):
         else:
             print(f"Error setting up remote health {self.host}:{self.port}")
         self.model = os.getenv(
-            "HEALTH_BACKEND_MODEL", "/fighthealthinsurance_model_v0.2"
+            "HEALTH_BACKEND_MODEL", "TotallyLegitCo/fighthealthinsurance_model_v0.2"
         )
         super().__init__(self.url, token="", model=self.model)
 
