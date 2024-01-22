@@ -23,9 +23,7 @@ RUN ln -s /opt/app/fighthealthinsurance/static /opt/app/static
 COPY scripts/start-server.sh /opt/app/
 COPY *.py /opt/app/
 WORKDIR /opt/app/
-RUN ls
 RUN chown -R www-data:www-data /opt/app
-RUN ls
 # start server
 EXPOSE 80
 STOPSIGNAL SIGTERM
