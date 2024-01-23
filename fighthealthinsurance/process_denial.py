@@ -329,16 +329,19 @@ class RemoteOpenLike(RemoteModel):
             s = requests.Session()
             # Combine the message, Mistral's VLLM container does not like the system role anymore?
             # despite it still being fine-tuned with the system role.
-            combined_content = f"<<SYS>>{system_prompt}<</SYS>>{prompt[0 : self.max_len]}"
+            combined_content = (
+                f"<<SYS>>{system_prompt}<</SYS>>{prompt[0 : self.max_len]}"
+            )
             result = s.post(
                 url,
                 headers={"Authorization": f"Bearer {self.token}"},
                 json={
                     "model": self.model,
                     "messages": [
-                        {"role": "user",
-                         "content": combined_content,
-                         },
+                        {
+                            "role": "user",
+                            "content": combined_content,
+                        },
                     ],
                     "temperature": 0.7,
                 },
