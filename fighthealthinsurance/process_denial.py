@@ -327,17 +327,18 @@ class RemoteOpenLike(RemoteModel):
             import requests
 
             s = requests.Session()
+            # Combine the message, Mistral's VLLM container does not like the system role anymore?
+            # despite it still being fine-tuned with the system role.
+            combined_content = f"<<SYS>>{system_prompt}<</SYS>>{prompt[0 : self.max_len]}"
             result = s.post(
                 url,
                 headers={"Authorization": f"Bearer {self.token}"},
                 json={
                     "model": self.model,
                     "messages": [
-                        {
-                            "role": "system",
-                            "content": system_prompt,
-                        },
-                        {"role": "user", "content": prompt[0 : self.max_len]},
+                        {"role": "user",
+                         "content": combined_content,
+                         },
                     ],
                     "temperature": 0.7,
                 },
@@ -360,7 +361,7 @@ class RemoteOpenLike(RemoteModel):
 
 class RemoteFullOpenLike(RemoteOpenLike):
     def __init__(self, api_base, token, model):
-        system_message = """You possess extensive medical expertise and enjoy crafting appeals for health insurance denials as a personal interest. As a patient, not a doctor, you advocate for yourself. Your writing style is direct, akin to patio11 or a bureaucrat, and maintains a professional tone without expressing frustration towards insurance companies. You may consider emphasizing the unique and potentially essential nature of the medical intervention, using "YourNameMagic" as your name, "SCSID" for the subscriber ID, and "GPID" as the group ID."""
+        system_message = """You possess extensive medical expertise and enjoy crafting appeals for health insurance denials as a personal interest. As a patient, not a doctor, you advocate for yourself. Your writing style is direct, akin to patio11 or a bureaucrat, and maintains a professional tone without expressing frustration towards insurance companies. You may consider emphasizing the unique and potentially essential nature of the medical intervention, using "YourNameMagic" as your name, "SCSID" for the subscriber ID, and "GPID" as the group ID. Make sure to write in the form of a letter. You can be verbose. Start your response with Dear [Insurance Company];"""
         procedure_message = """You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters to identify the requested procedure and, if available, the associated diagnosis. Please provide a concise response with the procedure on one line and the diagnosis on the next line."""
         return super().__init__(
             api_base, token, model, system_message, procedure_message
