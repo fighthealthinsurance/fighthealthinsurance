@@ -513,6 +513,8 @@ class AppealGenerator(object):
             return None
 
     def make_open_prompt(self, denial_text=None, procedure=None, diagnosis=None) -> str:
+        if denial_text is None:
+            return None
         start = "Write a health insurance appeal for the following denial:"
         if (
             procedure is not None
@@ -542,7 +544,7 @@ class AppealGenerator(object):
             procedure=denial.procedure,
             diagnosis=denial.diagnosis,
         )
-        open_med_reason_prompt = self.make_open_prompt(
+        open_med_reason_prompt = self.make_open_med_prompt(
             procedure=denial.procedure,
             diagnosis=denial.diagnosis,
         )
@@ -558,7 +560,7 @@ class AppealGenerator(object):
                 print(f"No prompt for {model} skipping")
                 return []
             results = model.infer(prompt, t)
-            print(f"Infered {results} for {model} using {prompt}")
+            print(f"Infered {results} for {model}-{t} using {prompt}")
             print("Yay!")
             return results
 
