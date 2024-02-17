@@ -5,7 +5,7 @@ import os
 import re
 from abc import ABC, abstractmethod
 from functools import cache, lru_cache
-from typing import Tuple, Optional
+from typing import Tuple, List, Optional
 import time
 
 import icd10
@@ -107,98 +107,8 @@ class RemoteModel(object):
     ) tag them with "med_reason".
     """
 
-    def infer(self, prompt):
+    def infer(self, prompt, t):
         pass
-
-    def model_type(self):
-        pass
-
-
-class RemoteBioGPT(RemoteModel):
-    """Use BioGPT for denial magic calls a service"""
-
-    @cache
-    def infer(self, prompt) -> Optional[str]:
-        try:
-            return requests.post(
-                "http://model-backend-svc/biogpt/infer", json={"prompt": prompt}
-            ).text
-        except:
-            return None
-
-    def model_type(self) -> str:
-        return "med_reason"
-
-
-class RemoteMed(RemoteModel):
-    """Use RemoteMed for denial magic calls a service"""
-
-    @cache
-    def infer(self, prompt) -> Optional[str]:
-        try:
-            return requests.post(
-                "http://model-backend-svc/openllamamed/infer", json={"prompt": prompt}
-            ).text
-        except:
-            return None
-
-    def model_type(self) -> str:
-        return "med_reason"
-
-
-class RemoteRunPod(RemoteModel):
-    def __init__(self):
-        self.model_name = os.getenv("RUNPOD_ENDPOINT", "")
-        self.token = os.getenv("RUNPOD_API_KEY", "")
-        # We use our own caching mechanism here so we don't cache None
-        self.internal_cache = {}
-
-    def infer(self, prompt) -> Optional[str]:
-        if prompt in self.internal_cache and self.internal_cache[prompt] is not None:
-            print(f"Using cached value for f{prompt} to avoid runpod.")
-            return self.internal_cache[prompt]
-        print(f"Looking up runpod {self.model_name}")
-        if self.token is None:
-            print("Error no Token provided for runpod.")
-
-        if prompt is None:
-            print("Error: must supply a prompt.")
-            return None
-        url = f"https://api.runpod.ai/v2/{self.model_name}/runsync"
-        try:
-            import requests
-
-            s = requests.Session()
-            json_result = s.post(
-                url,
-                headers={"Authorization": f"Bearer {self.token}"},
-                json={"input": {"prompt": prompt}},
-            ).json()
-            print(f"jr {json_result} on runpod.")
-        except Exception as e:
-            print(f"Error {e} calling runpod")
-            return None
-        print(f"Initial result {json_result}")
-        # When the backedn takes more than 60 seconds
-        while "status" in json_result and json_result["status"] == "IN_QUEUE":
-            job_id = json_result["id"]
-            url = f"https://api.runpod.ai/v2/{self.model_name}/status/{job_id}"
-            s = requests.Session()
-            json_result = s.post(
-                url, headers={"Authorization": f"Bearer {self.token}"}
-            ).json()
-            print(f"jr {json_result} on runpod.")
-            time.sleep(4)
-        try:
-            r = json_result["output"]["result"]
-            self.internal_cache[prompt] = r
-            return r
-        except Exception as e:
-            print(f"Error197 exception: {e} processing {json_result} from {self}.")
-            return None
-
-    def model_type(self) -> str:
-        return "full"
 
 
 class PalmAPI(RemoteModel):
@@ -206,11 +116,14 @@ class PalmAPI(RemoteModel):
         return result is not None
 
     @cache
-    def infer(self, prompt: str) -> Optional[str]:
+    def infer(self, prompt: str, t: str) -> List[Tuple[str, str]]:
         result = self._infer(prompt)
         if self.bad_result(result):
             result = self._infer(prompt)
-        return result
+        if result is not None:
+            return [(t, result)]
+        else:
+            return []
 
     def get_procedure_and_diagnosis(self, prompt):
         return (None, None)
@@ -260,13 +173,16 @@ class RemoteOpenLike(RemoteModel):
         return False
 
     @cache
-    def infer(self, prompt: str) -> Optional[str]:
+    def infer(self, prompt: str, t: str) -> List[Tuple[str, str]]:
         result = self._infer(self.system_message, prompt)
         if self.bad_result(result):
             result = self._infer(self.system_message, prompt)
         if self.bad_result(result):
             result = None
-        return result
+        if result is not None:
+            return [(t, result)]
+        else:
+            return []
 
     def _clean_procedure_response(self, response):
         return self.procedure_response_regex.sub("", response)
@@ -557,8 +473,6 @@ class AppealGenerator(object):
         self.perplexity_med = RemotePerplexityMedReason()
         self.anyscale = RemoteOpen()
         self.anyscale2 = RemoteOpenInst()
-        self.biogpt = RemoteBioGPT()
-        self.runpod = RemoteRunPod()
         self.remotehealth = RemoteHealthInsurance()
         self.together = RemoteTogetherAI()
         self.palm = PalmAPI()
@@ -567,11 +481,11 @@ class AppealGenerator(object):
         prompt = self.make_open_procedure_prompt(denial_text)
         models_to_try = [
             self.regex_denial_processor,
-            self.perplexity,
-            self.together,
-            self.anyscale,
+#            self.perplexity,
+#            self.together,
+#            self.anyscale,
             self.remotehealth,
-            self.palm,
+#            self.palm,
         ]
         procedure = None
         diagnosis = None
@@ -611,7 +525,7 @@ class AppealGenerator(object):
             start = f"Write a health insurance appeal for procedure {procedure} given the following denial:"
         return f"{start}\n{denial_text}"
 
-    def make_open_llama_med_prompt(
+    def make_open_med_prompt(
         self, procedure=None, diagnosis=None
     ) -> Optional[str]:
         if procedure is not None:
@@ -622,25 +536,13 @@ class AppealGenerator(object):
         else:
             return None
 
-    def make_biogpt_prompt(self, procedure=None, diagnosis=None) -> Optional[str]:
-        if procedure is not None:
-            if diagnosis is not None:
-                return f"{procedure} is medically necessary for {diagnosis} because"
-            else:
-                return f"{procedure} is medically necessary because"
-        else:
-            return None
-
     def make_appeals(self, denial, template_generator):
-        # Use LLMS
-        bio_gpt_prompt = self.make_biogpt_prompt(
-            procedure=denial.procedure, diagnosis=denial.diagnosis
-        )
-        llama_med_prompt = self.make_open_llama_med_prompt(
-            procedure=denial.procedure, diagnosis=denial.diagnosis
-        )
         open_prompt = self.make_open_prompt(
             denial_text=denial.denial_text,
+            procedure=denial.procedure,
+            diagnosis=denial.diagnosis,
+        )
+        open_med_reason_prompt = self.make_open_prompt(
             procedure=denial.procedure,
             diagnosis=denial.diagnosis,
         )
@@ -650,28 +552,27 @@ class AppealGenerator(object):
         generated_futures = []
 
         # For any model that we have a prompt for try to call it
-        def get_model_result(model: RemoteModel, prompt: str) -> (str, Optional[str]):
+        def get_model_result(model: RemoteModel, prompt: str, t: str) -> List[Tuple[str, Optional[str]]]:
             print(f"Looking up on {model}")
             if prompt is None:
                 print(f"No prompt for {model} skipping")
-                return (model.model_type(), None)
-            infered = model.infer(prompt)
-            t = model.model_type()
-            print(f"Infered {infered} for {model} using {prompt}")
+                return []
+            results = model.infer(prompt, t)
+            print(f"Infered {results} for {model} using {prompt}")
             print("Yay!")
-            return (t, infered)
+            return results
 
         calls = [
-            [self.remotehealth, open_prompt],
-            [self.together, open_prompt],
-            [self.palm, open_prompt],
+            [self.remotehealth, open_prompt, "full"],
+#            [self.together, open_prompt],
+#            [self.palm, open_prompt],
         ]
 
         backup_calls = [
-            [self.perplexity, open_prompt],
-            [self.anyscale, open_prompt],
-            [self.anyscale2, open_prompt],
-            [self.runpod, open_prompt],
+#            [self.perplexity, open_prompt],
+#            [self.anyscale, open_prompt],
+#            [self.anyscale2, open_prompt],
+#            [self.runpod, open_prompt],
         ]
         # If we need to know the medical reason ask our friendly LLMs
         static_appeal = template_generator.generate_static()
@@ -679,8 +580,7 @@ class AppealGenerator(object):
         if static_appeal is None:
             calls.extend(
                 [
-                    [self.biogpt, bio_gpt_prompt],
-                    [self.perplexity_med, bio_gpt_prompt],
+                    [self.remotehealth, open_med_reason_prompt, "med_reason"],
                 ]
             )
         else:
@@ -696,16 +596,18 @@ class AppealGenerator(object):
             )
 
             def generated_to_appeals_text(k_text):
-                k, text = k_text.result()
-                if text is None:
-                    return text
-                appeal_text = ""
-                # It's either full or a reason to plug into a template
-                if k == "full":
-                    appeal_text = text
-                else:
-                    appeal_text = template_generator.generate(text)
-                return appeal_text
+                model_results = k_text.result()
+                appeals_text = []
+                for k, text in model_results:
+                    if text is None:
+                        pass
+                    appeal_text = ""
+                    # It's either full or a reason to plug into a template
+                    if k == "full":
+                        appeals_text += text
+                    else:
+                        appeal_text += template_generator.generate(text)
+                return appeals_text
 
             generated_text = map(
                 generated_to_appeals_text,
@@ -721,4 +623,4 @@ class AppealGenerator(object):
         except StopIteration:
             appeals = make_calls_async(backup_calls)
         print(f"Sending back {appeals}")
-        return appeals
+        return itertools.chain.from_iterable(appeals)
