@@ -104,7 +104,7 @@ class RemoteModel(object):
     """
     For models which produce a "full" appeal tag them with "full"
     For medical reason (e.g. ones where we hybrid with our "expert system"
-    ) tag them with "med_reason".
+    ) tag them with "medically_necessary".
     """
 
     def infer(self, prompt, t):
@@ -148,12 +148,11 @@ class PalmAPI(RemoteModel):
 
 
 class RemoteOpenLike(RemoteModel):
-    def __init__(self, api_base, token, model, system_message, procedure_message=None):
+    def __init__(self, api_base, token, model, system_messages):
         self.api_base = api_base
         self.token = token
         self.model = model
-        self.system_message = system_message
-        self.procedure_message = procedure_message
+        self.system_messages = system_messages
         self.max_len = 4096 * 2
         self.procedure_response_regex = re.compile(
             r"\s*procedure\s*:?\s*", re.IGNORECASE
@@ -174,9 +173,9 @@ class RemoteOpenLike(RemoteModel):
 
     @cache
     def infer(self, prompt: str, t: str) -> List[Tuple[str, str]]:
-        result = self._infer(self.system_message, prompt)
+        result = self._infer(self.system_messages[t], prompt)
         if self.bad_result(result):
-            result = self._infer(self.system_message, prompt)
+            result = self._infer(self.system_messages[t], prompt)
         if self.bad_result(result):
             result = None
         if result is not None:
@@ -196,13 +195,13 @@ class RemoteOpenLike(RemoteModel):
     def get_procedure_and_diagnosis(
         self, prompt: str
     ) -> tuple[Optional[str], Optional[str]]:
-        if self.procedure_message is None:
+        if self.system_messages["procedure"] is None:
             print(f"No procedure message for {self.model} skipping")
             return (None, None)
-        model_response = self._infer(self.procedure_message, prompt)
+        model_response = self._infer(self.system_messages["procedure"], prompt)
         if model_response is None or "Diagnosis" not in model_response:
             print("Retrying query.")
-            model_response = self._infer(self.procedure_message, prompt)
+            model_response = self._infer(self.system_messages["procedure"], prompt)
         if model_response is not None:
             responses: list[str] = model_response.split("\n")
             if len(responses) == 2:
@@ -232,7 +231,7 @@ class RemoteOpenLike(RemoteModel):
         return (None, None)
 
     def _infer(self, system_prompt, prompt) -> Optional[str]:
-        print(f"Looking up model {self.model} using {self.api_base}")
+        print(f"Looking up model {self.model} using {self.api_base} and {prompt}")
         if self.token is None:
             print(f"Error no Token provided for {self.model}.")
         if prompt is None:
@@ -280,10 +279,13 @@ class RemoteOpenLike(RemoteModel):
 
 class RemoteFullOpenLike(RemoteOpenLike):
     def __init__(self, api_base, token, model):
-        system_message = """You possess extensive medical expertise and enjoy crafting appeals for health insurance denials as a personal interest. As a patient, not a doctor, you advocate for yourself. Your writing style is direct, akin to patio11 or a bureaucrat, and maintains a professional tone without expressing frustration towards insurance companies. You may consider emphasizing the unique and potentially essential nature of the medical intervention, using "YourNameMagic" as your name, "SCSID" for the subscriber ID, and "GPID" as the group ID. Make sure to write in the form of a letter. You can be verbose. Start your response with Dear [Insurance Company];"""
-        procedure_message = """You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters to identify the requested procedure and, if available, the associated diagnosis. Please provide a concise response with the procedure on one line and the diagnosis on the next line."""
+        systems = {
+            "full": """You possess extensive medical expertise and enjoy crafting appeals for health insurance denials as a personal interest. As a patient, not a doctor, you advocate for yourself. Your writing style is direct, akin to patio11 or a bureaucrat, and maintains a professional tone without expressing frustration towards insurance companies. You may consider emphasizing the unique and potentially essential nature of the medical intervention, using "YourNameMagic" as your name, "SCSID" for the subscriber ID, and "GPID" as the group ID. Make sure to write in the form of a letter. You can be verbose. Start your response with Dear [Insurance Company];""",
+            "procedure": """You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters to identify the requested procedure and, if available, the associated diagnosis. Each word costs an extra dollar. Please provide a concise response with the procedure on one line and the diagnosis on the next line.""",
+            "medically_necessary": """You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters. Each word costs an extra dollar. Please provide a concise response."""
+        }
         return super().__init__(
-            api_base, token, model, system_message, procedure_message
+            api_base, token, model, systems
         )
 
     def model_type(self) -> str:
@@ -380,7 +382,7 @@ class ProcessDenialRegex(DenialBase):
         return None
 
     def get_diagnosis(self, text):
-        print(f"Getting procedure types for {text}")
+        print(f"Getting diagnosis types for {text}")
         procedure = None
         for d in self.diagnosis:
             print(f"Exploring {d} w/ {d.regex}")
@@ -503,6 +505,8 @@ class AppealGenerator(object):
                 if procedure is not None and diagnosis is not None:
                     print(f"Return with procedure {procedure} and {diagnosis}")
                     return (procedure, diagnosis)
+                else:
+                    print(f"So far infered {procedure} and {diagnosis}")
         print(f"Fell through :/ could not fully populate.")
         return (procedure, diagnosis)
 
@@ -544,7 +548,7 @@ class AppealGenerator(object):
             procedure=denial.procedure,
             diagnosis=denial.diagnosis,
         )
-        open_med_reason_prompt = self.make_open_med_prompt(
+        open_medically_necessary_prompt = self.make_open_med_prompt(
             procedure=denial.procedure,
             diagnosis=denial.diagnosis,
         )
@@ -582,7 +586,7 @@ class AppealGenerator(object):
         if static_appeal is None:
             calls.extend(
                 [
-                    [self.remotehealth, open_med_reason_prompt, "med_reason"],
+                    [self.remotehealth, open_medically_necessary_prompt, "medically_necessary"],
                 ]
             )
         else:
