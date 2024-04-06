@@ -38,7 +38,7 @@ class Base(Configuration):
     SECRET_KEY = "django-insecure-4b6t3cnic_(g*0cexqe8w)=1&vyb#(erhad#7@y4sv)jzb2kaf"
 
     # SECURITY WARNING: don't run with debug turned on in production!
-    DEBUG = True
+    DEBUG = False
 
     MEDIA_ROOT = "media"
     MEDIA_URL = "/media/"
@@ -213,6 +213,8 @@ class Dev(Base):
 
 
 class Prod(Base):
+    DEBUG = False
+
     @property
     def SECRET_KEY(self):
         return os.getenv("SECRET_KEY")
