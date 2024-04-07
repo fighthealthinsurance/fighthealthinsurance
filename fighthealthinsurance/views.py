@@ -50,21 +50,21 @@ class OtherResourcesView(generic.TemplateView):
 class ScanView(generic.TemplateView):
     template_name = "scrub.html"
 
-    def get_context_data(self, request):
+    def get_context_data(self, **kwargs):
         return {"ocr_result": "", "upload_more": True}
 
 
 class PrivacyPolicyView(generic.TemplateView):
     template_name = "privacy_policy.html"
 
-    def get_context_data(self, request):
+    def get_context_data(self, **kwargs):
         return {"title": "Privacy Policy"}
 
 
 class TermsOfServiceView(generic.TemplateView):
     template_name = "tos.html"
 
-    def get_context_data(self, request):
+    def get_context_data(self, **kwargs):
         return {"title": "Terms of Service"}
 
 
