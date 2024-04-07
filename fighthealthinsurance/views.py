@@ -23,6 +23,7 @@ from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils.decorators import method_decorator
 from django.views import View
+from django.views import generic
 
 import numpy as np
 import uszipcode
@@ -34,49 +35,44 @@ from fighthealthinsurance.utils import *
 appealGenerator = AppealGenerator()
 
 
-class IndexView(View):
-    def get(self, request):
-        return render(request, "index.html")
+class IndexView(generic.TemplateView):
+    template_name = 'index.html'
 
 
-class AboutView(View):
-    def get(self, request):
-        return render(request, "about_us.html")
+class AboutView(generic.TemplateView):
+    template_name = "about_us.html"
 
 
-class OtherResourcesView(View):
-    def get(self, request):
-        return render(request, "other_resources.html")
+class OtherResourcesView(generic.TemplateView):
+    template_name = "other_resources.html"
 
 
-class ScanView(View):
-    def get(self, request):
-        return render(
-            request, "scrub.html", context={"ocr_result": "", "upload_more": True}
-        )
+class ScanView(generic.TemplateView):
+    template_name = 'scrub.html'
+
+    def get_context_data(self, request):
+        return {"ocr_result": "", "upload_more": True}
 
 
-class PrivacyPolicyView(View):
-    def get(self, request):
-        return render(
-            request, "privacy_policy.html", context={"title": "Privacy Policy"}
-        )
+class PrivacyPolicyView(generic.TemplateView):
+    template_name = "privacy_policy.html"
+
+    def get_context_data(self, request):
+        return {"title": "Privacy Policy"}
 
 
-class TermsOfServiceView(View):
-    def get(self, request):
-        return render(
-            request,
-            "tos.html",
-            context={
-                "title": "Terms of Service",
-            },
-        )
+class TermsOfServiceView(generic.TemplateView):
+    template_name = "tos.html"
+
+    def get_context_data(self, request):
+        return {"title": "Terms of Service"}
 
 
 class ShareDenialView(View):
     def get(self, request):
-        return render(request, "share_denial.html", context={"title": "Share Denial"})
+        return render(
+            request, "share_denial.html", context={"title": "Share Denial"}
+        )
 
     def post(self, request):
         form = ShareDenailForm(request.POST)
@@ -84,7 +80,9 @@ class ShareDenialView(View):
 
 class ShareAppealView(View):
     def get(self, request):
-        return render(request, "share_appeal.html", context={"title": "Share Appeal"})
+        return render(
+            request, "share_appeal.html", context={"title": "Share Appeal"}
+        )
 
     def post(self, request):
         form = ShareAppealForm(request.POST)
@@ -207,21 +205,22 @@ class FindNextSteps(View):
                     (
                         (
                             "<a href='https://www.cms.gov/CCIIO/Resources/Consumer-Assistance-Grants/"
-                            + state
-                            + "'>"
-                            + f"Your state {state} participates in a "
-                            + f"Consumer Assistance Program(CAP), and you may be able to get help "
+                            + state + "'>" +
+                            f"Your state {state} participates in a " +
+                            f"Consumer Assistance Program(CAP), and you may be able to get help "
                             + f"through them.</a>"
                         ),
                         "Visit <a href='https://www.cms.gov/CCIIO/Resources/Consumer-Assistance-Grants/'>CMS for more info</a>",
                     )
                 )
-            if denial.regulator == Regulator.objects.filter(alt_name="ERISA").get():
+            if denial.regulator == Regulator.objects.filter(alt_name="ERISA"
+                                                            ).get():
                 outside_help_details.append(
                     (
                         (
                             "Your plan looks to be an ERISA plan which means your employer <i>may</i>"
-                            + " have more input into plan decisions. If your are on good terms with HR "
+                            +
+                            " have more input into plan decisions. If your are on good terms with HR "
                             + " it could be worth it to ask them for advice."
                         ),
                         "Talk to your employer's HR if you are on good terms with them.",
@@ -240,7 +239,9 @@ class FindNextSteps(View):
             for dt in denial.denial_type.all():
                 new_form = dt.get_form()
                 if new_form is not None:
-                    new_form = new_form(initial={"medical_reason": dt.appeal_text})
+                    new_form = new_form(
+                        initial={"medical_reason": dt.appeal_text}
+                    )
                     question_forms.append(new_form)
             denial_ref_form = DenialRefForm(
                 initial={
@@ -319,7 +320,6 @@ class GenerateAppeal(View):
 
 class AppealsBackend(View):
     """Streaming back the appeals as json :D"""
-
     def __init__(self):
         self.regex_denial_processor = ProcessDenialRegex()
 
@@ -398,10 +398,12 @@ class AppealsBackend(View):
                 s = Template(appeal)
                 ret = s.safe_substitute(
                     {
-                        "insurance_company": denial.insurance_company
-                        or "{insurance_company}",
-                        "diagnosis": denial.diagnosis or "{diagnosis}",
-                        "procedure": denial.procedure or "{procedure}",
+                        "insurance_company":
+                            denial.insurance_company or "{insurance_company}",
+                        "diagnosis":
+                            denial.diagnosis or "{diagnosis}",
+                        "procedure":
+                            denial.procedure or "{procedure}",
                     }
                 )
                 return ret
@@ -409,7 +411,9 @@ class AppealsBackend(View):
             filtered_appeals = filter(lambda x: x != None, appeals)
             saved_appeals = map(save_appeal, filtered_appeals)
             subbed_appeals = map(sub_in_appeals, filtered_appeals)
-            subbed_appeals_json = map(lambda e: json.dumps(e) + "\n", subbed_appeals)
+            subbed_appeals_json = map(
+                lambda e: json.dumps(e) + "\n", subbed_appeals
+            )
             return StreamingHttpResponse(
                 subbed_appeals_json, content_type="application/json"
             )
@@ -437,7 +441,12 @@ class OCRView(View):
         uploader = files["uploader"]
         doc_txt = self._ocr(uploader)
         return render(
-            request, "scrub.html", context={"ocr_result": doc_txt, "upload_more": False}
+            request,
+            "scrub.html",
+            context={
+                "ocr_result": doc_txt,
+                "upload_more": False
+            }
         )
 
     def _ocr(self, uploader):
@@ -475,7 +484,9 @@ class ProcessView(View):
             denial_text = form.cleaned_data["denial_text"]
             denial = Denial(denial_text=denial_text, hashed_email=hashed_email)
             denial.save()
-            denial_types = self.regex_denial_processor.get_denialtype(denial_text)
+            denial_types = self.regex_denial_processor.get_denialtype(
+                denial_text
+            )
             denial_type = []
             for dt in denial_types:
                 DenialTypesRelation(
@@ -487,10 +498,11 @@ class ProcessView(View):
             state = None
             zip = form.cleaned_data["zip"]
             if zip is not None and zip != "":
-                state = self.zip_engine.by_zipcode(form.cleaned_data["zip"]).state
-            (procedure, diagnosis) = appealGenerator.get_procedure_and_diagnosis(
-                denial_text
-            )
+                state = self.zip_engine.by_zipcode(
+                    form.cleaned_data["zip"]
+                ).state
+            (procedure, diagnosis
+             ) = appealGenerator.get_procedure_and_diagnosis(denial_text)
             form = PostInferedForm(
                 initial={
                     "denial_type": denial_type,
