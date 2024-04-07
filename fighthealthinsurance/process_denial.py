@@ -282,11 +282,9 @@ class RemoteFullOpenLike(RemoteOpenLike):
         systems = {
             "full": """You possess extensive medical expertise and enjoy crafting appeals for health insurance denials as a personal interest. As a patient, not a doctor, you advocate for yourself. Your writing style is direct, akin to patio11 or a bureaucrat, and maintains a professional tone without expressing frustration towards insurance companies. You may consider emphasizing the unique and potentially essential nature of the medical intervention, using "YourNameMagic" as your name, "SCSID" for the subscriber ID, and "GPID" as the group ID. Make sure to write in the form of a letter. You can be verbose. Start your response with Dear [Insurance Company];""",
             "procedure": """You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters to identify the requested procedure and, if available, the associated diagnosis. Each word costs an extra dollar. Please provide a concise response with the procedure on one line and the diagnosis on the next line.""",
-            "medically_necessary": """You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters. Each word costs an extra dollar. Please provide a concise response."""
+            "medically_necessary": """You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters. Each word costs an extra dollar. Please provide a concise response.""",
         }
-        return super().__init__(
-            api_base, token, model, systems
-        )
+        return super().__init__(api_base, token, model, systems)
 
     def model_type(self) -> str:
         return "full"
@@ -483,11 +481,11 @@ class AppealGenerator(object):
         prompt = self.make_open_procedure_prompt(denial_text)
         models_to_try = [
             self.regex_denial_processor,
-#            self.perplexity,
-#            self.together,
-#            self.anyscale,
+            #            self.perplexity,
+            #            self.together,
+            #            self.anyscale,
             self.remotehealth,
-#            self.palm,
+            #            self.palm,
         ]
         procedure = None
         diagnosis = None
@@ -531,9 +529,7 @@ class AppealGenerator(object):
             start = f"Write a health insurance appeal for procedure {procedure} given the following denial:"
         return f"{start}\n{denial_text}"
 
-    def make_open_med_prompt(
-        self, procedure=None, diagnosis=None
-    ) -> Optional[str]:
+    def make_open_med_prompt(self, procedure=None, diagnosis=None) -> Optional[str]:
         if procedure is not None:
             if diagnosis is not None:
                 return f"Why is {procedure} medically necessary for {diagnosis}?"
@@ -558,7 +554,9 @@ class AppealGenerator(object):
         generated_futures = []
 
         # For any model that we have a prompt for try to call it
-        def get_model_result(model: RemoteModel, prompt: str, t: str) -> List[Tuple[str, Optional[str]]]:
+        def get_model_result(
+            model: RemoteModel, prompt: str, t: str
+        ) -> List[Tuple[str, Optional[str]]]:
             print(f"Looking up on {model}")
             if prompt is None:
                 print(f"No prompt for {model} skipping")
@@ -570,15 +568,15 @@ class AppealGenerator(object):
 
         calls = [
             [self.remotehealth, open_prompt, "full"],
-#            [self.together, open_prompt],
-#            [self.palm, open_prompt],
+            #            [self.together, open_prompt],
+            #            [self.palm, open_prompt],
         ]
 
         backup_calls = [
-#            [self.perplexity, open_prompt],
-#            [self.anyscale, open_prompt],
-#            [self.anyscale2, open_prompt],
-#            [self.runpod, open_prompt],
+            #            [self.perplexity, open_prompt],
+            #            [self.anyscale, open_prompt],
+            #            [self.anyscale2, open_prompt],
+            #            [self.runpod, open_prompt],
         ]
         # If we need to know the medical reason ask our friendly LLMs
         static_appeal = template_generator.generate_static()
@@ -586,7 +584,11 @@ class AppealGenerator(object):
         if static_appeal is None:
             calls.extend(
                 [
-                    [self.remotehealth, open_medically_necessary_prompt, "medically_necessary"],
+                    [
+                        self.remotehealth,
+                        open_medically_necessary_prompt,
+                        "medically_necessary",
+                    ],
                 ]
             )
         else:
