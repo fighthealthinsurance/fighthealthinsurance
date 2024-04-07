@@ -2,6 +2,7 @@ typing-extensions
 icd10-cm
 types-requests
 stripe
+black
 urllib3
 requests
 pytz
