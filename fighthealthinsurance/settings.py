@@ -16,9 +16,10 @@ from typing import *
 
 from configurations import Configuration
 
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "fighthealthinsurance.settings")
+os.environ.setdefault(
+    "DJANGO_SETTINGS_MODULE", "fighthealthinsurance.settings"
+)
 os.environ.setdefault("DJANGO_CONFIGURATION", os.getenv("ENVIRONMENT", "Dev"))
-
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -51,7 +52,9 @@ class Base(Configuration):
 
     SITE_ID = 1
 
-    TEMPLATE_CONTEXT_PROCESSORS = ["django.template.context_processors.request"]
+    TEMPLATE_CONTEXT_PROCESSORS = [
+        "django.template.context_processors.request"
+    ]
 
     INSTALLED_APPS = [
         "django.contrib.admin",
@@ -115,14 +118,16 @@ class Base(Configuration):
             "BACKEND": "django.template.backends.django.DjangoTemplates",
             "DIRS": [BASE_DIR / "templates"],
             "APP_DIRS": True,
-            "OPTIONS": {
-                "context_processors": [
-                    "django.template.context_processors.debug",
-                    "django.template.context_processors.request",
-                    "django.contrib.auth.context_processors.auth",
-                    "django.contrib.messages.context_processors.messages",
-                ],
-            },
+            "OPTIONS":
+                {
+                    "context_processors":
+                        [
+                            "django.template.context_processors.debug",
+                            "django.template.context_processors.request",
+                            "django.contrib.auth.context_processors.auth",
+                            "django.contrib.messages.context_processors.messages",
+                        ],
+                },
         },
     ]
 
@@ -132,10 +137,11 @@ class Base(Configuration):
     # https://docs.djangoproject.com/en/4.0/ref/settings/#databases
 
     DATABASES = {
-        "default": {
-            "ENGINE": "django.db.backends.sqlite3",
-            "NAME": BASE_DIR / "db.sqlite3",
-        }
+        "default":
+            {
+                "ENGINE": "django.db.backends.sqlite3",
+                "NAME": BASE_DIR / "db.sqlite3",
+            }
     }
 
     # Password validation
@@ -143,16 +149,20 @@ class Base(Configuration):
 
     AUTH_PASSWORD_VALIDATORS = [
         {
-            "NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator",
+            "NAME":
+                "django.contrib.auth.password_validation.UserAttributeSimilarityValidator",
         },
         {
-            "NAME": "django.contrib.auth.password_validation.MinimumLengthValidator",
+            "NAME":
+                "django.contrib.auth.password_validation.MinimumLengthValidator",
         },
         {
-            "NAME": "django.contrib.auth.password_validation.CommonPasswordValidator",
+            "NAME":
+                "django.contrib.auth.password_validation.CommonPasswordValidator",
         },
         {
-            "NAME": "django.contrib.auth.password_validation.NumericPasswordValidator",
+            "NAME":
+                "django.contrib.auth.password_validation.NumericPasswordValidator",
         },
     ]
 
@@ -193,7 +203,7 @@ class Base(Configuration):
 
 
 class Dev(Base):
-    Debug = True
+    DEBUG = True
     RECAPTCHA_TESTING = True
     os.environ["RECAPTCHA_TESTING"] = "True"
     SILENCED_SYSTEM_CHECKS = [
@@ -205,10 +215,11 @@ class Dev(Base):
     EMAIL_FILE_PATH = os.path.join(BASE_DIR, "sent_emails")
 
     DATABASES = {
-        "default": {
-            "ENGINE": "django.db.backends.sqlite3",
-            "NAME": BASE_DIR / "db.sqlite3",
-        }
+        "default":
+            {
+                "ENGINE": "django.db.backends.sqlite3",
+                "NAME": BASE_DIR / "db.sqlite3",
+            }
     }
 
 
@@ -227,14 +238,15 @@ class Prod(Base):
     def DATABASES(self):
         engine = "django.db.backends.mysql"
         return {
-            "default": {
-                "ENGINE": engine,
-                "NAME": os.getenv("DBNAME"),
-                "USER": os.getenv("DBUSER"),
-                "PASSWORD": os.getenv("DBPASSWORD"),
-                "HOST": os.getenv("DBHOST"),
-                "ATOMIC_REQUESTS": True,
-            }
+            "default":
+                {
+                    "ENGINE": engine,
+                    "NAME": os.getenv("DBNAME"),
+                    "USER": os.getenv("DBUSER"),
+                    "PASSWORD": os.getenv("DBPASSWORD"),
+                    "HOST": os.getenv("DBHOST"),
+                    "ATOMIC_REQUESTS": True,
+                }
         }
 
     EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
