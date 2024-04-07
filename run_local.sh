@@ -1,10 +1,14 @@
 #!/bin/bash
 
+JS_PATH=fighthealthinsurance/static/js
+
 python -c 'import configurations' 2>&1>/dev/null
 python_dep_check=$?
 
+pushd "${JS_PATH}"
 npm ls 2>&1>/dev/null
 npm_dep_check=$?
+popd
 
 if [ ${python_dep_check} != 0 ]; then
   set +x
@@ -40,12 +44,13 @@ if [ ! -f "cert.pem" ]; then
   mkcert -cert-file cert.pem -key-file key.pem localhost 127.0.0.1
 fi
 
+pushd "${JS_PATH}"
 if [ ${npm_dep_check} != 0 ]; then
-  pushd fighthealthinsurance/static/js/
   npm i || echo "Can't install?" >/dev/stderr
-  npm run build
-  popd
 fi
+npm run build
+popd
+
 
 RECAPTCHA_TESTING=true OAUTHLIB_RELAX_TOKEN_SCOPE=1 \
   python manage.py runserver_plus --cert-file cert.pem --key-file key.pem
