@@ -79,8 +79,6 @@ class ProcessDenialCodes(DenialBase):
             diag = i.group(1)
             tag = icd10.find(diag)
             if tag is not None:
-                print(tag)
-                print(tag.block_description)
                 if re.search("preventive", tag.block_description, re.IGNORECASE):
                     return [self.preventive_denial]
                 if diag in self.preventive_diagnosis:
@@ -88,7 +86,6 @@ class ProcessDenialCodes(DenialBase):
         cpt_codes = self.cpt_code_re.finditer(text)
         for i in cpt_codes:
             code = i.group(1)
-            print(code)
             if code in self.preventive_codes:
                 return [self.preventive_denial]
         return []
@@ -133,7 +130,6 @@ class PalmAPI(RemoteModel):
         if API_KEY is None:
             return None
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={API_KEY}"
-        print(f"Looking up model {self} w/prompt {prompt}")
         try:
             import requests
 
@@ -143,7 +139,6 @@ class PalmAPI(RemoteModel):
             candidates = json_result["candidates"]
             return candidates[0]["content"]["parts"][0]["text"]
         except Exception as e:
-            print(f"Error exception: {e} from {self} w/PaLM")
             return None
 
 
@@ -452,13 +447,14 @@ class AppealTemplateGenerator(object):
         print(f"Template {self.combined} on {self} ")
 
     def generate_static(self):
-        print(f"Generating static on {self} sending back {self.combined}")
+        print(f"Generating static on {self}")
         if "{medical_reason}" not in self.combined and self.combined != "":
             return self.combined
         else:
             return None
 
     def generate(self, medical_reason):
+        print(f"Generating non-static on {self}")
         result = self.combined.replace("{medical_reason}", medical_reason)
         if result != "":
             return result
@@ -538,7 +534,7 @@ class AppealGenerator(object):
         else:
             return None
 
-    def make_appeals(self, denial, template_generator):
+    def make_appeals(self, denial, template_generator, medical_reasons=[]):
         open_prompt = self.make_open_prompt(
             denial_text=denial.denial_text,
             procedure=denial.procedure,
@@ -549,7 +545,6 @@ class AppealGenerator(object):
             diagnosis=denial.diagnosis,
         )
 
-        medical_reasons = []
         # TODO: use the streaming and cancellable APIs (maybe some fancy JS on the client side?)
         generated_futures = []
 
@@ -580,7 +575,7 @@ class AppealGenerator(object):
         ]
         # If we need to know the medical reason ask our friendly LLMs
         static_appeal = template_generator.generate_static()
-        appeals = []
+        initial_appeals = []
         if static_appeal is None:
             calls.extend(
                 [
@@ -593,8 +588,13 @@ class AppealGenerator(object):
             )
         else:
             # Otherwise just put in as is.
-            appeals.append(static_appeal)
+            initial_appeals.append(static_appeal)
+        for reason in medical_reasons:
+            print(f"Using reason {reason}")
+            appeal = template_generator.generate(reason)
+            initial_appeals.append(appeal)
 
+        print(f"Initial appeal {initial_appeals}")
         # Executor map wants a list for each parameter.
 
         def make_calls_async(calls):
@@ -624,7 +624,7 @@ class AppealGenerator(object):
             return generated_text
 
         generated_text = make_calls_async(calls)
-        appeals = itertools.chain(appeals, generated_text)
+        appeals = itertools.chain([initial_appeals], generated_text)
         # Check and make sure we have a result
         try:
             appeals = itertools.chain([appeals.__next__()], appeals)

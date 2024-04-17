@@ -75,11 +75,13 @@ $(document).ready(function() {
     $.ajax({
         url: "{% url 'appeals_json_backend' %}",
         type: 'POST',
-        data: {
-	    'denial_id': "{{ denial_id }}",
-	    'email': "{{ email }}",
-	    'csrfmiddlewaretoken': '{{ csrf_token }}',
-	    'timbit': 'is awesome'},
+data: {
+{% autoescape off %}
+...{{form_context}},
+{% endautoescape %}
+              ...{
+              'csrfmiddlewaretoken': '{{ csrf_token }}',
+              'timbit': 'is most awesomex2'}},
 	contentType: 'application/x-www-form-urlencoded',
 	dataType: "text", // dataType is response.
 	processData: true,

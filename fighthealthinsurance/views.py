@@ -288,6 +288,9 @@ class ChooseAppeal(View):
                     "denial_id": denial_id,
                 },
             )
+        else:
+            print(form)
+            return None
 
 
 class GenerateAppeal(View):
@@ -297,13 +300,16 @@ class GenerateAppeal(View):
             denial_id = form.cleaned_data["denial_id"]
             email = form.cleaned_data["email"]
             hashed_email = hashlib.sha512(email.encode("utf-8")).hexdigest()
+            elems = dict(request.POST)
+            # Query dict is of lists
+            elems = dict((k, v[0]) for k, v in elems.items())
+            del elems["csrfmiddlewaretoken"]
+            print(elems)
             return render(
                 request,
                 "appeals.html",
                 context={
-                    "user_email": email,
-                    "email": email,
-                    "denial_id": denial_id,
+                    "form_context": json.dumps(elems),
                 },
             )
         else:
@@ -318,6 +324,8 @@ class AppealsBackend(View):
         self.regex_denial_processor = ProcessDenialRegex()
 
     def post(self, request):
+        print(request)
+        print(request.POST)
         form = DenialRefForm(request.POST)
         return self.handle_for_form(request, form)
 
@@ -325,10 +333,12 @@ class AppealsBackend(View):
         form = DenialRefForm(request.GET)
         return self.handle_for_form(request, form)
 
-    def handle_for_form(self, request, form):
-        if form.is_valid():
-            denial_id = form.cleaned_data["denial_id"]
-            email = form.cleaned_data["email"]
+    def handle_for_form(self, request, combined_form):
+        print(request)
+        print(request.POST)
+        if combined_form.is_valid():
+            denial_id = combined_form.cleaned_data["denial_id"]
+            email = combined_form.cleaned_data["email"]
             hashed_email = hashlib.sha512(email.encode("utf-8")).hexdigest()
 
             # Get the current info
@@ -350,6 +360,7 @@ class AppealsBackend(View):
             prefaces = []
             main = []
             footer = []
+            medical_reasons = []
             # Apply all of our 'expert system'
             # (aka six regexes in a trench coat hiding behind a database).
             for dt in denial.denial_type.all():
@@ -357,6 +368,17 @@ class AppealsBackend(View):
                 if form is not None:
                     parsed = form(request.POST)
                     if parsed.is_valid():
+                        print(parsed.cleaned_data)
+                        print(request.POST)
+                        if (
+                            "medical_reason" in parsed.cleaned_data
+                            and parsed.cleaned_data["medical_reason"] != ""
+                        ):
+                            medical_reasons.append(
+                                parsed.cleaned_data["medical_reason"]
+                            )
+                            print(f"Med reason {medical_reasons}")
+
                         new_prefaces = parsed.preface()
                         for p in new_prefaces:
                             if p not in prefaces:
@@ -378,6 +400,7 @@ class AppealsBackend(View):
                 appealGenerator.make_appeals(
                     denial,
                     AppealTemplateGenerator(prefaces, main, footer),
+                    medical_reasons=medical_reasons,
                 ),
             )
 
@@ -389,6 +412,7 @@ class AppealsBackend(View):
                 return appeal_text
 
             def sub_in_appeals(appeal: str) -> str:
+                print(f"Processing {appeal}")
                 s = Template(appeal)
                 ret = s.safe_substitute(
                     {
@@ -408,7 +432,7 @@ class AppealsBackend(View):
                 subbed_appeals_json, content_type="application/json"
             )
         else:
-            print(f"form {form} is not valid")
+            print(f"form {combined_form} is not valid")
 
 
 class OCRView(View):
