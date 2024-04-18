@@ -15,9 +15,11 @@ Upload your Health Insurance Denial
 {% block content %}
 <section class="scan-section mt-2">
     <div class="container">
+	{% if form.errors %}
 	<div style="color:red">
-	    {{ error }}
+	    {{ form.errors }}
 	</div>
+	{% endif %}
 	<button id="clear_local" class="btn btn-green" onclick="window.localStorage.clear()">
 	    Clear Page Local Storage
 	</button>

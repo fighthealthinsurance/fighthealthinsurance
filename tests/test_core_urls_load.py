@@ -3,6 +3,8 @@ from django.urls import reverse
 
 
 class TestCoreURLsLoad(TestCase):
+    fixtures = ["fighthealthinsurance/fixtures/initial.yaml"]
+
     def test_homepage(self):
         result = self.client.get("/")
         self.assertEqual(result.status_code, 200)

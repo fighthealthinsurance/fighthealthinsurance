@@ -1,3 +1,4 @@
+import hashlib
 import re
 import sys
 from typing import Optional
@@ -143,6 +144,11 @@ class Denial(models.Model):
     procedure = models.CharField(max_length=300, primary_key=False, null=True)
     diagnosis = models.CharField(max_length=300, primary_key=False, null=True)
     appeal_text = models.TextField(max_length=3000000000, primary_key=False, null=True)
+
+    @staticmethod
+    def get_hashed_email(email):
+        encoded_email = email.encode("utf-8")
+        return hashlib.sha512(encoded_email).hexdigest()
 
 
 class ProposedAppeal(models.Model):

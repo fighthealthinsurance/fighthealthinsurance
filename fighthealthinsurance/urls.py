@@ -21,7 +21,7 @@ from fighthealthinsurance import views
 
 urlpatterns = [
     path("admin/", admin.site.urls),
-    path("scan", views.ScanView.as_view(), name="scan"),
+    path("scan", views.ProcessView.as_view(), name="scan"),
     path("server_side_ocr", views.OCRView.as_view(), name="server_side_ocr"),
     path("", views.IndexView.as_view(), name="root"),
     path("about-us", views.AboutView.as_view(), name="about"),
