@@ -39,10 +39,10 @@ jobs:
       fail-fast: false
       matrix:
         python: ['310']
-        django: ['41', '42']
+        django: ['42']
         include:
           - python: '310'
-            django: '41'
+            django: '42'
 
     name: Run the test suite (Python ${{ matrix.python }}, Django ${{ matrix.django }})
     steps:

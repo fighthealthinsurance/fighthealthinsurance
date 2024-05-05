@@ -270,6 +270,7 @@ class ChooseAppeal(View):
             denial_id = form.cleaned_data["denial_id"]
             hashed_email = Denial.get_hashed_email(form.cleaned_data["email"])
             appeal_text = form.cleaned_data["appeal_text"]
+            email = form.cleaned_data["email"]
 
             # Get the current info
             denial = Denial.objects.filter(
@@ -288,7 +289,7 @@ class ChooseAppeal(View):
             )
         else:
             print(form)
-            return None
+            pass
 
 
 class GenerateAppeal(View):
@@ -306,6 +307,8 @@ class GenerateAppeal(View):
                 "appeals.html",
                 context={
                     "form_context": json.dumps(elems),
+                    "user_email": form.cleaned_data["email"],
+                    "denial_id": form.cleaned_data["denial_id"],
                 },
             )
         else:

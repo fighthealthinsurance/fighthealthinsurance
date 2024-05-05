@@ -58,9 +58,12 @@ $(document).ready(function() {
 		console.log(appealTextElem);
 		appealTextElem.text(j);
 		appealTextElem.val(j);
-		appealTextElem.value = j;
+                appealTextElem.value = j;
+                // One of these should work?
 		appealTextElem.prop("form", "form_" + appeal_id);
-		appealTextElem.prop("textContent", j);
+                appealTextElem.form = "form_" + appeal_id;
+                appealTextElem[0].setAttribute("form", "form_" + appeal_id);
+                appealTextElem.prop("textContent", j);
 		console.log("Value should now be:");
 		console.log(j);
 		console.log("We have:");
@@ -155,8 +158,7 @@ data: {
   {% csrf_token %}
   <input type="hidden" name="email" value="{{ user_email }}">
   <input type="hidden" name="denial_id" value="{{ denial_id }}">
-
-  <textarea style="width:100%" rows="20" name="appeal_text" id="appeal_text" form="nope">
+  <textarea style="width:100%" rows="20" name="appeal_text" id="appeal_text">
   </textarea>
 
   <button type="submit" class="btn btn-green">Choose This One</button>

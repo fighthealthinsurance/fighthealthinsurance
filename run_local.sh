@@ -19,6 +19,8 @@ fi
 
 set -ex
 
+python min_version.py
+
 package_command=''
 
 if command -v apt-get; then

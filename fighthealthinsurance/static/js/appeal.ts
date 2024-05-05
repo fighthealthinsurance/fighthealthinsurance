@@ -40,6 +40,7 @@ function descrub() {
     text = text.replace("lname", fname);
     text = text.replace("YourNameMagic", fname);
     text = text.replace("[Your Name]", fname);
+    text = text.replace("$your_name_here", name);
     text = text.replace("subscriber_id", subscriber_id);
     text = text.replace("SCSID: 123456789", subscriber_id);
     text = text.replace("GPID: 987654321", group_id);
