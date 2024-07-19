@@ -33,6 +33,8 @@ geopy
 django-regex-field
 pytesseract
 uszipcode
+# uszipcode issue see https://github.com/MacHu-GWU/uszipcode-project/issues/79
+sqlalchemy_mate==2.0.0.0
 pyarrow
 packaging>=20.0
 PyPDF2
