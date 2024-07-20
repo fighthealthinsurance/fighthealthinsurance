@@ -231,7 +231,7 @@ class PreventiveCareQuestions(InsuranceQuestions):
 
     def main(self):
         r = []
-        if "trans_gender" in self.cleaned_data:
+        if "trans_gender" in self.cleaned_data and self.cleaned_data["trans_gender"]:
             r.append(
                 "I am trans so it is important that preventive coverage for both genders be "
                 + "covered."
