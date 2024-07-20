@@ -171,9 +171,13 @@ class RemoteOpenLike(RemoteModel):
         temps = [0.7, 0.2]
         calls = itertools.chain.from_iterable(
             map(
-            lambda temp: map(lambda sm: [self._checked_infer, prompt, t, sm, temp],
-                             self.system_messages[t]),
-            temps))
+                lambda temp: map(
+                    lambda sm: [self._checked_infer, prompt, t, sm, temp],
+                    self.system_messages[t],
+                ),
+                temps,
+            )
+        )
         futures = list(map(lambda x: executor.submit(x[0], *x[1:]), calls))
         print(f"Returning {futures}")
         return futures
@@ -192,7 +196,12 @@ class RemoteOpenLike(RemoteModel):
         return self.procedure_response_regex.sub("", response)
 
     def _clean_diagnosis_response(self, response):
-        if "Not available in" in response or "Not provided" in response or "Not specified" in response or "Not Applicable" in response:
+        if (
+            "Not available in" in response
+            or "Not provided" in response
+            or "Not specified" in response
+            or "Not Applicable" in response
+        ):
             return None
         return self.diagnosis_response_regex.sub("", response)
 
@@ -288,10 +297,14 @@ class RemoteFullOpenLike(RemoteOpenLike):
         systems = {
             "full": [
                 """You possess extensive medical expertise and enjoy crafting appeals for health insurance denials as a personal interest. As a patient, not a doctor, you advocate for yourself. Your writing style is direct, akin to patio11 or a bureaucrat, and maintains a professional tone without expressing frustration towards insurance companies. You may consider emphasizing the unique and potentially essential nature of the medical intervention, using "YourNameMagic" as your name, "SCSID" for the subscriber ID, and "GPID" as the group ID. Make sure to write in the form of a letter. Ideally use the communication the style of patio11 / a being a Dangerous Professional means communicating in what might be a slightly adversarial context in a way which suggests that a bureaucracy take one's concerns seriously and escalate them to someone empowered to resolve them swiftly. You can be verbose. Start your response with Dear [Insurance Company];""",
-                """You possess extensive medical expertise and enjoy crafting appeals for health insurance denials as a personal interest. As a patient, not a doctor, you advocate for yourself. Your writing style is direct, akin to patio11 or a bureaucrat, and maintains a professional tone without expressing frustration towards insurance companies. You may consider emphasizing the unique and potentially essential nature of the medical intervention, using "YourNameMagic" as your name, "SCSID" for the subscriber ID, and "GPID" as the group ID. Make sure to write in the form of a letter. Do not use the 3rd person when refering to the patient, instead use the first persion (I, my, etc.). You are not a review and should not mention any."""
-                ],
-            "procedure": ["""You must be concise. You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters to identify the requested procedure and, if available, the associated diagnosis. Each word costs an extra dollar. Provide a concise response with the procedure on one line starting with "Procedure" and Diagnsosis on another line starting with Diagnosis. Do not say not specified. Diagnosis can also be reason for treatment even if it's not a disease (like high risk homosexual behaviour for prep or preventitive and the name of the diagnosis). Remember each result on a seperated line."""],
-            "medically_necessary": ["""You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters. Each word costs an extra dollar. Please provide a concise response. Do not use the 3rd person when refering to the patient (e.g. don't say "the patient", "patient's", "his", "hers"), instead use the first persion (I, my, mine,etc.) when talking about the patient. You are not a review and should not mention any. Write concisely in a professional tone akin to patio11. Do not say this is why the decission should be overturned. Just say why you believe it is medically necessary (e.g. to prevent X or to treat Y)."""],
+                """You possess extensive medical expertise and enjoy crafting appeals for health insurance denials as a personal interest. As a patient, not a doctor, you advocate for yourself. Your writing style is direct, akin to patio11 or a bureaucrat, and maintains a professional tone without expressing frustration towards insurance companies. You may consider emphasizing the unique and potentially essential nature of the medical intervention, using "YourNameMagic" as your name, "SCSID" for the subscriber ID, and "GPID" as the group ID. Make sure to write in the form of a letter. Do not use the 3rd person when refering to the patient, instead use the first persion (I, my, etc.). You are not a review and should not mention any.""",
+            ],
+            "procedure": [
+                """You must be concise. You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters to identify the requested procedure and, if available, the associated diagnosis. Each word costs an extra dollar. Provide a concise response with the procedure on one line starting with "Procedure" and Diagnsosis on another line starting with Diagnosis. Do not say not specified. Diagnosis can also be reason for treatment even if it's not a disease (like high risk homosexual behaviour for prep or preventitive and the name of the diagnosis). Remember each result on a seperated line."""
+            ],
+            "medically_necessary": [
+                """You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters. Each word costs an extra dollar. Please provide a concise response. Do not use the 3rd person when refering to the patient (e.g. don't say "the patient", "patient's", "his", "hers"), instead use the first persion (I, my, mine,etc.) when talking about the patient. You are not a review and should not mention any. Write concisely in a professional tone akin to patio11. Do not say this is why the decission should be overturned. Just say why you believe it is medically necessary (e.g. to prevent X or to treat Y)."""
+            ],
         }
         return super().__init__(api_base, token, model, systems)
 
@@ -618,7 +631,8 @@ class AppealGenerator(object):
         def make_calls_async(calls):
             print(f"Calling models: {calls}")
             generated_futures = itertools.chain.from_iterable(
-                map(lambda x: get_model_result(*x), calls))
+                map(lambda x: get_model_result(*x), calls)
+            )
 
             def generated_to_appeals_text(k_text):
                 model_results = k_text.result()
@@ -630,7 +644,6 @@ class AppealGenerator(object):
                         yield text
                     else:
                         yield template_generator.generate(text)
-
 
             generated_text = map(
                 generated_to_appeals_text,
