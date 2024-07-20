@@ -168,21 +168,22 @@ class RemoteOpenLike(RemoteModel):
 
     @cache
     def infer(self, prompt: str, t: str) -> List[Tuple[str, str]]:
-        result = self._infer(self.system_messages[t], prompt)
-        if self.bad_result(result):
-            result = self._infer(self.system_messages[t], prompt)
-        if self.bad_result(result):
-            result = None
-        if result is not None:
-            return [(t, result)]
-        else:
-            return []
+        print(f"Running inference on {t}")
+        results = map(lambda sm: self._infer(sm, prompt), self.system_messages[t])
+        cleaned_results = list(filter(lambda r: not self.bad_result(r), results))
+        # If only get bad results try once more.
+        if len(cleaned_results) == 0:
+            results = map(lambda sm: self._infer(sm, prompt), self.system_messages[t])
+            cleaned_results = list(filter(lambda r: not self.bad_result(r), results))
+        final = list(map(lambda result: (t, result), cleaned_results))
+        print(f"Returning {final}")
+        return final
 
     def _clean_procedure_response(self, response):
         return self.procedure_response_regex.sub("", response)
 
     def _clean_diagnosis_response(self, response):
-        if "Not available in" in response or "Not provided" in response:
+        if "Not available in" in response or "Not provided" in response or "Not specified" in response or "Not Applicable" in response:
             return None
         return self.diagnosis_response_regex.sub("", response)
 
@@ -190,6 +191,7 @@ class RemoteOpenLike(RemoteModel):
     def get_procedure_and_diagnosis(
         self, prompt: str
     ) -> tuple[Optional[str], Optional[str]]:
+        print(f"Getting procedure and diagnosis for {self} w/ {prompt}")
         if self.system_messages["procedure"] is None:
             print(f"No procedure message for {self.model} skipping")
             return (None, None)
@@ -225,7 +227,7 @@ class RemoteOpenLike(RemoteModel):
             print(f"No model response for {self.model}")
         return (None, None)
 
-    def _infer(self, system_prompt, prompt) -> Optional[str]:
+    def _infer(self, system_prompt, prompt, temperature=0.7) -> Optional[str]:
         print(f"Looking up model {self.model} using {self.api_base} and {prompt}")
         if self.token is None:
             print(f"Error no Token provided for {self.model}.")
@@ -253,7 +255,7 @@ class RemoteOpenLike(RemoteModel):
                             "content": combined_content,
                         },
                     ],
-                    "temperature": 0.7,
+                    "temperature": temperature,
                 },
             )
             print(f"Got {result} on {self.api_base} {self}")
@@ -275,9 +277,12 @@ class RemoteOpenLike(RemoteModel):
 class RemoteFullOpenLike(RemoteOpenLike):
     def __init__(self, api_base, token, model):
         systems = {
-            "full": """You possess extensive medical expertise and enjoy crafting appeals for health insurance denials as a personal interest. As a patient, not a doctor, you advocate for yourself. Your writing style is direct, akin to patio11 or a bureaucrat, and maintains a professional tone without expressing frustration towards insurance companies. You may consider emphasizing the unique and potentially essential nature of the medical intervention, using "YourNameMagic" as your name, "SCSID" for the subscriber ID, and "GPID" as the group ID. Make sure to write in the form of a letter. Ideally use the communication the style of patio11 / a being a Dangerous Professional means communicating in what might be a slightly adversarial context in a way which suggests that a bureaucracy take one's concerns seriously and escalate them to someone empowered to resolve them swiftly. You can be verbose. Start your response with Dear [Insurance Company];""",
-            "procedure": """You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters to identify the requested procedure and, if available, the associated diagnosis. Each word costs an extra dollar. Please provide a concise response with the procedure on one line and the diagnosis on the next line.""",
-            "medically_necessary": """You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters. Each word costs an extra dollar. Please provide a concise response.""",
+            "full": [
+                """You possess extensive medical expertise and enjoy crafting appeals for health insurance denials as a personal interest. As a patient, not a doctor, you advocate for yourself. Your writing style is direct, akin to patio11 or a bureaucrat, and maintains a professional tone without expressing frustration towards insurance companies. You may consider emphasizing the unique and potentially essential nature of the medical intervention, using "YourNameMagic" as your name, "SCSID" for the subscriber ID, and "GPID" as the group ID. Make sure to write in the form of a letter. Ideally use the communication the style of patio11 / a being a Dangerous Professional means communicating in what might be a slightly adversarial context in a way which suggests that a bureaucracy take one's concerns seriously and escalate them to someone empowered to resolve them swiftly. You can be verbose. Start your response with Dear [Insurance Company];""",
+                """You possess extensive medical expertise and enjoy crafting appeals for health insurance denials as a personal interest. As a patient, not a doctor, you advocate for yourself. Your writing style is direct, akin to patio11 or a bureaucrat, and maintains a professional tone without expressing frustration towards insurance companies. You may consider emphasizing the unique and potentially essential nature of the medical intervention, using "YourNameMagic" as your name, "SCSID" for the subscriber ID, and "GPID" as the group ID. Make sure to write in the form of a letter. You can be verbose"""
+                ],
+            "procedure": ["""You must be concise. You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters to identify the requested procedure and, if available, the associated diagnosis. Each word costs an extra dollar. Provide a concise response with the procedure on one line starting with "Procedure" and Diagnsosis on another line starting with Diagnosis. Do not say not specified. Diagnosis can also be reason for treatment even if it's not a disease (like high risk homosexual behaviour for prep or preventitive and the name of the diagnosis). Remember each result on a seperated line."""],
+            "medically_necessary": ["""You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters. Each word costs an extra dollar. Please provide a concise response. Do not use the 3rd person when refering to the patient, instead use the first persion (I, my, etc.). You are not a review and should not mention any. Write concisely in a professional tone akin to patio11."""],
         }
         return super().__init__(api_base, token, model, systems)
 
@@ -526,8 +531,8 @@ class AppealGenerator(object):
         return f"{start}\n{denial_text}"
 
     def make_open_med_prompt(self, procedure=None, diagnosis=None) -> Optional[str]:
-        if procedure is not None:
-            if diagnosis is not None:
+        if procedure is not None and len(procedure) > 3:
+            if diagnosis is not None and len(diagnosis) > 3:
                 return f"Why is {procedure} medically necessary for {diagnosis}?"
             else:
                 return f"Why is {procedure} is medically necessary?"
@@ -609,13 +614,12 @@ class AppealGenerator(object):
                 for k, text in model_results:
                     if text is None:
                         pass
-                    appeal_text = ""
                     # It's either full or a reason to plug into a template
                     if k == "full":
-                        appeals_text += text
+                        yield text
                     else:
-                        appeal_text += template_generator.generate(text)
-                return appeals_text
+                        yield template_generator.generate(text)
+
 
             generated_text = map(
                 generated_to_appeals_text,
