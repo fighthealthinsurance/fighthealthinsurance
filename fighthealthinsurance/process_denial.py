@@ -1,5 +1,6 @@
 import itertools
 import concurrent
+from concurrent.futures import Future
 import csv
 import os
 import re
@@ -8,10 +9,7 @@ from functools import cache, lru_cache
 from typing import Tuple, List, Optional
 import time
 
-try:
-    from typing_extensions import reveal_type
-except:
-    from typing import reveal_type
+from typing_extensions import reveal_type
 
 import icd10
 import requests
@@ -613,7 +611,7 @@ class AppealGenerator(object):
         # For any model that we have a prompt for try to call it
         def get_model_result(
             model: RemoteModel, prompt: str, t: str
-        ) -> List[Tuple[str, Optional[str]]]:
+        ) -> List[Future[str, Optional[str]]]:
             print(f"Looking up on {model}")
             if prompt is None:
                 print(f"No prompt for {model} skipping")
@@ -625,9 +623,9 @@ class AppealGenerator(object):
                     reveal_type(model)
                     results = model.parallel_infer(prompt, t)
                 else:
-                    results = executor.submit(model.infer, prompt, t)
+                    results = [executor.submit(model.infer, prompt, t)]
             except:
-                results = executor.submit(model.infer, prompt, t)
+                results = [executor.submit(model.infer, prompt, t)]
             print(f"Infered {results} for {model}-{t} using {prompt}")
             print("Yay!")
             return results
