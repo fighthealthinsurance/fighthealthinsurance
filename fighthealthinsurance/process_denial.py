@@ -565,7 +565,9 @@ class AppealGenerator(object):
         else:
             return None
 
-    def make_open_prompt(self, denial_text=None, procedure=None, diagnosis=None) -> Optional[str]:
+    def make_open_prompt(
+        self, denial_text=None, procedure=None, diagnosis=None
+    ) -> Optional[str]:
         if denial_text is None:
             return None
         start = "Write a health insurance appeal for the following denial:"
