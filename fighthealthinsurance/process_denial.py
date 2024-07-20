@@ -8,6 +8,11 @@ from functools import cache, lru_cache
 from typing import Tuple, List, Optional
 import time
 
+try:
+    from typing_extensions import reveal_type
+except:
+    from typing import reveal_type
+
 import icd10
 import requests
 from fighthealthinsurance.models import (
@@ -615,10 +620,13 @@ class AppealGenerator(object):
                 return []
             # If the model has parallelism use it
             results = None
-            if isinstance(model, RemoteOpenLike):
-                reveal_type(model)
-                results = model.parallel_infer(prompt, t)
-            else:
+            try:
+                if isinstance(model, RemoteOpenLike):
+                    reveal_type(model)
+                    results = model.parallel_infer(prompt, t)
+                else:
+                    results = executor.submit(model.infer, prompt, t)
+            except:
                 results = executor.submit(model.infer, prompt, t)
             print(f"Infered {results} for {model}-{t} using {prompt}")
             print("Yay!")
