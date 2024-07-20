@@ -257,7 +257,9 @@ class RemoteOpenLike(RemoteModel):
             if self.backup_model is None:
                 raise e
             else:
-                return self.__infer(system_prompt, prompt, temperature, self.backup_model)
+                return self.__infer(
+                    system_prompt, prompt, temperature, self.backup_model
+                )
         if r is None and self.backup_model is not None:
             return self.__infer(system_prompt, prompt, temperature, self.backup_model)
         else:
@@ -296,7 +298,7 @@ class RemoteOpenLike(RemoteModel):
             )
             print(f"Got {result} on {self.api_base} {self}")
             json_result = result.json()
-            if "object" in json_result and json_result['object'] != 'error':
+            if "object" in json_result and json_result["object"] != "error":
                 print(f"Looks ok")
         except Exception as e:
             print(f"Error {e} calling {self.api_base}")
@@ -345,9 +347,12 @@ class RemoteHealthInsurance(RemoteFullOpenLike):
             "HEALTH_BACKEND_MODEL", "TotallyLegitCo/fighthealthinsurance_model_v0.5"
         )
         self.backup_model = os.getenv(
-            "HEALTH_BACKUP_BACKEND_MODEL", "TotallyLegitCo/fighthealthinsurance_model_v0.3"
+            "HEALTH_BACKUP_BACKEND_MODEL",
+            "TotallyLegitCo/fighthealthinsurance_model_v0.3",
         )
-        super().__init__(self.url, token="", model=self.model, backup_model=self.backup_model)
+        super().__init__(
+            self.url, token="", model=self.model, backup_model=self.backup_model
+        )
 
 
 class RemoteTogetherAI(RemoteFullOpenLike):
