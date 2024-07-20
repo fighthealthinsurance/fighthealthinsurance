@@ -169,7 +169,10 @@ class RemoteOpenLike(RemoteModel):
 
     def parallel_infer(self, prompt: str, t: str):
         print(f"Running inference on {t}")
-        temps = [0.7, 0.2]
+        temps = [0.7]
+        if t == "full":
+            # Special case for the full one where we really want to explore the problem space
+            temps = [0.7, 0.2]
         calls = itertools.chain.from_iterable(
             map(
                 lambda temp: map(
@@ -247,7 +250,21 @@ class RemoteOpenLike(RemoteModel):
         return (None, None)
 
     def _infer(self, system_prompt, prompt, temperature=0.7) -> Optional[str]:
-        print(f"Looking up model {self.model} using {self.api_base} and {prompt}")
+        # Retry backup model if necessary
+        try:
+            r = self.__infer(system_prompt, prompt, temperature, self.model)
+        except Exception as e:
+            if self.backup_model is None:
+                raise e
+            else:
+                return self.__infer(system_prompt, prompt, temperature, self.backup_model)
+        if r is None and self.backup_model is not None:
+            return self.__infer(system_prompt, prompt, temperature, self.backup_model)
+        else:
+            return r
+
+    def __infer(self, system_prompt, prompt, temperature, model) -> Optional[str]:
+        print(f"Looking up model {model} using {self.api_base} and {prompt}")
         if self.token is None:
             print(f"Error no Token provided for {self.model}.")
         if prompt is None:
@@ -279,26 +296,7 @@ class RemoteOpenLike(RemoteModel):
             )
             print(f"Got {result} on {self.api_base} {self}")
             json_result = result.json()
-            if json_result['code'] != 200 and json_result['object'] == 'error' and self.backup_model is not None:
-                print(f"Making backup request")
-                s = requests.Session()
-                result = s.post(
-                    url,
-                    headers={"Authorization": f"Bearer {self.token}"},
-                    json={
-                        "model": self.backup_model,
-                        "messages": [
-                            {
-                                "role": "user",
-                                "content": combined_content,
-                            },
-                        ],
-                        "temperature": temperature,
-                    },
-                )
-                print(f"Backup result is: {result} on {self.api_base} {self}")
-                json_result = result.json()
-            else:
+            if "object" in json_result and json_result['object'] != 'error':
                 print(f"Looks ok")
         except Exception as e:
             print(f"Error {e} calling {self.api_base}")
