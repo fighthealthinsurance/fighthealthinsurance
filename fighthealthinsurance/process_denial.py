@@ -565,7 +565,7 @@ class AppealGenerator(object):
         else:
             return None
 
-    def make_open_prompt(self, denial_text=None, procedure=None, diagnosis=None) -> str:
+    def make_open_prompt(self, denial_text=None, procedure=None, diagnosis=None) -> Optional[str]:
         if denial_text is None:
             return None
         start = "Write a health insurance appeal for the following denial:"
@@ -612,9 +612,11 @@ class AppealGenerator(object):
                 print(f"No prompt for {model} skipping")
                 return []
             # If the model has parallelism use it
-            try:
+            results = None
+            if isinstance(model, RemoteOpenLike):
+                reveal_type(model)
                 results = model.parallel_infer(prompt, t)
-            except:
+            else:
                 results = executor.submit(model.infer, prompt, t)
             print(f"Infered {results} for {model}-{t} using {prompt}")
             print("Yay!")
