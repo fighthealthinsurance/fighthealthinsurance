@@ -166,18 +166,27 @@ class RemoteOpenLike(RemoteModel):
             return True
         return False
 
-    @cache
-    def infer(self, prompt: str, t: str) -> List[Tuple[str, str]]:
+    def parallel_infer(self, prompt: str, t: str):
         print(f"Running inference on {t}")
-        results = map(lambda sm: self._infer(sm, prompt), self.system_messages[t])
-        cleaned_results = list(filter(lambda r: not self.bad_result(r), results))
-        # If only get bad results try once more.
-        if len(cleaned_results) == 0:
-            results = map(lambda sm: self._infer(sm, prompt), self.system_messages[t])
-            cleaned_results = list(filter(lambda r: not self.bad_result(r), results))
-        final = list(map(lambda result: (t, result), cleaned_results))
-        print(f"Returning {final}")
-        return final
+        temps = [0.7, 0.2]
+        calls = itertools.chain.from_iterable(
+            map(
+            lambda temp: map(lambda sm: [self._checked_infer, prompt, t, sm, temp],
+                             self.system_messages[t]),
+            temps))
+        futures = list(map(lambda x: executor.submit(x[0], *x[1:]), calls))
+        print(f"Returning {futures}")
+        return futures
+
+    @cache
+    def _checked_infer(self, prompt: str, t, sm: str, temp):
+        result = self._infer(prompt, sm, temp)
+        # One retry
+        if self.bad_result(result):
+            result = self._infer(prompt, sm, temp)
+        if self.bad_result(result):
+            return []
+        return [(t, result)]
 
     def _clean_procedure_response(self, response):
         return self.procedure_response_regex.sub("", response)
@@ -279,11 +288,10 @@ class RemoteFullOpenLike(RemoteOpenLike):
         systems = {
             "full": [
                 """You possess extensive medical expertise and enjoy crafting appeals for health insurance denials as a personal interest. As a patient, not a doctor, you advocate for yourself. Your writing style is direct, akin to patio11 or a bureaucrat, and maintains a professional tone without expressing frustration towards insurance companies. You may consider emphasizing the unique and potentially essential nature of the medical intervention, using "YourNameMagic" as your name, "SCSID" for the subscriber ID, and "GPID" as the group ID. Make sure to write in the form of a letter. Ideally use the communication the style of patio11 / a being a Dangerous Professional means communicating in what might be a slightly adversarial context in a way which suggests that a bureaucracy take one's concerns seriously and escalate them to someone empowered to resolve them swiftly. You can be verbose. Start your response with Dear [Insurance Company];""",
-                """You possess extensive medical expertise and enjoy crafting appeals for health insurance denials as a personal interest. As a patient, not a doctor, you advocate for yourself. Your writing style is direct, akin to patio11 or a bureaucrat, and maintains a professional tone without expressing frustration towards insurance companies. You may consider emphasizing the unique and potentially essential nature of the medical intervention, using "YourNameMagic" as your name, "SCSID" for the subscriber ID, and "GPID" as the group ID. Make sure to write in the form of a letter. You can be verbose""",
                 """You possess extensive medical expertise and enjoy crafting appeals for health insurance denials as a personal interest. As a patient, not a doctor, you advocate for yourself. Your writing style is direct, akin to patio11 or a bureaucrat, and maintains a professional tone without expressing frustration towards insurance companies. You may consider emphasizing the unique and potentially essential nature of the medical intervention, using "YourNameMagic" as your name, "SCSID" for the subscriber ID, and "GPID" as the group ID. Make sure to write in the form of a letter. Do not use the 3rd person when refering to the patient, instead use the first persion (I, my, etc.). You are not a review and should not mention any."""
                 ],
             "procedure": ["""You must be concise. You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters to identify the requested procedure and, if available, the associated diagnosis. Each word costs an extra dollar. Provide a concise response with the procedure on one line starting with "Procedure" and Diagnsosis on another line starting with Diagnosis. Do not say not specified. Diagnosis can also be reason for treatment even if it's not a disease (like high risk homosexual behaviour for prep or preventitive and the name of the diagnosis). Remember each result on a seperated line."""],
-            "medically_necessary": ["""You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters. Each word costs an extra dollar. Please provide a concise response. Do not use the 3rd person when refering to the patient, instead use the first persion (I, my, etc.). You are not a review and should not mention any. Write concisely in a professional tone akin to patio11."""],
+            "medically_necessary": ["""You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters. Each word costs an extra dollar. Please provide a concise response. Do not use the 3rd person when refering to the patient (e.g. don't say "the patient", "patient's", "his", "hers"), instead use the first persion (I, my, mine,etc.) when talking about the patient. You are not a review and should not mention any. Write concisely in a professional tone akin to patio11. Do not say this is why the decission should be overturned. Just say why you believe it is medically necessary (e.g. to prevent X or to treat Y)."""],
         }
         return super().__init__(api_base, token, model, systems)
 
@@ -562,7 +570,11 @@ class AppealGenerator(object):
             if prompt is None:
                 print(f"No prompt for {model} skipping")
                 return []
-            results = model.infer(prompt, t)
+            # If the model has parallelism use it
+            try:
+                results = model.parallel_infer(prompt, t)
+            except:
+                results = executor.submit(model.infer, prompt, t)
             print(f"Infered {results} for {model}-{t} using {prompt}")
             print("Yay!")
             return results
@@ -605,13 +617,11 @@ class AppealGenerator(object):
 
         def make_calls_async(calls):
             print(f"Calling models: {calls}")
-            generated_futures = map(
-                lambda x: executor.submit(get_model_result, *x), calls
-            )
+            generated_futures = itertools.chain.from_iterable(
+                map(lambda x: get_model_result(*x), calls))
 
             def generated_to_appeals_text(k_text):
                 model_results = k_text.result()
-                appeals_text = []
                 for k, text in model_results:
                     if text is None:
                         pass
