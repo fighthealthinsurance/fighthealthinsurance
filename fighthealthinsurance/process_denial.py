@@ -351,7 +351,7 @@ class RemoteHealthInsurance(RemoteFullOpenLike):
         )
         self.backup_model = os.getenv(
             "HEALTH_BACKUP_BACKEND_MODEL",
-            "TotallyLegitCo/fighthealthinsurance_model_v0.3",
+            "TotallyLegitCo/fighthealthinsurance_model_v0.6",
         )
         super().__init__(
             self.url, token="", model=self.model, backup_model=self.backup_model
