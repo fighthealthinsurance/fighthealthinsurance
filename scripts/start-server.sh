@@ -6,6 +6,8 @@ cd /opt/app
 if [ ! -z "$PRIMARY" ]; then
   ./manage.py migrate
   ./manage.py loaddata initial
+  ./manage.py ensure_admin --no-input
+  exit 0
 fi
 # Start gunicorn
 export DJANGO_CONFIGURATION=${DJANGO_CONFIGURATION:-"Prod"}

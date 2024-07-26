@@ -1,25 +1,17 @@
 apiVersion: apps/v1
-kind: Deployment
+kind: Job
 metadata:
   name: web-primary
   namespace: totallylegitco
-  labels:
-    app: web-primary
 spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      special: web-primary-pod
-  strategy:
-    type: Recreate
   template:
     metadata:
       labels:
-        group: fight-health-insurance-webbackend
+        group: fight-health-insurance-webbackend-batch
         special: web-primary-pod
     spec:
       containers:
-        - image: holdenk/fight-health-insurance:v0.1.5b
+        - image: holdenk/fight-health-insurance:v0.1.6a
           name: totallylegitco
           env:
           - name: PRIMARY
@@ -27,27 +19,10 @@ spec:
           envFrom:
           - secretRef:
               name: fight-health-insurance-secret
+            - secretRef:
+              name: fight-health-insurance-primary-secret
           imagePullPolicy: Always
-          ports:
-            - containerPort: 80
-              name: web
-          livenessProbe:
-            httpGet:
-              httpHeaders:
-                - name: Host
-                  value: "www.fighthealthinsurance.com"
-              path: /
-              port: 80
-            periodSeconds: 180
-          startupProbe:
-            httpGet:
-              httpHeaders:
-                - name: Host
-                  value: "www.fighthealthinsurance.com"
-              path: /
-              port: 80
-            periodSeconds: 10
-            failureThreshold: 30
+      restartPolicy: OnFailure
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -57,7 +32,7 @@ metadata:
   labels:
     app: fight-health-insurance
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app: fight-health-insurance
@@ -68,7 +43,7 @@ spec:
         group: fight-health-insurance-webbackend
     spec:
       containers:
-        - image: holdenk/fight-health-insurance:v0.1.5b
+        - image: holdenk/fight-health-insurance:v0.1.6a
           name: totallylegitco
           envFrom:
           - secretRef:
@@ -164,6 +139,16 @@ spec:
                 port:
                   number: 80
     - host: www.fighthealthinsurance.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name:  web-svc
+                port:
+                  number: 80
+    - host: fighthealthinsurance.com
       http:
         paths:
           - path: /
