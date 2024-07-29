@@ -1,3 +1,4 @@
+setuptools
 typing-extensions
 icd10-cm
 types-requests
@@ -49,3 +50,4 @@ django-recaptcha==4.0.0
 # opencv-python
 pyyaml
 mypy
+flake8-django
