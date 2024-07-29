@@ -1,0 +1,38 @@
+{% extends 'base.html' %}
+{% block title %}
+Terms of Service
+{% endblock title %}
+{% load static %}
+{% block content %}
+<section id="warnings">
+    <div class="container">
+        <div class="section-header text-align-center">
+            <h2>Important</h2>
+        </div>
+
+	<p>
+	  These notes are not a complete description of what we may do with your data, for that please see our <a href="{% url 'tos' %}">terms of service</a>. These notes are here to help you understand at a high level some of what we may be doing and some of the limitations of our (and the state of the art) technology in general.
+	</p>
+
+	<p>
+	  When you use our tool you provide us with your data which we may <b>use to train and improve our model(s)</b> (see <a href="{% url 'tos' %}">terms of service</a> for more details). Your <b>data may be transfered to other companies as part of generating your appeal</b> (e.g. while we have our own internal model when possible we may check other companies models using their application programming interfaces (APIs)). These other companies may also perform training on your data.
+	</p>
+
+	<p class="font-weight-bold">
+	  This tool is not a doctor, or lawyer and is not intended to provide an medical or legal advice. By using this tool you agree and understand that you will not use the output of fight health insurance to treat any medical condition. You also agree that you will review our <a href="{% url 'tos' %}">terms of service</a>
+	</p>
+	
+        <p>
+	  We're really excited you're wiling to try out Fight Healht Insurance with your health insurance appeal. This software is still in <b>beta</b> and is only intended to be used to assist you in making your appeal, not replace your own (or others) judgement.
+        </p>
+
+	<p>
+	  <b>Beta</b> software means software which is early in development. Even when finished software contains errors, and beta software is more likely to have mistakes. If you encounter issues you can report them on our issue tracker. There may be known issues with the software which we have not had time to fix.
+	</p>
+	
+	<p>
+	  AI tools, including fight health insurance and others, are known to produce incorrect output, sometimes called <b>"hallucinations"</b> (which you can read more about if you're interested.) It is up to you, the user, to validate the suggestions produced from this tool. 
+	</p>
+    </div>
+</section>
+{% endblock content %}
