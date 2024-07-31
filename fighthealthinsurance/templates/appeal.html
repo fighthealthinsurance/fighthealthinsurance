@@ -13,7 +13,7 @@ Fight Your Health Insurnace Denial
 Huzzah! We have a <b>draft</b> appeal for you to edit bellow:
 
 <form action="{% url 'share_appeal' %}" method="post" class="col-md-12 d-flex flex-column align-items-center">
-
+  {% csrf_token %}
   <input type="hidden" name="email" value="{{ user_email }}">
   <input type="hidden" name="denial_id" value="{{ denial_id }}">
   

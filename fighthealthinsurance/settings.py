@@ -246,3 +246,6 @@ class Prod(Base):
     DEFAULT_FROM_EMAIL = "support@fighthealthinsurance.com"
     RECAPTCHA_PUBLIC_KEY = os.getenv("RECAPTCHA_PUBLIC_KEY", "")
     RECAPTCHA_PRIVATE_KEY = os.getenv("RECAPTCHA_PUBLIC_KEY", "")
+    RECAPTCHA_REQUIRED_SCORE = 0.85
+    RECAPTCHA_TESTING = False
+    os.environ["RECAPTCHA_TESTING"] = "False"

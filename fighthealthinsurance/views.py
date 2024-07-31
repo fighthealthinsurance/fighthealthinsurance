@@ -94,6 +94,8 @@ class ShareAppealView(View):
             ).get()
             denial.appeal = form.cleaned_data["appeal"]
             denial.save()
+            pa = ProposedAppeal(appeal_text=appeal_text, for_denial=denial,
+                                chosen=True, editted=True)
 
 
 class RemoveDataView(View):
