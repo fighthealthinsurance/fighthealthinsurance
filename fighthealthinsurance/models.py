@@ -162,7 +162,7 @@ class Denial(models.Model):
 
     @staticmethod
     def get_hashed_email(email):
-        encoded_email = email.encode("utf-8")
+        encoded_email = email.encode("utf-8").lower()
         return hashlib.sha512(encoded_email).hexdigest()
 
 
