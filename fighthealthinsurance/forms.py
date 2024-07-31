@@ -69,6 +69,7 @@ class PostInferedForm(forms.Form):
         required=False,
     )
 
+    captcha = None
     if (
         "RECAPTCHA_TESTING" not in os.environ
         or os.environ["RECAPTCHA_TESTING"].lower() != "true"
