@@ -287,8 +287,8 @@ class ChooseAppeal(View):
                     "denial_id": denial_id,
                 },
             )
-        pa = ProposedAppeal(appeal_text=appeal_text, for_denial=denial,
-                            chosen=True)
+            pa = ProposedAppeal(appeal_text=appeal_text, for_denial=denial,
+                                chosen=True)
         else:
             print(form)
             pass
