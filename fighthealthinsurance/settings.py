@@ -195,6 +195,8 @@ class Dev(Base):
     DEBUG = True
     RECAPTCHA_TESTING = True
     os.environ["RECAPTCHA_TESTING"] = "True"
+    #RECAPTCHA_PUBLIC_KEY = os.getenv("RECAPTCHA_PUBLIC_KEY", "")
+    #RECAPTCHA_PRIVATE_KEY = os.getenv("RECAPTCHA_PRIVATE_KEY", "")
     SILENCED_SYSTEM_CHECKS = [
         "captcha.recaptcha_test_key_error",
         "django_recaptcha.recaptcha_test_key_error",
@@ -245,7 +247,7 @@ class Prod(Base):
     EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
     DEFAULT_FROM_EMAIL = "support@fighthealthinsurance.com"
     RECAPTCHA_PUBLIC_KEY = os.getenv("RECAPTCHA_PUBLIC_KEY", "")
-    RECAPTCHA_PRIVATE_KEY = os.getenv("RECAPTCHA_PUBLIC_KEY", "")
+    RECAPTCHA_PRIVATE_KEY = os.getenv("RECAPTCHA_PRIVATE_KEY", "")
     RECAPTCHA_REQUIRED_SCORE = 0.85
     RECAPTCHA_TESTING = False
     os.environ["RECAPTCHA_TESTING"] = "False"

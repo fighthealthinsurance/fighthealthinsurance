@@ -92,10 +92,16 @@ class ShareAppealView(View):
                 # Include the hashed e-mail so folks can't brute force denial_id
                 hashed_email=hashed_email,
             ).get()
-            denial.appeal = form.cleaned_data["appeal"]
+            print(form.cleaned_data)
+            denial.appeal = form.cleaned_data["appeal_text"]
             denial.save()
-            pa = ProposedAppeal(appeal_text=appeal_text, for_denial=denial,
-                                chosen=True, editted=True)
+            pa = ProposedAppeal(
+                appeal_text=form.cleaned_data["appeal_text"],
+                for_denial=denial,
+                chosen=True,
+                editted=True)
+            pa.save()
+            return render(request, "thankyou.html")
 
 
 class RemoveDataView(View):

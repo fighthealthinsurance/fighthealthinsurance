@@ -2,7 +2,7 @@ import os
 
 from django import forms
 
-from django_recaptcha.fields import ReCaptchaField
+from django_recaptcha.fields import ReCaptchaField, ReCaptchaV3, ReCaptchaV2Checkbox
 from fighthealthinsurance.models import DenialTypes, PlanType
 
 
@@ -74,7 +74,7 @@ class PostInferedForm(forms.Form):
         "RECAPTCHA_TESTING" not in os.environ
         or os.environ["RECAPTCHA_TESTING"].lower() != "true"
     ):
-        captcha = ReCaptchaField()
+        captcha = ReCaptchaField(widget=ReCaptchaV2Checkbox())
 
 
 class InsuranceQuestions(forms.Form):
