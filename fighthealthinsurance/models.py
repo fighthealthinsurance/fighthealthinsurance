@@ -169,6 +169,7 @@ class Denial(models.Model):
 class ProposedAppeal(models.Model):
     appeal_text = models.TextField(max_length=3000000000, primary_key=False, null=True)
     for_denial = models.ForeignKey(Denial, on_delete=models.CASCADE)
+    chosen = models.BooleanField(default=False)
 
     def __str__(self):
         return f"{self.denial_id}: {self.denial_text[0:100]}"

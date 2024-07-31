@@ -287,6 +287,8 @@ class ChooseAppeal(View):
                     "denial_id": denial_id,
                 },
             )
+        pa = ProposedAppeal(appeal_text=appeal_text, for_denial=denial,
+                            chosen=True)
         else:
             print(form)
             pass
@@ -422,7 +424,7 @@ class AppealsBackend(View):
 
             filtered_appeals = filter(lambda x: x != None, appeals)
             saved_appeals = map(save_appeal, filtered_appeals)
-            subbed_appeals = map(sub_in_appeals, filtered_appeals)
+            subbed_appeals = map(sub_in_appeals, saved_appeals)
             subbed_appeals_json = map(lambda e: json.dumps(e) + "\n", subbed_appeals)
             return StreamingHttpResponse(
                 subbed_appeals_json, content_type="application/json"
