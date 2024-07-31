@@ -29,6 +29,9 @@ class FollowUpSched(models.Model):
     # in either case lets delete the scheduled follow ups.
     denial_id = models.ForeignKey("Denial", on_delete=models.CASCADE)
 
+    def __str__(self):
+        return f"{self.email} on {self.follow_up_date} for {self.denial_id}"
+
 
 class PlanType(models.Model):
     id = models.AutoField(primary_key=True)
@@ -62,11 +65,17 @@ class Diagnosis(models.Model):
     name = models.CharField(max_length=300, primary_key=False)
     regex = RegexField(max_length=400, re_flags=re.IGNORECASE | re.UNICODE | re.M)
 
+    def __str__(self):
+        return "{self.id}:{self.name}"
+
 
 class Procedures(models.Model):
     id = models.AutoField(primary_key=True)
     name = models.CharField(max_length=300, primary_key=False)
     regex = RegexField(max_length=400, re_flags=re.IGNORECASE | re.UNICODE | re.M)
+
+    def __str__(self):
+        return "{self.id}:{self.name}"
 
 
 class DenialTypes(models.Model):
@@ -110,10 +119,16 @@ class AppealTemplates(models.Model):
     )
     appeal_text = models.TextField(max_length=3000, primary_key=False, blank=True)
 
+    def __str__(self):
+        return "{self.id}:{self.name}"
+
 
 class DataSource(models.Model):
     id = models.AutoField(primary_key=True)
     name = models.CharField(max_length=100)
+
+    def __str__(self):
+        return "{self.id}:{self.name}"
 
 
 class DenialTypesRelation(models.Model):

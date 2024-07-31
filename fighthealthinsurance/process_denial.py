@@ -52,11 +52,11 @@ class ProcessDenialCodes(DenialBase):
         # These will match many things which are not ICD10 codes or CPT codes but
         # then the lookup will hopefully fail.
         self.icd10_re = re.compile(
-            "[\\(\\s:\\.\,]+([A-TV-Z][0-9][0-9AB]\\.?[0-9A-TV-Z]{0,4})[\\s:\\.\\)\,]",
+            "[\\(\\s:\\.,]+([A-TV-Z][0-9][0-9AB]\\.?[0-9A-TV-Z]{0,4})[\\s:\\.\\),]",
             re.M | re.UNICODE,
         )
         self.cpt_code_re = re.compile(
-            "[\\(\\s:\,]+(\\d{4,4}[A-Z0-9])[\\s:\\.\\)\,]", re.M | re.UNICODE
+            "[\\(\\s:,]+(\\d{4,4}[A-Z0-9])[\\s:\\.\\),]", re.M | re.UNICODE
         )
         self.preventive_regex = re.compile(
             "(exposure to human immunodeficiency virus|preventive|high risk homosexual)",
@@ -72,7 +72,7 @@ class ProcessDenialCodes(DenialBase):
             with open("./data/preventive_diagnosis.csv") as f:
                 rows = csv.reader(f)
                 self.preventive_diagnosis = {k: v for k, v in rows}
-        except:
+        except Exception:
             self.preventive_diagnosis = {}
 
     def get_denialtype(self, text):
@@ -134,8 +134,6 @@ class PalmAPI(RemoteModel):
             return None
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={API_KEY}"
         try:
-            import requests
-
             s = requests.Session()
             result = s.post(url, json={"contents": [{"parts": [{"text": prompt}]}]})
             json_result = result.json()
@@ -277,8 +275,6 @@ class RemoteOpenLike(RemoteModel):
             return None
         url = f"{self.api_base}/chat/completions"
         try:
-            import requests
-
             s = requests.Session()
             # Combine the message, Mistral's VLLM container does not like the system role anymore?
             # despite it still being fine-tuned with the system role.
