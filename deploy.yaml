@@ -1,9 +1,10 @@
-apiVersion: apps/v1
+apiVersion: batch/v1
 kind: Job
 metadata:
   name: web-primary
   namespace: totallylegitco
 spec:
+  ttlSecondsAfterFinished: 10
   template:
     metadata:
       labels:
@@ -11,7 +12,7 @@ spec:
         special: web-primary-pod
     spec:
       containers:
-        - image: holdenk/fight-health-insurance:v0.1.6a
+        - image: holdenk/fight-health-insurance:v0.1.6b
           name: totallylegitco
           env:
           - name: PRIMARY
@@ -19,7 +20,7 @@ spec:
           envFrom:
           - secretRef:
               name: fight-health-insurance-secret
-            - secretRef:
+          - secretRef:
               name: fight-health-insurance-primary-secret
           imagePullPolicy: Always
       restartPolicy: OnFailure
@@ -43,7 +44,7 @@ spec:
         group: fight-health-insurance-webbackend
     spec:
       containers:
-        - image: holdenk/fight-health-insurance:v0.1.6a
+        - image: holdenk/fight-health-insurance:v0.1.6b
           name: totallylegitco
           envFrom:
           - secretRef:

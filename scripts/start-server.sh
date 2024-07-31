@@ -6,7 +6,7 @@ cd /opt/app
 if [ ! -z "$PRIMARY" ]; then
   ./manage.py migrate
   ./manage.py loaddata initial
-  ./manage.py ensure_admin --no-input
+  ./manage.py ensure_adminuser --no-input
   exit 0
 fi
 # Start gunicorn
