@@ -78,7 +78,6 @@ class PostInferedForm(forms.Form):
         captcha = ReCaptchaField(widget=ReCaptchaV2Checkbox())
 
 
-
 class InsuranceQuestions(forms.Form):
     """Insurance Questions"""
 
