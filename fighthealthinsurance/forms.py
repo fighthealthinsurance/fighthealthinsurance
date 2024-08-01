@@ -69,12 +69,14 @@ class PostInferedForm(forms.Form):
         required=False,
     )
 
-    captcha = None
-    if (
+    captcha = forms.CharField(required=False, widget=forms.HiddenInput())
+    # Instead of the default behaviour we skip the recaptcha field entirely for dev.
+    if "RECAPTCHA_PUBLIC_KEY" in os.environ and (
         "RECAPTCHA_TESTING" not in os.environ
         or os.environ["RECAPTCHA_TESTING"].lower() != "true"
     ):
         captcha = ReCaptchaField(widget=ReCaptchaV2Checkbox())
+
 
 
 class InsuranceQuestions(forms.Form):
