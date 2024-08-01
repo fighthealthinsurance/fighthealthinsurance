@@ -12,10 +12,10 @@ server {
         proxy_set_header Host $host;
     }
     location /static {
-        root /opt/app/;
+        root /opt/fighthealthinsurance/;
     }
     location /media {
-        root /opt/app/;
+        root /opt/fighthealthinsurance/;
     }
 }
 

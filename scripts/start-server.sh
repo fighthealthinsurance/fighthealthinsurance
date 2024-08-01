@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 set -ex
 # start-server.sh
-cd /opt/app
+cd /opt/fighthealthinsurance
 # Run migrations
 if [ ! -z "$PRIMARY" ]; then
   ./manage.py migrate
   ./manage.py loaddata initial
   ./manage.py ensure_adminuser --no-input
+  sleep 20
   exit 0
 fi
 # Start gunicorn

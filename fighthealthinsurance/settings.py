@@ -195,8 +195,8 @@ class Dev(Base):
     DEBUG = True
     RECAPTCHA_TESTING = True
     os.environ["RECAPTCHA_TESTING"] = "True"
-    #RECAPTCHA_PUBLIC_KEY = os.getenv("RECAPTCHA_PUBLIC_KEY", "")
-    #RECAPTCHA_PRIVATE_KEY = os.getenv("RECAPTCHA_PRIVATE_KEY", "")
+    # RECAPTCHA_PUBLIC_KEY = os.getenv("RECAPTCHA_PUBLIC_KEY", "")
+    # RECAPTCHA_PRIVATE_KEY = os.getenv("RECAPTCHA_PRIVATE_KEY", "")
     SILENCED_SYSTEM_CHECKS = [
         "captcha.recaptcha_test_key_error",
         "django_recaptcha.recaptcha_test_key_error",

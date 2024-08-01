@@ -99,7 +99,8 @@ class ShareAppealView(View):
                 appeal_text=form.cleaned_data["appeal_text"],
                 for_denial=denial,
                 chosen=True,
-                editted=True)
+                editted=True,
+            )
             pa.save()
             return render(request, "thankyou.html")
 
@@ -295,8 +296,8 @@ class ChooseAppeal(View):
                     "denial_id": denial_id,
                 },
             )
-            pa = ProposedAppeal(appeal_text=appeal_text, for_denial=denial,
-                                chosen=True)
+            pa = ProposedAppeal(appeal_text=appeal_text, for_denial=denial, chosen=True)
+            pa.save()
         else:
             print(form)
             pass
@@ -415,6 +416,7 @@ class AppealsBackend(View):
                 t = time.time()
                 print(f"{t}: Saving {appeal_text}")
                 pa = ProposedAppeal(appeal_text=appeal_text, for_denial=denial)
+                pa.save()
                 return appeal_text
 
             def sub_in_appeals(appeal: str) -> str:

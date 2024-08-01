@@ -20,7 +20,7 @@ from django.urls import path
 from fighthealthinsurance import views
 
 urlpatterns = [
-    path("admin/", admin.site.urls),
+    path("timbit/admin/", admin.site.urls),
     path("scan", views.ProcessView.as_view(), name="scan"),
     path("server_side_ocr", views.OCRView.as_view(), name="server_side_ocr"),
     path("", views.IndexView.as_view(), name="root"),
