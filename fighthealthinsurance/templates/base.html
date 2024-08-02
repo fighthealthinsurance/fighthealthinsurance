@@ -31,6 +31,26 @@
     <link rel="stylesheet" href="{% static 'css/main.css' %}">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/github-fork-ribbon-css/0.2.3/gh-fork-ribbon.min.css" />
     <style>
+      .betaribbon {
+	  font-size: 28px;
+	  font-weight: bold;
+	  color: #fff;
+      }
+      .betaribbon {
+	  --f: .5em; /* control the folded part*/
+	  --r: .8em; /* control the ribbon shape */
+  
+	  position: absolute;
+	  left: 20px;
+	  top: calc(-1*var(--f));
+	  padding: .2em;
+	  background: #BF4D28;
+	  border-left: var(--f) solid #0005;
+	  border-bottom: var(--r) solid #0000;
+	  clip-path: polygon(var(--f) 0,100% 0,100% 100%,calc(50% + var(--f)/2) calc(100% - var(--r)), var(--f) 100%,var(--f) var(--f),0 var(--f));
+      }
+    </style>
+    <style>
         {
             % block extra_style %
         }
@@ -72,7 +92,8 @@
 </head>
 
 <body id="top" data-spy="scroll" data-target=".navbar-collapse" data-offset="50">
-  <a class="github-fork-ribbon" href="https://github.com/orgs/totallylegitco/repositories" data-ribbon="Fork me on GitHub" title="Fork me on GitHub">Contribute on GitHub</a>
+  <a class="github-fork-ribbon" href="https://github.com/orgs/totallylegitco/repositories" data-ribbon="Alpha -- Fork me on GH" title="Alpha -- Fork me on GH">Contribute on GitHub</a>
+<!--  <div class="betaribbon"><a href="https://inc42.com/glossary/alpha-release-beta-release/#:~:text=An%20alpha%20release%20is%20an,caught%20during%20the%20previous%20tests.">Alpha</a> <a href="{% url 'contact' %}">Feedback welcome</a></div>-->
     <!-- PRE LOADER -->
     <section class="preloader">
         <div class="spinner">
@@ -126,7 +147,7 @@
                     <li class="nav-item"><a href="{% url 'about' %}" class="nav-link">About Us</a></li>
 		    <li class="nav-item"><a href="{% url 'remove_data' %}" class="nav-link" id="removedata">Remove Your Data</a></li>
                     <li class="nav-item"><a href="{% url 'other-resources' %}" class="nav-link">Other Resources</a></li>
-                    <li class="nav-item"><a href="#" class="nav-link">Contact</a></li>
+                    <li class="nav-item"><a href="{% url 'contact' %}" class="nav-link">Contact</a></li>
                     <li class="nav-item appointment-btn"><a href="{% url 'scan' %}">Generate Appeal</a></li>
                 </ul>
             </div>
