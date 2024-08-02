@@ -40,4 +40,5 @@ urlpatterns = [
         name="appeals_json_backend",
     ),
     path("choose_appeal", views.ChooseAppeal.as_view(), name="choose_appeal"),
+    path("contact", views.ContactView.as_view(), name="contact"),
 ]

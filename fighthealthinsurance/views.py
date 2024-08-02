@@ -68,6 +68,12 @@ class TermsOfServiceView(generic.TemplateView):
         return {"title": "Terms of Service"}
 
 
+class ContactView(generic.TemplateView):
+    template_name = "contact.html"
+
+    def get_context_data(self, **kwargs):
+        return {"title": "Contact Us"}
+
 class ShareDenialView(View):
     def get(self, request):
         return render(request, "share_denial.html", context={"title": "Share Denial"})
