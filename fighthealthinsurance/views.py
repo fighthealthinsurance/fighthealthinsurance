@@ -74,6 +74,7 @@ class ContactView(generic.TemplateView):
     def get_context_data(self, **kwargs):
         return {"title": "Contact Us"}
 
+
 class ShareDenialView(View):
     def get(self, request):
         return render(request, "share_denial.html", context={"title": "Share Denial"})
