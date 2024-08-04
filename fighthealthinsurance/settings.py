@@ -245,7 +245,7 @@ class Prod(Base):
     EMAIL_USE_SSL = False
     EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "support")
     EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
-    DEFAULT_FROM_EMAIL = "support@fighthealthinsurance.com"
+    DEFAULT_FROM_EMAIL = "support42@fighthealthinsurance.com"
     RECAPTCHA_PUBLIC_KEY = os.getenv("RECAPTCHA_PUBLIC_KEY", "")
     RECAPTCHA_PRIVATE_KEY = os.getenv("RECAPTCHA_PRIVATE_KEY", "")
     RECAPTCHA_REQUIRED_SCORE = 0.85
