@@ -170,10 +170,10 @@ class RemoteOpenLike(RemoteModel):
 
     def parallel_infer(self, prompt: str, t: str):
         print(f"Running inference on {t}")
-        temps = [0.7]
+        temps = [0.5]
         if t == "full":
             # Special case for the full one where we really want to explore the problem space
-            temps = [0.7, 0.2]
+            temps = [0.6, 0.1]
         calls = itertools.chain.from_iterable(
             map(
                 lambda temp: map(
