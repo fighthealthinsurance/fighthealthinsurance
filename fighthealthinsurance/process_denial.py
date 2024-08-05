@@ -207,7 +207,7 @@ class RemoteOpenLike(RemoteModel):
             result = self._infer(prompt, sm, temp)
         if self.bad_result(result):
             return []
-        return [(t, result)]
+        return [(t, self.tla_fixer(result))]
 
     def _clean_procedure_response(self, response):
         return self.procedure_response_regex.sub("", response)
