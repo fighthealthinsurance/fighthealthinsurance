@@ -180,6 +180,47 @@ class RemoteOpenLike(RemoteModel):
                     return re.sub(f"(?<=[\.\( ]){m.group(4)}", tla, result)
             return result
 
+
+    common_bad_result = [
+        "The page you are trying to reach is not available. Please check the URL and try again.",
+        "The requested article is not currently available on this site."]
+
+    maybe_bad_url_endings = re.compile("^(.*)[\.\:\;\,\?\>]+$")
+
+    def is_valid_url(self, url):
+        try:
+            result = requests.get(url)
+            if result.status_code != 200:
+                groups = self.maybe_bad_url_endings.search(url)
+                if groups is not None:
+                    return is_valid_url(groups.group(1))
+                else:
+                    return False
+            if result.status_code == 200 and ".pdf" not in url:
+                result_text = result.text.lower()
+                for bad_result_text in self.common_bad_result:
+                    if bad_result_text.lower() in result_text:
+                        raise Exception(
+                            f"Found {bad_result_text} in {result_text}")
+                    return True
+        except Exception as e:
+            groups = self.maybe_bad_url_endings.search(url)
+            if groups is not None:
+                return is_valid_url(groups.group(1))
+            else:
+                return False
+
+    def url_fixer(self, result: Optional[str]) -> Optional[str]:
+        """LLMs like to hallucinate URLs drop them"""
+        if result is None:
+            return None
+        else:
+            urls = re.findall(r"(https?://\S+)", result)
+            for u in urls:
+                if not self.is_valid_url(u):
+                    result = re.sub(u, "", result)
+            return result
+
     def parallel_infer(self, prompt: str, t: str):
         print(f"Running inference on {t}")
         temps = [0.5]
@@ -207,7 +248,7 @@ class RemoteOpenLike(RemoteModel):
             result = self._infer(prompt, sm, temp)
         if self.bad_result(result):
             return []
-        return [(t, self.tla_fixer(result))]
+        return [(t, self.url_fixer(self.tla_fixer(result)))]
 
     def _clean_procedure_response(self, response):
         return self.procedure_response_regex.sub("", response)
