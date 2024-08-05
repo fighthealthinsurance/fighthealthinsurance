@@ -168,6 +168,18 @@ class RemoteOpenLike(RemoteModel):
             return True
         return False
 
+    def tla_fixer(self, result: Optional[str]) -> Optional[str]:
+        """Fix incorrectly picked TLAs from the LLM."""
+        if result is None:
+            return None
+        else:
+            m = re.search("([A-Z])\w+ ([A-Z])\w+ ([A-Z])\w+ \(([A-Z]{3})\)", result)
+            if m is not None:
+                tla = m.group(1) + m.group(2) + m.group(3)
+                if tla != m.group(4):
+                    return re.sub(f"(?<=[\.\( ]){m.group(4)}", tla, result)
+            return result
+
     def parallel_infer(self, prompt: str, t: str):
         print(f"Running inference on {t}")
         temps = [0.5]
