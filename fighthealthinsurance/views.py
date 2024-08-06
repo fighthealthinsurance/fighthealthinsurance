@@ -504,6 +504,7 @@ class ProcessView(generic.FormView):
             "ocr_result": self.get_ocr_result(),
             "upload_more": True,
         }
+        return context
 
     def __init__(self, *args, **kwargs):
         self.regex_denial_processor = ProcessDenialRegex()
