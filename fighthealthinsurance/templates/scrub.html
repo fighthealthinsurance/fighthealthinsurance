@@ -27,15 +27,15 @@ Upload your Health Insurance Denial
 	<div class="form-group">
 	    <div class="row">
 		<div class="col-md-4">
-		    <label for="fname" class="form-label">First name:</label><br>
+		    <label for="store_fname" class="form-label">First name:</label><br>
 		    <input type="text" id="store_fname" name="fname" class="form-control"><br>
 		</div>
 		<div class="col-md-4">
-		    <label for="lname" class="form-label">Last name:</label><br>
+		    <label for="store_lname" class="form-label">Last name:</label><br>
 		    <input type="text" id="store_lname" name="lname" class="form-control"><br>
 		</div>
 		<div class="col-md-8">
-		    <label for="street" class="form-label">Your street Address (e.g. 283 24th st)</label><br>
+		    <label for="store_street" class="form-label">Your street Address (e.g. 283 24th st)</label><br>
 		    <input type="text" id="store_street" name="street" class="form-control"><br>
 		</div>
 	    </div>
@@ -78,7 +78,7 @@ Upload your Health Insurance Denial
 
 	    <div class="form-group">
 		<div class="col-md-4">
-		    <label for="zip" class="form-label">Your Zip code</label><br>
+		    <label for="store_zip" class="form-label">Your Zip code</label><br>
 		    <input type="text" id="store_zip" name="zip" class="form-control"><br>
 		</div>
 	    </div>
@@ -102,6 +102,9 @@ Upload your Health Insurance Denial
 		    Store my raw e-mail to follow up with me (for the duration of automated follow ups + 30 days)
 		</label>
 		<br>
+	    </div>
+	    <div style="visibility:hidden; color:red" id="email_error">
+	      We need your e-mail to proceed, this allows us to delete your data later on request.
 	    </div>
 	    <div style="visibility:hidden; color:red" id="agree_chk_error">
 		Can't proceed as you didn't agree to the terms.

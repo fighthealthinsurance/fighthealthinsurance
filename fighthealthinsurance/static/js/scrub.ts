@@ -15,9 +15,15 @@ function validateScrubForm(event) {
     } else {
 	document.getElementById('pii_error').style.visibility='hidden';
     }
-    if (form.pii.checked && form.privacy.checked) {
+    if (form.email.value.length < 1) {
+	document.getElementById('email_error').style.visibility='visible';
+    } else {
+	document.getElementById('email_error').style.visibility='hidden';
+    }
+    if (form.pii.checked && form.privacy.checked && form.email.value.length > 0) {
 	document.getElementById('agree_chk_error').style.visibility='hidden';
 	document.getElementById('pii_error').style.visibility='hidden';
+	document.getElementById('email_error').style.visibility='hidden';
 	// YOLO
 	return true;
     } else {

@@ -13,6 +13,7 @@ import itertools
 from asgiref.sync import async_to_sync
 import json
 
+from django.core.validators import validate_email
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
@@ -496,7 +497,7 @@ class ProcessView(generic.FormView):
 
     def get_ocr_result(self):
         if self.request.method == "POST":
-            return request.POST.get("denial_text", "")
+            return self.request.POST.get("denial_text", "")
         return ""
 
     def get_context_data(self, **kwargs):
@@ -517,6 +518,7 @@ class ProcessView(generic.FormView):
         # It's not a password per-se but we want password like hashing.
         # but we don't support changing the values.
         email = form.cleaned_data["email"]
+        validate_email(email)
         hashed_email = Denial.get_hashed_email(email)
         denial_text = form.cleaned_data["denial_text"]
 
