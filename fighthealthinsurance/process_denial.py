@@ -159,11 +159,14 @@ class RemoteOpenLike(RemoteModel):
         self.backup_model = backup_model
 
     def bad_result(self, result: Optional[str]) -> bool:
-        bad = "Therefore, the Health Plans denial should be overturned."
+        bad_ideas = [
+            "Therefore, the Health Plans denial should be overturned.",
+            "I am writing on behalf of"]
         if result is None:
             return True
-        if bad in result:
-            return True
+        for bad in bad_ideas:
+            if bad in result:
+                return True
         if len(result.strip(" ")) < 5:
             return True
         return False
@@ -193,7 +196,7 @@ class RemoteOpenLike(RemoteModel):
             if result.status_code != 200:
                 groups = self.maybe_bad_url_endings.search(url)
                 if groups is not None:
-                    return is_valid_url(groups.group(1))
+                    return self.is_valid_url(groups.group(1))
                 else:
                     return False
             if result.status_code == 200 and ".pdf" not in url:
