@@ -180,10 +180,10 @@ class RemoteOpenLike(RemoteModel):
                     return re.sub(f"(?<=[\.\( ]){m.group(4)}", tla, result)
             return result
 
-
     common_bad_result = [
         "The page you are trying to reach is not available. Please check the URL and try again.",
-        "The requested article is not currently available on this site."]
+        "The requested article is not currently available on this site.",
+    ]
 
     maybe_bad_url_endings = re.compile("^(.*)[\.\:\;\,\?\>]+$")
 
@@ -200,8 +200,7 @@ class RemoteOpenLike(RemoteModel):
                 result_text = result.text.lower()
                 for bad_result_text in self.common_bad_result:
                     if bad_result_text.lower() in result_text:
-                        raise Exception(
-                            f"Found {bad_result_text} in {result_text}")
+                        raise Exception(f"Found {bad_result_text} in {result_text}")
                     return True
         except Exception as e:
             groups = self.maybe_bad_url_endings.search(url)
