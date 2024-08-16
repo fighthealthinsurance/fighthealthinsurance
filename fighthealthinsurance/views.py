@@ -25,6 +25,8 @@ from django.urls import reverse
 from django.utils.decorators import method_decorator
 from django.views import View
 from django.views import generic
+from django.views.decorators.cache import cache_control
+
 
 import numpy as np
 import uszipcode

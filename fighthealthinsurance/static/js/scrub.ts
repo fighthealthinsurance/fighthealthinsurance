@@ -158,6 +158,8 @@ function setupScrub()
     }
     const scrub = document.getElementById('scrub');
     scrub.onclick = clean;
+    const scrub2 = document.getElementById('scrub-2');
+    scrub2.onclick = clean;
     const form = document.getElementById("fuck_health_insurance_form");
     form.addEventListener("submit", validateScrubForm);
 }
