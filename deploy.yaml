@@ -46,7 +46,7 @@ spec:
       topologySpreadConstraints:
       - maxSkew: 1
         topologyKey: kubernetes.io/hostname
-        whenUnsatisfiable: ScheduleAnyways
+        whenUnsatisfiable: ScheduleAnyway
         labelSelector:
           matchLabels:
             app: fight-health-insurance
