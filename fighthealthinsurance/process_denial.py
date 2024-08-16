@@ -161,7 +161,8 @@ class RemoteOpenLike(RemoteModel):
     def bad_result(self, result: Optional[str]) -> bool:
         bad_ideas = [
             "Therefore, the Health Plans denial should be overturned.",
-            "I am writing on behalf of"]
+            "I am writing on behalf of",
+        ]
         if result is None:
             return True
         for bad in bad_ideas:
