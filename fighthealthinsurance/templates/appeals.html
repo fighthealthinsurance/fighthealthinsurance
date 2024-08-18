@@ -13,6 +13,8 @@ $(document).ready(function() {
     var resp_buffer = '';
     var appeal_id = 0;
     var appeals_so_far = [];
+    document.getElementById('loading-spinner').style.display = 'visible';
+    document.getElementById('loading-text').style.display = 'visible';
 
     let process_chunk = function(chunk) {
  	resp_buffer += chunk;
@@ -106,8 +108,12 @@ data: {
 	    console.log("Sucess?");
             console.log(response);
 	    process_chunk(response);
+            console.log("Hiding spinner");
+            setTimeout(function() {
             document.getElementById('loading-spinner').style.display = 'none';
-            document.getElementById('loading-text').style.display = 'none';
+	    document.getElementById('loading-text').style.display = 'none';
+            document.getElementById('loading-more').style.display = 'none';
+	    }, 1000);
         },
 	error: function(err) {
 	    console.log("Error :(");
@@ -123,14 +129,15 @@ data: {
 <!-- This code is partial written by AI -->
 <!-- Loading Spinner -->
 <div id="loading-text">
-  <h1>Loading appeals (please wait)...</h1>
+  <h1>Loading appeals (please wait) -- this will go away once all appeals are generated</h1>
 </div>
 <div id="loading-spinner">
   <i class="fas fa-spinner fa-spin fa-3x"></i>
 </div>
 
   <!-- Main Content -->
-  <div id="main-content">
+<div id="main-content">
+  <div id="loading-more">
     <h2>Page Loading: Health Insurance Appeals</h2>
     <p>Thank you for submitting your health insurance appeal. We're currently working to generate the necessary details for your appeal, and this process may take a few moments.</p>
 
@@ -139,7 +146,7 @@ data: {
 
     <h3>What to Expect:</h3>
     <ul>
-      <li><strong>Loading Spinner:</strong> You may notice a loading spinner on the page. This indicates that the appeal details are being processed in the background.</li>
+      <li><strong>Loading Spinner:</strong> You may notice a loading spinner on the page. This indicates that the appeal details are being processed in the background. Once all of the appeals are generated <strong>this text and the spinner should disappear</strong>.</li>
       <li><strong>Please Wait:</strong> Your patience is greatly appreciated. Rest assured, we're working diligently to gather the necessary information for your appeal.</li>
       <li><strong>Completion Notification:</strong> Once the appeal details are ready, you'll be promptly notified, and the relevant information will be displayed on this page.</li>
     </ul>
@@ -148,6 +155,7 @@ data: {
     <p><strong>Do Not Refresh:</strong> To ensure the smooth processing of your appeal, please avoid refreshing the page while the loading spinner is visible. Doing so may interrupt the appeal generation process.</p>
 
     <p>Thank you for your understanding and patience.</p>
+    </div>
   </div>
 
 <p>
