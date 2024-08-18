@@ -28,7 +28,7 @@ class SeleniumTestAppealGeneration(BaseCase, StaticLiveServerTestCase):
 
     def test_submit_an_appeal_with_missing_info_and_fail(self):
         self.open(f"{self.live_server_url}/")
-        self.assert_title("Fight Your Health Insurance Denial")
+        self.assert_title("Fight Your Health Insurance Denial -- Use AI to Generate Your Health Insurance Appeal")
         self.click('a[id="scanlink"]')
         self.assert_title("Upload your Health Insurance Denial")
         self.type("input#store_fname", "First NameTest")
@@ -38,7 +38,7 @@ class SeleniumTestAppealGeneration(BaseCase, StaticLiveServerTestCase):
 
     def test_submit_an_appeal_with_missing_info(self):
         self.open(f"{self.live_server_url}/")
-        self.assert_title("Fight Your Health Insurance Denial")
+        self.assert_title("Fight Your Health Insurance Denial -- Use AI to Generate Your Health Insurance Appeal")
         self.click('a[id="scanlink"]')
         self.assert_title("Upload your Health Insurance Denial")
         self.type("input#store_fname", "First NameTest")
@@ -73,7 +73,7 @@ class SeleniumTestAppealGeneration(BaseCase, StaticLiveServerTestCase):
 
     def test_submit_an_appeal_with_enough(self):
         self.open(f"{self.live_server_url}/")
-        self.assert_title("Fight Your Health Insurance Denial")
+        self.assert_title("Fight Your Health Insurance Denial -- Use AI to Generate Your Health Insurance Appeal")
         self.click('a[id="scanlink"]')
         self.assert_title("Upload your Health Insurance Denial")
         self.type("input#store_fname", "First NameTest")
@@ -100,7 +100,7 @@ Cheap-O-Insurance-Corp""",
     def test_submit_an_appeal_with_enough_then_delete(self):
         email = "farts@farts.com"
         self.open(f"{self.live_server_url}/")
-        self.assert_title("Fight Your Health Insurance Denial")
+        self.assert_title("Fight Your Health Insurance Denial -- Use AI to Generate Your Health Insurance Appeal")
         self.click('a[id="scanlink"]')
         self.assert_title("Upload your Health Insurance Denial")
         self.type("input#store_fname", "First NameTest")
