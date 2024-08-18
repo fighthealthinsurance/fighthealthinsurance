@@ -6,11 +6,7 @@
 <head>
     {% block scriptmagic %}
     {% endblock scriptmagic %}
-    <title>
-        {% block title %}
-        {{ title }}
-        {% endblock title %}
-    </title>
+    <title>{% block title %}{{ title }}{% endblock title %}</title>
     <meta name="description"
 	  content="{% block metadescription %}{% endblock metadescription %}">
     <meta name="title"
