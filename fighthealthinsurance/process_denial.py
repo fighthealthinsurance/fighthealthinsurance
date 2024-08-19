@@ -636,7 +636,11 @@ class AppealGenerator(object):
             return None
 
     def make_open_prompt(
-            self, denial_text=None, procedure=None, diagnosis=None, is_trans=False, 
+        self,
+        denial_text=None,
+        procedure=None,
+        diagnosis=None,
+        is_trans=False,
     ) -> Optional[str]:
         if denial_text is None:
             return None
@@ -655,7 +659,9 @@ class AppealGenerator(object):
             start = f"Write a health insurance appeal for procedure {procedure} given the following denial:"
         return f"{base}{start}\n{denial_text}"
 
-    def make_open_med_prompt(self, procedure=None, diagnosis=None, is_trans=False) -> Optional[str]:
+    def make_open_med_prompt(
+        self, procedure=None, diagnosis=None, is_trans=False
+    ) -> Optional[str]:
         base = ""
         if is_trans:
             base = "While answering the question keep in mind the patient is trans."

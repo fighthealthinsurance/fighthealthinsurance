@@ -164,7 +164,6 @@ class Denial(models.Model):
     created = models.DateTimeField(db_default=Now(), primary_key=False, null=True)
     use_external = models.BooleanField(default=False)
 
-
     @staticmethod
     def get_hashed_email(email):
         encoded_email = email.encode("utf-8").lower()

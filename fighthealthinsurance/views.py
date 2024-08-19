@@ -528,7 +528,6 @@ class ProcessView(generic.FormView):
         if form.cleaned_data["store_raw_email"]:
             possible_email = email
 
-
         denial = Denial.objects.create(
             denial_text=denial_text,
             hashed_email=hashed_email,
