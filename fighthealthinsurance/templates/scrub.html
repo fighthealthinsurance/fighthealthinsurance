@@ -100,9 +100,15 @@ Upload your Health Insurance Denial
 		<input type="checkbox" id="tos" name="tos" class="form-check-input">
 		<label for="tos" class="form-check-label">I <a href="{% url 'tos' %}">agree to the terms of service</a> and will only use this website to generate my own health insurance appeals and will not use this website to to treat, diagnose any disease or condition or asist in either of those.</label>
 		<br>
+		Optional:<br>
 		<input type="checkbox" id="store_raw_email" name="store_raw_email" value="checked" class="form-check-input">
 		<label for="store_raw_email" class="form-check-label">
 		    Store my raw e-mail to follow up with me (for the duration of automated follow ups + 30 days)*
+		</label>
+		<br>
+		<input type="checkbox" id="use_external_models" name="use_external_models" value="checked" class="form-check-input">
+		<label for="use_external_models" class="form-check-label">
+		    Increase the number of possible appeals and use external models. <b>This is not required and involves sharing your data with 3rd parties</b> subject to their own TOS potentially including Octoai.
 		</label>
 		<br>
 	    </div>

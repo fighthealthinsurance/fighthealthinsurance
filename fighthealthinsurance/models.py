@@ -6,6 +6,7 @@ from typing import Optional
 from django.db import models
 
 from regex_field.fields import RegexField
+from django.db.models.functions import Now
 
 
 class FollowUpType(models.Model):
@@ -159,6 +160,10 @@ class Denial(models.Model):
     procedure = models.CharField(max_length=300, primary_key=False, null=True)
     diagnosis = models.CharField(max_length=300, primary_key=False, null=True)
     appeal_text = models.TextField(max_length=3000000000, primary_key=False, null=True)
+    raw_email = models.TextField(max_length=300, primary_key=False, null=True)
+    created = models.DateTimeField(db_default=Now(), primary_key=False, null=True)
+    use_external = models.BooleanField(default=False)
+
 
     @staticmethod
     def get_hashed_email(email):

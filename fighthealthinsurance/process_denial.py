@@ -227,7 +227,7 @@ class RemoteOpenLike(RemoteModel):
     def parallel_infer(self, prompt: str, t: str):
         print(f"Running inference on {t}")
         temps = [0.5]
-        if t == "full":
+        if t == "full" and not self._expensive:
             # Special case for the full one where we really want to explore the problem space
             temps = [0.6, 0.1]
         calls = itertools.chain.from_iterable(
@@ -246,6 +246,7 @@ class RemoteOpenLike(RemoteModel):
     @cache
     def _checked_infer(self, prompt: str, t, sm: str, temp):
         result = self._infer(prompt, sm, temp)
+        print(f"Got result {result} from {prompt} on {self}")
         # One retry
         if self.bad_result(result):
             result = self._infer(prompt, sm, temp)
@@ -408,6 +409,18 @@ class RemoteHealthInsurance(RemoteFullOpenLike):
         super().__init__(
             self.url, token="", model=self.model, backup_model=self.backup_model
         )
+
+
+class OctoAI(RemoteFullOpenLike):
+    """Use RemotePerplexity for denial magic calls a service"""
+
+    def __init__(self):
+        api_base = "https://text.octoai.run/v1/"
+        token = os.getenv("OCTOAI_TOKEN")
+        print(f"Starting octoai with {token}")
+        model = "meta-llama-3.1-405b-instruct"
+        self._expensive = True
+        super().__init__(api_base, token, model)
 
 
 class RemoteTogetherAI(RemoteFullOpenLike):
@@ -582,6 +595,7 @@ class AppealGenerator(object):
         self.remotehealth = RemoteHealthInsurance()
         self.together = RemoteTogetherAI()
         self.palm = PalmAPI()
+        self.octoai = OctoAI()
 
     def get_procedure_and_diagnosis(self, denial_text=None):
         prompt = self.make_open_procedure_prompt(denial_text)
@@ -621,11 +635,14 @@ class AppealGenerator(object):
             return None
 
     def make_open_prompt(
-        self, denial_text=None, procedure=None, diagnosis=None
+            self, denial_text=None, procedure=None, diagnosis=None, is_trans=False, 
     ) -> Optional[str]:
         if denial_text is None:
             return None
-        start = "Write a health insurance appeal for the following denial:"
+        base = ""
+        if is_trans:
+            base = "While answering the question keep in mind the patient is trans."
+        start = f"Write a health insurance appeal for the following denial:"
         if (
             procedure is not None
             and procedure != ""
@@ -635,14 +652,17 @@ class AppealGenerator(object):
             start = f"Write a health insurance appeal for procedure {procedure} with diagnosis {diagnosis} given the following denial:"
         elif procedure is not None and procedure != "":
             start = f"Write a health insurance appeal for procedure {procedure} given the following denial:"
-        return f"{start}\n{denial_text}"
+        return f"{base}{start}\n{denial_text}"
 
-    def make_open_med_prompt(self, procedure=None, diagnosis=None) -> Optional[str]:
+    def make_open_med_prompt(self, procedure=None, diagnosis=None, is_trans=False) -> Optional[str]:
+        base = ""
+        if is_trans:
+            base = "While answering the question keep in mind the patient is trans."
         if procedure is not None and len(procedure) > 3:
             if diagnosis is not None and len(diagnosis) > 3:
-                return f"Why is {procedure} medically necessary for {diagnosis}?"
+                return f"{base}Why is {procedure} medically necessary for {diagnosis}?"
             else:
-                return f"Why is {procedure} is medically necessary?"
+                return f"{base}Why is {procedure} is medically necessary?"
         else:
             return None
 
@@ -687,6 +707,9 @@ class AppealGenerator(object):
             #            [self.together, open_prompt],
             #            [self.palm, open_prompt],
         ]
+
+        if denial.use_external:
+            calls.extend([[self.octoai, open_prompt, "full"]])
 
         backup_calls = [
             #            [self.perplexity, open_prompt],

@@ -523,10 +523,17 @@ class ProcessView(generic.FormView):
         validate_email(email)
         hashed_email = Denial.get_hashed_email(email)
         denial_text = form.cleaned_data["denial_text"]
+        # If they ask us to store their raw e-mail we do
+        possible_email = None
+        if form.cleaned_data["store_raw_email"]:
+            possible_email = email
+
 
         denial = Denial.objects.create(
             denial_text=denial_text,
             hashed_email=hashed_email,
+            use_external=form.cleaned_data["use_external_models"],
+            raw_email=possible_email,
         )
 
         denial_types = self.regex_denial_processor.get_denialtype(denial_text)

@@ -28,6 +28,7 @@ class DenialForm(forms.Form):
     tos = forms.BooleanField(required=True)
     privacy = forms.BooleanField(required=True)
     store_raw_email = forms.BooleanField(required=False)
+    use_external_models = forms.BooleanField(required=False)
     denial_text = forms.CharField(required=True)
     email = forms.EmailField(required=True)
 
