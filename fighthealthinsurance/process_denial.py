@@ -352,10 +352,11 @@ class RemoteOpenLike(RemoteModel):
                     "temperature": temperature,
                 },
             )
-            print(f"Got {result} on {self.api_base} {self}")
             json_result = result.json()
             if "object" in json_result and json_result["object"] != "error":
-                print(f"Looks ok")
+                print(f"Response on {self} Looks ok")
+            else:
+                print(f"***WARNING*** Response {result} on {self} looks _bad_")
         except Exception as e:
             print(f"Error {e} calling {self.api_base}")
             return None
