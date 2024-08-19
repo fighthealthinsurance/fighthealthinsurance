@@ -418,7 +418,6 @@ class OctoAI(RemoteFullOpenLike):
     def __init__(self):
         api_base = "https://text.octoai.run/v1/"
         token = os.getenv("OCTOAI_TOKEN")
-        print(f"Starting octoai with {token}")
         model = "meta-llama-3.1-405b-instruct"
         self._expensive = True
         super().__init__(api_base, token, model)
