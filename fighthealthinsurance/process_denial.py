@@ -749,6 +749,8 @@ class AppealGenerator(object):
 
             def generated_to_appeals_text(k_text):
                 model_results = k_text.result()
+                if model_results is None:
+                    pass
                 for k, text in model_results:
                     if text is None:
                         pass
