@@ -144,7 +144,18 @@ class PalmAPI(RemoteModel):
 
 
 class RemoteOpenLike(RemoteModel):
-    def __init__(self, api_base, token, model, system_messages, backup_model=None):
+
+    _expensive = False
+
+    def __init__(
+        self,
+        api_base,
+        token,
+        model,
+        system_messages,
+        backup_model=None,
+        expensive=False,
+    ):
         self.api_base = api_base
         self.token = token
         self.model = model
@@ -157,6 +168,7 @@ class RemoteOpenLike(RemoteModel):
             r"\s*diagnosis\s*:?\s*", re.IGNORECASE
         )
         self.backup_model = backup_model
+        self._expensive = expensive
 
     def bad_result(self, result: Optional[str]) -> bool:
         bad_ideas = [
@@ -372,7 +384,7 @@ class RemoteOpenLike(RemoteModel):
 
 
 class RemoteFullOpenLike(RemoteOpenLike):
-    def __init__(self, api_base, token, model, backup_model=None):
+    def __init__(self, api_base, token, model, backup_model=None, expensive=False):
         systems = {
             "full": [
                 """You possess extensive medical expertise and enjoy crafting appeals for health insurance denials as a personal interest. As a patient, not a doctor, you advocate for yourself. Your writing style is direct, akin to patio11 or a bureaucrat, and maintains a professional tone without expressing frustration towards insurance companies. You may consider emphasizing the unique and potentially essential nature of the medical intervention, using "YourNameMagic" as your name, "SCSID" for the subscriber ID, and "GPID" as the group ID. Make sure to write in the form of a letter. Ideally use the communication the style of patio11 / a being a Dangerous Professional means communicating in what might be a slightly adversarial context in a way which suggests that a bureaucracy take one's concerns seriously and escalate them to someone empowered to resolve them swiftly. You can be verbose. Start your response with Dear [Insurance Company];""",
@@ -385,7 +397,9 @@ class RemoteFullOpenLike(RemoteOpenLike):
                 """You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters. Each word costs an extra dollar. Please provide a concise response. Do not use the 3rd person when refering to the patient (e.g. don't say "the patient", "patient's", "his", "hers"), instead use the first persion (I, my, mine,etc.) when talking about the patient. You are not a review and should not mention any. Write concisely in a professional tone akin to patio11. Do not say this is why the decission should be overturned. Just say why you believe it is medically necessary (e.g. to prevent X or to treat Y)."""
             ],
         }
-        return super().__init__(api_base, token, model, systems, backup_model)
+        return super().__init__(
+            api_base, token, model, systems, backup_model, expensive=expensive
+        )
 
     def model_type(self) -> str:
         return "full"
@@ -420,7 +434,7 @@ class OctoAI(RemoteFullOpenLike):
         token = os.getenv("OCTOAI_TOKEN")
         model = "meta-llama-3.1-405b-instruct"
         self._expensive = True
-        super().__init__(api_base, token, model)
+        super().__init__(api_base, token, model, expensive=True)
 
 
 class RemoteTogetherAI(RemoteFullOpenLike):
