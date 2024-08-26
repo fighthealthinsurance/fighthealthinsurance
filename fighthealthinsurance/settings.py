@@ -251,3 +251,4 @@ class Prod(Base):
     RECAPTCHA_REQUIRED_SCORE = 0.85
     RECAPTCHA_TESTING = False
     os.environ["RECAPTCHA_TESTING"] = "False"
+    ADMINS = [("Holden Karau", "holden.karau@gmail.com")]
