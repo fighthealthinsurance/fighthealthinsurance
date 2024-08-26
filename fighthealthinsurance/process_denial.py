@@ -221,7 +221,7 @@ class RemoteOpenLike(RemoteModel):
         except Exception as e:
             groups = self.maybe_bad_url_endings.search(url)
             if groups is not None:
-                return is_valid_url(groups.group(1))
+                return self.is_valid_url(groups.group(1))
             else:
                 return False
 
