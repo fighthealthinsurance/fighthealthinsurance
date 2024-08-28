@@ -78,6 +78,11 @@ class ContactView(generic.TemplateView):
         return {"title": "Contact Us"}
 
 
+class ErrorView(View):
+    def get(self, request):
+        raise Exception("test")
+
+
 class ShareDenialView(View):
     def get(self, request):
         return render(request, "share_denial.html", context={"title": "Share Denial"})

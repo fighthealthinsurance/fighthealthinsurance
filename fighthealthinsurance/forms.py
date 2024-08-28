@@ -65,7 +65,7 @@ class PostInferedForm(forms.Form):
     diagnosis = forms.CharField(
         max_length=200,
         label="What is the diagnosis (if any) associated with the request."
-        + "Does not need to be a diseas it can be any number of personal factors, "
+        + "Does not need to be a disease it can be any number of personal factors, "
         + 'including things like "high risk homosexual behaviour" (yeah that\'s a real one)',
         required=False,
     )

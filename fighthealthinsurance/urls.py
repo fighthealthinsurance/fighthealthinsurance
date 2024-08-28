@@ -22,6 +22,7 @@ from fighthealthinsurance import views
 
 urlpatterns = [
     path("timbit/admin/", admin.site.urls),
+    path("error", views.ErrorView.as_view()),
     path("scan", views.ProcessView.as_view(), name="scan"),
     path("server_side_ocr", views.OCRView.as_view(), name="server_side_ocr"),
     path(

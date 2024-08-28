@@ -252,3 +252,20 @@ class Prod(Base):
     RECAPTCHA_TESTING = False
     os.environ["RECAPTCHA_TESTING"] = "False"
     ADMINS = [("Holden Karau", "holden.karau@gmail.com")]
+    SERVER_EMAIL = "support@pigscanfly.ca"
+    LOGGING = {
+        "version": 1,
+        "disable_existing_loggers": False,
+        "handlers": {
+            "console": {
+                "class": "logging.StreamHandler",
+                "filters": [],
+            },
+            "mail_admins": {
+                "level": "ERROR",
+                "filters": [],
+                "class": "django.utils.log.AdminEmailHandler",
+                "include_html": True,
+            },
+        },
+    }
