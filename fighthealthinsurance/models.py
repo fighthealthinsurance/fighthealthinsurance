@@ -105,7 +105,11 @@ class DenialTypes(models.Model):
             else:
                 return None
         else:
-            return getattr(sys.modules["fighthealthinsurance.forms"], self.form)
+            try:
+                return getattr(sys.modules["fighthealthinsurance.forms"], self.form)
+            except Exception as e:
+                print(f"Error loading form {e}")
+                return None
 
     def __str__(self):
         return self.name
