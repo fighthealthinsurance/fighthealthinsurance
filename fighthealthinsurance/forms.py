@@ -167,6 +167,7 @@ class NotCoveredQuestions(MedicalNeccessaryQuestions):
 class NotCoveredByQuestions(NotCoveredQuestions):
     """Alt name to match the db entry (my bad)"""
 
+
 class OutOfNetworkReimbursement(forms.Form):
     why_need_out_of_network = forms.CharField(
         max_length=300,
