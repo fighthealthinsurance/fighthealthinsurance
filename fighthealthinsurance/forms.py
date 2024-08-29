@@ -194,7 +194,10 @@ class BalanceBillQuestions(forms.Form):
     match_eob = forms.BooleanField(required=False)
 
     def preface(self):
-        return "As you are aware the no-surprises act ..."
+        if "emergency" in self.cleaned_data:
+            return "As you are aware the no-surprises act prohibits balance billing and similar practices in the majority of emergency cases (see https://www.cms.gov/newsroom/fact-sheets/no-surprises-understand-your-rights-against-surprise-medical-bills)"
+        else:
+            return ""
 
 
 class PriorAuthQuestions(InsuranceQuestions):
