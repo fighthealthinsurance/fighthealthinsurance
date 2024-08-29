@@ -1,0 +1,107 @@
+- model: fighthealthinsurance.appealtemplates
+  pk: 3
+  fields:
+    name: Ozempic Appeal Letter for Type 2 Diabetes
+    appeal_text: "Date:  [Insert Date]
+
+To:  
+[Insurance Company Name]  
+[Appeals and Grievances Department]  
+[Insurance Company Address]  
+[City, State, ZIP Code]
+
+From:  
+[Your Name]  
+[Your Address]  
+[City, State, ZIP Code]  
+[Phone Number]  
+[Email Address]  
+[Policy Number or Member ID]
+
+Subject: Appeal for Denial of Coverage for Ozempic (semaglutide)
+
+Dear [Insurance Company],
+
+I am writing to formally appeal the denial of coverage for the medication Ozempic (semaglutide), which has been prescribed by my healthcare provider, [Provider's Name], as an essential part of my diabetes management plan. The denial letter I received, dated [Denial Date], states that coverage was denied because [quote the specific reason given in the denial letter].
+
+Patient Information:
+
+ Name: [Patient's Name]  
+ Date of Birth: [Patient's DOB]  
+ Member ID: [Patient's Insurance ID]  
+ Claim/Reference Number: [Reference Number from Denial Letter]
+
+Background and Medical Necessity:
+
+[Patient's Name] has been diagnosed with Type 2 diabetes and has been managing the condition for [number of years]. Despite various treatments and lifestyle changes, their blood sugar levels remain uncontrolled. Ozempic has been shown to significantly improve glycemic control and reduce the risk of cardiovascular events in patients with Type 2 diabetes. The attached Letter of Medical Necessity from [Provider's Name] outlines why Ozempic is crucial for [patient's name]’s treatment plan.
+
+Request for Reconsideration:
+
+Given the clinical evidence supporting the use of Ozempic and the potential health benefits for [patient's name], I respectfully request that you reconsider your decision and approve coverage for this medication. Delaying access to Ozempic could result in worsening of [patient's name]’s condition, increasing the risk of complications.
+
+
+Request:
+
+I trust that you will review this appeal promptly and approve the necessary coverage for Ozempic. Should you require any additional information, please do not hesitate to contact me or [Provider's Name] at [Provider's Contact Information].
+
+Thank you for your attention to this matter.
+
+Sincerely,  
+[Your Name]  
+"
+    regex: "ozempic"
+    diagnosis_regex: "diabetes"
+- model: fighthealthinsurance.appealtemplates
+  pk: 4
+  fields:
+    name: OCREVUS appeal
+    appeal_text: "Date:  [Insert Date]
+
+To:  
+[Insurance Company Name]  
+[Appeals and Grievances Department]  
+[Insurance Company Address]  
+[City, State, ZIP Code]
+
+From:  
+[Your Name]  
+[Your Address]  
+[City, State, ZIP Code]  
+[Phone Number]  
+[Email Address]  
+[Policy Number or Member ID]
+
+Subject: Appeal for Continuation of OCREVUS (ocrelizumab) Therapy
+
+Dear [Insurance Company Name or Medical Director],
+
+I am writing to appeal the denial of coverage for the continuation of OCREVUS (ocrelizumab) therapy, which has been essential in managing my diagnosis of [Diagnosis]. The denial letter, dated [Denial Date], states that coverage was denied because [quote the specific reason given in the denial letter].
+
+Patient Information:
+
+ Name: [Patient's Name]  
+ Date of Birth: [Patient's DOB]  
+ Member ID: [Patient's Insurance ID]  
+ Claim/Reference Number: [Reference Number from Denial Letter]
+
+Background and Medical Necessity:
+
+[Patient's Name] has been receiving OCREVUS therapy since [Start Date] to manage [his/her] [Diagnosis]. The treatment has been instrumental in reducing the frequency and severity of symptoms and in preventing further progression of the disease. Discontinuing OCREVUS could result in a significant deterioration of [patient's name]’s condition, with potential for severe and irreversible outcomes.
+
+The attached Letter of Medical Necessity from [Provider's Name] provides detailed information on why the continuation of OCREVUS is medically necessary for [patient's name] and outlines the potential risks associated with stopping the treatment.
+
+Request for Reconsideration:
+
+In light of the critical role that OCREVUS plays in managing [patient's name]’s condition, I respectfully request that you overturn the denial and approve the continued coverage of this therapy. Discontinuation would likely result in adverse health outcomes that could be prevented by maintaining the current treatment plan.
+
+
+Request:
+
+I trust that you will review this appeal promptly and authorize the continuation of OCREVUS therapy. Should you require any additional information, please do not hesitate to contact me or [Provider's Name] at [Provider's Contact Information].
+
+Thank you for your consideration.
+
+Sincerely,  
+[Your Name]  
+"
+    regex: "OCREVUS"

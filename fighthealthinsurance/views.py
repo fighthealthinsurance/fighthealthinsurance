@@ -372,7 +372,7 @@ class AppealsBackend(View):
                 map(
                     lambda t: t.appeal_text,
                     self.regex_denial_processor.get_appeal_templates(
-                        denial.denial_text
+                        denial.denial_text, denial.diagnosis
                     ),
                 )
             )
@@ -441,8 +441,16 @@ class AppealsBackend(View):
                     {
                         "insurance_company": denial.insurance_company
                         or "{insurance_company}",
-                        "diagnosis": denial.diagnosis or "{diagnosis}",
-                        "procedure": denial.procedure or "{procedure}",
+                        "[Insurance Company Name]": denial.insurance_company
+                        or "{insurance_company}",
+                        "[Insert Date]": denial.date or "{date}",
+                        "[Reference Number from Denial Letter]": denial.claim_id or "{claim_id}",
+                        "[Claim ID]": denial.claim_id or "{claim_id}",
+                        "{claim_id}": denial.claim_id or "{claim_id}",
+                        "[Diagnosis]": denial.diagnosis or "{diagnosis}",
+                        "[Procedure]": denial.procedure or "{procedure}",
+                        "{diagnosis}": denial.diagnosis or "{diagnosis}",
+                        "{procedure}": denial.procedure or "{procedure}",
                     }
                 )
                 return ret

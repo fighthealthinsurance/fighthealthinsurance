@@ -144,7 +144,8 @@ function setupScrub()
     console.log("Nodes:")
     console.log(nodes)
     function handleStorage(node) {
-	if (node.id.startsWith('store_')) {
+	// All store_ fields which are local only and the e-mail field which is local and non-local.
+	if (node.id.startsWith('store_') || node.id.startsWith("email")) {
 	    node.addEventListener('change', storeLocal);
 	    if (node.value == "") {
 		node.value = window.localStorage.getItem(node.id);

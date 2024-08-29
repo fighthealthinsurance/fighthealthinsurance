@@ -564,11 +564,16 @@ class ProcessDenialRegex(DenialBase):
                 print(f"no match {p}")
         return plans
 
-    def get_appeal_templates(self, text):
+    def get_appeal_templates(self, text, diagnosis):
         templates = []
         for t in self.templates:
             if t.regex.pattern != "" and t.regex.search(text) is not None:
-                templates.append(t)
+                # Check if this requires a specific diagnosis
+                if t.diagnosis_regex.pattern != "":
+                    if t.diagnosis_regex.search(diagnosis) is not None or diagnosis == "":
+                        templates.append(t)
+                else:
+                    templates.append(t)
                 print("yay match")
             else:
                 print(f"no match on {t.regex.pattern}")
