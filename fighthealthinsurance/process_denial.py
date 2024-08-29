@@ -570,7 +570,10 @@ class ProcessDenialRegex(DenialBase):
             if t.regex.pattern != "" and t.regex.search(text) is not None:
                 # Check if this requires a specific diagnosis
                 if t.diagnosis_regex.pattern != "":
-                    if t.diagnosis_regex.search(diagnosis) is not None or diagnosis == "":
+                    if (
+                        t.diagnosis_regex.search(diagnosis) is not None
+                        or diagnosis == ""
+                    ):
                         templates.append(t)
                 else:
                     templates.append(t)

@@ -122,7 +122,9 @@ class AppealTemplates(models.Model):
     negative_regex = RegexField(
         max_length=400, re_flags=re.IGNORECASE | re.UNICODE | re.M
     )
-    diagnosis_regex = RegexField(max_length=400, re_flags=re.IGNORECASE | re.UNICODE | re.M, blank=True)
+    diagnosis_regex = RegexField(
+        max_length=400, re_flags=re.IGNORECASE | re.UNICODE | re.M, blank=True
+    )
     appeal_text = models.TextField(max_length=3000, primary_key=False, blank=True)
 
     def __str__(self):

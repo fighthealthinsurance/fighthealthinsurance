@@ -444,7 +444,8 @@ class AppealsBackend(View):
                         "[Insurance Company Name]": denial.insurance_company
                         or "{insurance_company}",
                         "[Insert Date]": denial.date or "{date}",
-                        "[Reference Number from Denial Letter]": denial.claim_id or "{claim_id}",
+                        "[Reference Number from Denial Letter]": denial.claim_id
+                        or "{claim_id}",
                         "[Claim ID]": denial.claim_id or "{claim_id}",
                         "{claim_id}": denial.claim_id or "{claim_id}",
                         "[Diagnosis]": denial.diagnosis or "{diagnosis}",
