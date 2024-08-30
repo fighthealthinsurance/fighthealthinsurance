@@ -561,7 +561,11 @@ class ProcessView(generic.FormView):
         state = None
         zip_code = form.cleaned_data["zip"]
         if zip_code is not None and zip_code != "":
-            state = self.zip_engine.by_zipcode(form.cleaned_data["zip"]).state
+            try :
+                state = self.zip_engine.by_zipcode(form.cleaned_data["zip"]).state
+            except:
+                # Default to no state
+                state = None
         (procedure, diagnosis) = appealGenerator.get_procedure_and_diagnosis(
             denial_text
         )
