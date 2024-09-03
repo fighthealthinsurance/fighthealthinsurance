@@ -32,7 +32,7 @@ import numpy as np
 import uszipcode
 from fighthealthinsurance.forms import *
 from fighthealthinsurance.models import *
-from fighthealthinsurance.process_denial import *
+from fighthealthinsurance.generate_appeal import *
 from fighthealthinsurance.utils import *
 
 appealGenerator = AppealGenerator()
