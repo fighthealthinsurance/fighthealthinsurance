@@ -210,7 +210,7 @@ class AppealGenerator(object):
                 model_results = k_text.result()
                 print(f"Got result {model_results}")
                 if model_results is None:
-                    pass
+                    return []
                 for k, text in model_results:
                     if text is None:
                         pass
