@@ -7,6 +7,7 @@ import re
 from abc import ABC, abstractmethod
 from functools import cache, lru_cache
 from typing import Tuple, List, Optional
+import traceback
 import time
 
 from typing_extensions import reveal_type
@@ -21,6 +22,7 @@ from fighthealthinsurance.models import (
     Procedures,
     Regulator,
 )
+from fighthealthinsurance.exec import *
 
 class RemoteModel(object):
     """
@@ -29,7 +31,7 @@ class RemoteModel(object):
     ) tag them with "medically_necessary".
     """
 
-    def infer(self, prompt, t):
+    def infer(self, prompt, patient_context, infer_type):
         pass
 
 
@@ -38,12 +40,12 @@ class PalmAPI(RemoteModel):
         return result is not None
 
     @cache
-    def infer(self, prompt: str, t: str) -> List[Tuple[str, str]]:
+    def infer(self, prompt: str, patient_context, infer_type: str) -> List[Tuple[str, str]]:
         result = self._infer(prompt)
         if self.bad_result(result):
             result = self._infer(prompt)
         if result is not None:
-            return [(t, result)]
+            return [(infer_type, result)]
         else:
             return []
 
@@ -158,17 +160,17 @@ class RemoteOpenLike(RemoteModel):
                     result = re.sub(u, "", result)
             return result
 
-    def parallel_infer(self, prompt: str, t: str):
-        print(f"Running inference on {t}")
+    def parallel_infer(self, prompt: str, patient_context: Optional[str], inf_type: str):
+        print(f"Running inference on {self} of type {inf_type}")
         temps = [0.5]
-        if t == "full" and not self._expensive:
+        if inf_type == "full" and not self._expensive:
             # Special case for the full one where we really want to explore the problem space
             temps = [0.6, 0.1]
         calls = itertools.chain.from_iterable(
             map(
                 lambda temp: map(
-                    lambda sm: [self._checked_infer, prompt, t, sm, temp],
-                    self.system_messages[t],
+                    lambda sm: [self._checked_infer, prompt, patient_context, inf_type, sm, temp],
+                    self.system_messages[inf_type],
                 ),
                 temps,
             )
@@ -178,15 +180,15 @@ class RemoteOpenLike(RemoteModel):
         return futures
 
     @cache
-    def _checked_infer(self, prompt: str, t, sm: str, temp):
-        result = self._infer(prompt, sm, temp)
+    def _checked_infer(self, prompt: str, patient_context, inf_type, sm: str, temp):
+        result = self._infer(prompt, patient_context, sm, temp)
         print(f"Got result {result} from {prompt} on {self}")
         # One retry
         if self.bad_result(result):
-            result = self._infer(prompt, sm, temp)
+            result = self._infer(prompt, patient_context, sm, temp)
         if self.bad_result(result):
             return []
-        return [(t, self.url_fixer(self.tla_fixer(result)))]
+        return [(inf_type, self.url_fixer(self.tla_fixer(result)))]
 
     def _clean_procedure_response(self, response):
         return self.procedure_response_regex.sub("", response)
@@ -247,23 +249,23 @@ class RemoteOpenLike(RemoteModel):
             print(f"No model response for {self.model}")
         return (None, None)
 
-    def _infer(self, system_prompt, prompt, medical_context=None, temperature=0.7) -> Optional[str]:
+    def _infer(self, system_prompt, prompt, patient_context=None, temperature=0.7) -> Optional[str]:
         # Retry backup model if necessary
         try:
-            r = self.__infer(system_prompt, prompt, medical_context, temperature, self.model)
+            r = self.__infer(system_prompt, prompt, patient_context, temperature, self.model)
         except Exception as e:
             if self.backup_model is None:
                 raise e
             else:
                 return self.__infer(
-                    system_prompt, prompt, medical_context, temperature, self.backup_model
+                    system_prompt, prompt, patient_context, temperature, self.backup_model
                 )
         if r is None and self.backup_model is not None:
-            return self.__infer(system_prompt, prompt, medical_context, temperature, self.backup_model)
+            return self.__infer(system_prompt, prompt, patient_context, temperature, self.backup_model)
         else:
             return r
 
-    def __infer(self, system_prompt, prompt, medical_context, temperature, model) -> Optional[str]:
+    def __infer(self, system_prompt, prompt, patient_context, temperature, model) -> Optional[str]:
         print(f"Looking up model {model} using {self.api_base} and {prompt}")
         if self.token is None:
             print(f"Error no Token provided for {self.model}.")
@@ -278,11 +280,11 @@ class RemoteOpenLike(RemoteModel):
             combined_content = (
                 f"<<SYS>>{system_prompt}<</SYS>>{prompt[0 : self.max_len]}"
             )
-            if medical_context is not None:
-                medical_context_max = self.max_len / 2
-                max_len = self.max_len - min(len(medical_context), medical_context_max)
+            if patient_context is not None and len(patient_context) > 1:
+                patient_context_max = int(self.max_len / 2)
+                max_len = self.max_len - min(len(patient_context), patient_context_max)
                 combined_content = (
-                    f"<<SYS>>{system_prompt}<</SYS>>When answering the following question you can use the patient context {medical_context[0:medical_context_max]}. {prompt[0 : self.max_len]}"
+                    f"<<SYS>>{system_prompt}<</SYS>>When answering the following question you can use the patient context {patient_context[0:patient_context_max]}. {prompt[0:max_len]}"
                 )
             result = s.post(
                 url,
@@ -304,7 +306,7 @@ class RemoteOpenLike(RemoteModel):
             else:
                 print(f"***WARNING*** Response {result} on {self} looks _bad_")
         except Exception as e:
-            print(f"Error {e} calling {self.api_base}")
+            print(f"Error {e} {traceback.format_exc()} calling {self.api_base}")
             return None
         try:
             r = json_result["choices"][0]["message"]["content"]
@@ -312,7 +314,7 @@ class RemoteOpenLike(RemoteModel):
             return r
         except Exception as e:
             print(
-                f"Error {e} processing {json_result} from {self.api_base} w/ url {url} --  {self}"
+                f"Error {e} {traceback.format_exc()} processing {json_result} from {self.api_base} w/ url {url} --  {self}"
             )
             return None
 
