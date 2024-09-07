@@ -3,8 +3,6 @@ import concurrent
 from concurrent.futures import Future
 import csv
 import os
-import re
-from abc import ABC, abstractmethod
 from functools import cache, lru_cache
 from typing import Tuple, List, Optional
 import time
@@ -21,566 +19,10 @@ from fighthealthinsurance.models import (
     Procedures,
     Regulator,
 )
+from fighthealthinsurance.process_denial import *
+from fighthealthinsurance.ml_models import *
 
 executor = concurrent.futures.ThreadPoolExecutor(max_workers=50)
-
-
-# Process all of our "expert system" rules.
-
-
-class DenialBase(ABC):
-    @abstractmethod
-    def get_denialtype(self, text):
-        pass
-
-    @abstractmethod
-    def get_regulator(self, text):
-        pass
-
-    @abstractmethod
-    def get_plan_type(self, text):
-        pass
-
-
-class ProcessDenialCodes(DenialBase):
-    """Process the denial type based on the procedure codes."""
-
-    def __init__(self):
-        self.preventive_denial = DenialTypes.objects.filter(
-            name="Preventive Care"
-        ).get()
-        # These will match many things which are not ICD10 codes or CPT codes but
-        # then the lookup will hopefully fail.
-        self.icd10_re = re.compile(
-            "[\\(\\s:\\.,]+([A-TV-Z][0-9][0-9AB]\\.?[0-9A-TV-Z]{0,4})[\\s:\\.\\),]",
-            re.M | re.UNICODE,
-        )
-        self.cpt_code_re = re.compile(
-            "[\\(\\s:,]+(\\d{4,4}[A-Z0-9])[\\s:\\.\\),]", re.M | re.UNICODE
-        )
-        self.preventive_regex = re.compile(
-            "(exposure to human immunodeficiency virus|preventive|high risk homosexual)",
-            re.M | re.UNICODE | re.IGNORECASE,
-        )
-        try:
-            with open("./data/preventitivecodes.csv") as f:
-                rows = csv.reader(f)
-                self.preventive_codes = {k: v for k, v in rows}
-        except Exception:
-            self.preventive_codes = {}
-        try:
-            with open("./data/preventive_diagnosis.csv") as f:
-                rows = csv.reader(f)
-                self.preventive_diagnosis = {k: v for k, v in rows}
-        except Exception:
-            self.preventive_diagnosis = {}
-
-    def get_denialtype(self, text):
-        """Get the denial type. For now short circuit logic."""
-        icd_codes = self.icd10_re.finditer(text)
-        for i in icd_codes:
-            diag = i.group(1)
-            tag = icd10.find(diag)
-            if tag is not None:
-                if re.search("preventive", tag.block_description, re.IGNORECASE):
-                    return [self.preventive_denial]
-                if diag in self.preventive_diagnosis:
-                    return [self.preventive_denial]
-        cpt_codes = self.cpt_code_re.finditer(text)
-        for i in cpt_codes:
-            code = i.group(1)
-            if code in self.preventive_codes:
-                return [self.preventive_denial]
-        return []
-
-    def get_regulator(self, text):
-        return []
-
-    def get_plan_type(self, text):
-        return []
-
-
-class RemoteModel(object):
-    """
-    For models which produce a "full" appeal tag them with "full"
-    For medical reason (e.g. ones where we hybrid with our "expert system"
-    ) tag them with "medically_necessary".
-    """
-
-    def infer(self, prompt, t):
-        pass
-
-
-class PalmAPI(RemoteModel):
-    def bad_result(self, result) -> bool:
-        return result is not None
-
-    @cache
-    def infer(self, prompt: str, t: str) -> List[Tuple[str, str]]:
-        result = self._infer(prompt)
-        if self.bad_result(result):
-            result = self._infer(prompt)
-        if result is not None:
-            return [(t, result)]
-        else:
-            return []
-
-    def get_procedure_and_diagnosis(self, prompt):
-        return (None, None)
-
-    def _infer(self, prompt) -> Optional[str]:
-        API_KEY = os.getenv("PALM_KEY")
-        if API_KEY is None:
-            return None
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={API_KEY}"
-        try:
-            s = requests.Session()
-            result = s.post(url, json={"contents": [{"parts": [{"text": prompt}]}]})
-            json_result = result.json()
-            candidates = json_result["candidates"]
-            return candidates[0]["content"]["parts"][0]["text"]
-        except Exception as e:
-            return None
-
-
-class RemoteOpenLike(RemoteModel):
-
-    _expensive = False
-
-    def __init__(
-        self,
-        api_base,
-        token,
-        model,
-        system_messages,
-        backup_model=None,
-        expensive=False,
-    ):
-        self.api_base = api_base
-        self.token = token
-        self.model = model
-        self.system_messages = system_messages
-        self.max_len = 4096 * 2
-        self.procedure_response_regex = re.compile(
-            r"\s*procedure\s*:?\s*", re.IGNORECASE
-        )
-        self.diagnosis_response_regex = re.compile(
-            r"\s*diagnosis\s*:?\s*", re.IGNORECASE
-        )
-        self.backup_model = backup_model
-        self._expensive = expensive
-
-    def bad_result(self, result: Optional[str]) -> bool:
-        bad_ideas = [
-            "Therefore, the Health Plans denial should be overturned.",
-            "I am writing on behalf of",
-        ]
-        if result is None:
-            return True
-        for bad in bad_ideas:
-            if bad in result:
-                return True
-        if len(result.strip(" ")) < 5:
-            return True
-        return False
-
-    def tla_fixer(self, result: Optional[str]) -> Optional[str]:
-        """Fix incorrectly picked TLAs from the LLM."""
-        if result is None:
-            return None
-        else:
-            m = re.search("([A-Z])\w+ ([A-Z])\w+ ([A-Z])\w+ \(([A-Z]{3})\)", result)
-            if m is not None:
-                tla = m.group(1) + m.group(2) + m.group(3)
-                if tla != m.group(4):
-                    return re.sub(f"(?<=[\.\( ]){m.group(4)}", tla, result)
-            return result
-
-    common_bad_result = [
-        "The page you are trying to reach is not available. Please check the URL and try again.",
-        "The requested article is not currently available on this site.",
-    ]
-
-    maybe_bad_url_endings = re.compile("^(.*)[\.\:\;\,\?\>]+$")
-
-    def is_valid_url(self, url):
-        try:
-            result = requests.get(url)
-            if result.status_code != 200:
-                groups = self.maybe_bad_url_endings.search(url)
-                if groups is not None:
-                    return self.is_valid_url(groups.group(1))
-                else:
-                    return False
-            if result.status_code == 200 and ".pdf" not in url:
-                result_text = result.text.lower()
-                for bad_result_text in self.common_bad_result:
-                    if bad_result_text.lower() in result_text:
-                        raise Exception(f"Found {bad_result_text} in {result_text}")
-                    return True
-        except Exception as e:
-            groups = self.maybe_bad_url_endings.search(url)
-            if groups is not None:
-                return self.is_valid_url(groups.group(1))
-            else:
-                return False
-
-    def url_fixer(self, result: Optional[str]) -> Optional[str]:
-        """LLMs like to hallucinate URLs drop them"""
-        if result is None:
-            return None
-        else:
-            urls = re.findall(r"(https?://\S+)", result)
-            for u in urls:
-                if not self.is_valid_url(u):
-                    result = re.sub(u, "", result)
-            return result
-
-    def parallel_infer(self, prompt: str, t: str):
-        print(f"Running inference on {t}")
-        temps = [0.5]
-        if t == "full" and not self._expensive:
-            # Special case for the full one where we really want to explore the problem space
-            temps = [0.6, 0.1]
-        calls = itertools.chain.from_iterable(
-            map(
-                lambda temp: map(
-                    lambda sm: [self._checked_infer, prompt, t, sm, temp],
-                    self.system_messages[t],
-                ),
-                temps,
-            )
-        )
-        futures = list(map(lambda x: executor.submit(x[0], *x[1:]), calls))
-        print(f"Returning {futures}")
-        return futures
-
-    @cache
-    def _checked_infer(self, prompt: str, t, sm: str, temp):
-        result = self._infer(prompt, sm, temp)
-        print(f"Got result {result} from {prompt} on {self}")
-        # One retry
-        if self.bad_result(result):
-            result = self._infer(prompt, sm, temp)
-        if self.bad_result(result):
-            return []
-        return [(t, self.url_fixer(self.tla_fixer(result)))]
-
-    def _clean_procedure_response(self, response):
-        return self.procedure_response_regex.sub("", response)
-
-    def _clean_diagnosis_response(self, response):
-        if (
-            "Not available in" in response
-            or "Not provided" in response
-            or "Not specified" in response
-            or "Not Applicable" in response
-        ):
-            return None
-        return self.diagnosis_response_regex.sub("", response)
-
-    @cache
-    def get_procedure_and_diagnosis(
-        self, prompt: str
-    ) -> tuple[Optional[str], Optional[str]]:
-        print(f"Getting procedure and diagnosis for {self} w/ {prompt}")
-        if self.system_messages["procedure"] is None:
-            print(f"No procedure message for {self.model} skipping")
-            return (None, None)
-        model_response = self._infer(self.system_messages["procedure"], prompt)
-        if model_response is None or "Diagnosis" not in model_response:
-            print("Retrying query.")
-            model_response = self._infer(self.system_messages["procedure"], prompt)
-        if model_response is not None:
-            responses: list[str] = model_response.split("\n")
-            if len(responses) == 2:
-                r = (
-                    self._clean_procedure_response(responses[0]),
-                    self._clean_diagnosis_response(responses[1]),
-                )
-                return r
-            elif len(responses) == 1:
-                r = (self._clean_procedure_response(responses[0]), None)
-                return r
-            elif len(responses) > 2:
-                procedure = None
-                diagnosis = None
-                for ra in responses:
-                    if "Diagnosis" in ra:
-                        diagnosis = self._clean_diagnosis_response(ra)
-                    if "Procedure" in ra:
-                        procedure = self._clean_procedure_response(ra)
-                return (procedure, diagnosis)
-            else:
-                print(
-                    f"Non-understood response {model_response} for procedure/diagnsosis."
-                )
-        else:
-            print(f"No model response for {self.model}")
-        return (None, None)
-
-    def _infer(self, system_prompt, prompt, temperature=0.7) -> Optional[str]:
-        # Retry backup model if necessary
-        try:
-            r = self.__infer(system_prompt, prompt, temperature, self.model)
-        except Exception as e:
-            if self.backup_model is None:
-                raise e
-            else:
-                return self.__infer(
-                    system_prompt, prompt, temperature, self.backup_model
-                )
-        if r is None and self.backup_model is not None:
-            return self.__infer(system_prompt, prompt, temperature, self.backup_model)
-        else:
-            return r
-
-    def __infer(self, system_prompt, prompt, temperature, model) -> Optional[str]:
-        print(f"Looking up model {model} using {self.api_base} and {prompt}")
-        if self.token is None:
-            print(f"Error no Token provided for {self.model}.")
-        if prompt is None:
-            print(f"Error: must supply a prompt.")
-            return None
-        url = f"{self.api_base}/chat/completions"
-        try:
-            s = requests.Session()
-            # Combine the message, Mistral's VLLM container does not like the system role anymore?
-            # despite it still being fine-tuned with the system role.
-            combined_content = (
-                f"<<SYS>>{system_prompt}<</SYS>>{prompt[0 : self.max_len]}"
-            )
-            result = s.post(
-                url,
-                headers={"Authorization": f"Bearer {self.token}"},
-                json={
-                    "model": self.model,
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": combined_content,
-                        },
-                    ],
-                    "temperature": temperature,
-                },
-            )
-            json_result = result.json()
-            if "object" in json_result and json_result["object"] != "error":
-                print(f"Response on {self} Looks ok")
-            else:
-                print(f"***WARNING*** Response {result} on {self} looks _bad_")
-        except Exception as e:
-            print(f"Error {e} calling {self.api_base}")
-            return None
-        try:
-            r = json_result["choices"][0]["message"]["content"]
-            print(f"Got {r} from {self.model} w/ {self.api_base} {self}")
-            return r
-        except Exception as e:
-            print(
-                f"Error {e} processing {json_result} from {self.api_base} w/ url {url} --  {self}"
-            )
-            return None
-
-
-class RemoteFullOpenLike(RemoteOpenLike):
-    def __init__(self, api_base, token, model, backup_model=None, expensive=False):
-        systems = {
-            "full": [
-                """You possess extensive medical expertise and enjoy crafting appeals for health insurance denials as a personal interest. As a patient, not a doctor, you advocate for yourself. Your writing style is direct, akin to patio11 or a bureaucrat, and maintains a professional tone without expressing frustration towards insurance companies. You may consider emphasizing the unique and potentially essential nature of the medical intervention, using "YourNameMagic" as your name, "SCSID" for the subscriber ID, and "GPID" as the group ID. Make sure to write in the form of a letter. Ideally use the communication the style of patio11 / a being a Dangerous Professional means communicating in what might be a slightly adversarial context in a way which suggests that a bureaucracy take one's concerns seriously and escalate them to someone empowered to resolve them swiftly. You can be verbose. Start your response with Dear [Insurance Company];""",
-                """You possess extensive medical expertise and enjoy crafting appeals for health insurance denials as a personal interest. As a patient, not a doctor, you advocate for yourself. Your writing style is direct, akin to patio11 or a bureaucrat, and maintains a professional tone without expressing frustration towards insurance companies. You may consider emphasizing the unique and potentially essential nature of the medical intervention, using "YourNameMagic" as your name, "SCSID" for the subscriber ID, and "GPID" as the group ID. Make sure to write in the form of a letter. Do not use the 3rd person when refering to the patient, instead use the first persion (I, my, etc.). You are not a review and should not mention any.""",
-            ],
-            "procedure": [
-                """You must be concise. You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters to identify the requested procedure and, if available, the associated diagnosis. Each word costs an extra dollar. Provide a concise response with the procedure on one line starting with "Procedure" and Diagnsosis on another line starting with Diagnosis. Do not say not specified. Diagnosis can also be reason for treatment even if it's not a disease (like high risk homosexual behaviour for prep or preventitive and the name of the diagnosis). Remember each result on a seperated line."""
-            ],
-            "medically_necessary": [
-                """You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters. Each word costs an extra dollar. Please provide a concise response. Do not use the 3rd person when refering to the patient (e.g. don't say "the patient", "patient's", "his", "hers"), instead use the first persion (I, my, mine,etc.) when talking about the patient. You are not a review and should not mention any. Write concisely in a professional tone akin to patio11. Do not say this is why the decission should be overturned. Just say why you believe it is medically necessary (e.g. to prevent X or to treat Y)."""
-            ],
-        }
-        return super().__init__(
-            api_base, token, model, systems, backup_model, expensive=expensive
-        )
-
-    def model_type(self) -> str:
-        return "full"
-
-
-class RemoteHealthInsurance(RemoteFullOpenLike):
-    def __init__(self):
-        self.port = os.getenv("HEALTH_BACKEND_PORT", "80")
-        self.host = os.getenv("HEALTH_BACKEND_HOST")
-        self.url = None
-        if self.port is not None and self.host is not None:
-            self.url = f"http://{self.host}:{self.port}/v1"
-        else:
-            print(f"Error setting up remote health {self.host}:{self.port}")
-        self.model = os.getenv(
-            "HEALTH_BACKEND_MODEL", "TotallyLegitCo/fighthealthinsurance_model_v0.5"
-        )
-        self.backup_model = os.getenv(
-            "HEALTH_BACKUP_BACKEND_MODEL",
-            "TotallyLegitCo/fighthealthinsurance_model_v0.6",
-        )
-        super().__init__(
-            self.url, token="", model=self.model, backup_model=self.backup_model
-        )
-
-
-class OctoAI(RemoteFullOpenLike):
-    """Use RemotePerplexity for denial magic calls a service"""
-
-    def __init__(self):
-        api_base = "https://text.octoai.run/v1/"
-        token = os.getenv("OCTOAI_TOKEN")
-        model = "meta-llama-3.1-405b-instruct"
-        self._expensive = True
-        super().__init__(api_base, token, model, expensive=True)
-
-
-class RemoteTogetherAI(RemoteFullOpenLike):
-    """Use RemotePerplexity for denial magic calls a service"""
-
-    def __init__(self):
-        api_base = "https://api.together.xyz"
-        token = os.getenv("TOGETHER_KEY")
-        model = "mistralai/Mixtral-8x7B-Instruct-v0.1"
-        super().__init__(api_base, token, model)
-
-
-class RemotePerplexityInstruct(RemoteFullOpenLike):
-    """Use RemotePerplexity for denial magic calls a service"""
-
-    def __init__(self):
-        api_base = "https://api.perplexity.ai"
-        token = os.getenv("PERPLEXITY_API")
-        model = "mistral-7b-instruct"
-        super().__init__(api_base, token, model)
-
-
-class RemotePerplexityMedReason(RemoteOpenLike):
-    """Use RemotePerplexity for denial magic calls a service"""
-
-    def __init__(self):
-        api_base = "https://api.perplexity.ai"
-        token = os.getenv("PERPLEXITY_API")
-        model = "mistral-7b-instruct"
-        medical_reason_message = "You are a doctor answering a friends question as to why a procedure is medically necessary."
-        super().__init__(api_base, token, model, medical_reason_message)
-
-
-class RemoteOpen(RemoteFullOpenLike):
-    """Use RemoteOpen for denial magic calls a service"""
-
-    def __init__(self):
-        api_base = os.getenv("OPENAI_API_BASE")
-        token = os.getenv("OPENAI_API_KEY")
-        model = "HuggingFaceH4/zephyr-7b-beta"
-        super().__init__(api_base, token, model)
-
-
-class RemoteOpenInst(RemoteFullOpenLike):
-    """Use RemoteOpen for denial magic calls a service"""
-
-    def __init__(self):
-        api_base = os.getenv("OPENAI_API_BASE")
-        token = os.getenv("OPENAI_API_KEY")
-        model = "mistralai/Mistral-7B-Instruct-v0.1"
-        super().__init__(api_base, token, model)
-
-
-class ProcessDenialRegex(DenialBase):
-    """Process the denial type based on the regexes stored in the database."""
-
-    def __init__(self):
-        self.planTypes = PlanType.objects.all()
-        self.regulators = Regulator.objects.all()
-        self.denialTypes = DenialTypes.objects.all()
-        self.diagnosis = Diagnosis.objects.all()
-        self.procedures = Procedures.objects.all()
-        self.templates = AppealTemplates.objects.all()
-
-    def get_procedure(self, text):
-        print(f"Getting procedure types for {text}")
-        procedure = None
-        for d in self.procedures:
-            print(f"Exploring {d} w/ {d.regex}")
-            if d.regex.pattern != "":
-                s = d.regex.search(text)
-                if s is not None:
-                    print("positive regex match")
-                    return s.groups("procedure")[0]
-        return None
-
-    def get_diagnosis(self, text):
-        print(f"Getting diagnosis types for {text}")
-        procedure = None
-        for d in self.diagnosis:
-            print(f"Exploring {d} w/ {d.regex}")
-            if d.regex.pattern != "":
-                s = d.regex.search(text)
-                if s is not None:
-                    print("positive regex match")
-                    return s.groups("diagnosis")[0]
-        return None
-
-    def get_procedure_and_diagnosis(self, text):
-        print("Getting procedure and diagnosis")
-        return (self.get_procedure(text), self.get_diagnosis(text))
-
-    def get_denialtype(self, text):
-        print(f"Getting denial types for {text}")
-        denials = []
-        for d in self.denialTypes:
-            print(f"Exploring {d} w/ {d.regex} & {d.negative_regex}")
-            if d.regex.pattern != "" and d.regex.search(text) is not None:
-                print("positive regex match")
-                if (
-                    d.negative_regex.pattern == ""
-                    or d.negative_regex.search(text) is None
-                ):
-                    print("no negative regex match!")
-                    denials.append(d)
-        print(f"Collected: {denials}")
-        return denials
-
-    def get_regulator(self, text):
-        regulators = []
-        for r in self.regulators:
-            if (
-                r.regex.search(text) is not None
-                and r.negative_regex.search(text) is None
-            ):
-                regulators.append(r)
-        return regulators
-
-    def get_plan_type(self, text):
-        plans = []
-        for p in self.planTypes:
-            if p.regex.pattern != "" and p.regex.search(text) is not None:
-                print(f"positive regex match for plan {p}")
-                if p.negative_regex != "" or p.negative_regex.search(text) is None:
-                    plans.append(p)
-            else:
-                print(f"no match {p}")
-        return plans
-
-    def get_appeal_templates(self, text, diagnosis):
-        templates = []
-        for t in self.templates:
-            if t.regex.pattern != "" and t.regex.search(text) is not None:
-                # Check if this requires a specific diagnosis
-                if t.diagnosis_regex.pattern != "":
-                    if (
-                        t.diagnosis_regex.search(diagnosis) is not None
-                        or diagnosis == ""
-                    ):
-                        templates.append(t)
-                else:
-                    templates.append(t)
-                print("yay match")
-            else:
-                print(f"no match on {t.regex.pattern}")
-        return templates
 
 
 class AppealTemplateGenerator(object):
@@ -610,8 +52,6 @@ class AppealTemplateGenerator(object):
 class AppealGenerator(object):
     def __init__(self):
         self.regex_denial_processor = ProcessDenialRegex()
-        self.perplexity = RemotePerplexityInstruct()
-        self.perplexity_med = RemotePerplexityMedReason()
         self.anyscale = RemoteOpen()
         self.anyscale2 = RemoteOpenInst()
         self.remotehealth = RemoteHealthInsurance()
@@ -623,11 +63,7 @@ class AppealGenerator(object):
         prompt = self.make_open_procedure_prompt(denial_text)
         models_to_try = [
             self.regex_denial_processor,
-            #            self.perplexity,
-            #            self.together,
-            #            self.anyscale,
             self.remotehealth,
-            #            self.palm,
         ]
         procedure = None
         diagnosis = None
@@ -694,7 +130,7 @@ class AppealGenerator(object):
         else:
             return None
 
-    def make_appeals(self, denial, template_generator, medical_reasons=[]):
+    def make_appeals(self, denial, template_generator, medical_reasons=[], medical_context=""):
         open_prompt = self.make_open_prompt(
             denial_text=denial.denial_text,
             procedure=denial.procedure,
@@ -710,7 +146,7 @@ class AppealGenerator(object):
 
         # For any model that we have a prompt for try to call it
         def get_model_result(
-            model: RemoteModel, prompt: str, t: str
+                model: RemoteModel, prompt: str, patient_context: Optional[str], t: str
         ) -> List[Future[str, Optional[str]]]:
             print(f"Looking up on {model}")
             if prompt is None:
@@ -721,7 +157,7 @@ class AppealGenerator(object):
             try:
                 if isinstance(model, RemoteOpenLike):
                     reveal_type(model)
-                    results = model.parallel_infer(prompt, t)
+                    results = model.parallel_infer(prompt, t, patient_context)
                 else:
                     results = [executor.submit(model.infer, prompt, t)]
             except:
@@ -731,20 +167,14 @@ class AppealGenerator(object):
             return results
 
         calls = [
-            [self.remotehealth, open_prompt, "full"],
-            #            [self.together, open_prompt],
-            #            [self.palm, open_prompt],
+            [self.remotehealth, open_prompt, medical_context, "full"],
         ]
 
         if denial.use_external:
-            calls.extend([[self.octoai, open_prompt, "full"]])
+            calls.extend([[self.octoai, open_prompt, medical_context, "full"]])
 
-        backup_calls = [
-            #            [self.perplexity, open_prompt],
-            #            [self.anyscale, open_prompt],
-            #            [self.anyscale2, open_prompt],
-            #            [self.runpod, open_prompt],
-        ]
+        # TODO: Add another external backup for external models.
+        backup_calls = []
         # If we need to know the medical reason ask our friendly LLMs
         static_appeal = template_generator.generate_static()
         initial_appeals = []
@@ -754,6 +184,7 @@ class AppealGenerator(object):
                     [
                         self.remotehealth,
                         open_medically_necessary_prompt,
+                        medical_context,
                         "medically_necessary",
                     ],
                 ]
@@ -777,6 +208,7 @@ class AppealGenerator(object):
 
             def generated_to_appeals_text(k_text):
                 model_results = k_text.result()
+                print(f"Got result {model_results}")
                 if model_results is None:
                     pass
                 for k, text in model_results:

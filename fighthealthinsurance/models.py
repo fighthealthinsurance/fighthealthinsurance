@@ -170,6 +170,8 @@ class Denial(models.Model):
     raw_email = models.TextField(max_length=300, primary_key=False, null=True)
     created = models.DateTimeField(db_default=Now(), primary_key=False, null=True)
     use_external = models.BooleanField(default=False)
+    medical_context = models.TextField(max_length=300000, primary_key=False, null=True)
+    qa_context = models.TextField(max_length=300000, primary_key=False, null=True)
 
     @staticmethod
     def get_hashed_email(email):

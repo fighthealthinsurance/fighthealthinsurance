@@ -88,6 +88,16 @@ class InsuranceQuestions(forms.Form):
     )
     urgent = forms.BooleanField(required=False, label="Urgent claim")
 
+    def medical_context(self):
+        response = ""
+        if "urgent" in self.cleaned_data:
+            response += "This is an urgent claim."
+        if "pre_service" in self.cleaned_data:
+            response += "This is a pre-service claim."
+        if "in_network" in self.cleaned_data:
+            response += "This is an in-network claim."
+        return response
+
     def preface(self):
         return [
             """Dear {insurance_company};
@@ -130,6 +140,22 @@ class MedicalNeccessaryQuestions(InsuranceQuestions):
         label="Why is this medically necessary (if you know)?",
         required=False,
     )
+    age = forms.CharField(required=False,
+                         label="What is your age?")
+
+    def medical_context(self):
+        response = ""
+        r = None
+        a = None
+        if "medical_reason" in self.cleaned_data:
+            r = self.cleaned_data["medical_reason"]
+            if r is not None and r != "":
+                response += f"The medical reason may be {r}."
+        if "age" in self.cleaned_data:
+            a = self.cleaned_data["age"]
+            if a is not None and a != "":
+                response += f"The patient age is {a}."
+        return response
 
     def generate_reason(self):
         """Return the reason OR the special tag {medical_reason} where we will ask the LLM why it might be medically necessary."""
@@ -177,6 +203,13 @@ class OutOfNetworkReimbursement(forms.Form):
         + " the in-network providers don't accept new patients or "
         + " the in-network providers don't perform the service needed.",
     )
+
+    def medical_context(self):
+        r = self.cleaned_data["why_need_out_of_network"]
+        if r is not None and r != "":
+            return "One reason why this out of network claim should be accepted could be " + r
+        else:
+            return ""
 
     def main(self):
         return [
@@ -238,6 +271,14 @@ class PreventiveCareQuestions(InsuranceQuestions):
         label="Are you trans*? Some preventive care is traditionally only covered for certain genders "
         + " and if your trans it's not uncommon for insurance to incorrectly deny necessary coverage.",
     )
+
+    def medical_context(self):
+        response = ""
+        if "trans_gender" in self.cleaned_data and self.cleaned_data["trans_gender"]:
+            response += "The patient is transgender."
+        if "medical_reason" in self.cleaned_data and self.cleaned_data["medical_reason"]:
+            response += "The patient may be at increased risk due to " + self.cleaned_data["medical_reason"]
+        return response
 
     def main(self):
         r = []

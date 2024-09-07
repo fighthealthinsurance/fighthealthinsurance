@@ -383,6 +383,8 @@ class AppealsBackend(View):
             main = []
             footer = []
             medical_reasons = []
+            medical_context = ""
+            # Extract any medical context AND
             # Apply all of our 'expert system'
             # (aka six regexes in a trench coat hiding behind a database).
             for dt in denial.denial_type.all():
@@ -390,6 +392,13 @@ class AppealsBackend(View):
                 if form is not None:
                     parsed = form(request.POST)
                     if parsed.is_valid():
+                        # Check and see if the form has a context method
+                        op = getattr(parsed, "medical_context", None)
+                        if op is not None and callable(op):
+                            try:
+                                medical_context += parsed.medical_context()
+                            except Exception as e:
+                                print(f"Error {e} processing form {form} for medical context")
                         print(parsed.cleaned_data)
                         print(request.POST)
                         if (
@@ -417,11 +426,15 @@ class AppealsBackend(View):
                     if dt.appeal_text is not None:
                         main.append(dt.appeal_text)
 
+            # Add the context to the denial
+            denial.qa_context = medical_context
+            denial.save()
             appeals = itertools.chain(
                 non_ai_appeals,
                 appealGenerator.make_appeals(
                     denial,
                     AppealTemplateGenerator(prefaces, main, footer),
+                    medical_context = medical_context,
                     medical_reasons=medical_reasons,
                 ),
             )
