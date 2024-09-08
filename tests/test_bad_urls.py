@@ -1,5 +1,5 @@
 from django.test import TestCase
-from fighthealthinsurance.process_denial import RemoteOpenLike
+from fighthealthinsurance.ml_models import RemoteOpenLike
 
 class TestBadURLs(TestCase):
     
