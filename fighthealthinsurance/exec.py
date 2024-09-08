@@ -1,3 +1,3 @@
-import concurrent
+from concurrent.futures import ThreadPoolExecutor
 
-executor = concurrent.futures.ThreadPoolExecutor(max_workers=50)
+executor = ThreadPoolExecutor(max_workers=50)
