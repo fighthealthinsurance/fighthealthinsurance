@@ -62,6 +62,9 @@ fi
 npm run build
 popd
 
+python manage.py loaddata initial
+python manage.py loaddata followup
+python manage.py loaddata plan_source
 
 RECAPTCHA_TESTING=true OAUTHLIB_RELAX_TOKEN_SCOPE=1 \
   python manage.py runserver_plus --cert-file cert.pem --key-file key.pem

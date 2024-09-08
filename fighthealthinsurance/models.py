@@ -60,6 +60,18 @@ class Regulator(models.Model):
     def __str__(self):
         return self.name
 
+class PlanSource(models.Model):
+    id = models.AutoField(primary_key=True)
+    name = models.CharField(max_length=300, primary_key=False)
+    regex = RegexField(max_length=400, re_flags=re.IGNORECASE | re.UNICODE | re.M)
+    negative_regex = RegexField(
+        max_length=400, re_flags=re.IGNORECASE | re.UNICODE | re.M
+    )
+
+    def __str__(self):
+        return self.name
+
+
 
 class Diagnosis(models.Model):
     id = models.AutoField(primary_key=True)
@@ -151,6 +163,12 @@ class PlanTypesRelation(models.Model):
     src = models.ForeignKey(DataSource, on_delete=models.SET_NULL, null=True)
 
 
+class PlanSourceRelation(models.Model):
+    denial = models.ForeignKey("Denial", on_delete=models.CASCADE)
+    plan_source = models.ForeignKey(PlanSource, on_delete=models.CASCADE)
+    src = models.ForeignKey(DataSource, on_delete=models.SET_NULL, null=True)
+
+
 class Denial(models.Model):
     denial_id = models.AutoField(primary_key=True)
     hashed_email = models.CharField(max_length=300, primary_key=False)
@@ -158,6 +176,7 @@ class Denial(models.Model):
     date = models.DateField(auto_now=False, auto_now_add=True)
     denial_type = models.ManyToManyField(DenialTypes, through=DenialTypesRelation)
     plan_type = models.ManyToManyField(PlanType, through=PlanTypesRelation)
+    plan_type = models.ManyToManyField(PlanSource, through=PlanSourceRelation)
     regulator = models.ForeignKey(Regulator, null=True, on_delete=models.SET_NULL)
     urgent = models.BooleanField(default=False)
     pre_service = models.BooleanField(default=False)

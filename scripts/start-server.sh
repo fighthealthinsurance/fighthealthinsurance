@@ -7,6 +7,7 @@ if [ ! -z "$PRIMARY" ]; then
   ./manage.py migrate
   ./manage.py loaddata initial
   ./manage.py loaddata followup
+  ./manage.py loaddata plan_source
   ./manage.py ensure_adminuser --no-input
   sleep 20
   exit 0

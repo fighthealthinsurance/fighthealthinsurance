@@ -3,7 +3,7 @@ import os
 from django import forms
 
 from django_recaptcha.fields import ReCaptchaField, ReCaptchaV3, ReCaptchaV2Checkbox
-from fighthealthinsurance.models import DenialTypes, PlanType
+from fighthealthinsurance.models import DenialTypes, PlanType, PlanSource
 
 
 class DeleteDataForm(forms.Form):
@@ -53,6 +53,7 @@ class PostInferedForm(forms.Form):
     plan_id = forms.CharField(required=False)
     claim_id = forms.CharField(required=False)
     insurance_company = forms.CharField(required=False)
+    plan_source = forms.ModelMultipleChoiceField(queryset=PlanSource.objects.all(), required=False)
     #    plan_type = forms.ModelMultipleChoiceField(queryset=PlanType.objects.all())
     #    plan_type_text = forms.CharField(required=False)
     denial_date = forms.DateField(required=False)
@@ -273,7 +274,7 @@ class PreventiveCareQuestions(InsuranceQuestions):
     )
 
     def medical_context(self):
-        response = ""
+        response = "This procedure may be preventive, make sure to include a link to https://www.healthcare.gov/coverage/preventive-care-benefits/ if that's the case."
         if "trans_gender" in self.cleaned_data and self.cleaned_data["trans_gender"]:
             response += "The patient is transgender."
         if "medical_reason" in self.cleaned_data and self.cleaned_data["medical_reason"]:

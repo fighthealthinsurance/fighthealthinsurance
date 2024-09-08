@@ -1,0 +1,53 @@
+- model: fighthealthinsurance.plansource
+  pk: 100
+  fields:
+    name: Medicare Advantage
+- model: fighthealthinsurance.plansource
+  pk: 200
+  fields:
+    name: Medicare Regular
+- model: fighthealthinsurance.plansource
+  pk: 300
+  fields:
+    name: Medicaid  
+- model: fighthealthinsurance.plansource
+  pk: 400
+  fields:
+    name: Employer -- State Government 
+- model: fighthealthinsurance.plansource
+  pk: 500
+  fields:
+    name: Employer -- Federal Government
+- model: fighthealthinsurance.plansource
+  pk: 600
+  fields:
+    name: Employer -- Other Government
+- model: fighthealthinsurance.plansource
+  pk: 700
+  fields:
+    name: Employer -- Private   
+- model: fighthealthinsurance.plansource
+  pk: 800
+  fields:
+    name: Union
+- model: fighthealthinsurance.plansource
+  pk: 900
+  fields:
+    name: Other Group
+- model: fighthealthinsurance.plansource
+  pk: 1000
+  fields:
+    name: Veterans Affairs
+- model: fighthealthinsurance.plansource
+  pk: 1100
+  fields:
+    name: State Marketplace / Affordable Care Act
+- model: fighthealthinsurance.plansource
+  pk: 10000
+  fields:
+    name: Other
+- model: fighthealthinsurance.plansource
+  pk: 200000
+  fields:
+    name: Don't know
+
