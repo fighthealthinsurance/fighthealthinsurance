@@ -217,9 +217,7 @@ class RemoteOpenLike(RemoteModel):
 
     @cache
     def questions(self, prompt: str, medical_context: str) -> List[str]:
-        result = self._infer(
-            self.system_messages["questions"], prompt, medical_context
-        )
+        result = self._infer(self.system_messages["questions"], prompt, medical_context)
         if result is None:
             return []
         else:
