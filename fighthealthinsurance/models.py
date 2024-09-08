@@ -176,7 +176,7 @@ class Denial(models.Model):
     date = models.DateField(auto_now=False, auto_now_add=True)
     denial_type = models.ManyToManyField(DenialTypes, through=DenialTypesRelation)
     plan_type = models.ManyToManyField(PlanType, through=PlanTypesRelation)
-    plan_type = models.ManyToManyField(PlanSource, through=PlanSourceRelation)
+    plan_source = models.ManyToManyField(PlanSource, through=PlanSourceRelation)
     regulator = models.ForeignKey(Regulator, null=True, on_delete=models.SET_NULL)
     urgent = models.BooleanField(default=False)
     pre_service = models.BooleanField(default=False)
