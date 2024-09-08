@@ -216,7 +216,7 @@ class FindNextSteps(View):
             denial.procedure = form.cleaned_data["procedure"]
             denial.diagnosis = form.cleaned_data["diagnosis"]
             if "plan_source" in form.cleaned_data:
-                denial.plan_source = form.cleaned_data["plan_source"]
+                denial.plan_source.set(form.cleaned_data["plan_source"])
             denial.save()
 
             outside_help_details = []
