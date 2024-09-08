@@ -85,8 +85,6 @@ class ProcessDenialCodes(DenialBase):
         return []
 
 
-
-
 class ProcessDenialRegex(DenialBase):
     """Process the denial type based on the regexes stored in the database."""
 
@@ -180,4 +178,3 @@ class ProcessDenialRegex(DenialBase):
             else:
                 print(f"no match on {t.regex.pattern}")
         return templates
-

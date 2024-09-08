@@ -60,6 +60,7 @@ class Regulator(models.Model):
     def __str__(self):
         return self.name
 
+
 class PlanSource(models.Model):
     id = models.AutoField(primary_key=True)
     name = models.CharField(max_length=300, primary_key=False)
@@ -70,7 +71,6 @@ class PlanSource(models.Model):
 
     def __str__(self):
         return self.name
-
 
 
 class Diagnosis(models.Model):

@@ -130,7 +130,9 @@ class AppealGenerator(object):
         else:
             return None
 
-    def make_appeals(self, denial, template_generator, medical_reasons=[], medical_context=""):
+    def make_appeals(
+        self, denial, template_generator, medical_reasons=[], medical_context=""
+    ):
         open_prompt = self.make_open_prompt(
             denial_text=denial.denial_text,
             procedure=denial.procedure,
@@ -146,7 +148,10 @@ class AppealGenerator(object):
 
         # For any model that we have a prompt for try to call it
         def get_model_result(
-                model: RemoteModel, prompt: str, patient_context: Optional[str], infer_type: str
+            model: RemoteModel,
+            prompt: str,
+            patient_context: Optional[str],
+            infer_type: str,
         ) -> List[Future[str, Optional[str]]]:
             print(f"Looking up on {model}")
             if prompt is None:
@@ -161,11 +166,21 @@ class AppealGenerator(object):
                     results = model.parallel_infer(prompt, patient_context, infer_type)
                 else:
                     print(f"Using system level parallel inference for {model}")
-                    results = [executor.submit(model.infer, prompt, patient_context, infer_type)]
+                    results = [
+                        executor.submit(
+                            model.infer, prompt, patient_context, infer_type
+                        )
+                    ]
             except Exception as e:
-                print(f"Error {e} {traceback.format_exc()} submitting to {model} falling back")
-                results = [executor.submit(model.infer, prompt, patient_context, infer_type)]
-            print(f"Infered {results} for {model}-{infer_type} using {prompt} w/ {patient_context}")
+                print(
+                    f"Error {e} {traceback.format_exc()} submitting to {model} falling back"
+                )
+                results = [
+                    executor.submit(model.infer, prompt, patient_context, infer_type)
+                ]
+            print(
+                f"Infered {results} for {model}-{infer_type} using {prompt} w/ {patient_context}"
+            )
             print("Yay!")
             return results
 

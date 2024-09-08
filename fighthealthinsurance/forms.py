@@ -53,7 +53,9 @@ class PostInferedForm(forms.Form):
     plan_id = forms.CharField(required=False)
     claim_id = forms.CharField(required=False)
     insurance_company = forms.CharField(required=False)
-    plan_source = forms.ModelMultipleChoiceField(queryset=PlanSource.objects.all(), required=False)
+    plan_source = forms.ModelMultipleChoiceField(
+        queryset=PlanSource.objects.all(), required=False
+    )
     #    plan_type = forms.ModelMultipleChoiceField(queryset=PlanType.objects.all())
     #    plan_type_text = forms.CharField(required=False)
     denial_date = forms.DateField(required=False)
@@ -141,8 +143,7 @@ class MedicalNeccessaryQuestions(InsuranceQuestions):
         label="Why is this medically necessary (if you know)?",
         required=False,
     )
-    age = forms.CharField(required=False,
-                         label="What is your age?")
+    age = forms.CharField(required=False, label="What is your age?")
 
     def medical_context(self):
         response = ""
@@ -208,7 +209,10 @@ class OutOfNetworkReimbursement(forms.Form):
     def medical_context(self):
         r = self.cleaned_data["why_need_out_of_network"]
         if r is not None and r != "":
-            return "One reason why this out of network claim should be accepted could be " + r
+            return (
+                "One reason why this out of network claim should be accepted could be "
+                + r
+            )
         else:
             return ""
 
@@ -277,8 +281,14 @@ class PreventiveCareQuestions(InsuranceQuestions):
         response = "This procedure may be preventive, make sure to include a link to https://www.healthcare.gov/coverage/preventive-care-benefits/ if that's the case."
         if "trans_gender" in self.cleaned_data and self.cleaned_data["trans_gender"]:
             response += "The patient is transgender."
-        if "medical_reason" in self.cleaned_data and self.cleaned_data["medical_reason"]:
-            response += "The patient may be at increased risk due to " + self.cleaned_data["medical_reason"]
+        if (
+            "medical_reason" in self.cleaned_data
+            and self.cleaned_data["medical_reason"]
+        ):
+            response += (
+                "The patient may be at increased risk due to "
+                + self.cleaned_data["medical_reason"]
+            )
         return response
 
     def main(self):

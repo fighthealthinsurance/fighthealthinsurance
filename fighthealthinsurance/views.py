@@ -400,7 +400,9 @@ class AppealsBackend(View):
                             try:
                                 medical_context += parsed.medical_context()
                             except Exception as e:
-                                print(f"Error {e} processing form {form} for medical context")
+                                print(
+                                    f"Error {e} processing form {form} for medical context"
+                                )
                         print(parsed.cleaned_data)
                         print(request.POST)
                         if (
@@ -436,7 +438,7 @@ class AppealsBackend(View):
                 appealGenerator.make_appeals(
                     denial,
                     AppealTemplateGenerator(prefaces, main, footer),
-                    medical_context = medical_context,
+                    medical_context=medical_context,
                     medical_reasons=medical_reasons,
                 ),
             )
@@ -576,7 +578,7 @@ class ProcessView(generic.FormView):
         state = None
         zip_code = form.cleaned_data["zip"]
         if zip_code is not None and zip_code != "":
-            try :
+            try:
                 state = self.zip_engine.by_zipcode(form.cleaned_data["zip"]).state
             except:
                 # Default to no state

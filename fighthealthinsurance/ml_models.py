@@ -24,6 +24,7 @@ from fighthealthinsurance.models import (
 )
 from fighthealthinsurance.exec import *
 
+
 class RemoteModel(object):
     """
     For models which produce a "full" appeal tag them with "full"
@@ -40,7 +41,9 @@ class PalmAPI(RemoteModel):
         return result is not None
 
     @cache
-    def infer(self, prompt: str, patient_context, infer_type: str) -> List[Tuple[str, str]]:
+    def infer(
+        self, prompt: str, patient_context, infer_type: str
+    ) -> List[Tuple[str, str]]:
         result = self._infer(prompt)
         if self.bad_result(result):
             result = self._infer(prompt)
@@ -160,7 +163,9 @@ class RemoteOpenLike(RemoteModel):
                     result = result.replace(u, "")
             return result
 
-    def parallel_infer(self, prompt: str, patient_context: Optional[str], inf_type: str):
+    def parallel_infer(
+        self, prompt: str, patient_context: Optional[str], inf_type: str
+    ):
         print(f"Running inference on {self} of type {inf_type}")
         temps = [0.5]
         if inf_type == "full" and not self._expensive:
@@ -169,7 +174,14 @@ class RemoteOpenLike(RemoteModel):
         calls = itertools.chain.from_iterable(
             map(
                 lambda temp: map(
-                    lambda sm: [self._checked_infer, prompt, patient_context, inf_type, sm, temp],
+                    lambda sm: [
+                        self._checked_infer,
+                        prompt,
+                        patient_context,
+                        inf_type,
+                        sm,
+                        temp,
+                    ],
                     self.system_messages[inf_type],
                 ),
                 temps,
@@ -204,10 +216,10 @@ class RemoteOpenLike(RemoteModel):
         return self.diagnosis_response_regex.sub("", response)
 
     @cache
-    def questions(
-            self, prompt: str, medical_context: str
-    ) -> List[str]:
-        return self._infer(self.system_messages["questions"], prompt, medical_context).split("\n")
+    def questions(self, prompt: str, medical_context: str) -> List[str]:
+        return self._infer(
+            self.system_messages["questions"], prompt, medical_context
+        ).split("\n")
 
     @cache
     def get_procedure_and_diagnosis(
@@ -249,23 +261,35 @@ class RemoteOpenLike(RemoteModel):
             print(f"No model response for {self.model}")
         return (None, None)
 
-    def _infer(self, system_prompt, prompt, patient_context=None, temperature=0.7) -> Optional[str]:
+    def _infer(
+        self, system_prompt, prompt, patient_context=None, temperature=0.7
+    ) -> Optional[str]:
         # Retry backup model if necessary
         try:
-            r = self.__infer(system_prompt, prompt, patient_context, temperature, self.model)
+            r = self.__infer(
+                system_prompt, prompt, patient_context, temperature, self.model
+            )
         except Exception as e:
             if self.backup_model is None:
                 raise e
             else:
                 return self.__infer(
-                    system_prompt, prompt, patient_context, temperature, self.backup_model
+                    system_prompt,
+                    prompt,
+                    patient_context,
+                    temperature,
+                    self.backup_model,
                 )
         if r is None and self.backup_model is not None:
-            return self.__infer(system_prompt, prompt, patient_context, temperature, self.backup_model)
+            return self.__infer(
+                system_prompt, prompt, patient_context, temperature, self.backup_model
+            )
         else:
             return r
 
-    def __infer(self, system_prompt, prompt, patient_context, temperature, model) -> Optional[str]:
+    def __infer(
+        self, system_prompt, prompt, patient_context, temperature, model
+    ) -> Optional[str]:
         print(f"Looking up model {model} using {self.api_base} and {prompt}")
         if self.token is None:
             print(f"Error no Token provided for {self.model}.")
@@ -283,9 +307,7 @@ class RemoteOpenLike(RemoteModel):
             if patient_context is not None and len(patient_context) > 1:
                 patient_context_max = int(self.max_len / 2)
                 max_len = self.max_len - min(len(patient_context), patient_context_max)
-                combined_content = (
-                    f"<<SYS>>{system_prompt}<</SYS>>When answering the following question you can use the patient context {patient_context[0:patient_context_max]}. {prompt[0:max_len]}"
-                )
+                combined_content = f"<<SYS>>{system_prompt}<</SYS>>When answering the following question you can use the patient context {patient_context[0:patient_context_max]}. {prompt[0:max_len]}"
             result = s.post(
                 url,
                 headers={"Authorization": f"Bearer {self.token}"},
