@@ -174,6 +174,7 @@
     name: Preventive Care
     appeal_text: "The ACA (and equivalent regulations for many non-ACA plans) requires that many types of preventive care be covered, in many cases without any out of pocket expense. See https://www.healthcare.gov/coverage/preventive-care-benefits/ https://www.kff.org/womens-health-policy/fact-sheet/preventive-services-covered-by-private-health-plans/ ."
     form: PreventiveCareQuestions
+    regex: "(prophylaxis|prep|STD|STI|vaccine|screening|immunization|preventitive|birth control|breastfeeding|follic acid|well-baby|preeclampsia|prevention|Breast cancer genetic test counseling|BCRA|pap test|pap smeer|Sexually transmitted infections|Fluoride varnish|Hearing screening|Tuberculin testing|well-child)"
 - model: fighthealthinsurance.diagnosis
   pk: 1
   fields:
