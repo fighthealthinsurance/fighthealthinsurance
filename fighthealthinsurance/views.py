@@ -498,14 +498,27 @@ class OCRView(View):
         return render(request, "server_side_ocr.html")
 
     def post(self, request):
-        txt = ""
-        print(request.FILES)
-        files = dict(request.FILES.lists())
-        uploader = files["uploader"]
-        doc_txt = self._ocr(uploader)
-        return render(
-            request, "scrub.html", context={"ocr_result": doc_txt, "upload_more": False}
-        )
+        try:
+            txt = ""
+            print(request.FILES)
+            files = dict(request.FILES.lists())
+            uploader = files["uploader"]
+            doc_txt = self._ocr(uploader)
+            return render(
+                request,
+                "scrub.html",
+                context={"ocr_result": doc_txt, "upload_more": False},
+            )
+        except AttributeError as e:
+            error_txt = "Unsupported file type"
+            return render(
+                request, "server_side_ocr_error.html", context={"error": error_txt}
+            )
+        except KeyError as e:
+            error_txt = "Missing file"
+            return render(
+                request, "server_side_ocr_error.html", context={"error": error_txt}
+            )
 
     def _ocr(self, uploader):
         from PIL import Image
