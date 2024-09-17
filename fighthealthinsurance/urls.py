@@ -15,12 +15,14 @@ Including another URLconf
 """
 
 from django.contrib import admin
-from django.urls import path
+from django.urls import path, include
 from django.views.decorators.cache import cache_control, cache_page
 
 from fighthealthinsurance import views
+from fighthealthinsurance.rest_urls import rest_urls
 
 urlpatterns = [
+    path("ziggy/rest/", include(rest_urls)),
     path("timbit/admin/", admin.site.urls),
     path("error", views.ErrorView.as_view()),
     path("scan", views.ProcessView.as_view(), name="scan"),

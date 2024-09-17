@@ -1,8 +1,9 @@
 from django.test import TestCase
 from fighthealthinsurance.ml_models import RemoteOpenLike
 
+
 class TestBadURLs(TestCase):
-    
+
     def test_none(self):
         r = RemoteOpenLike("", "", "", "")
         fixed = r.url_fixer(None)

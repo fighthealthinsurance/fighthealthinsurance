@@ -2,7 +2,6 @@ import asyncio
 import concurrent
 import os
 from io import BytesIO
-from string import Template
 from typing import *
 from django.conf import settings
 
@@ -12,14 +11,11 @@ import itertools
 
 from asgiref.sync import async_to_sync
 import json
-
-from django.core.validators import validate_email
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
 from django.contrib.staticfiles import finders
 from django.contrib.staticfiles.storage import staticfiles_storage
-from django.http import StreamingHttpResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils.decorators import method_decorator
@@ -34,6 +30,7 @@ from fighthealthinsurance.forms import *
 from fighthealthinsurance.models import *
 from fighthealthinsurance.generate_appeal import *
 from fighthealthinsurance.utils import *
+from fighthealthinsurance.common_view_logic import *
 
 appealGenerator = AppealGenerator()
 
@@ -135,9 +132,7 @@ class RemoveDataView(View):
         form = DeleteDataForm(request.POST)
         if form.is_valid():
             email = form.cleaned_data["email"]
-            hashed_email = Denial.get_hashed_email(email)
-            denials = Denial.objects.filter(hashed_email=hashed_email).delete()
-            FollowUpSched.objects.filter(email=email).delete()
+            RemoveDataHelper.remove_data_for_email(email)
             return render(
                 request,
                 "removed_data.html",
@@ -161,119 +156,27 @@ class RecommendAppeal(View):
         return render(request, "")
 
 
-states_with_caps = {
-    "AR",
-    "CA",
-    "CT",
-    "DE",
-    "DC",
-    "GA",
-    "IL",
-    "IA",
-    "KS",
-    "KY",
-    "ME",
-    "MD",
-    "MA",
-    "MI",
-    "MS",
-    "MO",
-    "MT",
-    "NV",
-    "NH",
-    "NJ",
-    "NM",
-    "NY",
-    "NC",
-    "MP",
-    "OK",
-    "OR",
-    "PA",
-    "RI",
-    "TN",
-    "TX",
-    "VT",
-    "VI",
-    "WV",
-}
-
-
 class FindNextSteps(View):
     def post(self, request):
         form = PostInferedForm(request.POST)
         if form.is_valid():
             denial_id = form.cleaned_data["denial_id"]
             email = form.cleaned_data["email"]
-            hashed_email = Denial.get_hashed_email(email)
 
-            # Update the denial
-            denial = Denial.objects.filter(
-                denial_id=denial_id,
-                # Include the hashed e-mail so folks can't brute force denial_id
-                hashed_email=hashed_email,
-            ).get()
-
-            denial.procedure = form.cleaned_data["procedure"]
-            denial.diagnosis = form.cleaned_data["diagnosis"]
-            if "plan_source" in form.cleaned_data:
-                denial.plan_source.set(form.cleaned_data["plan_source"])
-            denial.save()
-
-            outside_help_details = []
-            state = form.cleaned_data["your_state"]
-            if state in states_with_caps:
-                outside_help_details.append(
-                    (
-                        (
-                            "<a href='https://www.cms.gov/CCIIO/Resources/Consumer-Assistance-Grants/"
-                            + state
-                            + "'>"
-                            + f"Your state {state} participates in a "
-                            + f"Consumer Assistance Program(CAP), and you may be able to get help "
-                            + f"through them.</a>"
-                        ),
-                        "Visit <a href='https://www.cms.gov/CCIIO/Resources/Consumer-Assistance-Grants/'>CMS for more info</a>",
-                    )
-                )
-            if denial.regulator == Regulator.objects.filter(alt_name="ERISA").get():
-                outside_help_details.append(
-                    (
-                        (
-                            "Your plan looks to be an ERISA plan which means your employer <i>may</i>"
-                            + " have more input into plan decisions. If your are on good terms with HR "
-                            + " it could be worth it to ask them for advice."
-                        ),
-                        "Talk to your employer's HR if you are on good terms with them.",
-                    )
-                )
-            denial.insurance_company = form.cleaned_data["insurance_company"]
-            denial.plan_id = form.cleaned_data["plan_id"]
-            denial.claim_id = form.cleaned_data["claim_id"]
-            if "denial_type_text" in form.cleaned_data:
-                denial.denial_type_text = form.cleaned_data["denial_type_text"]
-            denial.denial_type.set(form.cleaned_data["denial_type"])
-            denial.state = form.cleaned_data["your_state"]
-            denial.save()
-            advice = []
-            question_forms = []
-            for dt in denial.denial_type.all():
-                new_form = dt.get_form()
-                if new_form is not None:
-                    new_form = new_form(initial={"medical_reason": dt.appeal_text})
-                    question_forms.append(new_form)
+            next_step_info = FindNextStepsHelper.find_next_steps(**form.cleaned_data)
             denial_ref_form = DenialRefForm(
                 initial={
-                    "denial_id": denial.denial_id,
+                    "denial_id": denial_id,
                     "email": email,
+                    "semi_sekret": next_step_info.semi_sekret,
                 }
             )
-            combined = magic_combined_form(question_forms)
             return render(
                 request,
                 "outside_help.html",
                 context={
-                    "outside_help_details": outside_help_details,
-                    "combined": combined,
+                    "outside_help_details": next_step_info.outside_help_details,
+                    "combined": next_step_info.combined_form,
                     "denial_form": denial_ref_form,
                 },
             )
@@ -337,6 +240,7 @@ class GenerateAppeal(View):
                     "form_context": json.dumps(elems),
                     "user_email": form.cleaned_data["email"],
                     "denial_id": form.cleaned_data["denial_id"],
+                    "semi_sekret": form.cleaned_data["semi_sekret"],
                 },
             )
         else:
@@ -347,141 +251,21 @@ class GenerateAppeal(View):
 class AppealsBackend(View):
     """Streaming back the appeals as json :D"""
 
-    def __init__(self):
-        self.regex_denial_processor = ProcessDenialRegex()
-
     def post(self, request):
         print(request)
         print(request.POST)
         form = DenialRefForm(request.POST)
-        return self.handle_for_form(request, form)
+        if form.is_valid():
+            return AppealsBackendHelper.generate_appeals(request.POST)
+        else:
+            print(f"Error processing {form}")
 
     def get(self, request):
         form = DenialRefForm(request.GET)
-        return self.handle_for_form(request, form)
-
-    def handle_for_form(self, request, form):
         if form.is_valid():
-            denial_id = form.cleaned_data["denial_id"]
-            hashed_email = Denial.get_hashed_email(form.cleaned_data["email"])
-
-            # Get the current info
-            denial = Denial.objects.filter(
-                denial_id=denial_id, hashed_email=hashed_email
-            ).get()
-
-            non_ai_appeals = list(
-                map(
-                    lambda t: t.appeal_text,
-                    self.regex_denial_processor.get_appeal_templates(
-                        denial.denial_text, denial.diagnosis
-                    ),
-                )
-            )
-
-            insurance_company = denial.insurance_company or "insurance company;"
-            claim_id = denial.claim_id or "YOURCLAIMIDGOESHERE"
-            prefaces = []
-            main = []
-            footer = []
-            medical_reasons = []
-            medical_context = ""
-            # Extract any medical context AND
-            # Apply all of our 'expert system'
-            # (aka six regexes in a trench coat hiding behind a database).
-            for dt in denial.denial_type.all():
-                form = dt.get_form()
-                if form is not None:
-                    parsed = form(request.POST)
-                    if parsed.is_valid():
-                        # Check and see if the form has a context method
-                        op = getattr(parsed, "medical_context", None)
-                        if op is not None and callable(op):
-                            try:
-                                medical_context += parsed.medical_context()
-                            except Exception as e:
-                                print(
-                                    f"Error {e} processing form {form} for medical context"
-                                )
-                        print(parsed.cleaned_data)
-                        print(request.POST)
-                        if (
-                            "medical_reason" in parsed.cleaned_data
-                            and parsed.cleaned_data["medical_reason"] != ""
-                        ):
-                            medical_reasons.append(
-                                parsed.cleaned_data["medical_reason"]
-                            )
-                            print(f"Med reason {medical_reasons}")
-
-                        new_prefaces = parsed.preface()
-                        for p in new_prefaces:
-                            if p not in prefaces:
-                                prefaces.append(p)
-                        new_main = parsed.main()
-                        for m in new_main:
-                            if m not in main:
-                                main.append(m)
-                        new_footer = parsed.footer()
-                        for f in new_footer:
-                            if f not in footer:
-                                footer.append(f)
-                else:
-                    if dt.appeal_text is not None:
-                        main.append(dt.appeal_text)
-
-            # Add the context to the denial
-            denial.qa_context = medical_context
-            denial.save()
-            appeals = itertools.chain(
-                non_ai_appeals,
-                appealGenerator.make_appeals(
-                    denial,
-                    AppealTemplateGenerator(prefaces, main, footer),
-                    medical_context=medical_context,
-                    medical_reasons=medical_reasons,
-                ),
-            )
-
-            def save_appeal(appeal_text):
-                # Save all of the proposed appeals, so we can use RL later.
-                t = time.time()
-                print(f"{t}: Saving {appeal_text}")
-                pa = ProposedAppeal(appeal_text=appeal_text, for_denial=denial)
-                pa.save()
-                return appeal_text
-
-            def sub_in_appeals(appeal: str) -> str:
-                print(f"Processing {appeal}")
-                s = Template(appeal)
-                ret = s.safe_substitute(
-                    {
-                        "insurance_company": denial.insurance_company
-                        or "{insurance_company}",
-                        "[Insurance Company Name]": denial.insurance_company
-                        or "{insurance_company}",
-                        "[Insert Date]": denial.date or "{date}",
-                        "[Reference Number from Denial Letter]": denial.claim_id
-                        or "{claim_id}",
-                        "[Claim ID]": denial.claim_id or "{claim_id}",
-                        "{claim_id}": denial.claim_id or "{claim_id}",
-                        "[Diagnosis]": denial.diagnosis or "{diagnosis}",
-                        "[Procedure]": denial.procedure or "{procedure}",
-                        "{diagnosis}": denial.diagnosis or "{diagnosis}",
-                        "{procedure}": denial.procedure or "{procedure}",
-                    }
-                )
-                return ret
-
-            filtered_appeals = filter(lambda x: x != None, appeals)
-            saved_appeals = map(save_appeal, filtered_appeals)
-            subbed_appeals = map(sub_in_appeals, saved_appeals)
-            subbed_appeals_json = map(lambda e: json.dumps(e) + "\n", subbed_appeals)
-            return StreamingHttpResponse(
-                subbed_appeals_json, content_type="application/json"
-            )
+            return AppealsBackendHelper.generate_appeals(request.GET)
         else:
-            print(f"form {combined_form} is not valid")
+            print(f"Error processing {form}")
 
 
 class OCRView(View):
@@ -553,61 +337,21 @@ class ProcessView(generic.FormView):
         }
         return context
 
-    def __init__(self, *args, **kwargs):
-        self.regex_denial_processor = ProcessDenialRegex()
-        self.codes_denial_processor = ProcessDenialCodes()
-        self.regex_src = DataSource.objects.get(name="regex")
-        self.codes_src = DataSource.objects.get(name="codes")
-        self.zip_engine = uszipcode.search.SearchEngine()
-
     def form_valid(self, form):
         # It's not a password per-se but we want password like hashing.
         # but we don't support changing the values.
-        email = form.cleaned_data["email"]
-        validate_email(email)
-        hashed_email = Denial.get_hashed_email(email)
-        denial_text = form.cleaned_data["denial_text"]
-        # If they ask us to store their raw e-mail we do
-        possible_email = None
-        if form.cleaned_data["store_raw_email"]:
-            possible_email = email
 
-        denial = Denial.objects.create(
-            denial_text=denial_text,
-            hashed_email=hashed_email,
-            use_external=form.cleaned_data["use_external_models"],
-            raw_email=possible_email,
-        )
-
-        denial_types = self.regex_denial_processor.get_denialtype(denial_text)
-        denial_type = []
-        for dt in denial_types:
-            DenialTypesRelation(
-                denial=denial, denial_type=dt, src=self.regex_src
-            ).save()
-            denial_type.append(dt)
-
-        plan_type = self.codes_denial_processor.get_plan_type(denial_text)
-        state = None
-        zip_code = form.cleaned_data["zip"]
-        if zip_code is not None and zip_code != "":
-            try:
-                state = self.zip_engine.by_zipcode(form.cleaned_data["zip"]).state
-            except:
-                # Default to no state
-                state = None
-        (procedure, diagnosis) = appealGenerator.get_procedure_and_diagnosis(
-            denial_text
-        )
+        denial_response = DenialCreatorHelper.create_denial(**form.cleaned_data)
 
         form = PostInferedForm(
             initial={
-                "denial_type": denial_type,
-                "denial_id": denial.denial_id,
-                "email": email,
-                "your_state": state,
-                "procedure": procedure,
-                "diagnosis": diagnosis,
+                "denial_type": denial_response.selected_denial_type,
+                "denial_id": denial_response.denial_id,
+                "email": form.cleaned_data["email"],
+                "your_state": denial_response.your_state,
+                "procedure": denial_response.procedure,
+                "diagnosis": denial_response.diagnosis,
+                "semi_sekret": denial_response.semi_sekret,
             }
         )
 

@@ -7,6 +7,8 @@ from django.db import models
 
 from regex_field.fields import RegexField
 from django.db.models.functions import Now
+from uuid import UUID
+import os
 
 
 class FollowUpType(models.Model):
@@ -169,6 +171,10 @@ class PlanSourceRelation(models.Model):
     src = models.ForeignKey(DataSource, on_delete=models.SET_NULL, null=True)
 
 
+def sekret_gen():
+    return str(UUID(bytes=os.urandom(16), version=4))
+
+
 class Denial(models.Model):
     denial_id = models.AutoField(primary_key=True)
     hashed_email = models.CharField(max_length=300, primary_key=False)
@@ -191,6 +197,7 @@ class Denial(models.Model):
     use_external = models.BooleanField(default=False)
     medical_context = models.TextField(max_length=300000, primary_key=False, null=True)
     qa_context = models.TextField(max_length=300000, primary_key=False, null=True)
+    semi_sekret = models.CharField(max_length=100, default=sekret_gen)
 
     @staticmethod
     def get_hashed_email(email):

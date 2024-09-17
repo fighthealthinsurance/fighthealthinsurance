@@ -51,3 +51,7 @@ django-recaptcha==4.0.0
 pyyaml
 mypy
 flake8-django
+djangorestframework
+django-filter
+# django-rest-framework-braces
+totallylegit-django-rest-framework-braces

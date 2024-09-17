@@ -70,6 +70,7 @@ class Base(Configuration):
         "static_thumbnails",
         "memoize",
         "django_recaptcha",
+        "rest_framework",
     ]
 
     COMPRESS_JS_FILTERS = [
