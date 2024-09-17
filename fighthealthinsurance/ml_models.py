@@ -293,6 +293,8 @@ class RemoteOpenLike(RemoteModel):
         self, system_prompt, prompt, patient_context, temperature, model
     ) -> Optional[str]:
         print(f"Looking up model {model} using {self.api_base} and {prompt}")
+        if self.api_base is None:
+            return None
         if self.token is None:
             print(f"Error no Token provided for {self.model}.")
         if prompt is None:
