@@ -33,6 +33,14 @@ jobs:
         run:
           tox -e black
 
+      - name: Check types
+        run:
+          tox -e mypy
+
+      - name: Check flake8 style
+        run:
+          tox -e flake8
+
   tests:
     runs-on: ubuntu-latest
     strategy:

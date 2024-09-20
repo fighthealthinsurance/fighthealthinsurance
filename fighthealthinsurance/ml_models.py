@@ -116,11 +116,11 @@ class RemoteOpenLike(RemoteModel):
         if result is None:
             return None
         else:
-            m = re.search("([A-Z])\w+ ([A-Z])\w+ ([A-Z])\w+ \(([A-Z]{3})\)", result)
+            m = re.search("([A-Z])\\w+ ([A-Z])\\w+ ([A-Z])\\w+ \\(([A-Z]{3})\\)", result)
             if m is not None:
                 tla = m.group(1) + m.group(2) + m.group(3)
                 if tla != m.group(4):
-                    return re.sub(f"(?<=[\.\( ]){m.group(4)}", tla, result)
+                    return re.sub(f"(?<=[\\.\\( ]){m.group(4)}", tla, result)
             return result
 
     common_bad_result = [
@@ -128,7 +128,7 @@ class RemoteOpenLike(RemoteModel):
         "The requested article is not currently available on this site.",
     ]
 
-    maybe_bad_url_endings = re.compile("^(.*)[\.\:\;\,\?\>]+$")
+    maybe_bad_url_endings = re.compile("^(.*)[\\.\\:\\;\\,\\?\\>]+$")
 
     def is_valid_url(self, url):
         try:
