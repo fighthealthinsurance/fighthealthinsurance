@@ -208,21 +208,25 @@ class DenialCreatorHelper:
     _codes_src = None
     _all_denial_types = None
 
+    @classmethod
     def codes_denial_processor(cls):
         if cls._codes_denial_processor is None:
             cls._codes_denial_processor = ProcessDenialCodes()
         return cls._codes_denial_processor
 
+    @classmethod
     def regex_src(cls):
         if cls._regex_src is None:
             cls._regex_src = DataSource.objects.get(name="regex")
         return cls._regex_src
 
+    @classmethod
     def codes_src(cls):
         if cls._codes_src is None:
             cls._codes_src = DataSource.objects.get(name="codes")
         return cls._codes_src
 
+    @classmethod
     def all_denial_types(cls):
         if cls._all_denial_types is None:
             cls._all_denial_types = DenialTypes.objects.all()
