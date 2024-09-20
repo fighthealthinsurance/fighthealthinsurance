@@ -1,5 +1,7 @@
 import json
 
+from typing import Any, Tuple
+
 from django.forms import Form
 from django.core.validators import validate_email
 from django.http import StreamingHttpResponse
@@ -62,7 +64,7 @@ states_with_caps = {
 
 @dataclass
 class NextStepInfo:
-    outside_help_details: list[str]
+    outside_help_details: list[Tuple[str, str]]
     combined_form: Form
     semi_sekret: str
 
@@ -101,7 +103,7 @@ class NextStepInfo:
 @dataclass
 class NextStepInfoSerializable:
     outside_help_details: list[str]
-    combined_form: list[any]
+    combined_form: list[Any]
     semi_sekret: str
 
 
@@ -123,7 +125,7 @@ class FindNextStepsHelper:
         captcha=None,
         denial_type_text=None,
         plan_source=None,
-    ) -> (list[str], Form):
+    ) -> NextStepInfo:
         hashed_email = Denial.get_hashed_email(email)
         # Update the denial
         denial = Denial.objects.filter(
@@ -176,7 +178,6 @@ class FindNextStepsHelper:
         denial.denial_type.set(denial_type)
         denial.state = your_state
         denial.save()
-        advice = []
         question_forms = []
         for dt in denial.denial_type.all():
             new_form = dt.get_form()
@@ -184,7 +185,6 @@ class FindNextStepsHelper:
                 new_form = new_form(initial={"medical_reason": dt.appeal_text})
                 question_forms.append(new_form)
         combined_form = magic_combined_form(question_forms)
-        print(f"Form is {combined_form} from {question_forms}")
         return NextStepInfo(outside_help_details, combined_form, semi_sekret)
 
 

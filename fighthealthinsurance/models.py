@@ -179,6 +179,7 @@ class Denial(models.Model):
     denial_id = models.AutoField(primary_key=True)
     hashed_email = models.CharField(max_length=300, primary_key=False)
     denial_text = models.TextField(max_length=30000000, primary_key=False)
+    denial_type_text = models.TextField(max_length=200, primary_key=False, null=True)
     date = models.DateField(auto_now=False, auto_now_add=True)
     denial_type = models.ManyToManyField(DenialTypes, through=DenialTypesRelation)
     plan_type = models.ManyToManyField(PlanType, through=PlanTypesRelation)
@@ -198,6 +199,8 @@ class Denial(models.Model):
     medical_context = models.TextField(max_length=300000, primary_key=False, null=True)
     qa_context = models.TextField(max_length=300000, primary_key=False, null=True)
     semi_sekret = models.CharField(max_length=100, default=sekret_gen)
+    plan_id = models.CharField(max_length=200, primary_key=False, null=True)
+    state = models.CharField(max_length=4, primary_key=False, null=True)
 
     @staticmethod
     def get_hashed_email(email):
