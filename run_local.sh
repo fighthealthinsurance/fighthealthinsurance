@@ -44,7 +44,7 @@ install_package() {
     printf 'Can not install %s. Please install it manually.\n' ${package_name} >/dev/stderr
     exit 1
   fi
-  ${package_command} ${package_name}
+  ${package_command} ${package_name} || sudo ${package_command} ${package_name}
 }
 
 if [ ! -f "cert.pem" ]; then
@@ -62,6 +62,7 @@ fi
 npm run build
 popd
 
+python manage.py migrate
 python manage.py loaddata initial
 python manage.py loaddata followup
 python manage.py loaddata plan_source

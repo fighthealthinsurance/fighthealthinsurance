@@ -201,11 +201,32 @@ class DenialResponseInfo:
 
 class DenialCreatorHelper:
     regex_denial_processor = ProcessDenialRegex()
-    codes_denial_processor = ProcessDenialCodes()
-    regex_src = DataSource.objects.get(name="regex")
-    codes_src = DataSource.objects.get(name="codes")
     zip_engine = uszipcode.search.SearchEngine()
-    all_denial_types = DenialTypes.objects.all()
+    # Lazy load to avoid bootstrap problem w/new project
+    _codes_denial_processor = None
+    _regex_src = None
+    _codes_src = None
+    _all_denial_types = None
+
+    def codes_denial_processor(cls):
+        if cls._codes_denial_processor is None:
+            cls._codes_denial_processor = ProcessDenialCodes()
+        return cls._codes_denial_processor
+
+    def regex_src(cls):
+        if cls._regex_src is None:
+            cls._regex_src = DataSource.objects.get(name="regex")
+        return cls._regex_src
+
+    def codes_src(cls):
+        if cls._codes_src is None:
+            cls._codes_src = DataSource.objects.get(name="codes")
+        return cls._codes_src
+
+    def all_denial_types(cls):
+        if cls._all_denial_types is None:
+            cls._all_denial_types = DenialTypes.objects.all()
+        return cls._all_denial_types
 
     @classmethod
     def create_denial(
@@ -234,14 +255,14 @@ class DenialCreatorHelper:
         )
 
         # Try and guess at the denial types
-        denial_types = cls.regex_denial_processor.get_denialtype(denial_text)
+        denial_types = cls.regex_denial_processor().get_denialtype(denial_text)
         denial_type = []
         for dt in denial_types:
-            DenialTypesRelation(denial=denial, denial_type=dt, src=cls.regex_src).save()
+            DenialTypesRelation(denial=denial, denial_type=dt, src=cls.regex_src()).save()
             denial_type.append(dt)
 
         # Guess at the plan type
-        plan_type = cls.codes_denial_processor.get_plan_type(denial_text)
+        plan_type = cls.codes_denial_processor().get_plan_type(denial_text)
         # Infer the state
         your_state = None
         if zip is not None and zip != "":
@@ -255,7 +276,7 @@ class DenialCreatorHelper:
         )
         return DenialResponseInfo(
             denial_type,
-            cls.all_denial_types,
+            cls.all_denial_types(),
             denial.denial_id,
             your_state,
             procedure,
