@@ -294,7 +294,7 @@ class OCRView(View):
                 context={"ocr_result": doc_txt, "upload_more": False},
             )
         except AttributeError as e:
-            error_txt = "Unsupported file type"
+            error_txt = "Unsupported file"
             return render(
                 request, "server_side_ocr_error.html", context={"error": error_txt}
             )

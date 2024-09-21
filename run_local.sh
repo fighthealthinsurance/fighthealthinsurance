@@ -47,6 +47,12 @@ install_package() {
   ${package_command} ${package_name} || sudo ${package_command} ${package_name}
 }
 
+if ! command -v tesseract-ocr &> /dev/null; then
+  # We need either the tesseract-ocr package OR easyocr
+  install_package tesseract-ocr || pip install easyocr
+fi
+
+
 if [ ! -f "cert.pem" ]; then
   if ! command -v mkcert &> /dev/null; then
     install_package mkcert

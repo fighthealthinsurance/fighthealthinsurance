@@ -46,7 +46,7 @@ pyOpenSSL
 python-Levenshtein
 django-recaptcha==4.0.0
 # We either need easyocr + opencv-python OR pytesseract + tesseract
-# easyocr
+#easyocr>=1.7.0
 # opencv-python
 pyyaml
 mypy
