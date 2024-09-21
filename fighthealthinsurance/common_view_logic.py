@@ -262,7 +262,9 @@ class DenialCreatorHelper:
         denial_types = cls.regex_denial_processor.get_denialtype(denial_text)
         denial_type = []
         for dt in denial_types:
-            DenialTypesRelation(denial=denial, denial_type=dt, src=cls.regex_src()).save()
+            DenialTypesRelation(
+                denial=denial, denial_type=dt, src=cls.regex_src()
+            ).save()
             denial_type.append(dt)
 
         # Guess at the plan type

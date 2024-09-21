@@ -116,7 +116,9 @@ class RemoteOpenLike(RemoteModel):
         if result is None:
             return None
         else:
-            m = re.search("([A-Z])\\w+ ([A-Z])\\w+ ([A-Z])\\w+ \\(([A-Z]{3})\\)", result)
+            m = re.search(
+                "([A-Z])\\w+ ([A-Z])\\w+ ([A-Z])\\w+ \\(([A-Z]{3})\\)", result
+            )
             if m is not None:
                 tla = m.group(1) + m.group(2) + m.group(3)
                 if tla != m.group(4):
