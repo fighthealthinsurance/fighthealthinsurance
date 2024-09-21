@@ -33,13 +33,15 @@ jobs:
         run:
           tox -e black
 
+  types:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+
       - name: Check types
         run:
           tox -e mypy
-
-      - name: Check flake8 style
-        run:
-          tox -e flake8
 
   tests:
     runs-on: ubuntu-latest
