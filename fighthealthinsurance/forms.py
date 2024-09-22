@@ -30,6 +30,7 @@ class DenialForm(forms.Form):
     store_raw_email = forms.BooleanField(required=False)
     use_external_models = forms.BooleanField(required=False)
     denial_text = forms.CharField(required=True)
+    health_history = forms.CharField(required=False)
     email = forms.EmailField(required=True)
 
 

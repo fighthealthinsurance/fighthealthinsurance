@@ -59,12 +59,14 @@ class AppealGenerator(object):
         self.palm = PalmAPI()
         self.octoai = OctoAI()
 
-    def get_procedure_and_diagnosis(self, denial_text=None):
+    def get_procedure_and_diagnosis(self, denial_text=None, use_external=False):
         prompt = self.make_open_procedure_prompt(denial_text)
         models_to_try = [
             self.regex_denial_processor,
             self.remotehealth,
         ]
+        if use_external:
+            models_to_try.append(self.octoai)
         procedure = None
         diagnosis = None
         for model in models_to_try:
@@ -130,9 +132,7 @@ class AppealGenerator(object):
         else:
             return None
 
-    def make_appeals(
-        self, denial, template_generator, medical_reasons=[], medical_context=""
-    ):
+    def make_appeals(self, denial, template_generator, medical_reasons=[]):
         open_prompt = self.make_open_prompt(
             denial_text=denial.denial_text,
             procedure=denial.procedure,
@@ -163,12 +163,19 @@ class AppealGenerator(object):
                 if isinstance(model, RemoteOpenLike):
                     print(f"Using {model}'s parallel inference")
                     reveal_type(model)
-                    results = model.parallel_infer(prompt, patient_context, infer_type)
+                    results = model.parallel_infer(
+                        prompt=prompt,
+                        patient_context=patient_context,
+                        infer_type=infer_type,
+                    )
                 else:
                     print(f"Using system level parallel inference for {model}")
                     results = [
                         executor.submit(
-                            model.infer, prompt, patient_context, infer_type
+                            model.infer,
+                            prompt=prompt,
+                            patient_context=patient_context,
+                            infer_type=infer_type,
                         )
                     ]
             except Exception as e:
@@ -176,7 +183,12 @@ class AppealGenerator(object):
                     f"Error {e} {traceback.format_exc()} submitting to {model} falling back"
                 )
                 results = [
-                    executor.submit(model.infer, prompt, patient_context, infer_type)
+                    executor.submit(
+                        model.infer,
+                        prompt=prompt,
+                        patient_context=patient_context,
+                        infer_type=infer_type,
+                    )
                 ]
             print(
                 f"Infered {results} for {model}-{infer_type} using {prompt} w/ {patient_context}"
@@ -184,12 +196,31 @@ class AppealGenerator(object):
             print("Yay!")
             return results
 
+        medical_context = ""
+        if denial.qa_context is not None:
+            medical_context += denial.qa_context
+        if denial.health_history is not None:
+            medical_context += denial.health_history
         calls = [
-            [self.remotehealth, open_prompt, medical_context, "full"],
+            {
+                "model": self.remotehealth,
+                "prompt": open_prompt,
+                "patient_context": medical_context,
+                "infer_type": "full",
+            },
         ]
 
         if denial.use_external:
-            calls.extend([[self.octoai, open_prompt, medical_context, "full"]])
+            calls.extend(
+                [
+                    {
+                        "model": self.octoai,
+                        "prompt": open_prompt,
+                        "patient_context": medical_context,
+                        "infer_type": "full",
+                    }
+                ]
+            )
 
         # TODO: Add another external backup for external models.
         backup_calls = []
@@ -199,12 +230,12 @@ class AppealGenerator(object):
         if static_appeal is None:
             calls.extend(
                 [
-                    [
-                        self.remotehealth,
-                        open_medically_necessary_prompt,
-                        medical_context,
-                        "medically_necessary",
-                    ],
+                    {
+                        "model": self.remotehealth,
+                        "prompt": open_medically_necessary_prompt,
+                        "patient_context": medical_context,
+                        "infer_type": "medically_necessary",
+                    },
                 ]
             )
         else:
@@ -221,7 +252,7 @@ class AppealGenerator(object):
         def make_calls_async(calls):
             print(f"Calling models: {calls}")
             generated_futures = itertools.chain.from_iterable(
-                map(lambda x: get_model_result(*x), calls)
+                map(lambda x: get_model_result(**x), calls)
             )
 
             def generated_to_appeals_text(k_text):

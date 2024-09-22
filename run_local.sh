@@ -40,14 +40,12 @@ fi
 
 install_package() {
   package_name=$1
-  if [ -z ${package_command} ]; then
-    printf 'Can not install %s. Please install it manually.\n' ${package_name} >/dev/stderr
-    exit 1
-  fi
-  ${package_command} ${package_name} || sudo ${package_command} ${package_name}
+  ${package_command} ${package_name} || sudo ${package_command} ${package_name} || \
+    (printf 'Can not install %s. Please install it manually.\n' ${package_name} >/dev/stderr && \
+       exit 1)
 }
 
-if ! command -v tesseract-ocr &> /dev/null; then
+if ! command -v tesseract &> /dev/null; then
   # We need either the tesseract-ocr package OR easyocr
   install_package tesseract-ocr || pip install easyocr
 fi

@@ -196,7 +196,7 @@ class Denial(models.Model):
     raw_email = models.TextField(max_length=300, primary_key=False, null=True)
     created = models.DateTimeField(db_default=Now(), primary_key=False, null=True)
     use_external = models.BooleanField(default=False)
-    medical_context = models.TextField(max_length=300000, primary_key=False, null=True)
+    health_history = models.TextField(max_length=300000, primary_key=False, null=True)
     qa_context = models.TextField(max_length=300000, primary_key=False, null=True)
     semi_sekret = models.CharField(max_length=100, default=sekret_gen)
     plan_id = models.CharField(max_length=200, primary_key=False, null=True)
