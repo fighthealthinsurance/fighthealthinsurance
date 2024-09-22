@@ -178,7 +178,7 @@ def sekret_gen():
 class Denial(models.Model):
     denial_id = models.AutoField(primary_key=True)
     hashed_email = models.CharField(max_length=300, primary_key=False)
-    denial_text = models.TextField(max_length=30000000, primary_key=False)
+    denial_text = models.TextField(max_length=300000000, primary_key=False)
     denial_type_text = models.TextField(max_length=200, primary_key=False, null=True)
     date = models.DateField(auto_now=False, auto_now_add=True)
     denial_type = models.ManyToManyField(DenialTypes, through=DenialTypesRelation)
@@ -192,7 +192,7 @@ class Denial(models.Model):
     claim_id = models.CharField(max_length=300, primary_key=False, null=True)
     procedure = models.CharField(max_length=300, primary_key=False, null=True)
     diagnosis = models.CharField(max_length=300, primary_key=False, null=True)
-    appeal_text = models.TextField(max_length=3000000000, primary_key=False, null=True)
+    appeal_text = models.TextField(max_length=30000000000, primary_key=False, null=True)
     raw_email = models.TextField(max_length=300, primary_key=False, null=True)
     created = models.DateTimeField(db_default=Now(), primary_key=False, null=True)
     use_external = models.BooleanField(default=False)
@@ -201,6 +201,15 @@ class Denial(models.Model):
     semi_sekret = models.CharField(max_length=100, default=sekret_gen)
     plan_id = models.CharField(max_length=200, primary_key=False, null=True)
     state = models.CharField(max_length=4, primary_key=False, null=True)
+
+    def follow_up(self):
+        return self.raw_email is not None and "@" in self.raw_email
+
+    def chose_appeal(self):
+        return self.appeal_text is not None and len(self.appeal_text) > 10
+
+    def __str__(self):
+        return f"{self.denial_id} -- {self.date} -- Follow Up: {self.follow_up()} -- Chose Appeal {self.chose_appeal()}"
 
     @staticmethod
     def get_hashed_email(email):

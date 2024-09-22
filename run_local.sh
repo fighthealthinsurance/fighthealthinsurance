@@ -73,5 +73,8 @@ python manage.py loaddata initial
 python manage.py loaddata followup
 python manage.py loaddata plan_source
 
+# Make sure we have an admin user so folks can test the admin view
+FIGHT_HEALTH_ADMIN_USER="admin" FIGHT_HEALTH_ADMIN_PASSWORD="admin" python manage.py ensure_adminuser --no-input
+
 RECAPTCHA_TESTING=true OAUTHLIB_RELAX_TOKEN_SCOPE=1 \
   python manage.py runserver_plus --cert-file cert.pem --key-file key.pem
