@@ -1,16 +1,13 @@
 import asyncio
 import concurrent
+import itertools
+import json
 import os
+import time
 from io import BytesIO
 from typing import *
+
 from django.conf import settings
-
-import time
-
-import itertools
-
-from asgiref.sync import async_to_sync
-import json
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
@@ -19,18 +16,18 @@ from django.contrib.staticfiles.storage import staticfiles_storage
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils.decorators import method_decorator
-from django.views import View
-from django.views import generic
+from django.views import View, generic
 from django.views.decorators.cache import cache_control
-
 
 import numpy as np
 import uszipcode
-from fighthealthinsurance.forms import *
-from fighthealthinsurance.models import *
-from fighthealthinsurance.generate_appeal import *
-from fighthealthinsurance.utils import *
+from asgiref.sync import async_to_sync
+
 from fighthealthinsurance.common_view_logic import *
+from fighthealthinsurance.forms import *
+from fighthealthinsurance.generate_appeal import *
+from fighthealthinsurance.models import *
+from fighthealthinsurance.utils import *
 
 appealGenerator = AppealGenerator()
 

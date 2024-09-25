@@ -1,17 +1,19 @@
-import itertools
 import concurrent
-from concurrent.futures import Future
 import csv
+import itertools
 import os
-from functools import cache, lru_cache
-from typing import Tuple, List, Optional
-import traceback
 import time
-
-from typing_extensions import reveal_type
+import traceback
+from concurrent.futures import Future
+from functools import cache, lru_cache
+from typing import List, Optional, Tuple
 
 import icd10
 import requests
+from typing_extensions import reveal_type
+
+from fighthealthinsurance.exec import *
+from fighthealthinsurance.ml_models import *
 from fighthealthinsurance.models import (
     AppealTemplates,
     DenialTypes,
@@ -21,8 +23,6 @@ from fighthealthinsurance.models import (
     Regulator,
 )
 from fighthealthinsurance.process_denial import *
-from fighthealthinsurance.ml_models import *
-from fighthealthinsurance.exec import *
 
 
 class AppealTemplateGenerator(object):

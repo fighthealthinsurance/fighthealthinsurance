@@ -56,7 +56,7 @@ Upload your Health Insurance Denial
 	{% endif %}
 	<!-- Changing Label Text -->
 
-	<form method="post" action="{% url 'process' %}" id="fuck_health_insurance_form">
+	<form method="post" action="{% url 'process' %}" id="fuck_health_insurance_form" enctype="multipart/form-data">
 	    {% csrf_token %}
 	    <h4>Transfered to server -- we store* </h4>
 
@@ -80,6 +80,10 @@ Upload your Health Insurance Denial
 	    <label for="health_history" class="form-label">Your Relevant Health History (optional) remove PII first</label><br>
 	    <textarea name="health_history" id="health_history" style="width:100%" rows="20" form="fuck_health_insurance_form"
 		placeholder="Health Insurance Denial Goes Here" class="form-control"></textarea>
+
+	    <h4>Optional: plan documents (like summary plan description)</h4>
+	    <label class="custom-file-label" for="plan_documents">Optional: Plan Documents</label><br>
+	    <input id="plans_documents" type="file" name="plan_documents" multiple>
 
 	    <h4>Transfered to server, we try not to store outside of session (we do store the state)</h4>
 

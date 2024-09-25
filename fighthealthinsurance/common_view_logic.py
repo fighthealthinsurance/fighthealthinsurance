@@ -1,18 +1,17 @@
 import json
-
+from dataclasses import dataclass
+from string import Template
 from typing import Any, Tuple
 
-from django.forms import Form
 from django.core.validators import validate_email
+from django.forms import Form
 from django.http import StreamingHttpResponse
-from string import Template
-
-from fighthealthinsurance.forms import *
-from fighthealthinsurance.models import *
-from fighthealthinsurance.generate_appeal import *
-from dataclasses import dataclass
 
 import uszipcode
+
+from fighthealthinsurance.forms import *
+from fighthealthinsurance.generate_appeal import *
+from fighthealthinsurance.models import *
 
 appealGenerator = AppealGenerator()
 
@@ -244,6 +243,7 @@ class DenialCreatorHelper:
         privacy=False,
         use_external_models=False,
         store_raw_email=False,
+        plan_documents=None,
     ):
         hashed_email = Denial.get_hashed_email(email)
         # If they ask us to store their raw e-mail we do
@@ -259,6 +259,12 @@ class DenialCreatorHelper:
             raw_email=possible_email,
             health_history=health_history,
         )
+
+        for plan_document in plan_documents:
+            pd = PlanDocuments.objects.create(
+                plan_document=plan_document, denial=denial
+            )
+            pd.save()
 
         # Try and guess at the denial types
         denial_types = cls.regex_denial_processor.get_denialtype(denial_text)

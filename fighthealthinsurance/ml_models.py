@@ -1,19 +1,20 @@
-import itertools
 import concurrent
-from concurrent.futures import Future
 import csv
+import itertools
 import os
 import re
-from abc import ABC, abstractmethod
-from functools import cache, lru_cache
-from typing import Any, Tuple, List, Optional, Iterable, Union, Callable
-import traceback
 import time
-
-from typing_extensions import reveal_type
+import traceback
+from abc import ABC, abstractmethod
+from concurrent.futures import Future
+from functools import cache, lru_cache
+from typing import Any, Callable, Iterable, List, Optional, Tuple, Union
 
 import icd10
 import requests
+from typing_extensions import reveal_type
+
+from fighthealthinsurance.exec import *
 from fighthealthinsurance.models import (
     AppealTemplates,
     DenialTypes,
@@ -22,7 +23,6 @@ from fighthealthinsurance.models import (
     Procedures,
     Regulator,
 )
-from fighthealthinsurance.exec import *
 
 
 class RemoteModel(object):

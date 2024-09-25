@@ -1,5 +1,6 @@
 import re
 from abc import ABC, abstractmethod
+
 from fighthealthinsurance.models import (
     AppealTemplates,
     DenialTypes,
@@ -8,7 +9,6 @@ from fighthealthinsurance.models import (
     Procedures,
     Regulator,
 )
-
 
 # Process all of our "expert system" rules.
 

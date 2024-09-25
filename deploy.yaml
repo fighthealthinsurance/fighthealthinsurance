@@ -1,3 +1,16 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: uploads
+  namespace: totallylegitco
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: longhorn
+  resources:
+    requests:
+      storage: 200Gi
+---
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -12,7 +25,7 @@ spec:
         special: web-primary-pod
     spec:
       containers:
-        - image: holdenk/fight-health-insurance:v0.3.0a
+        - image: holdenk/fight-health-insurance:v0.4.0b
           name: totallylegitco
           env:
           - name: PRIMARY
@@ -51,7 +64,7 @@ spec:
           matchLabels:
             app: fight-health-insurance
       containers:
-        - image: holdenk/fight-health-insurance:v0.3.0a
+        - image: holdenk/fight-health-insurance:v0.4.0b
           name: totallylegitco
           envFrom:
           - secretRef:
@@ -60,6 +73,9 @@ spec:
           ports:
             - containerPort: 80
               name: web
+          volumeMounts:
+            - name: uploads
+              mountPath: /external_data
           livenessProbe:
             httpGet:
               httpHeaders:
@@ -77,6 +93,10 @@ spec:
               port: 80
             periodSeconds: 10
             failureThreshold: 30
+      volumes:
+        - name: uploads
+          persistentVolumeClaim:
+            claimName: uploads
 ---
 apiVersion: v1
 kind: Service

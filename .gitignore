@@ -137,3 +137,7 @@ reports/
 
 fighthealthinsurance/static/js/node_modules
 fighthealthinsurance/static/js/dist
+
+# Ignore external storage
+external_storage
+external_data

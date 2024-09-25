@@ -1,14 +1,15 @@
 import hashlib
+import os
 import re
 import sys
 from typing import Optional
+from uuid import UUID
 
+from django.conf import settings
 from django.db import models
+from django.db.models.functions import Now
 
 from regex_field.fields import RegexField
-from django.db.models.functions import Now
-from uuid import UUID
-import os
 
 
 class FollowUpType(models.Model):
@@ -173,6 +174,14 @@ class PlanSourceRelation(models.Model):
 
 def sekret_gen():
     return str(UUID(bytes=os.urandom(16), version=4))
+
+
+class PlanDocuments(models.Model):
+    plan_document_id = models.AutoField(primary_key=True)
+    plan_document = models.FileField(null=True, storage=settings.EXTERNAL_STORAGE)
+    # If the denial is deleted it's either SPAM or a removal request in either case
+    # we cascade the delete
+    denial = models.ForeignKey("Denial", on_delete=models.CASCADE)
 
 
 class Denial(models.Model):

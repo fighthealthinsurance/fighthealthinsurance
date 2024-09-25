@@ -75,4 +75,4 @@ python manage.py loaddata plan_source
 FIGHT_HEALTH_ADMIN_USER="admin" FIGHT_HEALTH_ADMIN_PASSWORD="admin" python manage.py ensure_adminuser --no-input
 
 RECAPTCHA_TESTING=true OAUTHLIB_RELAX_TOKEN_SCOPE=1 \
-  python manage.py runserver_plus --cert-file cert.pem --key-file key.pem
+  python manage.py runserver_plus --cert-file cert.pem --key-file key.pem $@

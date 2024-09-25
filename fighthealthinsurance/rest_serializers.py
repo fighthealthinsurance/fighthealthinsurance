@@ -1,14 +1,14 @@
-from rest_framework import serializers
-from rest_framework import status
+import json
+
+from django import forms
+
 from drf_braces import fields
 from drf_braces.serializers.form_serializer import (
     FormSerializer,
-    make_form_serializer_field,
     FormSerializerFailure,
+    make_form_serializer_field,
 )
-
-from django import forms
-import json
+from rest_framework import serializers, status
 
 from fighthealthinsurance.forms import *
 from fighthealthinsurance.models import DenialTypes
@@ -69,6 +69,7 @@ class ChooseAppealFormSerializer(FormSerializer):
 class DenialFormSerializer(FormSerializer):
     class Meta(object):
         form = DenialForm
+        exclude = ("plan_documents",)
 
 
 class PostInferedFormSerializer(FormSerializer):

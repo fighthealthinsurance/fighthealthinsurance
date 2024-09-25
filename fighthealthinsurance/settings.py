@@ -42,6 +42,8 @@ class Base(Configuration):
     MEDIA_ROOT = "media"
     MEDIA_URL = "/media/"
 
+    EXTERNAL_STORAGE_LOCATION = "external_data"
+
     NEWSLETTER_THUMBNAIL = "sorl-thumbnail"
 
     ALLOWED_HOSTS: List[str] = ["*"]
@@ -191,6 +193,12 @@ class Base(Configuration):
     # STRIPE SETTINGS
     STRIPE_API_KEY = "sk_test_51MGgqqH3tqhFx4rg3scW0nEbQgv4aXCCvjdWkSYcCA5F15akyusRbkU6lzlIqW6XQmCSDvW9CKgKWmWFqyav5zs100rcmjUUDL"
 
+    @property
+    def EXTERNAL_STORAGE(self):
+        from django.core.files.storage import FileSystemStorage
+
+        return FileSystemStorage(location=self.EXTERNAL_STORAGE_LOCATION)
+
 
 class Dev(Base):
     DEBUG = True
@@ -239,6 +247,7 @@ class Prod(Base):
             }
         }
 
+    EXTERNAL_STORAGE_LOCATION = "/external_data"
     EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
     EMAIL_HOST = os.getenv("EMAIL_HOST", "pigscanfly.ca")
     EMAIL_USE_TLS = True
