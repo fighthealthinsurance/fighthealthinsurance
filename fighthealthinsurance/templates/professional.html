@@ -1,0 +1,31 @@
+{% extends 'base.html' %}
+{% block title %}
+Fighthealthinsurance Professional Version
+{% endblock title %}
+{% load static %}
+{% load absolute %}
+{% block content %}
+<section id="contact">
+    <div class="container">
+      <div class="section-header text-align-center">
+	<h2>Fighthealthinsurance Professional Version</h2>
+      </div>
+      <p>
+	We are actively working on a professional version, but for now, the consumer version which is available is not intended or certified for professional use. We'd love your e-mail to keep in touch and let you know when we've got a professional version.
+      </p>
+      <p>
+	Don't work in health care but still ended up here? Don't worry <a href="{% url 'scan' %}">you can try the regular appeal generator here</a>
+      </p>
+      <p>
+	If you're interested in being one of the first users you can also give us $10 and we'll give you access for the first three months of the professional beta once we launch the professional version. If you change your mind at any time before or during the professional beta we're more than happy to refund that. Honestly the $10 is to show that folks are willing to pay for it so we can get more resources.
+      </p>
+      <p>
+	<form method="post">
+	  {% csrf_token %}
+	  {{ form.as_p }}
+	  <input type="submit" value="Submit">
+	</form>
+      </p>
+    </div>
+</section>
+{% endblock content %}

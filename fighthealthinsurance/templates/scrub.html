@@ -21,7 +21,7 @@ Upload your Health Insurance Denial
 	</div>
 	{% endif %}
 	<button id="clear_local" class="btn btn-green" onclick="window.localStorage.clear()">
-	    Clear Page Local Storage
+	    Clear Page Local Storage (remove your name / address from cookie type storage)
 	</button>
 	<h4>Not transfered to server (uses JS local storage)</h4>
 	<div class="form-group">
@@ -41,7 +41,7 @@ Upload your Health Insurance Denial
 	    </div>
 
 	    <button id="scrub" class="btn btn-green">
-		Scrub Scanned Text
+		Try and Remove Name And Address From Scanned Text
 	    </button>
 	</div>
 	{% if upload_more %}
@@ -73,7 +73,7 @@ Upload your Health Insurance Denial
 	    <textarea name="denial_text" id="denial_text" style="width:100%" rows="20" form="fuck_health_insurance_form"
 		placeholder="Health Insurance Denial Goes Here" class="form-control">{{ocr_result}}</textarea>
 	    <button id="scrub-2" class="btn btn-green">
-		Scrub Scanned Text
+	      Try and Remove Name And Address From Scanned Text
 	    </button>
 
 	    <h4>Optional: your health history (do not include PII) -- we store for ML + may review</h4>
@@ -97,6 +97,9 @@ Upload your Health Insurance Denial
 	    <h4>Policies</h4>
 
 	    <div class="form-group">
+	        <input type="checkbox" id="personal-only" name="personal-only" class="form-check-input">
+	        <label for="personal-only" class="form-check-label">I am aware that <b>this is for personal use only</b> <a href="{% url 'pro_version' }">for those interested in a professional version (doctor/therapist/practioner/office/hospital/etc.) click here to learn more</a></label>
+	        <br>
 		<input type="checkbox" id="privacy" name="privacy" class="form-check-input">
 		<label for="privacy" class="form-check-label">I have read and understand the <a class="link" href="{% url 'privacy_policy' %}">privacy
 		    policy</a>

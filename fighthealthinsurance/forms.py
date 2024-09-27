@@ -4,7 +4,12 @@ from django import forms
 
 from django_recaptcha.fields import ReCaptchaField, ReCaptchaV2Checkbox, ReCaptchaV3
 
-from fighthealthinsurance.models import DenialTypes, PlanSource, PlanType
+from fighthealthinsurance.models import (
+    DenialTypes,
+    PlanSource,
+    PlanType,
+    InterestedProfessional,
+)
 
 
 # See https://docs.djangoproject.com/en/5.1/topics/http/file-uploads/
@@ -27,6 +32,26 @@ class MultipleFileField(forms.FileField):
 
 
 # Actual forms
+
+
+class InterestedProfessionalForm(forms.ModelForm):
+    business_name = forms.CharField(required=False)
+    address = forms.CharField(
+        required=False, widget=forms.Textarea(attrs={"cols": 80, "rows": 5})
+    )
+    comments = forms.CharField(
+        required=False, widget=forms.Textarea(attrs={"cols": 80, "rows": 5})
+    )
+    phone_number = forms.CharField(required=False)
+    clicked_for_paid = forms.BooleanField(
+        initial=True,
+        required=False,
+        label="Optional: Pay $10 now to get 3-months of the beta when we launch the professional version while we figure out what/if folks will pay for it.",
+    )
+
+    class Meta:
+        model = InterestedProfessional
+        exclude = ["paid", "signup_date"]
 
 
 class DeleteDataForm(forms.Form):

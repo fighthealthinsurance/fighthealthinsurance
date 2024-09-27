@@ -12,6 +12,19 @@ from django.db.models.functions import Now
 from regex_field.fields import RegexField
 
 
+class InterestedProfessional(models.Model):
+    id = models.AutoField(primary_key=True)
+    name = models.CharField(max_length=300, primary_key=False, default="")
+    business_name = models.CharField(max_length=300, primary_key=False, default="")
+    phone_number = models.CharField(max_length=300, primary_key=False, default="")
+    address = models.CharField(max_length=1000, primary_key=False, default="")
+    email = models.EmailField()
+    comments = models.CharField(max_length=30000, primary_key=False, default="")
+    clicked_for_paid = models.BooleanField(default=True)
+    paid = models.BooleanField(default=False)
+    signup_date = models.DateField(auto_now=True)
+
+
 class FollowUpType(models.Model):
     id = models.AutoField(primary_key=True)
     name = models.CharField(max_length=300, primary_key=False, default="")

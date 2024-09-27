@@ -38,6 +38,12 @@ urlpatterns = [
         name="about",
     ),
     path("other-resources", views.OtherResourcesView.as_view(), name="other-resources"),
+    path("pro_version", views.ProVersionView.as_view(), name="pro_version"),
+    path(
+        "pro_version_thankyou",
+        views.ProVersionThankYouView.as_view(),
+        name="pro_version_thankyou",
+    ),
     path("process", views.ProcessView.as_view(), name="process"),
     path("privacy_policy", views.PrivacyPolicyView.as_view(), name="privacy_policy"),
     path("share_denial", views.ShareDenialView.as_view(), name="share_denial"),

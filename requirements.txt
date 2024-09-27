@@ -55,3 +55,4 @@ djangorestframework
 django-filter
 # django-rest-framework-braces
 totallylegit-django-rest-framework-braces
+stripe==5.5.0

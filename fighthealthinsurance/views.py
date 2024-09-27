@@ -32,6 +32,32 @@ from fighthealthinsurance.utils import *
 appealGenerator = AppealGenerator()
 
 
+class ProVersionThankYouView(generic.TemplateView):
+    template_name = "professional_thankyou.html"
+
+
+class ProVersionView(generic.FormView):
+    template_name = "professional.html"
+    form_class = InterestedProfessionalForm
+
+    def form_valid(self, form):
+        form.save()
+        if (
+            "clicked_for_paid" in form.cleaned_data
+            and form.cleaned_data["clicked_for_paid"]
+        ):
+            items = []
+            checkout = stripe.checkout.Session.create(
+                line_items=items,
+                mode="payment",  # No subscriptions
+                success_url=request.build_absolute_uri(reverse("pro_version_thankyou")),
+                cancel_url=request.build_absolute_uri(reverse("pro_version_thankyou")),
+            )
+            return rederict(self.request, checkout.url)
+        # TODO: Stripe magic for folks who want it.
+        return render(self.request, "professional_thankyou.html")
+
+
 class IndexView(generic.TemplateView):
     template_name = "index.html"
 
