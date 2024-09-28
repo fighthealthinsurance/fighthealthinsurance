@@ -19,9 +19,11 @@ from django.utils.decorators import method_decorator
 from django.views import View, generic
 from django.views.decorators.cache import cache_control
 
+import stripe
 import numpy as np
 import uszipcode
 from asgiref.sync import async_to_sync
+import stripe
 
 from fighthealthinsurance.common_view_logic import *
 from fighthealthinsurance.forms import *
@@ -46,14 +48,31 @@ class ProVersionView(generic.FormView):
             "clicked_for_paid" in form.cleaned_data
             and form.cleaned_data["clicked_for_paid"]
         ):
-            items = []
+            stripe.api_key = settings.STRIPE_API_SECRET_KEY
+            stripe.publishable_key = settings.STRIPE_API_PUBLISHABLE_KEY
+            product = stripe.Product.create(name="Pre-Signup")
+            product_price = stripe.Price.create(
+                unit_amount=1000, currency="usd", product=product["id"]
+            )
+            items = [
+                {
+                    "price": product_price["id"],
+                    "quantity": 1,
+                }
+            ]
             checkout = stripe.checkout.Session.create(
                 line_items=items,
                 mode="payment",  # No subscriptions
-                success_url=request.build_absolute_uri(reverse("pro_version_thankyou")),
-                cancel_url=request.build_absolute_uri(reverse("pro_version_thankyou")),
+                success_url=self.request.build_absolute_uri(
+                    reverse("pro_version_thankyou")
+                ),
+                cancel_url=self.request.build_absolute_uri(
+                    reverse("pro_version_thankyou")
+                ),
+                customer_email=form.cleaned_data["email"]
             )
-            return rederict(self.request, checkout.url)
+            checkout_url = checkout.url
+            return redirect(checkout_url)
         # TODO: Stripe magic for folks who want it.
         return render(self.request, "professional_thankyou.html")
 

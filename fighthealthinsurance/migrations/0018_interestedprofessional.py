@@ -19,7 +19,7 @@ class Migration(migrations.Migration):
                 ("phone_number", models.CharField(default="", max_length=300)),
                 ("address", models.CharField(default="", max_length=1000)),
                 ("email", models.EmailField(max_length=254)),
-                ("comments", models.CharField(default="", max_length=30000)),
+                ("comments", models.CharField(default="", max_length=300)),
                 ("clicked_for_paid", models.BooleanField(default=True)),
                 ("paid", models.BooleanField(default=False)),
                 ("signup_date", models.DateField(auto_now=True)),

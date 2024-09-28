@@ -195,12 +195,15 @@ class Base(Configuration):
     def STRIPE_API_SECRET_KEY(self):
         return os.getenv(
             "STRIPE_TEST_SECRET_KEY",
-            "sk_test_51MGgqqH3tqhFx4rg3scW0nEbQgv4aXCCvjdWkSYcCA5F15akyusRbkU6lzlIqW6XQmCSDvW9CKgKWmWFqyav5zs100rcmjUUDL",
+            "",
         )
 
     @property
     def STRIPE_API_PUBLISHABLE_KEY(self):
-        return os.getenv("STRIPE_TEST_PUBLISHABLE_KEY", "")
+        return os.getenv(
+            "STRIPE_TEST_PUBLISHABLE_KEY",
+            "pk_test_51MXFu6FI0Ls3lz8tKOwolhL765Pc6WUkeZGTrOqri8ibbWJzRwLqJGRmyY8r6he09aMmGsULImRfIbErgjxvEVTO00vgERwX4P",
+        )
 
     @property
     def EXTERNAL_STORAGE(self):
