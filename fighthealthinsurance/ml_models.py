@@ -81,6 +81,7 @@ class RemoteOpenLike(RemoteModel):
         model,
         system_prompts,
         backup_model=None,
+        backup_api_base=None,
         expensive=False,
     ):
         self.api_base = api_base
@@ -95,6 +96,7 @@ class RemoteOpenLike(RemoteModel):
             r"\s*diagnosis\s*:?\s*", re.IGNORECASE
         )
         self.backup_model = backup_model
+        self.backup_api_base = backup_api_base
         self._expensive = expensive
 
     def bad_result(self, result: Optional[str]) -> bool:
@@ -294,28 +296,15 @@ class RemoteOpenLike(RemoteModel):
     def _infer(
         self, system_prompt, prompt, patient_context=None, temperature=0.7
     ) -> Optional[str]:
-        # Retry backup model if necessary
-        try:
-            r = self.__infer(
-                system_prompt=system_prompt,
-                prompt=prompt,
-                patient_context=patient_context,
-                temperature=temperature,
-                model=self.model,
-            )
-        except Exception as e:
-            if self.backup_model is None:
-                raise e
-            else:
-                return self.__infer(
-                    system_prompt=system_prompt,
-                    prompt=prompt,
-                    patient_context=patient_context,
-                    temperature=temperature,
-                    model=self.backup_model,
-                )
+        r = self.__infer(
+            system_prompt=system_prompt,
+            prompt=prompt,
+            patient_context=patient_context,
+            temperature=temperature,
+            model=self.model,
+        )
         if r is None and self.backup_model is not None:
-            return self.__infer(
+            r = self.__infer(
                 system_prompt=system_prompt,
                 prompt=prompt,
                 patient_context=patient_context,
@@ -324,19 +313,58 @@ class RemoteOpenLike(RemoteModel):
             )
         else:
             return r
+        if r is None and self.backup_api_base is not None:
+            r = self.__infer(
+                system_prompt=system_prompt,
+                prompt=prompt,
+                patient_context=patient_context,
+                temperature=temperature,
+                model=self.model,
+                api_base=self.backup_api_base,
+            )
+        else:
+            return r
+        if (
+            r is None
+            and self.backup_api_base is not None
+            and self.backup_model is not None
+        ):
+            r = self.__infer(
+                system_prompt=system_prompt,
+                prompt=prompt,
+                patient_context=patient_context,
+                temperature=temperature,
+                model=self.backup_model,
+                api_base=self.backup_api_base,
+            )
+        else:
+            print(f"Skipping fall through")
+        return r
 
     def __infer(
-        self, system_prompt, prompt, patient_context, temperature, model
+        self,
+        system_prompt,
+        prompt,
+        patient_context,
+        temperature,
+        model,
+        api_base=None,
     ) -> Optional[str]:
-        print(f"Looking up model {model} using {self.api_base} and {prompt}")
+        if api_base is None:
+            api_base = self.api_base
+        else:
+            print(
+                f"********************************OVERRIDING API BASE**** to {api_base}"
+            )
+        print(f"Looking up model {model} using {api_base} and {prompt}")
         if self.api_base is None:
-            return None
+            return api_base
         if self.token is None:
-            print(f"Error no Token provided for {self.model}.")
+            print(f"Error no Token provided for {model}.")
         if prompt is None:
             print(f"Error: must supply a prompt.")
             return None
-        url = f"{self.api_base}/chat/completions"
+        url = f"{api_base}/chat/completions"
         combined_content = None
         try:
             s = requests.Session()
@@ -353,7 +381,7 @@ class RemoteOpenLike(RemoteModel):
                 url,
                 headers={"Authorization": f"Bearer {self.token}"},
                 json={
-                    "model": self.model,
+                    "model": model,
                     "messages": [
                         {
                             "role": "user",
@@ -369,21 +397,29 @@ class RemoteOpenLike(RemoteModel):
             else:
                 print(f"***WARNING*** Response {result} on {self} looks _bad_")
         except Exception as e:
-            print(f"Error {e} {traceback.format_exc()} calling {self.api_base}")
+            print(f"Error {e} {traceback.format_exc()} calling {api_base}")
             return None
         try:
             r = json_result["choices"][0]["message"]["content"]
-            print(f"Got {r} from {self.model} w/ {self.api_base} {self}")
+            print(f"Got {r} from {model} w/ {api_base} {self}")
             return r
         except Exception as e:
             print(
-                f"Error {e} {traceback.format_exc()} processing {json_result} from {self.api_base} w/ url {url} --  {self} ON -- {combined_content}"
+                f"Error {e} {traceback.format_exc()} processing {json_result} from {api_base} w/ url {url} --  {self} ON -- {combined_content}"
             )
             return None
 
 
 class RemoteFullOpenLike(RemoteOpenLike):
-    def __init__(self, api_base, token, model, backup_model=None, expensive=False):
+    def __init__(
+        self,
+        api_base,
+        token,
+        model,
+        backup_model=None,
+        expensive=False,
+        backup_api_base=None,
+    ):
         systems = {
             "full": [
                 """You possess extensive medical expertise and enjoy crafting appeals for health insurance denials as a personal interest. As a patient, not a doctor, you advocate for yourself. Don't assume you have any letter from a physician. Your writing style is direct, akin to patio11 or a bureaucrat, and maintains a professional tone without expressing frustration towards insurance companies. You may consider emphasizing the unique and potentially essential nature of the medical intervention, using "YourNameMagic" as your name, "SCSID" for the subscriber ID, and "GPID" as the group ID. Make sure to write in the form of a letter. Ideally use the communication the style of patio11 / a being a Dangerous Professional means communicating in what might be a slightly adversarial context in a way which suggests that a bureaucracy take one's concerns seriously and escalate them to someone empowered to resolve them swiftly. You can be verbose. Start your response with Dear [Insurance Company];""",
@@ -400,7 +436,13 @@ class RemoteFullOpenLike(RemoteOpenLike):
             ],
         }
         return super().__init__(
-            api_base, token, model, systems, backup_model, expensive=expensive
+            api_base,
+            token,
+            model,
+            systems,
+            backup_model=backup_model,
+            expensive=expensive,
+            backup_api_base=backup_api_base,
         )
 
     def model_type(self) -> str:
@@ -411,20 +453,25 @@ class RemoteHealthInsurance(RemoteFullOpenLike):
     def __init__(self):
         self.port = os.getenv("HEALTH_BACKEND_PORT", "80")
         self.host = os.getenv("HEALTH_BACKEND_HOST")
+        self.backup_port = os.getenv("HEALTH_BACKUP_BACKEND_PORT", self.port)
+        self.backup_host = os.getenv("HEALTH_BACKUP_BACKEND_HOST", self.host)
         self.url = None
         if self.port is not None and self.host is not None:
             self.url = f"http://{self.host}:{self.port}/v1"
         else:
             print(f"Error setting up remote health {self.host}:{self.port}")
+        self.backup_url = f"http://{self.backup_host}:{self.backup_port}/v1"
+        print(f"Setting backup to {self.backup_url}")
         self.model = os.getenv(
             "HEALTH_BACKEND_MODEL", "TotallyLegitCo/fighthealthinsurance_model_v0.5"
         )
-        self.backup_model = os.getenv(
-            "HEALTH_BACKUP_BACKEND_MODEL",
-            "TotallyLegitCo/fighthealthinsurance_model_v0.6",
-        )
+        self.backup_model = os.getenv("HEALTH_BACKUP_BACKEND_MODEL", self.model)
         super().__init__(
-            self.url, token="", model=self.model, backup_model=self.backup_model
+            self.url,
+            token="",
+            model=self.model,
+            backup_model=self.backup_model,
+            backup_api_base=self.backup_url,
         )
 
 
