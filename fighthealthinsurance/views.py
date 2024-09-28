@@ -69,7 +69,7 @@ class ProVersionView(generic.FormView):
                 cancel_url=self.request.build_absolute_uri(
                     reverse("pro_version_thankyou")
                 ),
-                customer_email=form.cleaned_data["email"]
+                customer_email=form.cleaned_data["email"],
             )
             checkout_url = checkout.url
             return redirect(checkout_url)
