@@ -32,7 +32,7 @@ class RemoteModel(object):
     ) tag them with "medically_necessary".
     """
 
-    def infer(self, prompt, patient_context, infer_type):
+    def infer(self, prompt, patient_context, plan_context, infer_type):
         pass
 
 
@@ -42,7 +42,7 @@ class PalmAPI(RemoteModel):
 
     @cache
     def infer(
-        self, prompt: str, patient_context, infer_type: str
+        self, prompt: str, patient_context, plan_context, infer_type: str
     ) -> List[Tuple[str, str]]:
         result = self._infer(prompt)
         if self.bad_result(result):
@@ -168,7 +168,11 @@ class RemoteOpenLike(RemoteModel):
             return result
 
     def parallel_infer(
-        self, prompt: str, patient_context: Optional[str], infer_type: str
+        self,
+        prompt: str,
+        patient_context: Optional[str],
+        plan_context: Optional[str],
+        infer_type: str,
     ) -> List[Future[Tuple[str, Optional[str]]]]:
         print(f"Running inference on {self} of type {infer_type}")
         temperatures = [0.5]
@@ -183,6 +187,7 @@ class RemoteOpenLike(RemoteModel):
                         {
                             "prompt": prompt,
                             "patient_context": patient_context,
+                            "plan_context": plan_context,
                             "infer_type": infer_type,
                             "system_prompt": system_prompt,
                             "temperature": temperature,
@@ -201,6 +206,7 @@ class RemoteOpenLike(RemoteModel):
         self,
         prompt: str,
         patient_context,
+        plan_context,
         infer_type,
         system_prompt: str,
         temperature: float,
@@ -208,6 +214,7 @@ class RemoteOpenLike(RemoteModel):
         result = self._infer(
             prompt=prompt,
             patient_context=patient_context,
+            plan_context=plan_context,
             system_prompt=system_prompt,
             temperature=temperature,
         )
@@ -217,6 +224,7 @@ class RemoteOpenLike(RemoteModel):
             result = self._infer(
                 prompt=prompt,
                 patient_context=patient_context,
+                plan_context=plan_context,
                 system_prompt=system_prompt,
                 temperature=temperature,
             )
@@ -238,11 +246,12 @@ class RemoteOpenLike(RemoteModel):
         return self.diagnosis_response_regex.sub("", response)
 
     @cache
-    def questions(self, prompt: str, patient_context: str) -> List[str]:
+    def questions(self, prompt: str, patient_context: str, plan_context) -> List[str]:
         result = self._infer(
             system_prompt=self.system_prompts["questions"],
             prompt=prompt,
             patient_context=patient_context,
+            plan_context=plan_context,
         )
         if result is None:
             return []
@@ -294,12 +303,18 @@ class RemoteOpenLike(RemoteModel):
         return (None, None)
 
     def _infer(
-        self, system_prompt, prompt, patient_context=None, temperature=0.7
+        self,
+        system_prompt,
+        prompt,
+        patient_context=None,
+        plan_context=None,
+        temperature=0.7,
     ) -> Optional[str]:
         r = self.__infer(
             system_prompt=system_prompt,
             prompt=prompt,
             patient_context=patient_context,
+            plan_context=plan_context,
             temperature=temperature,
             model=self.model,
         )
@@ -308,6 +323,7 @@ class RemoteOpenLike(RemoteModel):
                 system_prompt=system_prompt,
                 prompt=prompt,
                 patient_context=patient_context,
+                plan_context=plan_context,
                 temperature=temperature,
                 model=self.backup_model,
             )
@@ -318,6 +334,7 @@ class RemoteOpenLike(RemoteModel):
                 system_prompt=system_prompt,
                 prompt=prompt,
                 patient_context=patient_context,
+                plan_context=plan_context,
                 temperature=temperature,
                 model=self.model,
                 api_base=self.backup_api_base,
@@ -333,6 +350,7 @@ class RemoteOpenLike(RemoteModel):
                 system_prompt=system_prompt,
                 prompt=prompt,
                 patient_context=patient_context,
+                plan_context=plan_context,
                 temperature=temperature,
                 model=self.backup_model,
                 api_base=self.backup_api_base,
@@ -346,16 +364,13 @@ class RemoteOpenLike(RemoteModel):
         system_prompt,
         prompt,
         patient_context,
+        plan_context,
         temperature,
         model,
         api_base=None,
     ) -> Optional[str]:
         if api_base is None:
             api_base = self.api_base
-        else:
-            print(
-                f"********************************OVERRIDING API BASE**** to {api_base}"
-            )
         print(f"Looking up model {model} using {api_base} and {prompt}")
         if self.api_base is None:
             return api_base
@@ -370,13 +385,15 @@ class RemoteOpenLike(RemoteModel):
             s = requests.Session()
             # Combine the message, Mistral's VLLM container does not like the system role anymore?
             # despite it still being fine-tuned with the system role.
-            combined_content = (
-                f"<<SYS>>{system_prompt}<</SYS>>{prompt[0 : self.max_len]}"
-            )
-            if patient_context is not None and len(patient_context) > 1:
+            context_extra = ""
+            if patient_context is not None and len(patient_context) > 3:
                 patient_context_max = int(self.max_len / 2)
                 max_len = self.max_len - min(len(patient_context), patient_context_max)
-                combined_content = f"<<SYS>>{system_prompt}<</SYS>>When answering the following question you can use the patient context {patient_context[0:patient_context_max]}. {prompt[0:max_len]}"
+                context_extra = f"When answering the following question you can use the patient context {patient_context[0:patient_context_max]}."
+            if plan_context is not None and len(plan_context) > 3:
+                context_extra += f"For answering the question you can use this context about the plan {plan_context}"
+            combined_content = f"<<SYS>>{system_prompt}<</SYS>>{context_extra}{prompt[0 : self.max_len]}"
+            print(f"Using {combined_content}")
             result = s.post(
                 url,
                 headers={"Authorization": f"Bearer {self.token}"},
@@ -433,6 +450,9 @@ class RemoteFullOpenLike(RemoteOpenLike):
             ],
             "medically_necessary": [
                 """You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters. Each word costs an extra dollar. Please provide a concise response. Do not use the 3rd person when refering to the patient (e.g. don't say "the patient", "patient's", "his", "hers"), instead use the first persion (I, my, mine,etc.) when talking about the patient. You are not a review and should not mention any. Write concisely in a professional tone akin to patio11. Do not say this is why the decission should be overturned. Just say why you believe it is medically necessary (e.g. to prevent X or to treat Y)."""
+            ],
+            "generic": [
+                """You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters. Help a patient answer the provided question for their insurance appeal."""
             ],
         }
         return super().__init__(

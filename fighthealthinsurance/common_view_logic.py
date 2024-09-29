@@ -68,9 +68,6 @@ class NextStepInfo:
     semi_sekret: str
 
     def convert_to_serializable(self):
-        print(
-            f"Preparing to convert {self.outside_help_details} {self.combined_form} and {self.semi_sekret}"
-        )
         return NextStepInfoSerializable(
             self.outside_help_details,
             map(lambda xy: self._field_to_dict(*xy), self.combined_form.fields.items()),
@@ -124,6 +121,7 @@ class FindNextStepsHelper:
         captcha=None,
         denial_type_text=None,
         plan_source=None,
+        employer_name=None,
     ) -> NextStepInfo:
         hashed_email = Denial.get_hashed_email(email)
         # Update the denial
@@ -195,6 +193,7 @@ class DenialResponseInfo:
     your_state: str
     procedure: str
     diagnosis: str
+    employer_name: str
     semi_sekret: str
 
 
@@ -266,15 +265,6 @@ class DenialCreatorHelper:
             )
             pd.save()
 
-        # Try and guess at the denial types
-        denial_types = cls.regex_denial_processor.get_denialtype(denial_text)
-        denial_type = []
-        for dt in denial_types:
-            DenialTypesRelation(
-                denial=denial, denial_type=dt, src=cls.regex_src()
-            ).save()
-            denial_type.append(dt)
-
         # Guess at the plan type
         plan_type = cls.codes_denial_processor().get_plan_type(denial_text)
         # Infer the state
@@ -288,14 +278,33 @@ class DenialCreatorHelper:
         (procedure, diagnosis) = appealGenerator.get_procedure_and_diagnosis(
             denial_text=denial_text, use_external=denial.use_external
         )
+        r = re.compile(r"Group Name:\s*(.*?)(,|)\s*(INC|CO|LTD)")
+        g = r.search(denial_text)
+        employer_name = None
+        if g is not None:
+            employer_name = g.group(1)
+            denial.employer_name = employer_name
+            denial.save()
+
+        # Try and guess at the denial types
+        denial_types = cls.regex_denial_processor.get_denialtype(
+            denial_text=denial_text, procedure=procedure, diagnosis=diagnosis
+        )
+        denial_type = []
+        for dt in denial_types:
+            DenialTypesRelation(
+                denial=denial, denial_type=dt, src=cls.regex_src()
+            ).save()
+            denial_type.append(dt)
         return DenialResponseInfo(
-            denial_type,
-            cls.all_denial_types(),
-            denial.denial_id,
-            your_state,
-            procedure,
-            diagnosis,
-            denial.semi_sekret,
+            selected_denial_type=denial_type,
+            all_denial_types=cls.all_denial_types(),
+            denial_id=denial.denial_id,
+            your_state=your_state,
+            procedure=procedure,
+            diagnosis=diagnosis,
+            employer_name=employer_name,
+            semi_sekret=denial.semi_sekret,
         )
 
 
@@ -326,8 +335,9 @@ class AppealsBackendHelper:
         prefaces = []
         main = []
         footer = []
-        medical_reasons = []
-        medical_context = ""
+        medical_reasons = set()
+        medical_context = set()
+        plan_context = set()
         # Extract any medical context AND
         # Apply all of our 'expert system'
         # (aka six regexes in a trench coat hiding behind a database).
@@ -340,16 +350,28 @@ class AppealsBackendHelper:
                     op = getattr(parsed, "medical_context", None)
                     if op is not None and callable(op):
                         try:
-                            medical_context += parsed.medical_context()
+                            mc = parsed.medical_context()
+                            if mc is not None:
+                                medical_context.add(mc)
                         except Exception as e:
                             print(
                                 f"Error {e} processing form {form} for medical context"
                             )
+                    # Check for plan context
+                    op = getattr(parsed, "plan_context", None)
+                    if op is not None and callable(op):
+                        try:
+                            pc = parsed.plan_context(denial)
+                            if pc is not None:
+                                plan_context.add(pc)
+                        except Exception as e:
+                            print(f"Error {e} processing form {form} for plan context")
+                    # See if we have a provided medical reason
                     if (
                         "medical_reason" in parsed.cleaned_data
                         and parsed.cleaned_data["medical_reason"] != ""
                     ):
-                        medical_reasons.append(parsed.cleaned_data["medical_reason"])
+                        medical_reasons.add(parsed.cleaned_data["medical_reason"])
                         print(f"Med reason {medical_reasons}")
                     # Questionable dynamic template
                     new_prefaces = parsed.preface()
@@ -369,7 +391,10 @@ class AppealsBackendHelper:
                         main.append(dt.appeal_text)
 
         # Add the context to the denial
-        denial.qa_context = medical_context
+        if medical_context is not None:
+            denial.qa_context = " ".join(medical_context)
+        if plan_context is not None:
+            denial.plan_context = " ".join(set(plan_context))
         denial.save()
         appeals = itertools.chain(
             non_ai_appeals,

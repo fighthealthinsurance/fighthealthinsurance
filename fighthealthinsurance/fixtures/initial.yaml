@@ -174,7 +174,21 @@
     name: Preventive Care
     appeal_text: "The ACA (and equivalent regulations for many non-ACA plans) requires that many types of preventive care be covered, in many cases without any out of pocket expense. See https://www.healthcare.gov/coverage/preventive-care-benefits/ https://www.kff.org/womens-health-policy/fact-sheet/preventive-services-covered-by-private-health-plans/ ."
     form: PreventiveCareQuestions
-    regex: "\b(prophylaxis|prep|STD|STI|vaccine|screening|immunization|preventitive|birth control|breastfeeding|follic acid|well-baby|preeclampsia|prevention|Breast cancer genetic test counseling|BCRA|pap test|pap smeer|Sexually transmitted infections|Fluoride varnish|Hearing screening|Tuberculin testing|well-child)\b"
+    regex: "\\b(prophylaxis|prep|STD|STI|vaccine|screening|immunization|preventitive|birth control|breastfeeding|follic acid|well-baby|preeclampsia|prevention|Breast cancer genetic test counseling|BCRA|pap test|pap smeer|Sexually transmitted infections|Fluoride varnish|Hearing screening|Tuberculin testing|well-child)\\b"
+- model: fighthealthinsurance.denialtypes
+  pk: 21
+  fields:
+    name: Gender Affirming Care
+    form: GenderAffirmingCareQuestions
+    regex: "\\b(SRS|GRS|HRT|transgender)\\b"
+    diagnosis_regex: "gender dysphoria"
+- model: fighthealthinsurance.denialtypes
+  pk: 22
+  fields:
+    name: Gender Affirming Care -- Breast Augmentation
+    form: GenderAffirmingCareBreastAugmentationQuestions
+    regex: "\\b(breast augmentation.*transgender)\\b"
+    procedure_regex: "breast augmentation"
 - model: fighthealthinsurance.diagnosis
   pk: 1
   fields:

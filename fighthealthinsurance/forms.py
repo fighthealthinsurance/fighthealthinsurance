@@ -4,6 +4,14 @@ from django import forms
 
 from django_recaptcha.fields import ReCaptchaField, ReCaptchaV2Checkbox, ReCaptchaV3
 
+from bs4 import BeautifulSoup
+
+import pymupdf
+import re
+from fighthealthinsurance.models import Denial, PlanDocuments
+import urllib
+import requests
+
 from fighthealthinsurance.models import (
     DenialTypes,
     PlanSource,
@@ -114,6 +122,7 @@ class PostInferedForm(DenialRefForm):
     )
     #    plan_type = forms.ModelMultipleChoiceField(queryset=PlanType.objects.all())
     #    plan_type_text = forms.CharField(required=False)
+    employer_name = forms.CharField(required=False)
     denial_date = forms.DateField(required=False)
     your_state = forms.CharField(max_length=2, required=False)
     procedure = forms.CharField(
@@ -149,11 +158,11 @@ class InsuranceQuestions(forms.Form):
 
     def medical_context(self):
         response = ""
-        if "urgent" in self.cleaned_data:
+        if "urgent" in self.cleaned_data and self.cleaned_data["urgent"]:
             response += "This is an urgent claim."
-        if "pre_service" in self.cleaned_data:
+        if "pre_service" in self.cleaned_data and self.cleaned_data["pre_service"]:
             response += "This is a pre-service claim."
-        if "in_network" in self.cleaned_data:
+        if "in_network" in self.cleaned_data and self.cleaned_data["in_network"]:
             response += "This is an in-network claim."
         return response
 
@@ -319,6 +328,105 @@ class PriorAuthQuestions(InsuranceQuestions):
         return r
 
 
+class GenderAffirmingCareQuestions(InsuranceQuestions):
+    """Generic questions for gender affirming care."""
+
+    def plan_context(self, denial: Denial):
+        response = ""
+        if denial.state == "CA":
+            response += "As covered in https://calmatters.org/health/2024/08/gender-affirming-care-denials/ CA health plans received the largest penality ever for gender-affirming care denials. The plan must follow https://www.insurance.ca.gov/01-consumers/110-health/60-resources/upload/CDI-Gender-Nondiscrimination-Regulations.pdf and insurers may not discriminate against gender affirming care. If the plan fails to approve this claim the patient intents to appeal all the way to the relevant regulator."
+        else:
+            response += "As covered in https://calmatters.org/health/2024/08/gender-affirming-care-denials/ CA health plans received the largest penality ever for gender-affirming care denials and some states have similar non-discriminiation requirements."
+
+        if denial.employer_name is not None:
+            if self.employer_hrc_lookup(denial.employer_name):
+                response += "The employer has stated to the human rights collation (HRC) that it will cover transgender health care. Should the plan deny this claim we intend to follow up with both HR and the HRC."
+
+        wpath_version = self.wpath_version(denial)
+        if wpath_version is not None:
+            response += f"As stated in the plan documents the plan must follow the WPATH{wpath_version} standards of care."
+        return response
+
+    def wpath_version(self, denial):
+        return self._wpath_version(
+            map(
+                lambda doc: doc.plan_document.path,
+                PlanDocuments.objects.filter(denial=denial),
+            )
+        )
+
+    def _wpath_version(self, plan_paths):
+        # Do we have plan documents and do they reference WPATH?
+        wpath_version = None
+        for path in plan_paths:
+            contents = None
+            if ".pdf" in path:
+                try:
+                    doc = pymupdf.open(path)
+                    contents = ""
+                    for page in doc:
+                        contents += page.get_text()
+                except:
+                    print(f"Error reading {path}")
+            if contents is None:
+                with open(path, "r") as file:
+                    contents = file.read()
+            soc_version_re = re.compile(
+                "WPATH.*?Standards of.*?Care.*?Version.*?(\\d+).*",
+                re.IGNORECASE | re.MULTILINE | re.DOTALL,
+            )
+            m = re.search(soc_version_re, contents)
+            if m is not None:
+                wpath_version = m.group(1)
+                # Exit as soon as we find any WPATH SOC version
+                return wpath_version
+            if "WPATH" in contents:
+                if wpath_version is None:
+                    # We don't know the version but it is refed
+                    wpath_version = ""
+
+            return wpath_version
+
+    def employer_hrc_lookup(self, employer):
+        # Check and see if the employer is listed in the HRC equality index
+        try:
+            safe_employer_name = urllib.parse.quote_plus(employer)
+            employer_search_string = (
+                f"https://www.hrc.org/resources/employers/search?q={safe_employer_name}"
+            )
+            r = requests.get(employer_search_string)
+            if "No results found for" not in r.text:
+                soup = BeautifulSoup(r.text, "html.parser")
+                link_re = re.compile("https://www.hrc.org/resources/buyers-guide/.*")
+                links = soup.find_all("a", {"href": link_re})
+                text = ""
+                for bs_link in links:
+                    if employer.lower() in bs_link.getText().lower():
+                        r = requests.get(bs_link["href"])
+                        text = r.text
+                        break
+                # Very hacky check to see if the employer should cover by HRC
+                if "Equality 100 Award" in text:
+                    return True
+                elif "45/50" in text or "50/50" in text:
+                    return True
+        except Exception as e:
+            print(f"Error {e} getting employer HRC score")
+            return False
+        return False
+
+
+class GenderAffirmingCareBreastAugmentationQuestions(GenderAffirmingCareQuestions):
+
+    def plan_context(self, denial: Denial):
+        if self.wpath_version(denial) == "7":
+            return """The plan references version 7 of the WPATH SOC. As covered on P59 of the WPATH 7 SOC the only requirements for breast augmentation is 1. Persistent, well-documented gender dysphoria;
+2. Capacity to make a fully informed decision and to consent for treatment;
+3. Age of majority in a given country (if younger, follow the SOC for children and adolescents);
+4. If significant medical or mental health concerns are present, they must be reasonably well
+controlled."""
+
+
 class PreventiveCareQuestions(InsuranceQuestions):
     """Questions for preventive care."""
 
@@ -391,7 +499,6 @@ class StepTherapy(MedicalNeccessaryQuestions):
 def magic_combined_form(forms_to_merge):
     combined_form = forms.Form()
     for f in forms_to_merge:
-        print(dir(f))
         for field_name, field in f.fields.items():
             if field_name not in combined_form.fields:
                 combined_form.fields[field_name] = field

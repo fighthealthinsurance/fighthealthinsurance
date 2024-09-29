@@ -151,6 +151,7 @@ class AppealGenerator(object):
             model: RemoteModel,
             prompt: str,
             patient_context: Optional[str],
+            plan_context: Optional[str],
             infer_type: str,
         ) -> List[Future[str, Optional[str]]]:
             print(f"Looking up on {model}")
@@ -166,6 +167,7 @@ class AppealGenerator(object):
                     results = model.parallel_infer(
                         prompt=prompt,
                         patient_context=patient_context,
+                        plan_context=plan_context,
                         infer_type=infer_type,
                     )
                 else:
@@ -175,6 +177,7 @@ class AppealGenerator(object):
                             model.infer,
                             prompt=prompt,
                             patient_context=patient_context,
+                            plan_context=plan_context,
                             infer_type=infer_type,
                         )
                     ]
@@ -187,6 +190,7 @@ class AppealGenerator(object):
                         model.infer,
                         prompt=prompt,
                         patient_context=patient_context,
+                        plan_context=plan_context,
                         infer_type=infer_type,
                     )
                 ]
@@ -201,11 +205,13 @@ class AppealGenerator(object):
             medical_context += denial.qa_context
         if denial.health_history is not None:
             medical_context += denial.health_history
+        plan_context = denial.plan_context
         calls = [
             {
                 "model": self.remotehealth,
                 "prompt": open_prompt,
                 "patient_context": medical_context,
+                "plan_context": plan_context,
                 "infer_type": "full",
             },
         ]
@@ -218,6 +224,7 @@ class AppealGenerator(object):
                         "prompt": open_prompt,
                         "patient_context": medical_context,
                         "infer_type": "full",
+                        "plan_context": plan_context,
                     }
                 ]
             )
@@ -235,6 +242,7 @@ class AppealGenerator(object):
                         "prompt": open_medically_necessary_prompt,
                         "patient_context": medical_context,
                         "infer_type": "medically_necessary",
+                        "plan_context": plan_context,
                     },
                 ]
             )

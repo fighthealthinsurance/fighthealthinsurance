@@ -15,7 +15,7 @@ from fighthealthinsurance.models import (
 
 class DenialBase(ABC):
     @abstractmethod
-    def get_denialtype(self, text):
+    def get_denialtype(self, denial_text, procedure, diagnosis):
         pass
 
     @abstractmethod
@@ -60,7 +60,7 @@ class ProcessDenialCodes(DenialBase):
         except Exception:
             self.preventive_diagnosis = {}
 
-    def get_denialtype(self, text):
+    def get_denialtype(self, denial_text, procedure, diagnosis):
         """Get the denial type. For now short circuit logic."""
         icd_codes = self.icd10_re.finditer(text)
         for i in icd_codes:
@@ -124,13 +124,31 @@ class ProcessDenialRegex(DenialBase):
         print("Getting procedure and diagnosis")
         return (self.get_procedure(text), self.get_diagnosis(text))
 
-    def get_denialtype(self, text):
-        print(f"Getting denial types for {text}")
+    def get_denialtype(self, denial_text, procedure, diagnosis):
+        print(f"Getting denial types for {denial_text}")
         denials = []
         for d in self.denialTypes:
-            print(f"Exploring {d} w/ {d.regex} & {d.negative_regex}")
-            if d.regex.pattern != "" and d.regex.search(text) is not None:
-                print("positive regex match")
+            if (
+                (
+                    d.regex is not None
+                    and d.regex.pattern != ""
+                    and d.regex.search(denial_text) is not None
+                )
+                or (
+                    procedure is not None
+                    and (
+                        d.procedure_regex is not None
+                        and d.procedure_regex.search(procedure) is not None
+                    )
+                )
+                or (
+                    diagnosis is not None
+                    and (
+                        d.diagnosis_regex is not None
+                        and d.diagnosis_regex.search(diagnosis) is not None
+                    )
+                )
+            ):
                 if (
                     d.negative_regex.pattern == ""
                     or d.negative_regex.search(text) is None

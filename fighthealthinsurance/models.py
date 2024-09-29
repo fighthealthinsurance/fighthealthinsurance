@@ -121,6 +121,12 @@ class DenialTypes(models.Model):
     )
     name = models.CharField(max_length=300, primary_key=False)
     regex = RegexField(max_length=400, re_flags=re.IGNORECASE | re.UNICODE | re.M)
+    diagnosis_regex = RegexField(
+        max_length=400, re_flags=re.IGNORECASE | re.UNICODE | re.M, null=True
+    )
+    procedure_regex = RegexField(
+        max_length=400, re_flags=re.IGNORECASE | re.UNICODE | re.M, null=True
+    )
     negative_regex = RegexField(
         max_length=400, re_flags=re.IGNORECASE | re.UNICODE | re.M
     )
@@ -208,6 +214,7 @@ class Denial(models.Model):
     denial_type = models.ManyToManyField(DenialTypes, through=DenialTypesRelation)
     plan_type = models.ManyToManyField(PlanType, through=PlanTypesRelation)
     plan_source = models.ManyToManyField(PlanSource, through=PlanSourceRelation)
+    employer_name = models.CharField(max_length=300, null=True)
     regulator = models.ForeignKey(Regulator, null=True, on_delete=models.SET_NULL)
     urgent = models.BooleanField(default=False)
     pre_service = models.BooleanField(default=False)
