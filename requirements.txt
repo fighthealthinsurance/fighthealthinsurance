@@ -58,3 +58,4 @@ totallylegit-django-rest-framework-braces
 stripe==5.5.0
 pymupdf
 beautifulsoup4==4.12.3
+django-cors-headers

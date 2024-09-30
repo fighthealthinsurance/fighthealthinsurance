@@ -73,6 +73,7 @@ class Base(Configuration):
         "memoize",
         "django_recaptcha",
         "rest_framework",
+        "corsheaders",
     ]
 
     COMPRESS_JS_FILTERS = [
@@ -104,6 +105,8 @@ class Base(Configuration):
         "django.middleware.clickjacking.XFrameOptionsMiddleware",
         "cookie_consent.middleware.CleanCookiesMiddleware",
         "django_user_agents.middleware.UserAgentMiddleware",
+        "corsheaders.middleware.CorsMiddleware",
+        "django.middleware.common.CommonMiddleware",
     ]
 
     GOOGLE_ANALYTICS = {
@@ -189,6 +192,15 @@ class Base(Configuration):
     # https://docs.djangoproject.com/en/4.0/ref/settings/#default-auto-field
 
     DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+    # CORS settings
+    CORS_URLS_REGEX = r"^/api/.*$"
+    CORS_ALLOWED_ORIGINS_REGEXES = [
+        "https://fhi-react.vercel.app",
+        "http://localhost:\d+",
+        "https://localhost:\d+",
+        "http://127.0.0.1:\d+",
+    ]
 
     # STRIPE SETTINGS
     @property
