@@ -96,6 +96,7 @@ class Base(Configuration):
     )
 
     MIDDLEWARE = [
+        "corsheaders.middleware.CorsMiddleware",
         "django.middleware.security.SecurityMiddleware",
         "django.contrib.sessions.middleware.SessionMiddleware",
         "django.middleware.common.CommonMiddleware",
@@ -105,8 +106,6 @@ class Base(Configuration):
         "django.middleware.clickjacking.XFrameOptionsMiddleware",
         "cookie_consent.middleware.CleanCookiesMiddleware",
         "django_user_agents.middleware.UserAgentMiddleware",
-        "corsheaders.middleware.CorsMiddleware",
-        "django.middleware.common.CommonMiddleware",
     ]
 
     GOOGLE_ANALYTICS = {
@@ -194,13 +193,16 @@ class Base(Configuration):
     DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
     # CORS settings
-    CORS_URLS_REGEX = r"^/api/.*$"
-    CORS_ALLOWED_ORIGINS_REGEXES = [
-        "https://fhi-react.vercel.app",
-        "http://localhost:\d+",
-        "https://localhost:\d+",
-        "http://127.0.0.1:\d+",
-    ]
+    CORS_URLS_REGEX = r"^/ziggy/.*$"
+    # CORS_ALLOWED_ORIGINS_REGEXES = [
+    #    "https://fhi-react.vercel.app",
+    #    "http://localhost:\d+",
+    #    "https://localhost:\d+",
+    #    "http://127.0.0.1:\d+",
+    # ]
+    CORS_ALLOW_ALL_ORIGINS = True
+    CORS_ALLOW_PRIVATE_NETWORK = True
+    CORS_ALLOW_CREDENTIALS = True
 
     # STRIPE SETTINGS
     @property
