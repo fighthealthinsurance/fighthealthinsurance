@@ -7,7 +7,7 @@ FROM python:3.11-bullseye as base-amd64
 FROM base-${TARGETARCH}
 
 # install nginx
-RUN apt-get update && apt-get install nginx vim emacs libmariadb-dev-compat default-libmysqlclient-dev libssl-dev nodejs npm python3-opencv libgl1 tesseract-ocr nano nfs-common -y
+RUN apt-get update && apt-get install nginx vim emacs libmariadb-dev-compat default-libmysqlclient-dev libssl-dev nodejs npm python3-opencv libgl1 tesseract-ocr nano nfs-common sudo -y
 COPY /conf/nginx.default /etc/nginx/sites-available/default
 RUN ln -sf /dev/stdout /var/log/nginx/access.log \
     && ln -sf /dev/stderr /var/log/nginx/error.log
@@ -27,6 +27,7 @@ ADD --chown=www-data:www-data fighthealthinsurance /opt/fighthealthinsurance/fig
 COPY --chown=www-data:www-data scripts/start-server.sh /opt/fighthealthinsurance/
 COPY --chown=www-data:www-data *.py /opt/fighthealthinsurance/
 WORKDIR /opt/fighthealthinsurance/
+RUN sudo -u www-data HOME=$(pwd) python initial.py
 # RUN chown -R www-data:www-data /opt/fighthealthinsurance
 # start server
 EXPOSE 80

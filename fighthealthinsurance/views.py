@@ -21,7 +21,6 @@ from django.views.decorators.cache import cache_control
 
 import stripe
 import numpy as np
-import uszipcode
 from asgiref.sync import async_to_sync
 import stripe
 
