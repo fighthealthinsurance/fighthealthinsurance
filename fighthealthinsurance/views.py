@@ -247,6 +247,7 @@ class ChooseAppeal(View):
                 denial_id=denial_id, hashed_email=hashed_email
             ).get()
             denial.appeal_text = appeal_text
+            appeal_info_extracted = ""
             denial.save()
             return render(
                 request,
@@ -255,6 +256,7 @@ class ChooseAppeal(View):
                     "appeal": appeal_text,
                     "user_email": email,
                     "denial_id": denial_id,
+                    "appeal_info_extract": appeal_info_extracted,
                 },
             )
             pa = ProposedAppeal(appeal_text=appeal_text, for_denial=denial, chosen=True)
