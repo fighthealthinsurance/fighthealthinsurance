@@ -8,6 +8,7 @@ from uuid import UUID
 
 from django.conf import settings
 from django.db import models
+from django.db.models import UniqueConstraint
 from django.db.models.functions import Now
 
 from regex_field.fields import RegexField
@@ -214,6 +215,30 @@ class FollowUpDocuments(models.Model):
     # If the denial is deleted it's either SPAM or a removal request in either case
     # we cascade the delete
     denial = models.ForeignKey("Denial", on_delete=models.CASCADE)
+
+
+class PubMedArticleSummarized(models.Model):
+    """PubMedArticles with a summary for the given query."""
+
+    class Meta:
+        UniqueConstraint(fields=["doi", "pmid", "query"], name="unique_doc_query_combo")
+
+    pmid = models.TextField(primary_key=False, blank=True)
+    doi = models.TextField(primary_key=False, blank=True)
+    query = models.TextField(primary_key=False, blank=True)
+    title = models.TextField(blank=True, null=True)
+    abstract = models.TextField(primary_key=False, blank=True, null=True)
+    basic_summary = models.TextField(primary_key=False)
+    says_effective = models.BooleanField()
+    publication_date = models.DateTimeField()
+    retrival_date = models.TextField(blank=True, null=True)
+
+
+class PubQueryMedData(models.Model):
+    internal_id = models.AutoField(primary_key=True)
+    query = models.TextField(null=False, max_length=300)
+    articles = models.TextField(null=True)  # Comma seperated articles
+    query_date = models.DateTimeField(auto_now_add=True)
 
 
 class Denial(models.Model):
