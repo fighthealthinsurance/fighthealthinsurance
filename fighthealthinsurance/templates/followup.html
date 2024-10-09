@@ -1,0 +1,33 @@
+{% extends 'base.html' %}
+{% block title %}
+Follow Up On Your Health Insurance Appeal
+{% endblock title %}
+
+{% load compress %}
+{% load static %}
+
+{% block scriptmagic %}
+{% endblock scriptmagic %}
+{% block content %}
+<h2>Provide Feedback on your Fight Health Insurance Process</h2>
+<p>Thank you so much for taking the time to let us know a bit about how your experience using fight health insurance went. The most important things for us to know are:
+</p>
+<ul>
+  <li>Which appeal did you choose & why (or why none)?</li>
+  <li>How did the appeal go?</li>
+  <li>Anything else</li>
+</ul>
+<section class="scan-section mt-2">
+  <div class="container">
+    <form action="{{ request.get_full_path }}" method="post" enctype="multipart/form-data">
+      {% csrf_token %}
+      <table>
+	{{ form.as_table }}
+      </table>
+      <div class="form-group mt-2">
+	<button type="submit" id="submit" class="btn btn-green">Save Feedback</button>
+      </div>
+    </form>
+  </div>
+</section>
+{% endblock content %}

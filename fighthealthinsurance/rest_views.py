@@ -59,6 +59,21 @@ class DenialCreator(APIView):
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
+class FollowUp(APIView):
+    def post(self, request):
+        pythondata = json.loads(request.body)
+        # Make sure we got what we expected
+        serializer = FollowUpFormSerializer(data=pythondata)
+        if serializer.is_valid():
+            response = FollowUpHelper.store_follow_up_result(
+                **serializer.validated_data
+            )
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        else:
+            print(f"Serialization error {serializer.errors}")
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
 class AppealsBackend(APIView):
     """Streaming back the appeals as json :D"""
 

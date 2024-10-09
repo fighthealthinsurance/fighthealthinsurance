@@ -1,0 +1,19 @@
+{% extends 'base.html' %}
+{% block title %}
+Thank you!
+{% endblock title %}
+
+{% load compress %}
+{% load static %}
+
+{% block scriptmagic %}
+<script type="module">
+  import * as main from '{% static "js/dist/scrub.bundle.js" %}';
+</script>
+{% endblock scriptmagic %}
+{% block content %}
+<h2>Thank you for your feedback</h2>
+<p>
+  Your feedback helps us improve for the future.
+</p>
+{% endblock content %}

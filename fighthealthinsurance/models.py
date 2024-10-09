@@ -3,6 +3,7 @@ import os
 import re
 import sys
 from typing import Optional
+import uuid
 from uuid import UUID
 
 from django.conf import settings
@@ -142,7 +143,9 @@ class DenialTypes(models.Model):
                 return None
         else:
             try:
-                return getattr(sys.modules["fighthealthinsurance.forms"], self.form)
+                return getattr(
+                    sys.modules["fighthealthinsurance.question_forms"], self.form
+                )
             except Exception as e:
                 print(f"Error loading form {e}")
                 return None
@@ -205,8 +208,17 @@ class PlanDocuments(models.Model):
     denial = models.ForeignKey("Denial", on_delete=models.CASCADE)
 
 
+class FollowUpDocuments(models.Model):
+    document_id = models.AutoField(primary_key=True)
+    followup_document = models.FileField(null=True, storage=settings.EXTERNAL_STORAGE)
+    # If the denial is deleted it's either SPAM or a removal request in either case
+    # we cascade the delete
+    denial = models.ForeignKey("Denial", on_delete=models.CASCADE)
+
+
 class Denial(models.Model):
     denial_id = models.AutoField(primary_key=True)
+    uuid = models.UUIDField(primary_key=False, default=uuid.uuid4, editable=False)
     hashed_email = models.CharField(max_length=300, primary_key=False)
     denial_text = models.TextField(primary_key=False)
     denial_type_text = models.TextField(max_length=200, primary_key=False, null=True)
@@ -232,6 +244,16 @@ class Denial(models.Model):
     semi_sekret = models.CharField(max_length=100, default=sekret_gen)
     plan_id = models.CharField(max_length=200, primary_key=False, null=True)
     state = models.CharField(max_length=4, primary_key=False, null=True)
+    follow_up_sent = models.BooleanField(default=False)
+    follow_up_sent_date = models.DateTimeField(null=True)
+    user_responsed = models.BooleanField(default=False)
+    more_follow_up_requested = models.BooleanField(default=False)
+    more_follow_up_sent = models.BooleanField(default=False)
+    more_follow_up_sent_date = models.DateTimeField(null=True)
+    follow_up_semi_sekret = models.CharField(max_length=100, default=sekret_gen)
+    user_comments = models.TextField(primary_key=False, null=True)
+    appeal_result = models.CharField(max_length=200, null=True)
+    last_interaction = models.DateTimeField(auto_now=True)
 
     def follow_up(self):
         return self.raw_email is not None and "@" in self.raw_email

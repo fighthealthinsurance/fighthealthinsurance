@@ -25,6 +25,22 @@ urlpatterns = [
     path("ziggy/rest/", include(rest_urls)),
     path("timbit/admin/", admin.site.urls),
     path("error", views.ErrorView.as_view()),
+    # So if there's an extra / or . at the end we ignore it.
+    path(
+        "v0/followup/<uuid:uuid>/<slug:hashed_email>/<slug:follow_up_semi_sekret>",
+        views.FollowUpView.as_view(),
+        name="followup",
+    ),
+    path(
+        "v0/followup/<uuid:uuid>/<slug:hashed_email>/<slug:follow_up_semi_sekret>.",
+        views.FollowUpView.as_view(),
+        name="followup",
+    ),
+    path(
+        "v0/followup/<uuid:uuid>/<slug:hashed_email>/<slug:followup_semi_sekret>/",
+        views.FollowUpView.as_view(),
+        name="followup",
+    ),
     path("scan", views.ProcessView.as_view(), name="scan"),
     path("server_side_ocr", views.OCRView.as_view(), name="server_side_ocr"),
     path(

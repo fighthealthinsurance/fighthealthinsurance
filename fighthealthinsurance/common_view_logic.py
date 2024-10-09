@@ -5,11 +5,14 @@ from typing import Any, Tuple
 
 from django.core.validators import validate_email
 from django.forms import Form
+from django.utils import timezone
 from django.http import StreamingHttpResponse
 
 import uszipcode
 
-from fighthealthinsurance.forms import *
+from fighthealthinsurance.core_forms import *
+from fighthealthinsurance.question_forms import *
+from fighthealthinsurance.form_utils import *
 from fighthealthinsurance.generate_appeal import *
 from fighthealthinsurance.models import *
 
@@ -101,6 +104,52 @@ class NextStepInfoSerializable:
     outside_help_details: list[str]
     combined_form: list[Any]
     semi_sekret: str
+
+
+class FollowUpHelper:
+    @classmethod
+    def fetch_denial(
+        cls, uuid: str, follow_up_semi_sekret: str, hashed_email: str, **kwargs
+    ):
+        denial = Denial.objects.filter(
+            uuid=uuid, follow_up_semi_sekret=follow_up_semi_sekret
+        ).get()
+        if denial is None:
+            raise Exception(
+                f"Failed to find denial for {uuid} & {follow_up_semi_sekret}"
+            )
+        return denial
+
+    @classmethod
+    def store_follow_up_result(
+        cls,
+        uuid: str,
+        follow_up_semi_sekret: str,
+        hashed_email: str,
+        user_comments: str,
+        appeal_result: str,
+        follow_up_again: bool,
+        followup_documents,
+    ):
+        denial = cls.fetch_denial(
+            uuid=uuid,
+            follow_up_semi_sekret=follow_up_semi_sekret,
+            hashed_email=hashed_email,
+        )
+        # Store the follow up response returns nothing but may raise
+        denial_id = denial.denial_id
+        for document in followup_documents:
+            fd = FollowUpDocuments.objects.create(
+                followup_document=document, denial=denial
+            )
+            fd.save()
+        denial.appeal_result = appeal_result
+        denial.user_comments = (denial.user_comments or "") + user_comments
+        # If the user requested more follow up we reset the more follow up sent flag to false
+        denial.more_follow_up_requested = follow_up_again
+        denial.more_follow_up_sent = False
+        denial.last_interaction = timezone.now()
+        denial.save()
 
 
 class FindNextStepsHelper:

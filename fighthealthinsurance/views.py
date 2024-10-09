@@ -25,12 +25,28 @@ from asgiref.sync import async_to_sync
 import stripe
 
 from fighthealthinsurance.common_view_logic import *
-from fighthealthinsurance.forms import *
+from fighthealthinsurance.core_forms import *
+from fighthealthinsurance.question_forms import *
 from fighthealthinsurance.generate_appeal import *
 from fighthealthinsurance.models import *
 from fighthealthinsurance.utils import *
 
 appealGenerator = AppealGenerator()
+
+
+class FollowUpView(generic.FormView):
+    template_name = "followup.html"
+    form_class = FollowUpForm
+
+    def get_initial(self):
+        # Set the initial arguments to the form based on the URL route params.
+        # Also make sure we can resolve the denial
+        denial = FollowUpHelper.fetch_denial(**self.kwargs)
+        return self.kwargs
+
+    def form_valid(self, form):
+        FollowUpHelper.store_follow_up_result(**form.cleaned_data)
+        return render(self.request, "followup_thankyou.html")
 
 
 class ProVersionThankYouView(generic.TemplateView):
@@ -72,7 +88,6 @@ class ProVersionView(generic.FormView):
             )
             checkout_url = checkout.url
             return redirect(checkout_url)
-        # TODO: Stripe magic for folks who want it.
         return render(self.request, "professional_thankyou.html")
 
 
