@@ -1,7 +1,9 @@
 from stopit import ThreadingTimeout as Timeout
 from django.core.files.storage import Storage
+from django.utils.deconstruct import deconstructible
 
 
+@deconstructible(path="fighthealthinsurance.combined_storage")
 class CombinedStorage(Storage):
     """A combined storage backend that uses timeouts."""
 
