@@ -373,7 +373,7 @@ class RemoteOpenLike(RemoteModel):
             api_base = self.api_base
         print(f"Looking up model {model} using {api_base} and {prompt}")
         if self.api_base is None:
-            return api_base
+            return None
         if self.token is None:
             print(f"Error no Token provided for {model}.")
         if prompt is None:

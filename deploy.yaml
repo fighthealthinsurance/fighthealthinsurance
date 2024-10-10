@@ -126,6 +126,9 @@ metadata:
     cert-manager.io/issue-temporary-certificate: "true"
     acme.cert-manager.io/http01-edit-in-place: "true"
     cert-manager.io/renew-before: "20d"
+    nginx.ingress.kubernetes.io/affinity: "cookie"
+    nginx.ingress.kubernetes.io/session-cookie-name: "route"
+    nginx.ingress.kubernetes.io/session-cookie-max-age: "30000"
 spec:
   ingressClassName: nginx
   tls:

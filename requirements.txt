@@ -54,3 +54,5 @@ typing-extensions
 urllib3
 uszipcode
 werkzeug
+django-minio-storage
+stopit

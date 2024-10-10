@@ -24,13 +24,13 @@ python min_version.py
 package_command=''
 
 # Are we sort of connected to the backend?
-if kubectl get service -n totallylegitco vllm-health-svc; then
-  export HEALTH_BACKEND_PORT=4280
-  export HEALTH_BACKEND_HOST=localhost
-  kubectl port-forward -n totallylegitco service/vllm-health-svc 4280:80 &
-else
+#if kubectl get service -n totallylegitco vllm-health-svc; then
+#  export HEALTH_BACKEND_PORT=4280
+#  export HEALTH_BACKEND_HOST=localhost
+#  kubectl port-forward -n totallylegitco service/vllm-health-svc 4280:80 &
+#else
   echo 'No connection to kube vllm health svc'
-fi
+#fi
 echo "Setup to use $HEALTH_BACKEND_HOST:$HEALTH_BACKEND_PORT"
 if command -v apt-get; then
   package_command="apt-get install -y"

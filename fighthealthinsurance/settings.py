@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import *
 
 from configurations import Configuration
+from fighthealthinsurance.combined_storage import CombinedStorage
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "fighthealthinsurance.settings")
 os.environ.setdefault("DJANGO_CONFIGURATION", os.getenv("ENVIRONMENT", "Dev"))
@@ -42,7 +43,9 @@ class Base(Configuration):
     MEDIA_ROOT = "media"
     MEDIA_URL = "/media/"
 
+    LOCALISH_STORAGE_LOCATION = "localish_data"
     EXTERNAL_STORAGE_LOCATION = "external_data"
+    EXTERNAL_STORAGE_LOCATION_B = "external_data_b"
 
     NEWSLETTER_THUMBNAIL = "sorl-thumbnail"
 
@@ -225,6 +228,24 @@ class Base(Configuration):
 
         return FileSystemStorage(location=self.EXTERNAL_STORAGE_LOCATION)
 
+    @property
+    def EXTERNAL_STORAGE_B(self):
+        from django.core.files.storage import FileSystemStorage
+
+        return FileSystemStorage(location=self.EXTERNAL_STORAGE_LOCATION_B)
+
+    @property
+    def LOCALISH_STORAGE(self):
+        from django.core.files.storage import FileSystemStorage
+
+        return FileSystemStorage(location=self.LOCALISH_STORAGE_LOCATION)
+
+    @property
+    def COMBINED_STORAGE(self):
+        return CombinedStorage(
+            self.LOCALISH_STORAGE, self.EXTERNAL_STORAGE, self.EXTERNAL_STORAGE_B
+        )
+
 
 class Dev(Base):
     DEBUG = True
@@ -309,3 +330,20 @@ class Prod(Base):
             },
         },
     }
+
+    MINIO_STORAGE_ACCESS_KEY = os.getenv("EX_MINIO_ACCESS", None)
+    MINIO_STORAGE_SECRET_KEY = os.getenv("EX_MINIO_SECRET", None)
+    MINIO_STORAGE_REGION = os.getenv("EX_MINIO_REGION", None)
+    MINIO_STORAGE_ENDPOINT = os.getenv("EX_MINIO_ENDPOINT", None)
+    MINIO_CERT_CHECK = os.getenv("EX_MINIO_CERT_CHECK", "True") == "True"
+    MINIO_STORAGE_USE_HTTPS = os.getenv("EX_USE_HTTPS", "True") == "True"
+
+    @property
+    def EXTERNAL_STORAGE_B(self):
+        try:
+            from minio_storage.storage import MinioStorage
+
+            return MinioStorage(bucket_name=os.getenv("EX_MINIO_BUCKET"))
+        except Exception as e:
+            print(f"Failed to setup minio storage")
+            return None

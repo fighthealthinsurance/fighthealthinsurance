@@ -203,7 +203,7 @@ def sekret_gen():
 
 class PlanDocuments(models.Model):
     plan_document_id = models.AutoField(primary_key=True)
-    plan_document = models.FileField(null=True, storage=settings.EXTERNAL_STORAGE)
+    plan_document = models.FileField(null=True, storage=settings.COMBINED_STORAGE)
     # If the denial is deleted it's either SPAM or a removal request in either case
     # we cascade the delete
     denial = models.ForeignKey("Denial", on_delete=models.CASCADE)
@@ -211,7 +211,7 @@ class PlanDocuments(models.Model):
 
 class FollowUpDocuments(models.Model):
     document_id = models.AutoField(primary_key=True)
-    followup_document = models.FileField(null=True, storage=settings.EXTERNAL_STORAGE)
+    followup_document = models.FileField(null=True, storage=settings.COMBINED_STORAGE)
     # If the denial is deleted it's either SPAM or a removal request in either case
     # we cascade the delete
     denial = models.ForeignKey("Denial", on_delete=models.CASCADE)
