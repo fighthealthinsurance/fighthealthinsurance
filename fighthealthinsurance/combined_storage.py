@@ -3,7 +3,7 @@ from django.core.files.storage import Storage
 from django.utils.deconstruct import deconstructible
 
 
-@deconstructible(path="fighthealthinsurance.combined_storage")
+@deconstructible(path="fighthealthinsurance.combined_storage.CombinedStorage")
 class CombinedStorage(Storage):
     """A combined storage backend that uses timeouts."""
 
