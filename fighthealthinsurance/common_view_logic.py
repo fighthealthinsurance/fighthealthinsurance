@@ -129,7 +129,8 @@ class FollowUpHelper:
         user_comments: str,
         appeal_result: str,
         follow_up_again: bool,
-        followup_documents,
+        medicare_someone_to_help: bool = False,
+        followup_documents=[],
     ):
         denial = cls.fetch_denial(
             uuid=uuid,
@@ -149,6 +150,7 @@ class FollowUpHelper:
         denial.more_follow_up_requested = follow_up_again
         denial.more_follow_up_sent = False
         denial.last_interaction = timezone.now()
+        denial.follow_up_medicare_someone_to_help = medicare_someone_to_help
         denial.save()
 
 

@@ -2,6 +2,7 @@ beautifulsoup4==4.12.3
 black
 celery
 django>=5.0.0
+django-celery
 django-celery-beat
 django-cms
 djangocms-attributes-field
@@ -48,7 +49,7 @@ sorl-thumbnail
 sqlalchemy_mate==2.0.0.0 # uszipcode issue see https://github.com/MacHu-GWU/uszipcode-project/issues/79
 stripe
 stripe==5.5.0
-totallylegit-django-rest-framework-braces # Forked from django-rest-framework-braces
+totallylegit-django-rest-framework-braces # forked from django-rest-framework-braces
 types-requests
 typing-extensions
 urllib3

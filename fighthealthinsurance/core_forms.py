@@ -145,6 +145,10 @@ class FollowUpForm(forms.Form):
         required=False, widget=forms.Textarea(attrs={"cols": 80, "rows": 5})
     )
     appeal_result = forms.ChoiceField(choices=Appeal_Result_Choices, required=False)
+    medicare_someone_to_help = forms.BooleanField(
+        required=False,
+        label="If you have a medicare plan would you be interested in someone handling the appeal process for you?",
+    )
     follow_up_again = forms.BooleanField(required=False, label="Follow up again")
     followup_documents = MultipleFileField(
         required=False,

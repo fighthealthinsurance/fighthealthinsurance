@@ -25,6 +25,7 @@ for model in models:
         "django.contrib" not in model.__module__
         and "newsletter" not in model.__module__
         and "cookie_consent" not in model.__module__
+        and "celery" not in model.__module__
     ):
         print(f"Registering {model}")
         try:
