@@ -13,6 +13,8 @@ from django.db.models.functions import Now
 
 from regex_field.fields import RegexField
 
+from fighthealthinsurance.utils import sekret_gen
+
 
 class InterestedProfessional(models.Model):
     id = models.AutoField(primary_key=True)
@@ -40,12 +42,31 @@ class FollowUpType(models.Model):
         return self.name
 
 
+class FollowUp(models.Model):
+    followup_result_id = models.AutoField(primary_key=True)
+    hashed_email = models.CharField(max_length=200, null=True)
+    denial_id = models.ForeignKey("Denial", on_delete=models.CASCADE)
+    more_follow_up_requested = models.BooleanField(default=False)
+    follow_up_medicare_someone_to_help = models.BooleanField(default=False)
+    user_comments = models.TextField(primary_key=False, null=True)
+    quote = models.TextField(primary_key=False, null=True)
+    use_quote = models.BooleanField(default=False)
+    email = models.CharField(max_length=300, null=True)
+    name_for_quote = models.TextField(primary_key=False, null=True)
+    appeal_result = models.CharField(max_length=200, null=True)
+    response_date = models.DateField(auto_now=False, auto_now_add=True)
+
+
 class FollowUpSched(models.Model):
     follow_up_id = models.AutoField(primary_key=True)
     email = models.CharField(max_length=300, primary_key=False)
-    follow_up_type = models.ForeignKey(FollowUpType, on_delete=models.CASCADE)
-    follow_up_date = models.DateField(auto_now=False)
+    follow_up_type = models.ForeignKey(
+        FollowUpType, null=True, on_delete=models.SET_NULL
+    )
     initial = models.DateField(auto_now=False, auto_now_add=True)
+    follow_up_date = models.DateField(auto_now=False, auto_now_add=False)
+    follow_up_sent = models.BooleanField(default=False)
+    follow_up_sent_date = models.DateTimeField(null=True)
     # If the denial is deleted it's either SPAM or a PII removal request
     # in either case lets delete the scheduled follow ups.
     denial_id = models.ForeignKey("Denial", on_delete=models.CASCADE)
@@ -197,10 +218,6 @@ class PlanSourceRelation(models.Model):
     src = models.ForeignKey(DataSource, on_delete=models.SET_NULL, null=True)
 
 
-def sekret_gen():
-    return str(UUID(bytes=os.urandom(16), version=4))
-
-
 class PlanDocuments(models.Model):
     plan_document_id = models.AutoField(primary_key=True)
     plan_document = models.FileField(null=True, storage=settings.COMBINED_STORAGE)
@@ -211,10 +228,11 @@ class PlanDocuments(models.Model):
 
 class FollowUpDocuments(models.Model):
     document_id = models.AutoField(primary_key=True)
-    followup_document = models.FileField(null=True, storage=settings.COMBINED_STORAGE)
+    follow_up_document = models.FileField(null=True, storage=settings.COMBINED_STORAGE)
     # If the denial is deleted it's either SPAM or a removal request in either case
     # we cascade the delete
     denial = models.ForeignKey("Denial", on_delete=models.CASCADE)
+    follow_up_id = models.ForeignKey("FollowUp", on_delete=models.CASCADE, null=True)
 
 
 class PubMedArticleSummarized(models.Model):
@@ -269,17 +287,9 @@ class Denial(models.Model):
     semi_sekret = models.CharField(max_length=100, default=sekret_gen)
     plan_id = models.CharField(max_length=200, primary_key=False, null=True)
     state = models.CharField(max_length=4, primary_key=False, null=True)
-    follow_up_sent = models.BooleanField(default=False)
-    follow_up_sent_date = models.DateTimeField(null=True)
-    user_responsed = models.BooleanField(default=False)
-    more_follow_up_requested = models.BooleanField(default=False)
-    more_follow_up_sent = models.BooleanField(default=False)
-    more_follow_up_sent_date = models.DateTimeField(null=True)
-    follow_up_semi_sekret = models.CharField(max_length=100, default=sekret_gen)
-    follow_up_medicare_someone_to_help = models.BooleanField(default=False)
-    user_comments = models.TextField(primary_key=False, null=True)
     appeal_result = models.CharField(max_length=200, null=True)
     last_interaction = models.DateTimeField(auto_now=True)
+    follow_up_semi_sekret = models.CharField(max_length=100, default=sekret_gen)
 
     def follow_up(self):
         return self.raw_email is not None and "@" in self.raw_email

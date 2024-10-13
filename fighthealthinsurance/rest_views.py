@@ -59,7 +59,7 @@ class DenialCreator(APIView):
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
-class FollowUp(APIView):
+class FollowUpAPI(APIView):
     def post(self, request):
         pythondata = json.loads(request.body)
         # Make sure we got what we expected

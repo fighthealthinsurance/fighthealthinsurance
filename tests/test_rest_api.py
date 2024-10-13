@@ -64,6 +64,7 @@ class DenialEndToEnd(APITestCase):
                     "pii": "true",
                     "tos": "true",
                     "privacy": "true",
+                    "store_raw_email": "true",  # Store the raw e-mail for the follow-up form
                 }
             ),
             content_type="application/json",

@@ -2,6 +2,7 @@ import json
 from dataclasses import dataclass
 from string import Template
 from typing import Any, Tuple
+import datetime
 
 from django.core.validators import validate_email
 from django.forms import Form
@@ -23,8 +24,9 @@ class RemoveDataHelper:
     @classmethod
     def remove_data_for_email(cls, email: str):
         hashed_email = Denial.get_hashed_email(email)
-        denials = Denial.objects.filter(hashed_email=hashed_email).delete()
+        Denial.objects.filter(hashed_email=hashed_email).delete()
         FollowUpSched.objects.filter(email=email).delete()
+        FollowUp.objects.filter(hashed_email=hashed_email).delete()
 
 
 states_with_caps = {
@@ -130,6 +132,10 @@ class FollowUpHelper:
         appeal_result: str,
         follow_up_again: bool,
         medicare_someone_to_help: bool = False,
+        email: Optional[str] = None,
+        quote: Optional[str] = None,
+        name_for_quote: Optional[str] = None,
+        use_quote: bool = False,
         followup_documents=[],
     ):
         denial = cls.fetch_denial(
@@ -139,18 +145,29 @@ class FollowUpHelper:
         )
         # Store the follow up response returns nothing but may raise
         denial_id = denial.denial_id
+        follow_up = FollowUp.objects.create(
+            hashed_email=hashed_email,
+            denial_id=denial,
+            more_follow_up_requested=follow_up_again,
+            follow_up_medicare_someone_to_help=medicare_someone_to_help,
+            use_quote=use_quote,
+            email=email,
+            name_for_quote=name_for_quote,
+            quote=quote,
+        )
+        # If they asked for additional follow up add a new schedule
+        if follow_up_again:
+            FollowUpSched.objects.create(
+                email=denial.raw_email,
+                denial_id=denial,
+                follow_up_date=denial.date + datetime.timedelta(days=15),
+            )
         for document in followup_documents:
             fd = FollowUpDocuments.objects.create(
-                followup_document=document, denial=denial
+                follow_up_document=document, denial=denial, follow_up_id=follow_up
             )
             fd.save()
         denial.appeal_result = appeal_result
-        denial.user_comments = (denial.user_comments or "") + user_comments
-        # If the user requested more follow up we reset the more follow up sent flag to false
-        denial.more_follow_up_requested = follow_up_again
-        denial.more_follow_up_sent = False
-        denial.last_interaction = timezone.now()
-        denial.follow_up_medicare_someone_to_help = medicare_someone_to_help
         denial.save()
 
 
@@ -309,6 +326,12 @@ class DenialCreatorHelper:
             raw_email=possible_email,
             health_history=health_history,
         )
+        if possible_email is not None:
+            FollowUpSched.objects.create(
+                email=possible_email,
+                follow_up_date=denial.date + datetime.timedelta(days=15),
+                denial_id=denial,
+            )
 
         for plan_document in plan_documents:
             pd = PlanDocuments.objects.create(

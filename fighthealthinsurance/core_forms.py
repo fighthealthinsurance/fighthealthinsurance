@@ -127,6 +127,10 @@ class PostInferedForm(DenialRefForm):
         captcha = ReCaptchaField(widget=ReCaptchaV2Checkbox())
 
 
+class FollowUpTestForm(forms.Form):
+    email = forms.CharField(required=True)
+
+
 class FollowUpForm(forms.Form):
     Appeal_Result_Choices = [
         ("Do not wish to disclose", "Do not wish to disclose"),
@@ -144,12 +148,24 @@ class FollowUpForm(forms.Form):
     user_comments = forms.CharField(
         required=False, widget=forms.Textarea(attrs={"cols": 80, "rows": 5})
     )
+    quote = forms.CharField(
+        required=False,
+        widget=forms.Textarea(attrs={"cols": 80, "rows": 5}),
+        label="Do you have a quote of your experience you'd be willing to share?",
+    )
+    use_quote = forms.BooleanField(required=False, label="Can we use/share your quote?")
+    name_for_quote = forms.CharField(required=False, label="Name to be used with quote")
+    email = forms.CharField(
+        required=False, label="Your e-mail if we can follow up with you more"
+    )
     appeal_result = forms.ChoiceField(choices=Appeal_Result_Choices, required=False)
     medicare_someone_to_help = forms.BooleanField(
         required=False,
         label="If you have a medicare plan would you be interested in someone handling the appeal process for you?",
     )
-    follow_up_again = forms.BooleanField(required=False, label="Follow up again")
+    follow_up_again = forms.BooleanField(
+        required=False, label="Would you like an automated follow up again"
+    )
     followup_documents = MultipleFileField(
         required=False,
         label="Optional: Any documents you wish to share",

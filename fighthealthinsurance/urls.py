@@ -17,13 +17,23 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import include, path
 from django.views.decorators.cache import cache_control, cache_page
+from django.contrib.admin.views.decorators import staff_member_required
 
 from fighthealthinsurance import views
 from fighthealthinsurance.rest_urls import rest_urls
+from fighthealthinsurance.followup_emails import (
+    ScheduleFollowUps,
+    FollowUpEmailSenderView,
+)
 
 urlpatterns = [
     path("ziggy/rest/", include(rest_urls)),
     path("timbit/admin/", admin.site.urls),
+    path("timbit/help/followup_sched", ScheduleFollowUps.as_view()),
+    path(
+        "timbit/help/followup_sender_test",
+        staff_member_required(FollowUpEmailSenderView.as_view()),
+    ),
     path("error", views.ErrorView.as_view()),
     # So if there's an extra / or . at the end we ignore it.
     path(
@@ -34,12 +44,12 @@ urlpatterns = [
     path(
         "v0/followup/<uuid:uuid>/<slug:hashed_email>/<slug:follow_up_semi_sekret>.",
         views.FollowUpView.as_view(),
-        name="followup",
+        name="followup-with-a-period",
     ),
     path(
         "v0/followup/<uuid:uuid>/<slug:hashed_email>/<slug:followup_semi_sekret>/",
         views.FollowUpView.as_view(),
-        name="followup",
+        name="followup-with-trailing-slash",
     ),
     path("scan", views.ProcessView.as_view(), name="scan"),
     path("server_side_ocr", views.OCRView.as_view(), name="server_side_ocr"),
