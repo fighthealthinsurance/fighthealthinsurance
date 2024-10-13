@@ -261,7 +261,7 @@ class PubQueryMedData(models.Model):
 
 class Denial(models.Model):
     denial_id = models.AutoField(primary_key=True)
-    uuid = models.UUIDField(primary_key=False, default=uuid.uuid4, editable=False)
+    uuid = models.CharField(max_length=300, primary_key=False, default=uuid.uuid4, editable=False)
     hashed_email = models.CharField(max_length=300, primary_key=False)
     denial_text = models.TextField(primary_key=False)
     denial_type_text = models.TextField(max_length=200, primary_key=False, null=True)
