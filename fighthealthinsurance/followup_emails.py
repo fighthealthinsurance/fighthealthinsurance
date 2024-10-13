@@ -76,8 +76,8 @@ class FollowUpEmailSender:
         selected_appeal = denial.chose_appeal()
         context = {
             "selected_appeal": selected_appeal,
-            "followup_link": "https://www.fighthealthinsurance.com" +
-            reverse(
+            "followup_link": "https://www.fighthealthinsurance.com"
+            + reverse(
                 "followup",
                 kwargs={
                     "uuid": denial.uuid,
