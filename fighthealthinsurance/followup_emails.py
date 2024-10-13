@@ -42,7 +42,12 @@ class FollowUpEmailSenderView(generic.FormView):
 
     def form_valid(self, form):
         s = FollowUpEmailSender()
-        sent = s.dosend(email=form.cleaned_data.get("email"))
+        field = form.cleaned_data.get("email")
+        try:
+            count = int(field)
+            sent = s.send_all(count=field)
+        except ValueError:
+            sent = s.dosend(email=field)
         return HttpResponse(str(sent))
 
 
@@ -53,9 +58,14 @@ class FollowUpEmailSender:
         )
         return candidates
 
-    def send_all(self) -> int:
+    def send_all(self, count: Optional[int] = None) -> int:
         candidates = self.find_candidates()
-        return len(list(map(lambda f: self.dosend(follow_up_sched=f), candidates)))
+        selected_candidates = candidates
+        if count is not None:
+            selected_candidates = candidates[:count]
+        return len(
+            list(map(lambda f: self.dosend(follow_up_sched=f), selected_candidates))
+        )
 
     def dosend(
         self,
@@ -63,11 +73,9 @@ class FollowUpEmailSender:
         email: Optional[str] = None,
     ) -> bool:
         if follow_up_sched is None and email is not None:
-            follow_up_sched = (
-                FollowUpSched.objects.filter(email=email)
-                .filter(follow_up_sent=False)
-                .get()
-            )
+            follow_up_sched = FollowUpSched.objects.filter(email=email).filter(
+                follow_up_sent=False
+            )[0]
         elif email is None and follow_up_sched is not None:
             email = follow_up_sched.email
         else:

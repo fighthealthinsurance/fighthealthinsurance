@@ -25,7 +25,7 @@ spec:
         special: web-primary-pod
     spec:
       containers:
-        - image: holdenk/fight-health-insurance:v0.5.3d
+        - image: holdenk/fight-health-insurance:v0.5.3f
           name: totallylegitco
           env:
           - name: PRIMARY
@@ -57,14 +57,14 @@ spec:
         group: fight-health-insurance-webbackend
     spec:
       topologySpreadConstraints:
-      - maxSkew: 1
+      - maxSkew: 2
         topologyKey: kubernetes.io/hostname
         whenUnsatisfiable: ScheduleAnyway
         labelSelector:
           matchLabels:
             app: fight-health-insurance
       containers:
-        - image: holdenk/fight-health-insurance:v0.5.3d
+        - image: holdenk/fight-health-insurance:v0.5.3f
           name: totallylegitco
           envFrom:
           - secretRef:
