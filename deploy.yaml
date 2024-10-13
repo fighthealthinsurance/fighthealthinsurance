@@ -25,7 +25,7 @@ spec:
         special: web-primary-pod
     spec:
       containers:
-        - image: holdenk/fight-health-insurance:v0.5.2c
+        - image: holdenk/fight-health-insurance:v0.5.3b
           name: totallylegitco
           env:
           - name: PRIMARY
@@ -46,7 +46,7 @@ metadata:
   labels:
     app: fight-health-insurance
 spec:
-  replicas: 4
+  replicas: 1
   selector:
     matchLabels:
       app: fight-health-insurance
@@ -64,7 +64,7 @@ spec:
           matchLabels:
             app: fight-health-insurance
       containers:
-        - image: holdenk/fight-health-insurance:v0.5.2c
+        - image: holdenk/fight-health-insurance:v0.5.3b
           name: totallylegitco
           envFrom:
           - secretRef:

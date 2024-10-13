@@ -76,14 +76,15 @@ class FollowUpEmailSender:
         selected_appeal = denial.chose_appeal()
         context = {
             "selected_appeal": selected_appeal,
-            "followup_link": reverse(
-                "followup",
-                kwargs={
-                    "uuid": denial.uuid,
-                    "hashed_email": denial.hashed_email,
-                    "follow_up_semi_sekret": denial.follow_up_semi_sekret,
-                },
-            ),
+            "followup_link": request.build_absolute_uri(
+                reverse(
+                    "followup",
+                    kwargs={
+                        "uuid": denial.uuid,
+                        "hashed_email": denial.hashed_email,
+                        "follow_up_semi_sekret": denial.follow_up_semi_sekret,
+                    },
+                )),
         }
 
         # First, render the plain text content.
