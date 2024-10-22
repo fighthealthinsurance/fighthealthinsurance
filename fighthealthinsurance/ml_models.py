@@ -8,6 +8,7 @@ import traceback
 from abc import ABC, abstractmethod
 from concurrent.futures import Future
 from functools import cache, lru_cache
+from stopit import ThreadingTimeout as Timeout
 from typing import Any, Callable, Iterable, List, Optional, Tuple, Union
 
 import icd10
@@ -89,6 +90,7 @@ class RemoteOpenLike(RemoteModel):
         self.model = model
         self.system_prompts = system_prompts
         self.max_len = 4096 * 8
+        self._timeout = 90
         self.procedure_response_regex = re.compile(
             r"\s*procedure\s*:?\s*", re.IGNORECASE
         )
@@ -317,7 +319,7 @@ class RemoteOpenLike(RemoteModel):
         plan_context=None,
         temperature=0.7,
     ) -> Optional[str]:
-        r = self.__infer(
+        r = self.__timeout_infer(
             system_prompt=system_prompt,
             prompt=prompt,
             patient_context=patient_context,
@@ -326,7 +328,7 @@ class RemoteOpenLike(RemoteModel):
             model=self.model,
         )
         if r is None and self.backup_model is not None:
-            r = self.__infer(
+            r = self.__timeout_infer(
                 system_prompt=system_prompt,
                 prompt=prompt,
                 patient_context=patient_context,
@@ -337,7 +339,7 @@ class RemoteOpenLike(RemoteModel):
         else:
             return r
         if r is None and self.backup_api_base is not None:
-            r = self.__infer(
+            r = self.__timeout_infer(
                 system_prompt=system_prompt,
                 prompt=prompt,
                 patient_context=patient_context,
@@ -353,7 +355,7 @@ class RemoteOpenLike(RemoteModel):
             and self.backup_api_base is not None
             and self.backup_model is not None
         ):
-            r = self.__infer(
+            r = self.__timeout_infer(
                 system_prompt=system_prompt,
                 prompt=prompt,
                 patient_context=patient_context,
@@ -365,6 +367,17 @@ class RemoteOpenLike(RemoteModel):
         else:
             print(f"Skipping fall through")
         return r
+
+    def __timeout_infer(
+        self,
+        *args,
+        **kwargs,
+    ) -> Optional[str]:
+        if self._timeout is not None:
+            with Timeout(self._timeout) as timeout_ctx:
+                return self.__infer(*args, **kwargs)
+        else:
+            return self.__infer(*args, **kwargs)
 
     def __infer(
         self,
