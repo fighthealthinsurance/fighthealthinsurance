@@ -1,3 +1,4 @@
+import random
 import concurrent
 import csv
 import itertools
@@ -6,7 +7,7 @@ import time
 import traceback
 from concurrent.futures import Future
 from functools import cache, lru_cache
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Iterator
 
 import icd10
 import requests
@@ -23,6 +24,7 @@ from fighthealthinsurance.models import (
     Regulator,
 )
 from fighthealthinsurance.process_denial import *
+from fighthealthinsurance.utils import as_available
 
 
 class AppealTemplateGenerator(object):
@@ -31,17 +33,14 @@ class AppealTemplateGenerator(object):
         self.main = main
         self.footer = footer
         self.combined = str("\n".join(prefaces + main + footer))
-        print(f"Template {self.combined} on {self} ")
 
     def generate_static(self):
-        print(f"Generating static on {self}")
         if "{medical_reason}" not in self.combined and self.combined != "":
             return self.combined
         else:
             return None
 
     def generate(self, medical_reason):
-        print(f"Generating non-static on {self}")
         result = self.combined.replace("{medical_reason}", medical_reason)
         if result != "":
             return result
@@ -58,6 +57,7 @@ class AppealGenerator(object):
         self.together = RemoteTogetherAI()
         self.palm = PalmAPI()
         self.octoai = OctoAI()
+        self.perplexity = RemotePerplexityInstruct()
 
     def get_procedure_and_diagnosis(self, denial_text=None, use_external=False):
         prompt = self.make_open_procedure_prompt(denial_text)
@@ -66,7 +66,7 @@ class AppealGenerator(object):
             self.remotehealth,
         ]
         if use_external:
-            models_to_try.append(self.octoai)
+            models_to_try.append(self.together)
         procedure = None
         diagnosis = None
         for model in models_to_try:
@@ -132,7 +132,9 @@ class AppealGenerator(object):
         else:
             return None
 
-    def make_appeals(self, denial, template_generator, medical_reasons=[]):
+    def make_appeals(
+        self, denial, template_generator, medical_reasons=[], non_ai_appeals=[]
+    ) -> Iterator[str]:
         open_prompt = self.make_open_prompt(
             denial_text=denial.denial_text,
             procedure=denial.procedure,
@@ -144,16 +146,15 @@ class AppealGenerator(object):
         )
 
         # TODO: use the streaming and cancellable APIs (maybe some fancy JS on the client side?)
-        generated_futures = []
 
-        # For any model that we have a prompt for try to call it
+        # For any model that we have a prompt for try to call it and return futures
         def get_model_result(
             model: RemoteModel,
             prompt: str,
             patient_context: Optional[str],
             plan_context: Optional[str],
             infer_type: str,
-        ) -> List[Future[str, Optional[str]]]:
+        ) -> List[Future[Tuple[str, Optional[str]]]]:
             print(f"Looking up on {model}")
             if prompt is None:
                 print(f"No prompt for {model} skipping")
@@ -220,7 +221,18 @@ class AppealGenerator(object):
             calls.extend(
                 [
                     {
-                        "model": self.octoai,
+                        "model": self.perplexity,
+                        "prompt": open_prompt,
+                        "patient_context": medical_context,
+                        "infer_type": "full",
+                        "plan_context": plan_context,
+                    }
+                ]
+            )
+            calls.extend(
+                [
+                    {
+                        "model": self.together,
                         "prompt": open_prompt,
                         "patient_context": medical_context,
                         "infer_type": "full",
@@ -230,10 +242,10 @@ class AppealGenerator(object):
             )
 
         # TODO: Add another external backup for external models.
-        backup_calls = []
+        backup_calls: List[Any] = []
         # If we need to know the medical reason ask our friendly LLMs
         static_appeal = template_generator.generate_static()
-        initial_appeals = []
+        initial_appeals = non_ai_appeals
         if static_appeal is None:
             calls.extend(
                 [
@@ -257,15 +269,14 @@ class AppealGenerator(object):
         print(f"Initial appeal {initial_appeals}")
         # Executor map wants a list for each parameter.
 
-        def make_calls_async(calls):
+        def make_async_model_calls(calls) -> List[Future[Iterable[str]]]:
             print(f"Calling models: {calls}")
-            generated_futures = itertools.chain.from_iterable(
+            model_futures = itertools.chain.from_iterable(
                 map(lambda x: get_model_result(**x), calls)
             )
 
-            def generated_to_appeals_text(k_text):
-                model_results = k_text.result()
-                print(f"Got result {model_results}")
+            def generated_to_appeals_text(k_text_future):
+                model_results = k_text_future.result()
                 if model_results is None:
                     return []
                 for k, text in model_results:
@@ -277,18 +288,41 @@ class AppealGenerator(object):
                     else:
                         yield template_generator.generate(text)
 
-            generated_text = map(
-                generated_to_appeals_text,
-                concurrent.futures.as_completed(generated_futures),
+            # Python lack reasonable future chaining (ugh)
+            generated_text_futures = list(
+                map(
+                    lambda f: executor.submit(generated_to_appeals_text, f),
+                    model_futures,
+                )
             )
-            return generated_text
+            return generated_text_futures
 
-        generated_text = make_calls_async(calls)
-        appeals = itertools.chain([initial_appeals], generated_text)
+        generated_text_futures: List[Future[Iterable[str]]] = make_async_model_calls(
+            calls
+        )
+
+        # Since we publish the results as they become available
+        # we want to add some randomization to the initial appeals so they are
+        # not always appearing in the first position.
+        def random_delay(appeal) -> List[str]:
+            time.sleep(random.randint(0, 15))
+            return [appeal]
+
+        delayed_initial_appeals: List[Future[Iterable[str]]] = list(
+            map(lambda appeal: executor.submit(random_delay, appeal), initial_appeals)
+        )
+        appeals_futures: List[Future[Iterable[str]]] = (
+            delayed_initial_appeals + generated_text_futures
+        )
+        appeals: Iterator[str] = itertools.chain.from_iterable(
+            as_available(appeals_futures)
+        )
         # Check and make sure we have a result
         try:
             appeals = itertools.chain([appeals.__next__()], appeals)
         except StopIteration:
-            appeals = make_calls_async(backup_calls)
+            appeals = itertools.chain.from_iterable(
+                as_available(make_async_model_calls(backup_calls))
+            )
         print(f"Sending back {appeals}")
-        return itertools.chain.from_iterable(appeals)
+        return appeals

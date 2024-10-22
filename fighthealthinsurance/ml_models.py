@@ -157,7 +157,7 @@ class RemoteOpenLike(RemoteModel):
                 return False
 
     def url_fixer(self, result: Optional[str]) -> Optional[str]:
-        """LLMs like to hallucinate URLs drop them"""
+        """LLMs like to hallucinate URLs drop them if they are not valid"""
         if result is None:
             return None
         else:
@@ -166,6 +166,13 @@ class RemoteOpenLike(RemoteModel):
                 if not self.is_valid_url(u):
                     result = result.replace(u, "")
             return result
+
+    def note_remover(self, result: Optional[str]) -> Optional[str]:
+        """Remove the last line note because we'll put similar content up earlier anyways"""
+        if result is None:
+            return None
+        else:
+            return re.sub(r"\n\s*\**\s*Note.*\Z", "", result)
 
     def parallel_infer(
         self,
@@ -230,7 +237,7 @@ class RemoteOpenLike(RemoteModel):
             )
         if self.bad_result(result):
             return []
-        return [(infer_type, self.url_fixer(self.tla_fixer(result)))]
+        return [(infer_type, self.note_remover(self.url_fixer(self.tla_fixer(result))))]
 
     def _clean_procedure_response(self, response):
         return self.procedure_response_regex.sub("", response)
@@ -512,7 +519,7 @@ class RemoteTogetherAI(RemoteFullOpenLike):
     def __init__(self):
         api_base = "https://api.together.xyz"
         token = os.getenv("TOGETHER_KEY")
-        model = "mistralai/Mixtral-8x7B-Instruct-v0.1"
+        model = "meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo"
         super().__init__(api_base, token, model)
 
 
@@ -522,7 +529,7 @@ class RemotePerplexityInstruct(RemoteFullOpenLike):
     def __init__(self):
         api_base = "https://api.perplexity.ai"
         token = os.getenv("PERPLEXITY_API")
-        model = "mistral-7b-instruct"
+        model = "llama-3.1-sonar-huge-128k-online"
         super().__init__(api_base, token, model)
 
 

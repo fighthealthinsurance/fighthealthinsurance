@@ -395,7 +395,7 @@ class AppealsBackendHelper:
             denial_id=denial_id, hashed_email=hashed_email
         ).get()
 
-        non_ai_appeals = list(
+        non_ai_appeals: List[str] = list(
             map(
                 lambda t: t.appeal_text,
                 cls.regex_denial_processor.get_appeal_templates(
@@ -470,13 +470,11 @@ class AppealsBackendHelper:
         if plan_context is not None:
             denial.plan_context = " ".join(set(plan_context))
         denial.save()
-        appeals = itertools.chain(
-            non_ai_appeals,
-            appealGenerator.make_appeals(
-                denial,
-                AppealTemplateGenerator(prefaces, main, footer),
-                medical_reasons=medical_reasons,
-            ),
+        appeals: Iterable[str] = appealGenerator.make_appeals(
+            denial,
+            AppealTemplateGenerator(prefaces, main, footer),
+            medical_reasons=medical_reasons,
+            non_ai_appeals=non_ai_appeals,
         )
 
         def save_appeal(appeal_text):
@@ -488,7 +486,6 @@ class AppealsBackendHelper:
             return appeal_text
 
         def sub_in_appeals(appeal: str) -> str:
-            print(f"Processing {appeal}")
             s = Template(appeal)
             ret = s.safe_substitute(
                 {
