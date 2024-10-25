@@ -8,6 +8,6 @@ mypy -p fighthealthinsurance
 ./manage.py collectstatic --no-input
 
 pushd ./static/js; npm i; npm run build; popd
-IMAGE=holdenk/fight-health-insurance:v0.6.0a
+IMAGE=holdenk/fight-health-insurance:v0.6.1a
 docker pull "${IMAGE}" || docker buildx build --platform=linux/amd64,linux/arm64 -t "${IMAGE}" . --push
 kubectl apply -f deploy.yaml

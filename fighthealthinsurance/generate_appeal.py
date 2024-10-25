@@ -138,75 +138,92 @@ class AppealGenerator(object):
             return None
 
     def find_more_context(self, denial) -> str:
+        """
+        Kind of hacky RAG routine that uses PubMed.
+        """
         # PubMed
         pmids = None
         pmid_text: list[str] = []
-        articles: list[PubMedArticleSummarized] = []
-        with Timeout(30.0) as timeout_ctx:
+        article_futures: list[Future[PubMedArticleSummarized]] = []
+        with Timeout(10.0) as timeout_ctx:
             query = f"{denial.procedure} {denial.diagnosis}"
             pmids = pubmed_fetcher.pmids_for_query(query)
             articles_json = json.dumps(pmids)
             PubMedQueryData.objects.create(query=query, articles=articles_json).save()
-            for article_id in pmids[0:10]:
-                possible_articles = PubMedArticleSummarized.objects.filter(
-                    pmid=article_id,
-                    query=query,
-                    basic_summary__isnull=False,
-                )[:1]
-                article = None
-                if len(possible_articles) > 0:
-                    article = possible_articles[0]
+            for article_id in pmids[0:2]:
+                article_futures.append(
+                    pubmed_executor.submit(self.do_article_summary, article_id, query)
+                )
 
-                if article is None:
-                    fetched = pubmed_fetcher.article_by_pmid(article_id)
-                    src = FindIt(article_id)
-                    url = src.url
-                    article_text = ""
-                    if url is not None:
-                        response = requests.get(url)
-                        if (
-                            ".pdf" in url
-                            or response.headers.get("Content-Type") == "application/pdf"
-                        ):
-                            with tempfile.NamedTemporaryFile(
-                                suffix=".pdf", delete=False
-                            ) as my_data:
-                                my_data.write(response.content)
+        def article_to_summary(article) -> str:
+            return f"PubMed DOI {article.doi} title {article.title} summary {article.basic_summary}"
 
-                                open_pdf_file = open(my_data.name, "rb")
-                                read_pdf = PyPDF2.PdfReader(open_pdf_file)
-                                if read_pdf.is_encrypted:
-                                    read_pdf.decrypt("")
-                                    for page in read_pdf.pages:
-                                        article_text += page.extract_text()
-                                else:
-                                    for page in read_pdf.pages:
-                                        article_text += page.extract_text()
+        articles: list[PubMedArticleSummarized] = []
+        # Get the articles that we've summarized
+        for f in article_futures:
+            try:
+                articles.append(f.result(timeout=10))
+            except Exception as e:
+                print(f"Skipping appending article from {f} due to {e} of {type(e)}")
+                pass
+
+        if len(articles) > 0:
+            return "\n".join(map(article_to_summary, articles))
+        else:
+            return ""
+
+    def do_article_summary(self, article_id, query) -> PubMedArticleSummarized:
+        possible_articles = PubMedArticleSummarized.objects.filter(
+            pmid=article_id,
+            query=query,
+            basic_summary__isnull=False,
+        )[:1]
+        article = None
+        if len(possible_articles) > 0:
+            article = possible_articles[0]
+
+        if article is None:
+            fetched = pubmed_fetcher.article_by_pmid(article_id)
+            src = FindIt(article_id)
+            url = src.url
+            article_text = ""
+            if url is not None:
+                response = requests.get(url)
+                if (
+                    ".pdf" in url
+                    or response.headers.get("Content-Type") == "application/pdf"
+                ):
+                    with tempfile.NamedTemporaryFile(
+                        suffix=".pdf", delete=False
+                    ) as my_data:
+                        my_data.write(response.content)
+
+                        open_pdf_file = open(my_data.name, "rb")
+                        read_pdf = PyPDF2.PdfReader(open_pdf_file)
+                        if read_pdf.is_encrypted:
+                            read_pdf.decrypt("")
+                            for page in read_pdf.pages:
+                                article_text += page.extract_text()
                         else:
-                            article_text += response.text
-                    else:
-                        article_text = fetched.content.text
-
-                    article = PubMedArticleSummarized.objects.create(
-                        pmid=article_id,
-                        doi=fetched.doi,
-                        title=fetched.title,
-                        abstract=fetched.abstract,
-                        text=article_text,
-                        query=query,
-                        basic_summary=model_router.summarize(
-                            query=query, abstract=fetched.abstract, text=article_text
-                        ),
-                    )
-                articles.append(article)
-
-            def article_to_summary(article) -> str:
-                return f"PubMed DOI {article.doi} title {article.title} summary {article.basic_summary}"
-
-            if len(articles) > 0:
-                return "\n".join(map(article_to_summary, articles))
+                            for page in read_pdf.pages:
+                                article_text += page.extract_text()
+                else:
+                    article_text += response.text
             else:
-                return ""
+                article_text = fetched.content.text
+
+            article = PubMedArticleSummarized.objects.create(
+                pmid=article_id,
+                doi=fetched.doi,
+                title=fetched.title,
+                abstract=fetched.abstract,
+                text=article_text,
+                query=query,
+                basic_summary=model_router.summarize(
+                    query=query, abstract=fetched.abstract, text=article_text
+                ),
+            )
+        return article
 
     def make_appeals(
         self, denial, template_generator, medical_reasons=[], non_ai_appeals=[]
