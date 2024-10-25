@@ -429,6 +429,8 @@ class RemoteHealthInsurance(RemoteFullOpenLike):
         self.host = os.getenv("HEALTH_BACKEND_HOST")
         self.backup_port = os.getenv("HEALTH_BACKUP_BACKEND_PORT", self.port)
         self.backup_host = os.getenv("HEALTH_BACKUP_BACKEND_HOST", self.host)
+        if self.host is None and self.backup_host is None:
+            raise Exception("Can not construct FHI backend without a host")
         self.url = None
         if self.port is not None and self.host is not None:
             self.url = f"http://{self.host}:{self.port}/v1"
