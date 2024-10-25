@@ -150,7 +150,7 @@ class AppealGenerator(object):
             pmids = pubmed_fetcher.pmids_for_query(query)
             articles_json = json.dumps(pmids)
             PubMedQueryData.objects.create(query=query, articles=articles_json).save()
-            for article_id in pmids[0:2]:
+            for article_id in pmids[0:3]:
                 article_futures.append(
                     pubmed_executor.submit(self.do_article_summary, article_id, query)
                 )
@@ -160,9 +160,11 @@ class AppealGenerator(object):
 
         articles: list[PubMedArticleSummarized] = []
         # Get the articles that we've summarized
+        t = 10
         for f in article_futures:
             try:
-                articles.append(f.result(timeout=10))
+                articles.append(f.result(timeout=t))
+                t = t - 1
             except Exception as e:
                 print(f"Skipping appending article from {f} due to {e} of {type(e)}")
                 pass
