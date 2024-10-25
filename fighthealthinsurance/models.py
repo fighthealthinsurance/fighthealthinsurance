@@ -238,24 +238,22 @@ class FollowUpDocuments(models.Model):
 class PubMedArticleSummarized(models.Model):
     """PubMedArticles with a summary for the given query."""
 
-    class Meta:
-        UniqueConstraint(fields=["doi", "pmid", "query"], name="unique_doc_query_combo")
-
     pmid = models.TextField(primary_key=False, blank=True)
     doi = models.TextField(primary_key=False, blank=True)
     query = models.TextField(primary_key=False, blank=True)
     title = models.TextField(blank=True, null=True)
     abstract = models.TextField(primary_key=False, blank=True, null=True)
-    basic_summary = models.TextField(primary_key=False)
-    says_effective = models.BooleanField()
-    publication_date = models.DateTimeField()
+    text = models.TextField(primary_key=False, blank=True, null=True)
+    basic_summary = models.TextField(primary_key=False, blank=True, null=True)
+    says_effective = models.BooleanField(null=True)
+    publication_date = models.DateTimeField(null=True)
     retrival_date = models.TextField(blank=True, null=True)
 
 
-class PubQueryMedData(models.Model):
+class PubMedQueryData(models.Model):
     internal_id = models.AutoField(primary_key=True)
     query = models.TextField(null=False, max_length=300)
-    articles = models.TextField(null=True)  # Comma seperated articles
+    articles = models.TextField(null=True)  # json
     query_date = models.DateTimeField(auto_now_add=True)
 
 
@@ -292,6 +290,8 @@ class Denial(models.Model):
     appeal_result = models.CharField(max_length=200, null=True)
     last_interaction = models.DateTimeField(auto_now=True)
     follow_up_semi_sekret = models.CharField(max_length=100, default=sekret_gen)
+    references = models.TextField(primary_key=False, null=True)
+    reference_summary = models.TextField(primary_key=False, null=True)
 
     def follow_up(self):
         return self.raw_email is not None and "@" in self.raw_email

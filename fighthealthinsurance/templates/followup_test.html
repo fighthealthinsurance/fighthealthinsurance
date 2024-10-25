@@ -1,0 +1,7 @@
+<form action="{{ request.get_full_path }}" method="post" enctype="multipart/form-data">
+  {% csrf_token %}
+  <table>
+    {{ form.as_table }}
+  </table>
+  <button type="submit" id="submit">Save Feedback</button>
+</form>

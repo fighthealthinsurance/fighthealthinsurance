@@ -10,12 +10,15 @@ from concurrent.futures import Future
 from functools import cache, lru_cache
 from stopit import ThreadingTimeout as Timeout
 from typing import Any, Callable, Iterable, List, Optional, Tuple, Union
+from dataclasses import dataclass
+
 
 import icd10
 import requests
 from typing_extensions import reveal_type
 
 from fighthealthinsurance.exec import *
+from fighthealthinsurance.utils import all_subclasses, is_valid_url, url_fixer
 from fighthealthinsurance.models import (
     AppealTemplates,
     DenialTypes,
@@ -26,49 +29,67 @@ from fighthealthinsurance.models import (
 )
 
 
-class RemoteModel(object):
-    """
-    For models which produce a "full" appeal tag them with "full"
-    For medical reason (e.g. ones where we hybrid with our "expert system"
-    ) tag them with "medically_necessary".
-    """
-
-    def infer(self, prompt, patient_context, plan_context, infer_type):
+class RemoteModelLike(object):
+    def infer(self, prompt, patient_context, plan_context, pubmed_context, infer_type):
         pass
 
-
-class PalmAPI(RemoteModel):
-    def bad_result(self, result) -> bool:
-        return result is not None
-
-    @cache
-    def infer(
-        self, prompt: str, patient_context, plan_context, infer_type: str
-    ) -> List[Tuple[str, str]]:
-        result = self._infer(prompt)
-        if self.bad_result(result):
-            result = self._infer(prompt)
-        if result is not None:
-            return [(infer_type, result)]
-        else:
-            return []
+    def _infer(
+        self,
+        system_prompt,
+        prompt,
+        patient_context=None,
+        plan_context=None,
+        pubmed_context=None,
+        temperature=0.7,
+    ) -> Optional[str]:
+        pass
 
     def get_procedure_and_diagnosis(self, prompt):
         return (None, None)
 
-    def _infer(self, prompt) -> Optional[str]:
-        API_KEY = os.getenv("PALM_KEY")
-        if API_KEY is None:
+    def external(self):
+        return True
+
+
+@dataclass(kw_only=True)
+class ModelDescription:
+    cost: int = 200  # Cost of the model (must be first for ordered if/when we upgrade)
+    name: str  # Common model name
+    internal_name: str  # Internal model name
+    model: Optional[RemoteModelLike] = None  # Actual instance of the model
+
+    def __lt__(self, other):
+        return self.cost < other.cost
+
+
+class RemoteModel(RemoteModelLike):
+    @classmethod
+    def models(cls) -> List[ModelDescription]:
+        return []
+
+    def bad_result(self, result: Optional[str]) -> bool:
+        return False
+
+    def tla_fixer(self, result: Optional[str]) -> Optional[str]:
+        """Fix incorrectly picked TLAs from the LLM."""
+        if result is None:
             return None
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={API_KEY}"
-        try:
-            s = requests.Session()
-            result = s.post(url, json={"contents": [{"parts": [{"text": prompt}]}]})
-            json_result = result.json()
-            candidates = json_result["candidates"]
-            return candidates[0]["content"]["parts"][0]["text"]
-        except Exception as e:
+        else:
+            m = re.search(
+                "([A-Z])\\w+ ([A-Z])\\w+ ([A-Z])\\w+ \\(([A-Z]{3})\\)", result
+            )
+            if m is not None:
+                tla = m.group(1) + m.group(2) + m.group(3)
+                if tla != m.group(4):
+                    return re.sub(f"(?<=[\\.\\( ]){m.group(4)}", tla, result)
+            return result
+
+    def note_remover(self, result: Optional[str]) -> Optional[str]:
+        """Remove the last line note because we'll put similar content up earlier anyways"""
+        if result is None:
             return None
+        else:
+            return re.sub(r"\n\s*\**\s*Note.*\Z", "", result)
 
 
 class RemoteOpenLike(RemoteModel):
@@ -81,7 +102,6 @@ class RemoteOpenLike(RemoteModel):
         token,
         model,
         system_prompts,
-        backup_model=None,
         backup_api_base=None,
         expensive=False,
     ):
@@ -91,13 +111,16 @@ class RemoteOpenLike(RemoteModel):
         self.system_prompts = system_prompts
         self.max_len = 4096 * 8
         self._timeout = 90
+        self.invalid_diag_procedure_regex = re.compile(
+            r"(not (available|provided|specified|applicable)|unknown|as per reviewer)",
+            re.IGNORECASE,
+        )
         self.procedure_response_regex = re.compile(
             r"\s*procedure\s*:?\s*", re.IGNORECASE
         )
         self.diagnosis_response_regex = re.compile(
             r"\s*diagnosis\s*:?\s*", re.IGNORECASE
         )
-        self.backup_model = backup_model
         self.backup_api_base = backup_api_base
         self._expensive = expensive
 
@@ -115,72 +138,12 @@ class RemoteOpenLike(RemoteModel):
             return True
         return False
 
-    def tla_fixer(self, result: Optional[str]) -> Optional[str]:
-        """Fix incorrectly picked TLAs from the LLM."""
-        if result is None:
-            return None
-        else:
-            m = re.search(
-                "([A-Z])\\w+ ([A-Z])\\w+ ([A-Z])\\w+ \\(([A-Z]{3})\\)", result
-            )
-            if m is not None:
-                tla = m.group(1) + m.group(2) + m.group(3)
-                if tla != m.group(4):
-                    return re.sub(f"(?<=[\\.\\( ]){m.group(4)}", tla, result)
-            return result
-
-    common_bad_result = [
-        "The page you are trying to reach is not available. Please check the URL and try again.",
-        "The requested article is not currently available on this site.",
-    ]
-
-    maybe_bad_url_endings = re.compile("^(.*)[\\.\\:\\;\\,\\?\\>]+$")
-
-    def is_valid_url(self, url):
-        try:
-            result = requests.get(url)
-            if result.status_code != 200:
-                groups = self.maybe_bad_url_endings.search(url)
-                if groups is not None:
-                    return self.is_valid_url(groups.group(1))
-                else:
-                    return False
-            if result.status_code == 200 and ".pdf" not in url:
-                result_text = result.text.lower()
-                for bad_result_text in self.common_bad_result:
-                    if bad_result_text.lower() in result_text:
-                        raise Exception(f"Found {bad_result_text} in {result_text}")
-                    return True
-        except Exception as e:
-            groups = self.maybe_bad_url_endings.search(url)
-            if groups is not None:
-                return self.is_valid_url(groups.group(1))
-            else:
-                return False
-
-    def url_fixer(self, result: Optional[str]) -> Optional[str]:
-        """LLMs like to hallucinate URLs drop them if they are not valid"""
-        if result is None:
-            return None
-        else:
-            urls = re.findall(r"(https?://\S+)", result)
-            for u in urls:
-                if not self.is_valid_url(u):
-                    result = result.replace(u, "")
-            return result
-
-    def note_remover(self, result: Optional[str]) -> Optional[str]:
-        """Remove the last line note because we'll put similar content up earlier anyways"""
-        if result is None:
-            return None
-        else:
-            return re.sub(r"\n\s*\**\s*Note.*\Z", "", result)
-
     def parallel_infer(
         self,
         prompt: str,
         patient_context: Optional[str],
         plan_context: Optional[str],
+        pubmed_context: Optional[str],
         infer_type: str,
     ) -> List[Future[Tuple[str, Optional[str]]]]:
         print(f"Running inference on {self} of type {infer_type}")
@@ -200,6 +163,7 @@ class RemoteOpenLike(RemoteModel):
                             "infer_type": infer_type,
                             "system_prompt": system_prompt,
                             "temperature": temperature,
+                            "pubmed_context": pubmed_context,
                         },
                     ),
                     self.system_prompts[infer_type],
@@ -217,6 +181,7 @@ class RemoteOpenLike(RemoteModel):
         patient_context,
         plan_context,
         infer_type,
+        pubmed_context,
         system_prompt: str,
         temperature: float,
     ):
@@ -225,6 +190,7 @@ class RemoteOpenLike(RemoteModel):
             patient_context=patient_context,
             plan_context=plan_context,
             system_prompt=system_prompt,
+            pubmed_context=pubmed_context,
             temperature=temperature,
         )
         print(f"Got result {result} from {prompt} on {self}")
@@ -235,22 +201,18 @@ class RemoteOpenLike(RemoteModel):
                 patient_context=patient_context,
                 plan_context=plan_context,
                 system_prompt=system_prompt,
+                pubmed_context=pubmed_context,
                 temperature=temperature,
             )
         if self.bad_result(result):
             return []
-        return [(infer_type, self.note_remover(self.url_fixer(self.tla_fixer(result))))]
+        return [(infer_type, self.note_remover(url_fixer(self.tla_fixer(result))))]
 
     def _clean_procedure_response(self, response):
         return self.procedure_response_regex.sub("", response)
 
     def _clean_diagnosis_response(self, response):
-        if (
-            "Not available in" in response
-            or "Not provided" in response
-            or "Not specified" in response
-            or "Not Applicable" in response
-        ):
+        if self.invalid_diag_procedure_regex.search(response):
             return None
         return self.diagnosis_response_regex.sub("", response)
 
@@ -317,6 +279,7 @@ class RemoteOpenLike(RemoteModel):
         prompt,
         patient_context=None,
         plan_context=None,
+        pubmed_context=None,
         temperature=0.7,
     ) -> Optional[str]:
         r = self.__timeout_infer(
@@ -324,20 +287,10 @@ class RemoteOpenLike(RemoteModel):
             prompt=prompt,
             patient_context=patient_context,
             plan_context=plan_context,
+            pubmed_context=pubmed_context,
             temperature=temperature,
             model=self.model,
         )
-        if r is None and self.backup_model is not None:
-            r = self.__timeout_infer(
-                system_prompt=system_prompt,
-                prompt=prompt,
-                patient_context=patient_context,
-                plan_context=plan_context,
-                temperature=temperature,
-                model=self.backup_model,
-            )
-        else:
-            return r
         if r is None and self.backup_api_base is not None:
             r = self.__timeout_infer(
                 system_prompt=system_prompt,
@@ -345,27 +298,10 @@ class RemoteOpenLike(RemoteModel):
                 patient_context=patient_context,
                 plan_context=plan_context,
                 temperature=temperature,
+                pubmed_context=pubmed_context,
                 model=self.model,
                 api_base=self.backup_api_base,
             )
-        else:
-            return r
-        if (
-            r is None
-            and self.backup_api_base is not None
-            and self.backup_model is not None
-        ):
-            r = self.__timeout_infer(
-                system_prompt=system_prompt,
-                prompt=prompt,
-                patient_context=patient_context,
-                plan_context=plan_context,
-                temperature=temperature,
-                model=self.backup_model,
-                api_base=self.backup_api_base,
-            )
-        else:
-            print(f"Skipping fall through")
         return r
 
     def __timeout_infer(
@@ -387,6 +323,7 @@ class RemoteOpenLike(RemoteModel):
         plan_context,
         temperature,
         model,
+        pubmed_context=None,
         api_base=None,
     ) -> Optional[str]:
         if api_base is None:
@@ -410,6 +347,8 @@ class RemoteOpenLike(RemoteModel):
                 patient_context_max = int(self.max_len / 2)
                 max_len = self.max_len - min(len(patient_context), patient_context_max)
                 context_extra = f"When answering the following question you can use the patient context {patient_context[0:patient_context_max]}."
+            if pubmed_context is not None:
+                context_extra += f"You can also use this context from pubmed: {pubmed_context} and you can include the DOI number in the appeal."
             if plan_context is not None and len(plan_context) > 3:
                 context_extra += f"For answering the question you can use this context about the plan {plan_context}"
             combined_content = f"<<SYS>>{system_prompt}<</SYS>>{context_extra}{prompt[0 : self.max_len]}"
@@ -453,13 +392,12 @@ class RemoteFullOpenLike(RemoteOpenLike):
         api_base,
         token,
         model,
-        backup_model=None,
         expensive=False,
         backup_api_base=None,
     ):
         systems = {
             "full": [
-                """You possess extensive medical expertise and enjoy crafting appeals for health insurance denials as a personal interest. As a patient, not a doctor, you advocate for yourself. Don't assume you have any letter from a physician. Your writing style is direct, akin to patio11 or a bureaucrat, and maintains a professional tone without expressing frustration towards insurance companies. You may consider emphasizing the unique and potentially essential nature of the medical intervention, using "YourNameMagic" as your name, "SCSID" for the subscriber ID, and "GPID" as the group ID. Make sure to write in the form of a letter. Ideally use the communication the style of patio11 / a being a Dangerous Professional means communicating in what might be a slightly adversarial context in a way which suggests that a bureaucracy take one's concerns seriously and escalate them to someone empowered to resolve them swiftly. You can be verbose. Start your response with Dear [Insurance Company];""",
+                #                """You possess extensive medical expertise and enjoy crafting appeals for health insurance denials as a personal interest. As a patient, not a doctor, you advocate for yourself. Don't assume you have any letter from a physician. Your writing style is direct, akin to patio11 or a bureaucrat, and maintains a professional tone without expressing frustration towards insurance companies. You may consider emphasizing the unique and potentially essential nature of the medical intervention, using "YourNameMagic" as your name, "SCSID" for the subscriber ID, and "GPID" as the group ID. Make sure to write in the form of a letter. Ideally use the communication the style of patio11 / a being a Dangerous Professional means communicating in what might be a slightly adversarial context in a way which suggests that a bureaucracy take one's concerns seriously and escalate them to someone empowered to resolve them swiftly. You can be verbose. Start your response with Dear [Insurance Company];""",
                 """You possess extensive medical expertise and enjoy crafting appeals for health insurance denials as a personal interest. As a patient, not a doctor, you advocate for yourself. Don't assume you have any letter from a physician unless absolutely necessary. Your writing style is direct, akin to patio11 or a bureaucrat, and maintains a professional tone without expressing frustration towards insurance companies. You may consider emphasizing the unique and potentially essential nature of the medical intervention, using "YourNameMagic" as your name, "SCSID" for the subscriber ID, and "GPID" as the group ID. Make sure to write in the form of a letter. Do not use the 3rd person when refering to the patient, instead use the first persion (I, my, etc.). You are not a review and should not mention any.""",
             ],
             "procedure": [
@@ -480,17 +418,13 @@ class RemoteFullOpenLike(RemoteOpenLike):
             token,
             model,
             systems,
-            backup_model=backup_model,
             expensive=expensive,
             backup_api_base=backup_api_base,
         )
 
-    def model_type(self) -> str:
-        return "full"
-
 
 class RemoteHealthInsurance(RemoteFullOpenLike):
-    def __init__(self):
+    def __init__(self, model: str):
         self.port = os.getenv("HEALTH_BACKEND_PORT", "80")
         self.host = os.getenv("HEALTH_BACKEND_HOST")
         self.backup_port = os.getenv("HEALTH_BACKUP_BACKEND_PORT", self.port)
@@ -502,76 +436,124 @@ class RemoteHealthInsurance(RemoteFullOpenLike):
             print(f"Error setting up remote health {self.host}:{self.port}")
         self.backup_url = f"http://{self.backup_host}:{self.backup_port}/v1"
         print(f"Setting backup to {self.backup_url}")
-        self.model = os.getenv(
+        super().__init__(
+            self.url, token="", backup_api_base=self.backup_url, model=model
+        )
+
+    def external(self):
+        return False
+
+    @classmethod
+    def models(cls) -> List[ModelDescription]:
+        model_name = os.getenv(
             "HEALTH_BACKEND_MODEL", "TotallyLegitCo/fighthealthinsurance_model_v0.5"
         )
-        self.backup_model = os.getenv("HEALTH_BACKUP_BACKEND_MODEL", self.model)
-        super().__init__(
-            self.url,
-            token="",
-            model=self.model,
-            backup_model=self.backup_model,
-            backup_api_base=self.backup_url,
-        )
-
-
-class OctoAI(RemoteFullOpenLike):
-    """Use RemotePerplexity for denial magic calls a service"""
-
-    def __init__(self):
-        api_base = "https://text.octoai.run/v1/"
-        token = os.getenv("OCTOAI_TOKEN")
-        model = "meta-llama-3.1-405b-instruct"
-        self._expensive = True
-        super().__init__(api_base, token, model, expensive=True)
+        return [
+            ModelDescription(cost=1, name="fhi", internal_name=model_name),
+            ModelDescription(
+                cost=2,
+                name="fhi",
+                internal_name=os.getenv("HEALTH_BACKUP_BACKEND_MODEL", model_name),
+            ),
+        ]
 
 
 class RemoteTogetherAI(RemoteFullOpenLike):
     """Use RemotePerplexity for denial magic calls a service"""
 
-    def __init__(self):
+    def __init__(self, model: str):
         api_base = "https://api.together.xyz"
         token = os.getenv("TOGETHER_KEY")
-        model = "meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo"
-        super().__init__(api_base, token, model)
+        if token is None or len(token) < 1:
+            raise Exception("No token found for together")
+        super().__init__(api_base, token, model=model)
+
+    @classmethod
+    def models(cls) -> List[ModelDescription]:
+        return [
+            ModelDescription(
+                cost=350,
+                name="meta-llama/llama-3.2-405B-instruct",
+                internal_name="meta-llama/Meta-Llama-3.2-405B-Instruct-Turbo",
+            ),
+            ModelDescription(
+                cost=350,
+                name="meta-llama/llama-3.1-405B-instruct",
+                internal_name="meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo",
+            ),
+            ModelDescription(
+                cost=88,
+                name="meta-llama/llama-3.2-70B-instruct",
+                internal_name="meta-llama/Meta-Llama-3.2-70B-Instruct-Turbo",
+            ),
+            ModelDescription(
+                cost=88,
+                name="meta-llama/llama-3.1-70b-instruct",
+                internal_name="meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
+            ),
+        ]
 
 
-class RemotePerplexityInstruct(RemoteFullOpenLike):
+class RemotePerplexity(RemoteFullOpenLike):
     """Use RemotePerplexity for denial magic calls a service"""
 
-    def __init__(self):
+    def __init__(self, model: str):
         api_base = "https://api.perplexity.ai"
         token = os.getenv("PERPLEXITY_API")
-        model = "llama-3.1-sonar-huge-128k-online"
-        super().__init__(api_base, token, model)
+        if token is None or len(token) < 1:
+            raise Exception("No token found for perplexity")
+        super().__init__(api_base, token, model=model)
+
+    @classmethod
+    def models(cls) -> List[ModelDescription]:
+        return [
+            ModelDescription(
+                cost=500,
+                name="perplexity",
+                internal_name="llama-3.1-sonar-huge-128k-online",
+            ),
+            ModelDescription(
+                cost=400,
+                name="perplexity",
+                internal_name="llama-3.1-sonar-large-128k-online",
+            ),
+            ModelDescription(
+                cost=100,
+                name="meta-llama/llama-3.1-70b-instruct",
+                internal_name="llama-3.1-70b-instruct",
+            ),
+            ModelDescription(
+                cost=20,
+                name="meta-llama/llama-3.1-8b-instruct",
+                internal_name="llama-3.1-8b-instruct",
+            ),
+        ]
 
 
-class RemotePerplexityMedReason(RemoteOpenLike):
-    """Use RemotePerplexity for denial magic calls a service"""
+class DeepInfra(RemoteFullOpenLike):
+    """Use DeepInfra."""
 
-    def __init__(self):
-        api_base = "https://api.perplexity.ai"
-        token = os.getenv("PERPLEXITY_API")
-        model = "mistral-7b-instruct"
-        medical_reason_message = "You are a doctor answering a friends question as to why a procedure is medically necessary."
-        super().__init__(api_base, token, model, medical_reason_message)
+    def __init__(self, model: str):
+        api_base = "https://api.deepinfra.com/v1/openai/chat/completions"
+        token = os.getenv("DEEPINFRA_API")
+        if token is None or len(token) < 1:
+            raise Exception("No token found for deepinfra")
+        super().__init__(api_base, token, model=model)
+
+    @classmethod
+    def models(cls) -> List[ModelDescription]:
+        return [
+            ModelDescription(
+                cost=179,
+                name="meta-llama/meta-llama-3.1-405B-instruct",
+                internal_name="meta-llama/Meta-Llama-3.1-70B-Instruct",
+            ),
+            ModelDescription(
+                cost=40,
+                name="meta-llama/meta-llama-3.1-70B-instruct",
+                internal_name="meta-llama/Meta-Llama-3.1-70B-Instruct",
+            ),
+        ]
 
 
-class RemoteOpen(RemoteFullOpenLike):
-    """Use RemoteOpen for denial magic calls a service"""
-
-    def __init__(self):
-        api_base = os.getenv("OPENAI_API_BASE")
-        token = os.getenv("OPENAI_API_KEY")
-        model = "HuggingFaceH4/zephyr-7b-beta"
-        super().__init__(api_base, token, model)
-
-
-class RemoteOpenInst(RemoteFullOpenLike):
-    """Use RemoteOpen for denial magic calls a service"""
-
-    def __init__(self):
-        api_base = os.getenv("OPENAI_API_BASE")
-        token = os.getenv("OPENAI_API_KEY")
-        model = "mistralai/Mistral-7B-Instruct-v0.1"
-        super().__init__(api_base, token, model)
+candidate_model_backends: list[type[RemoteModel]] = list(all_subclasses(RemoteModel))

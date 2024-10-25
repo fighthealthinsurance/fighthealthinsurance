@@ -1,0 +1,18 @@
+Hello,
+
+First off, thank you for using Fight Health Insurance to generate an appeal and choosing the follow-up option.
+
+{% if selected_appeal %}
+I'm checking in to see if you were able to submit your appeal and if so if the insurance company has responded. Any additional feedback on how we can improve the process would be appreciated.
+{% else %}
+It seems like we maybe didn't generate an appeal that worked for you and we'd love to know what we can do better.
+{% endif %}
+
+If you can fill-out the follow up form at {{ followup_link }} that would be greatly appreciated (alternatively, you can also respond to this e-mail and I'll take a look at your response :))
+
+
+Wishing you the best of luck with your fight with insurance,
+
+Holden :)
+
+https://www.fighthealthinsurance.com

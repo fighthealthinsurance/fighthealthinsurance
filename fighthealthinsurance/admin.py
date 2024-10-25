@@ -19,7 +19,6 @@ class DenialAdmin(admin.ModelAdmin):
 
 
 for model in models:
-    print(f"Registering {model} in {model.__module__}")
     # A bit ugly but auto register everything which has not exploded when auto registering cauze I'm lazy
     if (
         "django.contrib" not in model.__module__
@@ -27,7 +26,6 @@ for model in models:
         and "cookie_consent" not in model.__module__
         and "celery" not in model.__module__
     ):
-        print(f"Registering {model}")
         try:
             admin.site.register(model)
         except Exception:

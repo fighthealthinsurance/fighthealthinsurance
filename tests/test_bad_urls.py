@@ -1,15 +1,13 @@
 from django.test import TestCase
-from fighthealthinsurance.ml_models import RemoteOpenLike
+from fighthealthinsurance.utils import url_fixer
 
 
 class TestBadURLs(TestCase):
 
     def test_none(self):
-        r = RemoteOpenLike("", "", "", "")
-        fixed = r.url_fixer(None)
+        fixed = url_fixer(None)
         self.assertEqual(None, fixed)
 
     def test_badtla(self):
-        r = RemoteOpenLike("", "", "", "")
-        fixed = r.url_fixer("http://www.google.com http://www.google.com/farts")
+        fixed = url_fixer("http://www.google.com http://www.google.com/farts")
         self.assertEqual("http://www.google.com ", fixed)
