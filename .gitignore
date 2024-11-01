@@ -141,3 +141,4 @@ fighthealthinsurance/static/js/dist
 # Ignore external storage
 external_storage
 external_data
+.DS_Store
