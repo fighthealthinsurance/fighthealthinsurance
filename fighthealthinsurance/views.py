@@ -1,34 +1,17 @@
-import asyncio
-import concurrent
-import itertools
 import json
-import os
-import time
-from io import BytesIO
 from typing import *
 
 from django.conf import settings
-from django.contrib.auth import authenticate, login, logout
-from django.contrib.auth.decorators import login_required
-from django.contrib.auth.models import User
-from django.contrib.staticfiles import finders
-from django.contrib.staticfiles.storage import staticfiles_storage
 from django.shortcuts import redirect, render
 from django.urls import reverse
-from django.utils.decorators import method_decorator
 from django.views import View, generic
-from django.views.decorators.cache import cache_control
 
 import stripe
-import numpy as np
-from asgiref.sync import async_to_sync
-import stripe
-
 from fighthealthinsurance.common_view_logic import *
 from fighthealthinsurance.core_forms import *
-from fighthealthinsurance.question_forms import *
 from fighthealthinsurance.generate_appeal import *
 from fighthealthinsurance.models import *
+from fighthealthinsurance.question_forms import *
 from fighthealthinsurance.utils import *
 
 appealGenerator = AppealGenerator()
@@ -42,6 +25,8 @@ class FollowUpView(generic.FormView):
         # Set the initial arguments to the form based on the URL route params.
         # Also make sure we can resolve the denial
         denial = FollowUpHelper.fetch_denial(**self.kwargs)
+        if denial is None:
+            raise Exception(f"Could not find denial for {self.kwargs}")
         return self.kwargs
 
     def form_valid(self, form):
@@ -140,9 +125,6 @@ class ShareDenialView(View):
     def get(self, request):
         return render(request, "share_denial.html", context={"title": "Share Denial"})
 
-    def post(self, request):
-        form = ShareDenailForm(request.POST)
-
 
 class ShareAppealView(View):
     def get(self, request):
@@ -161,7 +143,7 @@ class ShareAppealView(View):
                 hashed_email=hashed_email,
             ).get()
             print(form.cleaned_data)
-            denial.appeal = form.cleaned_data["appeal_text"]
+            denial.appeal_text = form.cleaned_data["appeal_text"]
             denial.save()
             pa = ProposedAppeal(
                 appeal_text=form.cleaned_data["appeal_text"],
@@ -252,41 +234,96 @@ class ChooseAppeal(View):
     def post(self, request):
         form = ChooseAppealForm(request.POST)
         if form.is_valid():
-            denial_id = form.cleaned_data["denial_id"]
-            hashed_email = Denial.get_hashed_email(form.cleaned_data["email"])
-            appeal_text = form.cleaned_data["appeal_text"]
-            email = form.cleaned_data["email"]
-
-            # Get the current info
-            denial = Denial.objects.filter(
-                denial_id=denial_id, hashed_email=hashed_email
-            ).get()
-            denial.appeal_text = appeal_text
             appeal_info_extracted = ""
-            denial.save()
+            (appeal_fax_number, insurance_company, candidate_articles) = (
+                ChooseAppealHelper.choose_appeal(**form.cleaned_data)
+            )
+            fax_form = FaxForm(
+                initial={
+                    "denial_id": form.cleaned_data["denial_id"],
+                    "email": form.cleaned_data["email"],
+                    "semi_sekret": form.cleaned_data["semi_sekret"],
+                    "fax_phone": appeal_fax_number,
+                    "pubmed_articles_to_include": candidate_articles,
+                    "insurance_company": insurance_company,
+                }
+            )
             return render(
                 request,
                 "appeal.html",
                 context={
-                    "appeal": appeal_text,
-                    "user_email": email,
-                    "denial_id": denial_id,
+                    "appeal": form.cleaned_data["appeal_text"],
+                    "user_email": form.cleaned_data["email"],
+                    "denial_id": form.cleaned_data["denial_id"],
                     "appeal_info_extract": appeal_info_extracted,
+                    "fax_form": fax_form,
                 },
             )
-            pa = ProposedAppeal(appeal_text=appeal_text, for_denial=denial, chosen=True)
-            pa.save()
         else:
             print(form)
-            pass
+
+
+class FaxFollowUpView(generic.FormView):
+    template_name = "faxfollowup.html"
+    form_class = FaxResendForm
+
+    def get_initial(self):
+        # Set the initial arguments to the form based on the URL route params.
+        return self.kwargs
+
+    def form_valid(self, form):
+        FollowUpHelper.store_follow_up_result(**form.cleaned_data)
+        return render(self.request, "fax_followup_thankyou.html")
+
+
+class SendFaxView(View):
+
+    def get(self, request, **kwargs):
+        SendFaxHelper.remote_send_fax(**self.kwargs)
+        return render(self.request, "fax_thankyou.html")
+
+
+class StageFaxView(generic.FormView):
+    form_class = FaxForm
+
+    def form_valid(self, form):
+        staged = SendFaxHelper.stage_appeal_fax(**form.cleaned_data)
+        stripe.api_key = settings.STRIPE_API_SECRET_KEY
+        stripe.publishable_key = settings.STRIPE_API_PUBLISHABLE_KEY
+        product = stripe.Product.create(name="Fax")
+        product_price = stripe.Price.create(
+            unit_amount=500, currency="usd", product=product["id"]
+        )
+        items = [
+            {
+                "price": product_price["id"],
+                "quantity": 1,
+            }
+        ]
+        checkout = stripe.checkout.Session.create(
+            line_items=items,
+            mode="payment",  # No subscriptions
+            success_url=self.request.build_absolute_uri(
+                reverse(
+                    "sendfaxview",
+                    kwargs={
+                        "uuid": staged.uuid,
+                        "hashed_email": staged.hashed_email,
+                    },
+                ),
+            ),
+            cancel_url=self.request.build_absolute_uri(reverse("root")),
+            customer_email=form.cleaned_data["email"],
+        )
+        checkout_url = checkout.url
+        return redirect(checkout_url)
 
 
 class GenerateAppeal(View):
     def post(self, request):
         form = DenialRefForm(request.POST)
         if form.is_valid():
-            denial_id = form.cleaned_data["denial_id"]
-            hashed_email = Denial.get_hashed_email(form.cleaned_data["email"])
+            # We copy _most_ of the input over for the form context
             elems = dict(request.POST)
             # Query dict is of lists
             elems = dict((k, v[0]) for k, v in elems.items())
@@ -333,7 +370,7 @@ class OCRView(View):
             import easyocr
 
             self._easy_ocr_reader = easyocr.Reader(["en"], gpu=False)
-        except:
+        except Exception:
             pass
 
     def get(self, request):
@@ -341,7 +378,6 @@ class OCRView(View):
 
     def post(self, request):
         try:
-            txt = ""
             print(request.FILES)
             files = dict(request.FILES.lists())
             uploader = files["uploader"]
@@ -351,12 +387,12 @@ class OCRView(View):
                 "scrub.html",
                 context={"ocr_result": doc_txt, "upload_more": False},
             )
-        except AttributeError as e:
+        except AttributeError:
             error_txt = "Unsupported file"
             return render(
                 request, "server_side_ocr_error.html", context={"error": error_txt}
             )
-        except KeyError as e:
+        except KeyError:
             error_txt = "Missing file"
             return render(
                 request, "server_side_ocr_error.html", context={"error": error_txt}
@@ -371,7 +407,7 @@ class OCRView(View):
 
                 img = Image.open(x)
                 return pytesseract.image_to_string(img)
-            except:
+            except Exception:
                 result = self._easy_ocr_reader.readtext(x.read())
                 return " ".join([text for _, text, _ in result])
 

@@ -1,42 +1,27 @@
-import tempfile
-from metapub import PubMedFetcher, FindIt
-import PyPDF2
-from stopit import ThreadingTimeout as Timeout
-import random
-import concurrent
-import csv
 import itertools
-import os
+import json
+import random
+import tempfile
 import time
 import traceback
 from concurrent.futures import Future
-from functools import cache, lru_cache
-from typing import Any, List, Optional, Tuple, Iterator
-import json
+from typing import Any, Iterator, List, Optional, Tuple
 
-import metapub
-
-import icd10
+import PyPDF2
 import requests
-from typing_extensions import reveal_type
-
+from fighthealthinsurance.denial_base import DenialBase
 from fighthealthinsurance.exec import *
+from fighthealthinsurance.ml_models import RemoteFullOpenLike, RemoteModelLike
 from fighthealthinsurance.model_router import model_router
-from fighthealthinsurance.ml_models import RemoteModelLike, RemoteFullOpenLike
 from fighthealthinsurance.models import (
-    AppealTemplates,
-    DenialTypes,
-    Diagnosis,
-    PlanType,
-    Procedures,
-    Regulator,
-    PubMedQueryData,
     PubMedArticleSummarized,
+    PubMedQueryData,
 )
 from fighthealthinsurance.process_denial import *
-from fighthealthinsurance.utils import as_available_nested
-
-pubmed_fetcher = PubMedFetcher()
+from fighthealthinsurance.utils import as_available_nested, pubmed_fetcher
+from metapub import FindIt
+from stopit import ThreadingTimeout as Timeout
+from typing_extensions import reveal_type
 
 
 class AppealTemplateGenerator(object):
@@ -64,11 +49,19 @@ class AppealGenerator(object):
     def __init__(self):
         self.regex_denial_processor = ProcessDenialRegex()
 
+    def get_fax_number(self, denial_text=None, use_external=False) -> Optional[str]:
+        models_to_try = model_router.entity_extract_backends(use_external)
+        for model in models_to_try:
+            fax_number = model.get_fax_number(denial_text)
+            if fax_number is not None and "UNKNOWN" not in fax_number:
+                return fax_number
+        return None
+
     def get_procedure_and_diagnosis(
         self, denial_text=None, use_external=False
     ) -> Tuple[Optional[str], Optional[str]]:
         prompt = self.make_open_procedure_prompt(denial_text)
-        models_to_try = [
+        models_to_try: list[DenialBase] = [
             self.regex_denial_processor,
         ]
         models_to_try.extend(model_router.entity_extract_backends(use_external))
@@ -145,11 +138,15 @@ class AppealGenerator(object):
         pmids = None
         pmid_text: list[str] = []
         article_futures: list[Future[PubMedArticleSummarized]] = []
-        with Timeout(10.0) as timeout_ctx:
+        with Timeout(15.0) as timeout_ctx:
             query = f"{denial.procedure} {denial.diagnosis}"
             pmids = pubmed_fetcher.pmids_for_query(query)
             articles_json = json.dumps(pmids)
-            PubMedQueryData.objects.create(query=query, articles=articles_json).save()
+            PubMedQueryData.objects.create(
+                query=query,
+                articles=articles_json,
+                denial_id=denial.denial_id,
+            ).save()
             for article_id in pmids[0:3]:
                 article_futures.append(
                     pubmed_executor.submit(self.do_article_summary, article_id, query)
@@ -167,7 +164,6 @@ class AppealGenerator(object):
                 t = t - 1
             except Exception as e:
                 print(f"Skipping appending article from {f} due to {e} of {type(e)}")
-                pass
 
         if len(articles) > 0:
             return "\n".join(map(article_to_summary, articles))
@@ -246,7 +242,6 @@ class AppealGenerator(object):
             pubmed_context = self.find_more_context(denial)
         except Exception as e:
             print(f"Error {e} looking up context for {denial}.")
-            pass
 
         # TODO: use the streaming and cancellable APIs (maybe some fancy JS on the client side?)
 

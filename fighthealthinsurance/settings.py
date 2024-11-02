@@ -77,7 +77,6 @@ class Base(Configuration):
         "django_recaptcha",
         "rest_framework",
         "corsheaders",
-        "django_celery_beat",
     ]
 
     COMPRESS_JS_FILTERS = [

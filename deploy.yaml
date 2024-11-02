@@ -46,7 +46,7 @@ metadata:
   labels:
     app: fight-health-insurance
 spec:
-  replicas: 4
+  replicas: 8
   selector:
     matchLabels:
       app: fight-health-insurance
@@ -92,7 +92,7 @@ spec:
               path: /
               port: 80
             periodSeconds: 10
-            failureThreshold: 30
+            failureThreshold: 45
       volumes:
         - name: uploads
           persistentVolumeClaim:

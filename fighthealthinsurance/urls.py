@@ -15,18 +15,19 @@ Including another URLconf
 """
 
 from django.contrib import admin
+from django.contrib.admin.views.decorators import staff_member_required
 from django.urls import include, path
 from django.views.decorators.cache import cache_control, cache_page
-from django.contrib.admin.views.decorators import staff_member_required
 
 from fighthealthinsurance import views
-from fighthealthinsurance.rest_urls import rest_urls
 from fighthealthinsurance.followup_emails import (
-    ScheduleFollowUps,
     FollowUpEmailSenderView,
+    ScheduleFollowUps,
 )
+from fighthealthinsurance.rest_urls import rest_urls
 
 urlpatterns = [
+    # Internal-ish-views
     path("ziggy/rest/", include(rest_urls)),
     path("timbit/admin/", admin.site.urls),
     path("timbit/help/followup_sched", ScheduleFollowUps.as_view()),
@@ -35,6 +36,7 @@ urlpatterns = [
         staff_member_required(FollowUpEmailSenderView.as_view()),
     ),
     path("error", views.ErrorView.as_view()),
+    # These are links we e-mail people so might have some extra junk.
     # So if there's an extra / or . at the end we ignore it.
     path(
         "v0/followup/<uuid:uuid>/<slug:hashed_email>/<slug:follow_up_semi_sekret>",
@@ -50,6 +52,34 @@ urlpatterns = [
         "v0/followup/<uuid:uuid>/<slug:hashed_email>/<slug:followup_semi_sekret>/",
         views.FollowUpView.as_view(),
         name="followup-with-trailing-slash",
+    ),
+    # Fax follow up
+    # So if there's an extra / or . at the end we ignore it.
+    path(
+        "v0/faxfollowup/<uuid:uuid>/<slug:hashed_email>",
+        views.FaxFollowUpView.as_view(),
+        name="fax-followup",
+    ),
+    path(
+        "v0/faxfollowup/<uuid:uuid>/<slug:hashed_email>.",
+        views.FaxFollowUpView.as_view(),
+        name="fax-followup-with-a-period",
+    ),
+    path(
+        "v0/faxfollowup/<uuid:uuid>/<slug:hashed_email>/",
+        views.FaxFollowUpView.as_view(),
+        name="fax-followup-with-trailing-slash",
+    ),
+    # Back to normal stuff
+    path(
+        "v0/sendfax/<uuid:uuid>/<slug:hashed_email>/",
+        views.SendFaxView.as_view(),
+        name="sendfaxview",
+    ),
+    path(
+        "v0/stagefax",
+        views.StageFaxView.as_view(),
+        name="stagefaxview",
     ),
     path("scan", views.ProcessView.as_view(), name="scan"),
     path("server_side_ocr", views.OCRView.as_view(), name="server_side_ocr"),

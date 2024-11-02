@@ -1,21 +1,24 @@
+import datetime
 import json
 from dataclasses import dataclass
 from string import Template
-from typing import Any, Tuple
-import datetime
+from typing import Any, Optional, Tuple, Iterable
 
+from django.core.files import File
 from django.core.validators import validate_email
 from django.forms import Form
-from django.utils import timezone
 from django.http import StreamingHttpResponse
+from django.template.loader import render_to_string
 
 import uszipcode
-
 from fighthealthinsurance.core_forms import *
-from fighthealthinsurance.question_forms import *
+from fighthealthinsurance.fax_actor_ref import fax_actor_ref
+from fighthealthinsurance.fax_utils import flexible_fax_magic
 from fighthealthinsurance.form_utils import *
 from fighthealthinsurance.generate_appeal import *
 from fighthealthinsurance.models import *
+from fighthealthinsurance.question_forms import *
+from fighthealthinsurance.utils import pubmed_fetcher
 
 appealGenerator = AppealGenerator()
 
@@ -27,6 +30,7 @@ class RemoveDataHelper:
         Denial.objects.filter(hashed_email=hashed_email).delete()
         FollowUpSched.objects.filter(email=email).delete()
         FollowUp.objects.filter(hashed_email=hashed_email).delete()
+        FaxesToSend.objects.filter(hashed_email=hashed_email).delete()
 
 
 states_with_caps = {
@@ -74,9 +78,14 @@ class NextStepInfo:
 
     def convert_to_serializable(self):
         return NextStepInfoSerializable(
-            self.outside_help_details,
-            map(lambda xy: self._field_to_dict(*xy), self.combined_form.fields.items()),
-            self.semi_sekret,
+            outside_help_details=self.outside_help_details,
+            combined_form=list(
+                map(
+                    lambda xy: self._field_to_dict(*xy),
+                    self.combined_form.fields.items(),
+                )
+            ),
+            semi_sekret=self.semi_sekret,
         )
 
     def _field_to_dict(self, field_name, field):
@@ -102,8 +111,171 @@ class NextStepInfo:
 
 
 @dataclass
+class FaxHelperResults:
+    uuid: str
+    hashed_email: str
+
+
+class SendFaxHelper:
+    @classmethod
+    def stage_appeal_fax(
+        cls,
+        denial_id: str,
+        fax_phone: str,
+        email: str,
+        semi_sekret: str,
+        completed_appeal_text: str,
+        include_provided_health_history: bool,
+        name: str,
+        insurance_company: str,
+        pubmed_articles_to_include: str = "",
+    ):
+        hashed_email = Denial.get_hashed_email(email)
+        # Get the current info
+        denial = Denial.objects.filter(
+            denial_id=denial_id, hashed_email=hashed_email
+        ).get()
+        denial.insurance_company = insurance_company
+        files_for_fax: list[str] = []
+        # Cover page
+        cover_context = {
+            "receiver_name": denial.insurance_company or "",
+            "receiver_fax_number": fax_phone,
+            "company_name": "Fight Health Insurance -- A service of Totally Legit Co.",
+            "company_fax_number": "415-840-7591",
+            "fax_sent_datetime": str(datetime.datetime.now()),
+        }
+        html_content = render_to_string(
+            "faxes/cover.html",
+            context=cover_context,
+        )
+        with tempfile.NamedTemporaryFile(
+            suffix=".html", prefix="info_cover", mode="w+t", delete=False
+        ) as f:
+            f.write(html_content)
+            files_for_fax.append(f.name)
+        # Actual appeal
+        with tempfile.NamedTemporaryFile(
+            suffix=".txt", prefix="appealtxt", mode="w+t", delete=False
+        ) as f:
+            f.write(completed_appeal_text)
+            f.flush()
+            files_for_fax.append(f.name)
+        # Health history (if enabled)
+        if (
+            include_provided_health_history
+            and denial.health_history is not None
+            and len(denial.health_history) > 2
+        ):
+            with tempfile.NamedTemporaryFile(
+                suffix=".txt", prefix="healthhist", mode="w+t", delete=False
+            ) as f:
+                f.write("Health History:\n")
+                f.write(denial.health_history)
+                files_for_fax.append(f.name)
+                f.flush()
+
+        pubmed_ids_parsed = pubmed_articles_to_include.split(",")
+        pubmed_docs: list[PubMedArticleSummarized] = []
+        # Try and include the pubmed ids that we have but also fetch if not present
+        for pmid in pubmed_ids_parsed:
+            if pmid is None or pmid == "":
+                continue
+            try:
+                pubmed_docs.append(PubMedArticleSummarized.objects.get(pmid == pmid))
+            except:
+                try:
+                    fetched = pubmed_fetcher.article_by_pmid(pmid)
+                    article = PubMedArticleSummarized.objects.create(
+                        pmid=pmid,
+                        doi=fetched.doi,
+                        title=fetched.title,
+                        abstract=fetched.abstract,
+                        text=fetched.content.text,
+                    )
+                    pubmed_docs.append(article)
+                except:
+                    print(f"Skipping {pmid}")
+
+        for pubmed_doc in pubmed_docs:
+            with tempfile.NamedTemporaryFile(
+                suffix=".txt", prefix="pubmeddoc", mode="w+t", delete=False
+            ) as f:
+                if pubmed_doc.title is not None:
+                    f.write(pubmed_doc.title + "\n")
+                if pubmed_doc.abstract is not None:
+                    f.write("Abstract:\n")
+                    f.write(pubmed_doc.abstract)
+                if pubmed_doc.text is not None:
+                    f.write("Text:\n")
+                    f.write(pubmed_doc.text)
+                files_for_fax.append(f.name)
+                f.flush()
+
+        doc_path = flexible_fax_magic.assemble_single_output(
+            input_paths=files_for_fax, extra="", user_header=str(uuid.uuid4())
+        )
+        doc_fname = os.path.basename(doc_path)
+        doc = open(doc_path, "rb")
+        pmids = ""
+        try:
+            pmids = (
+                PubMedQueryData.objects.filter(denial_id=denial_id).get().articles or ""
+            )
+        except:
+            pass
+        fts = FaxesToSend.objects.create(
+            hashed_email=hashed_email,
+            paid=False,
+            pmids=pmids,
+            appeal_text=completed_appeal_text,
+            health_history=denial.health_history,
+            email=email,
+            denial_id=denial,
+            name=name,
+            # This should work but idk why it does not
+            combined_document=File(file=doc, name=doc_fname),
+            destination=fax_phone,
+        )
+        return FaxHelperResults(uuid=fts.uuid, hashed_email=hashed_email)
+
+    @classmethod
+    def remote_send_fax(cls, hashed_email, uuid):
+        """Send a fax using ray non-blocking"""
+        # Mark fax as to be sent just in case ray doesn't follow through
+        f = FaxesToSend.objects.filter(hashed_email=hashed_email, uuid=uuid).get()
+        f.should_send = True
+        f.save()
+        future = fax_actor_ref.get.do_send_fax.remote(hashed_email, uuid)
+
+
+class ChooseAppealHelper:
+    @classmethod
+    def choose_appeal(
+        cls, denial_id: str, appeal_text: str, email: str, semi_sekret: str
+    ) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+        hashed_email = Denial.get_hashed_email(email)
+        # Get the current info
+        denial = Denial.objects.filter(
+            denial_id=denial_id, hashed_email=hashed_email, semi_sekret=semi_sekret
+        ).get()
+        denial.appeal_text = appeal_text
+        denial.save()
+        pa = ProposedAppeal(appeal_text=appeal_text, for_denial=denial, chosen=True)
+        pa.save()
+        articles = None
+        try:
+            pmqd = PubMedQueryData.objects.filter(denial_id=denial_id).get()
+            if pmqd.articles is not None:
+                articles = ",".join(pmqd.articles.split(",")[0:2])
+        except:
+            pass
+        return (denial.appeal_fax_number, denial.insurance_company, articles)
+
+
+@dataclass
 class NextStepInfoSerializable:
-    outside_help_details: list[str]
+    outside_help_details: list[Tuple[str, str]]
     combined_form: list[Any]
     semi_sekret: str
 
@@ -190,6 +362,7 @@ class FindNextStepsHelper:
         denial_type_text=None,
         plan_source=None,
         employer_name=None,
+        appeal_fax_number=None,
     ) -> NextStepInfo:
         hashed_email = Denial.get_hashed_email(email)
         # Update the denial
@@ -206,6 +379,15 @@ class FindNextStepsHelper:
         if plan_source is not None:
             denial.plan_source.set(plan_source)
         denial.save()
+        # Only set employer name if it's not too long
+        if employer_name is not None and len(employer_name) < 200:
+            denial.employer_name = employer_name
+        if (
+            appeal_fax_number is not None
+            and len(appeal_fax_number) > 5
+            and len(appeal_fax_number) < 30
+        ):
+            denial.appeal_fax_number = appeal_fax_number
 
         outside_help_details = []
         state = your_state
@@ -257,12 +439,13 @@ class FindNextStepsHelper:
 class DenialResponseInfo:
     selected_denial_type: list[DenialTypes]
     all_denial_types: list[DenialTypes]
-    denial_id: str
-    your_state: str
-    procedure: str
-    diagnosis: str
-    employer_name: str
+    denial_id: int
+    your_state: Optional[str]
+    procedure: Optional[str]
+    diagnosis: Optional[str]
+    employer_name: Optional[str]
     semi_sekret: str
+    appeal_fax_number: Optional[str]
 
 
 class DenialCreatorHelper:
@@ -319,12 +502,23 @@ class DenialCreatorHelper:
         if store_raw_email:
             possible_email = email
 
+        appeal_fax_number = None
+        try:
+            appeal_fax_number = appealGenerator.get_fax_number(
+                denial_text=denial_text, use_external=use_external_models
+            )
+            if appeal_fax_number not in denial_text:
+                appeal_fax_number = None
+        except:
+            pass
+
         denial = Denial.objects.create(
             denial_text=denial_text,
             hashed_email=hashed_email,
             use_external=use_external_models,
             raw_email=possible_email,
             health_history=health_history,
+            appeal_fax_number=appeal_fax_number,
         )
         if possible_email is not None:
             FollowUpSched.objects.create(
@@ -379,6 +573,7 @@ class DenialCreatorHelper:
             diagnosis=diagnosis,
             employer_name=employer_name,
             semi_sekret=denial.semi_sekret,
+            appeal_fax_number=appeal_fax_number,
         )
 
 

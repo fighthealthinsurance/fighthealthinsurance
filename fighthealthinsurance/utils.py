@@ -1,13 +1,16 @@
-import os
-import itertools
-from uuid import UUID
-from functools import reduce
 import concurrent
-from concurrent.futures import Future
-from typing import List, Iterator, TypeVar, Generic, Optional
+import os
 import re
+from concurrent.futures import Future
+from functools import reduce
+from typing import Iterator, List, Optional, TypeVar
+from uuid import UUID
+
 import requests
+from metapub import PubMedFetcher
 from requests.exceptions import RequestException
+
+pubmed_fetcher = PubMedFetcher()
 
 U = TypeVar("U")
 T = TypeVar("T")

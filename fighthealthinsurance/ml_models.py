@@ -1,35 +1,20 @@
-import concurrent
-import csv
 import itertools
 import os
 import re
-import time
 import traceback
-from abc import ABC, abstractmethod
 from concurrent.futures import Future
-from functools import cache, lru_cache
-from stopit import ThreadingTimeout as Timeout
-from typing import Any, Callable, Iterable, List, Optional, Tuple, Union
 from dataclasses import dataclass
+from functools import cache
+from typing import Callable, List, Optional, Tuple, Iterable, Union
 
-
-import icd10
 import requests
-from typing_extensions import reveal_type
-
 from fighthealthinsurance.exec import *
-from fighthealthinsurance.utils import all_subclasses, is_valid_url, url_fixer
-from fighthealthinsurance.models import (
-    AppealTemplates,
-    DenialTypes,
-    Diagnosis,
-    PlanType,
-    Procedures,
-    Regulator,
-)
+from fighthealthinsurance.utils import all_subclasses, url_fixer
+from fighthealthinsurance.process_denial import DenialBase
+from stopit import ThreadingTimeout as Timeout
 
 
-class RemoteModelLike(object):
+class RemoteModelLike(DenialBase):
     def infer(self, prompt, patient_context, plan_context, pubmed_context, infer_type):
         pass
 
@@ -44,8 +29,20 @@ class RemoteModelLike(object):
     ) -> Optional[str]:
         pass
 
+    def get_denialtype(self, denial_text, procedure, diagnosis):
+        return None
+
+    def get_regulator(self, text):
+        return None
+
+    def get_plan_type(self, text):
+        return None
+
     def get_procedure_and_diagnosis(self, prompt):
         return (None, None)
+
+    def get_fax_number(self, prompt) -> Optional[str]:
+        return None
 
     def external(self):
         return True
@@ -63,6 +60,9 @@ class ModelDescription:
 
 
 class RemoteModel(RemoteModelLike):
+    def __init__(self, model: str):
+        pass
+
     @classmethod
     def models(cls) -> List[ModelDescription]:
         return []
@@ -215,6 +215,13 @@ class RemoteOpenLike(RemoteModel):
         if self.invalid_diag_procedure_regex.search(response):
             return None
         return self.diagnosis_response_regex.sub("", response)
+
+    @cache
+    def get_fax_number(self, denial: str) -> Optional[str]:
+        return self._infer(
+            system_prompt="You are a helpful assistant.",
+            prompt=f"Tell me the to appeal fax number is within the provided denial. If the fax number is unknown write UNKNOWN. If known just output the fax number without any pre-amble and as a snipper from the original doc. The denial follows: {denial}",
+        )
 
     @cache
     def questions(self, prompt: str, patient_context: str, plan_context) -> List[str]:
@@ -554,6 +561,11 @@ class DeepInfra(RemoteFullOpenLike):
                 cost=40,
                 name="meta-llama/meta-llama-3.1-70B-instruct",
                 internal_name="meta-llama/Meta-Llama-3.1-70B-Instruct",
+            ),
+            ModelDescription(
+                cost=5,
+                name="meta-llama/llama-3.2-3B-instruct",
+                internal_name="meta-llama/Llama-3.2-3B-Instruct",
             ),
         ]
 

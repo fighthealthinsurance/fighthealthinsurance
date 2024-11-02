@@ -1,15 +1,12 @@
-import os
+import re
+import urllib
 
 from django import forms
 
-from bs4 import BeautifulSoup
-
 import pymupdf
-import re
-from fighthealthinsurance.models import Denial, PlanDocuments
-from fighthealthinsurance.form_utils import *
-import urllib
 import requests
+from bs4 import BeautifulSoup
+from fighthealthinsurance.models import Denial, PlanDocuments
 
 
 class InsuranceQuestions(forms.Form):
@@ -176,16 +173,16 @@ class PriorAuthQuestions(InsuranceQuestions):
     prior_auth_id = forms.CharField(max_length=300, required=False)
 
     def main(self):
-        r = []
+        r: list[str] = []
         if "emergency" in self.cleaned_data:
-            r += (
+            r.append(
                 "This service was an emergency so prior auth could not be "
                 + "obtained."
             )
         if "told_prior_auth_not_needed" in self.cleaned_data:
-            r += "I was told prior auth would not be needed."
+            r.append("I was told prior auth would not be needed.")
         if "prior_auth_id" in self.cleaned_data:
-            r += (
+            r.append(
                 "Prior auth was obtained (id "
                 + self.cleaned_data["prior_auth_id"]
                 + ")"
@@ -332,7 +329,7 @@ class PreventiveCareQuestions(InsuranceQuestions):
         return r
 
 
-class ThirdPartyQuestions(forms.Form):
+class ThirdPartyQuestions(InsuranceQuestions):
     """Questions to ask for 3rd party insurance questions."""
 
     is_known_3rd_party = forms.BooleanField(

@@ -2,18 +2,15 @@ import hashlib
 import os
 import re
 import sys
-from typing import Optional
+import tempfile
 import uuid
-from uuid import UUID
 
 from django.conf import settings
 from django.db import models
-from django.db.models import UniqueConstraint
 from django.db.models.functions import Now
 
-from regex_field.fields import RegexField
-
 from fighthealthinsurance.utils import sekret_gen
+from regex_field.fields import RegexField
 
 
 class InterestedProfessional(models.Model):
@@ -67,6 +64,9 @@ class FollowUpSched(models.Model):
     follow_up_date = models.DateField(auto_now=False, auto_now_add=False)
     follow_up_sent = models.BooleanField(default=False)
     follow_up_sent_date = models.DateTimeField(null=True)
+    attempting_to_send_as_of = models.DateField(
+        auto_now=False, auto_now_add=False, null=True
+    )
     # If the denial is deleted it's either SPAM or a PII removal request
     # in either case lets delete the scheduled follow ups.
     denial_id = models.ForeignKey("Denial", on_delete=models.CASCADE)
@@ -255,10 +255,45 @@ class PubMedQueryData(models.Model):
     query = models.TextField(null=False, max_length=300)
     articles = models.TextField(null=True)  # json
     query_date = models.DateTimeField(auto_now_add=True)
+    denial_id = models.ForeignKey("Denial", on_delete=models.SET_NULL, null=True)
+
+
+class FaxesToSend(models.Model):
+    fax_id = models.AutoField(primary_key=True)
+    hashed_email = models.CharField(max_length=300, primary_key=False)
+    date = models.DateField(auto_now=False, auto_now_add=True)
+    paid = models.BooleanField()
+    email = models.CharField(max_length=300)
+    name = models.CharField(max_length=300, null=True)
+    appeal_text = models.TextField()
+    pmids = models.CharField(max_length=300)
+    health_history = models.TextField(null=True)
+    combined_document = models.FileField(null=True, storage=settings.COMBINED_STORAGE)
+    uuid = models.CharField(
+        max_length=300, primary_key=False, default=uuid.uuid4, editable=False
+    )
+    sent = models.BooleanField(default=False)
+    attempting_to_send_as_of = models.DateField(
+        auto_now=False, auto_now_add=False, null=True
+    )
+    denial_id = models.ForeignKey("Denial", on_delete=models.CASCADE, null=True)
+    destination = models.CharField(max_length=20, null=True)
+    should_send = models.BooleanField(default=False)
+
+    def get_temporary_document_path(self):
+        with tempfile.NamedTemporaryFile(
+            suffix=self.combined_document.name, mode="w+b", delete=False
+        ) as f:
+            f.write(self.combined_document.read())
+            f.flush()
+            f.close()
+            os.sync()
+            print(f"Constructed temp path {f.name}")
+            return f.name
 
 
 class Denial(models.Model):
-    denial_id = models.AutoField(primary_key=True)
+    denial_id = models.AutoField(primary_key=True, null=False)
     uuid = models.CharField(
         max_length=300, primary_key=False, default=uuid.uuid4, editable=False
     )
@@ -284,6 +319,7 @@ class Denial(models.Model):
     use_external = models.BooleanField(default=False)
     health_history = models.TextField(primary_key=False, null=True)
     qa_context = models.TextField(primary_key=False, null=True)
+    plan_context = models.TextField(primary_key=False, null=True)
     semi_sekret = models.CharField(max_length=100, default=sekret_gen)
     plan_id = models.CharField(max_length=200, primary_key=False, null=True)
     state = models.CharField(max_length=4, primary_key=False, null=True)
@@ -292,6 +328,7 @@ class Denial(models.Model):
     follow_up_semi_sekret = models.CharField(max_length=100, default=sekret_gen)
     references = models.TextField(primary_key=False, null=True)
     reference_summary = models.TextField(primary_key=False, null=True)
+    appeal_fax_number = models.CharField(max_length=12, null=True)
 
     def follow_up(self):
         return self.raw_email is not None and "@" in self.raw_email
@@ -317,4 +354,7 @@ class ProposedAppeal(models.Model):
     editted = models.BooleanField(default=False)
 
     def __str__(self):
-        return f"{self.for_denial}: {self.appeal_text[0:100]}"
+        if self.appeal_text is not None:
+            return f"{self.for_denial}: {self.appeal_text[0:100]}"
+        else:
+            return f"{self.for_denial}: {self.appeal_text}"

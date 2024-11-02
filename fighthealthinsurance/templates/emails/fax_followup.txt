@@ -1,0 +1,20 @@
+Hello {name},
+
+First off, thank you for using Fight Health Insurance to generate an appeal and choosing to use our fax service!.
+
+{% if success %}
+Our records indicate the fax was sent successfully. You should still call your insurance company to confirm receipt as they love to try and weasel out of it.
+{% else %}
+It seems like there may have been a problem sending the fax.
+{% endif %}
+
+If you would like to re-send the fax, or send it to another number, go to {{fax_redo_link}}
+
+
+Wishing you the best of luck with your fight with insurance,
+
+
+Holden :)
+
+---
+https://www.fighthealthinsurance.com

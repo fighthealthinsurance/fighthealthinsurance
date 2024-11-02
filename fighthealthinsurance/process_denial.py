@@ -1,5 +1,6 @@
 import re
-from abc import ABC, abstractmethod
+import csv
+import icd10
 
 from fighthealthinsurance.models import (
     AppealTemplates,
@@ -9,24 +10,10 @@ from fighthealthinsurance.models import (
     Procedures,
     Regulator,
 )
+from fighthealthinsurance.denial_base import DenialBase
+
 
 # Process all of our "expert system" rules.
-
-
-class DenialBase(ABC):
-    @abstractmethod
-    def get_denialtype(self, denial_text, procedure, diagnosis):
-        pass
-
-    @abstractmethod
-    def get_regulator(self, text):
-        pass
-
-    @abstractmethod
-    def get_plan_type(self, text):
-        pass
-
-
 class ProcessDenialCodes(DenialBase):
     """Process the denial type based on the procedure codes."""
 
@@ -60,9 +47,12 @@ class ProcessDenialCodes(DenialBase):
         except Exception:
             self.preventive_diagnosis = {}
 
+    def get_procedure_and_diagnosis(self, denial_text):
+        return (None, None)
+
     def get_denialtype(self, denial_text, procedure, diagnosis):
         """Get the denial type. For now short circuit logic."""
-        icd_codes = self.icd10_re.finditer(text)
+        icd_codes = self.icd10_re.finditer(denial_text)
         for i in icd_codes:
             diag = i.group(1)
             tag = icd10.find(diag)
@@ -71,7 +61,7 @@ class ProcessDenialCodes(DenialBase):
                     return [self.preventive_denial]
                 if diag in self.preventive_diagnosis:
                     return [self.preventive_denial]
-        cpt_codes = self.cpt_code_re.finditer(text)
+        cpt_codes = self.cpt_code_re.finditer(denial_text)
         for i in cpt_codes:
             code = i.group(1)
             if code in self.preventive_codes:
@@ -151,7 +141,7 @@ class ProcessDenialRegex(DenialBase):
             ):
                 if (
                     d.negative_regex.pattern == ""
-                    or d.negative_regex.search(text) is None
+                    or d.negative_regex.search(denial_text) is None
                 ):
                     print("no negative regex match!")
                     denials.append(d)

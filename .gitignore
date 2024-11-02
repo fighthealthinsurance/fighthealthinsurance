@@ -138,7 +138,13 @@ reports/
 fighthealthinsurance/static/js/node_modules
 fighthealthinsurance/static/js/dist
 
+# Apple
+
+.DS_Store
+
 # Ignore external storage
 external_storage
 external_data
-.DS_Store
+external_data_b
+localish_data
+

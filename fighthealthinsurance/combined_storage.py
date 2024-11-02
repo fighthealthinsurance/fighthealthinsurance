@@ -1,6 +1,8 @@
-from stopit import ThreadingTimeout as Timeout
 from django.core.files.storage import Storage
 from django.utils.deconstruct import deconstructible
+from typing import Optional
+
+from stopit import ThreadingTimeout as Timeout
 
 
 @deconstructible(path="fighthealthinsurance.combined_storage.CombinedStorage")
@@ -11,9 +13,7 @@ class CombinedStorage(Storage):
         self.backends = args
 
     def open(self, *args, **kwargs):
-        last_error = None
-        if name is None:
-            return
+        last_error: Optional[BaseException] = None
         for backend in self.backends:
             try:
                 with Timeout(2.0) as timeout_ctx:
@@ -21,12 +21,11 @@ class CombinedStorage(Storage):
             except Exception as e:
                 print(f"Error {e}")
                 last_error = e
-        raise last_error
+        if last_error is not None:
+            raise last_error
 
     def delete(self, *args, **kwargs):
-        last_error = None
-        if name is None:
-            return
+        last_error: Optional[BaseException] = None
         for backend in self.backends:
             try:
                 with Timeout(2.0) as timeout_ctx:
@@ -34,16 +33,17 @@ class CombinedStorage(Storage):
             except Exception as e:
                 print(f"Error {e}")
                 last_error = e
-        raise last_error
+        if last_error is not None:
+            raise last_error
 
     def save(self, *args, **kwargs):
         for backend in self.backends:
             try:
-                print(f"Called with {args} {kwargs}")
                 with Timeout(2.0) as timeout_ctx:
-                    backend.save(*args, **kwargs)
+                    l = backend.save(*args, **kwargs)
             except Exception as e:
-                print(f"Error saving {e}")
+                print(f"Error saving {e} to {backend}")
+        return l
 
     def exists(self, name):
         if name is None:

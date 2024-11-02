@@ -2,8 +2,9 @@
 
 import django.db.models.deletion
 import django.utils.timezone
-import fighthealthinsurance.utils
 from django.db import migrations, models
+
+import fighthealthinsurance.utils
 
 
 class Migration(migrations.Migration):

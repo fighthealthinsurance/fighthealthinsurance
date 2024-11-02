@@ -1,0 +1,28 @@
+{% extends 'base.html' %}
+{% block title %}
+Fax ReSend
+{% endblock title %}
+
+{% load compress %}
+{% load static %}
+
+{% block scriptmagic %}
+{% endblock scriptmagic %}
+{% block content %}
+<h2>Resend Your Fax</h2>
+<p>Thank you so much for using fight health insurance.
+</p>
+<section class="scan-section mt-2">
+  <div class="container">
+    <form action="{{ request.get_full_path }}" method="post" enctype="multipart/form-data">
+      {% csrf_token %}
+      <table>
+	{{ form.as_table }}
+      </table>
+      <div class="form-group mt-2">
+	<button type="submit" id="submit" class="btn btn-green">Resubmit</button>
+      </div>
+    </form>
+  </div>
+</section>
+{% endblock content %}

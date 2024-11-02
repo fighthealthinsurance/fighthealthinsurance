@@ -1,9 +1,6 @@
 beautifulsoup4==4.12.3
 black
-celery
 django>=5.0.0
-django-celery
-django-celery-beat
 django-cms
 djangocms-attributes-field
 django_compressor
@@ -57,3 +54,7 @@ uszipcode
 werkzeug
 django-minio-storage
 stopit
+telnyx
+pandoc
+ray==2.38.0
+ray[client]==2.38.0

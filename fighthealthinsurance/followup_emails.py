@@ -1,16 +1,17 @@
-from django.urls import reverse
-from django.core.mail import EmailMultiAlternatives
-from django.template.loader import render_to_string
-from django.utils.decorators import method_decorator
-from django.contrib.admin.views.decorators import staff_member_required
-from django_celery_beat.models import PeriodicTasks
-from django.views import View, generic
-from django.http import HttpResponse
-from django.db.models import QuerySet
-from fighthealthinsurance.models import Denial, FollowUpSched
-from fighthealthinsurance.core_forms import FollowUpTestForm
 import datetime
 from typing import Optional
+
+from django.contrib.admin.views.decorators import staff_member_required
+from django.core.mail import EmailMultiAlternatives
+from django.db.models import QuerySet
+from django.http import HttpResponse
+from django.template.loader import render_to_string
+from django.urls import reverse
+from django.utils.decorators import method_decorator
+from django.views import View, generic
+
+from fighthealthinsurance.core_forms import FollowUpTestForm
+from fighthealthinsurance.models import Denial, FollowUpSched
 
 
 class ScheduleFollowUps(View):
@@ -25,6 +26,9 @@ class ScheduleFollowUps(View):
         )
         c = 0
         for denial in denials:
+            # Shouldn't happen but makes the type checker happy.
+            if denial.raw_email is None:
+                continue
             FollowUpSched.objects.create(
                 email=denial.raw_email,
                 follow_up_date=denial.date + datetime.timedelta(days=15),

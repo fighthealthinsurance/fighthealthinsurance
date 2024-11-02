@@ -2,22 +2,12 @@ import os
 
 from django import forms
 
-from django_recaptcha.fields import ReCaptchaField, ReCaptchaV2Checkbox, ReCaptchaV3
-
-from bs4 import BeautifulSoup
-
-import pymupdf
-import re
-import urllib
-import requests
-
+from django_recaptcha.fields import ReCaptchaField, ReCaptchaV2Checkbox
 from fighthealthinsurance.form_utils import *
 from fighthealthinsurance.models import (
-    Denial,
     DenialTypes,
-    PlanSource,
-    PlanType,
     InterestedProfessional,
+    PlanSource,
 )
 
 
@@ -54,12 +44,6 @@ class ShareAppealForm(forms.Form):
     appeal_text = forms.CharField(required=True)
 
 
-class ChooseAppealForm(forms.Form):
-    denial_id = forms.IntegerField(required=True, widget=forms.HiddenInput())
-    email = forms.CharField(required=True, widget=forms.HiddenInput())
-    appeal_text = forms.CharField(required=True)
-
-
 class DenialForm(forms.Form):
     zip = forms.CharField(required=False)
     pii = forms.BooleanField(required=True)
@@ -77,6 +61,23 @@ class DenialRefForm(forms.Form):
     denial_id = forms.IntegerField(required=True, widget=forms.HiddenInput())
     email = forms.CharField(required=True, widget=forms.HiddenInput())
     semi_sekret = forms.CharField(required=True, widget=forms.HiddenInput())
+
+
+class ChooseAppealForm(DenialRefForm):
+    appeal_text = forms.CharField(required=True)
+
+
+class FaxForm(DenialRefForm):
+    name = forms.CharField(required=True, label="Your name (for the cover page)")
+    insurance_company = forms.CharField(required=True)
+    fax_phone = forms.CharField(required=True)
+    completed_appeal_text = forms.CharField(widget=forms.Textarea)
+    include_provided_health_history = forms.BooleanField(required=False)
+    pubmed_articles_to_include = forms.CharField(required=False)
+
+
+class FaxResendForm(forms.Form):
+    fax_phone = forms.CharField(required=True)
 
 
 class PostInferedForm(DenialRefForm):

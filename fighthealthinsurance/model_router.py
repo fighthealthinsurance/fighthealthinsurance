@@ -1,4 +1,4 @@
-from typing import Mapping, List
+from typing import List
 
 from fighthealthinsurance.ml_models import *
 
@@ -8,7 +8,7 @@ class ModelRouter(object):
     Tool to route our requests most cheapily.
     """
 
-    models_by_name: Mapping[str, List[RemoteModelLike]] = {}
+    models_by_name: dict[str, List[RemoteModelLike]] = {}
     internal_models_by_cost: List[RemoteModelLike] = []
     all_models_by_cost: List[RemoteModelLike] = []
 
@@ -16,7 +16,7 @@ class ModelRouter(object):
         print(f"Starting model 'router'")
         building_internal_models_by_cost = []
         building_all_models_by_cost = []
-        building_models_by_name = {}
+        building_models_by_name: dict[str, List[ModelDescription]] = {}
         for backend in candidate_model_backends:
             print(f"Considering {backend}")
             try:
@@ -33,7 +33,7 @@ class ModelRouter(object):
                             building_internal_models_by_cost
                         )
                     building_all_models_by_cost.append(m)
-                    same_models = []
+                    same_models: list[ModelDescription] = []
                     if m.name in building_models_by_name:
                         same_models = building_models_by_name[m.name]
                     same_models.append(m)
@@ -41,15 +41,19 @@ class ModelRouter(object):
                     print(f"Added {m}")
             except Exception as e:
                 print(f"Skipping {backend} due to {e} of {type(e)}")
-                pass
         for k, v in building_models_by_name.items():
-            self.models_by_name[k] = list(map(lambda m: m.model, sorted(v)))
-        self.internal_models_by_cost = list(
-            map(lambda m: m.model, sorted(building_internal_models_by_cost))
-        )
-        self.all_models_by_cost = list(
-            map(lambda m: m.model, sorted(building_all_models_by_cost))
-        )
+            sorted_model_descriptions: list[ModelDescription] = sorted(v)
+            self.models_by_name[k] = [
+                x.model for x in sorted_model_descriptions if x.model is not None
+            ]
+        self.internal_models_by_cost = [
+            x.model
+            for x in sorted(building_internal_models_by_cost)
+            if x.model is not None
+        ]
+        self.all_models_by_cost = [
+            x.model for x in sorted(building_all_models_by_cost) if x.model is not None
+        ]
         print(
             f"Built {self} with i:{self.internal_models_by_cost} a:{self.all_models_by_cost}"
         )

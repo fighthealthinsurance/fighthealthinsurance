@@ -1,0 +1,15 @@
+ARG DEBIAN_FRONTEND=noninteractive
+ARG RAY_VERSION
+
+FROM holdenk/ray:${RAY_VERSION}
+
+# install some tools
+RUN sudo apt-get update && sudo apt-get upgrade -y && sudo apt-get install vim emacs libssl-dev python3-opencv libgl1 tesseract-ocr nano nfs-common iputils-ping hylafax-client build-essential python3-dev pkg-config pandoc texlive -y
+RUN sudo apt-get install -y libmariadb-dev-compat
+
+# Installed seperately because only used in prod
+RUN pip install mysqlclient
+COPY requirements.txt ./
+RUN pip install --upgrade pip
+RUN pip install -r requirements.txt
+COPY fighthealthinsurance fighthealthinsurance
