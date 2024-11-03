@@ -18,7 +18,7 @@ spec:
       spec:
         affinity: {}
         containers:
-          - image: holdenk/fhi-ray:v0.7.0.a
+          - image: holdenk/fhi-ray:v0.8.0a
             env:
               - name: RAY_gcs_server_request_timeout_seconds
                 value: "20"
@@ -58,7 +58,7 @@ spec:
           app.kubernetes.io/instance: raycluster
       spec:
         containers:
-          - image: holdenk/fhi-ray:v0.7.0.a
+          - image: holdenk/fhi-ray:v0.8.0a
             env:
               - name: RAY_gcs_server_request_timeout_seconds
                 value: "20"

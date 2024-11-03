@@ -8,10 +8,10 @@ mypy -p fighthealthinsurance
 ./manage.py collectstatic --no-input
 
 pushd ./static/js; npm i; npm run build; popd
-FHI_VERSION=v0.7.0.a
+FHI_VERSION=v0.8.0.a
 export FHI_VERSION
 source build_ray.sh
-IMAGE=holdenk/fight-health-insurance:v0.7.0a
+IMAGE=holdenk/fight-health-insurance:${FHI_VERSION}
 docker pull "${IMAGE}" || docker buildx build --platform=linux/amd64,linux/arm64 -t "${IMAGE}" . --push
 kubectl apply -f deploy.yaml
 # The raycluster operator doesn't handle upgrades well so delete + recreate instead.
