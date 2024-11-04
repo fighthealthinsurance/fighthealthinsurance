@@ -8,7 +8,7 @@ mypy -p fighthealthinsurance
 ./manage.py collectstatic --no-input
 
 pushd ./static/js; npm i; npm run build; popd
-FHI_VERSION=v0.8.1a
+FHI_VERSION=v0.8.3a
 export FHI_VERSION
 source build_ray.sh
 IMAGE=holdenk/fight-health-insurance:${FHI_VERSION}
