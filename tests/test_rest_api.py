@@ -41,6 +41,41 @@ class Delete(APITestCase):
         assert denials_for_user_count == 0
 
 
+class DenialLongEmployerName(APITestCase):
+    """Test denial with long employer name."""
+
+    fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
+
+    def test_long_employer_name(self):
+        denial_text = "Group Name: "
+        for a in range(0, 300):
+            denial_text += str(a)
+        denial_text += "INC "
+        url = reverse("api_denialcreator")
+        email = "timbit@fighthealthinsurance.com"
+        hashed_email = hashlib.sha512(email.encode("utf-8")).hexdigest()
+        denials_for_user_count = Denial.objects.filter(
+            hashed_email=hashed_email
+        ).count()
+        assert denials_for_user_count == 0
+        # Create a denial
+        response = self.client.post(
+            url,
+            json.dumps(
+                {
+                    "email": email,
+                    "denial_text": denial_text,
+                    "pii": "true",
+                    "tos": "true",
+                    "privacy": "true",
+                    "store_raw_email": "true",  # Store the raw e-mail for the follow-up form
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertTrue(status.is_success(response.status_code))
+
+
 class DenialEndToEnd(APITestCase):
     """Test end to end, we need to load the initial fixtures so we have denial types."""
 

@@ -381,7 +381,7 @@ class FindNextStepsHelper:
             denial.plan_source.set(plan_source)
         denial.save()
         # Only set employer name if it's not too long
-        if employer_name is not None and len(employer_name) < 200:
+        if employer_name is not None and len(employer_name) < 300:
             denial.employer_name = employer_name
         if (
             appeal_fax_number is not None
@@ -552,8 +552,9 @@ class DenialCreatorHelper:
         employer_name = None
         if g is not None:
             employer_name = g.group(1)
-            denial.employer_name = employer_name
-            denial.save()
+            if len(employer_name) < 300:
+                denial.employer_name = employer_name
+                denial.save()
 
         # Try and guess at the denial types
         denial_types = cls.regex_denial_processor.get_denialtype(
