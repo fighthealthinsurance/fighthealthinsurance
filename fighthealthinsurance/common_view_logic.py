@@ -242,10 +242,13 @@ class SendFaxHelper:
 
     @classmethod
     def blocking_dosend_target(cls, email) -> int:
-        f = FaxesToSend.objects.filter(email=email, sent=False).get()
-        future = fax_actor_ref.get.do_send_fax.remote(f.hashed_email, f.uuid)
-        ray.get(future)
-        return 1
+        faxes = FaxesToSend.objects.filter(email=email, sent=False)
+        c = 0
+        for f in faxes:
+            future = fax_actor_ref.get.do_send_fax.remote(f.hashed_email, f.uuid)
+            ray.get(future)
+            c = c + 1
+        return c
 
     @classmethod
     def blocking_dosend_all(cls, count) -> int:
