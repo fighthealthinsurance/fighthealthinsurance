@@ -2,7 +2,7 @@ from functools import cached_property
 
 import time
 import ray
-from fighthealthinsurance.fax_utils import FaxActor
+from fighthealthinsurance.fax_actor import FaxActor
 
 
 class FaxActorRef:
@@ -10,7 +10,7 @@ class FaxActorRef:
     def get(self):
 
         # Shut down existing actor if needed.
-        name = f"FaxActor"
+        name = "FaxActor"
         fax_actor = None
         try:
             fax_actor = ray.get_actor(name, namespace="fhi")

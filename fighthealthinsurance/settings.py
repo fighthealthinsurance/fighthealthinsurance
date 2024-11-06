@@ -265,7 +265,23 @@ class Dev(Base):
         "default": {
             "ENGINE": "django.db.backends.sqlite3",
             "NAME": BASE_DIR / "db.sqlite3",
-        }
+            "TEST": {
+                "NAME": BASE_DIR / "test.db.sqlite3",
+            },
+        },
+    }
+
+
+class Test(Dev):
+    # This is a hack since the actors start up without the django test interface around them
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": BASE_DIR / "test.db.sqlite3",
+            "TEST": {
+                "NAME": BASE_DIR / "test.db.sqlite3",
+            },
+        },
     }
 
 

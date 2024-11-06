@@ -2,11 +2,11 @@ import time
 from functools import cached_property
 
 import ray
-from fighthealthinsurance.email_polling_actor import *
+from fighthealthinsurance.fax_polling_actor import *
 from fighthealthinsurance.ray import *
 
 
-class EmailPollingActorRef:
+class FaxPollingActorRef:
     """A reference to the email polling actor."""
 
     @cached_property
@@ -23,12 +23,12 @@ class EmailPollingActorRef:
         except Exception as e:
             print(f"No existing email actor to stop {e}")
 
-        email_polling_actor = EmailPollingActor.options(  # type: ignore
+        fax_polling_actor = FaxPollingActor.options(  # type: ignore
             name=name, lifetime="detached", namespace="fhi"
         ).remote()
         # Kick of the remote task
-        email_polling_actor.run.remote()
-        return email_polling_actor
+        fax_polling_actor.run.remote()
+        return fax_polling_actor
 
 
-email_polling_actor_ref = EmailPollingActorRef()
+fax_polling_actor_ref = FaxPollingActorRef()

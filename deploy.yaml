@@ -25,7 +25,7 @@ spec:
         special: web-primary-pod
     spec:
       containers:
-        - image: holdenk/fight-health-insurance:v0.8.3a
+        - image: holdenk/fight-health-insurance:v0.8.1l
           name: totallylegitco
           env:
           - name: PRIMARY

@@ -134,6 +134,7 @@ key.pem
 # test artifacts
 reports/
 /static/
+latest_logs/
 
 fighthealthinsurance/static/js/node_modules
 fighthealthinsurance/static/js/dist
@@ -147,4 +148,6 @@ external_storage
 external_data
 external_data_b
 localish_data
-
+# misc
+downloaded_files/
+test.db.sqlite3

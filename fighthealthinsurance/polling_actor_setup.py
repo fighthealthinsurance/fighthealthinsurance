@@ -1,0 +1,5 @@
+from fighthealthinsurance.email_polling_actore_ref import email_polling_actor_ref
+from fighthealthinsurance.fax_polling_actore_ref import fax_polling_actor_ref
+
+email_polling_actor_ref.get()
+fax_polling_actor_ref.get()

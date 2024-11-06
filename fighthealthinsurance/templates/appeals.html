@@ -55,7 +55,9 @@ $(document).ready(function() {
 		appealTextElem = clonedForm.find("textarea");
 		// WTF javascript why.
 		form = clonedForm.find("form");
-		form.prop("id", "form_" + appeal_id);
+                form.prop("id", "form_" + appeal_id);
+                submit = clonedForm.find("button");
+                submit.prop("id", "submit" + appeal_id);
 		console.log("Looking for our friend:");
 		console.log(appealTextElem);
 		appealTextElem.text(j);
@@ -169,7 +171,7 @@ data: {
   <textarea style="width:100%" rows="20" name="appeal_text" id="appeal_text">
   </textarea>
 
-  <button type="submit" class="btn btn-green">Choose This One</button>
+  <button type="submit" id="submit" class="btn btn-green">Choose This One</button>
 </form>
 </div>
 <div id="output-container">

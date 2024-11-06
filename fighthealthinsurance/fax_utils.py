@@ -9,7 +9,6 @@ from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
 from django.urls import reverse
 
-import ray
 import requests
 from PyPDF2 import PdfMerger, PdfReader, PdfWriter
 
@@ -451,79 +450,6 @@ class FlexibleFaxMagic(object):
                 backend = candidate
                 backend_cost = candidate_cost
         return backend.send_fax(destination=destination, path=path, blocking=blocking)
-
-
-@ray.remote
-class FaxActor:
-    def __init__(self):
-        # This is a bit of a hack but we do this so we have the app configured
-        from configurations.wsgi import get_wsgi_application
-
-        os.environ.setdefault("DJANGO_SETTINGS_MODULE", "fighthealthinsurance.settings")
-        self.application = get_wsgi_application()
-
-    def hi(self):
-        return "ok"
-
-    def version(self):
-        """Bump this to restart the fax actor."""
-        return 1
-
-    def do_send_fax(self, hashed_email, uuid) -> bool:
-        # Now that we have an app instance we can import faxes to send
-        from fighthealthinsurance.models import FaxesToSend
-
-        fts = FaxesToSend.objects.filter(uuid=uuid, hashed_email=hashed_email).get()
-        email = fts.email
-        denial = fts.denial_id
-        if denial is None:
-            return False
-        if fts.destination is None:
-            return False
-        extra = ""
-        if denial.claim_id is not None:
-            extra += "This is regarding claim id {denial.claim_id}."
-        if fts.name is not None:
-            extra += "This fax is sent on behalf of {fts.name}."
-        fax_sent = flexible_fax_magic.send_fax(
-            input_paths=[fts.get_temporary_document_path()],
-            extra=extra,
-            destination=fts.destination,
-            blocking=True,
-        )
-        fax_redo_link = "https://www.fighthealthinsurance.com" + reverse(
-            "fax-followup",
-            kwargs={
-                "hashed_email": hashed_email,
-                "uuid": uuid,
-            },
-        )
-        context = {
-            "name": fts.name,
-            "success": fax_sent,
-            "fax_redo_link": fax_redo_link,
-        }
-        # First, render the plain text content.
-        text_content = render_to_string(
-            "emails/fax_followup.txt",
-            context=context,
-        )
-
-        # Secondly, render the HTML content.
-        html_content = render_to_string(
-            "emails/fax_followup.html",
-            context=context,
-        )
-        # Then, create a multipart email instance.
-        msg = EmailMultiAlternatives(
-            "Following up from Fight Health Insurance",
-            text_content,
-            "support42@fighthealthinsurance.com",
-            [email],
-        )
-        msg.attach_alternative(html_content, "text/html")
-        msg.send()
-        return True
 
 
 flexible_fax_magic = FlexibleFaxMagic([FaxyMcFaxFace()])

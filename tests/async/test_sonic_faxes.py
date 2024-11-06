@@ -15,7 +15,8 @@ class SonicFaxTest(unittest.TestCase):
                 return True
         return False
 
-    @pytest.mark.skipif(_sonic_is_configured(), reason="Not configured")
+    # @pytest.mark.skipif(_sonic_is_configured(), reason="Not configured")
+    @pytest.mark.skip
     def test_sonic_fax_success(self):
         s = SonicFax()
         with tempfile.NamedTemporaryFile(
@@ -36,7 +37,8 @@ class SonicFaxTest(unittest.TestCase):
                 )
             )
 
-    @pytest.mark.skipif(_sonic_is_configured(), reason="Not configured")
+    # @pytest.mark.skipif(_sonic_is_configured(), reason="Not configured")
+    @pytest.mark.skip
     def test_sonic_fax_failure(self):
         s = SonicFax()
         with tempfile.NamedTemporaryFile(

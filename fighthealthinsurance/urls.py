@@ -20,6 +20,7 @@ from django.urls import include, path
 from django.views.decorators.cache import cache_control, cache_page
 
 from fighthealthinsurance import views
+from fighthealthinsurance import fax_views
 from fighthealthinsurance.followup_emails import (
     FollowUpEmailSenderView,
     ScheduleFollowUps,
@@ -34,6 +35,10 @@ urlpatterns = [
     path(
         "timbit/help/followup_sender_test",
         staff_member_required(FollowUpEmailSenderView.as_view()),
+    ),
+    path(
+        "timbit/help/followup_fax_test",
+        staff_member_required(fax_views.FollowUpFaxSenderView.as_view()),
     ),
     path("error", views.ErrorView.as_view()),
     # These are links we e-mail people so might have some extra junk.
@@ -57,28 +62,28 @@ urlpatterns = [
     # So if there's an extra / or . at the end we ignore it.
     path(
         "v0/faxfollowup/<uuid:uuid>/<slug:hashed_email>",
-        views.FaxFollowUpView.as_view(),
+        fax_views.FaxFollowUpView.as_view(),
         name="fax-followup",
     ),
     path(
         "v0/faxfollowup/<uuid:uuid>/<slug:hashed_email>.",
-        views.FaxFollowUpView.as_view(),
+        fax_views.FaxFollowUpView.as_view(),
         name="fax-followup-with-a-period",
     ),
     path(
         "v0/faxfollowup/<uuid:uuid>/<slug:hashed_email>/",
-        views.FaxFollowUpView.as_view(),
+        fax_views.FaxFollowUpView.as_view(),
         name="fax-followup-with-trailing-slash",
     ),
     # Back to normal stuff
     path(
         "v0/sendfax/<uuid:uuid>/<slug:hashed_email>/",
-        views.SendFaxView.as_view(),
+        fax_views.SendFaxView.as_view(),
         name="sendfaxview",
     ),
     path(
         "v0/stagefax",
-        views.StageFaxView.as_view(),
+        fax_views.StageFaxView.as_view(),
         name="stagefaxview",
     ),
     path("scan", views.ProcessView.as_view(), name="scan"),

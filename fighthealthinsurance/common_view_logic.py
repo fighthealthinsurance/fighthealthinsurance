@@ -19,6 +19,7 @@ from fighthealthinsurance.generate_appeal import *
 from fighthealthinsurance.models import *
 from fighthealthinsurance.question_forms import *
 from fighthealthinsurance.utils import pubmed_fetcher
+import ray
 
 appealGenerator = AppealGenerator()
 
@@ -240,11 +241,29 @@ class SendFaxHelper:
         return FaxHelperResults(uuid=fts.uuid, hashed_email=hashed_email)
 
     @classmethod
+    def blocking_dosend_target(cls, email) -> int:
+        f = FaxesToSend.objects.filter(email=email, sent=False).get()
+        future = fax_actor_ref.get.do_send_fax.remote(f.hashed_email, f.uuid)
+        ray.get(future)
+        return 1
+
+    @classmethod
+    def blocking_dosend_all(cls, count) -> int:
+        faxes = FaxesToSend.objects.filter(sent=False)[0:count]
+        c = 0
+        for fax in faxes:
+            future = fax_actor_ref.get.do_send_fax.remote(fax.hashed_email, fax.uuid)
+            ray.get(future)
+            c = c + 1
+        return c
+
+    @classmethod
     def remote_send_fax(cls, hashed_email, uuid) -> bool:
         """Send a fax using ray non-blocking"""
         # Mark fax as to be sent just in case ray doesn't follow through
         f = FaxesToSend.objects.filter(hashed_email=hashed_email, uuid=uuid).get()
         f.should_send = True
+        f.paid = True
         f.save()
         future = fax_actor_ref.get.do_send_fax.remote(hashed_email, uuid)
         return True
@@ -383,6 +402,8 @@ class FindNextStepsHelper:
         # Only set employer name if it's not too long
         if employer_name is not None and len(employer_name) < 300:
             denial.employer_name = employer_name
+        else:
+            employer_name = None
         if (
             appeal_fax_number is not None
             and len(appeal_fax_number) > 5
@@ -547,7 +568,7 @@ class DenialCreatorHelper:
         (procedure, diagnosis) = appealGenerator.get_procedure_and_diagnosis(
             denial_text=denial_text, use_external=denial.use_external
         )
-        r = re.compile(r"Group Name:\s*(.*?)(,|)\s*(INC|CO|LTD)")
+        r = re.compile(r"Group Name:\s*(.*?)(,|)\s*(INC|CO|LTD|LLC)\s+", re.IGNORECASE)
         g = r.search(denial_text)
         employer_name = None
         if g is not None:

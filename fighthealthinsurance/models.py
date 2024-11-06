@@ -261,7 +261,7 @@ class PubMedQueryData(models.Model):
 class FaxesToSend(models.Model):
     fax_id = models.AutoField(primary_key=True)
     hashed_email = models.CharField(max_length=300, primary_key=False)
-    date = models.DateField(auto_now=False, auto_now_add=True)
+    date = models.DateTimeField(auto_now=False, auto_now_add=True)
     paid = models.BooleanField()
     email = models.CharField(max_length=300)
     name = models.CharField(max_length=300, null=True)

@@ -16,18 +16,16 @@ jobs:
       - uses: actions/checkout@v3
       - uses: actions/setup-python@v4
 
-      - name: Setup node
-        uses: actions/setup-node@v3
-
-      - name: Install tesseract ocr
-        run: sudo apt-get install -y tesseract-ocr
-
       - name: Install dependencies
         run: pip install tox tox-gh-actions
 
-      - name: Check npm build
-        run:
-          cd fighthealthinsurance/static/js; npm i; npm run build
+      - name: Cache Tox
+        id: tox
+        uses: actions/cache@v4
+        with:
+          path: .tox
+          key: ${{ runner.os }}-black-${{ hashFiles('tox.ini') }}
+
 
       - name: Check style
         run:
@@ -42,6 +40,13 @@ jobs:
       - name: Install dependencies
         run: pip install tox tox-gh-actions
 
+      - name: Cache Tox
+        id: tox
+        uses: actions/cache@v4
+        with:
+          path: .tox
+          key: ${{ runner.os }}-mypy-tox-${{ hashFiles('tox.ini') }}-${{ hashFiles('requirements.txt') }}
+
       - name: Check types
         run:
           tox -e mypy
@@ -50,14 +55,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
+      - name: Setup node
+        uses: actions/setup-node@v3
+
+      - name: Cache NPM dependencies
+        uses: actions/cache@v1
+        with:
+          path: ~/.npm
+          key: ${{ runner.OS }}-npm-cache
+          restore-keys: |
+            ${{ runner.OS }}-npm-cache-
 
       - name: Check npm build
         run:
           cd fighthealthinsurance/static/js; npm i; npm run build
 
 
-  tests:
+  tests-sync:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -68,7 +82,7 @@ jobs:
           - python: '310'
             django: '50'
 
-    name: Run the test suite (Python ${{ matrix.python }}, Django ${{ matrix.django }})
+    name: Run the sync test suite (Python ${{ matrix.python }}, Django ${{ matrix.django }})
     steps:
       - uses: actions/checkout@v3
       - uses: actions/setup-python@v4
@@ -87,12 +101,85 @@ jobs:
         with:
           version: 2.19
 
+      - name: Cache NPM dependencies
+        uses: actions/cache@v1
+        with:
+          path: ~/.npm
+          key: ${{ runner.OS }}-npm-cache
+          restore-keys: |
+            ${{ runner.OS }}-npm-cache-
+
+      - name: Build npm js (needed for the e2e tests in django)
+        run:
+          cd fighthealthinsurance/static/js; npm i; npm run build
+
+      - name: Cache Tox
+        id: tox
+        uses: actions/cache@v4
+        with:
+          path: .tox
+          key: ${{ runner.os }}-${{ matrix.python }}-${{ matrix.django }}-tox-${{ hashFiles('tox.ini') }}-${{ hashFiles('requirements.txt') }}
+
+      - name: Run tests
+        run: tox -e py${{ matrix.python }}-django${{ matrix.django }}-sync
+        env:
+          FARTS: "farts"
+          GOOGLE_CLIENT_SECRETS_TEXT: ${{ secrets.GOOGLE_CLIENT_SECRETS_TEXT }}
+          STRIPE_TEST_SECRET_KEY: ${{ secrets.STRIPE_TEST_SECRET_KEY }}
+
+  tests-async:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['310']
+        django: ['50']
+        include:
+          - python: '310'
+            django: '50'
+
+    name: Run the async test suite (Python ${{ matrix.python }}, Django ${{ matrix.django }})
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+
+      - name: Setup node
+        uses: actions/setup-node@v3
+
+      - name: Install system level packages
+        run: sudo apt-get update && sudo apt-get install -y tesseract-ocr texlive
+
+      - name: Install dependencies
+        run: pip install tox tox-gh-actions
+
+      - name: Install
+        uses: pandoc/actions/setup@v1
+        with:
+          version: 2.19
+
+      - name: Cache Tox
+        id: tox
+        uses: actions/cache@v4
+        with:
+          path: .tox
+          key: ${{ runner.os }}-${{ matrix.python }}-${{ matrix.django }}-tox-${{ hashFiles('tox.ini') }}-${{ hashFiles('requirements.txt') }}
+
+      - name: Cache NPM dependencies
+        uses: actions/cache@v1
+        with:
+          path: ~/.npm
+          key: ${{ runner.OS }}-npm-cache
+          restore-keys: |
+            ${{ runner.OS }}-npm-cache-
+
       - name: Build npm js (needed for the e2e tests in django)
         run:
           cd fighthealthinsurance/static/js; npm i; npm run build
 
       - name: Run tests
-        run: tox -e py${{ matrix.python }}-django${{ matrix.django }}
+        run: tox -e py${{ matrix.python }}-django${{ matrix.django }}-async
         env:
           FARTS: "farts"
           GOOGLE_CLIENT_SECRETS_TEXT: ${{ secrets.GOOGLE_CLIENT_SECRETS_TEXT }}
+          STRIPE_TEST_SECRET_KEY: ${{ secrets.STRIPE_TEST_SECRET_KEY }}
+          NOSTRIPE: true

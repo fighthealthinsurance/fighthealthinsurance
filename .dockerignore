@@ -63,6 +63,7 @@ coverage.xml
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
+test.db.sqlite3
 
 # Flask stuff:
 instance/
@@ -147,3 +148,10 @@ localish_data
 
 # tests
 tests/
+
+# node modules to exlcude
+./fighthealthinsurance/static/js/node_modules
+./static/js/node_modules
+# misc logs
+archived_logs/
+latest_logs/
