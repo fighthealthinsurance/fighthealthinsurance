@@ -19,9 +19,10 @@ RUN mkdir -p /opt/fighthealthinsurance
 RUN chown -R www-data:www-data /opt/fighthealthinsurance
 # We hope requirements has not changed so we can use the cache
 COPY *requirements.txt /opt/fighthealthinsurance/
-RUN pip install --upgrade pip && pip install -r /opt/fighthealthinsurance/requirements.txt
-# install mysqlclient seperately because it's only in prod not dev.
-RUN pip install -r /opt/fighthealthinsurance/deploy-requirements.txt
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
+    export PATH=/root/.local/bin:$PATH && \
+    uv pip install --system -r /opt/fighthealthinsurance/requirements.txt && \
+    uv pip install --system -r /opt/fighthealthinsurance/deploy-requirements.txt
 RUN mkdir -p /external_data
 # We copy static early ish since it could also be cached nicely
 ADD --chown=www-data:www-data static /opt/fighthealthinsurance/static

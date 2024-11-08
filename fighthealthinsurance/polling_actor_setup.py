@@ -10,7 +10,7 @@ print(f"Launched fax polling actor {fpar}")
 
 print(f"Double check that we're not finishing the tasks")
 time.sleep(10)
-ready, wait = ray.wait([etask, ftask])
+ready, wait = ray.wait([etask, ftask], timeout=1)
 print(f"Finished {ready}")
 result = ray.get(ready)
 print(f"Which resulted in {result}")

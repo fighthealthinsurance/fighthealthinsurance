@@ -13,19 +13,15 @@ jobs:
   style:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v4
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
       - name: Install dependencies
-        run: pip install tox tox-gh-actions
-
-      - name: Cache Tox
-        id: tox
-        uses: actions/cache@v4
-        with:
-          path: .tox
-          key: ${{ runner.os }}-black-${{ hashFiles('tox.ini') }}
-
+        run: uv tool install tox
 
       - name: Check style
         run:
@@ -34,18 +30,15 @@ jobs:
   types:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v4
 
-      - name: Install dependencies
-        run: pip install tox tox-gh-actions
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
 
-      - name: Cache Tox
-        id: tox
-        uses: actions/cache@v4
-        with:
-          path: .tox
-          key: ${{ runner.os }}-mypy-tox-${{ hashFiles('tox.ini') }}-${{ hashFiles('requirements.txt') }}
+      - name: Install dependencies
+        run: uv tool install tox
 
       - name: Check types
         run:
@@ -76,8 +69,7 @@ jobs:
 
     name: Run the sync test suite (Python ${{ matrix.python }}, Django ${{ matrix.django }})
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
+      - uses: actions/checkout@v4
 
       - name: Setup node
         uses: actions/setup-node@v3
@@ -85,8 +77,13 @@ jobs:
       - name: Install system level packages
         run: sudo apt-get update && sudo apt-get install -y tesseract-ocr texlive && sudo apt-get clean
 
+      - uses: actions/setup-python@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
       - name: Install dependencies
-        run: pip install tox tox-gh-actions
+        run: uv tool install tox
 
       - name: Install
         uses: pandoc/actions/setup@v1
@@ -96,13 +93,6 @@ jobs:
       - name: Build npm js (needed for the e2e tests in django)
         run:
           cd fighthealthinsurance/static/js && npm i && npm run build && npm cache clean --force
-
-      - name: Cache Tox
-        id: tox
-        uses: actions/cache@v4
-        with:
-          path: .tox
-          key: ${{ runner.os }}-${{ matrix.python }}-${{ matrix.django }}-tox-${{ hashFiles('tox.ini') }}-${{ hashFiles('requirements.txt') }}
 
       - name: Run tests
         run: tox -e py${{ matrix.python }}-django${{ matrix.django }}-sync
@@ -124,8 +114,7 @@ jobs:
 
     name: Run the async test suite (Python ${{ matrix.python }}, Django ${{ matrix.django }})
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
+      - uses: actions/checkout@v4
 
       - name: Setup node
         uses: actions/setup-node@v3
@@ -133,20 +122,18 @@ jobs:
       - name: Install system level packages
         run: sudo apt-get update && sudo apt-get install -y tesseract-ocr texlive && sudo apt-get clean
 
+      - uses: actions/setup-python@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
       - name: Install dependencies
-        run: pip install tox tox-gh-actions
+        run: uv tool install tox
 
       - name: Install
         uses: pandoc/actions/setup@v1
         with:
           version: 2.19
-
-      - name: Cache Tox
-        id: tox
-        uses: actions/cache@v4
-        with:
-          path: .tox
-          key: ${{ runner.os }}-${{ matrix.python }}-${{ matrix.django }}-tox-${{ hashFiles('tox.ini') }}-${{ hashFiles('requirements.txt') }}
 
       - name: Build npm js (needed for the e2e tests in django)
         run:
