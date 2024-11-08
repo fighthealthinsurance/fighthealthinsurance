@@ -261,6 +261,7 @@ class HylaFaxClient(FaxSenderBase):
         with tempfile.NamedTemporaryFile(
             suffix=".txt", prefix="dest", mode="w+t", delete=True
         ) as f:
+            print(f"Wrote phone number {destination} to {f.name}")
             f.write(destination)
             f.flush()
             os.sync()
@@ -280,13 +281,87 @@ class HylaFaxClient(FaxSenderBase):
             )
             print(f"Sending command {command}")
             result = subprocess.run(command)
-            print(result.stdout)  # Output of the command
-            print(result.stderr)  # Error output (if any)
-            print(result.returncode)  # Exit code of the command
+            print(f"Sent -- result {result}")
+            print(f"Exit code {result.returncode}")
             return result.returncode == 0
 
 
-class FaxyMcFaxFace(HylaFaxClient):
+class SshHylaFaxClient(HylaFaxClient):
+    """HylaFaxClient that uses ssh to connect to a remote host, this is useful
+    since the default ftp is... less than ideal (and does not do well with NAT)"""
+
+    def _send_fax(
+        self,
+        destination: str,
+        path: str,
+        dest_name: Optional[str] = None,
+        blocking: bool = False,
+    ) -> bool:
+        if self.host is None:
+            raise Exception("Can not send fax without a host to fax from")
+        from paramiko import SSHClient
+        from paramiko.client import AutoAddPolicy
+
+        ssh = SSHClient()
+        ssh.load_system_host_keys()
+        ssh.set_missing_host_key_policy(AutoAddPolicy)
+        ssh.connect(self.host)
+        # Going above 9600 causes issues sometimes
+        with tempfile.NamedTemporaryFile(
+            suffix=".txt", prefix="dest", mode="w+t", delete=True
+        ) as f:
+            print(f"Wrote phone number {destination} to {f.name}")
+            f.write(destination)
+            f.flush()
+            os.sync()
+            time.sleep(1)
+            destination_file = f.name
+            command = ["sendfax"]
+            if blocking:
+                command.append("-w")
+            command.extend(
+                [
+                    "-n",
+                    f"-B{self.max_speed}",
+                    f"-h{self.host}",
+                    f"/tmp/{path}",
+                    f"-z{destination_file}",  # It is important this is last
+                ]
+            )
+            try:
+                sftp_client = ssh.open_sftp()
+                sftp_client.put(f.name, f.name)
+                dir = os.path.dirname(path)
+                stdin, stdout, stderr = ssh.exec_command(f"mkdir -p /tmp/{dir}")
+                sftp_client.put(path, f"/tmp/{path}")
+                print(f"Sending remote command {command}")
+                stdin, stdout, stderr = ssh.exec_command(" ".join(command))
+                print(f"Sent cmd")
+                exit_code = stdout.channel.recv_exit_status()
+                if exit_code == 0:
+                    print("Success")
+                    return True
+                else:
+                    print("Failed :(")
+                    print(
+                        f"Failure stdout {stdout.read().decode()} -- err {stderr.read().decode()}"
+                    )
+                    return False
+            except Exception as e:
+                print(f"Error: {e} sending remote command")
+                return False
+            finally:
+                try:
+                    ssh.exec_command(f"rm /tmp/{path}")
+                except Exception as e:
+                    print(f"Can't delete /tmp/{path}")
+                try:
+                    ssh.exec_command(f"rm {f.name}")
+                except Exception as e:
+                    print(f"Can't delete {f.name}")
+
+
+class FaxyMcFaxFace(SshHylaFaxClient):
     base_cost = 0
     cost_per_page = 1
     host = os.getenv("FAXYMCFAXFACE_HOST")

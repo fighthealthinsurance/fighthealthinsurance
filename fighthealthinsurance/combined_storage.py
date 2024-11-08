@@ -19,17 +19,22 @@ class CombinedStorage(Storage):
                 with Timeout(2.0) as timeout_ctx:
                     return backend.open(*args, **kwargs)
             except Exception as e:
-                print(f"Error {e}")
+                print(
+                    f"Error opening from {args} {kwargs} on backend {backend} from {self.backends}: {e}"
+                )
                 last_error = e
         if last_error is not None:
+            print(
+                f"Opening failed on all backends -- {self.backends} -- raising {last_error}"
+            )
             raise last_error
 
     def delete(self, *args, **kwargs):
         last_error: Optional[BaseException] = None
         for backend in self.backends:
             try:
-                with Timeout(2.0) as timeout_ctx:
-                    return backend.open(*args, **kwargs)
+                with Timeout(1.0) as timeout_ctx:
+                    return backend.delete(*args, **kwargs)
             except Exception as e:
                 print(f"Error {e}")
                 last_error = e
@@ -39,7 +44,7 @@ class CombinedStorage(Storage):
     def save(self, *args, **kwargs):
         for backend in self.backends:
             try:
-                with Timeout(2.0) as timeout_ctx:
+                with Timeout(4.0) as timeout_ctx:
                     l = backend.save(*args, **kwargs)
             except Exception as e:
                 print(f"Error saving {e} to {backend}")

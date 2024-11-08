@@ -18,7 +18,7 @@ spec:
       spec:
         affinity: {}
         containers:
-          - image: holdenk/fhi-ray:v0.8.4a
+          - image: holdenk/fhi-ray:v0.8.6d
             env:
               - name: RAY_gcs_server_request_timeout_seconds
                 value: "20"
@@ -30,21 +30,29 @@ spec:
             resources:
               limits:
                 cpu: "1"
-                memory: 4G
+                memory: 13G
               requests:
                 cpu: "1"
-                memory: 4G
+                memory: 12G
             volumeMounts:
               - mountPath: /tmp/ray
                 name: log-volume
               - name: uploads
                 mountPath: /external_data
+              - name: ssh-privatekey
+                readOnly: true
+                # container will see /root/.ssh/id_rsa as usual:
+                mountPath: "/home/ray/.ssh"
         volumes:
         - emptyDir: {}
           name: log-volume
         - name: uploads
           persistentVolumeClaim:
             claimName: uploads
+        - name: ssh-privatekey
+          secret:
+            secretName: ssh-privatekey
+            defaultMode: 0755
   workerGroupSpecs:
   - groupName: workergroup
     maxReplicas: 4
@@ -58,7 +66,7 @@ spec:
           app.kubernetes.io/instance: raycluster
       spec:
         containers:
-          - image: holdenk/fhi-ray:v0.8.4a
+          - image: holdenk/fhi-ray:v0.8.6d
             env:
               - name: RAY_gcs_server_request_timeout_seconds
                 value: "20"
@@ -70,19 +78,26 @@ spec:
             resources:
               limits:
                 cpu: "1"
-                memory: 4G
+                memory: 13G
               requests:
                 cpu: "1"
-                memory: 4G
-            securityContext: {}
+                memory: 12G
             volumeMounts:
             - mountPath: /tmp/ray
               name: log-volume
             - name: uploads
               mountPath: /external_data
+            - name: ssh-privatekey
+              readOnly: true
+              # container will see /root/.ssh/id_rsa as usual:
+              mountPath: "/home/ray/.ssh"
         volumes:
         - emptyDir: {}
           name: log-volume
         - name: uploads
           persistentVolumeClaim:
             claimName: uploads
+        - name: ssh-privatekey
+          secret:
+            secretName: ssh-privatekey
+            defaultMode: 0755

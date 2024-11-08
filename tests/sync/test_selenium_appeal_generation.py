@@ -117,12 +117,16 @@ Cheap-O-Insurance-Corp""",
         self.click("button#fax_appeal")
         # Make sure we get to stripe checkout
         time.sleep(1)
-        if ("STRIPE_TEST_SECRET_KEY" in os.environ and
-            "NOSTRIPE" not in os.environ and "MEEPS" in os.environ):
+        if (
+            "STRIPE_TEST_SECRET_KEY" in os.environ
+            and "NOSTRIPE" not in os.environ
+            and "MEEPS" in os.environ
+        ):
             self.assertIn(
                 "stripe",
                 self.driver.current_url,
-                f"Should be redirected to stripe f{self.driver.get_current_url}")
+                f"Should be redirected to stripe f{self.driver.get_current_url}",
+            )
 
     def test_submit_an_appeal_with_enough(self):
         self.open(f"{self.live_server_url}/")

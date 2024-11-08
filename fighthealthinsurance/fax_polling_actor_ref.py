@@ -2,15 +2,14 @@ import time
 from functools import cached_property
 
 import ray
-from fighthealthinsurance.fax_polling_actor import *
-from fighthealthinsurance.ray import *
+from fighthealthinsurance.fax_polling_actor import FaxPollingActor
 
 
 class FaxPollingActorRef:
     """A reference to the email polling actor."""
 
     @cached_property
-    def get(self) -> str:
+    def get(self):
         name = "fax_polling_actor"
         # Shut down existing actor
         try:
@@ -27,8 +26,9 @@ class FaxPollingActorRef:
             name=name, lifetime="detached", namespace="fhi"
         ).remote()
         # Kick of the remote task
-        fax_polling_actor.run.remote()
-        return fax_polling_actor
+        rr = fax_polling_actor.run.remote()
+        print(f"Remote run of email actor {rr}")
+        return (fax_polling_actor, rr)
 
 
 fax_polling_actor_ref = FaxPollingActorRef()

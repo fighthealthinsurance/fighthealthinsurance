@@ -41,7 +41,7 @@ class FaxFollowUpView(generic.FormView):
         return self.kwargs
 
     def form_valid(self, form):
-        FollowUpHelper.store_follow_up_result(**form.cleaned_data)
+        SendFaxHelper.resend(**form.cleaned_data)
         return render(self.request, "fax_followup_thankyou.html")
 
 

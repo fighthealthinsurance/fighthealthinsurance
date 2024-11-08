@@ -55,7 +55,7 @@ class FollowUpEmailSenderView(generic.FormView):
         return HttpResponse(str(sent))
 
 
-class FollowUpEmailSender:
+class FollowUpEmailSender(object):
     def find_candidates(self) -> QuerySet[FollowUpSched, FollowUpSched]:
         candidates = FollowUpSched.objects.filter(follow_up_sent=False).filter(
             follow_up_date__lt=datetime.date.today()

@@ -266,16 +266,17 @@ class FaxesToSend(models.Model):
     email = models.CharField(max_length=300)
     name = models.CharField(max_length=300, null=True)
     appeal_text = models.TextField()
-    pmids = models.CharField(max_length=300)
-    health_history = models.TextField(null=True)
+    pmids = models.CharField(max_length=300, blank=True)
+    health_history = models.TextField(null=True, blank=True)
     combined_document = models.FileField(null=True, storage=settings.COMBINED_STORAGE)
     uuid = models.CharField(
         max_length=300, primary_key=False, default=uuid.uuid4, editable=False
     )
     sent = models.BooleanField(default=False)
-    attempting_to_send_as_of = models.DateField(
-        auto_now=False, auto_now_add=False, null=True
+    attempting_to_send_as_of = models.DateTimeField(
+        auto_now=False, auto_now_add=False, null=True, blank=True
     )
+    fax_success = models.BooleanField(default=False)
     denial_id = models.ForeignKey("Denial", on_delete=models.CASCADE, null=True)
     destination = models.CharField(max_length=20, null=True)
     should_send = models.BooleanField(default=False)

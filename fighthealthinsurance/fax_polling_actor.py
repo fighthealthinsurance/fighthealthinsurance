@@ -6,14 +6,17 @@ import time
 import asyncio
 
 
-@ray.remote
+@ray.remote(max_restarts=-1, max_task_retries=-1)
 class FaxPollingActor:
     def __init__(self, i=60):
         # This is seperate from the global one
         name = "fpa-worker"
+        print(f"Starting fax polling actor")
+        time.sleep(1)
         self.fax_actor = FaxActor.options(  # type: ignore
             name=name, namespace="fhi"
         ).remote()
+        print(f"Created fpa-worker {self.fax_actor}")
         self.interval = i
         self.c = 0
         self.e = 0
@@ -23,6 +26,7 @@ class FaxPollingActor:
         return "Hi"
 
     async def run(self) -> bool:
+        print(f"Starting run")
         self.running = True
         while self.running:
             # Like yield
@@ -36,7 +40,9 @@ class FaxPollingActor:
                 self.aec += 1
             finally:
                 # Success or failure we wait.
-                await asyncio.sleep(1)
+                print(f"Waiting for next run")
+                await asyncio.sleep(5)
+        print(f"Done running? what?")
         return True
 
     async def count(self) -> int:

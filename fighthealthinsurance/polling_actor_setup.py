@@ -1,5 +1,18 @@
-from fighthealthinsurance.email_polling_actore_ref import email_polling_actor_ref
-from fighthealthinsurance.fax_polling_actore_ref import fax_polling_actor_ref
+from fighthealthinsurance.email_polling_actor_ref import email_polling_actor_ref
+from fighthealthinsurance.fax_polling_actor_ref import fax_polling_actor_ref
+import time
+import ray
 
-email_polling_actor_ref.get()
-fax_polling_actor_ref.get()
+epar, etask = email_polling_actor_ref.get
+fpar, ftask = fax_polling_actor_ref.get
+print(f"Launched email polling actor {epar}")
+print(f"Launched fax polling actor {fpar}")
+
+print(f"Double check that we're not finishing the tasks")
+time.sleep(10)
+ready, wait = ray.wait([etask, ftask])
+print(f"Finished {ready}")
+result = ray.get(ready)
+print(f"Which resulted in {result}")
+
+__all__ = ["epar", "fpar"]

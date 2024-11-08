@@ -11,7 +11,7 @@ if [ ! -z "$PRIMARY" ]; then
   ./manage.py loaddata followup
   ./manage.py loaddata plan_source
   ./manage.py ensure_adminuser --no-input
-  python -m fighthealthinsurance.polling_actor_setup || (echo "Error starting ray actor?" && sleep 240)
+  ./manage.py launch_polling_actors || (echo "Error starting ray actor?" && sleep 480)
   sleep 60
   exit 0
 fi

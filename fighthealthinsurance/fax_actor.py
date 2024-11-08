@@ -3,17 +3,19 @@ import ray
 from fighthealthinsurance.fax_utils import *
 from django.utils import timezone
 from datetime import datetime, timedelta
-from fighthealthinsurance.models import Denial, FaxesToSend
+import time
 
 
-@ray.remote
+@ray.remote(max_restarts=-1, max_task_retries=-1)
 class FaxActor:
     def __init__(self):
+        time.sleep(1)
         # This is a bit of a hack but we do this so we have the app configured
         from configurations.wsgi import get_wsgi_application
 
         os.environ.setdefault("DJANGO_SETTINGS_MODULE", "fighthealthinsurance.settings")
-        self.application = get_wsgi_application()
+        get_wsgi_application()
+        from fighthealthinsurance.models import FaxesToSend
 
     def hi(self):
         return "ok"
@@ -31,7 +33,7 @@ class FaxActor:
         from fighthealthinsurance.models import FaxesToSend
 
         target_time = timezone.now() - timedelta(hours=1)
-        print(f"Target: {target_time}")
+        print(f"Sending faxes older than target: {target_time}")
 
         delayed_faxes = FaxesToSend.objects.filter(
             should_send=True, sent=False, date__lt=target_time
@@ -40,11 +42,12 @@ class FaxActor:
         f = 0
         for fax in delayed_faxes:
             try:
+                print(f"Attempting to send fax {fax}")
                 t = t + 1
                 self.do_send_fax_object(fax)
+                print(f"Sent fax {fax}")
             except Exception as e:
                 print(f"Error sending fax {fax}: {e}")
-                raise e
                 f = f + 1
         return (t, f)
 
@@ -63,16 +66,25 @@ class FaxActor:
         if fax.destination is None:
             return False
         extra = ""
-        if denial.claim_id is not None:
-            extra += "This is regarding claim id {denial.claim_id}."
-        if fax.name is not None:
-            extra += "This fax is sent on behalf of {fax.name}."
+        if denial.claim_id is not None and len(denial.claim_id) > 2:
+            extra += f"This is regarding claim id {denial.claim_id}."
+        if fax.name is not None and len(fax.name) > 2:
+            extra += f"This fax is sent on behalf of {fax.name}."
+        print(f"Recording attempt to send time")
+        fax.attempting_to_send_as_of = timezone.now()
+        fax.save()
+        print(f"Kicking of fax sending")
         fax_sent = flexible_fax_magic.send_fax(
             input_paths=[fax.get_temporary_document_path()],
             extra=extra,
             destination=fax.destination,
             blocking=True,
         )
+        print(f"Fax send command returned :)")
+        fax.sent = True
+        fax.fax_success = fax_sent
+        fax.save()
+        print(f"Notifing user of result {fax.fax_success}")
         fax_redo_link = "https://www.fighthealthinsurance.com" + reverse(
             "fax-followup",
             kwargs={
@@ -105,4 +117,5 @@ class FaxActor:
         )
         msg.attach_alternative(html_content, "text/html")
         msg.send()
+        print(f"E-mail sent!")
         return True

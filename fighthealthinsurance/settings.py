@@ -13,9 +13,13 @@ https://docs.djangoproject.com/en/4.0/ref/settings/
 import os
 from pathlib import Path
 from typing import *
+import traceback
+from functools import cached_property
 
 from configurations import Configuration
 from fighthealthinsurance.combined_storage import CombinedStorage
+import minio as m
+from minio_storage.storage import MinioStorage
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "fighthealthinsurance.settings")
 os.environ.setdefault("DJANGO_CONFIGURATION", os.getenv("ENVIRONMENT", "Dev"))
@@ -44,7 +48,7 @@ class Base(Configuration):
     MEDIA_URL = "/media/"
 
     LOCALISH_STORAGE_LOCATION = "localish_data"
-    EXTERNAL_STORAGE_LOCATION = "external_data"
+    EXTERNAL_STORAGE_LOCATION = "/external_data"
     EXTERNAL_STORAGE_LOCATION_B = "external_data_b"
 
     NEWSLETTER_THUMBNAIL = "sorl-thumbnail"
@@ -222,25 +226,25 @@ class Base(Configuration):
             "pk_test_51MXFu6FI0Ls3lz8tKOwolhL765Pc6WUkeZGTrOqri8ibbWJzRwLqJGRmyY8r6he09aMmGsULImRfIbErgjxvEVTO00vgERwX4P",
         )
 
-    @property
+    @cached_property
     def EXTERNAL_STORAGE(self):
         from django.core.files.storage import FileSystemStorage
 
         return FileSystemStorage(location=self.EXTERNAL_STORAGE_LOCATION)
 
-    @property
+    @cached_property
     def EXTERNAL_STORAGE_B(self):
         from django.core.files.storage import FileSystemStorage
 
         return FileSystemStorage(location=self.EXTERNAL_STORAGE_LOCATION_B)
 
-    @property
+    @cached_property
     def LOCALISH_STORAGE(self):
         from django.core.files.storage import FileSystemStorage
 
         return FileSystemStorage(location=self.LOCALISH_STORAGE_LOCATION)
 
-    @property
+    @cached_property
     def COMBINED_STORAGE(self):
         return CombinedStorage(
             self.LOCALISH_STORAGE, self.EXTERNAL_STORAGE, self.EXTERNAL_STORAGE_B
@@ -350,16 +354,34 @@ class Prod(Base):
     MINIO_STORAGE_ACCESS_KEY = os.getenv("EX_MINIO_ACCESS", None)
     MINIO_STORAGE_SECRET_KEY = os.getenv("EX_MINIO_SECRET", None)
     MINIO_STORAGE_REGION = os.getenv("EX_MINIO_REGION", None)
-    MINIO_STORAGE_ENDPOINT = os.getenv("EX_MINIO_ENDPOINT", None)
+    MINIO_STORAGE_ENDPOINT = os.getenv("EX_MINIO_HOST_ENDPOINT", None)
     MINIO_CERT_CHECK = os.getenv("EX_MINIO_CERT_CHECK", "True") == "True"
-    MINIO_STORAGE_USE_HTTPS = os.getenv("EX_USE_HTTPS", "True") == "True"
+    MINIO_STORAGE_USE_HTTPS = os.getenv("EX_MINIO_USE_HTTPS", "True") == "True"
+    MINIO_STORAGE_MEDIA_BUCKET_NAME = os.getenv("EX_MINIO_BUCKET")
 
-    @property
+    @cached_property
     def EXTERNAL_STORAGE_B(self):
         try:
-            from minio_storage.storage import MinioStorage
+            from django.core.files.storage import storages
 
-            return MinioStorage(bucket_name=os.getenv("EX_MINIO_BUCKET"))
+            if self.MINIO_STORAGE_ENDPOINT is not None:
+                minio_client = m.Minio(
+                    self.MINIO_STORAGE_ENDPOINT,
+                    access_key=self.MINIO_STORAGE_ACCESS_KEY,
+                    secret_key=self.MINIO_STORAGE_SECRET_KEY,
+                    region=self.MINIO_STORAGE_REGION,
+                    secure=self.MINIO_STORAGE_USE_HTTPS,
+                )
+                minio = MinioStorage(
+                    minio_client,
+                    bucket_name=self.MINIO_STORAGE_MEDIA_BUCKET_NAME,
+                    auto_create_bucket=True,
+                )
+            else:
+                raise Exception("No storage endpoint configured")
         except Exception as e:
-            print(f"Failed to setup minio storage")
+            print(
+                f"Failed to setup minio storage to {self.MINIO_STORAGE_ENDPOINT} -- {e}"
+            )
+            print(traceback.format_exc())
             return None

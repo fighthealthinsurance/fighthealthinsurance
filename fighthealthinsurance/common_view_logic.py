@@ -261,6 +261,14 @@ class SendFaxHelper:
         return c
 
     @classmethod
+    def resend(cls, fax_phone, uuid, hashed_email) -> bool:
+        f = FaxesToSend.objects.filter(hashed_email=hashed_email, uuid=uuid).get()
+        f.destination = fax_phone
+        f.save()
+        future = fax_actor_ref.get.do_send_fax.remote(hashed_email, uuid)
+        return True
+
+    @classmethod
     def remote_send_fax(cls, hashed_email, uuid) -> bool:
         """Send a fax using ray non-blocking"""
         # Mark fax as to be sent just in case ray doesn't follow through

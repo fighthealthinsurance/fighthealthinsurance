@@ -58,3 +58,6 @@ telnyx
 pandoc
 ray==2.38.0
 ray[client]==2.38.0
+paramiko
+types-paramiko
+py-spy

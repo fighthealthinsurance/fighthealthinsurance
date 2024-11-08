@@ -1,0 +1,62 @@
+! $Id$
+!
+! HylaFAX (tm) Dialing String Processing Rules.
+!
+! This file describes how to process user-specified dialing strings
+! to create two items:
+!
+! CanonicalNumber: a unique string that is derived from all dialing
+! strings to the same destination phone number.  This string is used
+! by the fax server for ``naming'' the destination. 
+!
+! DialString: the string passed to the modem for use in dialing the
+! telephone.  This string should be void of any characters that might
+! confuse the modem.
+!
+Area=${AreaCode}		! local area code
+Country=${CountryCode}		! local country code
+IDPrefix=${InternationalPrefix}	! prefix for placing an international call
+LDPrefix=${LongDistancePrefix}	! prefix for placing a long distance call
+!
+WS=" 	"			! our notion of white space
+!
+! Convert a phone number to a canonical format:
+!
+!    +<country><areacode><rest>
+!
+! by (possibly) stripping off leading dialing prefixes for
+! long distance and/or international dialing.
+!
+CanonicalNumber := [
+%.*			=			! strip calling card stuff
+[abcABC]		= 2			! these convert alpha to numbers
+[defDEF]		= 3
+[ghiGHI]		= 4
+[jklJKL]		= 5
+[mnoMNO]		= 6
+[prsPRS]		= 7
+[tuvTUV]		= 8
+[wxyWXY]		= 9
+[^+0-9]+		=			! strip white space etc.
+^${IDPrefix}		= +			! replace int. dialing code
+^${LDPrefix}		= +${Country}		! replace l.d. dialing code
+^[^+]			= +${Country}${Area}&	! otherwise, insert canon form
+]
+!
+! Process a dialing string according to local requirements.
+! These rules do only one transformation: they convert in-country
+! international calls to long-distance calls.
+!
+DialString := [
+[-${WS}.]+		=			! strip syntactic sugar
+[abcABC]		= 2			! these convert alpha to numbers
+[defDEF]		= 3
+[ghiGHI]		= 4
+[jklJKL]		= 5
+[mnoMNO]		= 6
+[prsPRS]		= 7
+[tuvTUV]		= 8
+[wxyWXY]		= 9
+^[+]${Country}		= ${LDPrefix}		! long distance call
+^[+]			= ${IDPrefix}		! international call
+]

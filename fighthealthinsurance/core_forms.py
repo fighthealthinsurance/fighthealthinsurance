@@ -78,6 +78,8 @@ class FaxForm(DenialRefForm):
 
 class FaxResendForm(forms.Form):
     fax_phone = forms.CharField(required=True)
+    uuid = forms.UUIDField(required=True, widget=forms.HiddenInput)
+    hashed_email = forms.CharField(required=True, widget=forms.HiddenInput)
 
 
 class PostInferedForm(DenialRefForm):
