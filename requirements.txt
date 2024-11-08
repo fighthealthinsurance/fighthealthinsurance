@@ -11,6 +11,7 @@ django-extensions
 django-filer
 django-filter
 django-memoize
+django-minio-storage
 django-pipeline
 django-recaptcha==4.0.0
 django-regex-field
@@ -19,17 +20,16 @@ django-stubs
 django-treebeard
 django_user_agents
 easy_thumbnails
-easy_thumbnails
 flake8-django
 geopy
 git+https://github.com/holdenk/static-thumbnails.git
 git+https://github.com/jazzband/django-cookie-consent.git#egg=django-cookie-consent
-gunicorn
 icd10-cm
 metapub==0.5.12
 mypy
-mypy
 packaging>=20.0
+pandoc
+paramiko
 Pillow
 pyarrow
 pymupdf
@@ -40,24 +40,18 @@ python-Levenshtein
 pytz
 pyyaml
 RapidFuzz==2.15.1 # See https://github.com/mindee/doctr/issues/1186
+ray==2.38.0
+ray[client]==2.38.0
 requests
 setuptools
 sorl-thumbnail
 sqlalchemy_mate==2.0.0.0 # uszipcode issue see https://github.com/MacHu-GWU/uszipcode-project/issues/79
-stripe
+stopit
 stripe==5.5.0
 totallylegit-django-rest-framework-braces # forked from django-rest-framework-braces
+types-paramiko
 types-requests
 typing-extensions
 urllib3
 uszipcode
 werkzeug
-django-minio-storage
-stopit
-telnyx
-pandoc
-ray==2.38.0
-ray[client]==2.38.0
-paramiko
-types-paramiko
-py-spy

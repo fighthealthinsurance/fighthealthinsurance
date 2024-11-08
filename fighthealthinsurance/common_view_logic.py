@@ -540,8 +540,9 @@ class DenialCreatorHelper:
             appeal_fax_number = appealGenerator.get_fax_number(
                 denial_text=denial_text, use_external=use_external_models
             )
-            if appeal_fax_number not in denial_text:
-                appeal_fax_number = None
+            if appeal_fax_number is not None:
+                if appeal_fax_number not in denial_text or len(appeal_fax_number) > 30:
+                    appeal_fax_number = None
         except:
             pass
 

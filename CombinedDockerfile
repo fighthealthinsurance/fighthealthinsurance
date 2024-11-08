@@ -12,10 +12,10 @@ RUN mkdir -p /etc/hylafax
 COPY hylafax-settings/* /etc/hylafax
 
 # Installed seperately because only used in prod
-RUN pip install mysqlclient
-COPY requirements.txt ./
+COPY *requirements.txt ./
 RUN $HOME/anaconda3/bin/pip install --upgrade pip
 RUN $HOME/anaconda3/bin/pip install -r requirements.txt
+RUN $HOME/anaconda3/bin/pip install -r deploy-requirements.txt
 RUN mkdir -p ./fhi
 COPY fighthealthinsurance ./fhi/fighthealthinsurance
 COPY setup.py ./fhi/setup.py
