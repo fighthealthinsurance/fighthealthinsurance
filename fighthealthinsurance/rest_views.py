@@ -6,10 +6,31 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework import status
 
+from stopit import ThreadingTimeout as Timeout
+
 
 class Ping(APIView):
     def get(self, request):
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class CheckStorage(APIView):
+    def get(self, request):
+        es = settings.EXTERNAL_STORAGE
+        with Timeout(2.0) as timeout_ctx:
+            list = es.listdir("./")
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        return Response(status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+
+class CheckMlBackend(APIView):
+    def get(self, request):
+        from fighthealthinsurance.model_router import model_router
+
+        if model_router.working():
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        else:
+            return Response(status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
 
 class RemoveData(APIView):

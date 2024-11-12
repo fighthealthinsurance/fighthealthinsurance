@@ -78,5 +78,9 @@ class ModelRouter(object):
             )
         return None
 
+    def working(self) -> bool:
+        """Return if we have candidates to route to. (TODO: Check they're alive)"""
+        return len(self.all_models_by_cost) > 0
+
 
 model_router = ModelRouter()
