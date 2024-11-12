@@ -315,6 +315,10 @@ class Prod(Base):
                 "PASSWORD": os.getenv("DBPASSWORD"),
                 "HOST": os.getenv("DBHOST"),
                 "ATOMIC_REQUESTS": True,
+                "OPTIONS": {
+                    "charset": "utf8mb4",
+                    "use_unicode": True,
+                },
             }
         }
 
