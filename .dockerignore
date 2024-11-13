@@ -150,9 +150,9 @@ localish_data
 # tests
 tests/
 
-# node modules to exlcude
-./fighthealthinsurance/static/js/node_modules
-./static/js/node_modules
+# node modules to exlcude (note we need to let pdfjs through and for now I'm lazy so let it all through).
+#./fighthealthinsurance/static/js/node_modules
+#./static/js/node_modules
 # misc logs
 archived_logs/
 latest_logs/
