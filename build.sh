@@ -8,7 +8,7 @@ mypy -p fighthealthinsurance
 ./manage.py collectstatic --no-input
 
 pushd ./static/js; npm i; npm run build; popd
-FHI_VERSION=v0.8.8b
+FHI_VERSION=v0.8.8c
 export FHI_VERSION
 # Build ray cluster first so that the cluster can come up before the job that registers the workers
 source build_ray.sh
