@@ -65,6 +65,7 @@ local_settings.py
 db.sqlite3
 db.sqlite3-journal
 test.db.sqlite3
+test*.db.sqlite3*
 
 # Flask stuff:
 instance/
@@ -156,3 +157,6 @@ tests/
 # misc logs
 archived_logs/
 latest_logs/
+hlyafax.tar
+combined.tar
+a.tr

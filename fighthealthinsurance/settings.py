@@ -20,6 +20,7 @@ from configurations import Configuration
 from fighthealthinsurance.combined_storage import CombinedStorage
 import minio as m
 from minio_storage.storage import MinioStorage
+import time
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "fighthealthinsurance.settings")
 os.environ.setdefault("DJANGO_CONFIGURATION", os.getenv("ENVIRONMENT", "Dev"))
@@ -278,12 +279,14 @@ class Dev(Base):
 
 class Test(Dev):
     # This is a hack since the actors start up without the django test interface around them
+    dt = str(int(time.time()))
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.sqlite3",
-            "NAME": BASE_DIR / "test.db.sqlite3",
+            "NAME": BASE_DIR / f"test{dt}.db.sqlite3",
+            "TIMEOUT": 20,
             "TEST": {
-                "NAME": BASE_DIR / "test.db.sqlite3",
+                "NAME": BASE_DIR / f"test{dt}.db.sqlite3",
             },
         },
     }

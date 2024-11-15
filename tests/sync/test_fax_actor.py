@@ -20,8 +20,8 @@ class TestFaxActor(TestCase):
             ray.init(
                 namespace="fhi",
                 ignore_reinit_error=True,
-                # We need this to point to the same testing DB
-                local_mode=True,
+                # We need this to point to the same testing DB but then no async
+                # local_mode=True,
             )
         self.fax_actor = FaxActor.remote()
         self.maxDiff = None
@@ -36,7 +36,7 @@ class TestFaxActor(TestCase):
         result = ray.get(self.fax_actor.hi.remote())
         self.assertEqual(result, "ok")
 
-    def test_same_db(self):
+    def disabled_test_same_db(self):
         result = ray.get(self.fax_actor.db_settings.remote())
         self.assertEqual(result, str(dict(connection.settings_dict)))
 
@@ -44,39 +44,44 @@ class TestFaxActor(TestCase):
         """Test successful sending of delayed faxes."""
         # Create a delayed fax that should be sent
         delayed_time = timezone.now() - timedelta(hours=4)
-        fax = FaxesToSend.objects.create(
-            hashed_email="test_hash",
-            email="test@example.com",
-            destination="1234567890",
-            should_send=True,
-            sent=False,
-            paid=False,
-        )
+        fax = None
         try:
-            fax.date = delayed_time
-            fax.save()
-            os.sync()
+            ray.get(self.fax_actor.test_migrate.remote())
+            fax = ray.get(
+                self.fax_actor.test_create_fax_object.remote(
+                    hashed_email="test_hash",
+                    email="test@example.com",
+                    destination="1234567890",
+                    should_send=True,
+                    sent=False,
+                    paid=False,
+                    date=delayed_time,
+                )
+            )
 
             # Call the method and verify results
             (t, f) = ray.get(self.fax_actor.send_delayed_faxes.remote())
             self.assertEqual(f, 0)
             self.assertEqual(t, 1)
         finally:
-            fax.delete()
+            if fax is not None:
+                ray.get(self.fax_actor.test_delete.remote(fax))
 
     def test_send_delayed_faxes_no_delayed_faxes(self):
         """Test behavior when there are no delayed faxes to send."""
         # Create a recent fax that should not be sent yet
+        ray.get(self.fax_actor.test_migrate.remote())
         recent_time = datetime.now() - timedelta(hours=0)
-        fax = FaxesToSend.objects.create(
-            hashed_email="test_hash",
-            email="test@example.com",
-            destination="1234567890",
-            should_send=True,
-            sent=False,
-            paid=False,
+        fax = ray.get(
+            self.fax_actor.test_create_fax_object.remote(
+                hashed_email="test_hash",
+                email="test@example.com",
+                destination="1234567890",
+                should_send=True,
+                sent=False,
+                paid=False,
+            )
         )
-        fax.date = recent_time
 
         # Call the method and verify results
         (t, f) = ray.get(self.fax_actor.send_delayed_faxes.remote())

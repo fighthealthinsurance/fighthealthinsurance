@@ -151,3 +151,7 @@ localish_data
 # misc
 downloaded_files/
 test.db.sqlite3
+test*.db.sqlite3*
+hlyafax.tar
+combined.tar
+a.tr

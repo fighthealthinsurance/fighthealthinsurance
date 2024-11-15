@@ -139,8 +139,11 @@ jobs:
         run:
           cd fighthealthinsurance/static/js && npm i && npm run build && npm cache clean --force
 
+      - name: Setup DB (long story)
+        run: uv venv && source .venv/bin/activate && uv pip install -r requirements.txt && ./manage.py makemigrations && ./manage.py migrate && ENVIRONMENT=Test ./manage.py migrate
+
       - name: Run tests
-        run: tox -e py${{ matrix.python }}-django${{ matrix.django }}-async
+        run: ENVIRONMENT=Test tox -e py${{ matrix.python }}-django${{ matrix.django }}-async
         env:
           FARTS: "farts"
           GOOGLE_CLIENT_SECRETS_TEXT: ${{ secrets.GOOGLE_CLIENT_SECRETS_TEXT }}

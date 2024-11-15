@@ -31,7 +31,7 @@ class FaxSendBaseTest(unittest.TestCase):
             r = m.assemble_outputs(
                 user_header="MyHeader", extra="", input_paths=[t.name]
             )
-            self.assertEquals(len(r), 1)
+            self.assertEqual(len(r), 1)
             reader = PdfReader(r[0])
             header_text = reader.pages[0].extract_text()
             self.assertIn("MyHeader", header_text)
@@ -50,7 +50,7 @@ class FaxSendBaseTest(unittest.TestCase):
             r = m.assemble_outputs(
                 user_header="MyHeader", extra="", input_paths=[t1.name]
             )
-            self.assertEquals(len(r), 2)
+            self.assertEqual(len(r), 2)
             reader = PdfReader(r[0])
             header_text = reader.pages[0].extract_text()
             self.assertIn("MyHeader", header_text)
@@ -78,7 +78,7 @@ class FaxSendBaseTest(unittest.TestCase):
                     t2.write("Sup ")
                     t2.flush()
                 r = m.assemble_outputs("MyHeader", "", [t1.name, t2.name])
-                self.assertEquals(len(r), 1)
+                self.assertEqual(len(r), 1)
                 reader = PdfReader(r[0])
                 header_text = reader.pages[0].extract_text()
                 self.assertIn("MyHeader", header_text)

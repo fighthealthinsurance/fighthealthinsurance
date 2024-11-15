@@ -9,6 +9,8 @@ import pytest
 from django.contrib.staticfiles.testing import StaticLiveServerTestCase
 from fighthealthinsurance.models import *
 from seleniumbase import BaseCase
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 
 BaseCase.main(__name__, __file__)
 
@@ -26,13 +28,17 @@ class SeleniumTestAppealGeneration(BaseCase, StaticLiveServerTestCase):
         super(StaticLiveServerTestCase, cls).tearDownClass()
         super(BaseCase, cls).tearDownClass()
 
+    def assert_title_eventually(self, desired_title):
+        WebDriverWait(self.driver, 15).until(EC.title_is(desired_title))
+        self.assert_title(desired_title)
+
     def test_submit_an_appeal_with_missing_info_and_fail(self):
         self.open(f"{self.live_server_url}/")
-        self.assert_title(
+        self.assert_title_eventually(
             "Fight Your Health Insurance Denial -- Use AI to Generate Your Health Insurance Appeal"
         )
         self.click('a[id="scanlink"]')
-        self.assert_title("Upload your Health Insurance Denial")
+        self.assert_title_eventually("Upload your Health Insurance Denial")
         self.type("input#store_fname", "First NameTest")
         # pii error should not be present (we have not clicked submit)
         with pytest.raises(Exception) as ex:
@@ -40,20 +46,20 @@ class SeleniumTestAppealGeneration(BaseCase, StaticLiveServerTestCase):
 
     def test_submit_an_appeal_with_missing_info(self):
         self.open(f"{self.live_server_url}/")
-        self.assert_title(
+        self.assert_title_eventually(
             "Fight Your Health Insurance Denial -- Use AI to Generate Your Health Insurance Appeal"
         )
         self.click('a[id="scanlink"]')
-        self.assert_title("Upload your Health Insurance Denial")
+        self.assert_title_eventually("Upload your Health Insurance Denial")
         self.type("input#store_fname", "First NameTest")
         self.click("button#submit")
         # Now we should not have changed pages and pii error should show up
         self.assert_element("div#pii_error")
-        self.assert_title("Upload your Health Insurance Denial")
+        self.assert_title_eventually("Upload your Health Insurance Denial")
 
     def test_server_side_ocr_workflow(self):
         self.open(f"{self.live_server_url}/server_side_ocr")
-        self.assert_title(
+        self.assert_title_eventually(
             "Upload your Health Insurance Denial - Server Side Processing"
         )
         file_input = self.find_element("input#uploader")
@@ -77,11 +83,11 @@ class SeleniumTestAppealGeneration(BaseCase, StaticLiveServerTestCase):
 
     def test_submit_an_appeal_with_enough_and_fax(self):
         self.open(f"{self.live_server_url}/")
-        self.assert_title(
+        self.assert_title_eventually(
             "Fight Your Health Insurance Denial -- Use AI to Generate Your Health Insurance Appeal"
         )
         self.click('a[id="scanlink"]')
-        self.assert_title("Upload your Health Insurance Denial")
+        self.assert_title_eventually("Upload your Health Insurance Denial")
         self.type("input#store_fname", "First NameTest")
         self.type("input#store_lname", "LastName")
         self.type("input#email", "farts@fart.com")
@@ -96,18 +102,20 @@ Cheap-O-Insurance-Corp""",
         self.click("input#pii")
         self.click("input#privacy")
         self.click("input#tos")
-        self.assert_title("Upload your Health Insurance Denial")
+        self.assert_title_eventually("Upload your Health Insurance Denial")
         self.click("button#submit")
-        self.assert_title(
+        self.assert_title_eventually(
             "Categorize your denial (so we can generate the right kind of appeal)"
         )
         self.type("input#id_procedure", "prep")
         self.type("input#id_diagnosis", "high risk homosexual behaviour")
         self.click("input#submit_cat")
-        self.assert_title("Updating denial with your feedback & checking for resources")
+        self.assert_title_eventually(
+            "Updating denial with your feedback & checking for resources"
+        )
         self.type("input#id_medical_reason", "FakeReason")
         self.click("input#submit")
-        self.assert_title("Fight Your Health Insurnace Denial")
+        self.assert_title_eventually("Fight Your Health Insurnace Denial")
         # It takes time for the appeals to populate
         time.sleep(11)
         self.click("button#submit1")
@@ -130,11 +138,11 @@ Cheap-O-Insurance-Corp""",
 
     def test_submit_an_appeal_with_enough(self):
         self.open(f"{self.live_server_url}/")
-        self.assert_title(
+        self.assert_title_eventually(
             "Fight Your Health Insurance Denial -- Use AI to Generate Your Health Insurance Appeal"
         )
         self.click('a[id="scanlink"]')
-        self.assert_title("Upload your Health Insurance Denial")
+        self.assert_title_eventually("Upload your Health Insurance Denial")
         self.type("input#store_fname", "First NameTest")
         self.type("input#store_lname", "LastName")
         self.type("input#email", "farts@fart.com")
@@ -150,20 +158,22 @@ Cheap-O-Insurance-Corp""",
         self.click("input#privacy")
         self.click("input#tos")
         self.click("button#submit")
-        self.assert_title(
+        self.assert_title_eventually(
             "Categorize your denial (so we can generate the right kind of appeal)"
         )
         self.click("input#submit_cat")
-        self.assert_title("Updating denial with your feedback & checking for resources")
+        self.assert_title_eventually(
+            "Updating denial with your feedback & checking for resources"
+        )
 
     def test_submit_an_appeal_with_enough_then_delete(self):
         email = "farts@farts.com"
         self.open(f"{self.live_server_url}/")
-        self.assert_title(
+        self.assert_title_eventually(
             "Fight Your Health Insurance Denial -- Use AI to Generate Your Health Insurance Appeal"
         )
         self.click('a[id="scanlink"]')
-        self.assert_title("Upload your Health Insurance Denial")
+        self.assert_title_eventually("Upload your Health Insurance Denial")
         self.type("input#store_fname", "First NameTest")
         self.type("input#store_lname", "LastName")
         self.type("input#email", email)
@@ -179,11 +189,13 @@ Cheap-O-Insurance-Corp""",
         self.click("input#privacy")
         self.click("input#tos")
         self.click("button#submit")
-        self.assert_title(
+        self.assert_title_eventually(
             "Categorize your denial (so we can generate the right kind of appeal)"
         )
         self.click("input#submit_cat")
-        self.assert_title("Updating denial with your feedback & checking for resources")
+        self.assert_title_eventually(
+            "Updating denial with your feedback & checking for resources"
+        )
         # Assert we have some data
         hashed_email = hashlib.sha512(email.encode("utf-8")).hexdigest()
         denials_for_user_count = Denial.objects.filter(
@@ -191,10 +203,10 @@ Cheap-O-Insurance-Corp""",
         ).count()
         assert denials_for_user_count > 0
         self.click('a[id="removedata"]')
-        self.assert_title("Delete Your Data")
+        self.assert_title_eventually("Delete Your Data")
         self.type("input#id_email", email)
         self.click("button#submit")
-        self.assert_title("Deleted Your Data")
+        self.assert_title_eventually("Deleted Your Data")
         denials_for_user_count = Denial.objects.filter(
             hashed_email=hashed_email
         ).count()

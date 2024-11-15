@@ -3,7 +3,9 @@ import re
 import subprocess
 import tempfile
 import time
-from typing import Optional
+from typing import Mapping, Optional, Tuple
+from paramiko import SSHClient
+import asyncio, asyncssh
 
 from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
@@ -42,36 +44,36 @@ class FaxSenderBase(object):
             raise Exception("No calling special svc numbers")
         return number_str
 
-    def send_fax(
+    async def send_fax(
         self,
         destination: str,
         path: str,
         dest_name: Optional[str] = None,
         blocking: bool = False,
-    ):
+    ) -> bool:
         destination = self.parse_phone_number(destination)
         if blocking:
-            return self.send_fax_blocking(
+            return await self.send_fax_blocking(
                 destination=destination, path=path, dest_name=dest_name
             )
         else:
-            return self.send_fax_nonblocking(
+            return await self.send_fax_nonblocking(
                 destination=destination, path=path, dest_name=dest_name
             )
 
-    def send_fax_blocking(
+    async def send_fax_blocking(
         self, destination: str, path: str, dest_name: Optional[str] = None
     ) -> bool:
         return True
 
-    def send_fax_nonblocking(
+    async def send_fax_nonblocking(
         self, destination: str, path: str, dest_name: Optional[str] = None
     ) -> bool:
         return True
 
 
 class SonicFax(FaxSenderBase):
-    base_cost = 0
+    base_cost = 10
     cost_per_page = 2
     csrf_regex = re.compile(r"\"csrfKey\" value=\"(.*?)\"")
     headers = {
@@ -89,7 +91,7 @@ class SonicFax(FaxSenderBase):
             "SONIC_NOTIFICATION_EMAIL", "support42@fighthealthinsurance.com"
         )
 
-    def send_fax_blocking(
+    async def send_fax_blocking(
         self, destination: str, path: str, dest_name: Optional[str] = None
     ) -> bool:
         with requests.Session() as s:
@@ -178,7 +180,9 @@ class SonicFax(FaxSenderBase):
         print(f"Timed out! last chunk {chunk}")
         return False
 
-    def send_fax_non_blocking(self, destination, path, dest_name: Optional[str] = None):
+    async def send_fax_non_blocking(
+        self, destination, path, dest_name: Optional[str] = None
+    ):
         with requests.Session() as s:
             cookies = self._login(s)
             return self._send_fax_non_blocking(s, cookies, destination, path, dest_name)
@@ -225,8 +229,13 @@ class SonicFax(FaxSenderBase):
 class HylaFaxClient(FaxSenderBase):
     base_cost = 0
     cost_per_page = 0
-    host: Optional[str] = None
+    host: Optional[str]
+    # Going above 9600 causes issues sometimes
     max_speed = 9600
+    # Default is no modem specified which uses any modem on host
+    default_modem: Optional[str] = None
+    # Mapping from prefixes to modem names (e.g. so 1800 numbers)
+    modem_mapping: Mapping[str, list[Optional[str]]] = {}
 
     def estimate_cost(self, destination: str, pages: int) -> int:
         if self.host is not None:
@@ -234,21 +243,61 @@ class HylaFaxClient(FaxSenderBase):
         else:
             return 9999999999999999
 
-    def send_fax_blocking(
+    async def send_fax_blocking(
         self, destination: str, path: str, dest_name: Optional[str] = None
     ) -> bool:
-        return self._send_fax(
+        return await self._send_fax(
             destination=destination, path=path, dest_name=dest_name, blocking=True
         )
 
-    def send_fax_nonblocking(
+    async def send_fax_nonblocking(
         self, destination: str, path: str, dest_name: Optional[str] = None
     ) -> bool:
-        return self._send_fax(
+        return await self._send_fax(
             destination=destination, path=path, dest_name=dest_name, blocking=False
         )
 
-    def _send_fax(
+    def _choose_modems(self, destination: str) -> list[Optional[str]]:
+        """Choose the modem for a diven destination, returns any mapped modems + default"""
+        prefix: str = destination[0:4]
+        return self.modem_mapping.get(prefix, []) + [self.default_modem]
+
+    def _host_strings(self, destination: str) -> list[str]:
+        """Compute the different host strings, this depends on if there is custom modem mappings"""
+        if self.host is None:
+            raise Exception("Need host")
+
+        def __host_string(modem: Optional[str]) -> str:
+            # Yes this is silly but mypy...
+            if self.host is None:
+                raise Exception("Need host")
+            if modem is None:
+                return self.host
+            else:
+                return f"{modem}@{self.host}"
+
+        return list(map(__host_string, self._choose_modems(destination)))
+
+    async def _upload_file(self, file: str) -> Optional[str]:
+        """Upload files to remote host if needed. Returns None on failure. Return remote path."""
+        return file
+
+    async def _run_command(self, command: list[str]) -> Tuple[int, str]:
+        """Return the command and it's output"""
+        print(f"Sending command {command}")
+        proc = await asyncio.create_subprocess_shell(
+            " ".join(command),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        print(f"Exit code {proc.returncode}")
+        result_text = f"STDOUT: {stdout.decode()} STDERR: {stderr.decode()}"
+        if proc.returncode is None:
+            return (254, result_text)
+        return (proc.returncode, result_text)
+
+    async def _send_fax(
         self,
         destination: str,
         path: str,
@@ -257,7 +306,7 @@ class HylaFaxClient(FaxSenderBase):
     ) -> bool:
         if self.host is None:
             raise Exception("Can not send fax without a host to fax from")
-        # Going above 9600 causes issues sometimes
+        host_strings = self._host_strings(destination)
         with tempfile.NamedTemporaryFile(
             suffix=".txt", prefix="dest", mode="w+t", delete=True
         ) as f:
@@ -266,38 +315,71 @@ class HylaFaxClient(FaxSenderBase):
             f.flush()
             os.sync()
             time.sleep(1)
-            destination_file = f.name
-            command = ["sendfax"]
+            uploaded_destination_file = await self._upload_file(f.name)
+            if uploaded_destination_file is None:
+                return False
+            uploaded_path = await self._upload_file(path)
+            if uploaded_path is None:
+                return False
+            command = ["sendfax", "-n", f"-B{self.max_speed}"]
+            # For a blocking send cycle through the fax modems until one works
             if blocking:
                 command.append("-w")
-            command.extend(
-                [
-                    "-n",
-                    f"-B{self.max_speed}",
-                    f"-h{self.host}",
-                    path,
-                    f"-z{destination_file}",  # It is important this is last
-                ]
-            )
-            print(f"Sending command {command}")
-            result = subprocess.run(command)
-            print(f"Sent -- result {result}")
-            print(f"Exit code {result.returncode}")
-            return result.returncode == 0
+            for host_string in host_strings:
+                command.extend(
+                    [
+                        f"-h{host_string}",
+                        uploaded_path,
+                        f"-z{uploaded_destination_file}",  # It is important this is last
+                    ]
+                )
+                (exitcode, result_text) = await self._run_command(command)
+                if exitcode != 0:
+                    continue
+                if not blocking:
+                    return True
+                else:
+                    # Regex to match the job id
+                    pattern = r"request id is (\d+)"
+
+                    match = re.search(pattern, result_text, re.MULTILINE)
+
+                    # Extracting the job ID
+                    if match:
+                        job_id = match.group(1)
+                        print("Job ID:", job_id)
+                        (exit_code, result_text) = await self._run_command(
+                            ["faxstat", "-d"]
+                        )
+                        if exit_code != 0:
+                            continue
+                        # Regular expression pattern to check if the job ID succeeded
+                        pattern = rf"^{job_id}\s+\d+\s+D\b"
+
+                        match = re.search(pattern, result_text, re.MULTILINE)
+
+                        # Checking if the job succeeded
+                        if match:
+                            print(f"Job ID {job_id} succeeded.")
+                            return True
+                        else:
+                            print(f"Job ID {job_id} did not succeed.")
+                            return False
+                    else:
+                        print("No job ID found.")
+                        return False
+            return False
 
 
 class SshHylaFaxClient(HylaFaxClient):
     """HylaFaxClient that uses ssh to connect to a remote host, this is useful
     since the default ftp is... less than ideal (and does not do well with NAT)"""
 
-    def _send_fax(
-        self,
-        destination: str,
-        path: str,
-        dest_name: Optional[str] = None,
-        blocking: bool = False,
-    ) -> bool:
-        if self.host is None:
+    username = os.getenv("USERNAME", "idk")
+    remote_host: Optional[str]
+
+    def _create_ssh_client(self) -> SSHClient:
+        if self.remote_host is None:
             raise Exception("Can not send fax without a host to fax from")
         from paramiko import SSHClient
         from paramiko.client import AutoAddPolicy
@@ -305,67 +387,61 @@ class SshHylaFaxClient(HylaFaxClient):
         ssh = SSHClient()
         ssh.load_system_host_keys()
         ssh.set_missing_host_key_policy(AutoAddPolicy)
-        ssh.connect(self.host)
-        # Going above 9600 causes issues sometimes
-        with tempfile.NamedTemporaryFile(
-            suffix=".txt", prefix="dest", mode="w+t", delete=True
-        ) as f:
-            print(f"Wrote phone number {destination} to {f.name}")
-            f.write(destination)
-            f.flush()
-            os.sync()
-            time.sleep(1)
-            destination_file = f.name
-            command = ["sendfax"]
-            if blocking:
-                command.append("-w")
-            command.extend(
-                [
-                    "-n",
-                    f"-B{self.max_speed}",
-                    f"-h{self.host}",
-                    f"/tmp/{path}",
-                    f"-z{destination_file}",  # It is important this is last
-                ]
+        ssh.connect(self.remote_host)
+        return ssh
+
+    def _create_async_ssh_client(self):
+        # Set known_hosts to none to skip ssh key check since we're all inside VPN
+        return asyncssh.connect(self.remote_host, known_hosts=None)
+
+    async def _upload_file(self, path: str) -> Optional[str]:
+        ssh = self._create_ssh_client()
+        target = f"/tmp/{self.username}/{path}"
+        # Avoid //s
+        if path[0] == "/":
+            target = f"/tmp/{self.username}{path}"
+        try:
+            sftp_client = ssh.open_sftp()
+            # Make the remote directory if needed.
+            dir = os.path.dirname(target)
+            (exit_code, result_text) = await self._run_command(["mkdir", "-p", dir])
+            if exit_code != 0:
+                print("Failed to make dir")
+                return None
+            sftp_client.put(path, target)
+            return target
+        except Exception as e:
+            print(
+                f"Error during upload: {e} sending remote file {path} to {target} on {self.remote_host}"
             )
-            try:
-                sftp_client = ssh.open_sftp()
-                sftp_client.put(f.name, f.name)
-                dir = os.path.dirname(path)
-                stdin, stdout, stderr = ssh.exec_command(f"mkdir -p /tmp/{dir}")
-                sftp_client.put(path, f"/tmp/{path}")
+            return None
+
+    async def _run_command(self, command: list[str]) -> Tuple[int, str]:
+        try:
+            async with self._create_async_ssh_client() as conn:
                 print(f"Sending remote command {command}")
-                stdin, stdout, stderr = ssh.exec_command(" ".join(command))
+                process = conn.run(" ".join(command))
+                result = await process
                 print(f"Sent cmd")
-                exit_code = stdout.channel.recv_exit_status()
-                if exit_code == 0:
-                    print("Success")
-                    return True
-                else:
-                    print("Failed :(")
-                    print(
-                        f"Failure stdout {stdout.read().decode()} -- err {stderr.read().decode()}"
-                    )
-                    return False
-            except Exception as e:
-                print(f"Error: {e} sending remote command")
-                return False
-            finally:
-                try:
-                    ssh.exec_command(f"rm /tmp/{path}")
-                except Exception as e:
-                    print(f"Can't delete /tmp/{path}")
-                try:
-                    ssh.exec_command(f"rm {f.name}")
-                except Exception as e:
-                    print(f"Can't delete {f.name}")
+                exit_code = result.exit_status
+                result_text = f"STDOUT: {result.stdout} STDERR: {result.stderr}"
+                if exit_code != 0:
+                    print(f"Failed :( -- {result}")
+                return (exit_code, result_text)
+        except Exception as e:
+            print(f"Error sending command {command} -- {e}")
+            return (254, f"{e} fron {command}")
 
 
 class FaxyMcFaxFace(SshHylaFaxClient):
     base_cost = 0
     cost_per_page = 1
-    host = os.getenv("FAXYMCFAXFACE_HOST")
+    host = "localhost"
+    remote_host = os.getenv("FAXYMCFAXFACE_HOST")
     max_speed = 9600
+    default_modem = "ttyACM0"
+    # IAX is... not working great right now
+    # modem_mapping = {"1800": ["ttyIAX0"], "1844": ["ttyIAX0"], "1877": ["ttyIAX0"], "1888": ["ttyIAX0"]}
 
 
 class FlexibleFaxMagic(object):
@@ -381,6 +457,7 @@ class FlexibleFaxMagic(object):
         """Assembles all the inputs into one output. Will need to be chunked."""
         merger = PdfMerger()
         for input_path in input_paths:
+            command = []
             # Don't double convert pdfs
             if input_path.endswith(".pdf"):
                 merger.append(input_path)
@@ -495,7 +572,7 @@ class FlexibleFaxMagic(object):
                 w.write(t.name)
         return results
 
-    def send_fax(
+    async def send_fax(
         self, input_paths: list[str], extra: str, destination: str, blocking: bool
     ) -> bool:
         import uuid
@@ -504,7 +581,7 @@ class FlexibleFaxMagic(object):
         myuuidStr = str(myuuid)
         transmission_files = self.assemble_outputs(myuuidStr, extra, input_paths)
         for transmission in transmission_files:
-            r = self._send_fax(
+            r = await self._send_fax(
                 path=transmission, destination=destination, blocking=blocking
             )
             if r is False:
@@ -515,16 +592,21 @@ class FlexibleFaxMagic(object):
             os.remove(f)
         return True
 
-    def _send_fax(self, path: str, destination: str, blocking: bool) -> bool:
-        backend = self.backends[0]
+    async def _send_fax(self, path: str, destination: str, blocking: bool) -> bool:
         page_count = len(PdfReader(path).pages)
-        backend_cost = backend.estimate_cost(destination, page_count)
-        for candidate in self.backends[1:]:
-            candidate_cost = candidate.estimate_cost(destination, page_count)
-            if backend_cost > candidate_cost:
-                backend = candidate
-                backend_cost = candidate_cost
-        return backend.send_fax(destination=destination, path=path, blocking=blocking)
+        backends_by_cost = sorted(
+            self.backends,
+            key=lambda backend: backend.estimate_cost(destination, page_count),
+        )
+        for backend in backends_by_cost:
+            r = await backend.send_fax(
+                destination=destination, path=path, blocking=blocking
+            )
+            if r == True:
+                print(f"Sent fax to {destination} using {backend}")
+                return True
+        print(f"Unable to send fax to {destination} using {self.backends}")
+        return False
 
 
-flexible_fax_magic = FlexibleFaxMagic([FaxyMcFaxFace()])
+flexible_fax_magic = FlexibleFaxMagic([FaxyMcFaxFace(), SonicFax()])

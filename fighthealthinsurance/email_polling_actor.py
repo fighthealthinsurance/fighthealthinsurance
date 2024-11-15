@@ -3,6 +3,7 @@ import os
 import ray
 import asyncio
 import time
+from asgiref.sync import sync_to_async
 
 name = "EmailPollingActor"
 
@@ -24,7 +25,7 @@ class EmailPollingActor:
         self.sender = FollowUpEmailSender()
         print(f"Sender started")
 
-    def run(self):
+    async def run(self):
         print(f"Starting run")
         self.running = True
         while self.running:
