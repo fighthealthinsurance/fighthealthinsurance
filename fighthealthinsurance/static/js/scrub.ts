@@ -158,9 +158,13 @@ function setupScrub()
 	elm.addEventListener('change', recognize);
     }
     const scrub = document.getElementById('scrub');
-    scrub.onclick = clean;
+    if (scrub != null) {
+	scrub.onclick = clean;
+    }
     const scrub2 = document.getElementById('scrub-2');
-    scrub2.onclick = clean;
+    if (scrub2 != null) {
+	scrub2.onclick = clean;
+    }
     const form = document.getElementById("fuck_health_insurance_form");
     form.addEventListener("submit", validateScrubForm);
 }

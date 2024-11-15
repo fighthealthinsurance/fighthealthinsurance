@@ -20,128 +20,145 @@ Upload your Health Insurance Denial
 	    {{ form.errors }}
 	</div>
 	{% endif %}
-	<button id="clear_local" class="btn btn-green" onclick="window.localStorage.clear()">
-	    Clear Page Local Storage (remove your name / address from cookie type storage)
-	</button>
-	<h4>Not transfered to server (stored in your browser)</h4>
+	<div class="container" style="margin-top: 2.5rem !important">
+	<form method="post" action="{% url 'process' %}" id="fuck_health_insurance_form" enctype="multipart/form-data">
+		{% csrf_token %}
 	<div class="form-group">
 	    <div class="row">
-		<div class="col-md-4">
-		    <label for="store_fname" class="form-label">First name:</label><br>
-		    <input type="text" id="store_fname" name="fname" class="form-control"><br>
+			<div class="col-md-4">
+				<label for="store_fname" class="form-label">First name</label><br>
+				<input type="text" id="store_fname" name="fname" class="form-control"><br>
+			</div>
+			<div class="col-md-4">
+				<label for="store_lname" class="form-label">Last name</label><br>
+				<input type="text" id="store_lname" name="lname" class="form-control"><br>
+			</div>
 		</div>
-		<div class="col-md-4">
-		    <label for="store_lname" class="form-label">Last name:</label><br>
-		    <input type="text" id="store_lname" name="lname" class="form-control"><br>
-		</div>
-		<div class="col-md-8">
-		    <label for="store_street" class="form-label">Your street Address (e.g. 283 24th st)</label><br>
-		    <input type="text" id="store_street" name="street" class="form-control"><br>
-		</div>
-	    </div>
-
-	    <button id="scrub" class="btn btn-green">
-		Try and Remove Name And Address From Scanned Text
-	    </button>
 	</div>
+			<div class="form-group">
+				<div class="row">
+				<div class="col-md-4">
+					<label for="email" class="form-label">
+						Email
+						<span class="d-block small text-muted">
+						(Note: Your email (hashed) will be stored. To delete after your appeal is generated, refer to `Remove Your Data` at top.)
+						</span>
+					</label><br>
+					<input type="email" id="email" name="email" class="form-control"><br>
+				</div>
+			</div>
+		</div>
+		<div class="form-group">
+			<div class="row">
+				<div class="col-md-4">
+					<label for="store_street" class="form-label">
+						Street Address
+						<small class="text-muted">(e.g. 283 24th St)</small>
+					</label><br>
+					<input type="text" id="store_street" name="street" class="form-control"><br>
+				</div>
+				<div class="col-md-4">
+					<label for="store_zip" class="form-label">
+						Zip Code
+						<small class="text-muted">(e.g. 94103)</small>
+					</label><br>
+					<input type="text" id="store_zip" name="zip" class="form-control"><br>
+				</div>
+			</div>
+	    </div>
 	{% if upload_more %}
 	<div id="image_select_magic" style="visibility:visible">
-	    <h4>Not transfered, we do not store (but your phone/computer may store picture)</h4>
-	    <label class="custom-file-label" for="uploader">Scan & OCR your health insurance denial (select all
-		pages)</label><br>
-	    <div class="col-md-6">
-		<input id="uploader" type="file" name="uploader" multiple="true" class="form-control mt-2">
+	    <label class="custom-file-label" for="uploader">
+			Scan your health insurance denial
+			<small class="text-muted">(select all pages)</small>
+		</label><br>
+	    <div class="col-md-4">
+			<input id="uploader" type="file" name="uploader" multiple="true" class="form-control mt-2"><br>
 	    </div>
 	</div>
 	{% endif %}
-	<!-- Changing Label Text -->
-
-	<form method="post" action="{% url 'process' %}" id="fuck_health_insurance_form" enctype="multipart/form-data">
-	    {% csrf_token %}
-	    <h4>Transfered to server -- we store* </h4>
-
-	    <div class="form-group">
-		<div class="col-md-6">
-		    <label for="email" class="form-label">Your email</label><br>
-		    <input type="email" id="email" name="email" class="form-control"><br>
-		</div>
-	    </div>
-
-	    <h4>Your Insurance Denial & Info Transfered to server -- REMOVE PII FIRST! -- we store for ML + may review</h4>
-
-	    <label for="denial_text" class="form-label">Your insurance denial</label><br>
+	<div class="form-group">
+	    <label for="denial_text" class="form-label">
+			<b>Your Insurance Denial</b>
+			<small class="text-muted">(Remove personally identifiable information (PII) as we store for Machine Learning and may review)</small>
+		</label><br>
 	    <textarea name="denial_text" id="denial_text" style="width:100%" rows="20" form="fuck_health_insurance_form"
-		placeholder="Health Insurance Denial Goes Here" class="form-control">{{ocr_result}}</textarea>
+		class="form-control">{{ocr_result}}</textarea><br>
 	    <button id="scrub-2" class="btn btn-green">
-	      Try and Remove Name And Address From Scanned Text
-	    </button>
-
-	    <h4>Optional: your health history (do not include PII) -- we store for ML + may review</h4>
-	    <label for="health_history" class="form-label">Your Relevant Health History (optional) remove PII first</label><br>
-	    <textarea name="health_history" id="health_history" style="width:100%" rows="20" form="fuck_health_insurance_form"
-		placeholder="Related Health History Goes Here (e.g.: transgender, type 2 diabetes, etc.)" class="form-control"></textarea>
-
-	    <h4>Optional: plan documents (like summary plan description)</h4>
-	    <label class="custom-file-label" for="plan_documents">Optional: Plan Documents</label><br>
-	    <input id="plans_documents" type="file" name="plan_documents" multiple>
-
-	    <h4>Transfered to server, we try not to store outside of session (we do store the state)</h4>
-
-	    <div class="form-group">
-		<div class="col-md-4">
-		    <label for="store_zip" class="form-label">Your Zip code</label><br>
-		    <input type="text" id="store_zip" name="zip" class="form-control"><br>
+	      Click to remove name and address from scanned text
+	    </button><br>
+		<br>
 		</div>
-	    </div>
-
-	    <h4>Policies</h4>
-
-	    <div class="form-group">
+	<div class="form-group">
+	    <label for="health_history" class="form-label">
+			<b>Optional</b>: Your Relevant Health History
+			<small class="text-muted">(e.g. transgender, type 2 diabetes, fibromyalgia, etc.)</small>
+		</label><br>
+	    <textarea name="health_history" id="health_history" style="width:100%" rows="20" form="fuck_health_insurance_form"
+		placeholder="Related Health History Goes Here" class="form-control"></textarea>
+	<br>
+	</div>
+	<div class="form-group" style="visibility:visible">
+	    <label class="custom-file-label" for="plan_documents">
+			<b>Optional</b>: Plan Documents
+			<small class="text-muted">(e.g. summary description)</small>
+		</label><br>
+		<div class="col-md-4">
+		<input id="plans_documents" type="file" name="plan_documents" multiple="true" class="form-control mt-2"><br>
+		</div>
+	</div>
+	    <b>Policies</b>:
+	    <div class="form-check">
 	        <input type="checkbox" id="personal-only" name="personal-only" class="form-check-input">
-	        <label for="personal-only" class="form-check-label">I am aware that <b>this is for personal use only</b> <a href="{% url 'pro_version' %}">for those interested in a professional version (doctor/therapist/practioner/office/hospital/etc.) click here to learn more</a></label>
-	        <br>
+	        <label for="personal-only" class="form-check-label">I am aware that <b>this is for personal use only</b>. <a href="{% url 'pro_version' %}">Click here for those interested in a professional version (doctor/therapist/practitioner/office/hospital).</a></label>
+		</div>
+		<div class="form-check">
 		<input type="checkbox" id="privacy" name="privacy" class="form-check-input">
 		<label for="privacy" class="form-check-label">I have read and understand the <a class="link" href="{% url 'privacy_policy' %}">privacy
-		    policy</a>
+		    policy.</a>
 		</label>
-		<br>
+		</div>
+		<div class="form-check">
 		<input type="checkbox" id="pii" name="pii" class="form-check-input">
-		<label for="pii" class="form-check-label">I have removed my PII (Personal Identifiable Information) from the text area above</label>
-		<br>
+		<label for="pii" class="form-check-label">I have removed my personal identifiable information (PII) from the text areas above.</label>
+		</div>
+		<div class="form-check">
 		<input type="checkbox" id="tos" name="tos" class="form-check-input">
-		<label for="tos" class="form-check-label">I <a href="{% url 'tos' %}">agree to the terms of service</a> and will only use this website to generate my own health insurance appeals and will not use this website to to treat, diagnose any disease or condition or asist in either of those.</label>
-		<br>
-		Optional:<br>
-		<input type="checkbox" id="store_raw_email" name="store_raw_email" value="checked" class="form-check-input">
-		<label for="store_raw_email" class="form-check-label">
-		    Store my raw e-mail to follow up with me (for the duration of automated follow ups + 30 days)*
-		</label>
-		<br>
-		<input type="checkbox" id="use_external_models" name="use_external_models" value="checked" class="form-check-input">
-		<label for="use_external_models" class="form-check-label">
-		    Increase the number of possible appeals and use external models. <b>This is not required and involves sharing your data with 3rd parties</b> subject to their own TOS potentially including Octoai, Perplexity, TogetherAI, etc.
-		</label>
-		<br>
+		<label for="tos" class="form-check-label">I agree to the <a href="{% url 'tos' %}">terms of service</a> and will only use this website to generate my own health insurance appeals. I will not use this website to treat and diagnose any disease or condition or assist in either of those.</label>
+		</div>
+		<b>Optional</b>:
+			<div class="form-check">
+			<input type="checkbox" id="store_raw_email" name="store_raw_email" value="checked" class="form-check-input">
+				<label for="store_raw_email" class="form-check-label">
+					Store my email to follow-up with me (for the duration of automated follow ups + 30 days)*
+				</label>
+			</div>
+			<div class="form-check">
+			<input type="checkbox" id="use_external_models" name="use_external_models" value="checked" class="form-check-input">
+				<label for="use_external_models" class="form-check-label">
+					Increase the number of possible appeals and use external models. <b>This is not required and involves sharing your data with 3rd parties</b> subject to their own Terms Of Service potentially including OctoAI, Perplexity, TogetherAI, etc.
+				</label>
+			</div>
 	    </div>
 	    <div style="visibility:hidden; color:red" id="email_error">
-	      We need your e-mail to proceed, this allows us to delete your data later on request.
+	      We need your email to proceed, this allows us to delete your data later on request.
 	    </div>
 	    <div style="visibility:hidden; color:red" id="agree_chk_error">
 		Can't proceed as you didn't agree to the terms.
 	    </div>
 	    <div style="visibility:hidden; color:red" id="pii_error">
-		Can't proceed as you didn't check that you had removed your PII from the text area.
+		Can't proceed as you didn't check that you had removed your Personal Identifiable Information (PII) from the text areas.
 	    </div>
 	    <button type="submit" class="btn btn-green" id="submit">Submit</button>
 	</form>
-
 	<p>
-	    * We
-	    store a hashed version of your e-mail linked to your (cleaned) denial so you can request removal from our database
-	    (should you wish). Coming soon, if you opt-in we will store your raw e-mail to follow up after insurance company timelines may have expired so you can "remind" them. If you opt-in, we may follow up by e-mail after reviewing your denial with a better template if our
-	    ML model does not find a good model on the first pass through. You may choose to use a different or temporary e-mail
+	    * We store your hashed email that is linked to your denial so you can request removal from our database
+	    (should you wish). Coming soon, if you opt-in, we will store your raw email to follow-up after insurance
+		company timelines may have expired so you can "remind" them. If you opt-in, we may follow-up by email
+		after reviewing your denial with a better template if our Machine Learning model does not find a good
+		model on the first pass-through. You may choose to use a different or temporary email
 	    service, like <a href="https://proton.me/">proton mail.</a> Please review our <a
-		href="{% url 'privacy_policy' %}">privacy policy for more details</a>
+		href="{% url 'privacy_policy' %}">privacy policy</a> for more details.
 	</p>
     </div>
 </section>
