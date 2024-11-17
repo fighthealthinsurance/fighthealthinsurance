@@ -433,10 +433,10 @@ class FindNextStepsHelper:
                         + state
                         + "'>"
                         + f"Your state {state} participates in a "
-                        + f"Consumer Assistance Program(CAP), and you may be able to get help "
+                        + f"Consumer Assistance Program (CAP), and you may be able to get help "
                         + f"through them.</a>"
                     ),
-                    "Visit <a href='https://www.cms.gov/CCIIO/Resources/Consumer-Assistance-Grants/'>CMS for more info</a>",
+                    "Visit CMS.gov for more info<a href='https://www.cms.gov/CCIIO/Resources/Consumer-Assistance-Grants/'> here</a>",
                 )
             )
         if denial.regulator == Regulator.objects.filter(alt_name="ERISA").get():

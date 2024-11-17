@@ -1,7 +1,7 @@
 {% extends 'base.html' %}
 {% load static %}
 {% block title %}
-Fight Your Health Insurnace Denial
+Fight Your Health Insurance Denial: Choose an Appeal
 {% endblock title %}
 
 {% block pre-roll %}
@@ -47,7 +47,7 @@ $(document).ready(function() {
 		var clonedForm = $("#" + "magic" + appeal_id);
 		console.log("Found");
 		console.log(clonedForm);
-		
+
 		// Display the cloned form
 		clonedForm.removeAttr('style');  // Remove the "display: none" style
 		// $('#form-container' + appeal_id).html(clonedForm);
@@ -95,7 +95,7 @@ data: {
 	xhr: function() {
 	    console.log("Registering xhr function!");
 	    var xhr = new XMLHttpRequest();
-	    
+
 	    xhr.addEventListener(
 		'progress',
 		function(event) {
@@ -138,29 +138,33 @@ data: {
 </div>
 
   <!-- Main Content -->
-<div id="main-content">
+<div id="main-content" style="width: 80%; margin-top: 2.5rem !important; margin-top: 15vh;">
   <div id="loading-more">
-    <h2>Page Loading: Health Insurance Appeals</h2>
+    <h4>Page Loading: Health Insurance Appeals</h4>
     <p>Thank you for submitting your health insurance denial. We are currently working to generate the necessary details for your appeal, and this process may take a few moments.</p>
 
-    <h3>Why the Delay?</h3>
+    <h5>Why the delay?</h5>
     <p>Generative AI models (like the ones we use) can be slow at the best of times.</p>
 
-    <h3>What to Expect:</h3>
+    <h5>What to Expect:</h5>
     <ul>
       <li><strong>Please Wait:</strong> Your patience is greatly appreciated. Rest assured, we (or the computers) are working diligently (unless they broke) to gather the necessary information for your appeal.</li>
     </ul>
 
-    <h3>When to refresh:</h3>
-    <p>If this message does not go away after several minutes you can try refreshing the web page and we will try and generate a new set of appeals</p>
+    <h5>When to refresh:</h5>
+	<ul>
+	<li>If this message does not go away after several minutes, you can try refreshing the web page. We will try and generate a new set of appeals.</li>
+	</ul>
 
-    <h3>What if this message never goes away?</h3>
-    <p>You can try refreshing if it has been a few minutes. It is also possible something is broken. If you use an ad blocker or a javascript blocker you can try turning that off as sometimes they interfer. If that still does not help maybe our servers are broken (the two we use for model generation are called plushy and steve), you can <a href="mailto:support42@fighthealthinsurance.com">e-mail us at support42@fighthealthinsurance.com</a> & we will look into it</p>
-    </div>
-  </div>
+    <h5>What if this message never goes away?</h5>
+    <ul>
+	<li>You can try refreshing if it has been a few minutes. It is also possible something is broken. If you use an ad blocker or a Javascript blocker, try turning those off as sometimes they interfere. If that still does not help, maybe our servers are broken (the two we use for model generation are called Plushy and Steve). Email us at <a href="mailto:support42@fighthealthinsurance.com">support42@fighthealthinsurance.com</a> & we will look into it.</li>
+	</ul>
+	</div>
+  <!-- </div> -->
 
 <p>
-  When you choose a specific appeal we <b>save that appeal to our database for model training and review</b>.
+  When you choose a specific appeal, we <b>save that appeal to our database for model training and review</b>.
 </p>
 <div id="base-form" style="display: none;">
 <form action="{% url 'choose_appeal' %}" method="post" class="col-md-12 d-flex flex-column align-items-center" id="form">
@@ -175,5 +179,6 @@ data: {
 </form>
 </div>
 <div id="output-container">
+</div>
 </div>
 {% endblock content %}

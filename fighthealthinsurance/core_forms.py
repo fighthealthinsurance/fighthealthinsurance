@@ -83,7 +83,7 @@ class FaxResendForm(forms.Form):
 
 
 class PostInferedForm(DenialRefForm):
-    """The form to double check what we infered. This leads to our next steps /
+    """The form to double check what we inferred. This leads to our next steps /
     FindNextSteps."""
 
     # Send denial id and e-mail back that way people can't just change the ID
@@ -95,7 +95,7 @@ class PostInferedForm(DenialRefForm):
     )
     denial_type_text = forms.CharField(
         required=False,
-        label="Denial Type (text, you can type if the categories don't match the denial type)",
+        label="Denial Type (text, you can type if the above categories don't match the denial type)",
     )
     plan_id = forms.CharField(required=False)
     claim_id = forms.CharField(required=False)
@@ -110,14 +110,14 @@ class PostInferedForm(DenialRefForm):
     your_state = forms.CharField(max_length=2, required=False)
     procedure = forms.CharField(
         max_length=200,
-        label="What is the procedure/treatment you had denied?",
+        label="What is your denied procedure/treatment?",
         required=False,
     )
     diagnosis = forms.CharField(
         max_length=200,
-        label="What is the diagnosis (if any) associated with the request."
+        label="What is the diagnosis (if any) associated with the request?"
         + "Does not need to be a disease it can be any number of personal factors, "
-        + 'including things like "high risk homosexual behaviour" (yeah that\'s a real one)',
+        + 'including things like "high risk homosexual behavior" (yeah that\'s a real one)',
         required=False,
     )
 
@@ -159,15 +159,15 @@ class FollowUpForm(forms.Form):
     use_quote = forms.BooleanField(required=False, label="Can we use/share your quote?")
     name_for_quote = forms.CharField(required=False, label="Name to be used with quote")
     email = forms.CharField(
-        required=False, label="Your e-mail if we can follow up with you more"
+        required=False, label="Your email if we can follow-up with you more"
     )
     appeal_result = forms.ChoiceField(choices=Appeal_Result_Choices, required=False)
     medicare_someone_to_help = forms.BooleanField(
         required=False,
-        label="If you have a medicare plan would you be interested in someone handling the appeal process for you?",
+        label="If you have a medicare plan, would you be interested in someone handling the appeal process for you?",
     )
     follow_up_again = forms.BooleanField(
-        required=False, label="Would you like an automated follow up again"
+        required=False, label="Would you like an automated follow-up again"
     )
     followup_documents = MultipleFileField(
         required=False,

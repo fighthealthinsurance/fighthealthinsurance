@@ -1,40 +1,34 @@
 {% extends 'base.html' %}
 {% block title %}
-Updating denial with your feedback & checking for resources
+Updating Denial
 {% endblock title %}
 {% load compress %}
 {% load static %}
 {% block content %}
 
-<p>
-  <H1>Thank you for your submission! There are some possible next steps:</H1>
-</p>
-<table class="options-table">
+<div class="container" style="width: 80%; margin-top: 2.5rem !important; margin-top: 15vh;">
+  <p>Thank you for your submission!<br>
+    Let's now update your denial with your feedback & check for additional resources.<br>
+    There are some possible next steps:<br>
+  </p>
+<table class="options-table" style="width: 100%; margin: 0 auto;">
   <tr>
-    <td>
-      Option Description
-    </td>
-    <td>
-      Next Step
-    </td>
+    <td><b>Your Options:</b></td>
+    <td><b>Next Steps:</b></td>
   </tr>
   <tr>
     <td>
-	One option is to request all of the records associated with your denial. This can be very useful for complex cases.
+	    One option is to request all of the records associated with your denial. This can be very useful for complex cases.
     </td>
     <td>
-      The folks at <a href="https://www.propublica.org/article/find-out-why-health-insurance-claim-denied">propublica have a guide on how to request your file associated with a claim</a>
+      The folks at propublica have a <a href="https://www.propublica.org/article/find-out-why-health-insurance-claim-denied">guide</a> on how to request your file associated with a claim
     </td>
   </tr>
   {% for d in outside_help_details %}
   {% autoescape off %}
   <tr>
-    <td>
-      {{d.0}}
-    </td>
-    <td>
-      {{d.1}}
-    </td>
+    <td>{{d.0}}</td>
+    <td>{{d.1}}</td>
   </tr>
   {% endautoescape %}
   {% endfor %}
@@ -47,7 +41,7 @@ Updating denial with your feedback & checking for resources
     </td>
   </tr>
 </table>
-
+<br>
 {% if combined %}
 We have a few more questions for you to help us generate the appeal.
 {% else %}
@@ -56,10 +50,17 @@ Press the button bellow to see what we can come up with for an appeal:
 <form action="{% url 'generate_appeal' %}" method="post">
   {% csrf_token %}
   {{ denial_form }}
-  <table>
+  <table style="width: 100%; margin: 0 auto;">
     {{ combined.as_table }}
   </table>
-  <input type="submit" text="Generate the appeal" id="submit">
-</form>
-
+  <input type="submit" text="Generate Appeal" id="submit" style="
+    background: #a5c422;
+    text-align: center;
+    color:#ffffff !important;
+    border: none;
+    border-radius: 3px;
+    padding: 10px 20px;
+    font-size: 14px;">
+  </form>
+</div>
 {% endblock content %}

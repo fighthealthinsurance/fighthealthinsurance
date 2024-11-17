@@ -29,8 +29,11 @@ class SeleniumTestAppealGeneration(BaseCase, StaticLiveServerTestCase):
         super(BaseCase, cls).tearDownClass()
 
     def assert_title_eventually(self, desired_title):
-        WebDriverWait(self.driver, 15).until(EC.title_is(desired_title))
-        self.assert_title(desired_title)
+        try:
+            WebDriverWait(self.driver, 15).until(EC.title_is(desired_title))
+        except Exception:
+            # On failure assert_title gives us a better error message than the timeout.
+            self.assert_title(desired_title)
 
     def test_submit_an_appeal_with_missing_info_and_fail(self):
         self.open(f"{self.live_server_url}/")
@@ -104,18 +107,14 @@ Cheap-O-Insurance-Corp""",
         self.click("input#tos")
         self.assert_title_eventually("Upload your Health Insurance Denial")
         self.click("button#submit")
-        self.assert_title_eventually(
-            "Categorize your denial (so we can generate the right kind of appeal)"
-        )
+        self.assert_title_eventually("Categorize Your Denial")
         self.type("input#id_procedure", "prep")
         self.type("input#id_diagnosis", "high risk homosexual behaviour")
         self.click("input#submit_cat")
-        self.assert_title_eventually(
-            "Updating denial with your feedback & checking for resources"
-        )
+        self.assert_title_eventually("Updating Denial")
         self.type("input#id_medical_reason", "FakeReason")
         self.click("input#submit")
-        self.assert_title_eventually("Fight Your Health Insurnace Denial")
+        self.assert_title_eventually("Fight Your Health Insurance Denial: Choose an Appeal")
         # It takes time for the appeals to populate
         time.sleep(11)
         self.click("button#submit1")
@@ -158,13 +157,9 @@ Cheap-O-Insurance-Corp""",
         self.click("input#privacy")
         self.click("input#tos")
         self.click("button#submit")
-        self.assert_title_eventually(
-            "Categorize your denial (so we can generate the right kind of appeal)"
-        )
+        self.assert_title_eventually("Categorize Your Denial")
         self.click("input#submit_cat")
-        self.assert_title_eventually(
-            "Updating denial with your feedback & checking for resources"
-        )
+        self.assert_title_eventually("Updating Denial")
 
     def test_submit_an_appeal_with_enough_then_delete(self):
         email = "farts@farts.com"
@@ -189,13 +184,9 @@ Cheap-O-Insurance-Corp""",
         self.click("input#privacy")
         self.click("input#tos")
         self.click("button#submit")
-        self.assert_title_eventually(
-            "Categorize your denial (so we can generate the right kind of appeal)"
-        )
+        self.assert_title_eventually("Categorize Your Denial")
         self.click("input#submit_cat")
-        self.assert_title_eventually(
-            "Updating denial with your feedback & checking for resources"
-        )
+        self.assert_title_eventually("Updating Denial")
         # Assert we have some data
         hashed_email = hashlib.sha512(email.encode("utf-8")).hexdigest()
         denials_for_user_count = Denial.objects.filter(
