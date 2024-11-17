@@ -18,16 +18,6 @@ body {
 Our extras
 ---*/
 
-#google-map {
-    height: 300px;
-    margin: 0 auto;
-    padding: 0;
-    width: 100%;
-    border-radius: 4px;
-    box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
-    background-color: #fff;
-}
-
 .options-table {
     table-layout: fixed;
     border-collapse: collapse;

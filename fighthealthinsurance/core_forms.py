@@ -15,10 +15,10 @@ from fighthealthinsurance.models import (
 class InterestedProfessionalForm(forms.ModelForm):
     business_name = forms.CharField(required=False)
     address = forms.CharField(
-        required=False, widget=forms.Textarea(attrs={"cols": 80, "rows": 5})
+        required=False, widget=forms.Textarea(attrs={"class": "full_address"})
     )
     comments = forms.CharField(
-        required=False, widget=forms.Textarea(attrs={"cols": 80, "rows": 5})
+        required=False, widget=forms.Textarea(attrs={"class": "comments"})
     )
     phone_number = forms.CharField(required=False)
     job_title_or_provider_type = forms.CharField(required=False)
@@ -64,14 +64,18 @@ class DenialRefForm(forms.Form):
 
 
 class ChooseAppealForm(DenialRefForm):
-    appeal_text = forms.CharField(required=True)
+    appeal_text = forms.CharField(
+        widget=forms.Textarea(attrs={"class": "appeal_text"}), required=True
+    )
 
 
 class FaxForm(DenialRefForm):
     name = forms.CharField(required=True, label="Your name (for the cover page)")
     insurance_company = forms.CharField(required=True)
     fax_phone = forms.CharField(required=True)
-    completed_appeal_text = forms.CharField(widget=forms.Textarea)
+    completed_appeal_text = forms.CharField(
+        widget=forms.Textarea(attrs={"class": "appeal_text"}), required=True
+    )
     include_provided_health_history = forms.BooleanField(required=False)
     pubmed_articles_to_include = forms.CharField(required=False)
 

@@ -132,3 +132,18 @@ a.link:hover::after {
   height: auto; /* Allows the content to occupy its natural height */
   padding: initial; /* Restores padding */
 }
+
+.appeal_text {
+    width: 100%;
+    height: 20em;
+}
+
+.full_address {
+    height: 5em;
+    width: 80em;
+}
+
+.comments {
+    height: 10em;
+    width: 80em;
+}

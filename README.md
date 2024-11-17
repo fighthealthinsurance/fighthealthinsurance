@@ -25,3 +25,12 @@ If you don't have a GPU handy the other option is to use an external model. The 
 Tests are run through `tox`. If you dont have tox you can `pip` or `uv` install it. The tests are broken up into sync and async. You can run all tests by running `tox`.
 
 An example of running just one test suite is `tox -e py311-django50-sync -- tests/sync/test_selenium_appeal_generation.py`
+
+
+## Style
+
+We use black for style checking, and it can auto apply many style fixes so if you get a style error just run `black fighthealthinsurance`.
+
+## Types
+
+We use mypy for type checking.

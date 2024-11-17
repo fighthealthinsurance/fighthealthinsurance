@@ -52,10 +52,19 @@ function validateScrubForm(event: Event): void {
 	document.getElementById('email-label').style.color="";
 	rehideHiddenMessage('email_error');
     }
+    if (form.denial_text.value.length < 1) {
+	showHiddenMessage('need_denial');
+	document.getElementById('denial_text_label').style.color="red";
+    } else {
+	document.getElementById('denial_text_label').style.color="";
+	rehideHiddenMessage('need_denial');
+    }
+
     if (form.pii.checked && form.privacy.checked && form.email.value.length > 0) {
 	rehideHiddenMessage('agree_chk_error');
 	rehideHiddenMessage('pii_error');
 	rehideHiddenMessage('email_error');
+	rehideHiddenMessage('need_denial');
 	// YOLO
 	return;
     } else {

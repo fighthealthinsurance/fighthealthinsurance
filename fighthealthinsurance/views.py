@@ -363,16 +363,15 @@ class ProcessView(generic.FormView):
     template_name = "scrub.html"
     form_class = DenialForm
 
-    def get_ocr_result(self):
+    def get_ocr_result(self) -> Optional[str]:
         if self.request.method == "POST":
-            return self.request.POST.get("denial_text", "")
-        return ""
+            return self.request.POST.get("denial_text", None)
+        return None
 
     def get_context_data(self, **kwargs):
-        context = {
-            "ocr_result": self.get_ocr_result(),
-            "upload_more": True,
-        }
+        context = super().get_context_data(**kwargs)
+        context["ocr_result"] =  self.get_ocr_result()
+        context["upload_more"] = True
         return context
 
     def form_valid(self, form):

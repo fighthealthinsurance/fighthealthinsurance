@@ -77,7 +77,7 @@ Upload your Health Insurance Denial
 	</div>
 	{% endif %}
 	<div class="form-group">
-	    <label for="denial_text" class="form-label">
+	    <label for="denial_text" id="denial_text_label" class="form-label">
 			<b>Your Insurance Denial</b>
 			<small class="text-muted">(Remove personally identifiable information (PII) as we store for Machine Learning and may review)</small>
 		</label><br>
@@ -147,6 +147,9 @@ Upload your Health Insurance Denial
 	    </div>
 	    <div class="hidden-error-message" id="pii_error">
 		Can't proceed as you didn't check that you had removed your Personal Identifiable Information (PII) from the text areas.
+	    </div>
+	    <div class="hidden-error-message" id="need_denial">
+	      We need you to provide your denial message from your insurance company in the text field right underneath the words "Your Insurance Denial" if you didn't get one you can write that you have not received a denial but describe what was denied (for example: The pharmacy said my PrEP was denied). Normally insurance companies are required to provide denials, but in our experience they do not always comply with that.
 	    </div>
 	    <button type="submit" class="btn btn-green" id="submit">Submit</button>
 	</form>
