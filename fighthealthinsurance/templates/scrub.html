@@ -20,17 +20,17 @@ Upload your Health Insurance Denial
 	    {{ form.errors }}
 	</div>
 	{% endif %}
-	<div class="container" style="margin-top: 2.5rem !important">
+	<div class="main-form">
 	<form method="post" action="{% url 'process' %}" id="fuck_health_insurance_form" enctype="multipart/form-data">
 		{% csrf_token %}
 	<div class="form-group">
 	    <div class="row">
 			<div class="col-md-4">
-				<label for="store_fname" class="form-label">First name</label><br>
+				<label for="store_fname" class="form-label">First name^</label><br>
 				<input type="text" id="store_fname" name="fname" class="form-control"><br>
 			</div>
 			<div class="col-md-4">
-				<label for="store_lname" class="form-label">Last name</label><br>
+				<label for="store_lname" class="form-label">Last name^</label><br>
 				<input type="text" id="store_lname" name="lname" class="form-control"><br>
 			</div>
 		</div>
@@ -39,9 +39,8 @@ Upload your Health Insurance Denial
 				<div class="row">
 				<div class="col-md-4">
 					<label for="email" class="form-label">
-						Email
+					  <div id="email-label">Email*</div>
 						<span class="d-block small text-muted">
-						(Note: Your email (hashed) will be stored. To delete after your appeal is generated, refer to `Remove Your Data` at top.)
 						</span>
 					</label><br>
 					<input type="email" id="email" name="email" class="form-control"><br>
@@ -52,7 +51,7 @@ Upload your Health Insurance Denial
 			<div class="row">
 				<div class="col-md-4">
 					<label for="store_street" class="form-label">
-						Street Address
+						Street Address^
 						<small class="text-muted">(e.g. 283 24th St)</small>
 					</label><br>
 					<input type="text" id="store_street" name="street" class="form-control"><br>
@@ -104,13 +103,13 @@ Upload your Health Insurance Denial
 			<small class="text-muted">(e.g. summary description)</small>
 		</label><br>
 		<div class="col-md-4">
-		<input id="plans_documents" type="file" name="plan_documents" multiple="true" class="form-control mt-2"><br>
+		<input id="plan_documents" type="file" name="plan_documents" multiple="true" class="form-control mt-2"><br>
 		</div>
 	</div>
 	    <b>Policies</b>:
 	    <div class="form-check">
-	        <input type="checkbox" id="personal-only" name="personal-only" class="form-check-input">
-	        <label for="personal-only" class="form-check-label">I am aware that <b>this is for personal use only</b>. <a href="{% url 'pro_version' %}">Click here for those interested in a professional version (doctor/therapist/practitioner/office/hospital).</a></label>
+	        <input type="checkbox" id="personalonly" name="personalonly" class="form-check-input">
+	        <label for="personalonly" class="form-check-label">I am aware that <b>this is for personal use only</b>. <a href="{% url 'pro_version' %}">Click here for those interested in a professional version (doctor/therapist/practitioner/office/hospital).</a></label>
 		</div>
 		<div class="form-check">
 		<input type="checkbox" id="privacy" name="privacy" class="form-check-input">
@@ -130,7 +129,7 @@ Upload your Health Insurance Denial
 			<div class="form-check">
 			<input type="checkbox" id="store_raw_email" name="store_raw_email" value="checked" class="form-check-input">
 				<label for="store_raw_email" class="form-check-label">
-					Store my email to follow-up with me (for the duration of automated follow ups + 30 days)*
+					Store my email to follow-up with me (for the duration of automated follow ups + 30 days)**
 				</label>
 			</div>
 			<div class="form-check">
@@ -140,20 +139,23 @@ Upload your Health Insurance Denial
 				</label>
 			</div>
 	    </div>
-	    <div style="visibility:hidden; color:red" id="email_error">
+	    <div class="hidden-error-message" id="email_error">
 	      We need your email to proceed, this allows us to delete your data later on request.
 	    </div>
-	    <div style="visibility:hidden; color:red" id="agree_chk_error">
-		Can't proceed as you didn't agree to the terms.
+	    <div class="hidden-error-message" id="agree_chk_error">
+		Can't proceed as you didn't agree to all the terms.
 	    </div>
-	    <div style="visibility:hidden; color:red" id="pii_error">
+	    <div class="hidden-error-message" id="pii_error">
 		Can't proceed as you didn't check that you had removed your Personal Identifiable Information (PII) from the text areas.
 	    </div>
 	    <button type="submit" class="btn btn-green" id="submit">Submit</button>
 	</form>
 	<p>
-	    * We store your hashed email that is linked to your denial so you can request removal from our database
-	    (should you wish). Coming soon, if you opt-in, we will store your raw email to follow-up after insurance
+	  ^ We attempt to not store the fields marked with a single "^" on our server, instead they are stored in your web browser (like a cookie). You can remove this either in your web browser or in our <a href="{% url 'privacy_policy' %}">privacy policy</a> page.
+	</p>
+	<p>
+	    ** We hash your email before storing it in our database, this allows you cto request removal from our database (should you wish) without us having to store your raw e-mail.
+	    Iff you opt-in to follow-ups or faxing, we will store your raw email to follow-up after insurance
 		company timelines may have expired so you can "remind" them. If you opt-in, we may follow-up by email
 		after reviewing your denial with a better template if our Machine Learning model does not find a good
 		model on the first pass-through. You may choose to use a different or temporary email

@@ -12,6 +12,8 @@ The [ML model is generated using this repo](https://github.com/totallylegitco/he
 
 FHI requires Python 3.10 or 3.11. You can check the version of Python on your system by typing `python`. If you have a different version of Python two easy ways to get a different version of Python on your system are Anaconda or UV. Once you have a supported version of Python installed, you'll want to install all of the requirements for the project with `pip install -r requirements.txt`. You can do this inside a virtualenv or conda env.
 
+If you get `django.core.exceptions.AppRegistryNotReady: The translation infrastructure cannot be initialized before the apps registry is ready. Check that you don't make non-lazy gettext calls at import time.` make sure you are running Python 3.10 or higher.
+
 The `run_local.sh` can be used to launch django to run locally.
 
 To really test changes you'll likely want access to a model, one [option is using this repo](https://github.com/totallylegitco/healthinsurance-llm) and setting `HEALTH_BACKEND_PORT` to `8000` and `HEALTH_BACKEND_HOST` to `localhost`. Deploying locally requires ~ GPU equivalent to a 3090.

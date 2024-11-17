@@ -1,66 +1,102 @@
-import { storeLocal, pdfjsLib, node_module_path } from "./shared.ts"
+import { storeLocal, pdfjsLib, node_module_path } from "./shared"
 
+import { TextContent, TextItem } from 'pdfjs-dist/types/src/display/api';
+
+
+// Tesseract
 import Tesseract from 'tesseract.js';
 
+async function getTesseractWorkerRaw(): Promise<Tesseract.Worker> {
+    console.log("Loading tesseract worker.")
+    const worker = await Tesseract.createWorker(
+	'eng',
+	1,
+	{
+	    corePath: node_module_path + "/tesseract.js-core/tesseract-core.wasm.js",
+	    workerPath: node_module_path + "/tesseract.js/dist/worker.min.js",
+	    logger: function(m){console.log(m);}
+	});
+    await worker.setParameters({
+	tessedit_pageseg_mode: Tesseract.PSM.AUTO_OSD,
+    });
+    return worker;
+}
+
+const memoizeOne = require('async-memoize-one');
+const getTesseractWorker = memoizeOne(getTesseractWorkerRaw);
+
 // Main
-function validateScrubForm(event) {
-    const form = event.target;
-    if(!form.privacy.checked) {
-	document.getElementById('agree_chk_error').style.visibility='visible';
+function rehideHiddenMessage(name: string): void {
+    document.getElementById(name).classList.remove('visible');
+}
+function showHiddenMessage(name: string): void {
+    document.getElementById(name).classList.add('visible');
+}
+
+function validateScrubForm(event: Event): void {
+    const form = event.target as HTMLFormElement;
+    if(!form.privacy.checked || !form.personalonly.checked || !form.tos.checked) {
+	showHiddenMessage('agree_chk_error');
     } else {
-	document.getElementById('agree_chk_error').style.visibility='hidden';
+	rehideHiddenMessage('agree_chk_error');
     }
     if (!form.pii.checked) {
-	document.getElementById('pii_error').style.visibility='visible';
+	showHiddenMessage('pii_error');
     } else {
-	document.getElementById('pii_error').style.visibility='hidden';
+	rehideHiddenMessage('pii_error');
     }
     if (form.email.value.length < 1) {
-	document.getElementById('email_error').style.visibility='visible';
+	showHiddenMessage('email_error');
+	document.getElementById('email-label').style.color="red";
     } else {
-	document.getElementById('email_error').style.visibility='hidden';
+	document.getElementById('email-label').style.color="";
+	rehideHiddenMessage('email_error');
     }
     if (form.pii.checked && form.privacy.checked && form.email.value.length > 0) {
-	document.getElementById('agree_chk_error').style.visibility='hidden';
-	document.getElementById('pii_error').style.visibility='hidden';
-	document.getElementById('email_error').style.visibility='hidden';
+	rehideHiddenMessage('agree_chk_error');
+	rehideHiddenMessage('pii_error');
+	rehideHiddenMessage('email_error');
 	// YOLO
-	return true;
+	return;
     } else {
 	// Bad news no submit
 	event.preventDefault();
     }
 }
 
-function addText(text) {
-    document.getElementById("denial_text").value += text;
+function addText(text: string): void {
+    const input = document.getElementById("denial_text") as HTMLTextAreaElement;
+    input.value += text;
 }
 
 
-function isPDF(file) {
-    return file.type.match('application/pdf');
+function isPDF(file: File): boolean {
+    return file.type.match('application/pdf') == null;
 }
 
-const recognize = async function(evt){
-    const files = evt.target.files;
+const recognize = async function(evt: Event) {
+    const input = evt.target as HTMLInputElement;
+    const files = input.files;
     const file = files[0];
 
     if (isPDF(file)) {
 	console.log("PDF!")
 	const reader = new FileReader();
-	reader.onload = function () {
-	    const typedarray = new Uint8Array(this.result);
-	    console.log("Data?")
-	    console.log(typedarray)
-	    const loadingTask = pdfjsLib.getDocument(typedarray);
-	    loadingTask.promise.then(doc => {
-		const ret = getPDFText(doc);
-		ret.then((t) => {
-		    console.log("ret:");
-		    console.log(ret);
-		    addText(t);
-		});
-	    })
+	reader.onload = function (event: ProgressEvent<FileReader>) {
+	    if (event.target && event.target.result instanceof ArrayBuffer) {
+		const typedarray = new Uint8Array(event.target.result);
+		console.log("Data?")
+		console.log(typedarray)
+		const loadingTask = pdfjsLib.getDocument(typedarray);
+		loadingTask.promise.then(doc => {
+		    const ret = getPDFText(doc);
+		    ret.then((t) => {
+			console.log("ret:");
+			console.log(ret);
+			addText(t);
+		    });
+		})
+	    }
 	};
 	reader.readAsArrayBuffer(file);
     } else {
@@ -74,7 +110,8 @@ const recognize = async function(evt){
 }
 
 
-var scrubRegex = [
+type ScrubRegex = [RegExp, string, string];
+var scrubRegex: ScrubRegex[] = [
     [new RegExp("patents?:?\\s+(?<token>\\w+)", "gmi"), "name", "Patient: patient_name"],
     [new RegExp("patients?:?\\s+(?<token>\\w+)", "gmi"), "name", "Patient: patient_name"],
     [new RegExp("member:\\s+(?<token>\\w+)", "gmi"), "name", "Member: member_name"],
@@ -89,7 +126,7 @@ var scrubRegex = [
     [new RegExp("Group\\s*number\\s*.?\\s*.?\\s*(?<token>\\w+)", "gmi"), "group_id", "Group ID: group_id"],
 ];
 
-function scrubText(text) {
+function scrubText(text: string): string {
     var reservedTokens = [];
     var nodes = document.querySelectorAll('input');
     for (var i=0; i < nodes.length; i++) {
@@ -115,7 +152,7 @@ function scrubText(text) {
     console.log(scrubRegex)
     for (var i=0; i < scrubRegex.length; i++) {
 	const match = scrubRegex[i][0].exec(text)
-	if (match != null) {
+	if (match !== null) {
 	    // I want to use the groups syntax here but it is not working so just index in I guess.
 	    console.log("Match " + match + " groups " + match[1]);
 	    console.log("Storing " + match[1] + " for " + scrubRegex[i][1]);
@@ -130,20 +167,20 @@ function scrubText(text) {
     }
     return text;
 }
-function clean() {
-    document.getElementById("denial_text").value = scrubText(
-	document.getElementById("denial_text").value);
+
+function clean(): void {
+    const denialText = document.getElementById("denial_text") as HTMLTextAreaElement; 
+    denialText.value = scrubText(denialText.value);
 }
 
-function setupScrub()
-{
+function setupScrub(): void {
     // Restore previous local values
     var input = document.getElementsByTagName('input');
     console.log(input);
-    var nodes = document.querySelectorAll('input');
+    var nodes: NodeListOf<HTMLInputElement> = document.querySelectorAll('input');
     console.log("Nodes:")
     console.log(nodes)
-    function handleStorage(node) {
+    function handleStorage(node: HTMLInputElement) {
 	// All store_ fields which are local only and the e-mail field which is local and non-local.
 	if (node.id.startsWith('store_') || node.id.startsWith("email")) {
 	    node.addEventListener('change', storeLocal);
@@ -166,40 +203,29 @@ function setupScrub()
 	scrub2.onclick = clean;
     }
     const form = document.getElementById("fuck_health_insurance_form");
-    form.addEventListener("submit", validateScrubForm);
+    if (form) {
+	form.addEventListener("submit", validateScrubForm);
+    } else {
+	console.log("Missing form?!?")
+    }
 }
 
-const memoizeOne = require('async-memoize-one');
-
-// Tesseract
-async function getTesseractWorkerRaw() {
-    console.log("Loading tesseract worker.")
-    const worker = await Tesseract.createWorker(
-	'eng',
-	1,
-	{
-	    corePath: node_module_path + "/tesseract.js-core/tesseract-core.wasm.js",
-	    workerPath: node_module_path + "/tesseract.js/dist/worker.min.js",
-	    logger: function(m){console.log(m);}
-	});
-    await worker.setParameters({
-	tessedit_pageseg_mode: Tesseract.PSM.PSM_AUTO_OSD,
-    });
-    return worker;
-}
-
-const getTesseractWorker = memoizeOne(getTesseractWorkerRaw);
-
-async function getPDFPageText (pdf, pageNo) {
+async function getPDFPageText (pdf: any, pageNo: number): Promise<string> {
     const page = await pdf.getPage(pageNo);
-    const tokenizedText = await page.getTextContent();
-    const items = tokenizedText.items;
-    const strs = items.map(token => token.str);
+    const tokenizedText: TextContent = await page.getTextContent();
+    const items: TextItem[] = [];
+    tokenizedText.items.forEach(item => {
+	// Type guard to ensure item is of type TextItem
+        if ('str' in item) {
+            items.push(item as TextItem);
+        }
+    })
+    const strs = items.map((token: TextItem) => token.str);
     const pageText = strs.join(" ");
     return pageText;
 }
 
-async function getPDFText(pdf) {
+async function getPDFText(pdf: any): Promise<string> {
     console.log("Getting text from PDF:")
     console.log(pdf)
     const maxPages = pdf.numPages;

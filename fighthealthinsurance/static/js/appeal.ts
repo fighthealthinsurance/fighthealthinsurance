@@ -1,23 +1,24 @@
-import { jsPDF } from 'jspdf';
+import { jsPDF, jsPDFOptions } from 'jspdf';
 
-import {getLocalStorageItemOrDefault, getLocalStorageItemOrDefaultEQ} from './shared.ts';
+import {getLocalStorageItemOrDefault, getLocalStorageItemOrDefaultEQ} from './shared';
 
 
 async function generateAppealPDF() {
 
-  const options = {
-      orientation: 'p',
+  const options: jsPDFOptions = {
+      orientation: 'p', // portrait
       unit: 'px',
       format: 'letter',
       };
 
-  const completed_appeal_text = document.getElementById("id_completed_appeal_text").value;
+  const completedAppealText = (document.getElementById("id_completed_appeal_text") as HTMLTextAreaElement)?.value || "";
+
 
   // Create a new jsPDF document
   const doc = new jsPDF(options);
 
   // Add the text box contents to the PDF document
-  doc.text(20, 20, completed_appeal_text, { maxWidth: 300 });
+  doc.text(completedAppealText, 20, 20, { maxWidth: 300 });
 
   doc.setProperties({
 	title: 'Health Insurance Appeal'
@@ -29,8 +30,8 @@ async function generateAppealPDF() {
 
 function descrub() {
     const appeal_text = document.getElementById("scrubbed_appeal_text");
-    const target = document.getElementById("id_completed_appeal_text");
-    var text = appeal_text.value;
+    const target = document.getElementById("id_completed_appeal_text") as HTMLTextAreaElement;
+    var text = (appeal_text as HTMLTextAreaElement)?.value || "";
     const fname = getLocalStorageItemOrDefault("store_fname", "FirstName");
     const lname = getLocalStorageItemOrDefault("store_lname", "LastName");
     const subscriber_id = getLocalStorageItemOrDefaultEQ("subscriber_id");
@@ -52,15 +53,20 @@ function descrub() {
     text = text.replace("GPID", group_id);
     text = text.replace("subscriber\\_id", subscriber_id);
     text = text.replace("group\\_id", group_id);
-    target.value = text;
+    if (target) {
+	target.value = text;
+    } else {
+	console.error("Element with id 'id_completed_appeal_text' not found or not html text area");
+    }
 }
 
 function printAppeal() {
     console.log("Starting to print.")
     const childWindow = window.open('','_blank','');
+    const completedAppealText = (document.getElementById("id_completed_appeal_text") as HTMLTextAreaElement)?.value || "";
     childWindow.document.open();
     childWindow.document.write('<html><head></head><body>');
-    childWindow.document.write(document.getElementById('id_completed_appeal_text').value.replace(/\n/gi,'<br>'));
+    childWindow.document.write(completedAppealText.replace(/\n/gi,'<br>'));
     childWindow.document.write('</body></html>');
     // Wait 1 second for chrome.
     setTimeout(function(){

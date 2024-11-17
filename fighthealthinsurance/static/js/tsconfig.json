@@ -6,6 +6,9 @@
     "target": "es5",
     "jsx": "react",
     "allowJs": true,
-    "moduleResolution": "node"
-  }
+    "moduleResolution": "node",
+    "allowSyntheticDefaultImports": true,
+  },
+  "include": ["./*.ts"],                     // Files to include in the compilation
+  "exclude": ["node_modules"],               // Exclude node_modules
 }

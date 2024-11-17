@@ -48,3 +48,87 @@ a.link:hover::after {
 .section-btn:hover {
     background-color: #4267b2;
 }
+
+
+.custom-angle-up {
+  display: inline-block;
+  position: relative;
+  height: 30px;
+  width: 100px; /* adjust width as needed */
+  font-size: 20px; /* adjust font size as needed */
+  text-indent: -1000px;
+  overflow: hidden;
+  transition: transform 0.2s ease-in-out;
+}
+
+.custom-angle-up::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  transform-origin: center;
+  animation-name: arrow-up;
+  animation-duration: 1s;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+}
+
+@keyframes arrow-up {
+  0% {
+    transform: translate(0, 0);
+  }
+  100% {
+    transform: translate(0, -10px);
+  }
+}
+
+.main-form {
+    margin-top: 2.5rem !important;
+    width: 100%;
+}
+
+.generic-main-content {
+    width: 80%;
+    margin-top: 2.5rem !important;
+    margin-top: 15vh;
+}
+
+.post-infered-table {
+    width: 100%;
+    margin: 0 auto;
+}
+
+.outside-help-options-table {
+    table-layout: fixed;
+    border-collapse: collapse;
+    width: 80%;
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+    background-color: #fff;
+    margin: 0 auto;
+}
+
+.cat-submit-button {
+    background: #a5c422;
+    text-align: center;
+    color:#ffffff !important;
+    border: none;
+    border-radius: 3px;
+    padding: 10px 20px;
+    font-size: 14px;
+}
+
+.hidden-error-message {
+    visibility: hidden; /* Hides the element but keeps its space occupied */
+    color: red; /* Sets the text color */
+    height: 0; /* Ensures it doesn't take up space */
+    overflow: hidden; /* Ensures no content spills over */
+    margin: 0; /* Resets margin to avoid spacing */
+    padding: 0; /* Resets padding */
+}
+
+.hidden-error-message.visible {
+  visibility: visible; /* Makes the element visible */
+  height: auto; /* Allows the content to occupy its natural height */
+  padding: initial; /* Restores padding */
+}

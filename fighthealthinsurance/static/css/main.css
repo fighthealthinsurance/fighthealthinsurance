@@ -18,50 +18,58 @@ body {
 Our extras
 ---*/
 
-    .options-table {
-      width: 80%;
-      border-collapse: collapse;
-      margin-top: 20px;
-      box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
-      background-color: #fff;
-    }
+#google-map {
+    height: 300px;
+    margin: 0 auto;
+    padding: 0;
+    width: 100%;
+    border-radius: 4px;
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+    background-color: #fff;
+}
 
-    .options-table th, .options-table td {
-      border: 1px solid #ddd;
-      padding: 10px;
-      text-align: left;
-    }
+.options-table {
+    table-layout: fixed;
+    border-collapse: collapse;
+    width: 100%;
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+    background-color: #fff;
+}
 
-    .options-table th {
-      background-color: #f2f2f2;
-    }
+.options-table th,.options-table td {
+    border: 1px solid #ddd;
+    padding: 10px;
+    text-align: left;
+}
 
-    .options-table tr:hover {
-      background-color: #f5f5f5;
-    }
+.options-table th {
+    background-color: #f2f2f2;
+}
 
-    .select-option {
-      display: inline-block;
-      padding: 8px 12px;
-      font-size: 14px;
-      cursor: pointer;
-      background-color: #4caf50;
-      color: #fff;
-      border: none;
-      border-radius: 4px;
-      text-align: center;
-      text-decoration: none;
-      outline: none;
-      transition: background-color 0.3s;
-    }
+.options-table tr:hover {
+    background-color: #f5f5f5;
+}
 
-    .select-option:hover {
-      background-color: #45a049;
-    }
+.select-option {
+    display: inline-block;
+    padding: 8px 12px;
+    font-size: 14px;
+    cursor: pointer;
+    background-color: #4caf50;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    text-align: center;
+    text-decoration: none;
+    transition: background-color 0.3s;
+}
 
+.select-option:hover {
+    background-color: #3e8e41;
+}
 
 /*---------------------------------------
-     TYPOGRAPHY              
+     TYPOGRAPHY
   -----------------------------------------*/
 
 h1,
@@ -122,7 +130,7 @@ p {
 
 
 /*---------------------------------------
-     GENERAL               
+     GENERAL
   -----------------------------------------*/
 
 html {
@@ -255,15 +263,9 @@ a:focus {
     text-align: center;
 }
 
-#google-map {
-    line-height: 0;
-    margin: 0;
-    padding: 0;
-}
-
 
 /*---------------------------------------
-       PRE LOADER              
+       PRE LOADER
   -----------------------------------------*/
 
 .preloader {
@@ -304,20 +306,20 @@ a:focus {
 
 @-webkit-@keyframes spinner {
     to {
-        transform: rotate(360deg);
+	transform: rotate(360deg);
     }
 }
 
 @keyframes spinner {
     to {
-        transform: rotate(360deg);
+	transform: rotate(360deg);
     }
 }
 
 
 
 /*---------------------------------------
-      MENU              
+      MENU
   -----------------------------------------*/
 
 header {
@@ -364,7 +366,7 @@ header span i {
 
 
 /*---------------------------------------
-      MENU              
+      MENU
   -----------------------------------------*/
 
 .navbar-default {
@@ -447,7 +449,7 @@ header span i {
 
 
 /*---------------------------------------
-      HOME              
+      HOME
   -----------------------------------------*/
 
 #home h1 {
@@ -527,7 +529,7 @@ header span i {
 
 
 /*---------------------------------------
-      ABOUT              
+      ABOUT
   -----------------------------------------*/
 
 #about {
@@ -563,7 +565,7 @@ header span i {
 
 
 /*---------------------------------------
-      TEAM MEMBERS              
+      TEAM MEMBERS
   -----------------------------------------*/
 
 .team-thumb {
@@ -630,7 +632,7 @@ header span i {
 
 
 /*---------------------------------------
-     SERVICE              
+     SERVICE
   -----------------------------------------*/
 
 #service {
@@ -663,7 +665,7 @@ header span i {
 
 
 /*---------------------------------------
-      NEWS             
+      NEWS
   -----------------------------------------*/
 
 #news,
@@ -813,7 +815,7 @@ header span i {
 
 
 /*---------------------------------------
-      APPOINTMENT             
+      APPOINTMENT
   -----------------------------------------*/
 
 #appointment {
@@ -855,7 +857,7 @@ header span i {
 
 
 /*---------------------------------------
-     FOOTER              
+     FOOTER
   -----------------------------------------*/
 
 footer {
@@ -974,7 +976,7 @@ footer a:hover {
 
 
 /*---------------------------------------
-     SOCIAL ICON              
+     SOCIAL ICON
   -----------------------------------------*/
 
 .social-icon {
@@ -1008,59 +1010,59 @@ footer a:hover {
 
 
 /*---------------------------------------
-     RESPONSIVE STYLES              
+     RESPONSIVE STYLES
   -----------------------------------------*/
 
 @media only screen and (max-width: 1200px) {
     h1 {
-        font-size: 4em;
+	font-size: 4em;
     }
 
     h2 {
-        font-size: 2.5em;
+	font-size: 2.5em;
     }
 
     h3 {
-        font-size: 1.5em;
+	font-size: 1.5em;
     }
 
     header {
-        height: inherit;
+	height: inherit;
     }
 
     header span.date-icon {
-        border: 0;
-        padding-right: 0;
-        padding-left: 0;
+	border: 0;
+	padding-right: 0;
+	padding-left: 0;
     }
 
     header span.email-icon {
-        padding-top: 0;
+	padding-top: 0;
     }
 
     .navbar-default .navbar-nav li a {
-        padding-right: 15px !important;
-        padding-left: 15px !important;
+	padding-right: 15px !important;
+	padding-left: 15px !important;
     }
 }
 
 @media only screen and (max-width: 992px) {
     .slider .item {
-        background-position: center;
+	background-position: center;
     }
 
     header {
-        padding-bottom: 10px;
+	padding-bottom: 10px;
     }
 
     header .text-align-right {
-        text-align: left;
+	text-align: left;
     }
 
     header span {
-        padding-top: 0;
-        padding-left: 0;
-        padding-bottom: 0;
+	padding-top: 0;
+	padding-left: 0;
+	padding-bottom: 0;
     }
 }
 
@@ -1068,67 +1070,67 @@ footer a:hover {
 
     .navbar-default .navbar-collapse,
     .navbar-default .navbar-form {
-        border-color: transparent;
+	border-color: transparent;
     }
 
     .navbar-default .navbar-nav li.appointment-btn {
-        margin-left: 15px;
+	margin-left: 15px;
     }
 
     .navbar-default .navbar-nav li a {
-        display: inline-block !important;
-        padding-top: 8px !important;
-        padding-bottom: 8px !important;
+	display: inline-block !important;
+	padding-top: 8px !important;
+	padding-bottom: 8px !important;
     }
 
     .news-sidebar {
-        margin-top: 2em;
+	margin-top: 2em;
     }
 
     #appointment-form {
-        padding-top: 4em;
-        padding-bottom: 4em;
+	padding-top: 4em;
+	padding-bottom: 4em;
     }
 
     footer {
-        padding-top: 60px;
-        padding-bottom: 0;
+	padding-top: 60px;
+	padding-bottom: 0;
     }
 
     .footer-thumb {
-        padding-bottom: 10px;
+	padding-bottom: 10px;
     }
 
     .border-top {
-        text-align: center;
+	text-align: center;
     }
 
     .copyright-text {
-        margin-top: 10px;
+	margin-top: 10px;
     }
 
     .angle-up-btn {
-        bottom: 10em;
+	bottom: 10em;
     }
 }
 
 @media only screen and (max-width: 639px) {
     h1 {
-        font-size: 3em;
-        line-height: 1.2em;
+	font-size: 3em;
+	line-height: 1.2em;
     }
 
     h2 {
-        font-size: 2.1em;
+	font-size: 2.1em;
     }
 
     h4 {
-        font-size: 1.4em;
+	font-size: 1.4em;
     }
 
     #home h3 {
-        font-size: 11px;
-        letter-spacing: 1px;
+	font-size: 11px;
+	letter-spacing: 1px;
     }
 
 }

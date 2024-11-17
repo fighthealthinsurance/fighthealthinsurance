@@ -1,18 +1,19 @@
 import * as pdfjsLib from 'pdfjs-dist';
 
-function getLocalStorageItemOrDefault(key, defaultValue) {
+function getLocalStorageItemOrDefault(key: string, defaultValue: string): string {
     const value = window.localStorage.getItem(key);
     return value !== null ? value : defaultValue;
 }
 
-function getLocalStorageItemOrDefaultEQ(key) {
+function getLocalStorageItemOrDefaultEQ(key: string): string {
     return getLocalStorageItemOrDefault(key, key);
 }
 
 
-const storeLocal = async function(evt) {
-    const name = evt.target.id;
-    const value = evt.target.value;
+const storeLocal = async function(evt: Event) {
+    const target = event.target as HTMLInputElement;
+    const name = target.id;
+    const value = target.value;
     window.localStorage.setItem(name, value);
 }
 
