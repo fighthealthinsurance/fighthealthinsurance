@@ -1,0 +1,19 @@
+{% extends 'single_optional_question.html' %}
+{% block title %}
+Optional: Add Plan Documents
+{% endblock title %}
+
+{% load compress %}
+{% load static %}
+
+{% block formelm %}
+<div class="form-group" style="visibility:visible">
+  <label class="custom-file-label" for="plan_documents">
+    <b>Optional</b>: Plan Documents
+    <small class="text-muted">(e.g. summary description)</small>
+  </label><br>
+  <div class="col-md-4">
+    <input id="plan_documents" type="file" name="plan_documents" multiple="true" class="form-control mt-2"><br>
+  </div>
+</div>
+{% endblock formelm %}

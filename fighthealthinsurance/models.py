@@ -330,6 +330,7 @@ class Denial(models.Model):
     references = models.TextField(primary_key=False, null=True)
     reference_summary = models.TextField(primary_key=False, null=True)
     appeal_fax_number = models.CharField(max_length=40, null=True)
+    your_state = models.CharField(max_length=40, null=True)
 
     def follow_up(self):
         return self.raw_email is not None and "@" in self.raw_email

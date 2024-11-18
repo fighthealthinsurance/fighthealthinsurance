@@ -52,15 +52,21 @@ class DenialForm(forms.Form):
     store_raw_email = forms.BooleanField(required=False)
     use_external_models = forms.BooleanField(required=False)
     denial_text = forms.CharField(required=True)
-    health_history = forms.CharField(required=False)
     email = forms.EmailField(required=True)
-    plan_documents = MultipleFileField(required=False)
 
 
 class DenialRefForm(forms.Form):
     denial_id = forms.IntegerField(required=True, widget=forms.HiddenInput())
     email = forms.CharField(required=True, widget=forms.HiddenInput())
     semi_sekret = forms.CharField(required=True, widget=forms.HiddenInput())
+
+
+class HealthHistory(DenialRefForm):
+    health_history = forms.CharField(required=False)
+
+
+class PlanDocumentsForm(DenialRefForm):
+    plan_documents = MultipleFileField(required=False)
 
 
 class ChooseAppealForm(DenialRefForm):

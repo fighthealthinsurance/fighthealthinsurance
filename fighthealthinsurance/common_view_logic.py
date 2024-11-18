@@ -386,9 +386,9 @@ class FindNextStepsHelper:
         plan_id,
         claim_id,
         denial_type,
-        your_state,
         denial_date,
         semi_sekret,
+        your_state=None,
         captcha=None,
         denial_type_text=None,
         plan_source=None,
@@ -423,7 +423,7 @@ class FindNextStepsHelper:
             denial.appeal_fax_number = appeal_fax_number
 
         outside_help_details = []
-        state = your_state
+        state = your_state or denial.your_state
 
         if state in states_with_caps:
             outside_help_details.append(
@@ -577,28 +577,23 @@ class DenialCreatorHelper:
                 follow_up_date=denial.date + datetime.timedelta(days=15),
                 denial_id=denial,
             )
-
-        for plan_document in plan_documents:
-            pd = PlanDocuments.objects.create(
-                plan_document=plan_document, denial=denial
-            )
-            pd.save()
-
-        # Guess at the plan type
-        plan_type = cls.codes_denial_processor().get_plan_type(denial_text)
-        # Infer the state
         your_state = None
         if zip is not None and zip != "":
             try:
                 your_state = cls.zip_engine.by_zipcode(zip).state
+                denial.your_state = your_state
             except:
                 # Default to no state
                 your_state = None
         (procedure, diagnosis) = appealGenerator.get_procedure_and_diagnosis(
             denial_text=denial_text, use_external=denial.use_external
         )
+        denial.procedure = procedure
+        denial.diagnosis = diagnosis
+        denial.save()
         r = re.compile(r"Group Name:\s*(.*?)(,|)\s*(INC|CO|LTD|LLC)\s+", re.IGNORECASE)
         g = r.search(denial_text)
+        # TODO: Update based on plan document upload if present.
         employer_name = None
         if g is not None:
             employer_name = g.group(1)
@@ -616,16 +611,52 @@ class DenialCreatorHelper:
                 denial=denial, denial_type=dt, src=cls.regex_src()
             ).save()
             denial_type.append(dt)
+        denial_id = denial.denial_id
+        semi_sekret = denial.semi_sekret
+        return cls._update_denial(
+            denial=denial, health_history=health_history, plan_documents=plan_documents
+        )
+
+    @classmethod
+    def update_denial(
+        cls,
+        email,
+        denial_id,
+        semi_sekret,
+        health_history=None,
+        plan_documents=None,
+    ):
+        hashed_email = Denial.get_hashed_email(email)
+        denial = Denial.objects.filter(
+            hashed_email=hashed_email, denial_id=denial_id, semi_sekret=semi_sekret
+        ).get()
+        return cls._update_denial(
+            denial, health_history=health_history, plan_documents=plan_documents
+        )
+
+    @classmethod
+    def _update_denial(cls, denial, health_history=None, plan_documents=None):
+        if plan_documents is not None:
+            for plan_document in plan_documents:
+                pd = PlanDocuments.objects.create(
+                    plan_document=plan_document, denial=denial
+                )
+                pd.save()
+
+        if health_history is not None:
+            denial.health_history = health_history
+            denial.save()
+        # Return the current the state
         return DenialResponseInfo(
-            selected_denial_type=denial_type,
+            selected_denial_type=denial.denial_type.all(),
             all_denial_types=cls.all_denial_types(),
             denial_id=denial.denial_id,
-            your_state=your_state,
-            procedure=procedure,
-            diagnosis=diagnosis,
-            employer_name=employer_name,
+            your_state=denial.your_state,
+            procedure=denial.procedure,
+            diagnosis=denial.diagnosis,
+            employer_name=denial.employer_name,
             semi_sekret=denial.semi_sekret,
-            appeal_fax_number=appeal_fax_number,
+            appeal_fax_number=denial.appeal_fax_number,
         )
 
 

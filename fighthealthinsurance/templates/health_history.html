@@ -1,0 +1,19 @@
+{% extends 'single_optional_question.html' %}
+{% block title %}
+Optional: Health History
+{% endblock title %}
+
+{% load compress %}
+{% load static %}
+
+{% block formelm %}
+<div class="form-group">
+  <label for="health_history" class="form-label">
+    <b>Optional</b>: Your Relevant Health History
+    <small class="text-muted">(e.g. transgender, type 2 diabetes, fibromyalgia, etc.)</small>
+  </label><br>
+  <textarea name="health_history" id="health_history" style="width:100%" rows="20" form="fuck_health_insurance_form"
+	    placeholder="Related Health History Goes Here" class="form-control"></textarea>
+  <br>
+</div>
+{% endblock formelm %}

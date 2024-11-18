@@ -1,0 +1,32 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<section class="scan-section mt-2">
+    <div class="container">
+	{% if form.errors %}
+	<div style="color:red">
+	    {{ form.errors }}
+	</div>
+	{% endif %}
+	<div class="main-form">
+	<form method="post" action="{{ next }}" id="fuck_health_insurance_form" enctype="multipart/form-data">
+	  {% csrf_token %}
+	  <!-- Hidden fields used for finding the denial -->
+	  {% for field in form %}
+          {% if field.is_hidden %}
+              {{ field }}
+          {% endif %}
+	  {% endfor %}
+	  {% block formelm %}
+	  {% endblock formelm %}
+	  Don't include any personally identifiable information (like your name, address, etc.)<br>
+	  If you don't know (or don't want to answer) you can skip this question by pressing "Skip".<br>
+	<a href="{{ next }}" >
+          <button type="button" class="btn btn-red">Skip</button>
+        </a>
+	<button id="next" type="submit" class="btn btn-green">Next</button>
+	</form>
+	</div>
+    </div>
+</section>
+{% endblock content %}

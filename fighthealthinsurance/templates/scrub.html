@@ -82,30 +82,13 @@ Upload your Health Insurance Denial
 			<small class="text-muted">(Remove personally identifiable information (PII) as we store for Machine Learning and may review)</small>
 		</label><br>
 	    <textarea name="denial_text" id="denial_text" style="width:100%" rows="20" form="fuck_health_insurance_form"
+		placeholder="Your denial goes here"
 		class="form-control">{{ocr_result}}</textarea><br>
 	    <button id="scrub-2" class="btn btn-green">
 	      Click to remove name and address from scanned text
 	    </button><br>
 		<br>
 		</div>
-	<div class="form-group">
-	    <label for="health_history" class="form-label">
-			<b>Optional</b>: Your Relevant Health History
-			<small class="text-muted">(e.g. transgender, type 2 diabetes, fibromyalgia, etc.)</small>
-		</label><br>
-	    <textarea name="health_history" id="health_history" style="width:100%" rows="20" form="fuck_health_insurance_form"
-		placeholder="Related Health History Goes Here" class="form-control"></textarea>
-	<br>
-	</div>
-	<div class="form-group" style="visibility:visible">
-	    <label class="custom-file-label" for="plan_documents">
-			<b>Optional</b>: Plan Documents
-			<small class="text-muted">(e.g. summary description)</small>
-		</label><br>
-		<div class="col-md-4">
-		<input id="plan_documents" type="file" name="plan_documents" multiple="true" class="form-control mt-2"><br>
-		</div>
-	</div>
 	    <b>Policies</b>:
 	    <div class="form-check">
 	        <input type="checkbox" id="personalonly" name="personalonly" class="form-check-input">

@@ -359,7 +359,7 @@ class OCRView(View):
         return "\n".join(texts)
 
 
-class ProcessView(generic.FormView):
+class InitialProcessView(generic.FormView):
     template_name = "scrub.html"
     form_class = DenialForm
 
@@ -370,15 +370,68 @@ class ProcessView(generic.FormView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        context["ocr_result"] =  self.get_ocr_result()
+        context["ocr_result"] = self.get_ocr_result() or ""
         context["upload_more"] = True
         return context
 
     def form_valid(self, form):
-        # It's not a password per-se but we want password like hashing.
-        # but we don't support changing the values.
-
         denial_response = DenialCreatorHelper.create_denial(**form.cleaned_data)
+        form = HealthHistory(
+            initial={
+                "denial_id": denial_response.denial_id,
+                "email": form.cleaned_data["email"],
+                "semi_sekret": denial_response.semi_sekret,
+            }
+        )
+        # TODO: This should be a redirect to a new view to prevent
+        # double-submission and other potentially unexpected issues. Normally,
+        # this can be done by assigning a success_url to the view and Django
+        # will take care of the rest. Since we need to pass extra information
+        # along, we can use get_success_url to generate a querystring.
+        return render(
+            self.request,
+            "health_history.html",
+            context={
+                "form": form,
+                "next": reverse("hh"),
+            },
+        )
+
+
+class PlanDocumentsView(generic.FormView):
+    form_class = HealthHistory
+    template_name = "health_history.html"
+
+    def form_valid(self, form):
+        denial_response = DenialCreatorHelper.update_denial(**form.cleaned_data)
+        form = PlanDocumentsForm(
+            initial={
+                "denial_id": denial_response.denial_id,
+                "email": form.cleaned_data["email"],
+                "semi_sekret": denial_response.semi_sekret,
+            }
+        )
+        # TODO: This should be a redirect to a new view to prevent
+        # double-submission and other potentially unexpected issues. Normally,
+        # this can be done by assigning a success_url to the view and Django
+        # will take care of the rest. Since we need to pass extra information
+        # along, we can use get_success_url to generate a querystring.
+        return render(
+            self.request,
+            "plan_documents.html",
+            context={
+                "form": form,
+                "next": reverse("dvc"),
+            },
+        )
+
+
+class DenialCollectedView(generic.FormView):
+    form_class = PlanDocumentsForm
+    template_name = "plan_documents.html"
+
+    def form_valid(self, form):
+        denial_response = DenialCreatorHelper.update_denial(**form.cleaned_data)
 
         form = PostInferedForm(
             initial={
