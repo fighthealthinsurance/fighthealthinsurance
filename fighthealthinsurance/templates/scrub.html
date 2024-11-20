@@ -39,7 +39,7 @@ Upload your Health Insurance Denial
 				<div class="row">
 				<div class="col-md-4">
 					<label for="email" class="form-label">
-					  <div id="email-label">Email*</div>
+					  <div id="email-label">Email**</div>
 						<span class="d-block small text-muted">
 						</span>
 					</label><br>
@@ -123,7 +123,7 @@ Upload your Health Insurance Denial
 			</div>
 	    </div>
 	    <div class="hidden-error-message" id="email_error">
-	      We need your email to proceed, this allows us to delete your data later on request.
+	      We need your email to proceed, this allows us to delete your data later on request*.
 	    </div>
 	    <div class="hidden-error-message" id="agree_chk_error">
 		Can't proceed as you didn't agree to all the terms.
@@ -140,7 +140,7 @@ Upload your Health Insurance Denial
 	  ^ We attempt to not store the fields marked with a single "^" on our server, instead they are stored in your web browser (like a cookie). You can remove this either in your web browser or in our <a href="{% url 'privacy_policy' %}">privacy policy</a> page.
 	</p>
 	<p>
-	    ** We hash your email before storing it in our database, this allows you cto request removal from our database (should you wish) without us having to store your raw e-mail.
+	    ** We hash your email before storing it in our database, this allows you to request removal from our database (should you wish) without us having to store your raw e-mail.
 	    Iff you opt-in to follow-ups or faxing, we will store your raw email to follow-up after insurance
 		company timelines may have expired so you can "remind" them. If you opt-in, we may follow-up by email
 		after reviewing your denial with a better template if our Machine Learning model does not find a good
