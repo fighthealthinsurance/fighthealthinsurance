@@ -80,7 +80,7 @@ function addText(text: string): void {
 
 
 function isPDF(file: File): boolean {
-    return file.type.match('application/pdf') == null;
+    return file.type.match('application/pdf') !== null;
 }
 
 const recognize = async function(evt: Event) {
