@@ -26,11 +26,11 @@ Upload your Health Insurance Denial
 	<div class="form-group">
 	    <div class="row">
 			<div class="col-md-4">
-				<label for="store_fname" class="form-label">First name^</label><br>
+				<label for="store_fname" class="form-label">First name*</label><br>
 				<input type="text" id="store_fname" name="fname" class="form-control"><br>
 			</div>
 			<div class="col-md-4">
-				<label for="store_lname" class="form-label">Last name^</label><br>
+				<label for="store_lname" class="form-label">Last name*</label><br>
 				<input type="text" id="store_lname" name="lname" class="form-control"><br>
 			</div>
 		</div>
@@ -51,7 +51,7 @@ Upload your Health Insurance Denial
 			<div class="row">
 				<div class="col-md-4">
 					<label for="store_street" class="form-label">
-						Street Address^
+						Street Address*
 						<small class="text-muted">(e.g. 283 24th St)</small>
 					</label><br>
 					<input type="text" id="store_street" name="street" class="form-control"><br>
@@ -68,9 +68,10 @@ Upload your Health Insurance Denial
 	{% if upload_more %}
 	<div id="image_select_magic" style="visibility:visible">
 	    <label class="custom-file-label" for="uploader">
-			Scan your health insurance denial
-			<small class="text-muted">(select all pages)</small>
+			<b>Upload Insurance Denial</b>
 		</label><br>
+		<small class="text-muted">Attach all insurance denial pages below:</small><br>
+		<small class="text-muted">Once uploaded, your file(s) will populate below in plain text.</small><br>
 	    <div class="col-md-4">
 			<input id="uploader" type="file" name="uploader" multiple="true" class="form-control mt-2"><br>
 	    </div>
@@ -78,14 +79,17 @@ Upload your Health Insurance Denial
 	{% endif %}
 	<div class="form-group">
 	    <label for="denial_text" id="denial_text_label" class="form-label">
-			<b>Your Insurance Denial</b>
-			<small class="text-muted">(Remove personally identifiable information (PII) as we store for Machine Learning and may review)</small>
+			<b>Your Insurance Denial</b><br>
+			<small class="text-muted">If you are not uploading your health insurance denial file above, please copy and paste your denial below:</small><br>
+			<small class="text-muted">(Remove personally identifiable information (PII) as we store for machine learning and may review</small><br>
+			<small class="text-muted">OR click the button below to remove name and address from scanned text.)</small><br>
 		</label><br>
 	    <textarea name="denial_text" id="denial_text" style="width:100%" rows="20" form="fuck_health_insurance_form"
 		placeholder="Your denial goes here"
 		class="form-control">{{ocr_result}}</textarea><br>
-	    <button id="scrub-2" class="btn btn-green" type="button">
-	      Click to remove name and address from scanned text
+		<small class="text-muted">This scrubbed version of your denial is transferred to our servers.</small><br>
+	    <button id="scrub-2" class="btn btn-green">
+	      Remove PII
 	    </button><br>
 		<br>
 		</div>
@@ -118,7 +122,7 @@ Upload your Health Insurance Denial
 			<div class="form-check">
 			<input type="checkbox" id="use_external_models" name="use_external_models" value="checked" class="form-check-input">
 				<label for="use_external_models" class="form-check-label">
-					Increase the number of possible appeals and use external models. <b>This is not required and involves sharing your data with 3rd parties</b> subject to their own Terms Of Service potentially including OctoAI, Perplexity, TogetherAI, etc.
+					Increase the number of possible appeals and use external models. <b>This is not required and involves sharing your data with 3rd parties</b> subject to their own terms of service potentially including OctoAI, Perplexity, TogetherAI, etc.
 				</label>
 			</div>
 	    </div>
@@ -129,21 +133,22 @@ Upload your Health Insurance Denial
 		Can't proceed as you didn't agree to all the terms.
 	    </div>
 	    <div class="hidden-error-message" id="pii_error">
-		Can't proceed as you didn't check that you had removed your Personal Identifiable Information (PII) from the text areas.
+		Can't proceed as you didn't check that you had removed your personal identifiable information (PII) from the text areas.
 	    </div>
 	    <div class="hidden-error-message" id="need_denial">
 	      We need you to provide your denial message from your insurance company in the text field right underneath the words "Your Insurance Denial" if you didn't get one you can write that you have not received a denial but describe what was denied (for example: The pharmacy said my PrEP was denied). Normally insurance companies are required to provide denials, but in our experience they do not always comply with that.
 	    </div>
 	    <button type="submit" class="btn btn-green" id="submit">Submit</button>
 	</form>
+
 	<p>
-	  ^ We attempt to not store the fields marked with a single "^" on our server, instead they are stored in your web browser (like a cookie). You can remove this either in your web browser or in our <a href="{% url 'privacy_policy' %}">privacy policy</a> page.
+	  * We attempt not to store the fields marked with a single asterisk (*) on our server, instead they are stored in your web browser (like a cookie). You can remove this either in your web browser or in our <a href="{% url 'privacy_policy' %}">privacy policy</a> page.
 	</p>
 	<p>
 	    ** We hash your email before storing it in our database, this allows you to request removal from our database (should you wish) without us having to store your raw e-mail.
-	    Iff you opt-in to follow-ups or faxing, we will store your raw email to follow-up after insurance
+	    If you opt-in to follow-ups or faxing, we will store your raw email to follow-up after insurance
 		company timelines may have expired so you can "remind" them. If you opt-in, we may follow-up by email
-		after reviewing your denial with a better template if our Machine Learning model does not find a good
+		after reviewing your denial with a better template if our machine learning model does not find a good
 		model on the first pass-through. You may choose to use a different or temporary email
 	    service, like <a href="https://proton.me/">proton mail.</a> Please review our <a
 		href="{% url 'privacy_policy' %}">privacy policy</a> for more details.
