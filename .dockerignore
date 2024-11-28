@@ -160,3 +160,12 @@ latest_logs/
 hlyafax.tar
 combined.tar
 a.tr
+
+# Exclude the root static
+./fighthealthinsurance/static/
+# Exclude node modules that are not the scan module which does delayed loading
+./static/js/node_modules
+!./static/js/node_modules/tesseract.js-core/tesseract-core.wasm
+!./static/js/node_modules/tesseract.js-core/tesseract-core.wasm.js
+!./static/js/node_modules/tesseract.js/dist/worker.min.js
+!./static/js/node_modules/tesseract.js/dist/worker.min.js.map
