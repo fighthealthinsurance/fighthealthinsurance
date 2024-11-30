@@ -507,7 +507,18 @@ header span i {
 
 .slider .item-first {
     background-image: url(../images/letter.jpeg);
+    background-color: rgba(0, 0, 0, 0.2); /* Adds a dark overlay with 20% opacity */
+    background-blend-mode: overlay; /* Blends the color with the image */
 }
+
+.slider .item-first .pro-version-text a {
+    color: #a5c422;
+}
+
+.slider .item-first .pro-version-text a:visited {
+    color: #a5c422;
+}
+
 
 .slider .item-second {
     background-image: url(../images/slider2.jpg);
