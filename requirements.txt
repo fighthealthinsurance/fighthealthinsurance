@@ -56,3 +56,4 @@ urllib3
 uszipcode
 werkzeug
 asyncssh
+markdown_strings

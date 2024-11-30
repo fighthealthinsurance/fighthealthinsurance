@@ -83,7 +83,6 @@ class FaxForm(DenialRefForm):
         widget=forms.Textarea(attrs={"class": "appeal_text"}), required=True
     )
     include_provided_health_history = forms.BooleanField(required=False)
-    pubmed_articles_to_include = forms.CharField(required=False)
 
 
 class FaxResendForm(forms.Form):

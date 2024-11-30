@@ -9,6 +9,7 @@ from django.core.validators import validate_email
 from django.forms import Form
 from django.http import StreamingHttpResponse
 from django.template.loader import render_to_string
+from django.db.models import QuerySet
 
 import uszipcode
 from fighthealthinsurance.core_forms import *
@@ -20,6 +21,7 @@ from fighthealthinsurance.models import *
 from fighthealthinsurance.question_forms import *
 from fighthealthinsurance.utils import pubmed_fetcher
 import ray
+from .pubmed_tools import PubMedTools
 
 appealGenerator = AppealGenerator()
 
@@ -130,6 +132,7 @@ class SendFaxHelper:
         name: str,
         insurance_company: str,
         pubmed_articles_to_include: str = "",
+        pubmed_ids_parsed: Optional[List[str]] = None,
     ):
         hashed_email = Denial.get_hashed_email(email)
         # Get the current info
@@ -144,6 +147,7 @@ class SendFaxHelper:
             "receiver_fax_number": fax_phone,
             "company_name": "Fight Health Insurance -- A service of Totally Legit Co.",
             "company_fax_number": "415-840-7591",
+            "company_phone_number": "202-938-3266",
             "fax_sent_datetime": str(datetime.datetime.now()),
         }
         html_content = render_to_string(
@@ -176,59 +180,24 @@ class SendFaxHelper:
                 files_for_fax.append(f.name)
                 f.flush()
 
-        pubmed_ids_parsed = pubmed_articles_to_include.split(",")
-        pubmed_docs: list[PubMedArticleSummarized] = []
+        if pubmed_ids_parsed is None:
+            pubmed_ids_parsed = pubmed_articles_to_include.split(",")
+        pmt = PubMedTools()
+        pubmed_docs: list[PubMedArticleSummarized] = pmt.get_articles(pubmed_ids_parsed)
         # Try and include the pubmed ids that we have but also fetch if not present
-        for pmid in pubmed_ids_parsed:
-            if pmid is None or pmid == "":
-                continue
-            try:
-                pubmed_docs.append(PubMedArticleSummarized.objects.get(pmid == pmid))
-            except:
-                try:
-                    fetched = pubmed_fetcher.article_by_pmid(pmid)
-                    article = PubMedArticleSummarized.objects.create(
-                        pmid=pmid,
-                        doi=fetched.doi,
-                        title=fetched.title,
-                        abstract=fetched.abstract,
-                        text=fetched.content.text,
-                    )
-                    pubmed_docs.append(article)
-                except:
-                    print(f"Skipping {pmid}")
-
-        for pubmed_doc in pubmed_docs:
-            with tempfile.NamedTemporaryFile(
-                suffix=".txt", prefix="pubmeddoc", mode="w+t", delete=False
-            ) as f:
-                if pubmed_doc.title is not None:
-                    f.write(pubmed_doc.title + "\n")
-                if pubmed_doc.abstract is not None:
-                    f.write("Abstract:\n")
-                    f.write(pubmed_doc.abstract)
-                if pubmed_doc.text is not None:
-                    f.write("Text:\n")
-                    f.write(pubmed_doc.text)
-                files_for_fax.append(f.name)
-                f.flush()
-
+        pubmed_docs_paths = [
+            x for x in map(pmt.article_as_pdf, pubmed_docs) if x is not None
+        ]
+        files_for_fax.extend(pubmed_docs_paths)
         doc_path = flexible_fax_magic.assemble_single_output(
             input_paths=files_for_fax, extra="", user_header=str(uuid.uuid4())
         )
         doc_fname = os.path.basename(doc_path)
         doc = open(doc_path, "rb")
-        pmids = ""
-        try:
-            pmids = (
-                PubMedQueryData.objects.filter(denial_id=denial_id).get().articles or ""
-            )
-        except:
-            pass
         fts = FaxesToSend.objects.create(
             hashed_email=hashed_email,
             paid=False,
-            pmids=pmids,
+            pmids=json.dumps(pubmed_ids_parsed),
             appeal_text=completed_appeal_text,
             health_history=denial.health_history,
             email=email,
@@ -284,7 +253,9 @@ class ChooseAppealHelper:
     @classmethod
     def choose_appeal(
         cls, denial_id: str, appeal_text: str, email: str, semi_sekret: str
-    ) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    ) -> Tuple[
+        Optional[str], Optional[str], Optional[QuerySet[PubMedArticleSummarized]]
+    ]:
         hashed_email = Denial.get_hashed_email(email)
         # Get the current info
         denial = Denial.objects.filter(
@@ -296,10 +267,14 @@ class ChooseAppealHelper:
         pa.save()
         articles = None
         try:
-            pmqd = PubMedQueryData.objects.filter(denial_id=denial_id).get()
+            pmqd = PubMedQueryData.objects.filter(denial_id=denial_id)[0]
             if pmqd.articles is not None:
-                articles = ",".join(pmqd.articles.split(",")[0:2])
-        except:
+                article_ids = json.loads(pmqd.articles)
+                articles = PubMedArticleSummarized.objects.filter(
+                    pmid__in=article_ids
+                ).distinct()
+        except Exception as e:
+            print(f"Error loading pubmed data {e}")
             pass
         return (denial.appeal_fax_number, denial.insurance_company, articles)
 
@@ -405,8 +380,10 @@ class FindNextStepsHelper:
         ).get()
         denial.denial_date = denial_date
 
-        denial.procedure = procedure
-        denial.diagnosis = diagnosis
+        if procedure is not None and len(procedure) < 200:
+            denial.procedure = procedure
+        if diagnosis is not None and len(diagnosis) < 200:
+            denial.diagnosis = diagnosis
         if plan_source is not None:
             denial.plan_source.set(plan_source)
         denial.save()
@@ -588,8 +565,10 @@ class DenialCreatorHelper:
         (procedure, diagnosis) = appealGenerator.get_procedure_and_diagnosis(
             denial_text=denial_text, use_external=denial.use_external
         )
-        denial.procedure = procedure
-        denial.diagnosis = diagnosis
+        if procedure is not None and len(procedure) < 200:
+            denial.procedure = procedure
+        if diagnosis is not None and len(diagnosis) < 200:
+            denial.diagnosis = diagnosis
         denial.save()
         r = re.compile(r"Group Name:\s*(.*?)(,|)\s*(INC|CO|LTD|LLC)\s+", re.IGNORECASE)
         g = r.search(denial_text)

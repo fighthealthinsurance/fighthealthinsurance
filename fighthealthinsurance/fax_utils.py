@@ -460,7 +460,10 @@ class FlexibleFaxMagic(object):
             command = []
             # Don't double convert pdfs
             if input_path.endswith(".pdf"):
-                merger.append(input_path)
+                try:
+                    merger.append(input_path)
+                except Exception as e:
+                    print(f"Skipping {input_path} due to {e}")
             else:
                 command = ["pandoc", "--wrap=auto", input_path, f"-o{input_path}.pdf"]
                 result = subprocess.run(command)
@@ -484,7 +487,12 @@ class FlexibleFaxMagic(object):
                 if result.returncode == 0:
                     merger.append(f"{input_path}.pdf")
                 else:
-                    print(f"Skipping {input_path} from {result} with {command}")
+                    command.extend(["--pdf-engine=lualatex"])
+                    result = subprocess.run(command)
+                    if result.returncode == 0:
+                        merger.append(f"{input_path}.pdf")
+                    else:
+                        print(f"Skipping {input_path} from {result} with {command}")
         with tempfile.NamedTemporaryFile(
             suffix=".pdf", prefix="alltogether", mode="w+t", delete=False
         ) as t:

@@ -8,8 +8,8 @@ FROM base-${TARGETARCH}
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-# install nginx
-RUN apt-get update && apt-get upgrade -y && apt-get install nginx vim emacs libmariadb-dev-compat default-libmysqlclient-dev libssl-dev nodejs npm python3-opencv libgl1 tesseract-ocr nano nfs-common sudo iputils-ping hylafax-client pandoc texlive -y
+# install all of the tools we need.
+RUN apt-get update && apt-get upgrade -y && apt-get install nginx vim emacs libmariadb-dev-compat default-libmysqlclient-dev libssl-dev nodejs npm python3-opencv libgl1 tesseract-ocr nano nfs-common sudo iputils-ping hylafax-client pandoc texlive texlive-luatex -y
 COPY /conf/nginx.default /etc/nginx/sites-available/default
 RUN ln -sf /dev/stdout /var/log/nginx/access.log \
     && ln -sf /dev/stderr /var/log/nginx/error.log

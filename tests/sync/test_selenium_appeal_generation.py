@@ -8,14 +8,13 @@ import sys
 import pytest
 from django.contrib.staticfiles.testing import StaticLiveServerTestCase
 from fighthealthinsurance.models import *
+from .fhi_selenium_base import FHISeleniumBase
 from seleniumbase import BaseCase
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 
 BaseCase.main(__name__, __file__)
 
 
-class SeleniumTestAppealGeneration(BaseCase, StaticLiveServerTestCase):
+class SeleniumTestAppealGeneration(FHISeleniumBase, StaticLiveServerTestCase):
     fixtures = ["fighthealthinsurance/fixtures/initial.yaml"]
 
     @classmethod
@@ -27,13 +26,6 @@ class SeleniumTestAppealGeneration(BaseCase, StaticLiveServerTestCase):
     def tearDownClass(cls):
         super(StaticLiveServerTestCase, cls).tearDownClass()
         super(BaseCase, cls).tearDownClass()
-
-    def assert_title_eventually(self, desired_title):
-        try:
-            WebDriverWait(self.driver, 15).until(EC.title_is(desired_title))
-        except Exception:
-            # On failure assert_title gives us a better error message than the timeout.
-            self.assert_title(desired_title)
 
     def test_submit_an_appeal_with_missing_info_and_fail(self):
         self.open(f"{self.live_server_url}/")
@@ -78,10 +70,9 @@ class SeleniumTestAppealGeneration(BaseCase, StaticLiveServerTestCase):
             )
         file_input.send_keys(path_to_image)
         self.click("button#submit")
-        time.sleep(5)  # wait for OCR process to complete
-        self.assert_text(
+        self.assert_text_eventually_contains(
             """UnidentifiedImageError""",
-            "textarea#denial_text",
+            "denial_text",
         )
 
     def test_submit_an_appeal_with_enough_and_fax(self):
@@ -118,10 +109,10 @@ Cheap-O-Insurance-Corp""",
         self.assert_title_eventually("Updating Denial")
         self.type("input#id_medical_reason", "FakeReason")
         self.click("input#submit")
-        self.assert_title_eventually("Fight Your Health Insurance Denial: Choose an Appeal")
-        # It takes time for the appeals to populate
-        time.sleep(11)
-        self.click("button#submit1")
+        self.assert_title_eventually(
+            "Fight Your Health Insurance Denial: Choose an Appeal"
+        )
+        self.click_button_eventually("submit1")
         self.type("input#id_name", "Testy McTestFace")
         self.type("input#id_fax_phone", "425555555")
         self.type("input#id_insurance_company", "EvilCo")

@@ -1,27 +1,19 @@
 import itertools
 import json
 import random
-import tempfile
 import time
 import traceback
 from concurrent.futures import Future
 from typing import Any, Iterator, List, Optional, Tuple
 
-import PyPDF2
-import requests
 from fighthealthinsurance.denial_base import DenialBase
 from fighthealthinsurance.exec import *
 from fighthealthinsurance.ml_models import RemoteFullOpenLike, RemoteModelLike
 from fighthealthinsurance.model_router import model_router
-from fighthealthinsurance.models import (
-    PubMedArticleSummarized,
-    PubMedQueryData,
-)
 from fighthealthinsurance.process_denial import *
 from fighthealthinsurance.utils import as_available_nested, pubmed_fetcher
-from metapub import FindIt
-from stopit import ThreadingTimeout as Timeout
 from typing_extensions import reveal_type
+from .pubmed_tools import PubMedTools
 
 
 class AppealTemplateGenerator(object):
@@ -48,6 +40,7 @@ class AppealTemplateGenerator(object):
 class AppealGenerator(object):
     def __init__(self):
         self.regex_denial_processor = ProcessDenialRegex()
+        self.pmt = PubMedTools()
 
     def get_fax_number(self, denial_text=None, use_external=False) -> Optional[str]:
         models_to_try = model_router.entity_extract_backends(use_external)
@@ -73,7 +66,12 @@ class AppealGenerator(object):
             if procedure_diagnosis is not None:
                 if len(procedure_diagnosis) > 1:
                     procedure = procedure or procedure_diagnosis[0]
+                    # If it's too long then we're probably not valid
+                    if procedure is not None and len(procedure) > 200:
+                        procedure = None
                     diagnosis = diagnosis or procedure_diagnosis[1]
+                    if diagnosis is not None and len(diagnosis) > 200:
+                        diagnosis = None
                 else:
                     print(
                         f"Unexpected procedure diagnosis len on {procedure_diagnosis}"
@@ -130,99 +128,6 @@ class AppealGenerator(object):
         else:
             return None
 
-    def find_more_context(self, denial) -> str:
-        """
-        Kind of hacky RAG routine that uses PubMed.
-        """
-        # PubMed
-        pmids = None
-        pmid_text: list[str] = []
-        article_futures: list[Future[PubMedArticleSummarized]] = []
-        with Timeout(15.0) as timeout_ctx:
-            query = f"{denial.procedure} {denial.diagnosis}"
-            pmids = pubmed_fetcher.pmids_for_query(query)
-            articles_json = json.dumps(pmids)
-            PubMedQueryData.objects.create(
-                query=query,
-                articles=articles_json,
-                denial_id=denial.denial_id,
-            ).save()
-            for article_id in pmids[0:3]:
-                article_futures.append(
-                    pubmed_executor.submit(self.do_article_summary, article_id, query)
-                )
-
-        def article_to_summary(article) -> str:
-            return f"PubMed DOI {article.doi} title {article.title} summary {article.basic_summary}"
-
-        articles: list[PubMedArticleSummarized] = []
-        # Get the articles that we've summarized
-        t = 10
-        for f in article_futures:
-            try:
-                articles.append(f.result(timeout=t))
-                t = t - 1
-            except Exception as e:
-                print(f"Skipping appending article from {f} due to {e} of {type(e)}")
-
-        if len(articles) > 0:
-            return "\n".join(map(article_to_summary, articles))
-        else:
-            return ""
-
-    def do_article_summary(self, article_id, query) -> PubMedArticleSummarized:
-        possible_articles = PubMedArticleSummarized.objects.filter(
-            pmid=article_id,
-            query=query,
-            basic_summary__isnull=False,
-        )[:1]
-        article = None
-        if len(possible_articles) > 0:
-            article = possible_articles[0]
-
-        if article is None:
-            fetched = pubmed_fetcher.article_by_pmid(article_id)
-            src = FindIt(article_id)
-            url = src.url
-            article_text = ""
-            if url is not None:
-                response = requests.get(url)
-                if (
-                    ".pdf" in url
-                    or response.headers.get("Content-Type") == "application/pdf"
-                ):
-                    with tempfile.NamedTemporaryFile(
-                        suffix=".pdf", delete=False
-                    ) as my_data:
-                        my_data.write(response.content)
-
-                        open_pdf_file = open(my_data.name, "rb")
-                        read_pdf = PyPDF2.PdfReader(open_pdf_file)
-                        if read_pdf.is_encrypted:
-                            read_pdf.decrypt("")
-                            for page in read_pdf.pages:
-                                article_text += page.extract_text()
-                        else:
-                            for page in read_pdf.pages:
-                                article_text += page.extract_text()
-                else:
-                    article_text += response.text
-            else:
-                article_text = fetched.content.text
-
-            article = PubMedArticleSummarized.objects.create(
-                pmid=article_id,
-                doi=fetched.doi,
-                title=fetched.title,
-                abstract=fetched.abstract,
-                text=article_text,
-                query=query,
-                basic_summary=model_router.summarize(
-                    query=query, abstract=fetched.abstract, text=article_text
-                ),
-            )
-        return article
-
     def make_appeals(
         self, denial, template_generator, medical_reasons=[], non_ai_appeals=[]
     ) -> Iterator[str]:
@@ -239,7 +144,7 @@ class AppealGenerator(object):
 
         pubmed_context = None
         try:
-            pubmed_context = self.find_more_context(denial)
+            pubmed_context = self.pmt.find_context_for_denial(denial)
         except Exception as e:
             print(f"Error {e} looking up context for {denial}.")
 

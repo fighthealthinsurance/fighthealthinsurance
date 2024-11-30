@@ -134,21 +134,23 @@ const recognizeImage = async function(file: File) {
 const recognize = async function(evt: Event) {
     const input = evt.target as HTMLInputElement;
     const files = input.files;
-    const file = files[0];
+    const filesArray = Array.from(files)
 
-    if (isPDF(file)) {
-	console.log("probably pdf")
-	try {
-	    await recognizePDF(file)
-	} catch {
-	    await recognizeImage(file)
-	}
-    } else {
-	console.log("Assuming image...")
-	try {
-	    await recognizeImage(file)
-	} catch {
-	    await recognizePDF(file)
+    for (const file of filesArray) {
+	if (isPDF(file)) {
+	    console.log("probably pdf")
+	    try {
+		await recognizePDF(file)
+	    } catch {
+		await recognizeImage(file)
+	    }
+	} else {
+	    console.log("Assuming image...")
+	    try {
+		await recognizeImage(file)
+	    } catch {
+		await recognizePDF(file)
+	    }
 	}
     }
 }

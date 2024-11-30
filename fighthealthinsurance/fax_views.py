@@ -56,7 +56,17 @@ class StageFaxView(generic.FormView):
     form_class = FaxForm
 
     def form_valid(self, form):
-        staged = SendFaxHelper.stage_appeal_fax(**form.cleaned_data)
+        form_data = form.cleaned_data
+        # Get all of the articles the user wants to send
+        print(f"Items {list(self.request.POST.items())}")
+        pubmed_checkboxes = [
+            key[len("pubmed_") :]
+            for key, value in self.request.POST.items()
+            if key.startswith("pubmed_") and value == "on"
+        ]
+        form_data["pubmed_ids_parsed"] = pubmed_checkboxes
+        print(f"Staging fax with {form_data}")
+        staged = SendFaxHelper.stage_appeal_fax(**form_data)
         stripe.api_key = settings.STRIPE_API_SECRET_KEY
         stripe.publishable_key = settings.STRIPE_API_PUBLISHABLE_KEY
         product = stripe.Product.create(name="Fax")

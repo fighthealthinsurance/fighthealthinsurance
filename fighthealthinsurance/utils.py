@@ -9,6 +9,7 @@ from uuid import UUID
 import requests
 from metapub import PubMedFetcher
 from requests.exceptions import RequestException
+from markdown_strings import esc_format
 
 pubmed_fetcher = PubMedFetcher()
 
@@ -24,6 +25,12 @@ common_bad_result = [
 ]
 
 maybe_bad_url_endings = re.compile("^(.*)[\\.\\:\\;\\,\\?\\>]+$")
+
+
+def markdown_escape(string: Optional[str]) -> str:
+    if string is None:
+        return ""
+    return esc_format(string, esc=True)
 
 
 def is_valid_url(url) -> bool:

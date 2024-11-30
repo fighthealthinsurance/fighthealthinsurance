@@ -5,6 +5,7 @@ from django.conf import settings
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.views import View, generic
+from django.utils.safestring import mark_safe
 
 import stripe
 from fighthealthinsurance.common_view_logic import *
@@ -244,10 +245,22 @@ class ChooseAppeal(View):
                     "email": form.cleaned_data["email"],
                     "semi_sekret": form.cleaned_data["semi_sekret"],
                     "fax_phone": appeal_fax_number,
-                    "pubmed_articles_to_include": candidate_articles,
                     "insurance_company": insurance_company,
                 }
             )
+            # Add the possible articles for inclusion
+            if candidate_articles is not None:
+                for article in candidate_articles:
+                    article_id = article.pmid
+                    title = article.title
+                    link = f"http://www.ncbi.nlm.nih.gov/pubmed/{article_id}"
+                    label = mark_safe(
+                        f"Include Summary* of PubMed Article <a href='{link}'>{title} -- {article_id}</a>"
+                    )
+                    fax_form.fields["pubmed_" + article_id] = forms.BooleanField(
+                        label=label, required=False, initial=True
+                    )
+
             return render(
                 request,
                 "appeal.html",
