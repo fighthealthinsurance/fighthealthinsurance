@@ -37,6 +37,31 @@ a.link:hover::after {
     color: #fff;
 }
 
+.btn-delete {background-image: linear-gradient(to right, #ADD100 0%, #7B920A  51%, #ADD100  100%)}
+.btn-delete {
+   margin: 10px;
+   padding: 5px 25px;
+   text-align: center;
+   transition: 0.5s;
+   background-size: 200% auto;
+   color: white;
+   box-shadow: 0 0 20px #eee;
+   border-radius: 5px;
+   display: block;
+}
+
+.btn-delete:hover {
+   background-position: right center;
+   color: #fff;
+   text-decoration: none;
+}
+
+.delete-header {
+    width: 50%;
+    border-radius: 10px;
+    box-shadow: rgba(136, 165, 191, 0.48) 6px 2px 16px 0px, rgba(255, 255, 255, 0.8) -6px -2px 16px 0px;
+}
+
 .logo {
     width: 75px;
 }
