@@ -147,3 +147,18 @@ a.link:hover::after {
     height: 10em;
     width: 80em;
 }
+
+.spacer {
+    height: 5px;
+}
+
+.img-fluid.img-thumbnail {
+    max-width: 200px;
+    margin: auto;
+    border: none;
+}
+
+.row.align-items-center {
+    margin-top: 20px;
+    box-shadow: rgba(0, 0, 0, 0.1) 0px 10px 50px;
+}

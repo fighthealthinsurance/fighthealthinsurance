@@ -38,7 +38,7 @@
       .betaribbon {
 	  --f: .5em; /* control the folded part*/
 	  --r: .8em; /* control the ribbon shape */
-  
+
 	  position: absolute;
 	  left: 20px;
 	  top: calc(-1*var(--f));
@@ -161,13 +161,12 @@
     {% endblock foot-roll %}
     <!-- ***** Footer Start ***** -->
     <!-- FOOTER -->
-    <footer data-stellar-background-ratio="5">
+    <footer data-stellar-background-ratio="5" style="text-align: center; padding: 20px 0;">
         <div class="container">
             <div class="row">
                 <div class="row col-md-12 col-sm-12 border-top">
                     <div class="col-md-4 col-sm-6">
                         <div class="copyright-text">
-                            <img src="{% static '/images/better-logo.png' %}" alt="" class="img-fluid logo">
                         </div>
                     </div>
                     <div class="col-md-6 col-sm-6">
@@ -182,9 +181,11 @@
                             <a href="#top" class="smoothScroll wow fadeInUp" data-wow-delay="1.2s"><i class="custom-angle-up" aria-hidden="true"></i></a>
                         </div>
                     </div>
+                    <p style="color: #333; font-size: 14px; margin-bottom: 15px;">
+                    This site is not affiliated with or endorsed by any insurance companies. Any references to specific insurance companies are for illustrative purposes only.
+                    </p>
                 </div>
             </div>
-	    This site is not affiliated with or endorsed by any insurance companies. Any references to specific insurance companies are for illustrative purposes only.
         </div>
     </footer>
 </body>
