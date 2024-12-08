@@ -37,8 +37,8 @@ a.link:hover::after {
     color: #fff;
 }
 
-.btn-delete {background-image: linear-gradient(to right, #ADD100 0%, #7B920A  51%, #ADD100  100%)}
-.btn-delete {
+.btn-delete, .pro-submit-btn {background-image: linear-gradient(to right, #ADD100 0%, #7B920A  51%, #ADD100  100%)}
+.btn-delete, .pro-submit-btn {
    margin: 10px;
    padding: 5px 25px;
    text-align: center;
@@ -48,9 +48,10 @@ a.link:hover::after {
    box-shadow: 0 0 20px #eee;
    border-radius: 5px;
    display: block;
+   border:none;
 }
 
-.btn-delete:hover {
+.btn-delete:hover, .pro-submit-btn:hover {
    background-position: right center;
    color: #fff;
    text-decoration: none;
@@ -186,4 +187,14 @@ a.link:hover::after {
 .row.align-items-center {
     margin-top: 20px;
     box-shadow: rgba(0, 0, 0, 0.1) 0px 10px 50px;
+}
+
+#id_name, #id_job_title_or_provider_type, #id_email, #id_phone_number, #id_business_name, #id_address, #id_most_common_denial, #id_comments{
+    border-radius: .375rem;
+    padding: .375rem .75rem;
+    border: 1px solid #ced4da;
+}
+
+#id_address, #id_business_name{
+    width: 30em;
 }

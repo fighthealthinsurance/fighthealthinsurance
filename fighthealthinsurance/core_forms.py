@@ -1,6 +1,9 @@
 import os
 
 from django import forms
+from django.forms import ModelForm, Textarea, CheckboxInput
+
+from .models import InterestedProfessional
 
 from django_recaptcha.fields import ReCaptchaField, ReCaptchaV2Checkbox
 from fighthealthinsurance.form_utils import *
@@ -15,18 +18,35 @@ from fighthealthinsurance.models import (
 class InterestedProfessionalForm(forms.ModelForm):
     business_name = forms.CharField(required=False)
     address = forms.CharField(
-        required=False, widget=forms.Textarea(attrs={"class": "full_address"})
+        required=False,
     )
     comments = forms.CharField(
-        required=False, widget=forms.Textarea(attrs={"class": "comments"})
+        required=False,
+        widget=forms.Textarea(
+            attrs={
+                "placeholder": "ENTER YOUR COMMENTS HERE. WE WELCOME FEEDBACK!",
+                "style": "width: 50em; height: 5em; display: block",
+                "class": "comments",
+            }
+        ),
     )
     phone_number = forms.CharField(required=False)
     job_title_or_provider_type = forms.CharField(required=False)
-    most_common_denial = forms.CharField(required=False)
+    most_common_denial = forms.CharField(
+        required=False,
+        widget=forms.Textarea(
+            attrs={
+                "placeholder": "ENTER COMMON DENIALS HERE",
+                "style": "width: 50em; height: 3em; display: block",
+                "class": "most_common_denial",
+            }
+        ),
+    )
     clicked_for_paid = forms.BooleanField(
         initial=True,
         required=False,
         label="Optional: Pay $10 now to get 3-months of the beta when we launch the professional version while we figure out what/if folks will pay for it.",
+        widget=forms.CheckboxInput(),
     )
 
     class Meta:

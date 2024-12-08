@@ -8,22 +8,65 @@ Fighthealthinsurance Professional Version
 <section id="contact">
     <div class="container">
       <div class="section-header text-align-center">
-	<h2>Fight Health Insurance: Professional Version</h2>
+	<h3 class="pro-version-header" style="padding: 15px;">Fight Health Insurance: Professional Version</h3>
       </div>
       <p>
-	We are actively working on a professional version, but for now, the consumer version which is available is not intended or certified for professional use. We'd love your e-mail to keep in touch and let you know when we've got a professional version.
+	We are actively working on a professional version. The available consumer version is not intended or certified for professional use.
+      We would love to keep in touch to let you know when we've got a professional version. Fill out the form below!
       </p>
       <p>
-	Not a professional (e.g. providers office, appeal specialist, lawyer, etc.) but still ended up here? Don't worry! <a href="{% url 'scan' %}">You can try the regular appeal generator here.</a>
+	Not a professional (e.g. providers office, appeal specialist, lawyer, etc.) but still ended up here? Don't worry!
+      <a href="{% url 'scan' %}">You can try the regular appeal generator here.</a>
       </p>
       <p>
-	If you're interested in being one of the first users, you can also give us $10 and we'll give you access for the first three months of the professional beta once we launch the professional version. If you change your mind at any time before or during the professional beta we're more than happy to refund that. Honestly the $10 is to show that folks are willing to pay for it so we can get more resources.
+	If you're interested in becoming one of the first beta users, you have the option to pay $10 for a 3-month access of the professional beta
+      once it launches. If you change your mind at any time before or during the professional beta, we're more than happy to refund that.
+      Honestly the $10 is to show that folks are willing to pay for it so we can get more resources.
       </p>
       <p>
 	<form method="post">
 	  {% csrf_token %}
-	  {{ form.as_p }}
-	  <input type="submit" value="Submit">
+            <div class="form group">
+            <label for="id_name">Name:</label>
+            {{ form.name }}
+            <label for="id_job_title_or_provider_type">Job title or Provider type:</label>
+            {{ form.job_title_or_provider_type}}
+            </div><br>
+
+            <div class="form group">
+            <label for="id_email">Email:</label>
+            {{ form.email }}
+            <label for="id_phone">Phone number:</label>
+            {{ form.phone_number }}
+            </div><br>
+
+            <div class="form group business_name">
+            <label for="id_business_name" style="display: block;">Business name:</label>
+            {{ form.business_name }}
+            </div><br>
+
+            <div class="form-group address">
+            <label for="id_address" style="display: block;">Address:</label>
+            {{ form.address}}
+            </div><br>
+
+            <div class="form-group most_common_denial">
+            <label for="id_most_common_denial">Most common denial:</label>
+            {{ form.most_common_denial}}
+            </div>
+
+            <div class="form-group">
+            <label for="id_comments">Comments:</label>
+            {{ form.comments}}
+            <label for="clicked_for_paid">
+            {{ form.clicked_for_paid }}
+            {{ form.clicked_for_paid.label }}
+            </label>
+            </div>
+
+            <div class="form-group">
+	      <input class="pro-submit-btn" type="submit" value="Submit">
+            </div>
 	</form>
       </p>
     </div>
