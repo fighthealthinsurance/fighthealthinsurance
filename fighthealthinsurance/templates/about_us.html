@@ -7,6 +7,7 @@ About Us
 {% block content %}
 <div class="container mt-5">
     <h3>About Us</h3>
+    <div class="spacer"></div>
     <p>
         We are (exclusively) serving America, not because we don't love Europe, the rest of North America, Africa, or
         any other place in the world, but because, frankly, American health insurance is a special kind of SNAFU.
@@ -26,33 +27,70 @@ About Us
         If that sounds like you (or your business), we would love <a href="{% url 'pro_version' %}">to keep in touch</a> (and optionally, a small amount of
         money if you are interested in being a first beta user).
         <br><br>
-    </p>
+    <h5>As Featured In</h5>
+    <div class="row no-gutters">
+        <div class="col-md-2 text-center p-0">
+            <a href="https://www.fastcompany.com/91209422/if-your-health-insurance-denies-a-claim-this-tool-uses-ai-to-help-you-fight-back" target="_blank" rel="noopener noreferrer">
+            <img src="{% static '/images/fastcompanylogo.png' %}" alt="fastcompany-logo" class="img-fluid img-thumbnail"></a>
+        </div>
+        <div class="col-md-2 text-center p-0">
+            <a href="https://www.wbur.org/hereandnow/2024/11/11/ai-insurance-appeals" target="_blank" rel="noopener noreferrer">
+            <img src="{% static '/images/wbrlogo.png' %}" alt="wbr-logo" class="img-fluid img-thumbnail"></a>
+        </div>
+        <div class="col-md-2 text-center p-0">
+            <a href="https://armandalegshow.com/episode/fight-health-insurance-with-ai" target="_blank" rel="noopener noreferrer">
+            <img src="{% static '/images/armleglogo.png' %}" alt="armleg-logo" class="img-fluid img-thumbnail"></a>
+        </div>
+        <div class="col-md-2 text-center p-0">
+            <a href="https://www.newsnationnow.com/video/fighting-health-insurance-companies-with-ai-newsnation-prime/10025608" target="_blank" rel="noopener noreferrer">
+            <img src="{% static '/images/newsnationlogo.png' %}" alt="newsnation-logo" class="img-fluid img-thumbnail"></a>
+        </div>
+        <div class="col-md-2 text-center p-0">
+            <a href="https://sfstandard.com/2024/08/23/holden-karau-fight-health-insurance-appeal-claims-denials" target="_blank" rel="noopener noreferrer">
+            <img src="{% static '/images/sflogo.png' %}" alt="sfstandard-logo" class="img-fluid img-thumbnail"></a>
+        </div>
+    </div>
+</p>
     <div class="spacer"></div>
 
     <div class="row align-items-center">
     <div class="col-md-4 text-center">
         <img src="{% static '/images/holden.png' %}" alt="holden-pic" class="img-fluid img-thumbnail">
+        <p>
+            <a href="https://x.com/holdenkarau" target="_blank" rel="noopener noreferrer">
+            <img src="{% static '/images/twitterlogo.png' %}" alt="twitter-logo" class="img-fluid img-logo">
+            </a>
+
+            <a href="https://www.linkedin.com/in/holdenkarau" target="_blank" rel="noopener noreferrer">
+            <img src="{% static '/images/linkedinlogo.png' %}" alt="linkedin-logo" class="img-fluid img-logo">
+            </a>
+
+            <a href="https://www.threads.net/@hkarau" target="_blank" rel="noopener noreferrer">
+            <img src="{% static '/images/threadslogo.png' %}" alt="threads-logo" class="img-fluid img-logo">
+            </a>
+
+            <a href="https://bsky.app/profile/holdenkarau.com" target="_blank" rel="noopener noreferrer">
+            <img src="{% static '/images/blueskylogo.png' %}" alt="bluesky-logo" class="img-fluid img-logo">
+            </a>
+        </p>
     </div>
     <div class="col-md-8">
             <p>Holden Karau is a Canadian-born trans-woman living in America who's been working in tech for more than a decade.
             She's experienced the "joys" of American health insurance and helps her friends & loved ones navigate the seemingly random maze of disappointment and sadness.
             Her dislike of health insurance companies treating her loved ones unfairly led her to create Fight Health Insurance.
             Outside of fighting insurance companies and keeping them accountable, she rides motorcycles, works with big data and machine learning to pay the bills*,
-            spends time with her loved ones (most of all Professor Timbit), and dances to mashup music (or happy-hard-core if you're old enough to remember that). You can also follow her on all of the usual social media places where she talks about a mixture of these things (and sometimes live streams working on Fight Health Insurance) -- <a href=""></a>.
-            <br>
-            *For now: if any VC is out there, hit her up: <a href="holden@fighthealthinsurance.com">holden@fighthealthinsurance.com</a>
-            </p>
+            spends time with her loved ones (most of all Professor Timbit), and dances to mashup music (or happy-hard-core if you're old enough to remember that). You can also follow her on all of the usual social media places where she talks about a mixture of these things (and sometimes live streams working on Fight Health Insurance)<a href=""></a>.</p>
+            <p>*For now: if any VC is out there, hit her up: <a href="holden@fighthealthinsurance.com">holden@fighthealthinsurance.com</a></p>
         </div>
     </div>
+    <div class="spacer"></div>
     <div class="row align-items-center">
     <div class="col-md-4 text-center">
         <img src="{% static '/images/timbit-look-at-camera.jpg' %}" alt="timbit-look-at-camera" class="img-fluid img-thumbnail">
     </div>
     <div class="col-md-8">
-      <p>Timbit is an American born sheltie whose fight with pet insurance to cover anthesia during his root canal pushed Holden to finish Fight Health Insurance.
-        <br>
-        If you have comments, suggestions, or treat based sponsorship (and are not an insurance company) you can reach him through our support team at <a href="support42@fighthealthinsurance.com">support42@fighthealthinsurance.com</a>.
-      </p>
+      <p>Timbit is an American born sheltie whose fight with pet insurance to cover anesthesia during his root canal pushed Holden to finish Fight Health Insurance.</p>
+      <p>If you have comments, suggestions, or treat-based sponsorship (and are not an insurance company) you can reach him through our support team at <a href="support42@fighthealthinsurance.com">support42@fighthealthinsurance.com</a>.</p>
     </div>
 </div>
 {% endblock content %}

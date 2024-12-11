@@ -182,11 +182,47 @@ a.link:hover::after {
     max-width: 200px;
     margin: auto;
     border: none;
+    height: auto;
+    padding: 5px;
+}
+
+.img-fluid.img-logo {
+    max-width: 25px;
+    margin: auto;
+    border: none;
+    height: auto;
+    padding: 5px;
 }
 
 .row.align-items-center {
-    margin-top: 20px;
     box-shadow: rgba(0, 0, 0, 0.1) 0px 10px 50px;
+}
+
+.row {
+    display: flex;
+    flex-wrap: nowrap;
+}
+
+.row.no-gutters {
+    margin: 0;
+    justify-content: center;
+}
+
+.row.no-gutters .col-md-2 {
+    padding: 0;
+    flex-basis: 20%;
+}
+
+.row.no-gutters .col-md-2 img{
+    width: 100%;
+    height: auto;
+    margin: 5px;
+    flex-basis: 20%;
+}
+
+.row .col-md-2 {
+    margin: 10px;
+    flex-basis: 20%;
 }
 
 #id_name, #id_job_title_or_provider_type, #id_email, #id_phone_number, #id_business_name, #id_address, #id_most_common_denial, #id_comments{
