@@ -1,8 +1,6 @@
-# FROM l4t-pytorch:r35.2.1-pth2.0-py3 as base-arm64
+FROM python:3.11.10-bullseye as base-arm64
 
-FROM python:3.11-bullseye as base-arm64
-
-FROM python:3.11-bullseye as base-amd64
+FROM python:3.11.10-bullseye as base-amd64
 
 FROM base-${TARGETARCH}
 
