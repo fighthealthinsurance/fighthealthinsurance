@@ -101,6 +101,64 @@ jobs:
           GOOGLE_CLIENT_SECRETS_TEXT: ${{ secrets.GOOGLE_CLIENT_SECRETS_TEXT }}
           STRIPE_TEST_SECRET_KEY: ${{ secrets.STRIPE_TEST_SECRET_KEY }}
 
+  build-docker-ray-container:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+    name: Build the docker ray containers
+    steps:
+      -
+        name: Checkout
+        uses: actions/checkout@v4
+      -
+        # Add support for more platforms with QEMU (optional)
+        # https://github.com/docker/setup-qemu-action
+        name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+      -
+        name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Run ray docker build
+        run:
+          ./scripts/build_ray.sh
+        env:
+          BUILDX_CMD: "--load"
+          FHI_VERSION: "ci"
+          PLATFORM: linux/amd64
+
+  build-docker-django-container:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+    name: Build the docker django containers
+    steps:
+      -
+        name: Checkout
+        uses: actions/checkout@v4
+      -
+        # Add support for more platforms with QEMU (optional)
+        # https://github.com/docker/setup-qemu-action
+        name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+      -
+        name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+      - name: Install mypy
+        run:
+          uv venv build_venv && source build_venv/bin/activate && uv pip install -r requirements.txt
+      - name: Run build the templates
+        run:
+          ./scripts/setup_templates.sh
+      - name: Run django docker build
+        run:
+          ./scripts/build_django.sh
+        env:
+          BUILDX_CMD: "--load"
+          FHI_VERSION: "ci"
+          PLATFORM: linux/amd64
+
   tests-async:
     runs-on: ubuntu-latest
     strategy:
@@ -140,7 +198,7 @@ jobs:
           cd fighthealthinsurance/static/js && npm i && npm run build && npm cache clean --force
 
       - name: Setup DB (long story)
-        run: uv venv && source .venv/bin/activate && uv pip install -r requirements.txt && ./manage.py makemigrations && ./manage.py migrate && ENVIRONMENT=Test ./manage.py migrate
+        run: uv venv && source .venv/bin/activate && uv pip install -r requirements.txt && python manage.py makemigrations && python manage.py migrate && ENVIRONMENT=Test ./manage.py migrate
 
       - name: Run tests
         run: ENVIRONMENT=Test tox -e py${{ matrix.python }}-django${{ matrix.django }}-async

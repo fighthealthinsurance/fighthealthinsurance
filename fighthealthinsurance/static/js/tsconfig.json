@@ -7,8 +7,12 @@
     "jsx": "react",
     "allowJs": true,
     "moduleResolution": "node",
-    "allowSyntheticDefaultImports": true,
+    "allowSyntheticDefaultImports": true
   },
-  "include": ["./*.ts"],                     // Files to include in the compilation
-  "exclude": ["node_modules"],               // Exclude node_modules
+  "include": [
+    "./*.ts"
+  ], // Files to include in the compilation
+  "exclude": [
+    "node_modules"
+  ] // Exclude node_modules
 }
