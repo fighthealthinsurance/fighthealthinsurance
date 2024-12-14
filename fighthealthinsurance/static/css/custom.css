@@ -67,14 +67,24 @@ a.link:hover::after {
     width: 75px;
 }
 
-.section-btn {
-    transition: all 0.4s ease-in-out;
+
+.section-btn, .section-btn.btn.btn-default.smoothScroll{background-image: linear-gradient(to right, #ADD100 0%, #7B920A  51%, #ADD100  100%)}
+.section-btn, .section-btn.btn.btn-default.smoothScroll {
+   margin: 10px;
+   text-align: center;
+   transition: 0.5s;
+   background-size: 200% auto;
+   color: white;
+   box-shadow: 0 0 20px #eee;
+   border-radius: 4px;
+   border:none;
 }
 
-.section-btn:hover {
-    background-color: #4267b2;
+.section-btn:hover, .section-btn.btn.btn-default.smoothScroll:hover {
+   background-position: right center;
+   color: #fff;
+   text-decoration: none;
 }
-
 
 .custom-angle-up {
   display: inline-block;
