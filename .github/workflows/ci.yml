@@ -27,6 +27,15 @@ jobs:
         run:
           tox -e black
 
+  shell-linter:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shell check
+        run: sudo apt-get install -y shellcheck
+      - name: Run shellcheck
+        run: ./scripts/check_shell_style.sh
+
   types:
     runs-on: ubuntu-latest
     steps:

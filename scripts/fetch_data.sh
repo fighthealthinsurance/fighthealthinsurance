@@ -1,3 +1,5 @@
+#!/bin/bash
+
 # We are not touching ama assn license is... bad. very very bad.
 # Instead download public (semi-complete) CPT code lists
 # The fact that you have to PAY FOR A FUCKING LICENSE to READ YOUR OWN
