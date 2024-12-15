@@ -14,7 +14,7 @@ FHI requires Python 3.10 or 3.11. You can check the version of Python on your sy
 
 If you get `django.core.exceptions.AppRegistryNotReady: The translation infrastructure cannot be initialized before the apps registry is ready. Check that you don't make non-lazy gettext calls at import time.` make sure you are running Python 3.10 or higher.
 
-The `run_local.sh` can be used to launch django to run locally.
+The `./scripts/run_local.sh` can be used to launch django to run locally.
 
 To really test changes you'll likely want access to a model, one [option is using this repo](https://github.com/totallylegitco/healthinsurance-llm) and setting `HEALTH_BACKEND_PORT` to `8000` and `HEALTH_BACKEND_HOST` to `localhost`. Deploying locally requires ~ GPU equivalent to a 3090.
 

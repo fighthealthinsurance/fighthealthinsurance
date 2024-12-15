@@ -32,13 +32,13 @@ set -ex
 "${SCRIPT_DIR}/build_static.sh"
 
 # Are we sort of connected to the backend?
-# if kubectl get service -n totallylegitco vllm-health-svc; then
-#   export HEALTH_BACKEND_PORT=4280
-#   export HEALTH_BACKEND_HOST=localhost
-#   kubectl port-forward -n totallylegitco service/vllm-health-svc 4280:80 &
-# else
-#   echo 'No connection to kube vllm health svc'
-# fi
+if kubectl get service -n totallylegitco vllm-health-svc; then
+   export HEALTH_BACKEND_PORT=4280
+   export HEALTH_BACKEND_HOST=localhost
+   kubectl port-forward -n totallylegitco service/vllm-health-svc 4280:80 &
+else
+   echo 'No connection to kube vllm health svc'
+fi
 
 python manage.py migrate
 python manage.py loaddata initial

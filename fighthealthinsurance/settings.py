@@ -12,6 +12,7 @@ https://docs.djangoproject.com/en/4.0/ref/settings/
 
 import os
 from pathlib import Path
+import re
 from typing import *
 import traceback
 from functools import cached_property
@@ -82,6 +83,7 @@ class Base(Configuration):
         "django_recaptcha",
         "rest_framework",
         "corsheaders",
+        'django_prometheus',
     ]
 
     COMPRESS_JS_FILTERS = [
@@ -104,6 +106,7 @@ class Base(Configuration):
     )
 
     MIDDLEWARE = [
+        'django_prometheus.middleware.PrometheusBeforeMiddleware',
         "corsheaders.middleware.CorsMiddleware",
         "django.middleware.security.SecurityMiddleware",
         "django.contrib.sessions.middleware.SessionMiddleware",
@@ -114,6 +117,7 @@ class Base(Configuration):
         "django.middleware.clickjacking.XFrameOptionsMiddleware",
         "cookie_consent.middleware.CleanCookiesMiddleware",
         "django_user_agents.middleware.UserAgentMiddleware",
+        'django_prometheus.middleware.PrometheusAfterMiddleware',
     ]
 
     GOOGLE_ANALYTICS = {
@@ -212,6 +216,8 @@ class Base(Configuration):
     CORS_ALLOW_PRIVATE_NETWORK = True
     CORS_ALLOW_CREDENTIALS = True
 
+    PROMETHEUS_METRIC_NAMESPACE = "fhi"
+
     # STRIPE SETTINGS
     @property
     def STRIPE_API_SECRET_KEY(self):
@@ -250,6 +256,15 @@ class Base(Configuration):
         return CombinedStorage(
             self.LOCALISH_STORAGE, self.EXTERNAL_STORAGE, self.EXTERNAL_STORAGE_B
         )
+
+    # Ignore some 404 errors
+    IGNORABLE_404_URLS = [
+        re.compile(r"\.(php|cgi)$"),
+        re.compile(r"^/phpmyadmin/"),
+        re.compile(r"^/apple-touch-icon.*\.png$"),
+        re.compile(r"^/favicon\.ico$"),
+        re.compile(r"^/robots\.txt$"),
+    ]
 
 
 class Dev(Base):
@@ -309,7 +324,7 @@ class Prod(Base):
 
     @property
     def DATABASES(self):
-        engine = "django.db.backends.mysql"
+        engine = "django_prometheus.django.db.backends.mysql"
         return {
             "default": {
                 "ENGINE": engine,
@@ -354,6 +369,17 @@ class Prod(Base):
                 "filters": [],
                 "class": "django.utils.log.AdminEmailHandler",
                 "include_html": True,
+            },
+        },
+        "loggers": {
+            "django": {
+                "handlers": ["console"],
+                "propagate": True,
+            },
+            "django.request": {
+                "handlers": ["mail_admins"],
+                "level": "ERROR",
+                "propagate": True,
             },
         },
     }
