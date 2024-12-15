@@ -3,8 +3,10 @@
 # Activate the venv if present.
 if [ -f ./build_venv/bin/activate ]; then
   source ./build_venv/bin/activate
+  echo "Using build_venv"
 elif [ -f ./.venv/bin/activate ]; then
   source ./.venv/bin/activate
+  echo "Using .venv"
 fi
 
 check_python_environment() {
