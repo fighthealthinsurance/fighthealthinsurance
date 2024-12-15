@@ -1,7 +1,7 @@
 #!/bin/bash
 set -ex
 
-BUILDX_CMD=${BUILDX_CMD:-push}
+BUILDX_CMD=${BUILDX_CMD:-"--push"}
 PLATFORM=${PLATFORM:-linux/amd64,linux/arm64}
 
 # Build the web app
