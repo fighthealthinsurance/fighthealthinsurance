@@ -324,7 +324,7 @@ class Prod(Base):
 
     @property
     def DATABASES(self):
-        engine = "django_prometheus.django.db.backends.mysql"
+        engine = "django_prometheus.db.backends.mysql"
         return {
             "default": {
                 "ENGINE": engine,
