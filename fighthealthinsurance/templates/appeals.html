@@ -6,123 +6,7 @@ Fight Your Health Insurance Denial: Choose an Appeal
 
 {% block pre-roll %}
 <!-- This JS is partiall writen by AI -->
-<script>
-$(document).ready(function() {
-    // Where the forms go
-    var outputContainer = $('#output-container');
-    var resp_buffer = '';
-    var appeal_id = 0;
-    var appeals_so_far = [];
-    document.getElementById('loading-spinner').style.display = 'visible';
-    document.getElementById('loading-text').style.display = 'visible';
-
-    let process_chunk = function(chunk) {
- 	resp_buffer += chunk;
-	if (resp_buffer.includes('\n')) {
-	    let lastIndex = resp_buffer.lastIndexOf('\n');
-	    let current = resp_buffer.substring(0, lastIndex);
-	    resp_buffer = resp_buffer.substring(lastIndex);
-	    let lines = current.split('\n');
-	    lines.forEach(function(line) {
-		console.log("Parsing line:")
-		console.log(line)
-		if (line == "" || line == "\n") {
-		    console.log("Skipping");
-		    return;
-		}
-		appeal_id = appeal_id + 1
-		let j = JSON.parse(line);
-		if (appeals_so_far.includes(j)) {
-		    console.log("Already have this one.");
-		    return;
-		} else {
-		    appeals_so_far.push(j);
-		}
-		// Clone the base form template
-		var $clonedForm = $('#base-form').clone().prop(
-		    "id", "magic" + appeal_id);
-		console.log("Cloned form:");
-		console.log($clonedForm);
-		outputContainer.append( $clonedForm );
-		var clonedForm = $("#" + "magic" + appeal_id);
-		console.log("Found");
-		console.log(clonedForm);
-
-		// Display the cloned form
-		clonedForm.removeAttr('style');  // Remove the "display: none" style
-		// $('#form-container' + appeal_id).html(clonedForm);
-		// Fill in the textarea value from the response
-		appealTextElem = clonedForm.find("textarea");
-		// WTF javascript why.
-		form = clonedForm.find("form");
-                form.prop("id", "form_" + appeal_id);
-                submit = clonedForm.find("button");
-                submit.prop("id", "submit" + appeal_id);
-		console.log("Looking for our friend:");
-		console.log(appealTextElem);
-		appealTextElem.text(j);
-		appealTextElem.val(j);
-                appealTextElem.value = j;
-                // One of these should work?
-		appealTextElem.prop("form", "form_" + appeal_id);
-                appealTextElem.form = "form_" + appeal_id;
-                appealTextElem[0].setAttribute("form", "form_" + appeal_id);
-                appealTextElem.prop("textContent", j);
-		console.log("Value should now be:");
-		console.log(j);
-		console.log("We have:");
-		console.log(appealTextElem);
-	    })
-	} else {
-	    console.log("Waiting for a full line")
-	}
-    };
-
-    // Make AJAX request to Django endpoint with the specified ID
-    $.ajax({
-        url: "{% url 'appeals_json_backend' %}",
-        type: 'POST',
-data: {
-{% autoescape off %}
-...{{form_context}},
-{% endautoescape %}
-              ...{
-              'csrfmiddlewaretoken': '{{ csrf_token }}',
-              'timbit': 'is most awesomex2'}},
-	contentType: 'application/x-www-form-urlencoded',
-	dataType: "text", // dataType is response.
-	processData: true,
-	xhr: function() {
-	    console.log("Registering xhr function!");
-	    var xhr = new XMLHttpRequest();
-
-	    xhr.addEventListener(
-		'progress',
-		function(event) {
-		    var chunk = event.currentTarget.responseText;
-		    process_chunk(chunk);
-		}
-	    )
-	    console.log("Registered XHR func :D");
-	    return xhr;
-	},
-	success: function(response) {
-	    console.log("Sucess?");
-            console.log(response);
-	    process_chunk(response);
-            console.log("Hiding spinner");
-            setTimeout(function() {
-            document.getElementById('loading-spinner').style.display = 'none';
-	    document.getElementById('loading-text').style.display = 'none';
-            document.getElementById('loading-more').style.display = 'none';
-	    }, 1000);
-        },
-	error: function(err) {
-	    console.log("Error :(");
-	    console.log(err);
-	}});
-});
-</script>
+<script src='{% static "js/dist/appeal_fetcher.bundle.js" %}' defer></script>
 {% endblock pre-roll %}
 
 {% block content %}
@@ -182,4 +66,22 @@ data: {
 <div id="output-container">
 </div>
 </div>
+
+<script>
+  // Call the typescript on load
+  document.addEventListener('DOMContentLoaded', () => {
+      const backendUrl = "{% url 'appeals_json_backend' %}";
+      const data = {
+	  {% autoescape off %}
+          ...{{form_context}},
+          {% endautoescape %}
+          ...{
+              'csrfmiddlewaretoken': '{{ csrf_token }}',
+              'timbit': 'is most awesomex2'}}
+      const retries = 0;
+
+      // Call the doQuery function
+      doQuery(backendUrl, data, retries);
+  });
+</script>
 {% endblock content %}
