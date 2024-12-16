@@ -506,7 +506,7 @@ header span i {
 }
 
 .slider .item-first {
-    background-image: url(../images/letter.jpeg);
+    background-image: url(../images/crinkledcolors.jpg);
     background-color: rgba(0, 0, 0, 0.2); /* Adds a dark overlay with 20% opacity */
     background-blend-mode: overlay; /* Blends the color with the image */
 }
