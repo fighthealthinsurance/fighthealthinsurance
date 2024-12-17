@@ -16,8 +16,11 @@ Including another URLconf
 
 from django.contrib import admin
 from django.contrib.admin.views.decorators import staff_member_required
+from django.contrib.staticfiles.urls import staticfiles_urlpatterns
 from django.urls import include, path
+from django.conf.urls.static import static
 from django.views.decorators.cache import cache_control, cache_page
+from django.conf import settings
 
 from fighthealthinsurance import views
 from fighthealthinsurance import fax_views
@@ -146,3 +149,6 @@ urlpatterns = [
         name="contact",
     ),
 ]
+
+urlpatterns += staticfiles_urlpatterns()
+

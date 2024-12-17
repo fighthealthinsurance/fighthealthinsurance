@@ -60,3 +60,4 @@ urllib3
 uszipcode
 werkzeug
 pyright
+uvicorn[standard]
