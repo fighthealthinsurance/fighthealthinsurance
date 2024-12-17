@@ -442,6 +442,12 @@ header span i {
       HOME
   -----------------------------------------*/
 
+#home {
+    height: auto; /* Let the height adjust to fit content */
+    display: flex;
+    overflow: visible;
+}
+
 #home h1 {
     color: #ffffff;
     padding-bottom: 10px;
@@ -502,7 +508,7 @@ header span i {
     background-repeat: no-repeat;
     background-attachment: local;
     background-size: cover;
-    height: 650px;
+    min-height: 650px;
 }
 
 .slider .item-first {
@@ -1115,7 +1121,8 @@ footer a:hover {
     }
 }
 
-@media only screen and (max-width: 639px) {
+/* Mobile */
+@media only screen and (max-width: 768px) {
     h1 {
 	font-size: 3em;
 	line-height: 1.2em;
@@ -1134,4 +1141,18 @@ footer a:hover {
 	letter-spacing: 1px;
     }
 
+}
+
+@media screen and (max-width: 768px) {
+    #home {
+        min-height: auto; /* Remove strict height on smaller screens */
+        padding: 30px; /* Add padding for readability */
+    }
+    .slider .item {
+	height: auto;
+    }
+    .slider .item-first {
+	height: auto;
+	min-height: 650px;
+    }
 }

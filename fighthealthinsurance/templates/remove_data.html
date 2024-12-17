@@ -8,8 +8,8 @@ Delete Your Data
 <section id="delete-data" data-stellar-background-ratio="0.5">
     <div class="row mt-5 mb-5">
         <div class="caption d-flex flex-column align-items-center justify-content-center">
-            <div class="col-md-offset-1 col-md-10 text-align-center d-flex flex-column align-items-center justify-content-center" style="margin-top: 10vh;">
-                <h2 class="delete-header">Delete your Data</h2>
+            <div class="col-md-offset-1 col-md-10 text-align-center d-flex flex-column align-items-center justify-content-center">
+                <h1 class="delete-header">Delete your Data</h1>
                 <p>We do some things we think is cool-ish to try and improve your data privacy, you may wish to read the <a href="{% url 'privacy_policy' %}" target="_blank" rel="noopener noreferrer">privacy techniques in our privacy policy.</a> To help us delete your data, please provide the email address you used.</p>
                 <form action="{% url 'remove_data' %}" method="post" class="d-flex flex-column align-items-start">
                   {% csrf_token %}
