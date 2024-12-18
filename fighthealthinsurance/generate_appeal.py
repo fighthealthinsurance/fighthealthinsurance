@@ -42,15 +42,17 @@ class AppealGenerator(object):
         self.regex_denial_processor = ProcessDenialRegex()
         self.pmt = PubMedTools()
 
-    def get_fax_number(self, denial_text=None, use_external=False) -> Optional[str]:
+    async def get_fax_number(
+        self, denial_text=None, use_external=False
+    ) -> Optional[str]:
         models_to_try = model_router.entity_extract_backends(use_external)
         for model in models_to_try:
-            fax_number = model.get_fax_number(denial_text)
+            fax_number = await model.get_fax_number(denial_text)
             if fax_number is not None and "UNKNOWN" not in fax_number:
                 return fax_number
         return None
 
-    def get_procedure_and_diagnosis(
+    async def get_procedure_and_diagnosis(
         self, denial_text=None, use_external=False
     ) -> Tuple[Optional[str], Optional[str]]:
         prompt = self.make_open_procedure_prompt(denial_text)
@@ -62,7 +64,7 @@ class AppealGenerator(object):
         diagnosis = None
         for model in models_to_try:
             print(f"Exploring model {model}")
-            procedure_diagnosis = model.get_procedure_and_diagnosis(denial_text)
+            procedure_diagnosis = await model.get_procedure_and_diagnosis(denial_text)
             if procedure_diagnosis is not None:
                 if len(procedure_diagnosis) > 1:
                     procedure = procedure or procedure_diagnosis[0]
@@ -81,7 +83,9 @@ class AppealGenerator(object):
                     return (procedure, diagnosis)
                 else:
                     print(f"So far infered {procedure} and {diagnosis}")
-        print(f"Fell through :/ could not fully populate.")
+        print(
+            f"Fell through :/ could not fully populate but got {procedure}, {diagnosis}"
+        )
         return (procedure, diagnosis)
 
     def make_open_procedure_prompt(self, denial_text=None):

@@ -83,7 +83,7 @@ class Base(Configuration):
         "django_recaptcha",
         "rest_framework",
         "corsheaders",
-        'django_prometheus',
+        "django_prometheus",
     ]
 
     COMPRESS_JS_FILTERS = [
@@ -106,7 +106,7 @@ class Base(Configuration):
     )
 
     MIDDLEWARE = [
-        'django_prometheus.middleware.PrometheusBeforeMiddleware',
+        "django_prometheus.middleware.PrometheusBeforeMiddleware",
         "corsheaders.middleware.CorsMiddleware",
         "django.middleware.security.SecurityMiddleware",
         "django.contrib.sessions.middleware.SessionMiddleware",
@@ -117,7 +117,7 @@ class Base(Configuration):
         "django.middleware.clickjacking.XFrameOptionsMiddleware",
         "cookie_consent.middleware.CleanCookiesMiddleware",
         "django_user_agents.middleware.UserAgentMiddleware",
-        'django_prometheus.middleware.PrometheusAfterMiddleware',
+        "django_prometheus.middleware.PrometheusAfterMiddleware",
     ]
 
     GOOGLE_ANALYTICS = {
@@ -299,7 +299,7 @@ class Test(Dev):
         "default": {
             "ENGINE": "django.db.backends.sqlite3",
             "NAME": BASE_DIR / f"test{dt}.db.sqlite3",
-            "TIMEOUT": 20,
+            "TIMEOUT": 10,
             "TEST": {
                 "NAME": BASE_DIR / f"test{dt}.db.sqlite3",
             },

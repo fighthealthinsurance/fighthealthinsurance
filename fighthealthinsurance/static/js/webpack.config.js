@@ -6,6 +6,7 @@ module.exports = {
     'scrub': './scrub.ts',
     'appeal': './appeal.ts',
     'appeal_fetcher': './appeal_fetcher.ts',
+    'entity_fetcher': './entity_fetcher.ts',
   },
   resolve: {
     extensions: ['.ts', '.js'], // Automatically resolve these extensions

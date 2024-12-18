@@ -17,4 +17,9 @@ rest_urls = [
         rest_views.AppealsBackend.as_view(),
         name="api_appeals_json_backend",
     ),
+    path(
+        "v0/api_streamingentity_json_backend",
+        rest_views.StreamingEntityBackend.as_view(),
+        name="api_streamingentity_json_backend",
+    ),
 ]

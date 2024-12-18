@@ -1,8 +1,11 @@
+from asgiref.sync import sync_to_async, async_to_sync
+import asyncio
 import datetime
 import json
 from dataclasses import dataclass
 from string import Template
-from typing import Any, Optional, Tuple, Iterable
+from typing import Awaitable, Any, Optional, Tuple, Iterable
+import threading
 
 from django.core.files import File
 from django.core.validators import validate_email
@@ -19,7 +22,10 @@ from fighthealthinsurance.form_utils import *
 from fighthealthinsurance.generate_appeal import *
 from fighthealthinsurance.models import *
 from fighthealthinsurance.question_forms import *
-from fighthealthinsurance.utils import pubmed_fetcher
+from fighthealthinsurance.utils import (
+    pubmed_fetcher,
+    interleave_iterator_for_keep_alive,
+)
 import ray
 from .pubmed_tools import PubMedTools
 
@@ -474,9 +480,9 @@ class DenialCreatorHelper:
         return cls._codes_denial_processor
 
     @classmethod
-    def regex_src(cls):
+    async def regex_src(cls):
         if cls._regex_src is None:
-            cls._regex_src = DataSource.objects.get(name="regex")
+            cls._regex_src = await DataSource.objects.aget(name="regex")
         return cls._regex_src
 
     @classmethod
@@ -512,19 +518,6 @@ class DenialCreatorHelper:
         if store_raw_email:
             possible_email = email
 
-        # Try and extract the appeal fax number
-        appeal_fax_number = None
-        try:
-            appeal_fax_number = appealGenerator.get_fax_number(
-                denial_text=denial_text, use_external=use_external_models
-            )
-        except:
-            pass
-        # Slight gaurd against halucinations
-        if appeal_fax_number is not None:
-            if appeal_fax_number not in denial_text or len(appeal_fax_number) > 30:
-                appeal_fax_number = None
-
         try:
             denial = Denial.objects.create(
                 denial_text=denial_text,
@@ -532,7 +525,6 @@ class DenialCreatorHelper:
                 use_external=use_external_models,
                 raw_email=possible_email,
                 health_history=health_history,
-                appeal_fax_number=appeal_fax_number,
             )
         except Exception as e:
             # This is a temporary hack to drop non-ASCII characters
@@ -545,7 +537,6 @@ class DenialCreatorHelper:
                 use_external=use_external_models,
                 raw_email=possible_email,
                 health_history=health_history,
-                appeal_fax_number=appeal_fax_number,
             )
 
         if possible_email is not None:
@@ -562,14 +553,11 @@ class DenialCreatorHelper:
             except:
                 # Default to no state
                 your_state = None
-        (procedure, diagnosis) = appealGenerator.get_procedure_and_diagnosis(
-            denial_text=denial_text, use_external=denial.use_external
-        )
-        if procedure is not None and len(procedure) < 200:
-            denial.procedure = procedure
-        if diagnosis is not None and len(diagnosis) < 200:
-            denial.diagnosis = diagnosis
-        denial.save()
+        # Optionally:
+        # Fire off some async requests to the model to extract info.
+        # denial_id = denial.denial_id
+        # executor.submit(cls.start_background, denial_id)
+        # For now we fire this off "later" on a dedicated page with javascript magic.
         r = re.compile(r"Group Name:\s*(.*?)(,|)\s*(INC|CO|LTD|LLC)\s+", re.IGNORECASE)
         g = r.search(denial_text)
         # TODO: Update based on plan document upload if present.
@@ -580,21 +568,107 @@ class DenialCreatorHelper:
                 denial.employer_name = employer_name
                 denial.save()
 
-        # Try and guess at the denial types
-        denial_types = cls.regex_denial_processor.get_denialtype(
-            denial_text=denial_text, procedure=procedure, diagnosis=diagnosis
-        )
-        denial_type = []
-        for dt in denial_types:
-            DenialTypesRelation(
-                denial=denial, denial_type=dt, src=cls.regex_src()
-            ).save()
-            denial_type.append(dt)
         denial_id = denial.denial_id
         semi_sekret = denial.semi_sekret
         return cls._update_denial(
             denial=denial, health_history=health_history, plan_documents=plan_documents
         )
+
+    @classmethod
+    def start_background(cls, denial_id):
+        async_to_sync(cls._start_background(denial_id))
+
+    @classmethod
+    async def extract_entity(cls, denial_id=None, **kwargs):
+        # Fax extraction is fire and forget and can run in parallel to the other tass
+        asyncio.create_task(cls.extract_set_fax_number(denial_id))
+        asyncs: list[Awaitable[Any]] = [
+            # Denial type depends on denial and diagnosis
+            cls.extract_set_denial_and_diagnosis(denial_id),
+            cls.extract_set_denialtype(denial_id),
+            asyncio.sleep(0, result=""),
+        ]
+
+        # Run the tasks in order
+        def wait_for_result(r):
+            asyncio.run(r)
+            return f"{r}"
+
+        responses = map(wait_for_result, asyncs)
+        formatted = map(lambda e: e + "\n", responses)
+        return StreamingHttpResponse(
+            interleave_iterator_for_keep_alive(formatted),
+            content_type="application/json",
+        )
+
+    @classmethod
+    async def _start_background(cls, denial_id):
+        """Run"""
+        asyncio.ensure_future(cls.extract_set_fax_number(denial_id))
+        await cls.extract_set_denial_and_diagnosis(denial_id)
+        await cls.extract_set_denialtype(denial_id)
+
+    @classmethod
+    async def extract_set_denialtype(cls, denial_id):
+        print(f"Extracting and setting denial types....")
+        # Try and guess at the denial types
+        denial = await Denial.objects.filter(denial_id=denial_id).aget()
+        denial_types = await cls.regex_denial_processor.get_denialtype(
+            denial_text=denial.denial_text,
+            procedure=denial.procedure,
+            diagnosis=denial.diagnosis,
+        )
+        print(f"Ok lets rock with {denial_types}")
+        for dt in denial_types:
+            print(f"K: {dt}")
+            try:
+                await DenialTypesRelation.objects.acreate(
+                    denial=denial, denial_type=dt, src=await cls.regex_src()
+                )
+            except Exception as e:
+                print(f"Failed with {e}")
+            print(f"meep")
+        print(f"Done setting denial types")
+
+    @classmethod
+    async def extract_set_fax_number(cls, denial_id):
+        # Try and extract the appeal fax number
+        denial = await Denial.objects.filter(denial_id=denial_id).aget()
+        appeal_fax_number = None
+        try:
+            appeal_fax_number = await appealGenerator.get_fax_number(
+                denial_text=denial.denial_text, use_external=denial.use_external_models
+            )
+        except:
+            pass
+        # Slight gaurd against halucinations
+        if appeal_fax_number is not None:
+            # TODO: More flexible regex matching
+            if (
+                (appeal_fax_number not in denial.denial_text and
+                 "Fax" not in denial.denial_text)
+                or len(appeal_fax_number) > 30
+            ):
+                appeal_fax_number = None
+        if appeal_fax_number is not None:
+            denial = await Denial.objects.filter(denial_id=denial_id).aget()
+            denial.fax_number = appeal_fax_number
+            await denial.asave()
+
+    @classmethod
+    async def extract_set_denial_and_diagnosis(cls, denial_id):
+        try:
+            denial = await Denial.objects.filter(denial_id=denial_id).aget()
+            (procedure, diagnosis) = await appealGenerator.get_procedure_and_diagnosis(
+                denial_text=denial.denial_text, use_external=denial.use_external
+            )
+            if procedure is not None and len(procedure) < 200:
+                denial.procedure = procedure
+            if diagnosis is not None and len(diagnosis) < 200:
+                denial.diagnosis = diagnosis
+        finally:
+            denial.extract_procedure_diagnosis_finished = True
+            await denial.asave()
 
     @classmethod
     def update_denial(
@@ -643,19 +717,27 @@ class AppealsBackendHelper:
     regex_denial_processor = ProcessDenialRegex()
 
     @classmethod
-    def generate_appeals(cls, parameters):
+    async def generate_appeals(cls, parameters):
         denial_id = parameters["denial_id"]
-        hashed_email = Denial.get_hashed_email(parameters["email"])
+        email = parameters["email"]
+        semi_sekret = parameters["semi_sekret"]
+        hashed_email = Denial.get_hashed_email(email)
+
+        if denial_id is None:
+            raise Exception("Missing denial id")
+        if semi_sekret is None:
+            raise Exception("Missing sekret")
 
         # Get the current info
-        denial = Denial.objects.filter(
-            denial_id=denial_id, hashed_email=hashed_email
-        ).get()
+        await asyncio.sleep(0)
+        denial = await Denial.objects.filter(
+                denial_id=denial_id, semi_sekret=semi_sekret, hashed_email=hashed_email
+            ).aget()
 
         non_ai_appeals: List[str] = list(
             map(
                 lambda t: t.appeal_text,
-                cls.regex_denial_processor.get_appeal_templates(
+                await cls.regex_denial_processor.get_appeal_templates(
                     denial.denial_text, denial.diagnosis
                 ),
             )
@@ -672,8 +754,8 @@ class AppealsBackendHelper:
         # Extract any medical context AND
         # Apply all of our 'expert system'
         # (aka six regexes in a trench coat hiding behind a database).
-        for dt in denial.denial_type.all():
-            form = dt.get_form()
+        async for dt in denial.denial_type.all():
+            form = await sync_to_async(dt.get_form)()
             if form is not None:
                 parsed = form(parameters)
                 if parsed.is_valid():
@@ -726,8 +808,8 @@ class AppealsBackendHelper:
             denial.qa_context = " ".join(medical_context)
         if plan_context is not None:
             denial.plan_context = " ".join(set(plan_context))
-        denial.save()
-        appeals: Iterable[str] = appealGenerator.make_appeals(
+        await denial.asave()
+        appeals: Iterable[str] = await sync_to_async(appealGenerator.make_appeals)(
             denial,
             AppealTemplateGenerator(prefaces, main, footer),
             medical_reasons=medical_reasons,
@@ -764,9 +846,11 @@ class AppealsBackendHelper:
             return ret
 
         filtered_appeals = filter(lambda x: x != None, appeals)
+        # TODO: Move out of hot path (async)
         saved_appeals = map(save_appeal, filtered_appeals)
         subbed_appeals = map(sub_in_appeals, saved_appeals)
         subbed_appeals_json = map(lambda e: json.dumps(e) + "\n", subbed_appeals)
         return StreamingHttpResponse(
-            subbed_appeals_json, content_type="application/json"
+            interleave_iterator_for_keep_alive(subbed_appeals_json),
+            content_type="application/json",
         )

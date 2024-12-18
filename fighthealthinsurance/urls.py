@@ -37,7 +37,7 @@ urlpatterns = [
     path("ziggy/rest/", include(rest_urls)),
     path("timbit/admin/", admin.site.urls),
     path("error", views.ErrorView.as_view()),
-    path('', include('django_prometheus.urls')),
+    path("", include("django_prometheus.urls")),
     path("timbit/help/followup_sched", ScheduleFollowUps.as_view()),
     path(
         "timbit/help/followup_sender_test",
@@ -93,17 +93,28 @@ urlpatterns = [
         fax_views.StageFaxView.as_view(),
         name="stagefaxview",
     ),
-    path("scan",
-         sensitive_post_parameters("email")(views.InitialProcessView.as_view()),
-         name="scan"),
-    path("process",
-         sensitive_post_parameters("email")(views.InitialProcessView.as_view()),
-         name="process"),
-    path("v0/combined_collected_view",
-         sensitive_post_parameters("email")(views.DenialCollectedView.as_view()), name="dvc"),
+    path(
+        "scan",
+        sensitive_post_parameters("email")(views.InitialProcessView.as_view()),
+        name="scan",
+    ),
+    path(
+        "process",
+        sensitive_post_parameters("email")(views.InitialProcessView.as_view()),
+        name="process",
+    ),
+    path(
+        "v0/combined_collected_view",
+        sensitive_post_parameters("email")(views.DenialCollectedView.as_view()),
+        name="dvc",
+    ),
     path("v0/plan_documents", views.PlanDocumentsView.as_view(), name="hh"),
-    path("server_side_ocr",
-         sensitive_post_parameters("email")(views.OCRView.as_view()), name="server_side_ocr"),
+    path("v0/categorize", views.EntityExtractView.as_view(), name="eev"),
+    path(
+        "server_side_ocr",
+        sensitive_post_parameters("email")(views.OCRView.as_view()),
+        name="server_side_ocr",
+    ),
     path(
         "",
         cache_control(public=True)(cache_page(60 * 60 * 2)(views.IndexView.as_view())),
@@ -114,8 +125,11 @@ urlpatterns = [
         cache_control(public=True)(cache_page(60 * 60 * 2)(views.AboutView.as_view())),
         name="about",
     ),
-    path("other-resources",
-         sensitive_post_parameters("email")(views.OtherResourcesView.as_view()), name="other-resources"),
+    path(
+        "other-resources",
+        sensitive_post_parameters("email")(views.OtherResourcesView.as_view()),
+        name="other-resources",
+    ),
     path("pro_version", views.ProVersionView.as_view(), name="pro_version"),
     path(
         "pro_version_thankyou",
@@ -133,14 +147,31 @@ urlpatterns = [
         ),
         name="tos",
     ),
-    path("find_next_steps", sensitive_post_parameters("email")(views.FindNextSteps.as_view()), name="find_next_steps"),
-    path("generate_appeal", sensitive_post_parameters("email")(views.GenerateAppeal.as_view()), name="generate_appeal"),
+    path(
+        "find_next_steps",
+        sensitive_post_parameters("email")(views.FindNextSteps.as_view()),
+        name="find_next_steps",
+    ),
+    path(
+        "generate_appeal",
+        sensitive_post_parameters("email")(views.GenerateAppeal.as_view()),
+        name="generate_appeal",
+    ),
     path(
         "appeals_json_backend",
         sensitive_post_parameters("email")(views.AppealsBackend.as_view()),
         name="appeals_json_backend",
     ),
-    path("choose_appeal", sensitive_post_parameters("email")(views.ChooseAppeal.as_view()), name="choose_appeal"),
+    path(
+        "v0/streamingentity_json_backend",
+        sensitive_post_parameters("email")(views.StreamingEntityBackend.as_view()),
+        name="streamingentity_json_backend",
+    ),
+    path(
+        "choose_appeal",
+        sensitive_post_parameters("email")(views.ChooseAppeal.as_view()),
+        name="choose_appeal",
+    ),
     path(
         "contact",
         cache_control(public=True)(
@@ -151,4 +182,3 @@ urlpatterns = [
 ]
 
 urlpatterns += staticfiles_urlpatterns()
-

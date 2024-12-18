@@ -14,7 +14,7 @@ from fighthealthinsurance.utils import sekret_gen
 from regex_field.fields import RegexField
 
 
-class InterestedProfessional(ExportModelOperationsMixin('InterestedProfessional'), models.Model): # type: ignore
+class InterestedProfessional(ExportModelOperationsMixin("InterestedProfessional"), models.Model):  # type: ignore
     id = models.AutoField(primary_key=True)
     name = models.CharField(max_length=300, primary_key=False, default="")
     business_name = models.CharField(max_length=300, primary_key=False, default="")
@@ -260,7 +260,7 @@ class PubMedQueryData(models.Model):
     denial_id = models.ForeignKey("Denial", on_delete=models.SET_NULL, null=True)
 
 
-class FaxesToSend(ExportModelOperationsMixin('FaxesToSend'), models.Model): # type: ignore
+class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # type: ignore
     fax_id = models.AutoField(primary_key=True)
     hashed_email = models.CharField(max_length=300, primary_key=False)
     date = models.DateTimeField(auto_now=False, auto_now_add=True)
@@ -295,7 +295,7 @@ class FaxesToSend(ExportModelOperationsMixin('FaxesToSend'), models.Model): # ty
             return f.name
 
 
-class Denial(ExportModelOperationsMixin('Denial'), models.Model): # type: ignore
+class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignore
     denial_id = models.AutoField(primary_key=True, null=False)
     uuid = models.CharField(
         max_length=300, primary_key=False, default=uuid.uuid4, editable=False
@@ -316,6 +316,8 @@ class Denial(ExportModelOperationsMixin('Denial'), models.Model): # type: ignore
     claim_id = models.CharField(max_length=300, primary_key=False, null=True)
     procedure = models.CharField(max_length=300, primary_key=False, null=True)
     diagnosis = models.CharField(max_length=300, primary_key=False, null=True)
+    # Keep track of if the async thread finished extracting procedure and diagnosis
+    extract_procedure_diagnosis_finished = models.BooleanField(default=False)
     appeal_text = models.TextField(primary_key=False, null=True)
     raw_email = models.TextField(max_length=300, primary_key=False, null=True)
     created = models.DateTimeField(db_default=Now(), primary_key=False, null=True)
@@ -349,7 +351,7 @@ class Denial(ExportModelOperationsMixin('Denial'), models.Model): # type: ignore
         return hashlib.sha512(encoded_email).hexdigest()
 
 
-class ProposedAppeal(ExportModelOperationsMixin('ProposedAppeal'), models.Model): # type: ignore
+class ProposedAppeal(ExportModelOperationsMixin("ProposedAppeal"), models.Model):  # type: ignore
     appeal_text = models.TextField(max_length=3000000000, primary_key=False, null=True)
     for_denial = models.ForeignKey(
         Denial, on_delete=models.CASCADE, null=True, blank=True

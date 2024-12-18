@@ -84,7 +84,7 @@ class DenialEndToEnd(APITestCase):
     def test_denial_end_to_end(self):
         url = reverse("api_denialcreator")
         email = "timbit@fighthealthinsurance.com"
-        hashed_email = hashlib.sha512(email.encode("utf-8")).hexdigest()
+        hashed_email = Denial.get_hashed_email(email)
         denials_for_user_count = Denial.objects.filter(
             hashed_email=hashed_email
         ).count()
@@ -110,9 +110,29 @@ class DenialEndToEnd(APITestCase):
         semi_sekret = parsed["semi_sekret"]
         # Make sure we added a denial for this user
         denials_for_user_count = Denial.objects.filter(
-            hashed_email=hashed_email
+            hashed_email=hashed_email,
         ).count()
         assert denials_for_user_count > 0
+        # Make sure we can get the denial
+        denial = Denial.objects.filter(
+            hashed_email=hashed_email,
+            denial_id=denial_id
+        ).get()
+        print(f"We should find {denial}")
+        # Now we need to poke entity extraction
+        entity_extraction_url = reverse("api_streamingentity_json_backend")
+        response = self.client.post(
+            entity_extraction_url,
+            json.dumps(
+                {
+                    "email": email,
+                    "semi_sekret": semi_sekret,
+                    "denial_id": denial_id,
+                }
+            ),
+            content_type="application/json",
+        )
+        print(str(response.streaming_content))
         # Ok now lets get the additional info
         find_next_steps_url = reverse("api_findnextsteps")
         find_next_steps_response = self.client.post(

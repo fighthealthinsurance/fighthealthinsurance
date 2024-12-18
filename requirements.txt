@@ -1,3 +1,4 @@
+aiohttp
 asyncssh
 beautifulsoup4==4.12.3
 black
@@ -39,6 +40,7 @@ pyarrow
 pymupdf
 pyOpenSSL
 PyPDF2
+pyright
 pytesseract # We either need easyocr + opencv-python OR pytesseract + tesseract (so alt is easyocr>=1.7.0 opencv-python)
 python-Levenshtein
 pytz
@@ -58,6 +60,5 @@ types-requests
 typing-extensions
 urllib3
 uszipcode
-werkzeug
-pyright
 uvicorn[standard]
+werkzeug

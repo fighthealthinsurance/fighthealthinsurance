@@ -1,3 +1,5 @@
+from asgiref.sync import sync_to_async, async_to_sync
+import asyncio
 import json
 
 from fighthealthinsurance.common_view_logic import *
@@ -99,4 +101,13 @@ class AppealsBackend(APIView):
 
     def post(self, request):
         pythondata = json.loads(request.body)
-        return AppealsBackendHelper.generate_appeals(pythondata)
+        denial_id = pythondata["denial_id"]
+        return async_to_sync(AppealsBackendHelper.generate_appeals)(pythondata)
+
+
+class StreamingEntityBackend(APIView):
+    """Streaming back the updates as json :D"""
+
+    def post(self, request):
+        pythondata = json.loads(request.body)
+        return async_to_sync(DenialCreatorHelper.extract_entity)(**pythondata)

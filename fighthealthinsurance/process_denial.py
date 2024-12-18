@@ -47,10 +47,10 @@ class ProcessDenialCodes(DenialBase):
         except Exception:
             self.preventive_diagnosis = {}
 
-    def get_procedure_and_diagnosis(self, denial_text):
+    async def get_procedure_and_diagnosis(self, denial_text):
         return (None, None)
 
-    def get_denialtype(self, denial_text, procedure, diagnosis):
+    async def get_denialtype(self, denial_text, procedure, diagnosis):
         """Get the denial type. For now short circuit logic."""
         icd_codes = self.icd10_re.finditer(denial_text)
         for i in icd_codes:
@@ -68,10 +68,10 @@ class ProcessDenialCodes(DenialBase):
                 return [self.preventive_denial]
         return []
 
-    def get_regulator(self, text):
+    async def get_regulator(self, text):
         return []
 
-    def get_plan_type(self, text):
+    async def get_plan_type(self, text):
         return []
 
 
@@ -86,10 +86,10 @@ class ProcessDenialRegex(DenialBase):
         self.procedures = Procedures.objects.all()
         self.templates = AppealTemplates.objects.all()
 
-    def get_procedure(self, text):
+    async def get_procedure(self, text):
         print(f"Getting procedure types for {text}")
         procedure = None
-        for d in self.procedures:
+        async for d in self.procedures:
             print(f"Exploring {d} w/ {d.regex}")
             if d.regex.pattern != "":
                 s = d.regex.search(text)
@@ -98,10 +98,10 @@ class ProcessDenialRegex(DenialBase):
                     return s.groups("procedure")[0]
         return None
 
-    def get_diagnosis(self, text):
+    async def get_diagnosis(self, text):
         print(f"Getting diagnosis types for {text}")
         procedure = None
-        for d in self.diagnosis:
+        async for d in self.diagnosis:
             print(f"Exploring {d} w/ {d.regex}")
             if d.regex.pattern != "":
                 s = d.regex.search(text)
@@ -110,14 +110,14 @@ class ProcessDenialRegex(DenialBase):
                     return s.groups("diagnosis")[0]
         return None
 
-    def get_procedure_and_diagnosis(self, text):
+    async def get_procedure_and_diagnosis(self, text):
         print("Getting procedure and diagnosis")
-        return (self.get_procedure(text), self.get_diagnosis(text))
+        return (await self.get_procedure(text), await self.get_diagnosis(text))
 
-    def get_denialtype(self, denial_text, procedure, diagnosis):
+    async def get_denialtype(self, denial_text, procedure, diagnosis):
         print(f"Getting denial types for {denial_text}")
         denials = []
-        for d in self.denialTypes:
+        async for d in self.denialTypes:
             if (
                 (
                     d.regex is not None
@@ -148,7 +148,7 @@ class ProcessDenialRegex(DenialBase):
         print(f"Collected: {denials}")
         return denials
 
-    def get_regulator(self, text):
+    async def get_regulator(self, text):
         regulators = []
         for r in self.regulators:
             if (
@@ -158,7 +158,7 @@ class ProcessDenialRegex(DenialBase):
                 regulators.append(r)
         return regulators
 
-    def get_plan_type(self, text):
+    async def get_plan_type(self, text):
         plans = []
         for p in self.planTypes:
             if p.regex.pattern != "" and p.regex.search(text) is not None:
@@ -169,9 +169,9 @@ class ProcessDenialRegex(DenialBase):
                 print(f"no match {p}")
         return plans
 
-    def get_appeal_templates(self, text, diagnosis):
+    async def get_appeal_templates(self, text, diagnosis):
         templates = []
-        for t in self.templates:
+        async for t in self.templates:
             if t.regex.pattern != "" and t.regex.search(text) is not None:
                 # Check if this requires a specific diagnosis
                 if t.diagnosis_regex.pattern != "":

@@ -15,13 +15,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v4
+      - uses: actions/setup-python@v5
 
       - name: Install uv
         uses: astral-sh/setup-uv@v3
 
       - name: Install dependencies
-        run: uv tool install tox
+        run: uv tool install tox --with tox-uv
 
       - name: Check style
         run:
@@ -41,13 +41,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v4
+      - uses: actions/setup-python@v5
 
       - name: Install uv
         uses: astral-sh/setup-uv@v3
 
-      - name: Install dependencies
-        run: uv tool install tox
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install tox
+        run: uv tool install tox --with tox-uv
 
       - name: Check types
         run:
@@ -70,10 +74,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ['310']
+        python: ['3.10']
         django: ['50']
         include:
-          - python: '310'
+          - python: '3.10'
             django: '50'
 
     name: Run the sync test suite (Python ${{ matrix.python }}, Django ${{ matrix.django }})
@@ -86,15 +90,17 @@ jobs:
       - name: Install system level packages
         run: sudo apt-get update && sudo apt-get install -y tesseract-ocr texlive && sudo apt-get clean
 
-      - uses: actions/setup-python@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
 
       - name: Install uv
         uses: astral-sh/setup-uv@v3
 
-      - name: Install dependencies
-        run: uv tool install tox
+      - name: Install tox
+        run: uv tool install tox --with tox-uv
 
-      - name: Install
+      - name: Install pandoc
         uses: pandoc/actions/setup@v1
         with:
           version: 2.19
@@ -173,10 +179,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ['310']
+        python: ['3.10']
         django: ['50']
         include:
-          - python: '310'
+          - python: '3.10'
             django: '50'
 
     name: Run the async test suite (Python ${{ matrix.python }}, Django ${{ matrix.django }})
@@ -189,15 +195,17 @@ jobs:
       - name: Install system level packages
         run: sudo apt-get update && sudo apt-get install -y tesseract-ocr texlive && sudo apt-get clean
 
-      - uses: actions/setup-python@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
 
       - name: Install uv
         uses: astral-sh/setup-uv@v3
 
-      - name: Install dependencies
-        run: uv tool install tox
+      - name: Install tox
+        run: uv tool install tox --with tox-uv
 
-      - name: Install
+      - name: Install pandoc
         uses: pandoc/actions/setup@v1
         with:
           version: 2.19

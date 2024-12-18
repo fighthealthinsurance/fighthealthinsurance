@@ -300,22 +300,35 @@ class GenerateAppeal(View):
             pass
 
 
-class AppealsBackend(View):
-    """Streaming back the appeals as json :D"""
+class StreamingEntityBackend(View):
+    """Streaming Entity Extraction"""
 
-    def post(self, request):
+    async def post(self, request):
         print(request)
         print(request.POST)
         form = DenialRefForm(request.POST)
         if form.is_valid():
-            return AppealsBackendHelper.generate_appeals(request.POST)
+            return await DenialCreatorHelper.extract_entity(**form.cleaned_data)
         else:
             print(f"Error processing {form}")
 
-    def get(self, request):
+
+class AppealsBackend(View):
+    """Streaming back the appeals as json :D"""
+
+    async def post(self, request):
+        print(request)
+        print(request.POST)
+        form = DenialRefForm(request.POST)
+        if form.is_valid():
+            return await AppealsBackendHelper.generate_appeals(request.POST)
+        else:
+            print(f"Error processing {form}")
+
+    async def get(self, request):
         form = DenialRefForm(request.GET)
         if form.is_valid():
-            return AppealsBackendHelper.generate_appeals(request.GET)
+            return await AppealsBackendHelper.generate_appeals(request.GET)
         else:
             print(f"Error processing {form}")
 
@@ -411,6 +424,39 @@ class InitialProcessView(generic.FormView):
         )
 
 
+class EntityExtractView(generic.FormView):
+    form_class = EntityExtractForm
+    template_name = "entity_extract.html"
+
+    def form_valid(self, form):
+        denial_response = DenialCreatorHelper.update_denial(**form.cleaned_data)
+        form = PostInferedForm(
+            initial={
+                "denial_type": denial_response.selected_denial_type,
+                "denial_id": denial_response.denial_id,
+                "email": form.cleaned_data["email"],
+                "your_state": denial_response.your_state,
+                "procedure": denial_response.procedure,
+                "diagnosis": denial_response.diagnosis,
+                "semi_sekret": denial_response.semi_sekret,
+            }
+        )
+
+        # TODO: This should be a redirect to a new view to prevent
+        # double-submission and other potentially unexpected issues. Normally,
+        # this can be done by assigning a success_url to the view and Django
+        # will take care of the rest. Since we need to pass extra information
+        # along, we can use get_success_url to generate a querystring.
+        return render(
+            self.request,
+            "categorize.html",
+            context={
+                "post_infered_form": form,
+                "upload_more": True,
+            },
+        )
+
+
 class PlanDocumentsView(generic.FormView):
     form_class = HealthHistory
     template_name = "health_history.html"
@@ -445,29 +491,28 @@ class DenialCollectedView(generic.FormView):
 
     def form_valid(self, form):
         denial_response = DenialCreatorHelper.update_denial(**form.cleaned_data)
-
-        form = PostInferedForm(
-            initial={
-                "denial_type": denial_response.selected_denial_type,
-                "denial_id": denial_response.denial_id,
-                "email": form.cleaned_data["email"],
-                "your_state": denial_response.your_state,
-                "procedure": denial_response.procedure,
-                "diagnosis": denial_response.diagnosis,
-                "semi_sekret": denial_response.semi_sekret,
-            }
-        )
-
         # TODO: This should be a redirect to a new view to prevent
         # double-submission and other potentially unexpected issues. Normally,
         # this can be done by assigning a success_url to the view and Django
         # will take care of the rest. Since we need to pass extra information
         # along, we can use get_success_url to generate a querystring.
+        new_form = EntityExtractForm(
+            initial={
+                "denial_id": form.cleaned_data["denial_id"],
+                "email": form.cleaned_data["email"],
+                "semi_sekret": form.cleaned_data["semi_sekret"],
+            }
+        )
         return render(
             self.request,
-            "categorize.html",
+            "entity_extract.html",
             context={
-                "post_infered_form": form,
-                "upload_more": True,
+                "form_context": {
+                    "denial_id": form.cleaned_data["denial_id"],
+                    "email": form.cleaned_data["email"],
+                    "semi_sekret": form.cleaned_data["semi_sekret"],
+                },
+                "form": new_form,
+                "next": reverse("eev"),
             },
         )

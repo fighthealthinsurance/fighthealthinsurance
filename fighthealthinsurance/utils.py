@@ -1,3 +1,5 @@
+import asyncio
+from inspect import isabstract
 import concurrent
 import os
 import re
@@ -97,6 +99,10 @@ def all_subclasses(cls: type[U]) -> set[type[U]]:
     )
 
 
+def all_concrete_subclasses(cls: type[U]):
+    return [c for c in all_subclasses(cls) if not isabstract(c)]
+
+
 url_pattern = "https?:\\/\\/(?:www\\.)?[-a-zA-Z0-9@:%._\\+~#=]{1,256}\\.[a-zA-Z0-9()]{1,6}\\b(?:[-a-zA-Z0-9@:%_\\+.~#?&\\/=]*)"
 url_re = re.compile(url_pattern, re.IGNORECASE)
 
@@ -113,3 +119,17 @@ def url_fixer(result: Optional[str]) -> Optional[str]:
                 print(f"Removing invalud url {u}")
                 result = result.replace(u, "")
         return result
+
+
+async def filter_async_generator(predicate, list_in):
+    for elem in list_in:
+        if await predicate(elem):
+            yield elem
+
+
+# Interleave empty for keep alive -- hacky we should fix later.
+def interleave_iterator_for_keep_alive(iterator):
+    for item in iterator:
+        yield ""
+        yield item
+        yield ""

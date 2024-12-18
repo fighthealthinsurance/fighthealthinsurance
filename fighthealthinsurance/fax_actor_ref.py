@@ -4,6 +4,7 @@ import time
 import ray
 from fighthealthinsurance.fax_actor import FaxActor
 
+
 class FaxActorRef:
     fax_actor = None
 

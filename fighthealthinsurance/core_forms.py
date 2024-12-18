@@ -105,6 +105,10 @@ class FaxForm(DenialRefForm):
     include_provided_health_history = forms.BooleanField(required=False)
 
 
+class EntityExtractForm(DenialRefForm):
+    """Entity Extraction form."""
+
+
 class FaxResendForm(forms.Form):
     fax_phone = forms.CharField(required=True)
     uuid = forms.UUIDField(required=True, widget=forms.HiddenInput)

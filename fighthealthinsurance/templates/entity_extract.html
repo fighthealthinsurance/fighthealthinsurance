@@ -1,0 +1,33 @@
+{% extends 'single_optional_question.html' %}
+{% load compress %}
+{% load static %}
+{% block title %}
+Optional: Wait for entity extraction to finish.
+{% endblock title %}
+
+{% block pre-roll %}
+<script src='{% static "js/dist/entity_fetcher.bundle.js" %}' defer></script>
+{% endblock pre-roll %}
+
+{% block formexplanation %}
+<div class="waiting-msg" id="waiting-msg">
+    We are currently using machine learning to some initial processing on your documents. You can skip forward without waiting for it to finish _OR_ wait a minute for this message to go away.
+</div>
+<script>
+  // Call the typescript on load
+  document.addEventListener('DOMContentLoaded', () => {
+      const backendUrl = "{% url 'streamingentity_json_backend' %}";
+      const data = {
+	  {% autoescape off %}
+          ...{{form_context}},
+          {% endautoescape %}
+          ...{
+              'csrfmiddlewaretoken': '{{ csrf_token }}',
+              'timbit': 'is most awesomex2'}}
+      const retries = 0;
+
+      // Call the doQuery function
+      doQuery(backendUrl, data, retries);
+  });
+</script>
+{% endblock formexplanation %}

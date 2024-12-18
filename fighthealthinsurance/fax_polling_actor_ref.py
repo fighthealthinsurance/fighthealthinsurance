@@ -7,6 +7,7 @@ from fighthealthinsurance.fax_polling_actor import FaxPollingActor
 
 class FaxPollingActorRef:
     """A reference to the email polling actor."""
+
     fax_polling_actor = None
 
     @cached_property
