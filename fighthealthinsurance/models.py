@@ -317,7 +317,7 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     procedure = models.CharField(max_length=300, primary_key=False, null=True)
     diagnosis = models.CharField(max_length=300, primary_key=False, null=True)
     # Keep track of if the async thread finished extracting procedure and diagnosis
-    extract_procedure_diagnosis_finished = models.BooleanField(default=False)
+    extract_procedure_diagnosis_finished = models.BooleanField(default=False, null=True)
     appeal_text = models.TextField(primary_key=False, null=True)
     raw_email = models.TextField(max_length=300, primary_key=False, null=True)
     created = models.DateTimeField(db_default=Now(), primary_key=False, null=True)
