@@ -14,7 +14,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: web-migrations
+  name: web-migrations-staging
   namespace: totallylegitco
 spec:
   ttlSecondsAfterFinished: 10
@@ -38,42 +38,15 @@ spec:
           imagePullPolicy: Always
       restartPolicy: OnFailure
 ---
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: web-actor-launch
-  namespace: totallylegitco
-spec:
-  ttlSecondsAfterFinished: 10
-  template:
-    metadata:
-      labels:
-        group: fight-health-insurance-webbackend-batch
-        special: web-primary-pod
-    spec:
-      containers:
-        - image: holdenk/fight-health-insurance:${FHI_VERSION}
-          name: totallylegitco
-          env:
-          - name: POLLING_ACTORS
-            value: "1"
-          envFrom:
-          - secretRef:
-              name: fight-health-insurance-secret
-          - secretRef:
-              name: fight-health-insurance-primary-secret
-          imagePullPolicy: Always
-      restartPolicy: OnFailure
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: web
+  name: web-staging
   namespace: totallylegitco
   labels:
-    app: fight-health-insurance
+    app: fight-health-insurance-staging
 spec:
-  replicas: 8
+  replicas: 1
   selector:
     matchLabels:
       app: fight-health-insurance
@@ -81,7 +54,7 @@ spec:
     metadata:
       labels:
         app: fight-health-insurance
-        group: fight-health-insurance-webbackend
+        group: fight-health-insurance-webbackend-staging
     spec:
       topologySpreadConstraints:
       - maxSkew: 2
@@ -107,7 +80,7 @@ spec:
             httpGet:
               httpHeaders:
                 - name: Host
-                  value: "www.fighthealthinsurance.com"
+                  value: "staging.fighthealthinsurance.com"
               path: /
               port: 80
             periodSeconds: 180
@@ -115,7 +88,7 @@ spec:
             httpGet:
               httpHeaders:
                 - name: Host
-                  value: "www.fighthealthinsurance.com"
+                  value: "staging.fighthealthinsurance.com"
               path: /
               port: 80
             periodSeconds: 10
@@ -130,7 +103,7 @@ kind: Service
 metadata:
   labels:
     group: fight-health-insurance
-  name: web-svc
+  name: staging-web-svc
   namespace: totallylegitco
 spec:
   ports:
@@ -139,14 +112,14 @@ spec:
     protocol: TCP
     targetPort: web
   selector:
-    group: fight-health-insurance-webbackend
+    group: fight-health-insurance-webbackend-staging
   sessionAffinity: None
   type: ClusterIP
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: fight-health-insurance-ingress
+  name: fight-health-insurance-staging-ingress
   namespace: totallylegitco
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt
@@ -161,59 +134,16 @@ spec:
   ingressClassName: nginx
   tls:
   - hosts:
-      - www.fighthealthinsurance.com
-      - fighthealthinsurance.com
-      - www.fuckhealthinsurance.com
-      - www.appealhealthinsurance.com
-    secretName: combined-tls-secret
+      - staging.fighthealthinsurance.com
+    secretName: combined-tls-secret-staging
   rules:
-    - host: www.fuckhealthinsurance.com
+    - host: staging.fighthealthinsurance.com
       http:
         paths:
           - path: /
             pathType: Prefix
             backend:
               service:
-                name:  web-svc
-                port:
-                  number: 80
-    - host: fuckhealthinsurance.com
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name:  web-svc
-                port:
-                  number: 80
-    - host: www.appealhealthinsurance.com
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name:  web-svc
-                port:
-                  number: 80
-    - host: www.fighthealthinsurance.com
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name:  web-svc
-                port:
-                  number: 80
-    - host: fighthealthinsurance.com
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name:  web-svc
+                name:  staging-web-svc
                 port:
                   number: 80

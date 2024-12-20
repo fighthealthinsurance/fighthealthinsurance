@@ -332,7 +332,7 @@ class Prod(Base):
                 "USER": os.getenv("DBUSER"),
                 "PASSWORD": os.getenv("DBPASSWORD"),
                 "HOST": os.getenv("DBHOST"),
-                "ATOMIC_REQUESTS": True,
+                "ATOMIC_REQUESTS": False,
                 "OPTIONS": {
                     "charset": "utf8mb4",
                     "use_unicode": True,

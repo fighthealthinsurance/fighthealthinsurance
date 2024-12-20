@@ -1,10 +1,11 @@
+import asyncstdlib as a
 from asgiref.sync import sync_to_async, async_to_sync
 import asyncio
 import datetime
 import json
 from dataclasses import dataclass
 from string import Template
-from typing import Awaitable, Any, Optional, Tuple, Iterable
+from typing import AsyncIterator, Awaitable, Any, Optional, Tuple, Iterable
 import threading
 
 from django.core.files import File
@@ -589,15 +590,14 @@ class DenialCreatorHelper:
             asyncio.sleep(0, result=""),
         ]
 
-        # Run the tasks in order
-        def wait_for_result(r):
-            asyncio.run(r)
-            return f"{r}"
+        async def waitAndReturnNewline(e: Awaitable) -> str:
+            await e
+            return "\n"
 
-        responses = map(wait_for_result, asyncs)
-        formatted = map(lambda e: e + "\n", responses)
+        formatted: AsyncIterator[str] = a.map(waitAndReturnNewline, asyncs)
+        interleaved = interleave_iterator_for_keep_alive(formatted)
         return StreamingHttpResponse(
-            interleave_iterator_for_keep_alive(formatted),
+            interleaved,
             content_type="application/json",
         )
 
@@ -620,14 +620,12 @@ class DenialCreatorHelper:
         )
         print(f"Ok lets rock with {denial_types}")
         for dt in denial_types:
-            print(f"K: {dt}")
             try:
                 await DenialTypesRelation.objects.acreate(
                     denial=denial, denial_type=dt, src=await cls.regex_src()
                 )
             except Exception as e:
-                print(f"Failed with {e}")
-            print(f"meep")
+                print(f"Failed setting denial type with {e}")
         print(f"Done setting denial types")
 
     @classmethod
@@ -645,10 +643,9 @@ class DenialCreatorHelper:
         if appeal_fax_number is not None:
             # TODO: More flexible regex matching
             if (
-                (appeal_fax_number not in denial.denial_text and
-                 "Fax" not in denial.denial_text)
-                or len(appeal_fax_number) > 30
-            ):
+                appeal_fax_number not in denial.denial_text
+                and "Fax" not in denial.denial_text
+            ) or len(appeal_fax_number) > 30:
                 appeal_fax_number = None
         if appeal_fax_number is not None:
             denial = await Denial.objects.filter(denial_id=denial_id).aget()
@@ -731,8 +728,8 @@ class AppealsBackendHelper:
         # Get the current info
         await asyncio.sleep(0)
         denial = await Denial.objects.filter(
-                denial_id=denial_id, semi_sekret=semi_sekret, hashed_email=hashed_email
-            ).aget()
+            denial_id=denial_id, semi_sekret=semi_sekret, hashed_email=hashed_email
+        ).aget()
 
         non_ai_appeals: List[str] = list(
             map(
@@ -816,15 +813,16 @@ class AppealsBackendHelper:
             non_ai_appeals=non_ai_appeals,
         )
 
-        def save_appeal(appeal_text):
+        async def save_appeal(appeal_text: str) -> str:
             # Save all of the proposed appeals, so we can use RL later.
             t = time.time()
             print(f"{t}: Saving {appeal_text}")
             pa = ProposedAppeal(appeal_text=appeal_text, for_denial=denial)
-            pa.save()
+            await pa.asave()
             return appeal_text
 
-        def sub_in_appeals(appeal: str) -> str:
+        async def sub_in_appeals(appeal: str) -> str:
+            await asyncio.sleep(0)
             s = Template(appeal)
             ret = s.safe_substitute(
                 {
@@ -845,12 +843,18 @@ class AppealsBackendHelper:
             )
             return ret
 
-        filtered_appeals = filter(lambda x: x != None, appeals)
-        # TODO: Move out of hot path (async)
-        saved_appeals = map(save_appeal, filtered_appeals)
-        subbed_appeals = map(sub_in_appeals, saved_appeals)
-        subbed_appeals_json = map(lambda e: json.dumps(e) + "\n", subbed_appeals)
+        async def format_response(response: str) -> str:
+            return json.dumps(response) + "\n"
+
+        filtered_appeals: Iterator[str] = filter(lambda x: x != None, appeals)
+        # We convert to async here.
+        saved_appeals: AsyncIterator[str] = a.map(save_appeal, filtered_appeals)
+        subbed_appeals: AsyncIterator[str] = a.map(sub_in_appeals, saved_appeals)
+        subbed_appeals_json: AsyncIterator[str] = a.map(format_response, subbed_appeals)
+        interleaved: AsyncIterator[str] = interleave_iterator_for_keep_alive(
+            subbed_appeals_json
+        )
         return StreamingHttpResponse(
-            interleave_iterator_for_keep_alive(subbed_appeals_json),
+            interleaved,
             content_type="application/json",
         )

@@ -1,5 +1,6 @@
+import asyncstdlib
 import asyncio
-from inspect import isabstract
+from inspect import isabstract, isawaitable
 import concurrent
 import os
 import re
@@ -121,15 +122,17 @@ def url_fixer(result: Optional[str]) -> Optional[str]:
         return result
 
 
-async def filter_async_generator(predicate, list_in):
-    for elem in list_in:
-        if await predicate(elem):
-            yield elem
-
-
-# Interleave empty for keep alive -- hacky we should fix later.
 def interleave_iterator_for_keep_alive(iterator):
-    for item in iterator:
+    return asyncstdlib.iter(_interleave_iterator_for_keep_alive(iterator))
+
+
+async def _interleave_iterator_for_keep_alive(iterator):
+    yield ""
+    await asyncio.sleep(0)
+    async for item in iterator:
+        await asyncio.sleep(0)
         yield ""
+        await asyncio.sleep(0)
         yield item
+        await asyncio.sleep(0)
         yield ""

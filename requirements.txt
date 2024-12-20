@@ -1,5 +1,6 @@
 aiohttp
 asyncssh
+asyncstdlib
 beautifulsoup4==4.12.3
 black
 django>=5.0.0

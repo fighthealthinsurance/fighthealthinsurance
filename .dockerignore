@@ -169,3 +169,4 @@ a.tr
 !./static/js/node_modules/tesseract.js-core/tesseract-core.wasm.js
 !./static/js/node_modules/tesseract.js/dist/worker.min.js
 !./static/js/node_modules/tesseract.js/dist/worker.min.js.map
+!./static/js/node_modules/pdfjs-dist/build/*
