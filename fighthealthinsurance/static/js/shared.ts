@@ -20,6 +20,6 @@ const storeLocal = async function(evt: Event) {
 const node_module_path = "/static/js/node_modules/";
 
 // pdf.js
-pdfjsLib.GlobalWorkerOptions.workerSrc = node_module_path + "pdfjs-dist/build/pdf.worker.js";
+pdfjsLib.GlobalWorkerOptions.workerSrc = node_module_path + "pdfjs-dist/build/pdf.worker.min.js";
 
 export { storeLocal, pdfjsLib, node_module_path,  getLocalStorageItemOrDefault, getLocalStorageItemOrDefaultEQ};
