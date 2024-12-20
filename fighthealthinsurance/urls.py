@@ -21,6 +21,8 @@ from django.urls import include, path
 from django.conf.urls.static import static
 from django.views.decorators.cache import cache_control, cache_page
 from django.conf import settings
+from django.views.generic.base import RedirectView
+from django.contrib.staticfiles.storage import staticfiles_storage
 
 from fighthealthinsurance import views
 from fighthealthinsurance import fax_views
@@ -178,6 +180,10 @@ urlpatterns = [
             cache_page(60 * 60 * 2)(views.ContactView.as_view())
         ),
         name="contact",
+    ),
+    path(
+        "favicon.ico",
+        RedirectView.as_view(url=staticfiles_storage.url("images/favicon.ico")),
     ),
 ]
 

@@ -24,73 +24,126 @@ About Us
         <br><br>
 
         We also intend to offer a paid version for doctors, therapists, and other practitioner offices, hospitals, etc. since they deal with so many denials.
-        If that sounds like you (or your business), we would love <a href="{% url 'pro_version' %}">to keep in touch</a> (and optionally, a small amount of
+        If that sounds like you (or your business), we would love <a class="link" href="{% url 'pro_version' %}">to keep in touch</a> (and optionally, a small amount of
         money if you are interested in being a first beta user).
         <br><br>
     <h5>As Featured In</h5>
     <div class="row no-gutters">
-        <div class="col-md-2 text-center p-0">
-            <a href="https://www.fastcompany.com/91209422/if-your-health-insurance-denies-a-claim-this-tool-uses-ai-to-help-you-fight-back" target="_blank" rel="noopener noreferrer">
-            <img src="{% static '/images/fastcompanylogo.png' %}" alt="fastcompany-logo" class="img-fluid img-thumbnail"></a>
+        <div class="col-md-12">
+            <div class="row no-gutters">
+                <div class="col-md-2 text-center p-2">
+                <a href="https://www.fastcompany.com/91209422/if-your-health-insurance-denies-a-claim-this-tool-uses-ai-to-help-you-fight-back" target="_blank" rel="noopener noreferrer">
+                <img src="{% static '/images/fastcompanylogo.png' %}" alt="fastcompany-logo" class="img-fluid img-thumbnail"></a>
         </div>
-        <div class="col-md-2 text-center p-0">
+        <div class="col-md-2 text-center p-2">
+            <a href="https://www.cbsnews.com/news/health-insurance-costs-inflation-denials-luigi-mangione-united-healthcare" target="_blank" rel="noopener noreferrer">
+            <img src="{% static '/images/cbslogo.png' %}" alt="cbs-logo" class="img-fluid img-thumbnail"></a>
+        </div>
+        <div class="col-md-2 text-center p-2">
+            <a href="https://www.forbes.com/sites/amyfeldman/2024/12/11/these-entrepreneurs-are-using-ai-to-fight-health-insurance-claims-denials" target="_blank" rel="noopener noreferrer">
+            <img src="{% static '/images/forbeslogo.png' %}" alt="forbes-logo" class="img-fluid img-thumbnail"></a>
+        </div>
+        <div class="col-md-2 text-center p-2">
             <a href="https://www.wbur.org/hereandnow/2024/11/11/ai-insurance-appeals" target="_blank" rel="noopener noreferrer">
             <img src="{% static '/images/wbrlogo.png' %}" alt="wbr-logo" class="img-fluid img-thumbnail"></a>
         </div>
-        <div class="col-md-2 text-center p-0">
+        <div class="col-md-2 text-center p-2">
             <a href="https://armandalegshow.com/episode/fight-health-insurance-with-ai" target="_blank" rel="noopener noreferrer">
             <img src="{% static '/images/armleglogo.png' %}" alt="armleg-logo" class="img-fluid img-thumbnail"></a>
         </div>
-        <div class="col-md-2 text-center p-0">
+        </div>
+        </div>
+    </div>
+    <div class="row no-gutters mt-3">
+        <div class="col-md-12">
+            <div class="row no gutters justify-content-center"
+            style="box-shadow: rgba(240, 46, 170, 0.4) 0px 5px, rgba(240, 46, 170, 0.3) 0px 10px, rgba(240, 46, 170, 0.2) 0px 15px, rgba(240, 46, 170, 0.1) 0px 20px, rgba(240, 46, 170, 0.05) 0px 25px;"
+            >
+        <div class="col-md-2 text-center p-2">
             <a href="https://www.newsnationnow.com/video/fighting-health-insurance-companies-with-ai-newsnation-prime/10025608" target="_blank" rel="noopener noreferrer">
             <img src="{% static '/images/newsnationlogo.png' %}" alt="newsnation-logo" class="img-fluid img-thumbnail"></a>
         </div>
-        <div class="col-md-2 text-center p-0">
+        <div class="col-md-2 text-center p-2">
             <a href="https://sfstandard.com/2024/08/23/holden-karau-fight-health-insurance-appeal-claims-denials" target="_blank" rel="noopener noreferrer">
             <img src="{% static '/images/sflogo.png' %}" alt="sfstandard-logo" class="img-fluid img-thumbnail"></a>
         </div>
-    </div>
-</p>
-    <div class="spacer"></div>
-
-    <div class="row align-items-center">
-    <div class="col-md-4 text-center">
-        <img src="{% static '/images/holden.png' %}" alt="holden-pic" class="img-fluid img-thumbnail">
-        <p>
-            <a href="https://x.com/holdenkarau" target="_blank" rel="noopener noreferrer">
-            <img src="{% static '/images/twitterlogo.png' %}" alt="twitter-logo" class="img-fluid img-logo">
-            </a>
-
-            <a href="https://www.linkedin.com/in/holdenkarau" target="_blank" rel="noopener noreferrer">
-            <img src="{% static '/images/linkedinlogo.png' %}" alt="linkedin-logo" class="img-fluid img-logo">
-            </a>
-
-            <a href="https://www.threads.net/@hkarau" target="_blank" rel="noopener noreferrer">
-            <img src="{% static '/images/threadslogo.png' %}" alt="threads-logo" class="img-fluid img-logo">
-            </a>
-
-            <a href="https://bsky.app/profile/holdenkarau.com" target="_blank" rel="noopener noreferrer">
-            <img src="{% static '/images/blueskylogo.png' %}" alt="bluesky-logo" class="img-fluid img-logo">
-            </a>
-        </p>
-    </div>
-    <div class="col-md-8">
-            <p>Holden Karau is a Canadian-born trans-woman living in America who's been working in tech for more than a decade.
-            She's experienced the "joys" of American health insurance and helps her friends & loved ones navigate the seemingly random maze of disappointment and sadness.
-            Her dislike of health insurance companies treating her loved ones unfairly led her to create Fight Health Insurance.
-            Outside of fighting insurance companies and keeping them accountable, she rides motorcycles, works with big data and machine learning to pay the bills*,
-            spends time with her loved ones (most of all Professor Timbit), and dances to mashup music (or happy-hard-core if you're old enough to remember that). You can also follow her on all of the usual social media places where she talks about a mixture of these things (and sometimes live streams working on Fight Health Insurance)<a href=""></a>.</p>
-            <p>*For now: if any VC is out there, hit her up: <a href="holden@fighthealthinsurance.com">holden@fighthealthinsurance.com</a></p>
+        <div class="col-md-2 text-center p-2">
+            <a href="https://www.businessinsider.com/free-health-insurance-claim-denial-appeal-project-startup-2024-12" target="_blank" rel="noopener noreferrer">
+            <img src="{% static '/images/businessinsiderlogo.png' %}" alt="bi-logo" class="img-fluid img-thumbnail"></a>
+        </div>
+        <div class="col-md-2 text-center p-2">
+            <a href="https://www.statnews.com/2024/12/12/artificial-intelligence-appealing-health-insurance-denials" target="_blank" rel="noopener noreferrer">
+            <img src="{% static '/images/statlogo.png' %}" alt="stat-logo" class="img-fluid img-thumbnail"></a>
         </div>
     </div>
-    <div class="spacer"></div>
-    <div class="row align-items-center">
-    <div class="col-md-4 text-center">
-        <img src="{% static '/images/timbit-look-at-camera.jpg' %}" alt="timbit-look-at-camera" class="img-fluid img-thumbnail">
     </div>
-    <div class="col-md-8">
-      <p>Timbit is an American born sheltie whose fight with pet insurance to cover anesthesia during his root canal pushed Holden to finish Fight Health Insurance.</p>
-      <p>If you have comments, suggestions, or treat-based sponsorship (and are not an insurance company) you can reach him through our support team at <a href="support42@fighthealthinsurance.com">support42@fighthealthinsurance.com</a>.</p>
+    </div>
+</p>
+    <div class="spacer" style="margin-top: 5vh;"></div>
+
+    <div class="card-group">
+        <div class="card"
+        style="
+            border: none;
+            box-shadow: rgba(0, 0, 0, 0.07) 0px 1px 1px, rgba(0, 0, 0, 0.07) 0px 2px 2px, rgba(0, 0, 0, 0.07) 0px 4px 4px, rgba(0, 0, 0, 0.07) 0px 8px 8px, rgba(0, 0, 0, 0.07) 0px 16px 16px;"
+        >
+            <img src="{% static '/images/holden.png' %}" alt="holden-pic" class="img-fluid img-thumbnail">
+            <p style="display: block; align-self: center;">
+                <a href="https://x.com/holdenkarau" target="_blank" rel="noopener noreferrer">
+                <img src="{% static '/images/twitterlogo.png' %}" alt="twitter-logo" class="img-fluid img-logo">
+                </a>
+
+                <a href="https://www.linkedin.com/in/holdenkarau" target="_blank" rel="noopener noreferrer">
+                <img src="{% static '/images/linkedinlogo.png' %}" alt="linkedin-logo" class="img-fluid img-logo">
+                </a>
+
+                <a href="https://www.threads.net/@hkarau" target="_blank" rel="noopener noreferrer">
+                <img src="{% static '/images/threadslogo.png' %}" alt="threads-logo" class="img-fluid img-logo">
+                </a>
+
+                <a href="https://bsky.app/profile/holdenkarau.com" target="_blank" rel="noopener noreferrer">
+                <img src="{% static '/images/blueskylogo.png' %}" alt="bluesky-logo" class="img-fluid img-logo">
+                </a>
+            </p>
+            <div class="card-body">
+                <p class="card-text">
+                Holden Karau is a Canadian-born trans-woman living in America who's been working in tech for more than a decade.
+                She's experienced the "joys" of American health insurance and helps her friends & loved ones navigate the seemingly random maze of disappointment and sadness.
+                Her dislike of health insurance companies treating her loved ones unfairly led her to create Fight Health Insurance.
+                Outside of fighting insurance companies and keeping them accountable, she rides motorcycles, works with big data and machine learning to pay the bills*,
+                spends time with her loved ones (most of all Professor Timbit), and dances to mashup music (or happy-hard-core if you're old enough to remember that).
+                You can also follow her on all of the usual social media places where she talks about a mixture of these things (and sometimes live streams working on Fight Health Insurance)<a href=""></a>.
+                <p>*For now: if any VC is out there, hit her up:
+                <a class="link" href="mailto:holden@fighthealthinsurance.com">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-envelope" viewBox="0 0 16 16">
+                        <path d="M0 4a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2zm2-1a1 1 0 0 0-1 1v.217l7 4.2 7-4.2V4a1 1 0 0 0-1-1zm13 2.383-4.708 2.825L15 11.105zm-.034 6.876-5.64-3.471L8 9.583l-1.326-.795-5.64 3.47A1 1 0 0 0 2 13h12a1 1 0 0 0 .966-.741M1 11.105l4.708-2.897L1 5.383z"/>
+                    </svg>
+                    holden@fighthealthinsurance.com
+                </a>
+                </p>
+                </p>
+            </div>
+        </div>
+            <div class="card"
+            style="
+            border: none;
+            box-shadow: rgba(0, 0, 0, 0.07) 0px 1px 1px, rgba(0, 0, 0, 0.07) 0px 2px 2px, rgba(0, 0, 0, 0.07) 0px 4px 4px, rgba(0, 0, 0, 0.07) 0px 8px 8px, rgba(0, 0, 0, 0.07) 0px 16px 16px;"
+        >
+            <img src="{% static '/images/timbit-look-at-camera.jpg' %}" alt="timbit-look-at-camera" class="img-fluid img-thumbnail">
+            <br>
+            <br>
+            <div class="card-body">
+            <p class="card-text">
+            Professor Timbit is an American born sheltie whose fight with pet insurance to cover anesthesia during his root canal pushed Holden to finish Fight Health Insurance.</p>
+            <p>If you have comments, suggestions, or treat-based sponsorship (and are not an insurance company) you can reach him through our support team at
+            <a class="link" href="mailto:support42@fighthealthinsurance.com">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-envelope" viewBox="0 0 16 16">
+                    <path d="M0 4a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2zm2-1a1 1 0 0 0-1 1v.217l7 4.2 7-4.2V4a1 1 0 0 0-1-1zm13 2.383-4.708 2.825L15 11.105zm-.034 6.876-5.64-3.471L8 9.583l-1.326-.795-5.64 3.47A1 1 0 0 0 2 13h12a1 1 0 0 0 .966-.741M1 11.105l4.708-2.897L1 5.383z"/>
+                </svg>
+                support42@fighthealthinsurance.com
+            </a>
+            </div>
+        </div>
     </div>
 </div>
 {% endblock content %}
