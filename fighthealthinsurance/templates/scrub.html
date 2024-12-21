@@ -23,48 +23,42 @@ Upload your Health Insurance Denial
 	<div class="main-form">
 	<form method="post" action="{% url 'process' %}" id="fuck_health_insurance_form" enctype="multipart/form-data">
 		{% csrf_token %}
-	<div class="form-group">
-	    <div class="row">
-			<div class="col-md-4">
-				<label for="store_fname" class="form-label">First name*</label><br>
-				<input type="text" id="store_fname" name="fname" class="form-control"><br>
-			</div>
-			<div class="col-md-4">
-				<label for="store_lname" class="form-label">Last name*</label><br>
-				<input type="text" id="store_lname" name="lname" class="form-control"><br>
-			</div>
-		</div>
+	<div class="together-form-group">
+	  <div>
+	    <label for="store_fname" class="form-label">First name*</label><br>
+	    <input type="text" id="store_fname" name="fname" class="form-control">
+	  </div>
+	  <div>
+	    <label for="store_lname" class="form-label">Last name*</label><br>
+	    <input type="text" id="store_lname" name="lname" class="form-control">
+	  </div>
 	</div>
-			<div class="form-group">
-				<div class="row">
-				<div class="col-md-4">
-					<label for="email" class="form-label">
-					  <div id="email-label">Email**</div>
-						<span class="d-block small text-muted">
-						</span>
-					</label><br>
-					<input type="email" id="email" name="email" class="form-control"><br>
-				</div>
-			</div>
-		</div>
-		<div class="form-group">
-			<div class="row">
-				<div class="col-md-4">
-					<label for="store_street" class="form-label">
-						Street Address*
-						<small class="text-muted">(e.g. 283 24th St)</small>
-					</label><br>
-					<input type="text" id="store_street" name="street" class="form-control"><br>
-				</div>
-				<div class="col-md-4">
-					<label for="store_zip" class="form-label">
-						Zip Code
-						<small class="text-muted">(e.g. 94103)</small>
-					</label><br>
-					<input type="text" id="store_zip" name="zip" class="form-control"><br>
-				</div>
-			</div>
-	    </div>
+	<div class="form-group">
+	  <div>
+	    <label for="email" class="form-label">
+	      <div id="email-label">Email**</div>
+	      <span class="d-block small text-muted">
+	      </span>
+	    </label><br>
+	    <input type="email" id="email" name="email" class="form-control"><br>
+	  </div>
+	</div>
+	<div class="together-form-group">
+	  <div>
+	    <label for="store_street" class="form-label">
+	      Street Address*
+	      <small class="text-muted">(e.g. 283 24th St)</small>
+	    </label><br>
+	    <input type="text" id="store_street" name="street" class="form-control"><br>
+	  </div>
+	  <div>
+	    <label for="store_zip" class="form-label">
+	      Zip Code
+	      <small class="text-muted">(e.g. 94103)</small>
+	    </label><br>
+	    <input type="text" id="store_zip" name="zip" class="form-control"><br>
+	  </div>
+	</div>
 	{% if upload_more %}
 	<div id="image_select_magic" style="visibility:visible">
 	    <label class="custom-file-label" for="uploader">

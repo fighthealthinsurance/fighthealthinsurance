@@ -241,3 +241,34 @@ a.link:hover::after {
 #id_address, #id_business_name{
     width: 30em;
 }
+/* Handle form stacking v.s. non-stacking on mobile v.s. desktop. */
+
+/* Form Prompts Layout */
+
+.together-form-group {
+    /* Default layout for desktop */
+    display: flex;
+    flex-wrap: nowrap; /* Keep items on one line */
+}
+
+.together-form-group > div {
+  /* Individual prompt container */
+    margin: 10px;
+    flex: 1;
+}
+
+/* Mobile-specific layout (vertically stacked prompts) */
+@media only screen and (max-width: 768px) {
+    .together-form-group {
+	/* Switch to vertical layout on mobile */
+	flex-direction: column;
+	align-items: center;
+	display: flex;
+	flex-wrap: wrap;
+    }
+
+    .together-form-group > div {
+	/* Individual prompt container on mobile */
+	margin: 10px 0;
+    }
+}

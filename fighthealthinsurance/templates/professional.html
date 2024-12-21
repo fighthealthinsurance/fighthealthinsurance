@@ -24,50 +24,58 @@ Fighthealthinsurance Professional Version
       Honestly the $10 is to show that folks are willing to pay for it so we can get more resources.
       </p>
       <p>
+	<div class="main-form">
 	<form method="post">
 	  {% csrf_token %}
-            <div class="form group">
-            <label for="id_name">Name:</label>
-            {{ form.name }}
-            <label for="id_job_title_or_provider_type">Job title or Provider type:</label>
-            {{ form.job_title_or_provider_type}}
-            </div><br>
-
-            <div class="form group">
-            <label for="id_email">Email:</label>
-            {{ form.email }}
-            <label for="id_phone">Phone number:</label>
-            {{ form.phone_number }}
-            </div><br>
-
-            <div class="form group business_name">
+          <div class="together-form-group">
+	    <div>
+              <label for="id_name">Name:</label>
+              {{ form.name }}
+	    </div>
+	    <div>
+              <label for="id_job_title_or_provider_type">Job title or Provider type:</label>
+              {{ form.job_title_or_provider_type}}
+	    </div>
+          </div>
+          <div class="together-form-group">
+	    <div>
+              <label for="id_email">Email:</label>
+              {{ form.email }}
+	    </div>
+	    <div>
+              <label for="id_phone">Phone number:</label>
+              {{ form.phone_number }}
+	    </div>
+          </div>
+          <div class="form-group business_name">
             <label for="id_business_name" style="display: block;">Business name:</label>
             {{ form.business_name }}
-            </div><br>
+          </div><br>
 
-            <div class="form-group address">
+          <div class="form-group address">
             <label for="id_address" style="display: block;">Address:</label>
             {{ form.address}}
-            </div><br>
+          </div><br>
 
-            <div class="form-group most_common_denial">
+          <div class="form-group most_common_denial">
             <label for="id_most_common_denial">Most common denial:</label>
             {{ form.most_common_denial}}
-            </div>
+          </div>
 
-            <div class="form-group">
+          <div class="form-group">
             <label for="id_comments">Comments:</label>
             {{ form.comments}}
             <label for="clicked_for_paid">
             {{ form.clicked_for_paid }}
             {{ form.clicked_for_paid.label }}
             </label>
-            </div>
+          </div>
 
-            <div class="form-group">
-	      <input class="pro-submit-btn" type="submit" value="Submit">
-            </div>
+          <div class="form-group">
+	    <input class="pro-submit-btn" type="submit" value="Submit">
+          </div>
 	</form>
+	</div>
       </p>
     </div>
 </section>
