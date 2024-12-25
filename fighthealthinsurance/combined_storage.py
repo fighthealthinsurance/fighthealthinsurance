@@ -8,19 +8,20 @@ from stopit import ThreadingTimeout as Timeout
 @deconstructible(path="fighthealthinsurance.combined_storage.CombinedStorage")
 class CombinedStorage(Storage):
     """A combined storage backend that uses timeouts."""
+    backends: list[Storage]
 
-    def __init__(self, *args):
-        self.backends = args
+    def __init__(self, *args: Storage):
+        self.backends = list(args)
 
-    def open(self, *args, **kwargs):
+    def open(self, name: str, mode: str = 'rb'):
         last_error: Optional[BaseException] = None
         for backend in self.backends:
             try:
                 with Timeout(2.0) as timeout_ctx:
-                    return backend.open(*args, **kwargs)
+                    return backend.open(name, mode=mode)
             except Exception as e:
                 print(
-                    f"Error opening from {args} {kwargs} on backend {backend} from {self.backends}: {e}"
+                    f"Error opening from {name} {mode} on backend {backend} from {self.backends}: {e}"
                 )
                 last_error = e
         if last_error is not None:
@@ -29,14 +30,14 @@ class CombinedStorage(Storage):
             )
             raise last_error
 
-    def delete(self, *args, **kwargs):
+    def delete(self, name: str):
         last_error: Optional[BaseException] = None
         for backend in self.backends:
             try:
                 with Timeout(1.0) as timeout_ctx:
-                    return backend.delete(*args, **kwargs)
+                    return backend.delete(name)
             except Exception as e:
-                print(f"Error {e}")
+                print(f"Error {e} deleteing {name} from {self}")
                 last_error = e
         if last_error is not None:
             raise last_error
