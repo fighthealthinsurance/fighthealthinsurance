@@ -294,6 +294,9 @@ class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # t
             print(f"Constructed temp path {f.name}")
             return f.name
 
+    def __str__(self):
+        return f"{self.fax_id} -- {self.email} -- {self.paid} -- {self.fax_success}"
+
 
 class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignore
     denial_id = models.AutoField(primary_key=True, null=False)
