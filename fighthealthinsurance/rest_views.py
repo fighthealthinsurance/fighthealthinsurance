@@ -1,5 +1,4 @@
-from asgiref.sync import sync_to_async, async_to_sync
-import asyncio
+from asgiref.sync import async_to_sync
 import json
 
 from fighthealthinsurance.common_view_logic import *
@@ -19,7 +18,7 @@ class Ping(APIView):
 class CheckStorage(APIView):
     def get(self, request):
         es = settings.EXTERNAL_STORAGE
-        with Timeout(2.0) as timeout_ctx:
+        with Timeout(2.0) as _timeout_ctx:
             list = es.listdir("./")
             return Response(status=status.HTTP_204_NO_CONTENT)
         return Response(status=status.HTTP_503_SERVICE_UNAVAILABLE)

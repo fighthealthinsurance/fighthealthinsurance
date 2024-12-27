@@ -1,9 +1,9 @@
-from django.core.files import File
+from django.core.files.base import File
 from django.core.files.storage import Storage
 from django.utils.deconstruct import deconstructible
-from typing import Any, Optional, IO
 
 from stopit import ThreadingTimeout as Timeout
+from typing import Any, Optional, IO
 
 
 @deconstructible(path="fighthealthinsurance.combined_storage.CombinedStorage")
@@ -19,7 +19,9 @@ class CombinedStorage(Storage):
         for backend in self.backends:
             try:
                 with Timeout(2.0) as _timeout_ctx:
-                    return backend.open(name, mode=mode)
+                    result = backend.open(name, mode=mode)
+                    assert isinstance(result, File), "Opened object is not a File instance."
+                    return result
             except Exception as e:
                 print(
                     f"Error opening from {name} {mode} on backend {backend} from {self.backends}: {e}"
@@ -33,7 +35,7 @@ class CombinedStorage(Storage):
         else:
             raise Exception("No backends errored but still did not succeed.")
 
-    def delete(self, name: str):
+    def delete(self, name: str) -> None:
         last_error: Optional[BaseException] = None
         for backend in self.backends:
             try:
@@ -45,7 +47,9 @@ class CombinedStorage(Storage):
         if last_error is not None:
             raise last_error
 
-    def save(self, name: Optional[str], content: IO[Any], max_length=None):
+    def save(self, name: Optional[str], content: IO[Any], max_length: Optional[int]=None) -> str:
+        l: Optional[str] = None
+        last_error: Optional[BaseException] = None
         for backend in self.backends:
             try:
                 with Timeout(4.0) as _timeout_ctx:
@@ -55,25 +59,28 @@ class CombinedStorage(Storage):
                         max_length=max_length)
             except Exception as e:
                 print(f"Error saving {e} to {backend}")
-        return l
+                last_error = e
+        if l is None:
+            raise Exception(
+                f"Failed to save to any backend -- last error {last_error}")
+        else:
+            return l
 
-    def url(self, *args, **kwargs):
-        last_error = None
+    def url(self, name: Optional[str]) -> str:
+        last_error: Optional[BaseException] = None
         for backend in self.backends:
             try:
                 with Timeout(2.0) as _timeout_ctx:
-                    return backend.url(*args, **kwargs)
+                    return backend.url(name)
             except Exception as e:
                 print(f"Error saving {e} to {backend}")
         if last_error is not None:
             raise last_error
         else:
-            return None
+            raise Exception("No backends?")
 
-    def exists(self, name):
-        if name is None:
-            return False
-        last_error = None
+    def exists(self, name: str) -> bool:
+        last_error: Optional[BaseException] = None
         for backend in self.backends:
             try:
                 with Timeout(2.0) as _timeout_ctx:

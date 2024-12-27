@@ -2,14 +2,16 @@
 # Covered by https://stackoverflow.com/help/licensing
 import os
 
+from typing import Any
+
 from django.contrib.auth import get_user_model
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandParser
 
 
 class Command(BaseCommand):
     help = "Creates an admin user non-interactively if it doesn't exist"
 
-    def add_arguments(self, parser):
+    def add_arguments(self, parser: CommandParser) -> None:
         parser.add_argument("--username", help="Admin's username")
         parser.add_argument("--email", help="Admin's email")
         parser.add_argument("--password", help="Admin's password")
@@ -17,7 +19,7 @@ class Command(BaseCommand):
             "--no-input", help="Read options from the environment", action="store_true"
         )
 
-    def handle(self, *args, **options):
+    def handle(self, *args: str, **options) -> None:
         User = get_user_model()
 
         if options["no_input"]:
@@ -31,3 +33,4 @@ class Command(BaseCommand):
                 email=options["email"],
                 password=options["password"],
             )
+        return

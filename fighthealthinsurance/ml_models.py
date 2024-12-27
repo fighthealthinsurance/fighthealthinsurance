@@ -419,7 +419,7 @@ class RemoteOpenLike(RemoteModel):
             print(f"Error {e} {traceback.format_exc()} calling {api_base}")
             return None
         try:
-            r = json_result["choices"][0]["message"]["content"]
+            r: str = json_result["choices"][0]["message"]["content"]
             print(f"Got {r} from {model} w/ {api_base} {self}")
             return r
         except Exception as e:

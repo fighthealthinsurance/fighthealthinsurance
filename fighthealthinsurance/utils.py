@@ -6,7 +6,7 @@ import os
 import re
 from concurrent.futures import Future
 from functools import reduce
-from typing import Iterator, List, Optional, TypeVar
+from typing import AsyncIterator, Iterator, List, Optional, TypeVar
 from uuid import UUID
 
 import requests
@@ -33,7 +33,8 @@ maybe_bad_url_endings = re.compile("^(.*)[\\.\\:\\;\\,\\?\\>]+$")
 def markdown_escape(string: Optional[str]) -> str:
     if string is None:
         return ""
-    return esc_format(string, esc=True)
+    result: str= esc_format(string, esc=True)
+    return result
 
 
 def is_valid_url(url) -> bool:
@@ -122,11 +123,11 @@ def url_fixer(result: Optional[str]) -> Optional[str]:
         return result
 
 
-def interleave_iterator_for_keep_alive(iterator):
+def interleave_iterator_for_keep_alive(iterator: AsyncIterator[str]) -> AsyncIterator[str]:
     return asyncstdlib.iter(_interleave_iterator_for_keep_alive(iterator))
 
 
-async def _interleave_iterator_for_keep_alive(iterator):
+async def _interleave_iterator_for_keep_alive(iterator: AsyncIterator[str]) -> AsyncIterator[str]:
     yield ""
     await asyncio.sleep(0)
     async for item in iterator:

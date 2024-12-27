@@ -1,9 +1,7 @@
 import os
 
 import ray
-import asyncio
 import time
-from asgiref.sync import sync_to_async
 
 name = "EmailPollingActor"
 

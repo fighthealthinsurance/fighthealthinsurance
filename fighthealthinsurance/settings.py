@@ -13,7 +13,6 @@ https://docs.djangoproject.com/en/4.0/ref/settings/
 import os
 from pathlib import Path
 import re
-from typing import *
 import traceback
 from functools import cached_property
 
@@ -55,7 +54,7 @@ class Base(Configuration):
 
     NEWSLETTER_THUMBNAIL = "sorl-thumbnail"
 
-    ALLOWED_HOSTS: List[str] = ["*"]
+    ALLOWED_HOSTS: list[str] = ["*"]
 
     # Application definition
 
@@ -312,15 +311,15 @@ class Prod(Base):
 
     @property
     def SECRET_KEY(self):
-        return os.getenv("SECRET_KEY")
+        return os.getenv("SECRET_KEY", "")
 
     @property
     def STRIPE_API_SECRET_KEY(self):
-        return os.getenv("STRIPE_LIVE_SECRET_KEY")
+        return os.getenv("STRIPE_LIVE_SECRET_KEY", "")
 
     @property
     def STRIPE_API_PUBLISHABLE_KEY(self):
-        return os.getenv("STRIPE_LIVE_PUBLISHABLE_KEY")
+        return os.getenv("STRIPE_LIVE_PUBLISHABLE_KEY", "")
 
     @property
     def DATABASES(self):
@@ -395,8 +394,6 @@ class Prod(Base):
     @cached_property
     def EXTERNAL_STORAGE_B(self):
         try:
-            from django.core.files.storage import storages
-
             if self.MINIO_STORAGE_ENDPOINT is not None:
                 minio_client = m.Minio(
                     self.MINIO_STORAGE_ENDPOINT,
@@ -410,6 +407,7 @@ class Prod(Base):
                     bucket_name=self.MINIO_STORAGE_MEDIA_BUCKET_NAME,
                     auto_create_bucket=True,
                 )
+                return minio
             else:
                 raise Exception("No storage endpoint configured")
         except Exception as e:
