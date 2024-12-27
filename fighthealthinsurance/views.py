@@ -250,7 +250,7 @@ class ChooseAppeal(View):
             )
             # Add the possible articles for inclusion
             if candidate_articles is not None:
-                for article in candidate_articles:
+                for article in candidate_articles[0:6]:
                     article_id = article.pmid
                     title = article.title
                     link = f"http://www.ncbi.nlm.nih.gov/pubmed/{article_id}"

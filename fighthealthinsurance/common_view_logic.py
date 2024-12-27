@@ -192,7 +192,7 @@ class SendFaxHelper:
             x for x in map(pmt.article_as_pdf, pubmed_docs) if x is not None
         ]
         files_for_fax.extend(pubmed_docs_paths)
-        doc_path = flexible_fax_magic.assemble_single_output(
+        doc_path = async_to_sync(flexible_fax_magic.assemble_single_output)(
             input_paths=files_for_fax, extra="", user_header=str(uuid.uuid4())
         )
         doc_fname = os.path.basename(doc_path)

@@ -8,6 +8,7 @@ from concurrent.futures import Future
 from functools import reduce
 from typing import AsyncIterator, Iterator, List, Optional, TypeVar
 from uuid import UUID
+from subprocess import CalledProcessError
 
 import requests
 from metapub import PubMedFetcher
@@ -28,6 +29,21 @@ common_bad_result = [
 ]
 
 maybe_bad_url_endings = re.compile("^(.*)[\\.\\:\\;\\,\\?\\>]+$")
+
+async def check_call(cmd, max_retries=0, **kwargs):
+    print(f"Running: {cmd}")
+    process = await asyncio.create_subprocess_exec(
+        *cmd, **kwargs, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+    )
+    return_code = await process.wait()
+    if return_code != 0:
+        if max_retries < 1:
+            raise CalledProcessError(return_code, cmd)
+        else:
+            print(f"Retrying {cmd}")
+            return await check_call(cmd, max_retries=max_retries - 1, **kwargs)
+    else:
+        print(f"Success {cmd}")
 
 
 def markdown_escape(string: Optional[str]) -> str:
