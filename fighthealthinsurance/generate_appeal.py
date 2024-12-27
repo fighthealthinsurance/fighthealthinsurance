@@ -1,5 +1,4 @@
 import itertools
-import json
 import random
 import time
 import traceback
@@ -11,13 +10,13 @@ from fighthealthinsurance.exec import *
 from fighthealthinsurance.ml_models import RemoteFullOpenLike, RemoteModelLike
 from fighthealthinsurance.model_router import model_router
 from fighthealthinsurance.process_denial import *
-from fighthealthinsurance.utils import as_available_nested, pubmed_fetcher
+from fighthealthinsurance.utils import as_available_nested
 from typing_extensions import reveal_type
 from .pubmed_tools import PubMedTools
 
 
 class AppealTemplateGenerator(object):
-    def __init__(self, prefaces, main, footer):
+    def __init__(self, prefaces: list[str], main: list[str], footer: list[str]):
         self.prefaces = prefaces
         self.main = main
         self.footer = footer
@@ -29,7 +28,7 @@ class AppealTemplateGenerator(object):
         else:
             return None
 
-    def generate(self, medical_reason):
+    def generate(self, medical_reason: str):
         result = self.combined.replace("{medical_reason}", medical_reason)
         if result != "":
             return result
@@ -55,7 +54,7 @@ class AppealGenerator(object):
     async def get_procedure_and_diagnosis(
         self, denial_text=None, use_external=False
     ) -> Tuple[Optional[str], Optional[str]]:
-        prompt = self.make_open_procedure_prompt(denial_text)
+        prompt: Optional[str] = self.make_open_procedure_prompt(denial_text)
         models_to_try: list[DenialBase] = [
             self.regex_denial_processor,
         ]
@@ -88,7 +87,7 @@ class AppealGenerator(object):
         )
         return (procedure, diagnosis)
 
-    def make_open_procedure_prompt(self, denial_text=None):
+    def make_open_procedure_prompt(self, denial_text=None) -> Optional[str]:
         if denial_text is not None:
             return f"What was the procedure/treatment and what is the diagnosis from the following denial (remember to provide two strings seperated by MAGIC as your response): {denial_text}"
         else:

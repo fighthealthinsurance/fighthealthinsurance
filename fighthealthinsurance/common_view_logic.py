@@ -145,8 +145,8 @@ class SendFaxHelper:
         denial.insurance_company = insurance_company
         files_for_fax: list[str] = []
         # Cover page
-        cover_context = {
-            "receiver_name": denial.insurance_company or "",
+        cover_context: dict[str, str] = {
+            "receiver_name": insurance_company or "",
             "receiver_fax_number": fax_phone,
             "company_name": "Fight Health Insurance -- A service of Totally Legit Co.",
             "company_fax_number": "415-840-7591",
@@ -576,7 +576,7 @@ class DenialCreatorHelper:
         async_to_sync(cls._start_background(denial_id))
 
     @classmethod
-    async def extract_entity(cls, denial_id=None, **kwargs):
+    async def extract_entity(cls, denial_id: int) -> StreamingHttpResponse:
         # Fax extraction is fire and forget and can run in parallel to the other tass
         asyncio.create_task(cls.extract_set_fax_number(denial_id))
         asyncs: list[Awaitable[Any]] = [

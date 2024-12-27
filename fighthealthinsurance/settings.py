@@ -19,6 +19,7 @@ from functools import cached_property
 from configurations import Configuration
 from fighthealthinsurance.combined_storage import CombinedStorage
 import minio as m
+from django.core.files.storage import Storage
 from minio_storage.storage import MinioStorage
 import time
 
@@ -233,25 +234,25 @@ class Base(Configuration):
         )
 
     @cached_property
-    def EXTERNAL_STORAGE(self):
+    def EXTERNAL_STORAGE(self) -> Storage:
         from django.core.files.storage import FileSystemStorage
 
         return FileSystemStorage(location=self.EXTERNAL_STORAGE_LOCATION)
 
     @cached_property
-    def EXTERNAL_STORAGE_B(self):
+    def EXTERNAL_STORAGE_B(self) -> Storage:
         from django.core.files.storage import FileSystemStorage
 
         return FileSystemStorage(location=self.EXTERNAL_STORAGE_LOCATION_B)
 
     @cached_property
-    def LOCALISH_STORAGE(self):
+    def LOCALISH_STORAGE(self) -> Storage:
         from django.core.files.storage import FileSystemStorage
 
         return FileSystemStorage(location=self.LOCALISH_STORAGE_LOCATION)
 
     @cached_property
-    def COMBINED_STORAGE(self):
+    def COMBINED_STORAGE(self) -> Storage:
         return CombinedStorage(
             self.LOCALISH_STORAGE, self.EXTERNAL_STORAGE, self.EXTERNAL_STORAGE_B
         )
@@ -394,7 +395,11 @@ class Prod(Base):
     @cached_property
     def EXTERNAL_STORAGE_B(self):
         try:
-            if self.MINIO_STORAGE_ENDPOINT is not None:
+            if (
+                    self.MINIO_STORAGE_ENDPOINT is not None and
+                    self.MINIO_STORAGE_ACCESS_KEY is not None and
+                    self.MINIO_STORAGE_SECRET_KEY is not None and
+                    self.MINIO_STORAGE_MEDIA_BUCKET_NAME is not None):
                 minio_client = m.Minio(
                     self.MINIO_STORAGE_ENDPOINT,
                     access_key=self.MINIO_STORAGE_ACCESS_KEY,

@@ -308,7 +308,8 @@ class StreamingEntityBackend(View):
         print(request.POST)
         form = DenialRefForm(request.POST)
         if form.is_valid():
-            return await DenialCreatorHelper.extract_entity(**form.cleaned_data)
+            return await DenialCreatorHelper.extract_entity(
+                form.cleaned_data["denial_id"])
         else:
             print(f"Error processing {form}")
 

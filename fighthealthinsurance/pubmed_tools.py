@@ -27,7 +27,7 @@ class PubMedTools(object):
         pmids = None
         pmid_text: list[str] = []
         article_futures: list[Future[Optional[PubMedArticleSummarized]]] = []
-        with Timeout(15.0) as timeout_ctx:
+        with Timeout(15.0) as _timeout_ctx:
             query = f"{denial.procedure} {denial.diagnosis}"
             pmids = pubmed_fetcher.pmids_for_query(query)
             articles_json = json.dumps(pmids)
@@ -154,7 +154,7 @@ class PubMedTools(object):
         """Return the best PDF we can find of the article."""
         # First we try and fetch the article
         try:
-            with Timeout(15.0) as timeout_ctx:
+            with Timeout(15.0) as _timeout_ctx:
                 article_id = article.pmid
                 url = article.article_url
                 if url is not None:

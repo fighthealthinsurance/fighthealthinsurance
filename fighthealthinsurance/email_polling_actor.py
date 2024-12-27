@@ -15,7 +15,7 @@ class EmailPollingActor:
         from configurations.wsgi import get_wsgi_application
 
         os.environ.setdefault("DJANGO_SETTINGS_MODULE", "fighthealthinsurance.settings")
-        application = get_wsgi_application()
+        _application = get_wsgi_application()
         print(f"wsgi started")
         # Now we can import the follow up e-mails logic
         from fighthealthinsurance.followup_emails import FollowUpEmailSender
@@ -23,7 +23,7 @@ class EmailPollingActor:
         self.sender = FollowUpEmailSender()
         print(f"Sender started")
 
-    async def run(self):
+    async def run(self) -> None:
         print(f"Starting run")
         self.running = True
         while self.running:
@@ -33,4 +33,5 @@ class EmailPollingActor:
             except Exception as e:
                 print(f"Error {e} while checking messages.")
 
-    print(f"Done running? what?")
+        print(f"Done running? what?")
+        return None

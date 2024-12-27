@@ -109,4 +109,5 @@ class StreamingEntityBackend(APIView):
 
     def post(self, request):
         pythondata = json.loads(request.body)
-        return async_to_sync(DenialCreatorHelper.extract_entity)(**pythondata)
+        denial_id: int = pythondata["denial_id"]
+        return async_to_sync(DenialCreatorHelper.extract_entity)(denial_id)

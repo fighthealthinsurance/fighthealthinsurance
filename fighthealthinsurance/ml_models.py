@@ -535,7 +535,7 @@ class RemoteTogetherAI(RemoteFullOpenLike):
                 cost=88,
                 name="meta-llama/llama-3.1-70b-instruct",
                 internal_name="meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
-            ),
+            )
         ]
 
 
@@ -603,6 +603,10 @@ class DeepInfra(RemoteFullOpenLike):
                 name="meta-llama/llama-3.2-3B-instruct",
                 internal_name="meta-llama/Llama-3.2-3B-Instruct",
             ),
+            ModelDescription(
+                cost=30,
+                name="meta-llama/Llama-3.3-70B-Instruct-Turbo",
+                internal_name="meta-llama/Llama-3.3-70B-Instruct-Turbo")
         ]
 
 

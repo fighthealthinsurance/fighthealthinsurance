@@ -8,10 +8,6 @@ from paramiko import SSHClient
 from stopit import ThreadingTimeout as Timeout
 import asyncio, asyncssh
 
-from django.core.mail import EmailMultiAlternatives
-from django.template.loader import render_to_string
-from django.urls import reverse
-
 import requests
 from requests import Session
 from PyPDF2 import PdfMerger, PdfReader, PdfWriter
@@ -151,7 +147,12 @@ class SonicFax(FaxSenderBase):
             )
 
     def _blocking_check_fax_status(
-        self, s: Session, cookies, destination: str, path: str, dest_name: Optional[str] = None
+            self,
+            s: Session,
+            cookies: dict[str, str],
+            destination: str,
+            path: str,
+            dest_name: Optional[str] = None
     ) -> bool:
         r = s.get(
             "https://members.sonic.net/labs/fax/?a=history",
@@ -198,18 +199,23 @@ class SonicFax(FaxSenderBase):
         return False
 
     async def send_fax_non_blocking(
-        self, destination, path, dest_name: Optional[str] = None
+        self, destination: str, path: str, dest_name: Optional[str] = None
     ):
         with requests.Session() as s:
             cookies = self._login(s)
             return self._send_fax_non_blocking(s, cookies, destination, path, dest_name)
 
     def _get_filename(self, path: str) -> str:
-        head, tail = os.path.split(path)
+        _head, tail = os.path.split(path)
         return tail
 
     def _send_fax_non_blocking(
-        self, s: Session, cookies, destination: str, path: str, dest_name: Optional[str] = None
+            self,
+            s: Session,
+            cookies: dict[str, str],
+            destination: str,
+            path: str,
+            dest_name: Optional[str] = None
     ):
         r = s.get(
             "https://members.sonic.net/labs/fax", headers=self.headers, cookies=cookies
@@ -295,9 +301,9 @@ class HylaFaxClient(FaxSenderBase):
 
         return list(map(__host_string, self._choose_modems(destination)))
 
-    async def _upload_file(self, file: str) -> Optional[str]:
+    async def _upload_file(self, path: str) -> Optional[str]:
         """Upload files to remote host if needed. Returns None on failure. Return remote path."""
-        return file
+        return path
 
     async def _run_command(self, command: list[str]) -> Tuple[int, str]:
         """Return the command and it's output"""
@@ -421,7 +427,7 @@ class SshHylaFaxClient(HylaFaxClient):
             sftp_client = ssh.open_sftp()
             # Make the remote directory if needed.
             dir = os.path.dirname(target)
-            (exit_code, result_text) = await self._run_command(["mkdir", "-p", dir])
+            (exit_code, _result_text) = await self._run_command(["mkdir", "-p", dir])
             if exit_code != 0:
                 print("Failed to make dir")
                 return None
@@ -440,7 +446,7 @@ class SshHylaFaxClient(HylaFaxClient):
                 process = conn.run(" ".join(command))
                 result = await process
                 print(f"Sent cmd")
-                exit_code = result.exit_status
+                exit_code: int = result.exit_status
                 result_text = f"STDOUT: {result.stdout} STDERR: {result.stderr}"
                 if exit_code != 0:
                     print(f"Failed :( -- {result}")
@@ -464,7 +470,7 @@ class FaxyMcFaxFace(SshHylaFaxClient):
 class FlexibleFaxMagic(object):
     """Fax interface that routes to different backends and chops pages etc."""
 
-    def __init__(self, backends: list[FaxSenderBase], max_pages=10):
+    def __init__(self, backends: list[FaxSenderBase], max_pages: int = 10):
         self.backends = backends
         self.max_pages = max_pages
 
@@ -627,7 +633,7 @@ class FlexibleFaxMagic(object):
             key=lambda backend: backend.estimate_cost(destination, page_count),
         )
         for backend in backends_by_cost:
-            with Timeout(1200.0) as timeout_ctx:
+            with Timeout(1200.0) as _timeout_ctx:
                 try:
                     r = await backend.send_fax(
                         destination=destination, path=path, blocking=blocking

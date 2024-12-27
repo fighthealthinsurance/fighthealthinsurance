@@ -19,10 +19,10 @@ class Command(BaseCommand):
             "--no-input", help="Read options from the environment", action="store_true"
         )
 
-    def handle(self, *args: str, **options) -> None:
+    def handle(self, *args: str, **options: Any) -> None:
         User = get_user_model()
 
-        if options["no_input"]:
+        if "no_input" in options and options["no_input"]:
             options["username"] = os.environ["FIGHT_HEALTH_ADMIN_USER"]
             options["email"] = os.environ["FIGHT_HEALTH_ADMIN_USER"]
             options["password"] = os.environ["FIGHT_HEALTH_ADMIN_PASSWORD"]

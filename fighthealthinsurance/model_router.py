@@ -66,17 +66,23 @@ class ModelRouter(object):
         else:
             return self.internal_models_by_cost
 
-    def summarize(self, text: str, query: str, abstract: str) -> Optional[str]:
+    def summarize(self, text: Optional[str], query: str, abstract: Optional[str]) -> Optional[str]:
         models: list[RemoteModelLike] = []
-        if "meta-llama/llama-3.1-70b-instruct" in self.models_by_name:
-            models = self.models_by_name["meta-llama/llama-3.1-70b-instruct"]
+        if "meta-llama/Llama-3.3-70B-Instruct-Turbo" in self.models_by_name:
+            models = self.models_by_name["meta-llama/Llama-3.3-70B-Instruct-Turbo"]
         else:
             models = self.all_models_by_cost
+        abstract_optional = ""
+        text_optional = ""
+        if abstract is not None:
+            abstract_optional = f"--- Current abstract: {abstract} ---"
+        if text is not None:
+            text_optional = f"--- Full-ish article text: {text} ---"
         for m in models:
             return asyncio.run(
                 m._infer(
                     system_prompt="You are a helpful assistant summarizing an article for a person or other LLM wriitng an appeal. Be very concise.",
-                    prompt=f"Given this query {query} summarize the following for {query}: {abstract} -- {text}.",
+                    prompt=f"Given this query {query} summarize the following for {query}: {abstract_optional} {text_optional}.",
                 )
             )
         return None
