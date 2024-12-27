@@ -13,6 +13,7 @@ from django.template.loader import render_to_string
 from django.urls import reverse
 
 import requests
+from requests import Session
 from PyPDF2 import PdfMerger, PdfReader, PdfWriter
 
 FROM_FAX = os.getenv("FROM_FAX", "4158407591")
@@ -83,11 +84,26 @@ class SonicFax(FaxSenderBase):
         "accept-encoding": "gzip, deflate, br, zstd",
         "accept-language": "en-US,en;q=0.9",
     }
+    token: str
+    password: str
+    username: str
 
     def __init__(self):
-        self.username = os.getenv("SONIC_USERNAME")
-        self.password = os.getenv("SONIC_PASSWORD")
-        self.token = os.getenv("SONIC_TOKEN")
+        username = os.getenv("SONIC_USERNAME")
+        if username is None:
+            raise Exception("Missing sonic username")
+        else:
+            self.username = username
+        password = os.getenv("SONIC_PASSWORD")
+        if password is None:
+            raise Exception("Missing sonic password")
+        else:
+            self.password = password
+        token = os.getenv("SONIC_TOKEN")
+        if token is None:
+            raise Exception("We need a token SONIC_TOKEN")
+        else:
+            self.token = token
         self.notification_email = os.getenv(
             "SONIC_NOTIFICATION_EMAIL", "support42@fighthealthinsurance.com"
         )
@@ -112,7 +128,7 @@ class SonicFax(FaxSenderBase):
                 dest_name=dest_name,
             )
 
-    def _login(self, s):
+    def _login(self, s: Session) -> dict[str, str]:
         cookies = {"mt2FAToken": self.token}
         r = s.get("https://members.sonic.net/", headers=self.headers, cookies=cookies)
         r = s.post(
@@ -135,7 +151,7 @@ class SonicFax(FaxSenderBase):
             )
 
     def _blocking_check_fax_status(
-        self, s, cookies, destination: str, path: str, dest_name: Optional[str] = None
+        self, s: Session, cookies, destination: str, path: str, dest_name: Optional[str] = None
     ) -> bool:
         r = s.get(
             "https://members.sonic.net/labs/fax/?a=history",
@@ -193,7 +209,7 @@ class SonicFax(FaxSenderBase):
         return tail
 
     def _send_fax_non_blocking(
-        self, s, cookies, destination: str, path: str, dest_name: Optional[str] = None
+        self, s: Session, cookies, destination: str, path: str, dest_name: Optional[str] = None
     ):
         r = s.get(
             "https://members.sonic.net/labs/fax", headers=self.headers, cookies=cookies
@@ -452,6 +468,9 @@ class FlexibleFaxMagic(object):
         self.backends = backends
         self.max_pages = max_pages
 
+    def _add_backend(self, backend: FaxSenderBase) -> None:
+        self.backends.append(backend)
+
     def assemble_single_output(
         self, user_header: str, extra: str, input_paths: list[str]
     ) -> str:
@@ -622,4 +641,11 @@ class FlexibleFaxMagic(object):
         return False
 
 
-flexible_fax_magic = FlexibleFaxMagic([FaxyMcFaxFace(), SonicFax()])
+flexible_fax_magic = FlexibleFaxMagic([FaxyMcFaxFace()])
+
+# Add Sonic if we can support it
+try:
+    s = SonicFax()
+    flexible_fax_magic._add_backend(s)
+except:
+    pass

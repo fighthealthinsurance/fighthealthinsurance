@@ -21,7 +21,9 @@ django-recaptcha==4.0.0
 django-regex-field
 djangorestframework
 django-stubs
+django-stubs-ext
 django-treebeard
+django-types
 django_user_agents
 easy_thumbnails
 exceptionite

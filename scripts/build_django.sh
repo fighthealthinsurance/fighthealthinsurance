@@ -1,6 +1,8 @@
 #!/bin/bash
 set -ex
 
+pwd
+
 BUILDX_CMD=${BUILDX_CMD:-"push"}
 PLATFORM=${PLATFORM:-linux/amd64,linux/arm64}
 

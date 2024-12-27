@@ -6,7 +6,6 @@ import json
 from dataclasses import dataclass
 from string import Template
 from typing import AsyncIterator, Awaitable, Any, Optional, Tuple, Iterable
-import threading
 
 from django.core.files import File
 from django.core.validators import validate_email
@@ -23,10 +22,7 @@ from fighthealthinsurance.form_utils import *
 from fighthealthinsurance.generate_appeal import *
 from fighthealthinsurance.models import *
 from fighthealthinsurance.question_forms import *
-from fighthealthinsurance.utils import (
-    pubmed_fetcher,
-    interleave_iterator_for_keep_alive,
-)
+from fighthealthinsurance.utils import interleave_iterator_for_keep_alive
 import ray
 from .pubmed_tools import PubMedTools
 
@@ -36,7 +32,7 @@ appealGenerator = AppealGenerator()
 class RemoveDataHelper:
     @classmethod
     def remove_data_for_email(cls, email: str):
-        hashed_email = Denial.get_hashed_email(email)
+        hashed_email: str = Denial.get_hashed_email(email)
         Denial.objects.filter(hashed_email=hashed_email).delete()
         FollowUpSched.objects.filter(email=email).delete()
         FollowUp.objects.filter(hashed_email=hashed_email).delete()
@@ -98,7 +94,7 @@ class NextStepInfo:
             semi_sekret=self.semi_sekret,
         )
 
-    def _field_to_dict(self, field_name, field):
+    def _field_to_dict(self, field_name: str, field: Any) -> dict[str, Any]:
         label = field.label
         visible = not field.hidden_widget
         required = field.required

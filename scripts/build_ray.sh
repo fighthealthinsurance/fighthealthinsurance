@@ -1,6 +1,8 @@
 #!/bin/bash
 set -ex
 
+pwd
+
 # Ray doesn't publish combiend aarch64 & amd64 images because idk.
 RAY_VERSION=2.38.0-py311
 RAY_IMAGE=holdenk/ray:${RAY_VERSION}

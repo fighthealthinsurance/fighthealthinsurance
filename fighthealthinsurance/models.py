@@ -346,7 +346,7 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
         return f"{self.denial_id} -- {self.date} -- Follow Up: {self.follow_up()} -- Chose Appeal {self.chose_appeal()}"
 
     @staticmethod
-    def get_hashed_email(email):
+    def get_hashed_email(email: str) -> str:
         encoded_email = email.encode("utf-8").lower()
         return hashlib.sha512(encoded_email).hexdigest()
 

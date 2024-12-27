@@ -175,10 +175,10 @@ class DenialEndToEnd(APITestCase):
                     "denial_id": denial_id,
                 }
             ),
-            content_type="application/json",
+            content_type="application/json"
         )
         # It's a streaming response with one per new line
-        text = b"".join(appeals_gen_response.streaming_content).split(b"\n")
+        text = b"".join(appeals_gen_response).split(b"\n")
         appeals = json.loads(text[0])
         assert appeals.startswith("Dear")
         # Now lets go ahead and provide follow up

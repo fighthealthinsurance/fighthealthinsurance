@@ -1,6 +1,8 @@
 #!/bin/bash
 set -ex
 
+pwd
+
 # Activate the venv if present.
 if [ -f ./build_venv/bin/activate ]; then
   source ./build_venv/bin/activate

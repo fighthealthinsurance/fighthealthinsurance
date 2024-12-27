@@ -160,9 +160,9 @@ jobs:
         uses: docker/setup-buildx-action@v3
       - name: Install uv
         uses: astral-sh/setup-uv@v3
-      - name: Install mypy
+      - name: Install our build env
         run:
-          uv venv build_venv && source build_venv/bin/activate && uv pip install -r requirements.txt
+          pwd && uv venv build_venv --python python3.11 && source build_venv/bin/activate && uv pip install -r requirements.txt
       - name: Run build the templates
         run:
           ./scripts/setup_templates.sh
