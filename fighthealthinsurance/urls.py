@@ -38,7 +38,6 @@ urlpatterns = [
     # Internal-ish-views
     path("ziggy/rest/", include(rest_urls)),
     path("timbit/admin/", admin.site.urls),
-    path("error", views.ErrorView.as_view()),
     path("", include("django_prometheus.urls")),
     path("timbit/help/followup_sched", ScheduleFollowUps.as_view()),
     path(
@@ -49,7 +48,6 @@ urlpatterns = [
         "timbit/help/followup_fax_test",
         staff_member_required(fax_views.FollowUpFaxSenderView.as_view()),
     ),
-    path("error", views.ErrorView.as_view()),
     # These are links we e-mail people so might have some extra junk.
     # So if there's an extra / or . at the end we ignore it.
     path(
