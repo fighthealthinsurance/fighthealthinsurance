@@ -11,7 +11,7 @@ from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from fighthealthinsurance.models import *
+from fighthealthinsurance.models import Denial
 
 
 class Delete(APITestCase):
@@ -74,6 +74,10 @@ class DenialLongEmployerName(APITestCase):
             content_type="application/json",
         )
         self.assertTrue(status.is_success(response.status_code))
+        denials_for_user_count = Denial.objects.filter(
+            hashed_email=hashed_email,
+        ).count()
+        assert denials_for_user_count == 1
 
 
 class DenialEndToEnd(APITestCase):
@@ -115,8 +119,7 @@ class DenialEndToEnd(APITestCase):
         assert denials_for_user_count > 0
         # Make sure we can get the denial
         denial = Denial.objects.filter(
-            hashed_email=hashed_email,
-            denial_id=denial_id
+            hashed_email=hashed_email, denial_id=denial_id
         ).get()
         print(f"We should find {denial}")
         # Now we need to poke entity extraction
@@ -175,7 +178,7 @@ class DenialEndToEnd(APITestCase):
                     "denial_id": denial_id,
                 }
             ),
-            content_type="application/json"
+            content_type="application/json",
         )
         # It's a streaming response with one per new line
         text = b"".join(appeals_gen_response).split(b"\n")
