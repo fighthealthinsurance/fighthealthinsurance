@@ -11,10 +11,10 @@ from django.utils.safestring import mark_safe
 from django.views import View, generic
 
 from fighthealthinsurance import common_view_logic
-from fighthealthinsurance import core_forms
+from fighthealthinsurance import forms as core_forms
 from fighthealthinsurance import generate_appeal
 from fighthealthinsurance import models
-from fighthealthinsurance import question_forms
+from fighthealthinsurance.forms import questions as question_forms
 from fighthealthinsurance import utils
 
 appealGenerator = generate_appeal.AppealGenerator()

@@ -3,9 +3,8 @@ from django import forms
 from drf_braces.serializers.form_serializer import (
     FormSerializer,
 )
-from fighthealthinsurance.core_forms import *
+from fighthealthinsurance import forms as core_forms
 from fighthealthinsurance.models import DenialTypes
-from fighthealthinsurance.question_forms import *
 from rest_framework import serializers
 
 
@@ -48,32 +47,32 @@ class DenialResponseInfoSerializer(serializers.Serializer):
 # Forms
 class DeleteDataFormSerializer(FormSerializer):
     class Meta(object):
-        form = DeleteDataForm
+        form = core_forms.DeleteDataForm
 
 
 class ShareAppealFormSerializer(FormSerializer):
     class Meta(object):
-        form = ShareAppealForm
+        form = core_forms.ShareAppealForm
 
 
 class ChooseAppealFormSerializer(FormSerializer):
     class Meta(object):
-        form = ChooseAppealForm
+        form = core_forms.ChooseAppealForm
 
 
 class DenialFormSerializer(FormSerializer):
     class Meta(object):
-        form = DenialForm
+        form = core_forms.DenialForm
         exclude = ("plan_documents",)
 
 
 class PostInferedFormSerializer(FormSerializer):
     class Meta(object):
-        form = PostInferedForm
+        form = core_forms.PostInferedForm
 
 
 class FollowUpFormSerializer(FormSerializer):
     class Meta(object):
-        form = FollowUpForm
+        form = core_forms.FollowUpForm
         exclude = ("followup_documents",)
         field_mapping = {forms.UUIDField: serializers.CharField}

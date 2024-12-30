@@ -46,10 +46,12 @@ My name is $your_name_here and I am writing you regarding claim {claim_id}{denia
             and self.cleaned_data["urgent"]
             and self.cleaned_data["pre_service"]
         ):
-            return [
-                common,
-                "As an urgent pre-service claim you must respond within the timeline required for my medical situation (up to a maximum of four days). This also serves as notice of concurrent request of external review.",
-            ]
+            return [common, (
+                "As an urgent pre-service claim you must respond within the "
+                "timeline required for my medical situation (up to a maximum "
+                "of four days). This also serves as notice of concurrent "
+                "request of external review."
+            )]
         elif "pre_service" in self.cleaned_data and self.cleaned_data["pre_service"]:
             return [
                 common,
@@ -196,17 +198,39 @@ class GenderAffirmingCareQuestions(InsuranceQuestions):
     def plan_context(self, denial: Denial):
         response = ""
         if denial.state == "CA":
-            response += "As covered in https://calmatters.org/health/2024/08/gender-affirming-care-denials/ CA health plans received the largest penality ever for gender-affirming care denials. The plan must follow https://www.insurance.ca.gov/01-consumers/110-health/60-resources/upload/CDI-Gender-Nondiscrimination-Regulations.pdf and insurers may not discriminate against gender affirming care. If the plan fails to approve this claim the patient intents to appeal all the way to the relevant regulator."
+            response += (
+                "As covered in https://calmatters.org/health/2024/08"
+                "/gender-affirming-care-denials/ CA health plans received the "
+                "largest penality ever for gender-affirming care denials. "
+                "The plan must follow https://www.insurance.ca.gov/01-consumers/110-health/"
+                "60-resources/upload/CDI-Gender-Nondiscrimination-Regulations.pdf "
+                "and insurers may not discriminate against gender affirming "
+                "care. If the plan fails to approve this claim the patient "
+                "intents to appeal all the way to the relevant regulator."
+            )
         else:
-            response += "As covered in https://calmatters.org/health/2024/08/gender-affirming-care-denials/ CA health plans received the largest penality ever for gender-affirming care denials and some states have similar non-discriminiation requirements."
+            response += (
+                "As covered in https://calmatters.org/health/2024/08"
+                "/gender-affirming-care-denials/ CA health plans received "
+                "the largest penality ever for gender-affirming care denials "
+                "and some states have similar non-discriminiation requirements."
+            )
 
         if denial.employer_name is not None:
             if self.employer_hrc_lookup(denial.employer_name):
-                response += "The employer has stated to the human rights collation (HRC) that it will cover transgender health care. Should the plan deny this claim we intend to follow up with both HR and the HRC."
+                response += (
+                    "The employer has stated to the human rights collation "
+                    "(HRC) that it will cover transgender health care. Should "
+                    "the plan deny this claim we intend to follow up with "
+                    "both HR and the HRC."
+                )
 
         wpath_version = self.wpath_version(denial)
         if wpath_version is not None:
-            response += f"As stated in the plan documents the plan must follow the WPATH{wpath_version} standards of care."
+            response += (
+                "As stated in the plan documents the plan must follow the "
+                f"WPATH{wpath_version} standards of care."
+            )
         return response
 
     def wpath_version(self, denial):
@@ -228,7 +252,7 @@ class GenderAffirmingCareQuestions(InsuranceQuestions):
                     contents = ""
                     for page in doc:
                         contents += page.get_text()
-                except:
+                except RuntimeError:
                     print(f"Error reading {path}")
             if contents is None:
                 with open(path, "r") as file:
@@ -299,12 +323,19 @@ class PreventiveCareQuestions(InsuranceQuestions):
     )
     trans_gender = forms.BooleanField(
         required=False,
-        label="Are you trans*? Some preventive care is traditionally only covered for certain genders "
-        + " and if your trans it's not uncommon for insurance to incorrectly deny necessary coverage.",
+        label=(
+            "Are you trans*? Some preventive care is traditionally only "
+            "covered for certain genders certain genders and if you're trans "
+            "it's not uncommon for insurance to incorrectly deny necessary coverage."
+        ),
     )
 
     def medical_context(self):
-        response = "This procedure may be preventive, make sure to include a link to https://www.healthcare.gov/coverage/preventive-care-benefits/ if that's the case."
+        response = (
+            "This procedure may be preventive, make sure to include a link to "
+            "https://www.healthcare.gov/coverage/preventive-care-benefits/ if "
+            "that's the case."
+        )
         if "trans_gender" in self.cleaned_data and self.cleaned_data["trans_gender"]:
             response += "The patient is transgender."
         if (
@@ -321,8 +352,8 @@ class PreventiveCareQuestions(InsuranceQuestions):
         r = []
         if "trans_gender" in self.cleaned_data and self.cleaned_data["trans_gender"]:
             r.append(
-                "I am trans so it is important that preventive coverage for both genders be "
-                + "covered."
+                "I am trans so it is important that preventive coverage "
+                "for both genders be covered."
             )
         if self.cleaned_data["medical_reason"]:
             r.append(self.cleaned_data["medical_reason"])
@@ -332,11 +363,15 @@ class PreventiveCareQuestions(InsuranceQuestions):
 class ThirdPartyQuestions(InsuranceQuestions):
     """Questions to ask for 3rd party insurance questions."""
 
+    alternate_insurance_details = forms.CharField(max_length=300)
     is_known_3rd_party = forms.BooleanField(
         required=False,
-        label="Was this medical claim the result of an accident that is covered by another insurance (e.g. auto accident where there is known auto insurance or workers comp)",
+        label=(
+            "Was this medical claim the result of an accident that is "
+            "covered by another insurance (e.g. auto accident where "
+            "there is known auto insurance or workers comp)"
+        ),
     )
-    alternate_insurance_details = forms.CharField(max_length=300)
 
     def preface(self):
         if "is_known_3rd_party" in self.cleaned_data:
@@ -344,8 +379,8 @@ class ThirdPartyQuestions(InsuranceQuestions):
                 "As requested the 3rd party insurance is "
                 + self.cleaned_data["alternate_insurance_details"]
             )
-        else:
-            return super().preface()
+
+        return super().preface()
 
 
 class StepTherapy(MedicalNeccessaryQuestions):
@@ -353,6 +388,9 @@ class StepTherapy(MedicalNeccessaryQuestions):
 
     medically_necessary = forms.CharField(
         required=False,
-        label="Why the option from the insurnace company does not work (e.g. "
-        + "you've tried the suggested medication, are allergic, not recommended, etc.)",
+        label=(
+            "Why the option from the insurnace company does not "
+            "work (e.g. you've tried the suggested medication, are "
+            "allergic, not recommended, etc.)"
+        ),
     )

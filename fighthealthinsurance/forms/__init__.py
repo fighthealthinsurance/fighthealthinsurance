@@ -3,7 +3,7 @@ import os
 from django import forms
 from django.forms import ModelForm, Textarea, CheckboxInput
 
-from .models import InterestedProfessional
+from fighthealthinsurance.models import InterestedProfessional
 
 from django_recaptcha.fields import ReCaptchaField, ReCaptchaV2Checkbox
 from fighthealthinsurance.form_utils import *
