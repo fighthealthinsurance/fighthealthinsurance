@@ -30,13 +30,12 @@ from fighthealthinsurance.followup_emails import (
     FollowUpEmailSenderView,
     ScheduleFollowUps,
 )
-from fighthealthinsurance.rest_urls import rest_urls
 from django.views.decorators.debug import sensitive_post_parameters
 
 
 urlpatterns = [
     # Internal-ish-views
-    path("ziggy/rest/", include(rest_urls)),
+    path("ziggy/rest/", include('fighthealthinsurance.rest_urls')),
     path("timbit/admin/", admin.site.urls),
     path("", include("django_prometheus.urls")),
     path("timbit/help/followup_sched", ScheduleFollowUps.as_view()),

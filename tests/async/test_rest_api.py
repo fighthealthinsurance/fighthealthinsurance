@@ -20,7 +20,7 @@ class Delete(APITestCase):
     fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
 
     def test_url_root(self):
-        url = reverse("api_delete")
+        url = reverse("dataremoval-list")
         email = "timbit@fighthealthinsurance.com"
         hashed_email = hashlib.sha512(email.encode("utf-8")).hexdigest()
         # Create the object
@@ -51,7 +51,7 @@ class DenialLongEmployerName(APITestCase):
         for a in range(0, 300):
             denial_text += str(a)
         denial_text += "INC "
-        url = reverse("api_denialcreator")
+        url = reverse("denials-list")
         email = "timbit@fighthealthinsurance.com"
         hashed_email = hashlib.sha512(email.encode("utf-8")).hexdigest()
         denials_for_user_count = Denial.objects.filter(
@@ -86,7 +86,7 @@ class DenialEndToEnd(APITestCase):
     fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
 
     def test_denial_end_to_end(self):
-        url = reverse("api_denialcreator")
+        url = reverse("denials-list")
         email = "timbit@fighthealthinsurance.com"
         hashed_email = Denial.get_hashed_email(email)
         denials_for_user_count = Denial.objects.filter(
@@ -137,7 +137,7 @@ class DenialEndToEnd(APITestCase):
         )
         print(str(response.streaming_content))
         # Ok now lets get the additional info
-        find_next_steps_url = reverse("api_findnextsteps")
+        find_next_steps_url = reverse("nextsteps-list")
         find_next_steps_response = self.client.post(
             find_next_steps_url,
             json.dumps(
@@ -186,7 +186,7 @@ class DenialEndToEnd(APITestCase):
         assert appeals.startswith("Dear")
         # Now lets go ahead and provide follow up
         denial = Denial.objects.get(denial_id=denial_id)
-        followup_url = reverse("api_followup")
+        followup_url = reverse("followups-list")
         followup_response = self.client.post(
             followup_url,
             json.dumps(

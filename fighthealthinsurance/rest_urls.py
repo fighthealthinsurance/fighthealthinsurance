@@ -1,17 +1,34 @@
+from django.urls import include
 from django.urls import path
+from django.conf import settings
 
 from fighthealthinsurance import rest_views
 
-rest_urls = [
+from rest_framework import routers
+
+if settings.DEBUG:
+    RouterClass = routers.DefaultRouter
+else:
+    RouterClass = routers.SimpleRouter
+
+router = RouterClass()
+
+router.register(r"denials", rest_views.DenialViewSet, basename="denials")
+router.register(r"next_steps", rest_views.NextStepsViewSet, basename="nextsteps")
+router.register(r"follow_up", rest_views.FollowUpViewSet, basename="followups")
+
+router.register(
+    r"data_removal",
+    rest_views.DataRemovalViewSet,
+    basename="dataremoval",
+)
+
+urlpatterns = [
     path("ping", rest_views.Ping.as_view(), name="ping"),
     path("check_storage", rest_views.CheckStorage.as_view(), name="check_storage"),
     path(
         "check_ml_backend", rest_views.CheckMlBackend.as_view(), name="check_ml_backend"
     ),
-    path("removedata", rest_views.RemoveData.as_view(), name="api_delete"),
-    path("findnextsteps", rest_views.FindNextSteps.as_view(), name="api_findnextsteps"),
-    path("followup", rest_views.FollowUpAPI.as_view(), name="api_followup"),
-    path("denialcreator", rest_views.DenialCreator.as_view(), name="api_denialcreator"),
     path(
         "appeals_json_backend",
         rest_views.AppealsBackend.as_view(),
@@ -22,4 +39,5 @@ rest_urls = [
         rest_views.StreamingEntityBackend.as_view(),
         name="api_streamingentity_json_backend",
     ),
+    path("", include(router.urls)),
 ]
