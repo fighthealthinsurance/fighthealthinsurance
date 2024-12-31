@@ -10,7 +10,7 @@ elif [ -f ./.venv/bin/activate ]; then
   source ./.venv/bin/activate
 fi
 
-tox -e mypy
+mypy -p fighthealthinsurance
 ./manage.py migrate
 ./manage.py makemigrations
 ./manage.py migrate

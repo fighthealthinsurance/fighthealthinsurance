@@ -6,7 +6,8 @@ python min_version.py
 
 python -m venv .venv &&
 	. .venv/bin/activate &&
-	pip install -r requirements.txt
+	pip install -r requirements.txt &&
+	pip install -r requirements-dev.txt
 
 package_command=''
 if command -v apt-get; then
