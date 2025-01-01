@@ -10,7 +10,12 @@ elif [ -f ./.venv/bin/activate ]; then
   source ./.venv/bin/activate
 fi
 
-tox -e mypy
+if command -v tox >/dev/null 2>&1; then
+  tox -e mypy
+else
+  mypy -p fighthealthinsurance
+fi
+
 ./manage.py migrate
 ./manage.py makemigrations
 ./manage.py migrate
