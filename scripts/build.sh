@@ -7,7 +7,7 @@ BUILDX_CMD=${BUILDX_CMD:-push}
 
 source "${SCRIPT_DIR}/setup_templates.sh"
 
-FHI_VERSION=v0.9.15a
+FHI_VERSION=v0.9.16a
 
 export FHI_VERSION
 
