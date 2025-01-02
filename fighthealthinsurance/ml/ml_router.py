@@ -1,10 +1,10 @@
 import asyncio
 from typing import List
 
-from fighthealthinsurance.ml_models import *
+from fighthealthinsurance.ml.ml_models import *
 
 
-class ModelRouter(object):
+class MLRouter(object):
     """
     Tool to route our requests most cheapily.
     """
@@ -92,4 +92,4 @@ class ModelRouter(object):
         return len(self.all_models_by_cost) > 0
 
 
-model_router = ModelRouter()
+ml_router = MLRouter()

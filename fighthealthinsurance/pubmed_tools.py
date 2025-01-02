@@ -11,7 +11,7 @@ from .models import Denial
 import json
 import PyPDF2
 import requests
-from fighthealthinsurance.model_router import model_router
+from fighthealthinsurance.ml.ml_router import ml_router
 import tempfile
 from typing import List, Optional
 from .exec import pubmed_executor
@@ -140,7 +140,7 @@ class PubMedTools(object):
                     text=article_text,
                     query=query,
                     article_url=url,
-                    basic_summary=model_router.summarize(
+                    basic_summary=ml_router.summarize(
                         query=query, abstract=fetched.abstract, text=article_text
                     ),
                 )

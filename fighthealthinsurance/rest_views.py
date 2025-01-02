@@ -11,7 +11,7 @@ from rest_framework.serializers import Serializer
 from rest_framework.views import APIView
 
 from fighthealthinsurance import common_view_logic
-from fighthealthinsurance.model_router import model_router
+from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance import rest_serializers as serializers
 
 from stopit import ThreadingTimeout as Timeout
@@ -134,7 +134,7 @@ class CheckStorage(APIView):
 
 class CheckMlBackend(APIView):
     def get(self, request):
-        if model_router.working():
+        if ml_router.working():
             return Response(status=status.HTTP_204_NO_CONTENT)
 
         return Response(status=status.HTTP_503_SERVICE_UNAVAILABLE)

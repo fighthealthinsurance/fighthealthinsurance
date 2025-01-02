@@ -7,8 +7,8 @@ from typing import Any, Iterator, List, Optional, Tuple
 
 from fighthealthinsurance.denial_base import DenialBase
 from fighthealthinsurance.exec import *
-from fighthealthinsurance.ml_models import RemoteFullOpenLike, RemoteModelLike
-from fighthealthinsurance.model_router import model_router
+from fighthealthinsurance.ml.ml_models import RemoteFullOpenLike, RemoteModelLike
+from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.process_denial import *
 from fighthealthinsurance.utils import as_available_nested
 from typing_extensions import reveal_type
@@ -44,9 +44,9 @@ class AppealGenerator(object):
     async def get_fax_number(
         self, denial_text=None, use_external=False
     ) -> Optional[str]:
-        models_to_try = model_router.entity_extract_backends(use_external)
+        models_to_try = ml_router.entity_extract_backends(use_external)
         for model in models_to_try:
-            fax_number = await model.get_fax_number(denial_text)
+            fax_number: Optional[str] = await model.get_fax_number(denial_text)
             if fax_number is not None and "UNKNOWN" not in fax_number:
                 return fax_number
         return None
@@ -58,7 +58,7 @@ class AppealGenerator(object):
         models_to_try: list[DenialBase] = [
             self.regex_denial_processor,
         ]
-        models_to_try.extend(model_router.entity_extract_backends(use_external))
+        models_to_try.extend(ml_router.entity_extract_backends(use_external))
         procedure = None
         diagnosis = None
         for model in models_to_try:
@@ -163,10 +163,10 @@ class AppealGenerator(object):
             pubmed_context: Optional[str] = None,
         ) -> List[Future[Tuple[str, Optional[str]]]]:
             print(f"Looking up on {model_name}")
-            if model_name not in model_router.models_by_name:
+            if model_name not in ml_router.models_by_name:
                 print(f"No backend for {model_name}")
                 return []
-            model_backends = model_router.models_by_name[model_name]
+            model_backends = ml_router.models_by_name[model_name]
             if prompt is None:
                 print(f"No prompt for {model_name} skipping")
                 return []

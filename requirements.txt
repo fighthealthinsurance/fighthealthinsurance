@@ -65,3 +65,4 @@ urllib3
 uszipcode
 uvicorn[standard]
 werkzeug
+git+https://github.com/totallylegitco/llm-result-utils.git

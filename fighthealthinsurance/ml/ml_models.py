@@ -12,8 +12,10 @@ from typing import Callable, List, Optional, Tuple, Iterable, Union, Awaitable
 import requests
 from stopit import ThreadingTimeout as Timeout
 
+from llm_result_utils.cleaner_utils import CleanerUtils
+
 from fighthealthinsurance.exec import *
-from fighthealthinsurance.utils import all_concrete_subclasses, url_fixer
+from fighthealthinsurance.utils import all_concrete_subclasses
 from fighthealthinsurance.process_denial import DenialBase
 
 
@@ -31,36 +33,44 @@ class RemoteModelLike(DenialBase):
         pubmed_context=None,
         temperature=0.7,
     ) -> Optional[str]:
+        """Do inference on a remote model."""
         await asyncio.sleep(0)  # yield
         return None
 
-    async def get_denialtype(self, denial_text, procedure, diagnosis):
+    async def get_denialtype(self, denial_text, procedure, diagnosis) -> Optional[str]:
+        """What is the denial type?"""
         await asyncio.sleep(0)  # yield
         return None
 
     async def get_regulator(self, text) -> Optional[str]:
+        """Who is the regulator most likely associated with a given denial."""
         await asyncio.sleep(0)  # yield
         return None
 
     async def get_plan_type(self, text) -> Optional[str]:
+        """What is the plan type."""
         await asyncio.sleep(0)  # yield
         return None
 
     async def get_procedure_and_diagnosis(
         self, prompt
     ) -> Tuple[Optional[str], Optional[str]]:
+        """Single call to get procedure and diagnosis."""
         await asyncio.sleep(0)  # yield
         return (None, None)
 
     async def get_fax_number(self, prompt) -> Optional[str]:
+        """Try and extract the fax number."""
         return await asyncio.sleep(0, result=None)
 
     def external(self):
+        """Is this an external model. This is important for privacy conscious folks & pro."""
         return True
 
 
 @dataclass(kw_only=True)
 class ModelDescription:
+    """Model description with a rough proxy for cost."""
     cost: int = 200  # Cost of the model (must be first for ordered if/when we upgrade)
     name: str  # Common model name
     internal_name: str  # Internal model name
@@ -76,32 +86,14 @@ class RemoteModel(RemoteModelLike):
 
     @classmethod
     def models(cls) -> List[ModelDescription]:
+        """Return a list of supported models."""
         return []
 
     def bad_result(self, result: Optional[str]) -> bool:
+        """Checker to see if a result is "reasonable" may be used to retry."""
+        if result is None or len(result) < 3:
+            return True
         return False
-
-    def tla_fixer(self, result: Optional[str]) -> Optional[str]:
-        """Fix incorrectly picked TLAs from the LLM."""
-        if result is None:
-            return None
-        else:
-            m = re.search(
-                "([A-Z])\\w+ ([A-Z])\\w+ ([A-Z])\\w+ \\(([A-Z]{3})\\)", result
-            )
-            if m is not None:
-                tla = m.group(1) + m.group(2) + m.group(3)
-                if tla != m.group(4):
-                    return re.sub(f"(?<=[\\.\\( ]){m.group(4)}", tla, result)
-            return result
-
-    def note_remover(self, result: Optional[str]) -> Optional[str]:
-        """Remove the last line note because we'll put similar content up earlier anyways"""
-        if result is None:
-            return None
-        else:
-            return re.sub(r"\n\s*\**\s*Note.*\Z", "", result)
-
 
 class RemoteOpenLike(RemoteModel):
 
@@ -238,7 +230,7 @@ class RemoteOpenLike(RemoteModel):
             )
         if self.bad_result(result):
             return []
-        return [(infer_type, self.note_remover(url_fixer(self.tla_fixer(result))))]
+        return [(infer_type, CleanerUtils.note_remover(CleanerUtils.url_fixer(CleanerUtils.tla_fixer(result))))]
 
     def _clean_procedure_response(self, response):
         return self.procedure_response_regex.sub("", response)

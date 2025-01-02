@@ -121,24 +121,6 @@ def all_concrete_subclasses(cls: type[U]):
     return [c for c in all_subclasses(cls) if not isabstract(c)]
 
 
-url_pattern = "https?:\\/\\/(?:www\\.)?[-a-zA-Z0-9@:%._\\+~#=]{1,256}\\.[a-zA-Z0-9()]{1,6}\\b(?:[-a-zA-Z0-9@:%_\\+.~#?&\\/=]*)"
-url_re = re.compile(url_pattern, re.IGNORECASE)
-
-
-def url_fixer(result: Optional[str]) -> Optional[str]:
-    """LLMs like to hallucinate URLs drop them if they are not valid"""
-    if result is None:
-        return None
-    else:
-        urls = url_re.findall(result)
-        for u in urls:
-            print(f"{u}")
-            if not is_valid_url(u):
-                print(f"Removing invalud url {u}")
-                result = result.replace(u, "")
-        return result
-
-
 def interleave_iterator_for_keep_alive(iterator: AsyncIterator[str]) -> AsyncIterator[str]:
     return asyncstdlib.iter(_interleave_iterator_for_keep_alive(iterator))
 
