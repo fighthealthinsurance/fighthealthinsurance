@@ -6,6 +6,7 @@ import json
 from dataclasses import dataclass
 from string import Template
 from typing import AsyncIterator, Awaitable, Any, Optional, Tuple, Iterable
+from loguru import logger
 
 from django.core.files import File
 from django.core.validators import validate_email
@@ -13,6 +14,8 @@ from django.forms import Form
 from django.http import StreamingHttpResponse
 from django.template.loader import render_to_string
 from django.db.models import QuerySet
+from django.db import connections
+
 
 import uszipcode
 from fighthealthinsurance import forms as core_forms
@@ -22,7 +25,10 @@ from fighthealthinsurance.form_utils import *
 from fighthealthinsurance.generate_appeal import *
 from fighthealthinsurance.models import *
 from fighthealthinsurance.forms import questions as question_forms
-from fighthealthinsurance.utils import interleave_iterator_for_keep_alive
+from fighthealthinsurance.utils import (
+    async_to_sync_iterator,
+    interleave_iterator_for_keep_alive,
+)
 import ray
 from .pubmed_tools import PubMedTools
 
@@ -277,7 +283,7 @@ class ChooseAppealHelper:
                     pmid__in=article_ids
                 ).distinct()
         except Exception as e:
-            print(f"Error loading pubmed data {e}")
+            logger.debug(f"Error loading pubmed data {e}")
             pass
         return (denial.appeal_fax_number, denial.insurance_company, articles)
 
@@ -364,14 +370,14 @@ class FindNextStepsHelper:
         plan_id,
         claim_id,
         denial_type,
-        denial_date,
-        semi_sekret,
-        your_state=None,
+        denial_date: Optional[datetime.date] = None,
+        semi_sekret: str = "",
+        your_state: Optional[str] = None,
         captcha=None,
-        denial_type_text=None,
+        denial_type_text: Optional[str] = None,
         plan_source=None,
-        employer_name=None,
-        appeal_fax_number=None,
+        employer_name: Optional[str] = None,
+        appeal_fax_number: Optional[str] = None,
     ) -> NextStepInfo:
         hashed_email = Denial.get_hashed_email(email)
         # Update the denial
@@ -381,7 +387,8 @@ class FindNextStepsHelper:
             hashed_email=hashed_email,
             semi_sekret=semi_sekret,
         ).get()
-        denial.denial_date = denial_date
+        if denial_date:
+            denial.denial_date = denial_date
 
         if procedure is not None and len(procedure) < 200:
             denial.procedure = procedure
@@ -435,8 +442,10 @@ class FindNextStepsHelper:
         denial.claim_id = claim_id
         if denial_type_text is not None:
             denial.denial_type_text = denial_type_text
-        denial.denial_type.set(denial_type)
-        denial.state = your_state
+        if denial_type:
+            denial.denial_type.set(denial_type)
+        if your_state:
+            denial.state = your_state
         denial.save()
         question_forms = []
         for dt in denial.denial_type.all():
@@ -586,14 +595,21 @@ class DenialCreatorHelper:
             asyncio.sleep(0, result=""),
         ]
 
-        async def waitAndReturnNewline(e: Awaitable) -> str:
-            await e
+        async def waitAndReturnNewline(a: Awaitable) -> str:
+            try:
+                await a
+            except:
+                logger.opt(exception=True).warning("Failed to process {a}")
             return "\n"
 
+        # I don't live this but in SQLLite we end up with locking issues
+        # TODO: Fix this.
         formatted: AsyncIterator[str] = a.map(waitAndReturnNewline, asyncs)
-        interleaved = interleave_iterator_for_keep_alive(formatted)
+        # StreamignHttpResponse needs a synchronous iterator otherwise it blocks.
+        interleaved: AsyncIterator[str] = interleave_iterator_for_keep_alive(formatted)
+        synced = async_to_sync_iterator(interleaved)
         return StreamingHttpResponse(
-            interleaved,
+            synced,
             content_type="application/json",
         )
 
@@ -606,7 +622,7 @@ class DenialCreatorHelper:
 
     @classmethod
     async def extract_set_denialtype(cls, denial_id):
-        print(f"Extracting and setting denial types....")
+        logger.debug(f"Extracting and setting denial types....")
         # Try and guess at the denial types
         denial = await Denial.objects.filter(denial_id=denial_id).aget()
         denial_types = await cls.regex_denial_processor.get_denialtype(
@@ -614,15 +630,15 @@ class DenialCreatorHelper:
             procedure=denial.procedure,
             diagnosis=denial.diagnosis,
         )
-        print(f"Ok lets rock with {denial_types}")
+        logger.debug(f"Ok lets rock with {denial_types}")
         for dt in denial_types:
             try:
                 await DenialTypesRelation.objects.acreate(
                     denial=denial, denial_type=dt, src=await cls.regex_src()
                 )
             except Exception as e:
-                print(f"Failed setting denial type with {e}")
-        print(f"Done setting denial types")
+                logger.debug(f"Failed setting denial type with {e}")
+        logger.debug(f"Done setting denial types")
 
     @classmethod
     async def extract_set_fax_number(cls, denial_id):
@@ -649,9 +665,9 @@ class DenialCreatorHelper:
             await denial.asave()
 
     @classmethod
-    async def extract_set_denial_and_diagnosis(cls, denial_id):
+    async def extract_set_denial_and_diagnosis(cls, denial_id: int):
+        denial = await Denial.objects.filter(denial_id=denial_id).aget()
         try:
-            denial = await Denial.objects.filter(denial_id=denial_id).aget()
             (procedure, diagnosis) = await appealGenerator.get_procedure_and_diagnosis(
                 denial_text=denial.denial_text, use_external=denial.use_external
             )
@@ -760,7 +776,7 @@ class AppealsBackendHelper:
                             if mc is not None:
                                 medical_context.add(mc)
                         except Exception as e:
-                            print(
+                            logger.debug(
                                 f"Error {e} processing form {form} for medical context"
                             )
                     # Check for plan context
@@ -771,14 +787,16 @@ class AppealsBackendHelper:
                             if pc is not None:
                                 plan_context.add(pc)
                         except Exception as e:
-                            print(f"Error {e} processing form {form} for plan context")
+                            logger.debug(
+                                f"Error {e} processing form {form} for plan context"
+                            )
                     # See if we have a provided medical reason
                     if (
                         "medical_reason" in parsed.cleaned_data
                         and parsed.cleaned_data["medical_reason"] != ""
                     ):
                         medical_reasons.add(parsed.cleaned_data["medical_reason"])
-                        print(f"Med reason {medical_reasons}")
+                        logger.debug(f"Med reason {medical_reasons}")
                     # Questionable dynamic template
                     new_prefaces = parsed.preface()
                     for p in new_prefaces:
@@ -812,9 +830,15 @@ class AppealsBackendHelper:
         async def save_appeal(appeal_text: str) -> str:
             # Save all of the proposed appeals, so we can use RL later.
             t = time.time()
-            print(f"{t}: Saving {appeal_text}")
-            pa = ProposedAppeal(appeal_text=appeal_text, for_denial=denial)
-            await pa.asave()
+            logger.debug(f"{t}: Saving {appeal_text}")
+            await asyncio.sleep(0)
+            # YOLO on saving appeals, sqllite gets sad.
+            try:
+                pa = ProposedAppeal(appeal_text=appeal_text, for_denial=denial)
+                await pa.asave()
+            except Exception as e:
+                logger.opt(exception=True).warning("Failed to save proposed appeal: {e}")
+                pass
             return appeal_text
 
         async def sub_in_appeals(appeal: str) -> str:
@@ -843,14 +867,17 @@ class AppealsBackendHelper:
             return json.dumps(response) + "\n"
 
         filtered_appeals: Iterator[str] = filter(lambda x: x != None, appeals)
+
         # We convert to async here.
         saved_appeals: AsyncIterator[str] = a.map(save_appeal, filtered_appeals)
         subbed_appeals: AsyncIterator[str] = a.map(sub_in_appeals, saved_appeals)
         subbed_appeals_json: AsyncIterator[str] = a.map(format_response, subbed_appeals)
+        # StreamignHttpResponse needs a synchronous iterator otherwise it blocks.
         interleaved: AsyncIterator[str] = interleave_iterator_for_keep_alive(
             subbed_appeals_json
         )
+        synced = async_to_sync_iterator(interleaved)
         return StreamingHttpResponse(
-            interleaved,
+            synced,
             content_type="application/json",
-        )
+            )

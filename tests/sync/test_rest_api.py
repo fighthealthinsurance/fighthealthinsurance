@@ -111,6 +111,7 @@ class DenialEndToEnd(APITestCase):
         self.assertTrue(status.is_success(response.status_code))
         parsed = response.json()
         denial_id = parsed["denial_id"]
+        print(f"Using '{denial_id}'")
         semi_sekret = parsed["semi_sekret"]
         # Make sure we added a denial for this user
         denials_for_user_count = Denial.objects.filter(
@@ -135,7 +136,9 @@ class DenialEndToEnd(APITestCase):
             ),
             content_type="application/json",
         )
-        print(str(response.streaming_content))
+        print(str(list(response.streaming_content)))
+        # Hack
+        time.sleep(30)
         # Ok now lets get the additional info
         find_next_steps_url = reverse("nextsteps-list")
         find_next_steps_response = self.client.post(

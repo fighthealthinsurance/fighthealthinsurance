@@ -66,7 +66,9 @@ class MLRouter(object):
         else:
             return self.internal_models_by_cost
 
-    def summarize(self, text: Optional[str], query: str, abstract: Optional[str]) -> Optional[str]:
+    def summarize(
+        self, text: Optional[str], query: str, abstract: Optional[str]
+    ) -> Optional[str]:
         models: list[RemoteModelLike] = []
         if "meta-llama/Llama-3.3-70B-Instruct-Turbo" in self.models_by_name:
             models = self.models_by_name["meta-llama/Llama-3.3-70B-Instruct-Turbo"]

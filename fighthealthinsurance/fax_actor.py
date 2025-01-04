@@ -52,7 +52,7 @@ class FaxActor:
         from django.core.management import call_command
 
         env = os.getenv("DJANGO_CONFIGURATION")
-        if env != "Test":
+        if env != "Test" and env != "TestSync":
             raise Exception(f"Tried to call test migrate in non-test env -- {env}")
         try:
             FaxesToSend.objects.all().delete()

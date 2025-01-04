@@ -1,3 +1,5 @@
+import typing
+
 from django.urls import include
 from django.urls import path
 from django.conf import settings
@@ -7,7 +9,7 @@ from fighthealthinsurance import rest_views
 from rest_framework import routers
 
 if settings.DEBUG:
-    RouterClass = routers.DefaultRouter
+    RouterClass: typing.Type[routers.BaseRouter] = routers.DefaultRouter
 else:
     RouterClass = routers.SimpleRouter
 

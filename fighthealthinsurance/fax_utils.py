@@ -148,12 +148,12 @@ class SonicFax(FaxSenderBase):
             )
 
     def _blocking_check_fax_status(
-            self,
-            s: Session,
-            cookies: dict[str, str],
-            destination: str,
-            path: str,
-            dest_name: Optional[str] = None
+        self,
+        s: Session,
+        cookies: dict[str, str],
+        destination: str,
+        path: str,
+        dest_name: Optional[str] = None,
     ) -> bool:
         r = s.get(
             "https://members.sonic.net/labs/fax/?a=history",
@@ -211,12 +211,12 @@ class SonicFax(FaxSenderBase):
         return tail
 
     def _send_fax_non_blocking(
-            self,
-            s: Session,
-            cookies: dict[str, str],
-            destination: str,
-            path: str,
-            dest_name: Optional[str] = None
+        self,
+        s: Session,
+        cookies: dict[str, str],
+        destination: str,
+        path: str,
+        dest_name: Optional[str] = None,
     ):
         r = s.get(
             "https://members.sonic.net/labs/fax", headers=self.headers, cookies=cookies
@@ -483,7 +483,12 @@ class FlexibleFaxMagic(object):
             return input_path
         else:
             await asyncio.sleep(0)
-            base_convert_command = ["pandoc", "--wrap=auto", input_path, f"-o{input_path}.pdf"]
+            base_convert_command = [
+                "pandoc",
+                "--wrap=auto",
+                input_path,
+                f"-o{input_path}.pdf",
+            ]
             try:
                 await check_call(base_convert_command)
                 return f"{input_path}.pdf"
@@ -515,14 +520,14 @@ class FlexibleFaxMagic(object):
                         pass
                 return None
 
-
-
     async def assemble_single_output(
         self, user_header: str, extra: str, input_paths: list[str]
     ) -> str:
         """Assembles all the inputs into one output. Will need to be chunked."""
         merger = PdfMerger()
-        converted_paths = await asyncio.gather(*(self._convert_input(path) for path in input_paths))
+        converted_paths = await asyncio.gather(
+            *(self._convert_input(path) for path in input_paths)
+        )
 
         for pdf_path in filter(None, converted_paths):
             merger.append(pdf_path)

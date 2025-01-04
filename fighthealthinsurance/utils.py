@@ -1,5 +1,8 @@
+from django.db import connections
+import nest_asyncio
 import asyncstdlib
 import asyncio
+from asgiref.sync import sync_to_async, async_to_sync
 from inspect import isabstract, isawaitable
 import concurrent
 import os
@@ -9,6 +12,7 @@ from functools import reduce
 from typing import AsyncIterator, Iterator, List, Optional, TypeVar
 from uuid import UUID
 from subprocess import CalledProcessError
+from loguru import logger
 
 import requests
 from metapub import PubMedFetcher
@@ -30,8 +34,9 @@ common_bad_result = [
 
 maybe_bad_url_endings = re.compile("^(.*)[\\.\\:\\;\\,\\?\\>]+$")
 
+
 async def check_call(cmd, max_retries=0, **kwargs):
-    print(f"Running: {cmd}")
+    logger.debug(f"Running: {cmd}")
     process = await asyncio.create_subprocess_exec(
         *cmd, **kwargs, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
     )
@@ -40,16 +45,16 @@ async def check_call(cmd, max_retries=0, **kwargs):
         if max_retries < 1:
             raise CalledProcessError(return_code, cmd)
         else:
-            print(f"Retrying {cmd}")
+            logger.debug(f"Retrying {cmd}")
             return await check_call(cmd, max_retries=max_retries - 1, **kwargs)
     else:
-        print(f"Success {cmd}")
+        logger.debug(f"Success {cmd}")
 
 
 def markdown_escape(string: Optional[str]) -> str:
     if string is None:
         return ""
-    result: str= esc_format(string, esc=True)
+    result: str = esc_format(string, esc=True)
     return result
 
 
@@ -67,11 +72,11 @@ def is_valid_url(url) -> bool:
         # Look for those craft 200 OKs which should be 404s
         for bad_result_text in common_bad_result:
             if bad_result_text.lower() in result_text:
-                print(f"Found bad result on {url}")
+                logger.debug(f"Found bad result on {url}")
                 return False
         return True
     except RequestException as e:
-        print(f"Error {e} looking up {url}")
+        logger.debug(f"Error {e} looking up {url}")
         groups = maybe_bad_url_endings.search(url)
         if groups is not None:
             return is_valid_url(groups.group(1))
@@ -121,11 +126,18 @@ def all_concrete_subclasses(cls: type[U]):
     return [c for c in all_subclasses(cls) if not isabstract(c)]
 
 
-def interleave_iterator_for_keep_alive(iterator: AsyncIterator[str]) -> AsyncIterator[str]:
+# I'm lazy and we only work with strings right now.
+
+
+def interleave_iterator_for_keep_alive(
+    iterator: AsyncIterator[str],
+) -> AsyncIterator[str]:
     return asyncstdlib.iter(_interleave_iterator_for_keep_alive(iterator))
 
 
-async def _interleave_iterator_for_keep_alive(iterator: AsyncIterator[str]) -> AsyncIterator[str]:
+async def _interleave_iterator_for_keep_alive(
+    iterator: AsyncIterator[str],
+) -> AsyncIterator[str]:
     yield ""
     await asyncio.sleep(0)
     async for item in iterator:
@@ -135,3 +147,31 @@ async def _interleave_iterator_for_keep_alive(iterator: AsyncIterator[str]) -> A
         yield item
         await asyncio.sleep(0)
         yield ""
+
+
+def async_to_sync_iterator(async_gen: AsyncIterator[str]) -> Iterator[str]:
+    """
+    Converts an asynchronous generator into a synchronous iterator
+    suitable for use with StreamingHttpResponse.
+
+    Parameters:
+        async_gen (AsyncIterator[str]): The asynchronous generator to convert.
+
+    Returns:
+        Iterator[str]: A synchronous iterator yielding the same items.
+    """
+
+    async def get_next():
+        return await async_gen.__anext__()
+
+    def generator() -> Iterator[str]:
+        """Synchronous generator wrapping the asynchronous generator."""
+        nest_asyncio.apply()
+        while True:
+            try:
+                # Use asyncio.run with to_thread to fetch the next item
+                item: str = asyncio.run(get_next())
+                yield item
+            except StopAsyncIteration:
+                break
+    return generator()

@@ -1,0 +1,9 @@
+{
+  "include": ["**/*.py"],
+  "exclude": ["**/migrations/**"],
+  "typeCheckingMode": "strict",
+  "useLibraryCodeForTypes": true,
+  "reportMissingTypeStubs": false,
+  "pythonVersion": "3.10",
+  "pythonPlatform": "Linux"
+}

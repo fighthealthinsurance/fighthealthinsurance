@@ -16,6 +16,7 @@ import tempfile
 from typing import List, Optional
 from .exec import pubmed_executor
 import subprocess
+from loguru import logger
 
 
 class PubMedTools(object):
@@ -37,7 +38,7 @@ class PubMedTools(object):
                 denial_id=denial,
             ).save()
             for article_id in pmids[0:10]:
-                print(f"Loading {article_id}")
+                logger.debug(f"Loading {article_id}")
                 article_futures.append(
                     pubmed_executor.submit(self.do_article_summary, article_id, query)
                 )
@@ -55,7 +56,9 @@ class PubMedTools(object):
                     articles.append(result)
                 t = t - 1
             except Exception as e:
-                print(f"Skipping appending article from {f} due to {e} of {type(e)}")
+                logger.debug(
+                    f"Skipping appending article from {f} due to {e} of {type(e)}"
+                )
 
         if len(articles) > 0:
             return "\n".join(map(format_article_short, articles))
@@ -84,7 +87,7 @@ class PubMedTools(object):
                         )
                         pubmed_docs.append(article)
                 except:
-                    print(f"Skipping {pmid}")
+                    logger.debug(f"Skipping {pmid}")
         return pubmed_docs
 
     def do_article_summary(
@@ -146,7 +149,7 @@ class PubMedTools(object):
                 )
                 return article
             else:
-                print(f"Skipping {fetched}")
+                logger.debug(f"Skipping {fetched}")
                 return None
         return None
 
@@ -171,9 +174,9 @@ class PubMedTools(object):
                                 my_data.flush()
                                 return my_data.name
                             else:
-                                print(f"No content from fetching {url}")
+                                logger.debug(f"No content from fetching {url}")
         except Exception as e:
-            print(f"Error {e} fetching article for {article}")
+            logger.debug(f"Error {e} fetching article for {article}")
             pass
         # Backup us markdown & pandoc -- but only if we have something to write
         if article.abstract is None and article.text is None:
@@ -199,7 +202,9 @@ class PubMedTools(object):
             if result.returncode == 0:
                 return f"{my_data.name}.pdf"
             else:
-                print(f"Error processing {command} trying again with different engine")
+                logger.debug(
+                    f"Error processing {command} trying again with different engine"
+                )
                 command = [
                     "pandoc",
                     "--wrap=auto",
@@ -212,5 +217,5 @@ class PubMedTools(object):
                 if result.returncode == 0:
                     return f"{my_data.name}.pdf"
                 else:
-                    print(f"Error processing {command}")
+                    logger.debug(f"Error processing {command}")
         return None

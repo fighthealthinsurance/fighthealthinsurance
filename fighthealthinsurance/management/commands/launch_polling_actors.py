@@ -8,4 +8,5 @@ class Command(BaseCommand):
 
     def handle(self, *args: str, **options: Any):
         from fighthealthinsurance.polling_actor_setup import epar, fpar
+
         print(f"Loaded actor {epar} {fpar}")

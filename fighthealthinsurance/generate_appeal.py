@@ -4,6 +4,7 @@ import time
 import traceback
 from concurrent.futures import Future
 from typing import Any, Iterator, List, Optional, Tuple
+from loguru import logger
 
 from fighthealthinsurance.denial_base import DenialBase
 from fighthealthinsurance.exec import *
@@ -62,7 +63,7 @@ class AppealGenerator(object):
         procedure = None
         diagnosis = None
         for model in models_to_try:
-            print(f"Exploring model {model}")
+            logger.debug(f"Exploring model {model}")
             procedure_diagnosis = await model.get_procedure_and_diagnosis(denial_text)
             if procedure_diagnosis is not None:
                 if len(procedure_diagnosis) > 1:
@@ -74,15 +75,15 @@ class AppealGenerator(object):
                     if diagnosis is not None and len(diagnosis) > 200:
                         diagnosis = None
                 else:
-                    print(
+                    logger.debug(
                         f"Unexpected procedure diagnosis len on {procedure_diagnosis}"
                     )
                 if procedure is not None and diagnosis is not None:
-                    print(f"Return with procedure {procedure} and {diagnosis}")
+                    logger.debug(f"Return with procedure {procedure} and {diagnosis}")
                     return (procedure, diagnosis)
                 else:
-                    print(f"So far infered {procedure} and {diagnosis}")
-        print(
+                    logger.debug(f"So far infered {procedure} and {diagnosis}")
+        logger.debug(
             f"Fell through :/ could not fully populate but got {procedure}, {diagnosis}"
         )
         return (procedure, diagnosis)
@@ -149,7 +150,7 @@ class AppealGenerator(object):
         try:
             pubmed_context = self.pmt.find_context_for_denial(denial)
         except Exception as e:
-            print(f"Error {e} looking up context for {denial}.")
+            logger.debug(f"Error {e} looking up context for {denial}.")
 
         # TODO: use the streaming and cancellable APIs (maybe some fancy JS on the client side?)
 
@@ -162,13 +163,13 @@ class AppealGenerator(object):
             infer_type: str,
             pubmed_context: Optional[str] = None,
         ) -> List[Future[Tuple[str, Optional[str]]]]:
-            print(f"Looking up on {model_name}")
+            logger.debug(f"Looking up on {model_name}")
             if model_name not in ml_router.models_by_name:
-                print(f"No backend for {model_name}")
+                logger.debug(f"No backend for {model_name}")
                 return []
             model_backends = ml_router.models_by_name[model_name]
             if prompt is None:
-                print(f"No prompt for {model_name} skipping")
+                logger.debug(f"No prompt for {model_name} skipping")
                 return []
             for model in model_backends:
                 try:
@@ -181,8 +182,8 @@ class AppealGenerator(object):
                         pubmed_context=pubmed_context,
                     )
                 except Exception as e:
-                    print(f"Backend {model} failed {e}")
-            print(f"All backends for {model_name} failed")
+                    logger.debug(f"Backend {model} failed {e}")
+            logger.debug(f"All backends for {model_name} failed")
             return []
 
         def _get_model_result(
@@ -197,7 +198,7 @@ class AppealGenerator(object):
             results = None
             try:
                 if isinstance(model, RemoteFullOpenLike):
-                    print(f"Using {model}'s parallel inference")
+                    logger.debug(f"Using {model}'s parallel inference")
                     reveal_type(model)
                     results = model.parallel_infer(
                         prompt=prompt,
@@ -207,7 +208,7 @@ class AppealGenerator(object):
                         infer_type=infer_type,
                     )
                 else:
-                    print(f"Using system level parallel inference for {model}")
+                    logger.debug(f"Using system level parallel inference for {model}")
                     results = [
                         executor.submit(
                             model.infer,
@@ -219,7 +220,7 @@ class AppealGenerator(object):
                         )
                     ]
             except Exception as e:
-                print(
+                logger.debug(
                     f"Error {e} {traceback.format_exc()} submitting to {model} falling back"
                 )
                 results = [
@@ -232,7 +233,7 @@ class AppealGenerator(object):
                         pubmed_context=pubmed_context,
                     )
                 ]
-            print(
+            logger.debug(
                 f"Infered {results} for {model}-{infer_type} using {prompt} w/ {patient_context}"
             )
             return results
@@ -326,15 +327,15 @@ class AppealGenerator(object):
             # Otherwise just put in as is.
             initial_appeals.append(static_appeal)
         for reason in medical_reasons:
-            print(f"Using reason {reason}")
+            logger.debug(f"Using reason {reason}")
             appeal = template_generator.generate(reason)
             initial_appeals.append(appeal)
 
-        print(f"Initial appeal {initial_appeals}")
+        logger.debug(f"Initial appeal {initial_appeals}")
         # Executor map wants a list for each parameter.
 
         def make_async_model_calls(calls) -> List[Future[Iterator[str]]]:
-            print(f"Calling models: {calls}")
+            logger.debug(f"Calling models: {calls}")
             model_futures = itertools.chain.from_iterable(
                 map(lambda x: get_model_result(**x), calls)
             )
@@ -382,5 +383,5 @@ class AppealGenerator(object):
         except StopIteration:
             appeals = as_available_nested(make_async_model_calls(backup_calls))
         appeals = itertools.chain(appeals, as_available_nested(delayed_initial_appeals))
-        print(f"Sending back {appeals}")
+        logger.debug(f"Sending back {appeals}")
         return appeals

@@ -10,6 +10,7 @@ django_compressor
 django_compressor_toolkit
 django-configurations>=2.4
 django-cors-headers
+django-easy-logging
 django-extensions
 django-filer
 django-filter
@@ -31,7 +32,9 @@ flake8-django
 geopy
 git+https://github.com/holdenk/static-thumbnails.git
 git+https://github.com/jazzband/django-cookie-consent.git#egg=django-cookie-consent
+git+https://github.com/totallylegitco/llm-result-utils.git
 icd10-cm
+loguru
 markdown_strings
 metapub==0.5.12
 mypy
@@ -65,4 +68,4 @@ urllib3
 uszipcode
 uvicorn[standard]
 werkzeug
-git+https://github.com/totallylegitco/llm-result-utils.git
+nest_asyncio

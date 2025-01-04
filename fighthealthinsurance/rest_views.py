@@ -18,13 +18,11 @@ from stopit import ThreadingTimeout as Timeout
 
 
 class SerializerMixin:
-    serializer_class: typing.Optional[Serializer] = None
+    serializer_class: typing.Optional[typing.Type[Serializer]] = None
 
     def get_serializer(self, data=None):
         if self.serializer_class is None:
-            raise ValueError(
-                'serializer_class must be defined and not None'
-            )
+            raise ValueError("serializer_class must be defined and not None")
 
         return self.serializer_class(data=data)
 
@@ -51,7 +49,7 @@ class DeleteMixin(SerializerMixin):
         pass
 
     def delete(self, request, *args, **kwargs):
-        """ For some reason """
+        """For some reason"""
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         self.perform_delete(request, serializer, *args, **kwargs)
@@ -59,9 +57,7 @@ class DeleteMixin(SerializerMixin):
 
 
 class DeleteOnlyMixin:
-    """ Extra mixin that allows router display for delete-only resources
-
-    """
+    """Extra mixin that allows router display for delete-only resources"""
 
     def list(self, request, *args, **kwargs):
         # For some reason, delete resources don't show if there's not an
@@ -146,7 +142,9 @@ class AppealsBackend(APIView):
     def post(self, request):
         pythondata = json.loads(request.body)
         assert "denial_id" in pythondata
-        return async_to_sync(common_view_logic.AppealsBackendHelper.generate_appeals)(pythondata)
+        return async_to_sync(common_view_logic.AppealsBackendHelper.generate_appeals)(
+            pythondata
+        )
 
 
 class StreamingEntityBackend(APIView):
@@ -155,4 +153,6 @@ class StreamingEntityBackend(APIView):
     def post(self, request):
         pythondata = json.loads(request.body)
         denial_id: int = pythondata["denial_id"]
-        return async_to_sync(common_view_logic.DenialCreatorHelper.extract_entity)(denial_id)
+        return async_to_sync(common_view_logic.DenialCreatorHelper.extract_entity)(
+            denial_id
+        )

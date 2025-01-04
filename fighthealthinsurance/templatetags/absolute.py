@@ -8,8 +8,11 @@ register = template.Library()
 
 
 @register.simple_tag(takes_context=True)
-def absolute_url(context: dict[str, Any], view_name: str, *args: Any, **kwargs: Any) -> str:
+def absolute_url(
+    context: dict[str, Any], view_name: str, *args: Any, **kwargs: Any
+) -> str:
     request: HttpRequest = context["request"]
     result: str = request.build_absolute_uri(
-        reverse(view_name, args=args, kwargs=kwargs))
+        reverse(view_name, args=args, kwargs=kwargs)
+    )
     return result

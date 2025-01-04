@@ -11,6 +11,7 @@ from fighthealthinsurance.models import (
     Regulator,
 )
 from fighthealthinsurance.denial_base import DenialBase
+from loguru import logger
 
 
 # Process all of our "expert system" rules.
@@ -87,35 +88,35 @@ class ProcessDenialRegex(DenialBase):
         self.templates = AppealTemplates.objects.all()
 
     async def get_procedure(self, text):
-        print(f"Getting procedure types for {text}")
+        logger.debug(f"Getting procedure types for {text}")
         procedure = None
         async for d in self.procedures:
-            print(f"Exploring {d} w/ {d.regex}")
+            logger.debug(f"Exploring {d} w/ {d.regex}")
             if d.regex.pattern != "":
                 s = d.regex.search(text)
                 if s is not None:
-                    print("positive regex match")
+                    logger.debug("positive regex match")
                     return s.groups("procedure")[0]
         return None
 
     async def get_diagnosis(self, text):
-        print(f"Getting diagnosis types for {text}")
+        logger.debug(f"Getting diagnosis types for {text}")
         procedure = None
         async for d in self.diagnosis:
-            print(f"Exploring {d} w/ {d.regex}")
+            logger.debug(f"Exploring {d} w/ {d.regex}")
             if d.regex.pattern != "":
                 s = d.regex.search(text)
                 if s is not None:
-                    print("positive regex match")
+                    logger.debug("positive regex match")
                     return s.groups("diagnosis")[0]
         return None
 
     async def get_procedure_and_diagnosis(self, text):
-        print("Getting procedure and diagnosis")
+        logger.debug("Getting procedure and diagnosis")
         return (await self.get_procedure(text), await self.get_diagnosis(text))
 
     async def get_denialtype(self, denial_text, procedure, diagnosis):
-        print(f"Getting denial types for {denial_text}")
+        logger.debug(f"Getting denial types for {denial_text}")
         denials = []
         async for d in self.denialTypes:
             if (
@@ -143,9 +144,9 @@ class ProcessDenialRegex(DenialBase):
                     d.negative_regex.pattern == ""
                     or d.negative_regex.search(denial_text) is None
                 ):
-                    print("no negative regex match!")
+                    logger.debug("no negative regex match!")
                     denials.append(d)
-        print(f"Collected: {denials}")
+        logger.debug(f"Collected: {denials}")
         return denials
 
     async def get_regulator(self, text):
@@ -162,11 +163,11 @@ class ProcessDenialRegex(DenialBase):
         plans = []
         for p in self.planTypes:
             if p.regex.pattern != "" and p.regex.search(text) is not None:
-                print(f"positive regex match for plan {p}")
+                logger.debug(f"positive regex match for plan {p}")
                 if p.negative_regex != "" or p.negative_regex.search(text) is None:
                     plans.append(p)
             else:
-                print(f"no match {p}")
+                logger.debug(f"no match {p}")
         return plans
 
     async def get_appeal_templates(self, text, diagnosis):
@@ -182,7 +183,7 @@ class ProcessDenialRegex(DenialBase):
                         templates.append(t)
                 else:
                     templates.append(t)
-                print("yay match")
+                logger.debug("yay match")
             else:
-                print(f"no match on {t.regex.pattern}")
+                logger.debug(f"no match on {t.regex.pattern}")
         return templates

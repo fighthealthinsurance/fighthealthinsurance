@@ -7,6 +7,7 @@ import pymupdf
 import requests
 from bs4 import BeautifulSoup
 from fighthealthinsurance.models import Denial, PlanDocuments
+from loguru import logger
 
 
 class InsuranceQuestions(forms.Form):
@@ -46,12 +47,15 @@ My name is $your_name_here and I am writing you regarding claim {claim_id}{denia
             and self.cleaned_data["urgent"]
             and self.cleaned_data["pre_service"]
         ):
-            return [common, (
-                "As an urgent pre-service claim you must respond within the "
-                "timeline required for my medical situation (up to a maximum "
-                "of four days). This also serves as notice of concurrent "
-                "request of external review."
-            )]
+            return [
+                common,
+                (
+                    "As an urgent pre-service claim you must respond within the "
+                    "timeline required for my medical situation (up to a maximum "
+                    "of four days). This also serves as notice of concurrent "
+                    "request of external review."
+                ),
+            ]
         elif "pre_service" in self.cleaned_data and self.cleaned_data["pre_service"]:
             return [
                 common,
@@ -253,7 +257,7 @@ class GenderAffirmingCareQuestions(InsuranceQuestions):
                     for page in doc:
                         contents += page.get_text()
                 except RuntimeError:
-                    print(f"Error reading {path}")
+                    logger.warning(f"Error reading {path}")
             if contents is None:
                 with open(path, "r") as file:
                     contents = file.read()
@@ -297,7 +301,7 @@ class GenderAffirmingCareQuestions(InsuranceQuestions):
                 elif "45/50" in text or "50/50" in text:
                     return True
         except Exception as e:
-            print(f"Error {e} getting employer HRC score")
+            logger.debug(f"Error {e} getting employer HRC score")
             return False
         return False
 

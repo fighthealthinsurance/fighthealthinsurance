@@ -11,6 +11,7 @@ from functools import cache
 from typing import Callable, List, Optional, Tuple, Iterable, Union, Awaitable
 import requests
 from stopit import ThreadingTimeout as Timeout
+from loguru import logger
 
 from llm_result_utils.cleaner_utils import CleanerUtils
 
@@ -71,6 +72,7 @@ class RemoteModelLike(DenialBase):
 @dataclass(kw_only=True)
 class ModelDescription:
     """Model description with a rough proxy for cost."""
+
     cost: int = 200  # Cost of the model (must be first for ordered if/when we upgrade)
     name: str  # Common model name
     internal_name: str  # Internal model name
@@ -94,6 +96,7 @@ class RemoteModel(RemoteModelLike):
         if result is None or len(result) < 3:
             return True
         return False
+
 
 class RemoteOpenLike(RemoteModel):
 
@@ -149,7 +152,7 @@ class RemoteOpenLike(RemoteModel):
         pubmed_context: Optional[str],
         infer_type: str,
     ) -> List[Future[Tuple[str, Optional[str]]]]:
-        print(f"Running inference on {self} of type {infer_type}")
+        logger.debug(f"Running inference on {self} of type {infer_type}")
         temperatures = [0.5]
         if infer_type == "full" and not self._expensive:
             # Special case for the full one where we really want to explore the problem space
@@ -217,7 +220,7 @@ class RemoteOpenLike(RemoteModel):
             pubmed_context=pubmed_context,
             temperature=temperature,
         )
-        print(f"Got result {result} from {prompt} on {self}")
+        logger.debug(f"Got result {result} from {prompt} on {self}")
         # One retry
         if self.bad_result(result):
             result = await self._infer(
@@ -230,7 +233,14 @@ class RemoteOpenLike(RemoteModel):
             )
         if self.bad_result(result):
             return []
-        return [(infer_type, CleanerUtils.note_remover(CleanerUtils.url_fixer(CleanerUtils.tla_fixer(result))))]
+        return [
+            (
+                infer_type,
+                CleanerUtils.note_remover(
+                    CleanerUtils.url_fixer(CleanerUtils.tla_fixer(result))
+                ),
+            )
+        ]
 
     def _clean_procedure_response(self, response):
         return self.procedure_response_regex.sub("", response)
@@ -263,15 +273,15 @@ class RemoteOpenLike(RemoteModel):
     async def get_procedure_and_diagnosis(
         self, prompt: str
     ) -> tuple[Optional[str], Optional[str]]:
-        print(f"Getting procedure and diagnosis for {self} w/ {prompt}")
+        logger.debug(f"Getting procedure and diagnosis for {self} w/ {prompt}")
         if self.system_prompts["procedure"] is None:
-            print(f"No procedure message for {self.model} skipping")
+            logger.debug(f"No procedure message for {self.model} skipping")
             return (None, None)
         model_response = await self._infer(
             system_prompt=self.system_prompts["procedure"], prompt=prompt
         )
         if model_response is None or "Diagnosis" not in model_response:
-            print("Retrying query.")
+            logger.debug("Retrying query.")
             model_response = await self._infer(
                 system_prompt=self.system_prompts["procedure"], prompt=prompt
             )
@@ -296,11 +306,11 @@ class RemoteOpenLike(RemoteModel):
                         procedure = self._clean_procedure_response(ra)
                 return (procedure, diagnosis)
             else:
-                print(
+                logger.debug(
                     f"Non-understood response {model_response} for procedure/diagnsosis."
                 )
         else:
-            print(f"No model response for {self.model}")
+            logger.debug(f"No model response for {self.model}")
         return (None, None)
 
     async def _infer(
@@ -358,13 +368,13 @@ class RemoteOpenLike(RemoteModel):
     ) -> Optional[str]:
         if api_base is None:
             api_base = self.api_base
-        print(f"Looking up model {model} using {api_base} and {prompt}")
+        logger.debug(f"Looking up model {model} using {api_base} and {prompt}")
         if self.api_base is None:
             return None
         if self.token is None:
-            print(f"Error no Token provided for {model}.")
+            logger.debug(f"Error no Token provided for {model}.")
         if prompt is None:
-            print(f"Error: must supply a prompt.")
+            logger.debug(f"Error: must supply a prompt.")
             return None
         url = f"{api_base}/chat/completions"
         combined_content = None
@@ -385,7 +395,7 @@ class RemoteOpenLike(RemoteModel):
                 if plan_context is not None and len(plan_context) > 3:
                     context_extra += f"For answering the question you can use this context about the plan {plan_context}"
                 combined_content = f"<<SYS>>{system_prompt}<</SYS>>{context_extra}{prompt[0 : self.max_len]}"
-                print(f"Using {combined_content}")
+                logger.debug(f"Using {combined_content}")
                 async with s.post(
                     url,
                     headers={"Authorization": f"Bearer {self.token}"},
@@ -402,20 +412,20 @@ class RemoteOpenLike(RemoteModel):
                 ) as response:
                     json_result = await response.json()
                     if "object" in json_result and json_result["object"] != "error":
-                        print(f"Response on {self} Looks ok")
+                        logger.debug(f"Response on {self} Looks ok")
                     else:
-                        print(
+                        logger.debug(
                             f"***WARNING*** Response {response} on {self} looks _bad_"
                         )
         except Exception as e:
-            print(f"Error {e} {traceback.format_exc()} calling {api_base}")
+            logger.debug(f"Error {e} {traceback.format_exc()} calling {api_base}")
             return None
         try:
             r: str = json_result["choices"][0]["message"]["content"]
-            print(f"Got {r} from {model} w/ {api_base} {self}")
+            logger.debug(f"Got {r} from {model} w/ {api_base} {self}")
             return r
         except Exception as e:
-            print(
+            logger.debug(
                 f"Error {e} {traceback.format_exc()} processing {json_result} from {api_base} w/ url {url} --  {self} ON -- {combined_content}"
             )
             return None
@@ -470,9 +480,9 @@ class RemoteHealthInsurance(RemoteFullOpenLike):
         if self.port is not None and self.host is not None:
             self.url = f"http://{self.host}:{self.port}/v1"
         else:
-            print(f"Error setting up remote health {self.host}:{self.port}")
+            logger.debug(f"Error setting up remote health {self.host}:{self.port}")
         self.backup_url = f"http://{self.backup_host}:{self.backup_port}/v1"
-        print(f"Setting backup to {self.backup_url}")
+        logger.debug(f"Setting backup to {self.backup_url}")
         super().__init__(
             self.url, token="", backup_api_base=self.backup_url, model=model
         )
@@ -527,7 +537,7 @@ class RemoteTogetherAI(RemoteFullOpenLike):
                 cost=88,
                 name="meta-llama/llama-3.1-70b-instruct",
                 internal_name="meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
-            )
+            ),
         ]
 
 
@@ -598,7 +608,8 @@ class DeepInfra(RemoteFullOpenLike):
             ModelDescription(
                 cost=30,
                 name="meta-llama/Llama-3.3-70B-Instruct-Turbo",
-                internal_name="meta-llama/Llama-3.3-70B-Instruct-Turbo")
+                internal_name="meta-llama/Llama-3.3-70B-Instruct-Turbo",
+            ),
         ]
 
 

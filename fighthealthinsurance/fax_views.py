@@ -1,6 +1,6 @@
 import json
 import stripe
-
+from loguru import logger
 from typing import *
 
 from django.conf import settings
@@ -61,14 +61,14 @@ class StageFaxView(generic.FormView):
     def form_valid(self, form):
         form_data = form.cleaned_data
         # Get all of the articles the user wants to send
-        print(f"Items {list(self.request.POST.items())}")
+        logger.debug(f"Items {list(self.request.POST.items())}")
         pubmed_checkboxes = [
-            key[len("pubmed_"):]
+            key[len("pubmed_") :]
             for key, value in self.request.POST.items()
             if key.startswith("pubmed_") and value == "on"
         ]
         form_data["pubmed_ids_parsed"] = pubmed_checkboxes
-        print(f"Staging fax with {form_data}")
+        logger.debug(f"Staging fax with {form_data}")
         staged = common_view_logic.SendFaxHelper.stage_appeal_fax(**form_data)
         stripe.api_key = settings.STRIPE_API_SECRET_KEY
         stripe.publishable_key = settings.STRIPE_API_PUBLISHABLE_KEY

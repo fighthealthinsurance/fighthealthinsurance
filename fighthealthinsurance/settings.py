@@ -22,6 +22,7 @@ import minio as m
 from django.core.files.storage import Storage
 from minio_storage.storage import MinioStorage
 import time
+from dj_easy_log import load_loguru
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "fighthealthinsurance.settings")
 os.environ.setdefault("DJANGO_CONFIGURATION", os.getenv("ENVIRONMENT", "Dev"))
@@ -145,12 +146,13 @@ class Base(Configuration):
     WSGI_APPLICATION = "fighthealthinsurance.wsgi.application"
 
     # Database
-    # https://docs.djangoproject.com/en/4.0/ref/settings/#databases
+    # https://docs.djangoproject.com/en/5.0/ref/settings/#databases
 
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.sqlite3",
             "NAME": BASE_DIR / "db.sqlite3",
+            "ATOMIC_REQUESTS": False,
         }
     }
 
@@ -291,18 +293,37 @@ class Dev(Base):
         },
     }
 
+    # Configure logging
+    load_loguru(globals())
+
 
 class Test(Dev):
-    # This is a hack since the actors start up without the django test interface around them
+    # For async tests we do in memory for increased isolation
     dt = str(int(time.time()))
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.sqlite3",
             "NAME": BASE_DIR / f"test{dt}.db.sqlite3",
-            "TIMEOUT": 10,
+            "TIMEOUT": 1,
+            "CONN_MAX_AGE": 0,
+            "NAME": "memory",
             "TEST": {
                 "NAME": BASE_DIR / f"test{dt}.db.sqlite3",
             },
+        },
+    }
+
+
+class TestSync(Dev):
+    # We use "real" files for sync tests since we have seperate processes for actors.
+    dt = str(int(time.time()))
+    dbname = os.getenv("DBNAME", f"{BASE_DIR}/test{dt}.db.sqlite3")
+    os.environ["DBNAME"] = dbname
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "TIMEOUT": 4,
+            "NAME": dbname,
         },
     }
 
@@ -396,10 +417,11 @@ class Prod(Base):
     def EXTERNAL_STORAGE_B(self):
         try:
             if (
-                    self.MINIO_STORAGE_ENDPOINT is not None and
-                    self.MINIO_STORAGE_ACCESS_KEY is not None and
-                    self.MINIO_STORAGE_SECRET_KEY is not None and
-                    self.MINIO_STORAGE_MEDIA_BUCKET_NAME is not None):
+                self.MINIO_STORAGE_ENDPOINT is not None
+                and self.MINIO_STORAGE_ACCESS_KEY is not None
+                and self.MINIO_STORAGE_SECRET_KEY is not None
+                and self.MINIO_STORAGE_MEDIA_BUCKET_NAME is not None
+            ):
                 minio_client = m.Minio(
                     self.MINIO_STORAGE_ENDPOINT,
                     access_key=self.MINIO_STORAGE_ACCESS_KEY,

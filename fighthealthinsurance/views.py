@@ -1,6 +1,7 @@
 import json
 import stripe
 import typing
+from loguru import logger
 
 from PIL import Image
 from django import forms
@@ -21,9 +22,13 @@ appealGenerator = generate_appeal.AppealGenerator()
 
 
 def render_ocr_error(request, text):
-    return render(request, "server_side_ocr_error.html", context={
-        "error": text,
-    })
+    return render(
+        request,
+        "server_side_ocr_error.html",
+        context={
+            "error": text,
+        },
+    )
 
 
 class FollowUpView(generic.FormView):
@@ -81,9 +86,7 @@ class ProVersionView(generic.FormView):
             success_url=self.request.build_absolute_uri(
                 reverse("pro_version_thankyou")
             ),
-            cancel_url=self.request.build_absolute_uri(
-                reverse("pro_version_thankyou")
-            ),
+            cancel_url=self.request.build_absolute_uri(reverse("pro_version_thankyou")),
             customer_email=form.cleaned_data["email"],
         )
         checkout_url = checkout.url
@@ -151,7 +154,7 @@ class ShareAppealView(View):
                 # Include the hashed e-mail so folks can't brute force denial_id
                 hashed_email=hashed_email,
             ).get()
-            print(form.cleaned_data)
+            logger.debug(form.cleaned_data)
             denial.appeal_text = form.cleaned_data["appeal_text"]
             denial.save()
             pa = models.ProposedAppeal(
@@ -181,9 +184,13 @@ class RemoveDataView(View):
         if form.is_valid():
             email = form.cleaned_data["email"]
             common_view_logic.RemoveDataHelper.remove_data_for_email(email)
-            return render(request, "removed_data.html", context={
-                "title": "Remove My Data",
-            })
+            return render(
+                request,
+                "removed_data.html",
+                context={
+                    "title": "Remove My Data",
+                },
+            )
 
         return render(
             request,
@@ -217,11 +224,15 @@ class FindNextSteps(View):
                     "semi_sekret": next_step_info.semi_sekret,
                 }
             )
-            return render(request, "outside_help.html", context={
-                "outside_help_details": next_step_info.outside_help_details,
-                "combined": next_step_info.combined_form,
-                "denial_form": denial_ref_form,
-            })
+            return render(
+                request,
+                "outside_help.html",
+                context={
+                    "outside_help_details": next_step_info.outside_help_details,
+                    "combined": next_step_info.combined_form,
+                    "denial_form": denial_ref_form,
+                },
+            )
 
         # If not valid take the user back.
         return render(
@@ -239,16 +250,14 @@ class ChooseAppeal(View):
         form = core_forms.ChooseAppealForm(request.POST)
 
         if not form.is_valid():
-            print(form)
+            logger.debug(form)
             return
 
         (
             appeal_fax_number,
             insurance_company,
             candidate_articles,
-        ) = common_view_logic.ChooseAppealHelper.choose_appeal(
-            **form.cleaned_data
-        )
+        ) = common_view_logic.ChooseAppealHelper.choose_appeal(**form.cleaned_data)
 
         appeal_info_extracted = ""
         fax_form = core_forms.FaxForm(
@@ -276,13 +285,17 @@ class ChooseAppeal(View):
                     initial=True,
                 )
 
-        return render(request, "appeal.html", context={
-            "appeal": form.cleaned_data["appeal_text"],
-            "user_email": form.cleaned_data["email"],
-            "denial_id": form.cleaned_data["denial_id"],
-            "appeal_info_extract": appeal_info_extracted,
-            "fax_form": fax_form,
-        })
+        return render(
+            request,
+            "appeal.html",
+            context={
+                "appeal": form.cleaned_data["appeal_text"],
+                "user_email": form.cleaned_data["email"],
+                "denial_id": form.cleaned_data["denial_id"],
+                "appeal_info_extract": appeal_info_extracted,
+                "fax_form": fax_form,
+            },
+        )
 
 
 class GenerateAppeal(View):
@@ -313,34 +326,37 @@ class StreamingEntityBackend(View):
     """Streaming Entity Extraction"""
 
     async def post(self, request):
-        print(request)
-        print(request.POST)
+        logger.debug(request)
+        logger.debug(request.POST)
         form = core_forms.DenialRefForm(request.POST)
         if form.is_valid():
             return await common_view_logic.DenialCreatorHelper.extract_entity(
-                form.cleaned_data["denial_id"])
+                form.cleaned_data["denial_id"]
+            )
         else:
-            print(f"Error processing {form}")
+            logger.debug(f"Error processing {form}")
 
 
 class AppealsBackend(View):
     """Streaming back the appeals as json :D"""
 
     async def post(self, request):
-        print(request)
-        print(request.POST)
+        logger.debug(request)
+        logger.debug(request.POST)
         form = core_forms.DenialRefForm(request.POST)
         if not form.is_valid():
-            print(f"Error processing {form}")
+            logger.debug(f"Error processing {form}")
             return
 
-        return await common_view_logic.AppealsBackendHelper.generate_appeals(request.POST)
+        return await common_view_logic.AppealsBackendHelper.generate_appeals(
+            request.POST
+        )
 
     async def get(self, request):
         form = core_forms.DenialRefForm(request.GET)
 
         if not form.is_valid():
-            print(f"Error processing {form}")
+            logger.debug(f"Error processing {form}")
             return
 
         return await common_view_logic.AppealsBackendHelper.generate_appeals(
@@ -353,6 +369,7 @@ class OCRView(View):
         # Load easy ocr reader if possible
         try:
             import easyocr
+
             self._easy_ocr_reader = easyocr.Reader(["en"], gpu=False)
         except Exception:
             pass
@@ -362,14 +379,18 @@ class OCRView(View):
 
     def post(self, request):
         try:
-            print(request.FILES)
+            logger.debug(request.FILES)
             files = dict(request.FILES.lists())
             uploader = files["uploader"]
             doc_txt = self._ocr(uploader)
-            return render(request, "scrub.html", context={
-                "ocr_result": doc_txt,
-                "upload_more": False,
-            })
+            return render(
+                request,
+                "scrub.html",
+                context={
+                    "ocr_result": doc_txt,
+                    "upload_more": False,
+                },
+            )
 
         except AttributeError:
             render_ocr_error(request, "Unsupported file")
@@ -381,6 +402,7 @@ class OCRView(View):
         def ocr_upload(x):
             try:
                 import pytesseract
+
                 img = Image.open(x)
                 return pytesseract.image_to_string(img)
             except Exception:
@@ -414,16 +436,22 @@ class InitialProcessView(generic.FormView):
             **form.cleaned_data,
         )
 
-        form = core_forms.HealthHistory(initial={
-            "denial_id": denial_response.denial_id,
-            "email": form.cleaned_data["email"],
-            "semi_sekret": denial_response.semi_sekret,
-        })
+        form = core_forms.HealthHistory(
+            initial={
+                "denial_id": denial_response.denial_id,
+                "email": form.cleaned_data["email"],
+                "semi_sekret": denial_response.semi_sekret,
+            }
+        )
 
-        return render(self.request, "health_history.html", context={
-            "form": form,
-            "next": reverse("hh"),
-        })
+        return render(
+            self.request,
+            "health_history.html",
+            context={
+                "form": form,
+                "next": reverse("hh"),
+            },
+        )
 
 
 class EntityExtractView(generic.FormView):
@@ -435,20 +463,26 @@ class EntityExtractView(generic.FormView):
             **form.cleaned_data,
         )
 
-        form = core_forms.PostInferedForm(initial={
-            "denial_type": denial_response.selected_denial_type,
-            "denial_id": denial_response.denial_id,
-            "email": form.cleaned_data["email"],
-            "your_state": denial_response.your_state,
-            "procedure": denial_response.procedure,
-            "diagnosis": denial_response.diagnosis,
-            "semi_sekret": denial_response.semi_sekret,
-        })
+        form = core_forms.PostInferedForm(
+            initial={
+                "denial_type": denial_response.selected_denial_type,
+                "denial_id": denial_response.denial_id,
+                "email": form.cleaned_data["email"],
+                "your_state": denial_response.your_state,
+                "procedure": denial_response.procedure,
+                "diagnosis": denial_response.diagnosis,
+                "semi_sekret": denial_response.semi_sekret,
+            }
+        )
 
-        return render(self.request, "categorize.html", context={
-            "post_infered_form": form,
-            "upload_more": True,
-        })
+        return render(
+            self.request,
+            "categorize.html",
+            context={
+                "post_infered_form": form,
+                "upload_more": True,
+            },
+        )
 
 
 class PlanDocumentsView(generic.FormView):
@@ -460,16 +494,22 @@ class PlanDocumentsView(generic.FormView):
             **form.cleaned_data,
         )
 
-        form = core_forms.PlanDocumentsForm(initial={
-            "denial_id": denial_response.denial_id,
-            "email": form.cleaned_data["email"],
-            "semi_sekret": denial_response.semi_sekret,
-        })
+        form = core_forms.PlanDocumentsForm(
+            initial={
+                "denial_id": denial_response.denial_id,
+                "email": form.cleaned_data["email"],
+                "semi_sekret": denial_response.semi_sekret,
+            }
+        )
 
-        return render(self.request, "plan_documents.html", context={
-            "form": form,
-            "next": reverse("dvc"),
-        })
+        return render(
+            self.request,
+            "plan_documents.html",
+            context={
+                "form": form,
+                "next": reverse("dvc"),
+            },
+        )
 
 
 class DenialCollectedView(generic.FormView):
@@ -480,18 +520,24 @@ class DenialCollectedView(generic.FormView):
         # TODO: Make use of the response from this
         common_view_logic.DenialCreatorHelper.update_denial(**form.cleaned_data)
 
-        new_form = core_forms.EntityExtractForm(initial={
-            "denial_id": form.cleaned_data["denial_id"],
-            "email": form.cleaned_data["email"],
-            "semi_sekret": form.cleaned_data["semi_sekret"],
-        })
-
-        return render(self.request, "entity_extract.html", context={
-            "form": new_form,
-            "next": reverse("eev"),
-            "form_context": {
+        new_form = core_forms.EntityExtractForm(
+            initial={
                 "denial_id": form.cleaned_data["denial_id"],
                 "email": form.cleaned_data["email"],
                 "semi_sekret": form.cleaned_data["semi_sekret"],
+            }
+        )
+
+        return render(
+            self.request,
+            "entity_extract.html",
+            context={
+                "form": new_form,
+                "next": reverse("eev"),
+                "form_context": {
+                    "denial_id": form.cleaned_data["denial_id"],
+                    "email": form.cleaned_data["email"],
+                    "semi_sekret": form.cleaned_data["semi_sekret"],
+                },
             },
-        })
+        )
