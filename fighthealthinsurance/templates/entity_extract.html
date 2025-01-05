@@ -16,7 +16,7 @@ Optional: Wait for entity extraction to finish.
 <script>
   // Call the typescript on load
   document.addEventListener('DOMContentLoaded', () => {
-      const backendUrl = "{% url 'streamingentity_json_backend' %}";
+      const backendUrl = `wss://${window.location.host}/ws/streaming-entity-backend/`;
       const data = {
 	  {% autoescape off %}
           ...{{form_context}},

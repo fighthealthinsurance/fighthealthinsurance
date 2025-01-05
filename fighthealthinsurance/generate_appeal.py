@@ -6,6 +6,7 @@ from concurrent.futures import Future
 from typing import Any, Iterator, List, Optional, Tuple
 from loguru import logger
 
+
 from fighthealthinsurance.denial_base import DenialBase
 from fighthealthinsurance.exec import *
 from fighthealthinsurance.ml.ml_models import RemoteFullOpenLike, RemoteModelLike

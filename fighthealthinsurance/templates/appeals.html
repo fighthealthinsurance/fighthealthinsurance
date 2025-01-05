@@ -69,7 +69,7 @@ Fight Your Health Insurance Denial: Choose an Appeal
 <script>
   // Call the typescript on load
   document.addEventListener('DOMContentLoaded', () => {
-      const backendUrl = "{% url 'appeals_json_backend' %}";
+      const backendUrl = `wss://${window.location.host}/ws/streaming-appeals-backend/`;
       const data = {
 	  {% autoescape off %}
           ...{{form_context}},
@@ -77,10 +77,9 @@ Fight Your Health Insurance Denial: Choose an Appeal
           ...{
               'csrfmiddlewaretoken': '{{ csrf_token }}',
               'timbit': 'is most awesomex2'}}
-      const retries = 0;
 
       // Call the doQuery function
-      doQuery(backendUrl, data, retries);
+      doQuery(backendUrl, data);
   });
 </script>
 {% endblock content %}

@@ -16,3 +16,5 @@ pymupdf
 mypy
 black
 easyocr
+daphne
+pytest-asyncio

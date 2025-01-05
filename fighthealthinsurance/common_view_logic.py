@@ -11,7 +11,6 @@ from loguru import logger
 from django.core.files import File
 from django.core.validators import validate_email
 from django.forms import Form
-from django.http import StreamingHttpResponse
 from django.template.loader import render_to_string
 from django.db.models import QuerySet
 from django.db import connections
@@ -25,10 +24,7 @@ from fighthealthinsurance.form_utils import *
 from fighthealthinsurance.generate_appeal import *
 from fighthealthinsurance.models import *
 from fighthealthinsurance.forms import questions as question_forms
-from fighthealthinsurance.utils import (
-    async_to_sync_iterator,
-    interleave_iterator_for_keep_alive,
-)
+from fighthealthinsurance.utils import interleave_iterator_for_keep_alive
 import ray
 from .pubmed_tools import PubMedTools
 
@@ -585,7 +581,7 @@ class DenialCreatorHelper:
         async_to_sync(cls._start_background(denial_id))
 
     @classmethod
-    async def extract_entity(cls, denial_id: int) -> StreamingHttpResponse:
+    async def extract_entity(cls, denial_id: int) -> AsyncIterator[str]:
         # Fax extraction is fire and forget and can run in parallel to the other tass
         asyncio.create_task(cls.extract_set_fax_number(denial_id))
         asyncs: list[Awaitable[Any]] = [
@@ -607,11 +603,7 @@ class DenialCreatorHelper:
         formatted: AsyncIterator[str] = a.map(waitAndReturnNewline, asyncs)
         # StreamignHttpResponse needs a synchronous iterator otherwise it blocks.
         interleaved: AsyncIterator[str] = interleave_iterator_for_keep_alive(formatted)
-        synced = async_to_sync_iterator(interleaved)
-        return StreamingHttpResponse(
-            synced,
-            content_type="application/json",
-        )
+        return interleaved
 
     @classmethod
     async def _start_background(cls, denial_id):
@@ -636,8 +628,8 @@ class DenialCreatorHelper:
                 await DenialTypesRelation.objects.acreate(
                     denial=denial, denial_type=dt, src=await cls.regex_src()
                 )
-            except Exception as e:
-                logger.debug(f"Failed setting denial type with {e}")
+            except:
+                logger.opt(exception=True).debug(f"Failed setting denial type")
         logger.debug(f"Done setting denial types")
 
     @classmethod
@@ -837,7 +829,9 @@ class AppealsBackendHelper:
                 pa = ProposedAppeal(appeal_text=appeal_text, for_denial=denial)
                 await pa.asave()
             except Exception as e:
-                logger.opt(exception=True).warning("Failed to save proposed appeal: {e}")
+                logger.opt(exception=True).warning(
+                    "Failed to save proposed appeal: {e}"
+                )
                 pass
             return appeal_text
 
@@ -876,8 +870,4 @@ class AppealsBackendHelper:
         interleaved: AsyncIterator[str] = interleave_iterator_for_keep_alive(
             subbed_appeals_json
         )
-        synced = async_to_sync_iterator(interleaved)
-        return StreamingHttpResponse(
-            synced,
-            content_type="application/json",
-            )
+        return interleaved

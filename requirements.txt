@@ -69,3 +69,4 @@ uszipcode
 uvicorn[standard]
 werkzeug
 nest_asyncio
+channels

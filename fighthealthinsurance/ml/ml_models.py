@@ -421,11 +421,14 @@ class RemoteOpenLike(RemoteModel):
             logger.debug(f"Error {e} {traceback.format_exc()} calling {api_base}")
             return None
         try:
+            if "choices" not in json_result:
+                logger.debug(f"Response {json_result} missing key result.")
+                return None
             r: str = json_result["choices"][0]["message"]["content"]
             logger.debug(f"Got {r} from {model} w/ {api_base} {self}")
             return r
         except Exception as e:
-            logger.debug(
+            logger.opt(exception=True).error(
                 f"Error {e} {traceback.format_exc()} processing {json_result} from {api_base} w/ url {url} --  {self} ON -- {combined_content}"
             )
             return None

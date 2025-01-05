@@ -31,15 +31,5 @@ urlpatterns = [
     path(
         "check_ml_backend", rest_views.CheckMlBackend.as_view(), name="check_ml_backend"
     ),
-    path(
-        "appeals_json_backend",
-        rest_views.AppealsBackend.as_view(),
-        name="api_appeals_json_backend",
-    ),
-    path(
-        "v0/api_streamingentity_json_backend",
-        rest_views.StreamingEntityBackend.as_view(),
-        name="api_streamingentity_json_backend",
-    ),
     path("", include(router.urls)),
 ]

@@ -18,8 +18,6 @@ from fighthealthinsurance import models
 from fighthealthinsurance.forms import questions as question_forms
 from fighthealthinsurance import utils
 
-appealGenerator = generate_appeal.AppealGenerator()
-
 
 def render_ocr_error(request, text):
     return render(
@@ -319,48 +317,6 @@ class GenerateAppeal(View):
                 "denial_id": form.cleaned_data["denial_id"],
                 "semi_sekret": form.cleaned_data["semi_sekret"],
             },
-        )
-
-
-class StreamingEntityBackend(View):
-    """Streaming Entity Extraction"""
-
-    async def post(self, request):
-        logger.debug(request)
-        logger.debug(request.POST)
-        form = core_forms.DenialRefForm(request.POST)
-        if form.is_valid():
-            return await common_view_logic.DenialCreatorHelper.extract_entity(
-                form.cleaned_data["denial_id"]
-            )
-        else:
-            logger.debug(f"Error processing {form}")
-
-
-class AppealsBackend(View):
-    """Streaming back the appeals as json :D"""
-
-    async def post(self, request):
-        logger.debug(request)
-        logger.debug(request.POST)
-        form = core_forms.DenialRefForm(request.POST)
-        if not form.is_valid():
-            logger.debug(f"Error processing {form}")
-            return
-
-        return await common_view_logic.AppealsBackendHelper.generate_appeals(
-            request.POST
-        )
-
-    async def get(self, request):
-        form = core_forms.DenialRefForm(request.GET)
-
-        if not form.is_valid():
-            logger.debug(f"Error processing {form}")
-            return
-
-        return await common_view_logic.AppealsBackendHelper.generate_appeals(
-            request.GET,
         )
 
 

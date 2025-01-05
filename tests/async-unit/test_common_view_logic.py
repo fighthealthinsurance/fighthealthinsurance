@@ -86,14 +86,14 @@ class TestCommonViewLogic(TestCase):
                 "semi_sekret": denial.semi_sekret,
             })
             # Create a BytesIO to capture the response  
-            buf = io.BytesIO()  
+            buf = io.StringIO()  
       
             # Write each chunk to the BytesIO  
-            for chunk in response.streaming_content:  
+            async for chunk in response:  
                 buf.write(chunk)  
       
             # Go back to the beginning of the BytesIO  
             buf.seek(0)
-            string_data = buf.getvalue().decode('utf-8')
+            string_data = buf.getvalue()
 
         async_to_sync(test)()

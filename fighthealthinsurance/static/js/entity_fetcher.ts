@@ -1,19 +1,57 @@
-// TypeScript Version
-
-// Import necessary modules if using a framework like jQuery or update as needed.
 declare const $: any;
 
 // DOM Elements
 const loadingText = document.getElementById('waiting-msg');
 const submitButton = document.getElementById("next");
-const max_retries = 2;
 
 function processResponseChunk(chunk: string): void {
     console.log("Waiting...")
 }
 
 function done(): void {
+    console.log("Moving to the next step :)");
     submitButton.click();
+}
+
+function connectWebSocket(
+    websocketUrl: string,
+    data: object,
+    processResponseChunk: (chunk: string) => void,
+    done: () => void,
+    retries = 0,
+    maxRetries = 5
+) {
+    const ws = new WebSocket(websocketUrl);
+
+    // Open the connection and send data
+    ws.onopen = () => {
+        console.log('WebSocket connection opened');
+        ws.send(JSON.stringify(data));
+    };
+
+    // Handle incoming messages
+    ws.onmessage = (event) => {
+        const chunk = event.data;
+        processResponseChunk(chunk);
+    };
+
+    // Handle connection closure
+    ws.onclose = (event) => {
+        console.log('WebSocket connection closed:', event.reason);
+	done();
+    };
+
+    // Handle errors
+    ws.onerror = (error) => {
+       console.error('WebSocket error:', error);
+       if (retries < maxRetries) {
+            console.log(`Retrying WebSocket connection (${retries + 1}/${maxRetries})...`);
+            setTimeout(() => connectWebSocket(websocketUrl, data, processResponseChunk, done, retries + 1, maxRetries), 1000);
+        } else {
+            console.error('Max retries reached. Closing connection.');
+            done();
+        }
+    };
 }
 
 export function doQuery(
@@ -21,50 +59,13 @@ export function doQuery(
   data: Map<string, string>, 
   retries: number
 ): void {
-    if (retries > max_retries) {
-	console.log("Error requesting backend");
-	return;
-    }
-
-    try {
-	$.ajax({
-            url: backend_url,
-            type: 'POST',
-            data: data,
-            contentType: 'application/x-www-form-urlencoded',
-            dataType: 'text',
-            processData: true,
-            xhr: function () {
-		const xhr = new XMLHttpRequest();
-		xhr.addEventListener('progress', (event) => {
-                    const chunk = (event.currentTarget as XMLHttpRequest).responseText;
-                    processResponseChunk(chunk);
-		});
-		return xhr;
-            },
-            success: (response: string) => {
-		console.log('AJAX success:', response);
-                done();
-            },
-            error: (error: any) => {
-		console.error('AJAX error:', error);
-		if (retries < max_retries) {
-                    doQuery(backend_url, data, retries + 1);
-		} else {
-                    done();
-		}
-            }
-	});
-    } catch (error) {
-        console.error('Client-side error:', error);
-
-        if (retries < max_retries) {
-            console.log(`Retrying after client-side error... (${retries + 1}/${max_retries})`);
-            doQuery(backend_url, data, retries + 1);
-        } else {
-            done();
-        }
-    }
+    return connectWebSocket(
+	backend_url,
+	data,
+	processResponseChunk,
+	done,
+	0,
+	retries);
 }
 
 // Make it available

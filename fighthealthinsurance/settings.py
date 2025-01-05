@@ -84,6 +84,7 @@ class Base(Configuration):
         "django_recaptcha",
         "rest_framework",
         "corsheaders",
+        "channels",
         "django_prometheus",
     ]
 

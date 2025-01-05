@@ -1,5 +1,11 @@
 """Test the rest API functionality"""
 
+from asgiref.sync import sync_to_async, async_to_sync
+
+import pytest
+from channels.testing import WebsocketCommunicator
+
+
 import hashlib
 import os
 import time
@@ -12,7 +18,7 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from fighthealthinsurance.models import Denial
-
+from fighthealthinsurance.websockets import StreamingEntityBackend, StreamingAppealsBackend
 
 class Delete(APITestCase):
     """Test just the delete API."""
@@ -85,16 +91,17 @@ class DenialEndToEnd(APITestCase):
 
     fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
 
-    def test_denial_end_to_end(self):
+    @pytest.mark.asyncio
+    async def test_denial_end_to_end(self):
         url = reverse("denials-list")
         email = "timbit@fighthealthinsurance.com"
         hashed_email = Denial.get_hashed_email(email)
-        denials_for_user_count = Denial.objects.filter(
+        denials_for_user_count = await Denial.objects.filter(
             hashed_email=hashed_email
-        ).count()
+        ).acount()
         assert denials_for_user_count == 0
         # Create a denial
-        response = self.client.post(
+        response = await sync_to_async(self.client.post)(
             url,
             json.dumps(
                 {
@@ -114,34 +121,39 @@ class DenialEndToEnd(APITestCase):
         print(f"Using '{denial_id}'")
         semi_sekret = parsed["semi_sekret"]
         # Make sure we added a denial for this user
-        denials_for_user_count = Denial.objects.filter(
+        denials_for_user_count = await Denial.objects.filter(
             hashed_email=hashed_email,
-        ).count()
+        ).acount()
         assert denials_for_user_count > 0
         # Make sure we can get the denial
-        denial = Denial.objects.filter(
+        denial = await Denial.objects.filter(
             hashed_email=hashed_email, denial_id=denial_id
-        ).get()
+        ).aget()
         print(f"We should find {denial}")
-        # Now we need to poke entity extraction
-        entity_extraction_url = reverse("api_streamingentity_json_backend")
-        response = self.client.post(
-            entity_extraction_url,
-            json.dumps(
+        # Now we need to poke entity extraction, this part is async
+        seb_communicator = WebsocketCommunicator(StreamingEntityBackend.as_asgi(), "/testws/")
+        connected, subprotocol = await seb_communicator.connect()
+        assert connected
+        await seb_communicator.send_json_to(
                 {
                     "email": email,
                     "semi_sekret": semi_sekret,
                     "denial_id": denial_id,
                 }
-            ),
-            content_type="application/json",
         )
-        print(str(list(response.streaming_content)))
-        # Hack
-        time.sleep(30)
+        # We should receive at least one frame.
+        response = await seb_communicator.receive_from()
+        # Now consume all of the rest of them until done.
+        try:
+            while True:
+                response = await seb_communicator.receive_from()
+        except:
+            pass
+        finally:
+            await seb_communicator.disconnect()
         # Ok now lets get the additional info
         find_next_steps_url = reverse("nextsteps-list")
-        find_next_steps_response = self.client.post(
+        find_next_steps_response = await sync_to_async(self.client.post)(
             find_next_steps_url,
             json.dumps(
                 {
@@ -168,29 +180,41 @@ class DenialEndToEnd(APITestCase):
             "type",
         ]
         # Now we need to poke at the appeal creator
-        appeals_gen_url = reverse("api_appeals_json_backend")
-        appeals_gen_response = self.client.post(
-            appeals_gen_url,
-            json.dumps(
-                {
-                    "email": email,
-                    "semi_sekret": semi_sekret,
-                    "medical_reason": "preventive",
-                    "age": "30",
-                    "in_network": True,
-                    "denial_id": denial_id,
-                }
-            ),
-            content_type="application/json",
+        # Now we need to poke entity extraction, this part is async
+        a_communicator = WebsocketCommunicator(StreamingAppealsBackend.as_asgi(), "/testws/")
+        connected, subprotocol = await a_communicator.connect()
+        assert connected
+        await a_communicator.send_json_to(
+            {
+                "email": email,
+                "semi_sekret": semi_sekret,
+                "medical_reason": "preventive",
+                "age": "30",
+                "in_network": True,
+                "denial_id": denial_id,
+            }
         )
+        responses = []
+        # We should receive at least one frame.
+        responses.append(await a_communicator.receive_from(timeout=60))
+        # Now consume all of the rest of them until done.
+        try:
+            while True:
+                responses.append(await a_communicator.receive_from(timeout=60))
+        except Exception as e:
+            print(f"Error {e}")
+            pass
+        finally:
+            await a_communicator.disconnect()
+        print(f"Received responses {responses}")
+        responses = list(filter(lambda x: len(x) > 4, responses))
         # It's a streaming response with one per new line
-        text = b"".join(appeals_gen_response).split(b"\n")
-        appeals = json.loads(text[0])
-        assert appeals.startswith("Dear")
+        appeal = json.loads(responses[0])
+        assert appeal.startswith("Dear")
         # Now lets go ahead and provide follow up
-        denial = Denial.objects.get(denial_id=denial_id)
+        denial = await Denial.objects.aget(denial_id=denial_id)
         followup_url = reverse("followups-list")
-        followup_response = self.client.post(
+        followup_response = await sync_to_async(self.client.post)(
             followup_url,
             json.dumps(
                 {

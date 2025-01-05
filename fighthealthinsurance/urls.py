@@ -157,16 +157,6 @@ urlpatterns = [
         name="generate_appeal",
     ),
     path(
-        "appeals_json_backend",
-        sensitive_post_parameters("email")(views.AppealsBackend.as_view()),
-        name="appeals_json_backend",
-    ),
-    path(
-        "v0/streamingentity_json_backend",
-        sensitive_post_parameters("email")(views.StreamingEntityBackend.as_view()),
-        name="streamingentity_json_backend",
-    ),
-    path(
         "choose_appeal",
         sensitive_post_parameters("email")(views.ChooseAppeal.as_view()),
         name="choose_appeal",

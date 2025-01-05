@@ -13,5 +13,13 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "fighthealthinsurance.settings")
 os.environ.setdefault("DJANGO_CONFIGURATION", "Dev")
 
 from configurations.asgi import get_asgi_application
+from fighthealthinsurance.routing import websocket_urlpatterns
+from channels.auth import AuthMiddlewareStack
+from channels.routing import ProtocolTypeRouter, URLRouter
 
-application = get_asgi_application()
+application = ProtocolTypeRouter(
+    {
+        "http": get_asgi_application(),
+        "websocket": AuthMiddlewareStack(URLRouter(websocket_urlpatterns)),
+    }
+)

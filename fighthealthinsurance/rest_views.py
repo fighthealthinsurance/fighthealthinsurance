@@ -134,25 +134,3 @@ class CheckMlBackend(APIView):
             return Response(status=status.HTTP_204_NO_CONTENT)
 
         return Response(status=status.HTTP_503_SERVICE_UNAVAILABLE)
-
-
-class AppealsBackend(APIView):
-    """Streaming back the appeals as json :D"""
-
-    def post(self, request):
-        pythondata = json.loads(request.body)
-        assert "denial_id" in pythondata
-        return async_to_sync(common_view_logic.AppealsBackendHelper.generate_appeals)(
-            pythondata
-        )
-
-
-class StreamingEntityBackend(APIView):
-    """Streaming back the updates as json :D"""
-
-    def post(self, request):
-        pythondata = json.loads(request.body)
-        denial_id: int = pythondata["denial_id"]
-        return async_to_sync(common_view_logic.DenialCreatorHelper.extract_entity)(
-            denial_id
-        )
