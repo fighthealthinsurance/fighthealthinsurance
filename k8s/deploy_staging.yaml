@@ -130,7 +130,7 @@ metadata:
     nginx.ingress.kubernetes.io/session-cookie-name: "route"
     nginx.ingress.kubernetes.io/session-cookie-max-age: "30000"
     nginx.ingress.kubernetes.io/proxy-body-size: 80m
-    nginx.ingress.kubernetes.io/proxy-http-version: 1.1
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
 spec:
   ingressClassName: nginx
   tls:
