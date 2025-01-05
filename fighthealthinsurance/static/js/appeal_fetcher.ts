@@ -35,6 +35,8 @@ function hideLoading(): void {
 let my_data: Map<string, string> = new Map<string, string>;
 let my_backend_url = ""
 
+let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+
 function done(): void {
     // If we've reached stream end but also less than maxRetries appeals retry
     if (appealsSoFar.length < 3 && retries < maxRetries) {
@@ -42,6 +44,7 @@ function done(): void {
 	retries = retries + 1;
 	doQuery(my_backend_url, my_data);
     } else {
+	clearTimeout(timeoutHandle);
 	hideLoading();
     }
 }
@@ -104,7 +107,6 @@ function connectWebSocket(
     processResponseChunk: (chunk: string) => void,
     done: () => void,
 ) {
-    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
 
     const resetTimeout = () => {
 	if (timeoutHandle) clearTimeout(timeoutHandle);

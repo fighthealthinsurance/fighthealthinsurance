@@ -122,6 +122,7 @@ metadata:
   name: fight-health-insurance-staging-ingress
   namespace: totallylegitco
   annotations:
+    nginx.org/websocket-services: staging-web-svc
     cert-manager.io/cluster-issuer: letsencrypt
     cert-manager.io/issue-temporary-certificate: "true"
     acme.cert-manager.io/http01-edit-in-place: "true"
@@ -131,6 +132,11 @@ metadata:
     nginx.ingress.kubernetes.io/session-cookie-max-age: "30000"
     nginx.ingress.kubernetes.io/proxy-body-size: 80m
     nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      proxy_set_header Upgrade "websocket";
+      proxy_set_header Connection "Upgrade";
 spec:
   ingressClassName: nginx
   tls:
