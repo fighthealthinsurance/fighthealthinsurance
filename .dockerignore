@@ -141,9 +141,9 @@ key.pem
 
 # Ignore external storage
 external_storage
-external_data
+external_data*
 external_data_b
-localish_data
+localish_data*
 
 # Source control
 .git
@@ -170,3 +170,12 @@ a.tr
 !./static/js/node_modules/tesseract.js/dist/worker.min.js
 !./static/js/node_modules/tesseract.js/dist/worker.min.js.map
 !./static/js/node_modules/pdfjs-dist/build/*
+
+# Exclude k8s
+!./k8s/
+# Exclude test sent emails
+!./sent-emails/
+# Exclude the test logs
+!./latest_logs
+# Exclude test coverage reports
+reports/
