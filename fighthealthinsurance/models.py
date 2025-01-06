@@ -295,7 +295,7 @@ class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # t
             return f.name
 
     def __str__(self):
-        return f"{self.fax_id} -- {self.email} -- {self.paid} -- {self.fax_success}"
+        return f"{self.fax_id} -- {self.email} -- {self.paid} -- {self.fax_success} -- {self.name}"
 
 
 class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignore
