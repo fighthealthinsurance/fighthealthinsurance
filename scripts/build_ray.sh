@@ -19,7 +19,7 @@ check_or_build_image() {
 }
 export RAY_VERSION
 
-pull_or_build_image "${RAY_IMAGE}" "${RAY_VERSION}" "k8s/ray/RayDockerfile"
+check_or_build_image "${RAY_IMAGE}" "${RAY_VERSION}" "k8s/ray/RayDockerfile"
 
 # Using the amd64/arm64 ray container as a base put together a container with the FHI code and libs in it.
 COMBINED_IMAGE=holdenk/fhi-ray:${FHI_VERSION}
