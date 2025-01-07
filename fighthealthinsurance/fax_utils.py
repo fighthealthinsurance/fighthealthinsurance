@@ -646,10 +646,15 @@ class FlexibleFaxMagic(object):
             key=lambda backend: backend.estimate_cost(destination, page_count),
         )
         for backend in backends_by_cost:
-            with Timeout(1200.0) as _timeout_ctx:
+            print(f"Entering timeout ctx")
+            with Timeout(330.0) as _timeout_ctx:
                 try:
-                    r = await backend.send_fax(
-                        destination=destination, path=path, blocking=blocking
+                    print(f"Calling backend {backend}")
+                    r = await asyncio.wait_for(
+                        backend.send_fax(
+                            destination=destination, path=path, blocking=blocking
+                        ),
+                        timeout=300,
                     )
                     if r == True:
                         print(f"Sent fax to {destination} using {backend}")
