@@ -56,6 +56,7 @@ ray==2.38.0
 ray[client]==2.38.0
 requests
 setuptools
+sentry-sdk[django]
 sorl-thumbnail
 sqlalchemy_mate==2.0.0.0 # uszipcode issue see https://github.com/MacHu-GWU/uszipcode-project/issues/79
 stopit

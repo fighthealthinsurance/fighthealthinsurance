@@ -32,10 +32,13 @@ from fighthealthinsurance.followup_emails import (
 )
 from django.views.decorators.debug import sensitive_post_parameters
 
+def trigger_error(request):
+    division_by_zero = 1 / 0
 
 urlpatterns = [
     # Internal-ish-views
     path("ziggy/rest/", include("fighthealthinsurance.rest_urls")),
+    path('timbit/sentry-debug/', trigger_error),
     path("timbit/admin/", admin.site.urls),
     path("", include("django_prometheus.urls")),
     path("timbit/help/followup_sched", ScheduleFollowUps.as_view()),
