@@ -647,7 +647,7 @@ class FlexibleFaxMagic(object):
         )
         for backend in backends_by_cost:
             print(f"Entering timeout ctx")
-            with Timeout(330.0) as _timeout_ctx:
+            with Timeout(600.0) as _timeout_ctx:
                 try:
                     print(f"Calling backend {backend}")
                     r = await asyncio.wait_for(
