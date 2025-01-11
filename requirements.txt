@@ -32,7 +32,7 @@ flake8-django
 geopy
 git+https://github.com/holdenk/static-thumbnails.git
 git+https://github.com/jazzband/django-cookie-consent.git#egg=django-cookie-consent
-git+https://github.com/totallylegitco/llm-result-utils.git
+git+https://github.com/totallylegitco/llm-result-utils.git@7e2feb036bb40f6c93214b1b1282684a9b33ccda
 icd10-cm
 loguru
 markdown_strings
