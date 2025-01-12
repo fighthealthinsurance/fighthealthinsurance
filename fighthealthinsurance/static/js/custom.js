@@ -4,7 +4,7 @@
 
     // PRE LOADER
     $(window).load(function(){
-      $('.preloader').fadeOut(1000); // set duration in brackets    
+      $('.preloader').fadeOut(1000); // set duration in brackets
     });
 
 
@@ -24,19 +24,7 @@
 
 
     // PARALLAX EFFECT
-    $.stellar();  
-
-
-    // SMOOTHSCROLL
-    $(function() {
-      $('.navbar-default a, #home a, footer a').on('click', function(event) {
-        var $anchor = $(this);
-          $('html, body').stop().animate({
-            scrollTop: $($anchor.attr('href')).offset().top - 49
-          }, 1000);
-            event.preventDefault();
-      });
-    });  
+    $.stellar();
 
 
     // WOW ANIMATION
