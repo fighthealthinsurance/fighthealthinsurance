@@ -4,6 +4,10 @@
 
 SCRIPT_DIR="$(dirname "$0")"
 
+if [ ! -f "cert.pem" ]; then
+  "${SCRIPT_DIR}/install.sh"
+fi
+
 # Activate the venv if present.
 if [ -f ./build_venv/bin/activate ]; then
   source ./build_venv/bin/activate
