@@ -10,7 +10,7 @@ function getLocalStorageItemOrDefaultEQ(key: string): string {
 }
 
 
-const storeLocal = async function(evt: Event) {
+const storeLocal = async function(event: Event) {
     const target = event.target as HTMLInputElement;
     const name = target.id;
     const value = target.value;
