@@ -9,6 +9,7 @@ from django.conf import settings
 from django.db import models
 from django.db.models.functions import Now
 from django_prometheus.models import ExportModelOperationsMixin
+from django_encrypted_filefield.fields import EncryptedFileField
 
 from fighthealthinsurance.utils import sekret_gen
 from regex_field.fields import RegexField
@@ -222,6 +223,7 @@ class PlanSourceRelation(models.Model):
 class PlanDocuments(models.Model):
     plan_document_id = models.AutoField(primary_key=True)
     plan_document = models.FileField(null=True, storage=settings.COMBINED_STORAGE)
+    plan_document_enc = EncryptedFileField(null=True, storage=settings.COMBINED_STORAGE)
     # If the denial is deleted it's either SPAM or a removal request in either case
     # we cascade the delete
     denial = models.ForeignKey("Denial", on_delete=models.CASCADE)
@@ -230,6 +232,7 @@ class PlanDocuments(models.Model):
 class FollowUpDocuments(models.Model):
     document_id = models.AutoField(primary_key=True)
     follow_up_document = models.FileField(null=True, storage=settings.COMBINED_STORAGE)
+    follow_up_document_enc = EncryptedFileField(null=True, storage=settings.COMBINED_STORAGE)
     # If the denial is deleted it's either SPAM or a removal request in either case
     # we cascade the delete
     denial = models.ForeignKey("Denial", on_delete=models.CASCADE)
@@ -271,6 +274,7 @@ class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # t
     pmids = models.CharField(max_length=300, blank=True)
     health_history = models.TextField(null=True, blank=True)
     combined_document = models.FileField(null=True, storage=settings.COMBINED_STORAGE)
+    combined_document_enc = EncryptedFileField(null=True, storage=settings.COMBINED_STORAGE)
     uuid = models.CharField(
         max_length=300, primary_key=False, default=uuid.uuid4, editable=False
     )
@@ -284,10 +288,11 @@ class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # t
     should_send = models.BooleanField(default=False)
 
     def get_temporary_document_path(self):
+        combined_document = self.combined_document or self.combined_document_enc
         with tempfile.NamedTemporaryFile(
-            suffix=self.combined_document.name, mode="w+b", delete=False
+            suffix=combined_document.name, mode="w+b", delete=False
         ) as f:
-            f.write(self.combined_document.read())
+            f.write(combined_document.read())
             f.flush()
             f.close()
             os.sync()

@@ -209,7 +209,7 @@ class SendFaxHelper:
             denial_id=denial,
             name=name,
             # This should work but idk why it does not
-            combined_document=File(file=doc, name=doc_fname),
+            combined_document_enc=File(file=doc, name=doc_fname),
             destination=fax_phone,
         )
         return FaxHelperResults(uuid=fts.uuid, hashed_email=hashed_email)
@@ -347,7 +347,7 @@ class FollowUpHelper:
             )
         for document in followup_documents:
             fd = FollowUpDocuments.objects.create(
-                follow_up_document=document, denial=denial, follow_up_id=follow_up
+                follow_up_document_enc=document, denial=denial, follow_up_id=follow_up
             )
             fd.save()
         denial.appeal_result = appeal_result
@@ -693,7 +693,7 @@ class DenialCreatorHelper:
         if plan_documents is not None:
             for plan_document in plan_documents:
                 pd = PlanDocuments.objects.create(
-                    plan_document=plan_document, denial=denial
+                    plan_document_enc=plan_document, denial=denial
                 )
                 pd.save()
 
