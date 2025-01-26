@@ -1,5 +1,6 @@
 import asyncio
 from typing import List
+from loguru import logger
 
 from fighthealthinsurance.ml.ml_models import *
 
@@ -14,20 +15,20 @@ class MLRouter(object):
     all_models_by_cost: List[RemoteModelLike] = []
 
     def __init__(self):
-        print(f"Starting model 'router'")
+        logger.debug(f"Starting model 'router'")
         building_internal_models_by_cost = []
         building_all_models_by_cost = []
         building_models_by_name: dict[str, List[ModelDescription]] = {}
         for backend in candidate_model_backends:
-            print(f"Considering {backend}")
+            logger.debug(f"Considering {backend}")
             try:
                 models = backend.models()
-                print(f"{backend} gave us {models}")
+                logger.debug(f"{backend} gave us {models}")
                 for m in models:
-                    print(f"Adding {m} from {backend}")
+                    logger.debug(f"Adding {m} from {backend}")
                     if m.model is None:
                         m.model = backend(model=m.internal_name)
-                        print(f"Built {m.model}")
+                        logger.debug(f"Built {m.model}")
                     if not m.model.external():
                         building_internal_models_by_cost.append(m)
                         building_internal_models_by_cost = (
@@ -39,9 +40,9 @@ class MLRouter(object):
                         same_models = building_models_by_name[m.name]
                     same_models.append(m)
                     building_models_by_name[m.name] = same_models
-                    print(f"Added {m}")
+                    logger.debug(f"Added {m}")
             except Exception as e:
-                print(f"Skipping {backend} due to {e} of {type(e)}")
+                logger.warning(f"Skipping {backend} due to {e} of {type(e)}")
         for k, v in building_models_by_name.items():
             sorted_model_descriptions: list[ModelDescription] = sorted(v)
             self.models_by_name[k] = [
@@ -55,7 +56,7 @@ class MLRouter(object):
         self.all_models_by_cost = [
             x.model for x in sorted(building_all_models_by_cost) if x.model is not None
         ]
-        print(
+        logger.debug(
             f"Built {self} with i:{self.internal_models_by_cost} a:{self.all_models_by_cost}"
         )
 

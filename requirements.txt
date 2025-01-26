@@ -3,6 +3,7 @@ asyncssh
 asyncstdlib
 beautifulsoup4==4.12.3
 black
+channels
 django>=5.0.0
 django-cms
 djangocms-attributes-field
@@ -32,17 +33,20 @@ flake8-django
 geopy
 git+https://github.com/holdenk/static-thumbnails.git
 git+https://github.com/jazzband/django-cookie-consent.git#egg=django-cookie-consent
-git+https://github.com/totallylegitco/llm-result-utils.git@7e2feb036bb40f6c93214b1b1282684a9b33ccda
 git+https://github.com/totallylegitco/django-encrypted-model-fields.git@87dfff140b3ad256404a913019e90f2c245e57f8
+git+https://github.com/totallylegitco/llm-result-utils.git@7e2feb036bb40f6c93214b1b1282684a9b33ccda
 icd10-cm
 loguru
 markdown_strings
 metapub==0.5.12
 mypy
+nest_asyncio
 packaging>=20.0
 pandoc
 paramiko
 Pillow
+psycopg2
+psycopg-pool
 pyarrow
 pymupdf
 pyOpenSSL
@@ -56,8 +60,8 @@ RapidFuzz==2.15.1 # See https://github.com/mindee/doctr/issues/1186
 ray==2.38.0
 ray[client]==2.38.0
 requests
-setuptools
 sentry-sdk[django]
+setuptools
 sorl-thumbnail
 sqlalchemy_mate==2.0.0.0 # uszipcode issue see https://github.com/MacHu-GWU/uszipcode-project/issues/79
 stopit
@@ -70,5 +74,3 @@ urllib3
 uszipcode
 uvicorn[standard]
 werkzeug
-nest_asyncio
-channels

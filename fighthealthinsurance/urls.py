@@ -17,7 +17,7 @@ Including another URLconf
 from django.contrib import admin
 from django.contrib.admin.views.decorators import staff_member_required
 from django.contrib.staticfiles.urls import staticfiles_urlpatterns
-from django.urls import include, path
+from django.urls import include, path, re_path
 from django.conf.urls.static import static
 from django.views.decorators.cache import cache_control, cache_page
 from django.conf import settings
@@ -31,14 +31,17 @@ from fighthealthinsurance.followup_emails import (
     ScheduleFollowUps,
 )
 from django.views.decorators.debug import sensitive_post_parameters
+import os
+
 
 def trigger_error(request):
     division_by_zero = 1 / 0
 
+
 urlpatterns = [
     # Internal-ish-views
     path("ziggy/rest/", include("fighthealthinsurance.rest_urls")),
-    path('timbit/sentry-debug/', trigger_error),
+    path("timbit/sentry-debug/", trigger_error),
     path("timbit/admin/", admin.site.urls),
     path("", include("django_prometheus.urls")),
     path("timbit/help/followup_sched", ScheduleFollowUps.as_view()),
@@ -96,11 +99,6 @@ urlpatterns = [
         name="stagefaxview",
     ),
     path(
-        "scan",
-        sensitive_post_parameters("email")(views.InitialProcessView.as_view()),
-        name="scan",
-    ),
-    path(
         "process",
         sensitive_post_parameters("email")(views.InitialProcessView.as_view()),
         name="process",
@@ -116,11 +114,6 @@ urlpatterns = [
         "server_side_ocr",
         sensitive_post_parameters("email")(views.OCRView.as_view()),
         name="server_side_ocr",
-    ),
-    path(
-        "",
-        cache_control(public=True)(cache_page(60 * 60 * 2)(views.IndexView.as_view())),
-        name="root",
     ),
     path(
         "about-us",
@@ -176,5 +169,27 @@ urlpatterns = [
         RedirectView.as_view(url=staticfiles_storage.url("images/favicon.ico")),
     ),
 ]
+
+# Don't break people already in the flow but "drain" the people by replacing scan & index w/ BRB view.
+if os.getenv("BRB") == "BRB":
+    urlpatterns += [
+        path(r"", views.BRB.as_view(), name="brb"),
+    ]
+else:
+    urlpatterns += [
+        path(
+            "",
+            cache_control(public=True)(
+                cache_page(60 * 60 * 2)(views.IndexView.as_view())
+            ),
+            name="root",
+        ),
+        path(
+            "scan",
+            sensitive_post_parameters("email")(views.InitialProcessView.as_view()),
+            name="scan",
+        ),
+    ]
+
 
 urlpatterns += staticfiles_urlpatterns()

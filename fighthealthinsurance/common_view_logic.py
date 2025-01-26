@@ -530,8 +530,10 @@ class DenialCreatorHelper:
             )
         except Exception as e:
             # This is a temporary hack to drop non-ASCII characters
-            denial_text = denial_text.encode("ascii", errors="ignore").decode(
-                errors="ignore"
+            denial_text = (
+                denial_text.encode("ascii", errors="ignore")
+                .decode(errors="ignore")
+                .replace("\x00", "")
             )
             denial = Denial.objects.create(
                 denial_text=denial_text,

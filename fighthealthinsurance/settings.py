@@ -372,10 +372,20 @@ class Prod(Base):
 
     @property
     def DATABASES(self):
-        engine = "django_prometheus.db.backends.mysql"
+        mysql_engine = "django_prometheus.db.backends.mysql"
+        postgres_engine = "django_prometheus.db.backends.postgresql"
         return {
             "default": {
-                "ENGINE": engine,
+                "ENGINE": postgres_engine,
+                "NAME": os.getenv("PDBNAME"),
+                "USER": os.getenv("PDBUSER"),
+                "PASSWORD": os.getenv("PDBPASSWORD"),
+                "HOST": os.getenv("PDBHOST"),
+                "ATOMIC_REQUESTS": False,
+                "pool": True,
+            },
+            "mysql": {
+                "ENGINE": mysql_engine,
                 "NAME": os.getenv("DBNAME"),
                 "USER": os.getenv("DBUSER"),
                 "PASSWORD": os.getenv("DBPASSWORD"),
@@ -385,7 +395,7 @@ class Prod(Base):
                     "charset": "utf8mb4",
                     "use_unicode": True,
                 },
-            }
+            },
         }
 
     EXTERNAL_STORAGE_LOCATION = "/external_data"

@@ -6,7 +6,7 @@ export DJANGO_CONFIGURATION=${DJANGO_CONFIGURATION:-"Prod"}
 export DJANGO_SETTINGS_MODULE=${DJANGO_SETTINGS_MODULE:-"fighthealthinsurance.settings"}
 # Run migrations on the migrations container only
 if [ -n "$MIGRATIONS" ]; then
-  python manage.py migrate
+  python manage.py migrate || (sleep 600; exit 1)
   python manage.py loaddata initial
   python manage.py loaddata followup
   python manage.py loaddata plan_source

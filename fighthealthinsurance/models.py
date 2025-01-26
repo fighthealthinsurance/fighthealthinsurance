@@ -17,14 +17,22 @@ from regex_field.fields import RegexField
 
 class InterestedProfessional(ExportModelOperationsMixin("InterestedProfessional"), models.Model):  # type: ignore
     id = models.AutoField(primary_key=True)
-    name = models.CharField(max_length=300, primary_key=False, default="")
-    business_name = models.CharField(max_length=300, primary_key=False, default="")
-    phone_number = models.CharField(max_length=300, primary_key=False, default="")
-    address = models.CharField(max_length=1000, primary_key=False, default="")
+    name = models.CharField(max_length=300, primary_key=False, default="", blank=True)
+    business_name = models.CharField(
+        max_length=300, primary_key=False, default="", blank=True
+    )
+    phone_number = models.CharField(
+        max_length=300, primary_key=False, default="", blank=True
+    )
+    address = models.CharField(
+        max_length=1000, primary_key=False, default="", blank=True
+    )
     email = models.EmailField()
-    comments = models.TextField(primary_key=False, default="")
-    most_common_denial = models.CharField(max_length=300, default="")
-    job_title_or_provider_type = models.CharField(max_length=300, default="")
+    comments = models.TextField(primary_key=False, default="", blank=True)
+    most_common_denial = models.CharField(max_length=300, default="", blank=True)
+    job_title_or_provider_type = models.CharField(
+        max_length=300, default="", blank=True
+    )
     paid = models.BooleanField(default=False)
     clicked_for_paid = models.BooleanField(default=True)
     signup_date = models.DateField(auto_now=True)
@@ -74,16 +82,18 @@ class FollowUpSched(models.Model):
     denial_id = models.ForeignKey("Denial", on_delete=models.CASCADE)
 
     def __str__(self):
-        return f"{self.email} on {self.follow_up_date} for {self.denial_id}"
+        return f"{self.email} on {self.follow_up_date}"
 
 
 class PlanType(models.Model):
     id = models.AutoField(primary_key=True)
     name = models.CharField(max_length=300, primary_key=False)
-    alt_name = models.CharField(max_length=300, primary_key=False)
-    regex = RegexField(max_length=400, re_flags=re.IGNORECASE | re.UNICODE | re.M)
+    alt_name = models.CharField(max_length=300, primary_key=False, blank=True)
+    regex = RegexField(max_length=400, re_flags=re.IGNORECASE | re.UNICODE | re.M,
+                       blank=True)
     negative_regex = RegexField(
-        max_length=400, re_flags=re.IGNORECASE | re.UNICODE | re.M
+        max_length=400, re_flags=re.IGNORECASE | re.UNICODE | re.M,
+        blank=True
     )
 
     def __str__(self):
@@ -122,7 +132,7 @@ class Diagnosis(models.Model):
     regex = RegexField(max_length=400, re_flags=re.IGNORECASE | re.UNICODE | re.M)
 
     def __str__(self):
-        return "{self.id}:{self.name}"
+        return f"{self.id}:{self.name}"
 
 
 class Procedures(models.Model):
@@ -147,16 +157,22 @@ class DenialTypes(models.Model):
     name = models.CharField(max_length=300, primary_key=False)
     regex = RegexField(max_length=400, re_flags=re.IGNORECASE | re.UNICODE | re.M)
     diagnosis_regex = RegexField(
-        max_length=400, re_flags=re.IGNORECASE | re.UNICODE | re.M, null=True
+        max_length=400,
+        re_flags=re.IGNORECASE | re.UNICODE | re.M,
+        null=True,
+        blank=True,
     )
     procedure_regex = RegexField(
-        max_length=400, re_flags=re.IGNORECASE | re.UNICODE | re.M, null=True
+        max_length=400,
+        re_flags=re.IGNORECASE | re.UNICODE | re.M,
+        null=True,
+        blank=True,
     )
     negative_regex = RegexField(
-        max_length=400, re_flags=re.IGNORECASE | re.UNICODE | re.M
+        max_length=400, re_flags=re.IGNORECASE | re.UNICODE | re.M, blank=True
     )
     appeal_text = models.TextField(max_length=3000, primary_key=False, blank=True)
-    form = models.CharField(max_length=300, null=True)
+    form = models.CharField(max_length=300, null=True, blank=True)
 
     def get_form(self):
         if self.form is None:
@@ -232,7 +248,9 @@ class PlanDocuments(models.Model):
 class FollowUpDocuments(models.Model):
     document_id = models.AutoField(primary_key=True)
     follow_up_document = models.FileField(null=True, storage=settings.COMBINED_STORAGE)
-    follow_up_document_enc = EncryptedFileField(null=True, storage=settings.COMBINED_STORAGE)
+    follow_up_document_enc = EncryptedFileField(
+        null=True, storage=settings.COMBINED_STORAGE
+    )
     # If the denial is deleted it's either SPAM or a removal request in either case
     # we cascade the delete
     denial = models.ForeignKey("Denial", on_delete=models.CASCADE)
@@ -249,8 +267,8 @@ class PubMedArticleSummarized(models.Model):
     abstract = models.TextField(primary_key=False, blank=True, null=True)
     text = models.TextField(primary_key=False, blank=True, null=True)
     basic_summary = models.TextField(primary_key=False, blank=True, null=True)
-    says_effective = models.BooleanField(null=True)
-    publication_date = models.DateTimeField(null=True)
+    says_effective = models.BooleanField(null=True, blank=True)
+    publication_date = models.DateTimeField(null=True, blank=True)
     retrival_date = models.TextField(blank=True, null=True)
     article_url = models.TextField(primary_key=False, blank=True, null=True)
 
@@ -274,7 +292,9 @@ class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # t
     pmids = models.CharField(max_length=300, blank=True)
     health_history = models.TextField(null=True, blank=True)
     combined_document = models.FileField(null=True, storage=settings.COMBINED_STORAGE)
-    combined_document_enc = EncryptedFileField(null=True, storage=settings.COMBINED_STORAGE)
+    combined_document_enc = EncryptedFileField(
+        null=True, storage=settings.COMBINED_STORAGE
+    )
     uuid = models.CharField(
         max_length=300, primary_key=False, default=uuid.uuid4, editable=False
     )
@@ -310,38 +330,38 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     )
     hashed_email = models.CharField(max_length=300, primary_key=False)
     denial_text = models.TextField(primary_key=False)
-    denial_type_text = models.TextField(max_length=200, primary_key=False, null=True)
+    denial_type_text = models.TextField(max_length=200, primary_key=False, null=True, blank=True)
     date = models.DateField(auto_now=False, auto_now_add=True)
     denial_type = models.ManyToManyField(DenialTypes, through=DenialTypesRelation)
     plan_type = models.ManyToManyField(PlanType, through=PlanTypesRelation)
     plan_source = models.ManyToManyField(PlanSource, through=PlanSourceRelation)
-    employer_name = models.CharField(max_length=300, null=True)
-    regulator = models.ForeignKey(Regulator, null=True, on_delete=models.SET_NULL)
+    employer_name = models.CharField(max_length=300, null=True, blank=True)
+    regulator = models.ForeignKey(Regulator, null=True, on_delete=models.SET_NULL, blank=True)
     urgent = models.BooleanField(default=False)
     pre_service = models.BooleanField(default=False)
-    denial_date = models.DateField(auto_now=False, null=True)
-    insurance_company = models.CharField(max_length=300, primary_key=False, null=True)
-    claim_id = models.CharField(max_length=300, primary_key=False, null=True)
+    denial_date = models.DateField(auto_now=False, null=True, blank=True)
+    insurance_company = models.CharField(max_length=300, primary_key=False, null=True, blank=True)
+    claim_id = models.CharField(max_length=300, primary_key=False, null=True, blank=True)
     procedure = models.CharField(max_length=300, primary_key=False, null=True)
     diagnosis = models.CharField(max_length=300, primary_key=False, null=True)
     # Keep track of if the async thread finished extracting procedure and diagnosis
     extract_procedure_diagnosis_finished = models.BooleanField(default=False, null=True)
-    appeal_text = models.TextField(primary_key=False, null=True)
-    raw_email = models.TextField(max_length=300, primary_key=False, null=True)
+    appeal_text = models.TextField(primary_key=False, null=True, blank=True)
+    raw_email = models.TextField(max_length=300, primary_key=False, null=True, blank=True)
     created = models.DateTimeField(db_default=Now(), primary_key=False, null=True)
     use_external = models.BooleanField(default=False)
-    health_history = models.TextField(primary_key=False, null=True)
-    qa_context = models.TextField(primary_key=False, null=True)
-    plan_context = models.TextField(primary_key=False, null=True)
+    health_history = models.TextField(primary_key=False, null=True, blank=True)
+    qa_context = models.TextField(primary_key=False, null=True, blank=True)
+    plan_context = models.TextField(primary_key=False, null=True, blank=True)
     semi_sekret = models.CharField(max_length=100, default=sekret_gen)
     plan_id = models.CharField(max_length=200, primary_key=False, null=True)
-    state = models.CharField(max_length=4, primary_key=False, null=True)
+    state = models.CharField(max_length=4, primary_key=False, null=True, blank=True)
     appeal_result = models.CharField(max_length=200, null=True)
     last_interaction = models.DateTimeField(auto_now=True)
     follow_up_semi_sekret = models.CharField(max_length=100, default=sekret_gen)
-    references = models.TextField(primary_key=False, null=True)
-    reference_summary = models.TextField(primary_key=False, null=True)
-    appeal_fax_number = models.CharField(max_length=40, null=True)
+    references = models.TextField(primary_key=False, null=True, blank=True)
+    reference_summary = models.TextField(primary_key=False, null=True, blank=True)
+    appeal_fax_number = models.CharField(max_length=40, null=True, blank=True)
     your_state = models.CharField(max_length=40, null=True)
 
     def follow_up(self):
@@ -369,6 +389,6 @@ class ProposedAppeal(ExportModelOperationsMixin("ProposedAppeal"), models.Model)
 
     def __str__(self):
         if self.appeal_text is not None:
-            return f"{self.for_denial}: {self.appeal_text[0:100]}"
+            return f"{self.appeal_text[0:100]}"
         else:
-            return f"{self.for_denial}: {self.appeal_text}"
+            return f"{self.appeal_text}"

@@ -31,7 +31,8 @@ class PubMedTools(object):
         with Timeout(15.0) as _timeout_ctx:
             query = f"{denial.procedure} {denial.diagnosis}"
             pmids = pubmed_fetcher.pmids_for_query(query)
-            articles_json = json.dumps(pmids)
+            # Sometimes we get nulls...
+            articles_json = json.dumps(pmids).replace("\x00", "")
             PubMedQueryData.objects.create(
                 query=query,
                 articles=articles_json,
@@ -81,9 +82,9 @@ class PubMedTools(object):
                         article = PubMedArticleSummarized.objects.create(
                             pmid=pmid,
                             doi=fetched.doi,
-                            title=fetched.title,
-                            abstract=fetched.abstract,
-                            text=fetched.content.text,
+                            title=fetched.title.replace("\x00", ""),
+                            abstract=fetched.abstract.replace("\x00", ""),
+                            text=fetched.content.text.replace("\x00", ""),
                         )
                         pubmed_docs.append(article)
                 except:
