@@ -89,11 +89,11 @@ class PlanType(models.Model):
     id = models.AutoField(primary_key=True)
     name = models.CharField(max_length=300, primary_key=False)
     alt_name = models.CharField(max_length=300, primary_key=False, blank=True)
-    regex = RegexField(max_length=400, re_flags=re.IGNORECASE | re.UNICODE | re.M,
-                       blank=True)
+    regex = RegexField(
+        max_length=400, re_flags=re.IGNORECASE | re.UNICODE | re.M, blank=True
+    )
     negative_regex = RegexField(
-        max_length=400, re_flags=re.IGNORECASE | re.UNICODE | re.M,
-        blank=True
+        max_length=400, re_flags=re.IGNORECASE | re.UNICODE | re.M, blank=True
     )
 
     def __str__(self):
@@ -330,24 +330,34 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     )
     hashed_email = models.CharField(max_length=300, primary_key=False)
     denial_text = models.TextField(primary_key=False)
-    denial_type_text = models.TextField(max_length=200, primary_key=False, null=True, blank=True)
+    denial_type_text = models.TextField(
+        max_length=200, primary_key=False, null=True, blank=True
+    )
     date = models.DateField(auto_now=False, auto_now_add=True)
     denial_type = models.ManyToManyField(DenialTypes, through=DenialTypesRelation)
     plan_type = models.ManyToManyField(PlanType, through=PlanTypesRelation)
     plan_source = models.ManyToManyField(PlanSource, through=PlanSourceRelation)
     employer_name = models.CharField(max_length=300, null=True, blank=True)
-    regulator = models.ForeignKey(Regulator, null=True, on_delete=models.SET_NULL, blank=True)
+    regulator = models.ForeignKey(
+        Regulator, null=True, on_delete=models.SET_NULL, blank=True
+    )
     urgent = models.BooleanField(default=False)
     pre_service = models.BooleanField(default=False)
     denial_date = models.DateField(auto_now=False, null=True, blank=True)
-    insurance_company = models.CharField(max_length=300, primary_key=False, null=True, blank=True)
-    claim_id = models.CharField(max_length=300, primary_key=False, null=True, blank=True)
+    insurance_company = models.CharField(
+        max_length=300, primary_key=False, null=True, blank=True
+    )
+    claim_id = models.CharField(
+        max_length=300, primary_key=False, null=True, blank=True
+    )
     procedure = models.CharField(max_length=300, primary_key=False, null=True)
     diagnosis = models.CharField(max_length=300, primary_key=False, null=True)
     # Keep track of if the async thread finished extracting procedure and diagnosis
     extract_procedure_diagnosis_finished = models.BooleanField(default=False, null=True)
     appeal_text = models.TextField(primary_key=False, null=True, blank=True)
-    raw_email = models.TextField(max_length=300, primary_key=False, null=True, blank=True)
+    raw_email = models.TextField(
+        max_length=300, primary_key=False, null=True, blank=True
+    )
     created = models.DateTimeField(db_default=Now(), primary_key=False, null=True)
     use_external = models.BooleanField(default=False)
     health_history = models.TextField(primary_key=False, null=True, blank=True)

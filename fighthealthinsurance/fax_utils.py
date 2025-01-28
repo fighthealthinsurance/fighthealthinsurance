@@ -160,7 +160,9 @@ class SonicFax(FaxSenderBase):
             headers=self.headers,
             cookies=cookies,
         )
+        # Get the filename but also just the name
         filename = self._get_filename(path)
+        filename = filename.split("/")[-1]
         c = 0
         max_initial_count = 5
         max_final_count = 25
@@ -196,7 +198,7 @@ class SonicFax(FaxSenderBase):
                     elif ">success<" in chunk:
                         print(f"Success: {chunk}")
                         return True
-        print(f"Timed out! last chunk {chunk}")
+        print(f"Timed out! last chunk {chunk} -- {filename}")
         return False
 
     async def send_fax_non_blocking(
