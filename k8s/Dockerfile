@@ -5,6 +5,7 @@ FROM python:3.11.10-bullseye as base-amd64
 FROM base-${TARGETARCH}
 
 ARG DEBIAN_FRONTEND=noninteractive
+ARG RELEASE=unknown
 
 # install all of the tools we need.
 RUN apt-get update && apt-get upgrade -y && apt-get install nginx vim emacs libmariadb-dev-compat default-libmysqlclient-dev libssl-dev nodejs npm python3-opencv libgl1 tesseract-ocr nano nfs-common sudo iputils-ping hylafax-client pandoc texlive texlive-luatex texlive-latex-extra texlive-xetex postgresql ca-certificates curl libpq-dev -y

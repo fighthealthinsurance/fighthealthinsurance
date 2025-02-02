@@ -63,28 +63,14 @@ class Base(Configuration):
 
     sentry_endpoint = os.getenv("SENTRY_ENDPOINT")
 
-    if sentry_endpoint:
-
-        import sentry_sdk
-
-        sentry_sdk.init(
-            dsn=sentry_endpoint,
-            # Set traces_sample_rate to 1.0 to capture 100%
-            # of transactions for tracing.
-            traces_sample_rate=1.0,
-            _experiments={
-                # Set continuous_profiling_auto_start to True
-                # to automatically start the profiler on when
-                # possible.
-                "continuous_profiling_auto_start": True,
-            },
-        )
-
     # Application definition
 
     SITE_ID = 1
 
-    TEMPLATE_CONTEXT_PROCESSORS = ["django.template.context_processors.request"]
+    TEMPLATE_CONTEXT_PROCESSORS = [
+        "django.template.context_processors.request",
+        "django.template.context_processors.debug",
+    ]
 
     INSTALLED_APPS = [
         "django.contrib.admin",
@@ -356,7 +342,30 @@ class TestSync(Dev):
 
 
 class Prod(Base):
+    sentry_endpoint = os.getenv("SENTRY_ENDPOINT")
+
     DEBUG = False
+
+    if sentry_endpoint and not DEBUG:
+
+        import sentry_sdk
+        from sentry_sdk.integrations.django import DjangoIntegration
+
+        sentry_sdk.init(
+            dsn=sentry_endpoint,
+            # Set traces_sample_rate to 1.0 to capture 100%
+            # of transactions for tracing.
+            traces_sample_rate=1.0,
+            integrations=[DjangoIntegration()],
+            environment="production",  # Set this to your desired environment name
+            release=os.getenv("RELEASE", "unset"),
+            _experiments={
+                # Set continuous_profiling_auto_start to True
+                # to automatically start the profiler on when
+                # possible.
+                "continuous_profiling_auto_start": True,
+            },
+        )
 
     @property
     def SECRET_KEY(self):
