@@ -10,52 +10,12 @@ from django.db import models
 from django.db.models.functions import Now
 from django_prometheus.models import ExportModelOperationsMixin
 from django_encrypted_filefield.fields import EncryptedFileField
-from django.contrib.auth.models import User
+from django.contrib.auth import get_user_model
 
 from fighthealthinsurance.utils import sekret_gen
 from regex_field.fields import RegexField
 
-
-# Auth-ish-related models
-class Domain(models.Model):
-    id = models.AutoField(primary_key=True)
-    name = models.CharField(primary_key=False, blank=False, null=False, max_length=300)
-    active = models.BooleanField()
-
-
-class ConsumerUser(models.Model):
-    id = models.AutoField(primary_key=True)
-    user = models.OneToOneField(User, on_delete=models.CASCADE)
-    active = models.BooleanField()
-
-
-class ProfessionalUser(models.Model):
-    id = models.AutoField(primary_key=True)
-    user = models.OneToOneField(User, on_delete=models.CASCADE)
-    npi_number = models.CharField(blank=True, null=True, max_length=20)
-    active = models.BooleanField()
-
-
-class DenialDomainRelation(models.Model):
-    denial = models.ForeignKey("Denial", on_delete=models.CASCADE)
-    domain = models.ForeignKey("Domain", on_delete=models.CASCADE)
-
-
-class ProfessionalDomainRelation(models.Model):
-    professional = models.ForeignKey("ProfessionalUser", on_delete=models.CASCADE)
-    domain = models.ForeignKey("Domain", on_delete=models.CASCADE)
-    active = models.BooleanField()
-    admin = models.BooleanField()
-
-
-class ConsumerDomainRelation(models.Model):
-    consumer = models.ForeignKey("ConsumerUser", on_delete=models.CASCADE)
-    domain = models.ForeignKey("Domain", on_delete=models.CASCADE)
-
-
-class DenialProfessionalRelation(models.Model):
-    denial = models.ForeignKey("Denial", on_delete=models.CASCADE)
-    professional = models.ForeignKey("ProfessionalUser", on_delete=models.CASCADE)
+User = get_user_model()
 
 
 # Money related :p
@@ -395,7 +355,6 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     claim_id = models.CharField(
         max_length=300, primary_key=False, null=True, blank=True
     )
-    user = models.OneToOneField(User, on_delete=models.SET_NULL, null=True, blank=True)
     procedure = models.CharField(max_length=300, primary_key=False, null=True)
     diagnosis = models.CharField(max_length=300, primary_key=False, null=True)
     # Keep track of if the async thread finished extracting procedure and diagnosis
