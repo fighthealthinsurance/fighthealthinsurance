@@ -34,7 +34,6 @@ from django.views.decorators.debug import sensitive_post_parameters
 import os
 
 
-
 def trigger_error(request):
     division_by_zero = 1 / 0
 

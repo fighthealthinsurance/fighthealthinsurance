@@ -62,7 +62,7 @@ class Base(Configuration):
 
     ALLOWED_HOSTS: list[str] = ["*"]
 
-    sentry_endpoint = os.getenv("SENTRY_ENDPOINT")
+    SENTRY_ENDPOINT = os.getenv("SENTRY_ENDPOINT")
 
     # Application definition
 
@@ -343,30 +343,7 @@ class TestSync(Dev):
 
 
 class Prod(Base):
-    sentry_endpoint = os.getenv("SENTRY_ENDPOINT")
-
     DEBUG = False
-
-    if sentry_endpoint and not DEBUG:
-
-        import sentry_sdk
-        from sentry_sdk.integrations.django import DjangoIntegration
-
-        sentry_sdk.init(
-            dsn=sentry_endpoint,
-            # Set traces_sample_rate to 1.0 to capture 100%
-            # of transactions for tracing.
-            traces_sample_rate=1.0,
-            integrations=[DjangoIntegration()],
-            environment="production",  # Set this to your desired environment name
-            release=os.getenv("RELEASE", "unset"),
-            _experiments={
-                # Set continuous_profiling_auto_start to True
-                # to automatically start the profiler on when
-                # possible.
-                "continuous_profiling_auto_start": True,
-            },
-        )
 
     @property
     def SECRET_KEY(self):
