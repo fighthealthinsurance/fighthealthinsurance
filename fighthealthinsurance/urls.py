@@ -34,6 +34,7 @@ from django.views.decorators.debug import sensitive_post_parameters
 import os
 
 
+
 def trigger_error(request):
     division_by_zero = 1 / 0
 
@@ -42,6 +43,7 @@ urlpatterns = [
     # Internal-ish-views
     path("ziggy/rest/", include("fighthealthinsurance.rest_urls")),
     path("timbit/sentry-debug/", trigger_error),
+    re_path("timbit/sentry-debug/(?P<path>.+)", trigger_error, name="fake_fetch_url"),
     path("timbit/admin/", admin.site.urls),
     path("", include("django_prometheus.urls")),
     path("timbit/help/followup_sched", ScheduleFollowUps.as_view()),

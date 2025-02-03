@@ -37,6 +37,7 @@ class Base(Configuration):
     LOGIN_URL = "login"
     LOGIN_REDIRECT_URL = "/"
     THUMBNAIL_DEBUG = True
+    DEFF_FETCH_URL_NAME = "fake_fetch_url"
 
     # Quick-start development settings - unsuitable for production
     # See https://docs.djangoproject.com/en/4.0/howto/deployment/checklist/
