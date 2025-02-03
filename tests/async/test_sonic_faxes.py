@@ -4,6 +4,7 @@ import unittest
 from fighthealthinsurance.fax_utils import SonicFax
 import tempfile
 import pytest
+import asyncio
 
 
 class SonicFaxTest(unittest.TestCase):
@@ -30,11 +31,11 @@ class SonicFaxTest(unittest.TestCase):
             # Get the file name
             file_name = f.name
             self.assertTrue(
-                s.send_fax(
+                asyncio.run(s.send_fax(
                     destination=os.getenv("TEST_GOOD_FAX_NUMBER", "4158407591"),
                     path=file_name,
                     blocking=True,
-                )
+                ))
             )
 
     # @pytest.mark.skipif(_sonic_is_configured(), reason="Not configured")
@@ -52,9 +53,9 @@ class SonicFaxTest(unittest.TestCase):
             # Get the file name
             file_name = f.name
             self.assertFalse(
-                s.send_fax(
+                asyncio.run(s.send_fax(
                     destination=os.getenv("TEST_BAD_FAX_NUMBER", "4255555555"),
                     path=file_name,
                     blocking=True,
-                )
+                ))
             )

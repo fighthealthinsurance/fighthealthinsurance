@@ -117,7 +117,7 @@ class SonicFax(FaxSenderBase):
                 path=path,
                 dest_name=dest_name,
             )
-            return self._blocking_check_fax_status(
+            return await self._blocking_check_fax_status(
                 s=s,
                 cookies=cookies,
                 destination=destination,
@@ -138,16 +138,16 @@ class SonicFax(FaxSenderBase):
             raise Exception(f"Error logging into sonic got back {r.text}")
         return cookies
 
-    def blocking_check_fax_status(
+    async def blocking_check_fax_status(
         self, destination: str, path: str, dest_name: Optional[str] = None
     ) -> bool:
         with requests.Session() as s:
             cookies = self._login(s)
-            return self._blocking_check_fax_status(
+            return await self._blocking_check_fax_status(
                 s, cookies, destination, path, dest_name
             )
 
-    def _blocking_check_fax_status(
+    async def _blocking_check_fax_status(
         self,
         s: Session,
         cookies: dict[str, str],
@@ -174,31 +174,48 @@ class SonicFax(FaxSenderBase):
                 cookies=cookies,
             )
             c = c + 1
-            time.sleep(c)
+            await asyncio.sleep(c)
             if filename in r.text:
                 break
         if filename not in r.text:
             return False
+        # A two page fax normally takes about two minutes
+        await asyncio.sleep(120)
         c = 0
         chunk = None
+        full = None
         while c < max_final_count:
             c = c + 1
-            time.sleep(c)
+            await asyncio.sleep(10 + c)
             r = s.get(
                 "https://members.sonic.net/labs/fax/?a=history",
                 headers=self.headers,
                 cookies=cookies,
             )
-            chunks = r.text.split("tr>")
+            full = r.text
+            chunks = r.text.split("<tr ")
             for chunk in chunks:
-                if filename in chunk and destination in chunk:
+                if filename in chunk:
+                    # Core states we care about
                     if ">failed<" in chunk:
                         print(f"Failed :( {chunk}")
                         return False
                     elif ">success<" in chunk:
                         print(f"Success: {chunk}")
                         return True
-        print(f"Timed out! last chunk {chunk} -- {filename}")
+                    # More delay states
+                    elif "in-queue" in chunk:
+                        await asyncio.sleep(c * 3)
+                        pass
+                    elif "retrying" in chunk:
+                        await asyncio.sleep(c * 5)
+                    elif "transmitting" in chunk:
+                        await asyncio.sleep(c * 2)
+                        pass
+                    else:
+                        print(f"No status in {chunk} but {filename}")
+                        pass
+        print(f"Timed out -- on file {filename} last response: {full}")
         return False
 
     async def send_fax_non_blocking(
@@ -649,20 +666,40 @@ class FlexibleFaxMagic(object):
         )
         for backend in backends_by_cost:
             print(f"Entering timeout ctx")
-            with Timeout(600.0) as _timeout_ctx:
+            with Timeout(1300.0) as _timeout_ctx:
                 try:
                     print(f"Calling backend {backend}")
                     r = await asyncio.wait_for(
                         backend.send_fax(
                             destination=destination, path=path, blocking=blocking
                         ),
-                        timeout=300,
+                        timeout=600,
                     )
                     if r == True:
                         print(f"Sent fax to {destination} using {backend}")
                         return True
+                    else:
+                        print(f"Failed sending to {destination} using {backend}")
                 except Exception as e:
-                    print(f"Error {e} sending fax on {backend}")
+                    print(f"Error {e} sending fax on {backend}, retrying once")
+                try:
+                    print(f"Retrying backend {backend}")
+                    r = await asyncio.wait_for(
+                        backend.send_fax(
+                            destination=destination, path=path, blocking=blocking
+                        ),
+                        timeout=600,
+                    )
+                    if r == True:
+                        print(f"Sent fax to {destination} using {backend}")
+                        return True
+                    else:
+                        print(f"Failed sending to {destination} using {backend}")
+                except Exception as e:
+                    print(
+                        f"Error {e} sending fax on {backend}, moving on to next backend"
+                    )
+
         print(f"Unable to send fax to {destination} using {self.backends}")
         return False
 
