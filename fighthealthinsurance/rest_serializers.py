@@ -44,6 +44,17 @@ class DenialResponseInfoSerializer(serializers.Serializer):
     semi_sekret = serializers.CharField()
 
 
+# Signup options
+
+
+class ProviderSingupSerializer(serializers.Serializer):
+    first_name = serializers.CharField()
+    middle_name = serializers.CharField()
+    last_name = serializers.CharField()
+    npi_number = serializers.CharField()
+    domain_name = serializers.CharField()
+
+
 # Forms
 class DeleteDataFormSerializer(FormSerializer):
     class Meta(object):

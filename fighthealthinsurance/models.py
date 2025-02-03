@@ -13,6 +13,7 @@ from django_encrypted_filefield.fields import EncryptedFileField
 from django.contrib.auth import get_user_model
 
 from fighthealthinsurance.utils import sekret_gen
+from fhi_users.models import *
 from regex_field.fields import RegexField
 
 User = get_user_model()
@@ -223,24 +224,6 @@ class DataSource(models.Model):
         return "{self.id}:{self.name}"
 
 
-class DenialTypesRelation(models.Model):
-    denial = models.ForeignKey("Denial", on_delete=models.CASCADE)
-    denial_type = models.ForeignKey(DenialTypes, on_delete=models.CASCADE)
-    src = models.ForeignKey(DataSource, on_delete=models.SET_NULL, null=True)
-
-
-class PlanTypesRelation(models.Model):
-    denial = models.ForeignKey("Denial", on_delete=models.CASCADE)
-    plan_type = models.ForeignKey(PlanType, on_delete=models.CASCADE)
-    src = models.ForeignKey(DataSource, on_delete=models.SET_NULL, null=True)
-
-
-class PlanSourceRelation(models.Model):
-    denial = models.ForeignKey("Denial", on_delete=models.CASCADE)
-    plan_source = models.ForeignKey(PlanSource, on_delete=models.CASCADE)
-    src = models.ForeignKey(DataSource, on_delete=models.SET_NULL, null=True)
-
-
 class PlanDocuments(models.Model):
     plan_document_id = models.AutoField(primary_key=True)
     plan_document = models.FileField(null=True, storage=settings.COMBINED_STORAGE)
@@ -328,6 +311,24 @@ class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # t
         return f"{self.fax_id} -- {self.email} -- {self.paid} -- {self.fax_success} -- {self.name}"
 
 
+class DenialTypesRelation(models.Model):
+    denial = models.ForeignKey("Denial", on_delete=models.CASCADE)
+    denial_type = models.ForeignKey(DenialTypes, on_delete=models.CASCADE)
+    src = models.ForeignKey(DataSource, on_delete=models.SET_NULL, null=True)
+
+
+class PlanTypesRelation(models.Model):
+    denial = models.ForeignKey("Denial", on_delete=models.CASCADE)
+    plan_type = models.ForeignKey(PlanType, on_delete=models.CASCADE)
+    src = models.ForeignKey(DataSource, on_delete=models.SET_NULL, null=True)
+
+
+class PlanSourceRelation(models.Model):
+    denial = models.ForeignKey("Denial", on_delete=models.CASCADE)
+    plan_source = models.ForeignKey(PlanSource, on_delete=models.CASCADE)
+    src = models.ForeignKey(DataSource, on_delete=models.SET_NULL, null=True)
+
+
 class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignore
     denial_id = models.AutoField(primary_key=True, null=False)
     uuid = models.CharField(
@@ -407,3 +408,16 @@ class ProposedAppeal(ExportModelOperationsMixin("ProposedAppeal"), models.Model)
             return f"{self.appeal_text[0:100]}"
         else:
             return f"{self.appeal_text}"
+
+
+# Denial Relations
+
+
+class DenialDomainRelation(models.Model):
+    denial = models.ForeignKey(Denial, on_delete=models.CASCADE)
+    domain = models.ForeignKey(UserDomain, on_delete=models.CASCADE)
+
+
+class DenialProfessionalRelation(models.Model):
+    denial = models.ForeignKey(Denial, on_delete=models.CASCADE)
+    professional = models.ForeignKey(ProfessionalUser, on_delete=models.CASCADE)

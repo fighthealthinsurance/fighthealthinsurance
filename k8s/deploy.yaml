@@ -25,7 +25,7 @@ spec:
         special: web-primary-pod
     spec:
       containers:
-        - image: holdenk/fight-health-insurance:${FHI_VERSION}
+        - image: ${FHI_BASE}:${FHI_VERSION}
           name: totallylegitco
           env:
           - name: MIGRATIONS
@@ -36,6 +36,8 @@ spec:
           - secretRef:
               name: fight-health-insurance-primary-secret
           imagePullPolicy: Always
+      imagePullSecrets:
+        - name: regcred
       restartPolicy: OnFailure
 ---
 apiVersion: batch/v1
@@ -52,7 +54,7 @@ spec:
         special: web-primary-pod
     spec:
       containers:
-        - image: holdenk/fight-health-insurance:${FHI_VERSION}
+        - image: ${FHI_BASE}:${FHI_VERSION}
           name: totallylegitco
           env:
           - name: POLLING_ACTORS
@@ -63,6 +65,8 @@ spec:
           - secretRef:
               name: fight-health-insurance-primary-secret
           imagePullPolicy: Always
+      imagePullSecrets:
+        - name: regcred
       restartPolicy: OnFailure
 ---
 apiVersion: apps/v1
@@ -91,7 +95,7 @@ spec:
           matchLabels:
             app: fight-health-insurance
       containers:
-        - image: holdenk/fight-health-insurance:${FHI_VERSION}
+        - image: ${FHI_BASE}:${FHI_VERSION}
           name: totallylegitco
           envFrom:
           - secretRef:
@@ -120,6 +124,8 @@ spec:
               port: 80
             periodSeconds: 10
             failureThreshold: 45
+      imagePullSecrets:
+        - name: regcred
       volumes:
         - name: uploads
           persistentVolumeClaim:

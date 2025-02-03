@@ -5,7 +5,8 @@ pwd
 
 # Ray doesn't publish combiend aarch64 & amd64 images because idk.
 RAY_VERSION=2.38.0-py311
-RAY_IMAGE=holdenk/ray:${RAY_VERSION}
+RAY_BASE=${RAY_BASE:-totallylegitco/fhi-ray}
+RAY_IMAGE=${RAY_BASE}:${RAY_VERSION}
 
 BUILDX_CMD=${BUILDX_CMD:-"push"}
 PLATFORM=${PLATFORM:-linux/amd64,linux/arm64}

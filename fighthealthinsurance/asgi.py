@@ -24,6 +24,8 @@ application = ProtocolTypeRouter(
     }
 )
 
+# Intentional import after the get_asgi_application is called.
+
 from django.conf import settings
 
 if settings.SENTRY_ENDPOINT and not settings.DEBUG:

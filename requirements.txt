@@ -1,6 +1,7 @@
 aiohttp
 asyncssh
 asyncstdlib
+argon2-cffi
 beautifulsoup4==4.12.3
 black
 channels
@@ -27,6 +28,9 @@ django-stubs-ext
 django-treebeard
 django-types
 django_user_agents
+django-otp
+django-two-factor-auth
+django-mfa2
 easy_thumbnails
 exceptionite
 flake8-django

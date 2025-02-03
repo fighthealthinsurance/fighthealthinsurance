@@ -1,0 +1,54 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}
+Login
+{% endblock title %}
+
+{% block content %}
+<div class="container">
+  <div class="card card-login mx-auto mt-5">
+    <div class="card-header">Login</div>
+    <div class="card-body">
+      {% if invalid %}
+      <div class="alert alert-danger">Invalid Username or password</div>
+      {% endif %}
+      {% if domain_invalid %}
+      <div class="alert alert-danger">Domain not found</div>
+      {% endif %}
+      <form action="{% url 'login' %}" method="post" id="loginForm">
+	{% csrf_token %}
+        <div class="form-group">
+          <div class="form-label-group">
+	    <label for="inputUsername">Username</label>
+            <input type="text" id="inputUsername" name="username" class="form-control" placeholder="username" autocomplete="username webauthn"  autofocus="autofocus">
+          </div>
+        </div>
+        <div class="form-group">
+          <div class="form-label-group">
+	    <label for="inputDomain">Domain</label>
+            <input type="text" id="inputDomain"  name="domain" class="form-control" placeholder="domain" required="required">
+          </div>
+        <div class="form-group">
+          <div class="form-label-group">
+	    <label for="inputPassword">Password</label>
+            <input type="password" id="inputPassword"  name="password" class="form-control" placeholder="Password" required="required">
+          </div>
+        </div>
+	
+        <button class="btn btn-primary btn-block" type="submit">Login</button><br/>
+
+        <button class="btn btn-primary btn-block" type="button" onclick="authen()">Login By Security Key</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Bootstrap core JavaScript-->
+<script src="{% static 'js/jquery.js'%}"></script>
+<script src="{%static 'js/bootstrap.min.js'%}"></script>
+
+{% include 'FIDO2/Auth_JS.html'%}
+<script type="text/javascript">
+  window.onload = checkConditionalUI('loginForm')
+</script>
+{% endblock content %}

@@ -23,6 +23,8 @@ from django.views.decorators.cache import cache_control, cache_page
 from django.conf import settings
 from django.views.generic.base import RedirectView
 from django.contrib.staticfiles.storage import staticfiles_storage
+import mfa
+import mfa.TrustedDevice
 
 from fighthealthinsurance import views
 from fighthealthinsurance import fax_views
@@ -30,6 +32,7 @@ from fighthealthinsurance.followup_emails import (
     FollowUpEmailSenderView,
     ScheduleFollowUps,
 )
+from .auth import auth_views
 from django.views.decorators.debug import sensitive_post_parameters
 import os
 
@@ -54,6 +57,13 @@ urlpatterns = [
         "timbit/help/followup_fax_test",
         staff_member_required(fax_views.FollowUpFaxSenderView.as_view()),
     ),
+    # Auth related views
+    path("v0/auth/login", auth_views.LoginView.as_view(), name="login"),  # Login
+    path("v0/auth/logout", auth_views.LogoutView, name="logout"),  # Logout
+    path(
+        "v0/auth/mfa/", include("mfa.urls")
+    ),  # Include MFA URLs for handling MFA processes.
+    #    path('v0/auth/device_add', mfa.TrustedDevice.add,name="mfa_add_new_trusted_device"),  # Add device
     # These are links we e-mail people so might have some extra junk.
     # So if there's an extra / or . at the end we ignore it.
     path(

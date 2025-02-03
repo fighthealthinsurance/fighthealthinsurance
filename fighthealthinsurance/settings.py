@@ -32,12 +32,20 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 
 class Base(Configuration):
+    SENTRY_ENDPOINT = os.getenv("SENTRY_ENDPOINT")
     COOKIE_CONSENT_ENABLED = True
     COOKIE_CONSENT_LOG_ENABLED = True
     LOGIN_URL = "login"
     LOGIN_REDIRECT_URL = "/"
     THUMBNAIL_DEBUG = True
     DEFF_FETCH_URL_NAME = "fake_fetch_url"
+    AUTH_USER_MODEL = "fhi_users.User"
+
+    REST_FRAMEWORK = {
+        "DEFAULT_AUTHENTICATION_CLASSES": [
+            "rest_framework.authentication.SessionAuthentication",
+        ]
+    }
 
     # Quick-start development settings - unsuitable for production
     # See https://docs.djangoproject.com/en/4.0/howto/deployment/checklist/
@@ -63,7 +71,6 @@ class Base(Configuration):
     ALLOWED_HOSTS: list[str] = ["*"]
 
     SENTRY_ENDPOINT = os.getenv("SENTRY_ENDPOINT")
-
     # Application definition
 
     SITE_ID = 1
@@ -71,6 +78,8 @@ class Base(Configuration):
     TEMPLATE_CONTEXT_PROCESSORS = [
         "django.template.context_processors.request",
         "django.template.context_processors.debug",
+        "django.contrib.auth.context_processors.auth",
+        "django.contrib.messages.context_processors.messages",
     ]
 
     INSTALLED_APPS = [
@@ -82,6 +91,7 @@ class Base(Configuration):
         "django.contrib.staticfiles",
         "django.contrib.sites",
         "fighthealthinsurance",
+        "fhi_users",
         "sorl.thumbnail",
         "easy_thumbnails",
         "cookie_consent",
@@ -92,6 +102,7 @@ class Base(Configuration):
         "memoize",
         "django_recaptcha",
         "rest_framework",
+        "mfa",
         "corsheaders",
         "channels",
         "django_prometheus",
@@ -166,6 +177,16 @@ class Base(Configuration):
         }
     }
 
+    # See https://docs.djangoproject.com/en/5.1/topics/auth/passwords/#using-argon2-with-django
+    PASSWORD_HASHERS = [
+        "django.contrib.auth.hashers.Argon2PasswordHasher",
+        "django.contrib.auth.hashers.PBKDF2PasswordHasher",
+        "django.contrib.auth.hashers.PBKDF2SHA1PasswordHasher",
+        "django.contrib.auth.hashers.BCryptSHA256PasswordHasher",
+        "django.contrib.auth.hashers.ScryptPasswordHasher",
+        "mfa.recovery.Hash",
+    ]
+
     # Password validation
     # https://docs.djangoproject.com/en/4.0/ref/settings/#auth-password-validators
 
@@ -182,7 +203,28 @@ class Base(Configuration):
         {
             "NAME": "django.contrib.auth.password_validation.NumericPasswordValidator",
         },
+        {
+            "NAME": "django.contrib.auth.password_validation.MinimumLengthValidator",
+            "OPTIONS": {
+                "min_length": 9,
+            },
+        },
     ]
+
+    # Auth https://github.com/mkalioby/django-mfa2
+    FIDO_SERVER_ID = (
+        "localhost"  # Server rp id for FIDO2, it is the full domain of your project
+    )
+    FIDO_SERVER_NAME = "fightpaperwork"
+    MFA_REDIRECT_AFTER_REGISTRATION = "root"
+    # Force TOTP tokens on
+    # MFA_ENFORCE_EMAIL_TOKEN = True
+    EMAIL_FROM = "support@fightpaperwork.com"
+
+    TOKEN_ISSUER_NAME = "FIGHT"  # TOTP Issuer name
+    MFA_OTP_EMAIL_SUBJECT = (
+        "One time password: Fight Paperwork"  # The subject of the email after the token
+    )
 
     # Internationalization
     # https://docs.djangoproject.com/en/4.0/topics/i18n/
@@ -344,6 +386,9 @@ class TestSync(Dev):
 
 class Prod(Base):
     DEBUG = False
+
+    # Different fido server for production
+    FIDO_SERVER_ID = "fighthealthinsurance.com"  # Server rp id for FIDO2, it is the full domain of your project
 
     @property
     def SECRET_KEY(self):

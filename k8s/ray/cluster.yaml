@@ -18,7 +18,7 @@ spec:
       spec:
         affinity: {}
         containers:
-          - image: holdenk/fhi-ray:${FHI_VERSION}
+          - image: ${RAY_BASE}:${FHI_VERSION}
             env:
               - name: RAY_gcs_server_request_timeout_seconds
                 value: "20"
@@ -43,6 +43,8 @@ spec:
                 readOnly: true
                 # container will see /root/.ssh/id_rsa as usual:
                 mountPath: "/home/ray/.ssh"
+        imagePullSecrets:
+          - name: regcred
         volumes:
         - emptyDir: {}
           name: log-volume
@@ -66,7 +68,7 @@ spec:
           app.kubernetes.io/instance: raycluster
       spec:
         containers:
-          - image: holdenk/fhi-ray:${FHI_VERSION}
+          - image: ${RAY_BASE}:${FHI_VERSION}
             env:
               - name: RAY_gcs_server_request_timeout_seconds
                 value: "20"
@@ -91,6 +93,8 @@ spec:
               readOnly: true
               # container will see /root/.ssh/id_rsa as usual:
               mountPath: "/home/ray/.ssh"
+        imagePullSecrets:
+          - name: regcred
         volumes:
         - emptyDir: {}
           name: log-volume
