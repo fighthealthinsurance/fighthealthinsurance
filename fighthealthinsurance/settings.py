@@ -39,7 +39,6 @@ class Base(Configuration):
     LOGIN_REDIRECT_URL = "/"
     THUMBNAIL_DEBUG = True
     DEFF_FETCH_URL_NAME = "fake_fetch_url"
-    AUTH_USER_MODEL = "fhi_users.User"
 
     REST_FRAMEWORK = {
         "DEFAULT_AUTHENTICATION_CLASSES": [

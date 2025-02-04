@@ -6,8 +6,6 @@ from fighthealthinsurance.models import *
 from fhi_users.models import User
 from django.contrib.auth.admin import UserAdmin
 
-admin.site.register(User, UserAdmin)
-
 # Auto magic
 models = apps.get_models()
 
