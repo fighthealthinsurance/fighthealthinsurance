@@ -7,7 +7,7 @@ BUILDX_CMD=${BUILDX_CMD:-push}
 
 source "${SCRIPT_DIR}/setup_templates.sh"
 
-FHI_VERSION=v0.10.1a
+FHI_VERSION=v0.10.1b
 RAY_BASE=${RAY_BASE:-totallylegitco/fhi-ray}
 FHI_BASE=${FHI_BASE:-totallylegitco/fhi-base}
 FHI_DOCKER_USERNAME=${FHI_DOCKER_USERNAME:-holdenk}
