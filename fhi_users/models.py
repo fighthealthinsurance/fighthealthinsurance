@@ -1,4 +1,3 @@
-from django.contrib.auth.models import AbstractUser
 from django.db import models
 from django.contrib.auth import get_user_model
 
@@ -81,9 +80,12 @@ class ProfessionalDomainRelation(models.Model):
     approval_required = models.BooleanField(default=True)
     display_name = models.CharField(max_length=400, null=True)
     professional_type = models.CharField(max_length=400, null=True)
+    pending = models.BooleanField(
+        default=True
+    )  # Has an admin accepted the request to join the domain?
 
 
 class PatientDomainRelation(models.Model):
     patient = models.ForeignKey("PatientUser", on_delete=models.CASCADE)
     domain = models.ForeignKey(UserDomain, on_delete=models.CASCADE)
-    active = models.BooleanField()
+    active = models.BooleanField(default=True)

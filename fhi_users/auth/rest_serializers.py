@@ -68,3 +68,7 @@ class ProfessionalSignupSerializer(serializers.ModelSerializer):
     class Meta(object):
         model = ProfessionalUser
         fields = ["npi_number", "make_new_domain", "user_signup_info", "user_domain"]
+
+
+class ProfessionalSignupResponseSerializer(serializers.Serializer):
+    next_url = serializers.URLField()

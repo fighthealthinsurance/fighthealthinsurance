@@ -11,14 +11,14 @@ class SerializerMixin:
         if self.serializer_class is None:
             raise ValueError("serializer_class must be defined and not None")
         else:
-            return self.serializer_class(data)
+            return self.serializer_class(data=data)
 
 
 class CreateMixin(SerializerMixin):
-    def perform_create(self, request, serializer):
+    def perform_create(self, request, serializer: Serializer) -> Response | Serializer:
         pass
 
-    def create(self, request):
+    def create(self, request) -> Response:
         request_serializer = self.deserialize(data=request.data)
         request_serializer.is_valid(raise_exception=True)
         response_serializer = self.perform_create(request, request_serializer)
@@ -27,6 +27,8 @@ class CreateMixin(SerializerMixin):
             result = response_serializer.data
         else:
             result = None
+        if isinstance(result, Response):
+            return result
         return Response(result, status=status.HTTP_201_CREATED)
 
 
