@@ -102,7 +102,7 @@ class AppealSerializer(serializers.ModelSerializer):
     def get_appeal_pdf_url(self, obj):
         # Generate a URL for downloading the appeal PDF
         if obj.appeal_pdf:
-            return f"/secure-appeals/{get_random_string(32)}/{obj.id}/download/"
+            return f"/appeal-pdf-backend/{obj.id}/download/"
         return None
 
 

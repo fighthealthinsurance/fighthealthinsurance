@@ -22,8 +22,8 @@ from fighthealthinsurance.rest_mixins import (
 class CreateProfessionalUser(viewsets.ViewSet, CreateMixin):
     serializer_class = serializers.ProfessionalSignupSerializer
 
-    def create(self, request, serializer):
+    def perform_create(self, request, serializer):
         data = serializer.validated_data
         if not data["make_new_domain"]:
-            domain = UserDomains.objects.filter(domain=data["domain"]).get()
+            domain = UserDomain.objects.filter(name=data["domain_name"]).get()
         return None

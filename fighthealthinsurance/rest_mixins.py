@@ -7,7 +7,7 @@ from rest_framework.response import Response
 class SerializerMixin:
     serializer_class: typing.Optional[typing.Type[Serializer]] = None
 
-    def deserializer(self, data=None):
+    def deserialize(self, data=None):
         if self.serializer_class is None:
             raise ValueError("serializer_class must be defined and not None")
         else:
