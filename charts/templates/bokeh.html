@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+  <script src="https://cdn.bokeh.org/bokeh/release/bokeh-3.6.2.min.js"
+          crossorigin="anonymous"></script>
+  <script src="https://cdn.bokeh.org/bokeh/release/bokeh-widgets-3.6.2.min.js"
+          crossorigin="anonymous"></script>
+  <script src="https://cdn.bokeh.org/bokeh/release/bokeh-tables-3.6.2.min.js"
+          crossorigin="anonymous"></script>
+  <script src="https://cdn.bokeh.org/bokeh/release/bokeh-gl-3.6.2.min.js"
+          crossorigin="anonymous"></script>
+  <script src="https://cdn.bokeh.org/bokeh/release/bokeh-mathjax-3.6.2.min.js"
+          crossorigin="anonymous"></script>
+  <head>
+    <title>Bokeh magic</title>
+    {{ script | safe }}
+  </head>
+  <body>
+    Graph<br/>
+    {{ div | safe }}
+    Data<br/>
+    {{ df_html|safe }}
+    Totals<br/>
+    {{ totals_html|safe }}
+  </body>
+</html>

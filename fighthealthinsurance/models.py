@@ -40,7 +40,9 @@ class InterestedProfessional(ExportModelOperationsMixin("InterestedProfessional"
     )
     paid = models.BooleanField(default=False)
     clicked_for_paid = models.BooleanField(default=True)
-    signup_date = models.DateField(auto_now=True)
+    # Note: Was initially auto_now so data is kind of junk-ish prior to Feb 3rd
+    signup_date = models.DateField(auto_now_add=True)
+    mod_date = models.DateField(auto_now=True)
 
 
 # Everyone else:

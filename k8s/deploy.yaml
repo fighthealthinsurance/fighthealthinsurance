@@ -36,8 +36,6 @@ spec:
           - secretRef:
               name: fight-health-insurance-primary-secret
           imagePullPolicy: Always
-      imagePullSecrets:
-        - name: regcred
       restartPolicy: OnFailure
 ---
 apiVersion: batch/v1
@@ -65,8 +63,6 @@ spec:
           - secretRef:
               name: fight-health-insurance-primary-secret
           imagePullPolicy: Always
-      imagePullSecrets:
-        - name: regcred
       restartPolicy: OnFailure
 ---
 apiVersion: apps/v1
@@ -124,8 +120,6 @@ spec:
               port: 80
             periodSeconds: 10
             failureThreshold: 45
-      imagePullSecrets:
-        - name: regcred
       volumes:
         - name: uploads
           persistentVolumeClaim:

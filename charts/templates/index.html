@@ -1,0 +1,34 @@
+{% load static %}
+<html>
+    <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+        <title></title>
+        <script src="{% static 'canvasjs.min.js' %}"></script>
+        <script>
+            window.onload = function () {
+
+                var chart = new CanvasJS.Chart("chartContainer", {
+                    theme: "light1", // "light2", "dark1", "dark2"
+                    animationEnabled: false, // change to true		
+                    title:{
+                        text: "Basic Column Chart"
+                    },
+                    data: [
+                    {
+                        // Change type to "bar", "area", "spline", "pie",etc.
+                        type: "column",
+                        dataPoints: {{ data_points | safe }}
+                    }
+                    ]
+                });
+                chart.render();
+
+            }
+        </script>
+        
+    </head>
+    <body>
+        <div id="chartContainer"></div>
+    </body>
+</html>

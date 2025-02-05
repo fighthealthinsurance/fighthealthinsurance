@@ -43,8 +43,6 @@ spec:
                 readOnly: true
                 # container will see /root/.ssh/id_rsa as usual:
                 mountPath: "/home/ray/.ssh"
-        imagePullSecrets:
-          - name: regcred
         volumes:
         - emptyDir: {}
           name: log-volume
@@ -93,8 +91,6 @@ spec:
               readOnly: true
               # container will see /root/.ssh/id_rsa as usual:
               mountPath: "/home/ray/.ssh"
-        imagePullSecrets:
-          - name: regcred
         volumes:
         - emptyDir: {}
           name: log-volume

@@ -7,19 +7,21 @@ BUILDX_CMD=${BUILDX_CMD:-push}
 
 source "${SCRIPT_DIR}/setup_templates.sh"
 
-FHI_VERSION=v0.10.1b
-RAY_BASE=${RAY_BASE:-totallylegitco/fhi-ray}
-FHI_BASE=${FHI_BASE:-totallylegitco/fhi-base}
+FHI_VERSION=v0.10.3a
+MYORG=${MYORG:-holdenk}
+RAY_BASE=${RAY_BASE:-${MYORG}/fhi-ray}
+FHI_BASE=${FHI_BASE:-${MYORG}/fhi-base}
 FHI_DOCKER_USERNAME=${FHI_DOCKER_USERNAME:-holdenk}
 FHI_DOCKER_EMAIL=${FHI_DOCKER_EMAIL:-"holden@pigscanfly.ca"}
 
 
 export FHI_VERSION
+export FHI_BASE
+export RAY_BASE
+export MYORG
 
 # Build the django container first
 source "${SCRIPT_DIR}/build_django.sh"
-
-kubectl create secret docker-registry regcred --namespace=totallylegitco --docker-username="${FHI_DOCKER_USERNAME}" --docker-password="${FHI_DOCKER_TOKEN}" --docker-email="${FHI_DOCKER_EMAIL}"
 
 # Deploy a staging env
 envsubst < k8s/deploy_staging.yaml | kubectl apply -f -

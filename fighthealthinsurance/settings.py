@@ -79,6 +79,7 @@ class Base(Configuration):
         "django.template.context_processors.debug",
         "django.contrib.auth.context_processors.auth",
         "django.contrib.messages.context_processors.messages",
+        "django.template.context_processors.request",
     ]
 
     INSTALLED_APPS = [
@@ -91,12 +92,14 @@ class Base(Configuration):
         "django.contrib.sites",
         "fighthealthinsurance",
         "fhi_users",
+        "charts",
         "sorl.thumbnail",
         "easy_thumbnails",
         "cookie_consent",
         "compressor",
         "compressor_toolkit",
         "django_extensions",
+        "django_tables2",
         "static_thumbnails",
         "memoize",
         "django_recaptcha",
