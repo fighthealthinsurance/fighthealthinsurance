@@ -7,7 +7,7 @@ BUILDX_CMD=${BUILDX_CMD:-push}
 
 source "${SCRIPT_DIR}/setup_templates.sh"
 
-FHI_VERSION=v0.10.3b
+FHI_VERSION=v0.10.4a
 MYORG=${MYORG:-holdenk}
 RAY_BASE=${RAY_BASE:-${MYORG}/fhi-ray}
 FHI_BASE=${FHI_BASE:-${MYORG}/fhi-base}
