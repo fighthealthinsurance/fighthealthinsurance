@@ -4,7 +4,7 @@ from drf_braces.serializers.form_serializer import (
     FormSerializer,
 )
 from fighthealthinsurance import forms as core_forms
-from fighthealthinsurance.models import DenialTypes
+from fighthealthinsurance.models import Appeal, DenialTypes
 from rest_framework import serializers
 
 
@@ -87,3 +87,46 @@ class FollowUpFormSerializer(FormSerializer):
         form = core_forms.FollowUpForm
         exclude = ("followup_documents",)
         field_mapping = {forms.UUIDField: serializers.CharField}
+
+
+class AppealSerializer(serializers.ModelSerializer):
+    appeal_pdf_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Appeal
+        fields = [
+            "appeal_text",
+            "appeal_pdf_url",
+        ]
+
+    def get_appeal_pdf_url(self, obj):
+        # Generate a URL for downloading the appeal PDF
+        if obj.appeal_pdf:
+            return f"/secure-appeals/{get_random_string(32)}/{obj.id}/download/"
+        return None
+
+
+class AppealRequestSerializer(serializers.Serializer):
+    provider_id = serializers.IntegerField()
+    patient_id = serializers.IntegerField()
+    denial_letter = serializers.FileField(required=False)
+    denial_reason = serializers.CharField()
+    send_to_patient = serializers.BooleanField(default=False)
+
+
+class AppealResponseSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Appeal
+        fields = ["id", "status", "response_text", "response_date"]
+
+
+class AppealListSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Appeal
+        fields = ["id", "provider", "patient", "status", "created_at"]
+
+
+class AppealSubmissionResponseSerializer(serializers.Serializer):
+    appeal_id = serializers.IntegerField()
+    status = serializers.CharField()
+    message = serializers.CharField()

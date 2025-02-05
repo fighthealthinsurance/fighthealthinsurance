@@ -6,7 +6,7 @@ from typing import Any
 from fighthealthinsurance.models import PubMedArticleSummarized
 from django.core.management.base import BaseCommand, CommandParser
 from django.db import models
-from fighthealthinsurance.auth.auth_utils import combine_domain_and_username
+from fhi_users.auth.auth_utils import combine_domain_and_username
 from django.contrib.auth import get_user_model
 from fhi_users.models import UserDomain
 
