@@ -29,9 +29,9 @@ check_python_environment() {
 	python min_version.py
 }
 
-check_python_environment
-
 set -ex
+
+check_python_environment
 
 "${SCRIPT_DIR}/build_static.sh"
 
@@ -54,4 +54,4 @@ FIGHT_HEALTH_ADMIN_USER="admin" FIGHT_HEALTH_ADMIN_PASSWORD="admin" python manag
 
 python manage.py make_user  --username test_user --domain farts --password farts2
 
-RECAPTCHA_TESTING=true OAUTHLIB_RELAX_TOKEN_SCOPE=1 uvicorn fighthealthinsurance.asgi:application --reload --reload-dir fighthealthinsurance --access-log --log-config conf/uvlog_config.yaml --port 8000 --ssl-keyfile key.pem --ssl-certfile cert.pem $@
+RECAPTCHA_TESTING=true OAUTHLIB_RELAX_TOKEN_SCOPE=1 uvicorn fighthealthinsurance.asgi:application --reload --reload-dir fighthealthinsurance --reload-exclude "*.pyc,__pycache__/*,*.pyo,*~,#*#,.#*" --access-log --log-config conf/uvlog_config.yaml --port 8000 --ssl-keyfile key.pem --ssl-certfile cert.pem $@

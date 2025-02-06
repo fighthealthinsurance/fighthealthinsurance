@@ -3,9 +3,15 @@
 # _even_ if you define a custom user model this feels like the most reasonable workaround.
 
 from fhi_users.models import UserDomain
+from django.contrib.auth.models import AbstractUser  # Add this import
 from django.contrib.auth import get_user_model
 
-User = get_user_model()
+# See https://github.com/typeddjango/django-stubs/issues/599
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from django.contrib.auth.models import User
+else:
+    User = get_user_model()
 
 
 def validate_username(username: str) -> bool:

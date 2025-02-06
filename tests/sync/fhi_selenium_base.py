@@ -3,8 +3,10 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from seleniumbase import BaseCase
 
+from django.test import TestCase
 
-class FHISeleniumBase(BaseCase):
+
+class FHISeleniumBase(BaseCase, TestCase):
     def assert_title_eventually(self, desired_title):
         try:
             WebDriverWait(self.driver, 15).until(EC.title_is(desired_title))

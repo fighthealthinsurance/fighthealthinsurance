@@ -611,8 +611,8 @@ class DenialCreatorHelper:
     async def _start_background(cls, denial_id):
         """Run"""
         asyncio.ensure_future(cls.extract_set_fax_number(denial_id))
-        await cls.extract_set_denial_and_diagnosis(denial_id)
         await cls.extract_set_denialtype(denial_id)
+        await cls.extract_set_denial_and_diagnosis(denial_id)
 
     @classmethod
     async def extract_set_denialtype(cls, denial_id):
@@ -669,6 +669,10 @@ class DenialCreatorHelper:
                 denial.procedure = procedure
             if diagnosis is not None and len(diagnosis) < 200:
                 denial.diagnosis = diagnosis
+        except Exception as e:
+            logger.opt(exception=True).warning(
+                f"Failed to extract procedure and diagnosis for denial {denial_id}"
+            )
         finally:
             denial.extract_procedure_diagnosis_finished = True
             await denial.asave()

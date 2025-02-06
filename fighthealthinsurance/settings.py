@@ -361,19 +361,25 @@ class Test(Dev):
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.sqlite3",
-            "NAME": BASE_DIR / f"test{dt}.db.sqlite3",
             "TIMEOUT": 1,
             "CONN_MAX_AGE": 0,
             "NAME": "memory",
-            "TEST": {
-                "NAME": BASE_DIR / f"test{dt}.db.sqlite3",
-            },
         },
     }
 
 
 class TestSync(Dev):
-    # We use "real" files for sync tests since we have seperate processes for actors.
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "TIMEOUT": 4,
+            "NAME": "memory",
+        },
+    }
+
+
+class TestActor(Dev):
+    # We _may_ use "real" files for actor tests since we have seperate processes for actors.
     dt = str(int(time.time()))
     dbname = os.getenv("DBNAME", f"{BASE_DIR}/test{dt}.db.sqlite3")
     os.environ["DBNAME"] = dbname
@@ -382,6 +388,9 @@ class TestSync(Dev):
             "ENGINE": "django.db.backends.sqlite3",
             "TIMEOUT": 4,
             "NAME": dbname,
+            "TEST": {
+                "NAME": dbname,
+            },
         },
     }
 

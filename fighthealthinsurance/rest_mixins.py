@@ -16,7 +16,7 @@ class SerializerMixin:
 
 class CreateMixin(SerializerMixin):
     def perform_create(self, request, serializer: Serializer) -> Response | Serializer:
-        pass
+        raise NotImplementedError("Subclasses must implement perform_create()")
 
     def create(self, request) -> Response:
         request_serializer = self.deserialize(data=request.data)
