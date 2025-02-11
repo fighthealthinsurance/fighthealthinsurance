@@ -31,11 +31,13 @@ class SonicFaxTest(unittest.TestCase):
             # Get the file name
             file_name = f.name
             self.assertTrue(
-                asyncio.run(s.send_fax(
-                    destination=os.getenv("TEST_GOOD_FAX_NUMBER", "4158407591"),
-                    path=file_name,
-                    blocking=True,
-                ))
+                asyncio.run(
+                    s.send_fax(
+                        destination=os.getenv("TEST_GOOD_FAX_NUMBER", "4158407591"),
+                        path=file_name,
+                        blocking=True,
+                    )
+                )
             )
 
     # @pytest.mark.skipif(_sonic_is_configured(), reason="Not configured")
@@ -53,9 +55,11 @@ class SonicFaxTest(unittest.TestCase):
             # Get the file name
             file_name = f.name
             self.assertFalse(
-                asyncio.run(s.send_fax(
-                    destination=os.getenv("TEST_BAD_FAX_NUMBER", "4255555555"),
-                    path=file_name,
-                    blocking=True,
-                ))
+                asyncio.run(
+                    s.send_fax(
+                        destination=os.getenv("TEST_BAD_FAX_NUMBER", "4255555555"),
+                        path=file_name,
+                        blocking=True,
+                    )
+                )
             )

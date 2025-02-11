@@ -15,10 +15,11 @@ BaseCase.main(__name__, __file__)
 
 
 class SeleniumTestAppealGenerationBase(FHISeleniumBase, StaticLiveServerTestCase):
-    fixtures = ["fighthealthinsurance/fixtures/initial.yaml",
-                "fighthealthinsurance/fixtures/followup.yaml",
-                "fighthealthinsurance/fixtures/plan_source.yaml",
-                ]
+    fixtures = [
+        "fighthealthinsurance/fixtures/initial.yaml",
+        "fighthealthinsurance/fixtures/followup.yaml",
+        "fighthealthinsurance/fixtures/plan_source.yaml",
+    ]
 
     @classmethod
     def setUpClass(cls):
@@ -119,7 +120,7 @@ Cheap-O-Insurance-Corp""",
         self.assert_title_eventually(
             "Fight Your Health Insurance Denial: Choose an Appeal"
         )
-        return # The rest of this code depends on channels, which is being difficult
+        return  # The rest of this code depends on channels, which is being difficult
         # See https://channels.readthedocs.io/en/latest/tutorial/part_4.html
         self.click_button_eventually("submit1")
         self.type("input#id_name", "Testy McTestFace")

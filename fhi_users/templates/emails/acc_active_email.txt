@@ -1,0 +1,8 @@
+Dear {{ user.first_name }},
+
+Please activate your account by clicking the link below:
+
+{{ activation_link }}
+
+Best regards,
+Fight Health Insurance Team

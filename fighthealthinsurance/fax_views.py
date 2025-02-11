@@ -13,8 +13,8 @@ from fighthealthinsurance import forms as core_forms
 from fighthealthinsurance import common_view_logic
 from fighthealthinsurance.generate_appeal import *
 from fighthealthinsurance.models import *
-from fighthealthinsurance.forms import questions as question_forms
 from fighthealthinsurance.utils import *
+from fighthealthinsurance.stripe_utils import get_or_create_price
 
 
 class FollowUpFaxSenderView(generic.FormView):
@@ -71,19 +71,22 @@ class StageFaxView(generic.FormView):
         logger.debug(f"Staging fax with {form_data}")
         staged = common_view_logic.SendFaxHelper.stage_appeal_fax(**form_data)
         stripe.api_key = settings.STRIPE_API_SECRET_KEY
-        stripe.publishable_key = settings.STRIPE_API_PUBLISHABLE_KEY
-        product = stripe.Product.create(name="Fax")
-        product_price = stripe.Price.create(
-            unit_amount=500, currency="usd", product=product["id"]
+
+        # Check if the product already exists
+        (product_id, price_id) = get_or_create_price(
+            product_name="Appeal Fax -- New",
+            amount=500,
+            currency="usd",
+            recurring=False,
         )
         items = [
             {
-                "price": product_price["id"],
+                "price": price_id,
                 "quantity": 1,
             }
         ]
         checkout = stripe.checkout.Session.create(
-            line_items=items,
+            line_items=items,  # type: ignore
             mode="payment",  # No subscriptions
             success_url=self.request.build_absolute_uri(
                 reverse(
@@ -96,6 +99,13 @@ class StageFaxView(generic.FormView):
             ),
             cancel_url=self.request.build_absolute_uri(reverse("root")),
             customer_email=form.cleaned_data["email"],
+            metadata={
+                "payment_type": "fax",
+                "fax_request_uuid": staged.uuid,
+            },
         )
         checkout_url = checkout.url
-        return redirect(checkout_url)
+        if checkout_url is None:
+            raise Exception("Could not create checkout url")
+        else:
+            return redirect(checkout_url)

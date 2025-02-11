@@ -39,7 +39,7 @@ class Base(Configuration):
     LOGIN_REDIRECT_URL = "/"
     THUMBNAIL_DEBUG = True
     DEFF_FETCH_URL_NAME = "fake_fetch_url"
-
+    STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
     REST_FRAMEWORK = {
         "DEFAULT_AUTHENTICATION_CLASSES": [
             "rest_framework.authentication.SessionAuthentication",
@@ -275,6 +275,9 @@ class Base(Configuration):
     PROMETHEUS_METRIC_NAMESPACE = "fhi"
 
     # STRIPE SETTINGS
+    STRIPE_LIVE_MODE = False
+    STRIPE_API_VERSION = "2024-09-30.acacia"
+
     @property
     def STRIPE_API_SECRET_KEY(self):
         return os.getenv(
@@ -400,6 +403,8 @@ class Prod(Base):
 
     # Different fido server for production
     FIDO_SERVER_ID = "fighthealthinsurance.com"  # Server rp id for FIDO2, it is the full domain of your project
+
+    STRIPE_LIVE_MODE = True
 
     @property
     def SECRET_KEY(self):

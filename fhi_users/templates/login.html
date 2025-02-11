@@ -13,7 +13,7 @@ Login
       <div class="alert alert-danger">Invalid Username or password</div>
       {% endif %}
       {% if domain_invalid %}
-      <div class="alert alert-danger">Domain not found</div>
+      <div class="alert alert-danger">Domain or phone number not found</div>
       {% endif %}
       <form action="{% url 'login' %}" method="post" id="loginForm">
 	{% csrf_token %}
@@ -26,8 +26,15 @@ Login
         <div class="form-group">
           <div class="form-label-group">
 	    <label for="inputDomain">Domain</label>
-            <input type="text" id="inputDomain"  name="domain" class="form-control" placeholder="domain" required="required">
+            <input type="text" id="inputDomain"  name="domain" class="form-control" placeholder="domain">
           </div>
+        </div>
+        <div class="form-group">
+          <div class="form-label-group">
+	    <label for="inputPhone">Phone Number</label>
+            <input type="text" id="inputPhone"  name="phone" class="form-control" placeholder="phone number">
+          </div>
+        </div>
         <div class="form-group">
           <div class="form-label-group">
 	    <label for="inputPassword">Password</label>

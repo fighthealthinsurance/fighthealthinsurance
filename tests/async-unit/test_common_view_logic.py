@@ -11,36 +11,40 @@ from fighthealthinsurance.common_view_logic import (
     DenialCreatorHelper,
     AppealsBackendHelper,
     DenialResponseInfo,
-    NextStepInfo
+    NextStepInfo,
 )
 from fighthealthinsurance.models import Denial, DenialTypes, FaxesToSend
 import pytest
 from django.test import TestCase, Client
 
+
 class TestCommonViewLogic(TestCase):
     fixtures = ["fighthealthinsurance/fixtures/initial.yaml"]
 
     @pytest.mark.django_db
-    @patch('fighthealthinsurance.common_view_logic.Denial.objects')
+    @patch("fighthealthinsurance.common_view_logic.Denial.objects")
     def test_remove_data_for_email(self, mock_denial_objects):
         mock_denial = Mock()
         mock_denial_objects.filter.return_value.delete.return_value = 1
-        RemoveDataHelper.remove_data_for_email('test@example.com')
+        RemoveDataHelper.remove_data_for_email("test@example.com")
         mock_denial_objects.filter.assert_called()
         mock_denial_objects.filter.return_value.delete.assert_called()
 
     @pytest.mark.django_db
-    @patch('fighthealthinsurance.common_view_logic.Denial.objects')
+    @patch("fighthealthinsurance.common_view_logic.Denial.objects")
     def test_find_next_steps(self, mock_denial_objects):
         denial = Denial.objects.create(
             denial_id=1,
             semi_sekret="sekret",
-            hashed_email=Denial.get_hashed_email('test@example.com')
+            hashed_email=Denial.get_hashed_email("test@example.com"),
         )
-        denial.denial_type.all.return_value = [DenialTypes.objects.get(name="Insurance Company"), DenialTypes.objects.get(name="Medically Necessary")]
+        denial.denial_type.all.return_value = [
+            DenialTypes.objects.get(name="Insurance Company"),
+            DenialTypes.objects.get(name="Medically Necessary"),
+        ]
         next_steps = FindNextStepsHelper.find_next_steps(
             denial_id=1,
-            email='test@example.com',
+            email="test@example.com",
             semi_sekret=denial.semi_sekret,
             procedure="prep",
             plan_id="1",
@@ -53,23 +57,27 @@ class TestCommonViewLogic(TestCase):
         self.assertIsInstance(next_steps, NextStepInfo)
 
     @pytest.mark.django_db
-    @patch('fighthealthinsurance.common_view_logic.Denial.objects')
+    @patch("fighthealthinsurance.common_view_logic.Denial.objects")
     def test_create_denial(self, mock_denial_objects):
         mock_denial = Mock()
         mock_denial_objects.create.return_value = mock_denial
         denial_response = DenialCreatorHelper.create_denial(
-            email='test@example.com', denial_text='text', health_history='history', zip='1234'
+            email="test@example.com",
+            denial_text="text",
+            health_history="history",
+            zip="1234",
         )
         self.assertIsInstance(denial_response, DenialResponseInfo)
 
     @pytest.mark.django_db
-    @patch('fighthealthinsurance.common_view_logic.appealGenerator')
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
     def test_generate_appeals(self, mock_appeal_generator):
-        email = 'test@example.com'
+        email = "test@example.com"
         denial = Denial.objects.create(
             denial_id=1,
             semi_sekret="sekret",
-            hashed_email=Denial.get_hashed_email(email))
+            hashed_email=Denial.get_hashed_email(email),
+        )
 
         async def async_generator(items) -> AsyncIterator[str]:
             """Test helper: Async generator yielding items with delay."""
@@ -79,20 +87,24 @@ class TestCommonViewLogic(TestCase):
 
         async def test():
             # TODO: Wire this up correctly.
-            mock_appeal_generator.generate_appeals.return_value = async_generator(["test"])
-            response = await AppealsBackendHelper.generate_appeals({
-                'denial_id': 1,
-                'email': email,
-                "semi_sekret": denial.semi_sekret,
-            })
-            # Create a BytesIO to capture the response  
-            buf = io.StringIO()  
-      
-            # Write each chunk to the BytesIO  
-            async for chunk in response:  
-                buf.write(chunk)  
-      
-            # Go back to the beginning of the BytesIO  
+            mock_appeal_generator.generate_appeals.return_value = async_generator(
+                ["test"]
+            )
+            response = await AppealsBackendHelper.generate_appeals(
+                {
+                    "denial_id": 1,
+                    "email": email,
+                    "semi_sekret": denial.semi_sekret,
+                }
+            )
+            # Create a BytesIO to capture the response
+            buf = io.StringIO()
+
+            # Write each chunk to the BytesIO
+            async for chunk in response:
+                buf.write(chunk)
+
+            # Go back to the beginning of the BytesIO
             buf.seek(0)
             string_data = buf.getvalue()
 

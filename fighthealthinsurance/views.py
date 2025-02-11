@@ -1,25 +1,26 @@
 import json
 import stripe
+from stripe import error as stripe_error
 import typing
 from loguru import logger
-
 from PIL import Image
+
+
 from django import forms
 from django.conf import settings
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils.safestring import mark_safe
 from django.views import View, generic
+from django.http import HttpRequest, HttpResponseBase, HttpResponse
+
 
 from fighthealthinsurance import common_view_logic
 from fighthealthinsurance import forms as core_forms
-from fighthealthinsurance import generate_appeal
 from fighthealthinsurance import models
-from fighthealthinsurance.forms import questions as question_forms
-from fighthealthinsurance import utils
 
 
-def render_ocr_error(request, text):
+def render_ocr_error(request: HttpRequest, text: str) -> HttpResponseBase:
     return render(
         request,
         "server_side_ocr_error.html",
@@ -66,7 +67,7 @@ class ProVersionView(generic.FormView):
     form_class = core_forms.InterestedProfessionalForm
 
     def form_valid(self, form):
-        form.save()
+        interested_professional = form.save()
 
         if not (
             "clicked_for_paid" in form.cleaned_data
@@ -75,29 +76,58 @@ class ProVersionView(generic.FormView):
             return render(self.request, "professional_thankyou.html")
 
         stripe.api_key = settings.STRIPE_API_SECRET_KEY
-        stripe.publishable_key = settings.STRIPE_API_PUBLISHABLE_KEY
 
-        product = stripe.Product.create(name="Pre-Signup")
-        product_price = stripe.Price.create(
-            unit_amount=1000, currency="usd", product=product["id"]
+        # Check if the product already exists
+        products = stripe.Product.list(limit=100)
+        product = next(
+            (p for p in products.data if p.name == "Pre-Signup -- New"), None
         )
-        items = [
-            {
-                "price": product_price["id"],
-                "quantity": 1,
-            }
-        ]
+
+        if product is None:
+            product = stripe.Product.create(name="Pre-Signup -- New")
+
+        # Check if the price already exists for the product
+        prices = stripe.Price.list(product=product["id"], limit=100)
+        product_price = next(
+            (
+                p
+                for p in prices.data
+                if p.unit_amount == 1000
+                and p.currency == "usd"
+                and p.id == product["id"]
+            ),
+            None,
+        )
+
+        if product_price is None:
+            product_price = stripe.Price.create(
+                unit_amount=1000, currency="usd", product=product["id"]
+            )
+
         checkout = stripe.checkout.Session.create(
-            line_items=items,
-            mode="payment",  # No subscriptions
+            line_items=[
+                {
+                    "price": product_price["id"],
+                    "quantity": 1,
+                }
+            ],
+            mode="payment",
             success_url=self.request.build_absolute_uri(
                 reverse("pro_version_thankyou")
             ),
             cancel_url=self.request.build_absolute_uri(reverse("pro_version_thankyou")),
             customer_email=form.cleaned_data["email"],
+            metadata={
+                "payment_type": "interested_professional_signup",
+                "interested_professional_id": interested_professional.id,
+            },
         )
+
         checkout_url = checkout.url
-        return redirect(checkout_url)
+        if checkout_url is None:
+            raise Exception("Could not create checkout url")
+        else:
+            return redirect(checkout_url)
 
 
 class IndexView(generic.TemplateView):
@@ -506,3 +536,50 @@ class DenialCollectedView(generic.FormView):
                 },
             },
         )
+
+
+class StripeWebhookView(View):
+    def post(self, request):
+        payload = request.body
+        sig_header = request.META.get("HTTP_STRIPE_SIGNATURE")
+
+        try:
+            event = stripe.Webhook.construct_event(
+                payload, sig_header, settings.STRIPE_WEBHOOK_SECRET
+            )
+        except ValueError as e:
+            logger.error(f"Invalid payload: {e}")
+            return HttpResponse(status=400)
+        except stripe_error.SignatureVerificationError as e:  # type: ignore
+            logger.error(f"Invalid signature: {e}")
+            return HttpResponse(status=400)
+
+        if event.type == "checkout.session.completed":
+            session = event.data.object
+            payment_type = session.metadata.get("payment_type")
+
+            if payment_type == "interested_professional_signup":
+                models.InterestedProfessional.objects.filter(
+                    id=session.metadata.get("interested_professional_id")
+                ).update(paid=True)
+
+            elif payment_type == "professional_domain_subscription":
+                subscription_id = session.get("subscription")
+                if subscription_id:
+                    models.UserDomain.objects.filter(
+                        id=session.metadata.get("id")
+                    ).update(stripe_subscription_id=subscription_id, active=True)
+                    models.ProfessionalUser.objects.filter(
+                        id=session.metadata.get("professional_id")
+                    ).update(active=True)
+                else:
+                    logger.error("No subscription ID in completed checkout session")
+
+            elif payment_type == "fax":
+                models.FaxesToSend.objects.filter(
+                    uuid=session.metadata.get("uuid")
+                ).update(paid=True, should_send=True)
+            else:
+                logger.error(f"Unknown payment type: {payment_type}")
+
+        return HttpResponse(status=200)

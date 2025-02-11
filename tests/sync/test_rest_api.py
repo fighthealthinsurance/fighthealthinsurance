@@ -18,7 +18,11 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from fighthealthinsurance.models import Denial
-from fighthealthinsurance.websockets import StreamingEntityBackend, StreamingAppealsBackend
+from fighthealthinsurance.websockets import (
+    StreamingEntityBackend,
+    StreamingAppealsBackend,
+)
+
 
 class Delete(APITestCase):
     """Test just the delete API."""
@@ -131,15 +135,17 @@ class DenialEndToEnd(APITestCase):
         ).aget()
         print(f"We should find {denial}")
         # Now we need to poke entity extraction, this part is async
-        seb_communicator = WebsocketCommunicator(StreamingEntityBackend.as_asgi(), "/testws/")
+        seb_communicator = WebsocketCommunicator(
+            StreamingEntityBackend.as_asgi(), "/testws/"
+        )
         connected, subprotocol = await seb_communicator.connect()
         assert connected
         await seb_communicator.send_json_to(
-                {
-                    "email": email,
-                    "semi_sekret": semi_sekret,
-                    "denial_id": denial_id,
-                }
+            {
+                "email": email,
+                "semi_sekret": semi_sekret,
+                "denial_id": denial_id,
+            }
         )
         # We should receive at least one frame.
         response = await seb_communicator.receive_from()
@@ -181,7 +187,9 @@ class DenialEndToEnd(APITestCase):
         ]
         # Now we need to poke at the appeal creator
         # Now we need to poke entity extraction, this part is async
-        a_communicator = WebsocketCommunicator(StreamingAppealsBackend.as_asgi(), "/testws/")
+        a_communicator = WebsocketCommunicator(
+            StreamingAppealsBackend.as_asgi(), "/testws/"
+        )
         connected, subprotocol = await a_communicator.connect()
         assert connected
         await a_communicator.send_json_to(

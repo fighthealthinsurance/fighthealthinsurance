@@ -1,14 +1,16 @@
 import typing
-
-from django.urls import include
-from django.urls import path
+from django.urls import include, path
 from django.conf import settings
 import mfa
 import mfa.TrustedDevice
-
 from fhi_users.auth import rest_auth_views
 from fhi_users.auth import auth_views
-
+from fhi_users.auth.rest_auth_views import (
+    ResendVerificationEmailView,
+    RestLoginView,
+    CreatePatientUserView,
+    VerifyEmailView,
+)
 from rest_framework import routers
 
 if settings.DEBUG:
@@ -22,14 +24,31 @@ router.register(
     rest_auth_views.CreateProfessionalUser,
     basename="create_pro_user",
 )
+router.register(
+    r"admin_professional_user",
+    rest_auth_views.AdminProfessionalUser,
+    basename="admin_pro_user",
+)
+router.register(r"api/login", RestLoginView, basename="rest_login")
+router.register(
+    r"api/create_patient_user", CreatePatientUserView, basename="create_patient_user"
+)
+router.register(r"rest_verify_email", VerifyEmailView, basename="rest_verify_email")
+router.register(
+    r"resend_verification_email",
+    ResendVerificationEmailView,
+    basename="resend_verification_email",
+)
 
 urlpatterns = [
-    # Auth related views
-    path("login", auth_views.LoginView.as_view(), name="login"),  # Login
-    path("logout", auth_views.LogoutView, name="logout"),  # Logout
-    path("rest/", include(router.urls)),
+    path("login", auth_views.LoginView.as_view(), name="login"),
+    path("logout", auth_views.LogoutView.as_view(), name="logout"),
+    path("rest/router/", include(router.urls)),
+    path("mfa/", include("mfa.urls")),
+    path("device_add", mfa.TrustedDevice.add, name="mfa_add_new_trusted_device"),
     path(
-        "v0/auth/mfa/", include("mfa.urls")
-    ),  # Include MFA URLs for handling MFA processes.
-    #    path('v0/auth/device_add', mfa.TrustedDevice.add,name="mfa_add_new_trusted_device"),  # Add device
+        "verify-email-legacy/<uidb64>/<token>/",
+        VerifyEmailView.as_view({"get": "retrieve"}),
+        name="verify_email_legacy",
+    ),
 ]

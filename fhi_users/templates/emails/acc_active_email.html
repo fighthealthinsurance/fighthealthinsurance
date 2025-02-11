@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Activate your account{% endblock %}
+{% block content %}
+<p>
+Dear {{ user.first_name }},
+</p>
+<p>
+Please activate your account by <a href="{{ activation_link }}">clicking the link below:
+</p>
+<p>
+{{ activation_link }}
+</p>
+</a>
+Best regards,<br/>
+Fight Health Insurance Team<br/>
+{% endblock %}

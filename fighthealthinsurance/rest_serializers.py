@@ -4,7 +4,7 @@ from drf_braces.serializers.form_serializer import (
     FormSerializer,
 )
 from fighthealthinsurance import forms as core_forms
-from fighthealthinsurance.models import Appeal, DenialTypes
+from fighthealthinsurance.models import Appeal, DenialTypes, MailingListSubscriber
 from rest_framework import serializers
 
 
@@ -130,3 +130,18 @@ class AppealSubmissionResponseSerializer(serializers.Serializer):
     appeal_id = serializers.IntegerField()
     status = serializers.CharField()
     message = serializers.CharField()
+
+
+class EmailVerifierSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    token = serializers.CharField()
+    user_id = serializers.IntegerField()
+
+
+# Mailing list
+
+
+class MailingListSubscriberSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MailingListSubscriber
+        fields = ["email", "name", "notes"]

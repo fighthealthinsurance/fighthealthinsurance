@@ -1,0 +1,6 @@
+Dear {{ user.first_name }},
+
+There was an error submitting your appeal. Please try again later.
+
+Best regards,
+Fight Health Insurance Team

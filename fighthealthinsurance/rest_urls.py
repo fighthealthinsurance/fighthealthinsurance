@@ -5,6 +5,7 @@ from django.urls import path
 from django.conf import settings
 
 from fighthealthinsurance import rest_views
+from fighthealthinsurance.rest_views import AppealViewSet, MailingListSubscriberViewSet
 
 from rest_framework import routers
 
@@ -25,11 +26,18 @@ router.register(
     basename="dataremoval",
 )
 
+router.register(r"appeals", AppealViewSet, basename="appeals")
+router.register(
+    r"mailinglist_subscribe", MailingListSubscriberViewSet, basename="subscribe"
+)
+
 urlpatterns = [
+    # Non-viewset but still rest API endpoints.
     path("ping", rest_views.Ping.as_view(), name="ping"),
     path("check_storage", rest_views.CheckStorage.as_view(), name="check_storage"),
     path(
         "check_ml_backend", rest_views.CheckMlBackend.as_view(), name="check_ml_backend"
     ),
+    # Router
     path("", include(router.urls)),
 ]
