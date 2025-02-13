@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, List
 
 from django.core.files.base import File
 from django.core.files.storage import Storage
@@ -13,10 +13,10 @@ from loguru import logger
 class CombinedStorage(Storage):
     """A combined storage backend that uses timeouts."""
 
-    backends: list[Storage]
+    backends: List[Storage]
 
     def __init__(self, *args: Optional[Storage]):
-        self.backends = list(filter(lambda x: x is not None, args))
+        self.backends = [x for x in args if x is not None]
 
     def open(self, name: str, mode: str = "rb") -> File:
         last_error: Optional[BaseException] = None
@@ -61,17 +61,19 @@ class CombinedStorage(Storage):
         l: Optional[str] = None
         last_error: Optional[BaseException] = None
         error_list: List[BaseException] = []
-        saved_ok = False
         for backend in self.backends:
             try:
                 with Timeout(4.0) as _timeout_ctx:
-                    l = backend.save(name=name, content=content, max_length=max_length)
-                    saved_ok = True
+                    # Only overwrite l if we have not yet saved but always try and save.
+                    if l is None:
+                        l = backend.save(name=name, content=content, max_length=max_length)
+                    else:
+                        backend.save(name=name, content=content, max_length=max_length)
             except Exception as e:
                 logger.error(f"Error saving {e} to {backend}")
                 error_list.append(e)
                 last_error = e
-        if not saved_ok and l is None:
+        if l is None:
             raise Exception(
                 f"Failed to save to any backend w/ errors {error_list} -- last error {last_error}"
             )
