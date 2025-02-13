@@ -1,3 +1,5 @@
+from typing import Optional
+
 from django.core.files.base import File
 from django.core.files.storage import Storage
 from django.utils.deconstruct import deconstructible
@@ -13,11 +15,12 @@ class CombinedStorage(Storage):
 
     backends: list[Storage]
 
-    def __init__(self, *args: Storage):
-        self.backends = list(args)
+    def __init__(self, *args: Optional[Storage]):
+        self.backends = list(filter(lambda x: x is not None, args))
 
     def open(self, name: str, mode: str = "rb") -> File:
         last_error: Optional[BaseException] = None
+        error_list: List[BaseException] = []
         for backend in self.backends:
             try:
                 with Timeout(2.0) as _timeout_ctx:
@@ -27,13 +30,14 @@ class CombinedStorage(Storage):
                     ), "Opened object is not a File instance."
                     return result
             except Exception as e:
+                error_list.append(e)
                 logger.warning(
                     f"Error opening from {name} {mode} on backend {backend} from {self.backends}: {e}"
                 )
                 last_error = e
         if last_error is not None:
             logger.error(
-                f"Opening failed on all backends -- {self.backends} -- raising {last_error}"
+                f"Opening failed on all backends -- {self.backends} w/ errors {error_list}-- raising {last_error}"
             )
             raise last_error
         else:
@@ -43,7 +47,7 @@ class CombinedStorage(Storage):
         last_error: Optional[BaseException] = None
         for backend in self.backends:
             try:
-                with Timeout(1.0) as _timeout_ctx:
+                with Timeout(2.0) as _timeout_ctx:
                     return backend.delete(name)
             except Exception as e:
                 logger.error(f"Error {e} deleteing {name} from {self}")
@@ -56,15 +60,21 @@ class CombinedStorage(Storage):
     ) -> str:
         l: Optional[str] = None
         last_error: Optional[BaseException] = None
+        error_list: List[BaseException] = []
+        saved_ok = False
         for backend in self.backends:
             try:
                 with Timeout(4.0) as _timeout_ctx:
                     l = backend.save(name=name, content=content, max_length=max_length)
+                    saved_ok = True
             except Exception as e:
                 logger.error(f"Error saving {e} to {backend}")
+                error_list.append(e)
                 last_error = e
-        if l is None:
-            raise Exception(f"Failed to save to any backend -- last error {last_error}")
+        if not saved_ok and l is None:
+            raise Exception(
+                f"Failed to save to any backend w/ errors {error_list} -- last error {last_error}"
+            )
         else:
             return l
 

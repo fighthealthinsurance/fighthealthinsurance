@@ -15,6 +15,7 @@ from pathlib import Path
 import re
 import traceback
 from functools import cached_property
+from typing import Optional, List
 
 from configurations import Configuration
 from fighthealthinsurance.combined_storage import CombinedStorage
@@ -293,19 +294,23 @@ class Base(Configuration):
         )
 
     @cached_property
-    def EXTERNAL_STORAGE(self) -> Storage:
+    def EXTERNAL_STORAGE(self) -> Optional[Storage]:
         from django.core.files.storage import FileSystemStorage
 
         return FileSystemStorage(location=self.EXTERNAL_STORAGE_LOCATION)
 
     @cached_property
-    def EXTERNAL_STORAGE_B(self) -> Storage:
+    def EXTERNAL_STORAGE_B(self) -> Optional[Storage]:
         from django.core.files.storage import FileSystemStorage
 
         return FileSystemStorage(location=self.EXTERNAL_STORAGE_LOCATION_B)
 
     @cached_property
-    def LOCALISH_STORAGE(self) -> Storage:
+    def EXTERNAL_STORAGE_C(self) -> Optional[Storage]:
+        return None
+
+    @cached_property
+    def LOCALISH_STORAGE(self) -> Optional[Storage]:
         from django.core.files.storage import FileSystemStorage
 
         return FileSystemStorage(location=self.LOCALISH_STORAGE_LOCATION)
@@ -313,7 +318,10 @@ class Base(Configuration):
     @cached_property
     def COMBINED_STORAGE(self) -> Storage:
         return CombinedStorage(
-            self.LOCALISH_STORAGE, self.EXTERNAL_STORAGE, self.EXTERNAL_STORAGE_B
+            self.LOCALISH_STORAGE,
+            self.EXTERNAL_STORAGE,
+            self.EXTERNAL_STORAGE_B,
+            self.EXTERNAL_STORAGE_C,
         )
 
     # Ignore some 404 errors
@@ -528,3 +536,9 @@ class Prod(Base):
             )
             print(traceback.format_exc())
             return None
+
+    BB_STORAGE_ENDPOINT = os.getenv("BB_STORAGE_ENDPOINT", None)
+    BB_STORAGE_ACCESS_KEY = os.getenv("BB_STORAGE_ACCESS_KEY", None)
+    BB_STORAGE_SECRET_KEY = os.getenv("BB_STORAGE_SECRET_KEY", None)
+    BB_STORAGE_MEDIA_BUCKET_NAME = os.getenv("BB_STORAGE_MEDIA_BUCKET_NAME", None)
+    BB_REGION_NAME = os.getenv("BB_REGION_NAME", "True") == "True"

@@ -17,7 +17,10 @@ from rest_framework.serializers import Serializer
 from rest_framework.views import APIView
 
 from fighthealthinsurance import common_view_logic
-from fighthealthinsurance.models import MailingListSubscriber, SecondaryAppealProfessionalRelation
+from fighthealthinsurance.models import (
+    MailingListSubscriber,
+    SecondaryAppealProfessionalRelation,
+)
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance import rest_serializers as serializers
 from fighthealthinsurance.rest_mixins import (
@@ -28,7 +31,12 @@ from fighthealthinsurance.rest_mixins import (
 )
 from fighthealthinsurance.models import Appeal
 
-from fhi_users.models import UserDomain, ProfessionalDomainRelation, PatientUser, ProfessionalUser
+from fhi_users.models import (
+    UserDomain,
+    ProfessionalDomainRelation,
+    PatientUser,
+    ProfessionalUser,
+)
 
 from stopit import ThreadingTimeout as Timeout
 
@@ -37,6 +45,7 @@ if typing.TYPE_CHECKING:
     from django.contrib.auth.models import User
 else:
     User = get_user_model()
+
 
 class DataRemovalViewSet(viewsets.ViewSet, DeleteMixin, DeleteOnlyMixin):
     serializer_class = serializers.DeleteDataFormSerializer
@@ -132,7 +141,8 @@ class AppealViewSet(viewsets.ViewSet):
             query_set |= Appeal.objects.filter(primary_professional=professional_user)
             # Appeals they were add to.
             additional_appeals = SecondaryAppealProfessionalRelation.objects.filter(
-                professional=professional_user)
+                professional=professional_user
+            )
             query_set |= Appeal.objects.filter(
                 id__in=[a.appeal.id for a in additional_appeals]
             )
@@ -140,7 +150,7 @@ class AppealViewSet(viewsets.ViewSet):
             try:
                 user_admin_domains = UserDomain.objects.filter(
                     professionaldomainrelation__professional__user=current_user,
-                    professionaldomainrelation__admin=True
+                    professionaldomainrelation__admin=True,
                 )
                 query_set |= Appeal.objects.filter(domain__in=user_admin_domains)
             except ProfessionalDomainRelation.DoesNotExist:
