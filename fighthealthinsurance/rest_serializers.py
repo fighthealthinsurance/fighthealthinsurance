@@ -1,4 +1,5 @@
 from django import forms
+from django.urls import reverse
 
 from drf_braces.serializers.form_serializer import (
     FormSerializer,
@@ -89,23 +90,6 @@ class FollowUpFormSerializer(FormSerializer):
         field_mapping = {forms.UUIDField: serializers.CharField}
 
 
-class AppealSerializer(serializers.ModelSerializer):
-    appeal_pdf_url = serializers.SerializerMethodField()
-
-    class Meta:
-        model = Appeal
-        fields = [
-            "appeal_text",
-            "appeal_pdf_url",
-        ]
-
-    def get_appeal_pdf_url(self, obj):
-        # Generate a URL for downloading the appeal PDF
-        if obj.appeal_pdf:
-            return f"/appeal-pdf-backend/{obj.id}/download/"
-        return None
-
-
 class AppealRequestSerializer(serializers.Serializer):
     provider_id = serializers.IntegerField()
     patient_id = serializers.IntegerField()
@@ -114,16 +98,33 @@ class AppealRequestSerializer(serializers.Serializer):
     send_to_patient = serializers.BooleanField(default=False)
 
 
-class AppealResponseSerializer(serializers.ModelSerializer):
+class AppealSummarySerializer(serializers.ModelSerializer):
     class Meta:
         model = Appeal
-        fields = ["id", "status", "response_text", "response_date"]
+        fields = ["uuid", "status", "response_text", "response_date" "pending"]
 
 
-class AppealListSerializer(serializers.ModelSerializer):
+class AppealDetailSerializer(serializers.ModelSerializer):
+    appeal_pdf_url = serializers.SerializerMethodField()
+
     class Meta:
         model = Appeal
-        fields = ["id", "provider", "patient", "status", "created_at"]
+        fields = [
+            "uuid",
+            "status",
+            "response_text",
+            "response_date",
+            "appeal_text",
+            "appeal_pdf_url",
+            "pending",
+        ]
+
+    def get_appeal_pdf_url(self, obj):
+        # Generate a URL for downloading the appeal PDF
+        if obj.appeal_pdf:
+            # TODO: Use reverse here rather than hardcoding
+            return reverse("appeal_file_view", kwargs={"appeal_uuid": obj.uuid})
+        return None
 
 
 class AppealSubmissionResponseSerializer(serializers.Serializer):

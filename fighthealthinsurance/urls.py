@@ -112,6 +112,12 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         fax_views.StageFaxView.as_view(),
         name="stagefaxview",
     ),
+    # View an appeal
+    path(
+        "v0/appeal/<uuid:appeal_uuid>/",
+        views.AppealFileView.as_view(),
+        name="appeal_file_view",
+    ),
     path(
         "process",
         sensitive_post_parameters("email")(views.InitialProcessView.as_view()),

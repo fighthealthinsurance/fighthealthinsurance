@@ -2,16 +2,20 @@ import typing
 from rest_framework import status
 from rest_framework.serializers import Serializer
 from rest_framework.response import Response
+from rest_framework.decorators import action
 
 
 class SerializerMixin:
     serializer_class: typing.Optional[typing.Type[Serializer]] = None
 
+    def get_serializer_class(self):
+        return self.serializer_class
+
     def deserialize(self, data=None):
-        if self.serializer_class is None:
+        if self.get_serializer_class() is None:
             raise ValueError("serializer_class must be defined and not None")
         else:
-            return self.serializer_class(data=data)
+            return self.get_serializer_class()(data=data)
 
 
 class CreateMixin(SerializerMixin):

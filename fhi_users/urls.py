@@ -20,14 +20,9 @@ else:
 
 router = RouterClass()
 router.register(
-    r"create_professional_user",
-    rest_auth_views.CreateProfessionalUser,
-    basename="create_pro_user",
-)
-router.register(
-    r"admin_professional_user",
-    rest_auth_views.AdminProfessionalUser,
-    basename="admin_pro_user",
+    r"professional_user",
+    rest_auth_views.ProfessionalUserViewSet,
+    basename="professional_user",
 )
 router.register(r"api/login", RestLoginView, basename="rest_login")
 router.register(

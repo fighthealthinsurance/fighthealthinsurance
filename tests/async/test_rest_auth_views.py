@@ -9,6 +9,8 @@ from fhi_users.models import (
     UserContactInfo,
     PatientUser,
     VerificationToken,
+    ProfessionalUser,
+    ProfessionalDomainRelation,
 )
 from django.utils.http import urlsafe_base64_encode
 from django.utils.encoding import force_bytes
@@ -205,3 +207,113 @@ class RestAuthViewsTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
         self.assertEqual(response.json()["status"], "failure")
         self.assertEqual(response.json()["message"], "Activation link has expired")
+
+    def test_create_professional_user_with_new_domain(self) -> None:
+        url = reverse("professional_user-list")
+        data = {
+            "user_signup_info": {
+                "username": "newprouser",
+                "password": "newpass",
+                "email": "newprouser@example.com",
+                "first_name": "New",
+                "last_name": "User",
+                "domain_name": "newdomain",
+                "visible_phone_number": "1234567891",
+                "continue_url": "http://example.com/continue",
+            },
+            "make_new_domain": True,
+            "user_domain": {
+                "name": "newdomain",
+                "visible_phone_number": "1234567891",
+                "internal_phone_number": "0987654322",
+                "display_name": "New Domain",
+                "country": "USA",
+                "state": "CA",
+                "city": "New City",
+                "address1": "456 New St",
+                "zipcode": "67890",
+            },
+        }
+        response = self.client.post(url, data, format="json")
+        self.assertIn(response.status_code, range(200, 300))
+        self.assertTrue(UserDomain.objects.filter(name="newdomain").exists())
+
+    def test_create_professional_user_with_existing_domain_name_but_create_set_to_true(
+        self,
+    ) -> None:
+        url = reverse("professional_user-list")
+        data = {
+            "user_signup_info": {
+                "username": "newprouser2",
+                "password": "newpass",
+                "email": "newprouser2@example.com",
+                "first_name": "New",
+                "last_name": "User",
+                "domain_name": "testdomain",
+                "visible_phone_number": "1234567892",
+                "continue_url": "http://example.com/continue",
+            },
+            "make_new_domain": True,
+            "user_domain": {
+                "name": "testdomain",
+                "visible_phone_number": "1234567892",
+                "internal_phone_number": "0987654323",
+                "display_name": "Test Domain",
+                "country": "USA",
+                "state": "CA",
+                "city": "Test City",
+                "address1": "123 Test St",
+                "zipcode": "12345",
+            },
+        }
+        response = self.client.post(url, data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_create_professional_user_with_existing_domain_name_and_create_set_to_false(
+        self,
+    ) -> None:
+        url = reverse("professional_user-list")
+        data = {
+            "user_signup_info": {
+                "username": "newprouser2",
+                "password": "newpass",
+                "email": "newprouser2@example.com",
+                "first_name": "New",
+                "last_name": "User",
+                "domain_name": "testdomain",
+                "visible_phone_number": "1234567892",
+                "continue_url": "http://example.com/continue",
+            },
+            "make_new_domain": False,
+        }
+        response = self.client.post(url, data, format="json")
+        self.assertIn(response.status_code, range(200, 300))
+
+    def test_create_professional_user_with_existing_visible_phone_number(self) -> None:
+        url = reverse("professional_user-list")
+        data = {
+            "user_signup_info": {
+                "username": "newprouser3",
+                "password": "newpass",
+                "email": "newprouser3@example.com",
+                "first_name": "New",
+                "last_name": "User",
+                "domain_name": "anothernewdomain",
+                "visible_phone_number": "1234567890",
+                "continue_url": "http://example.com/continue",
+            },
+            "make_new_domain": True,
+            "user_domain": {
+                "name": "anothernewdomain",
+                "visible_phone_number": "1234567890",
+                "internal_phone_number": "0987654324",
+                "display_name": "Another New Domain",
+                "country": "USA",
+                "state": "CA",
+                "city": "Another City",
+                "address1": "789 Another St",
+                "zipcode": "54321",
+            },
+        }
+        response = self.client.post(url, data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)

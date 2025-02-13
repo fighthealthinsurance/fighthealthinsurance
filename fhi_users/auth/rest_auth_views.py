@@ -1,5 +1,5 @@
 from loguru import logger
-from typing import Optional, TYPE_CHECKING
+from typing import Any, Optional, TYPE_CHECKING
 
 from rest_framework import status
 from rest_framework import viewsets
@@ -11,6 +11,7 @@ from rest_framework import permissions
 from rest_framework.viewsets import ViewSet
 from rest_framework.mixins import CreateModelMixin, ListModelMixin
 from rest_framework.viewsets import GenericViewSet
+from rest_framework.permissions import IsAuthenticated
 
 from django.http import HttpRequest
 from django.conf import settings
@@ -50,21 +51,111 @@ else:
     User = get_user_model()
 
 
-class CreateProfessionalUser(viewsets.ViewSet, CreateMixin):
-    """Create a professional user"""
+class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
 
-    serializer_class = serializers.ProfessionalSignupSerializer
+    def get_serializer_class(self):
+        if self.action == "accept":
+            return serializers.AcceptProfessionalUserSerializer
+        else:
+            return serializers.ProfessionalSignupSerializer
+
+    def get_permissions(self):
+        """
+        Different permissions for different actions
+        """
+        permission_classes = [] # type: ignore
+        if self.action == "list":
+            permission_classes = []
+        elif self.action == "accept" or self.action == "reject":
+            permission_classes = [IsAuthenticated]
+        else:
+            permission_classes = []
+        return [permission() for permission in permission_classes]
+
+    @action(detail=False, methods=["post"])
+    def reject(self, request) -> Response:
+        serializer = self.deserialize(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        professional_user_id: int = serializer.validated_data["professional_user_id"]
+        domain_id = serializer.validated_data["domain_id"]
+        current_user: User = request.user
+        current_user_admin_in_domain = user_is_admin_in_domain(current_user, domain_id)
+        if not current_user_admin_in_domain:
+            # Credentials are valid but does not have permissions
+            return Response(status=status.HTTP_403_FORBIDDEN)
+        relation = ProfessionalDomainRelation.objects.get(
+            professional_id=professional_user_id, pending=True, domain_id=domain_id
+        )
+        relation.pending = False
+        # TODO: Add to model
+        relation.rejected = True
+        relation.active = False
+        relation.save()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=False, methods=["post"])
+    def accept(self, request) -> Response:
+        serializer = self.deserialize(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        professional_user_id: int = serializer.validated_data["professional_user_id"]
+        domain_id = serializer.validated_data["domain_id"]
+        try:
+            current_user: User = request.user  # type: ignore
+            current_user_admin_in_domain = user_is_admin_in_domain(
+                current_user, domain_id
+            )
+            if not current_user_admin_in_domain:
+                # Credentials are valid but does not have permissions
+                return Response(status=status.HTTP_403_FORBIDDEN)
+        except Exception as e:
+            # Unexecpted generic error, fail closed
+            logger.opt(exception=e).error("Error in accepting professional user")
+            return Response(status=status.HTTP_401_UNAUTHORIZED)
+        try:
+            relation = ProfessionalDomainRelation.objects.get(
+                professional_id=professional_user_id, pending=True, domain_id=domain_id
+            )
+            professional_user = ProfessionalUser.objects.get(id=professional_user_id)
+            professional_user.active = True
+            professional_user.save()
+            relation.pending = False
+            relation.save()
+
+            stripe.api_key = settings.STRIPE_API_SECRET_KEY
+            if relation.domain.stripe_subscription_id:
+                subscription = stripe.Subscription.retrieve(
+                    relation.domain.stripe_subscription_id
+                )
+                stripe.Subscription.modify(
+                    subscription.id,
+                    items=[
+                        {
+                            "id": subscription["items"]["data"][0].id,
+                            "quantity": subscription["items"]["data"][0].quantity + 1,
+                        }
+                    ],
+                )
+            else:
+                logger.debug("Skipping no subscription present.")
+
+            return Response({"status": "accepted"}, status=status.HTTP_200_OK)
+        except ProfessionalDomainRelation.DoesNotExist:
+            return Response(
+                {"error": "Relation not found or already accepted"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
 
     def perform_create(
         self, request: HttpRequest, serializer: Serializer
     ) -> Response | serializers.ProfessionalSignupResponseSerializer:
-        data: dict[str, str | dict[str, str]] = serializer.validated_data  # type: ignore
+        data: dict[str, bool | str | dict[str, str]] = serializer.validated_data  # type: ignore
         user_signup_info: dict[str, str] = data["user_signup_info"]  # type: ignore
         domain_name: Optional[str] = user_signup_info["domain_name"]  # type: ignore
         visible_phone_number: Optional[str] = user_signup_info["visible_phone_number"]  # type: ignore
         new_domain: bool = bool(data["make_new_domain"])  # type: ignore
 
         if not new_domain:
+            # In practice the serializer may enforce these for us
             try:
                 UserDomain.objects.filter(name=domain_name).get()
             except UserDomain.DoesNotExist:
@@ -149,6 +240,7 @@ class CreateProfessionalUser(viewsets.ViewSet, CreateMixin):
             pending=True,
         )
 
+        # TODO: Update to use stripe utils
         stripe.api_key = settings.STRIPE_API_SECRET_KEY
         # Check if the product already exists
         products = stripe.Product.list(limit=100)
@@ -208,86 +300,6 @@ class CreateProfessionalUser(viewsets.ViewSet, CreateMixin):
         return serializers.ProfessionalSignupResponseSerializer(
             {"next_url": checkout_session.url}
         )
-
-
-class AdminProfessionalUser(viewsets.ViewSet, SerializerMixin):
-    """Accept OR reject pending professional user"""
-
-    serializer_class = serializers.AcceptProfessionalUserSerializer
-    permission_classes = [permissions.IsAuthenticated]
-
-    @action(detail=False, methods=["post"])
-    def reject(self, request) -> Response:
-        serializer = self.deserialize(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        professional_user_id: int = serializer.validated_data["professional_user_id"]
-        domain_id = serializer.validated_data["domain_id"]
-        current_user: User = request.user
-        current_user_admin_in_domain = user_is_admin_in_domain(current_user, domain_id)
-        if not current_user_admin_in_domain:
-            # Credentials are valid but does not have permissions
-            return Response(status=status.HTTP_403_FORBIDDEN)
-        relation = ProfessionalDomainRelation.objects.get(
-            professional_id=professional_user_id, pending=True, domain_id=domain_id
-        )
-        relation.pending = False
-        # TODO: Add to model
-        relation.rejected = True
-        relation.active = False
-        relation.save()
-        return Response(status=status.HTTP_204_NO_CONTENT)
-
-    @action(detail=False, methods=["post"])
-    def accept(self, request) -> Response:
-        serializer = self.deserialize(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        professional_user_id: int = serializer.validated_data["professional_user_id"]
-        domain_id = serializer.validated_data["domain_id"]
-        try:
-            current_user: User = request.user  # type: ignore
-            current_user_admin_in_domain = user_is_admin_in_domain(
-                current_user, domain_id
-            )
-            if not current_user_admin_in_domain:
-                # Credentials are valid but does not have permissions
-                return Response(status=status.HTTP_403_FORBIDDEN)
-        except Exception as e:
-            # Unexecpted generic error, fail closed
-            logger.opt(exception=e).error("Error in accepting professional user")
-            return Response(status=status.HTTP_401_UNAUTHORIZED)
-        try:
-            relation = ProfessionalDomainRelation.objects.get(
-                professional_id=professional_user_id, pending=True, domain_id=domain_id
-            )
-            professional_user = ProfessionalUser.objects.get(id=professional_user_id)
-            professional_user.active = True
-            professional_user.save()
-            relation.pending = False
-            relation.save()
-
-            stripe.api_key = settings.STRIPE_API_SECRET_KEY
-            if relation.domain.stripe_subscription_id:
-                subscription = stripe.Subscription.retrieve(
-                    relation.domain.stripe_subscription_id
-                )
-                stripe.Subscription.modify(
-                    subscription.id,
-                    items=[
-                        {
-                            "id": subscription["items"]["data"][0].id,
-                            "quantity": subscription["items"]["data"][0].quantity + 1,
-                        }
-                    ],
-                )
-            else:
-                logger.debug("Skipping no subscription present.")
-
-            return Response({"status": "accepted"}, status=status.HTTP_200_OK)
-        except ProfessionalDomainRelation.DoesNotExist:
-            return Response(
-                {"error": "Relation not found or already accepted"},
-                status=status.HTTP_404_NOT_FOUND,
-            )
 
 
 class RestLoginView(ViewSet, SerializerMixin):

@@ -8,11 +8,11 @@ from PIL import Image
 
 from django import forms
 from django.conf import settings
-from django.shortcuts import redirect, render
+from django.shortcuts import redirect, render, get_object_or_404
 from django.urls import reverse
 from django.utils.safestring import mark_safe
 from django.views import View, generic
-from django.http import HttpRequest, HttpResponseBase, HttpResponse
+from django.http import HttpRequest, HttpResponseBase, HttpResponse, FileResponse
 
 
 from fighthealthinsurance import common_view_logic
@@ -535,6 +535,22 @@ class DenialCollectedView(generic.FormView):
                     "semi_sekret": form.cleaned_data["semi_sekret"],
                 },
             },
+        )
+
+
+class AppealFileView(View):
+    def get(self, request, *args, **kwargs):
+        if not request.user.is_authenticated:
+            return HttpResponse(status=401)
+        appeal_uuid = kwargs.get("appeal_uuid", None)
+        if appeal_uuid is None:
+            return HttpResponse(status=400)
+        current_user = request.user  # type: ignore
+        appeal = get_object_or_404(
+            models.Appeal.filter_to_allowed_appeals(current_user), uuid=appeal_uuid
+        )
+        return FileResponse(
+            appeal.combined_document_enc, content_type="application/pdf"
         )
 
 

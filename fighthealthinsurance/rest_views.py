@@ -74,7 +74,6 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
     def perform_create(self, request: Request, serializer):
         serializer = self.deserialize(data=request.data)
         serializer.is_valid(raise_exception=True)
-
         denial = common_view_logic.DenialCreatorHelper.create_denial(
             **serializer.validated_data
         )
@@ -116,7 +115,6 @@ class CheckMlBackend(APIView):
 
 
 class AppealViewSet(viewsets.ViewSet):
-
     def filter_to_allowed_appeals(self):
         current_user: User = request.user  # type: ignore
         if current_user.is_superuser or current_user.is_staff:
@@ -161,13 +159,17 @@ class AppealViewSet(viewsets.ViewSet):
 
     def list(self, request: Request) -> Response:
         # Lets figure out what appeals they _should_ see
-        appeals = self.filter_to_allowed_appeals()
-        serializer = serializers.AppealSerializer(appeals, many=True)
+        current_user: User = request.user  # type: ignore
+        appeals = Appeal.filter_to_allowed_appeals(current_user)
+        serializer = serializers.AppealSummarySerializer(appeals, many=True)
         return Response(serializer.data)
 
     def retrieve(self, request: Request, pk: int) -> Response:
-        appeal = get_object_or_404(self.filter_to_allowed_appeals(), pk=pk)
-        serializer = serializers.AppealSerializer(appeal)
+        current_user: User = request.user  # type: ignore
+        appeal = get_object_or_404(
+            Appeal.filter_to_allowed_appeals(current_user), pk=pk
+        )
+        serializer = serializers.AppealDetailSerializer(appeal)
         return Response(serializer.data)
 
 

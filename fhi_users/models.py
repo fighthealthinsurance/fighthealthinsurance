@@ -1,6 +1,7 @@
 import uuid
 import time
 import datetime
+import typing
 
 from django.db import models
 from django.contrib.auth import get_user_model
@@ -9,7 +10,10 @@ from django.db.models.signals import pre_save
 from django.dispatch import receiver
 
 
-User = get_user_model()
+if typing.TYPE_CHECKING:
+    from django.contrib.auth.models import User
+else:
+    User = get_user_model()
 
 
 # Auth-ish-related models
@@ -82,7 +86,7 @@ class UserContactInfo(models.Model):
 class PatientUser(models.Model):
     id = models.AutoField(primary_key=True)
     user = models.OneToOneField(User, on_delete=models.CASCADE)
-    active = models.BooleanField()
+    active = models.BooleanField(default=False)
 
 
 class ProfessionalUser(models.Model):
@@ -92,6 +96,13 @@ class ProfessionalUser(models.Model):
     active = models.BooleanField()
     provider_type = models.CharField(blank=True, null=True, max_length=300)
     most_common_denial = models.CharField(blank=True, null=True, max_length=300)
+
+    def admin_domains(self):
+        return UserDomain.objects.filter(
+            professionaldomainrelation__professional=self,
+            professionaldomainrelation__admin=True,
+            professionaldomainrelation__active=True,
+        )
 
 
 class ProfessionalDomainRelation(models.Model):
