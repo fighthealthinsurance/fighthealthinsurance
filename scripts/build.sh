@@ -7,14 +7,15 @@ BUILDX_CMD=${BUILDX_CMD:-push}
 
 source "${SCRIPT_DIR}/setup_templates.sh"
 
-FHI_VERSION=v0.10.6a
+BUILDKIT_NO_CLIENT_TOKEN=true
+FHI_VERSION=v0.10.6b
 MYORG=${MYORG:-holdenk}
 RAY_BASE=${RAY_BASE:-${MYORG}/fhi-ray}
 FHI_BASE=${FHI_BASE:-${MYORG}/fhi-base}
 FHI_DOCKER_USERNAME=${FHI_DOCKER_USERNAME:-holdenk}
 FHI_DOCKER_EMAIL=${FHI_DOCKER_EMAIL:-"holden@pigscanfly.ca"}
 
-
+export BUILDKIT_NO_CLIENT_TOKEN
 export FHI_VERSION
 export FHI_BASE
 export RAY_BASE
