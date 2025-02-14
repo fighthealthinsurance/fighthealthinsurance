@@ -472,11 +472,13 @@ class ProposedAppeal(ExportModelOperationsMixin("ProposedAppeal"), models.Model)
 
 
 class Appeal(ExportModelOperationsMixin("Appeal"), models.Model):  # type: ignore
-    uuid = models.UUIDField(
+    id = models.AutoField(primary_key=True)
+    uuid = models.CharField(
         default=uuid.uuid4,
         editable=False,
         primary_key=False,
         unique=True,
+        db_index=False,
         max_length=100,
     )
     appeal_text = models.TextField(max_length=3000000000, primary_key=False, null=True)
