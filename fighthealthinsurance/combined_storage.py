@@ -66,7 +66,9 @@ class CombinedStorage(Storage):
                 with Timeout(4.0) as _timeout_ctx:
                     # Only overwrite l if we have not yet saved but always try and save.
                     if l is None:
-                        l = backend.save(name=name, content=content, max_length=max_length)
+                        l = backend.save(
+                            name=name, content=content, max_length=max_length
+                        )
                     else:
                         backend.save(name=name, content=content, max_length=max_length)
             except Exception as e:

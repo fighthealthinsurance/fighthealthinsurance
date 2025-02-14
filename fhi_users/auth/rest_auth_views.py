@@ -63,7 +63,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         """
         Different permissions for different actions
         """
-        permission_classes = [] # type: ignore
+        permission_classes = []  # type: ignore
         if self.action == "list":
             permission_classes = []
         elif self.action == "accept" or self.action == "reject":

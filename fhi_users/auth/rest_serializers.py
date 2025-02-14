@@ -32,6 +32,7 @@ class PasswordResetFormSerializer(FormSerializer):
     class Meta(object):
         form = PasswordResetForm
 
+
 class TOTPResponse(serializers.Serializer):
     success = serializers.BooleanField()
     error_description = serializers.CharField()
