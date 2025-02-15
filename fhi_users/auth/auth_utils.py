@@ -71,6 +71,7 @@ def resolve_domain_id(
 
 def combine_domain_and_username(
     username: str,
+    *ignore,
     domain_id: Optional[str] = None,
     domain_name: Optional[str] = None,
     phone_number: Optional[str] = None,

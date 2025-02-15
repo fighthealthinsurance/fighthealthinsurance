@@ -338,7 +338,7 @@ class RestLoginView(ViewSet, SerializerMixin):
         )
 
 
-class CreatePatientUserView(ViewSet, CreateMixin):
+class CreatePatientUserViewSet(ViewSet, CreateMixin):
     serializer_class = serializers.CreatePatientUserSerializer
 
     def perform_create(self, request: Request, serializer) -> Response:
@@ -348,7 +348,7 @@ class CreatePatientUserView(ViewSet, CreateMixin):
         return Response({"status": "pending"})
 
 
-class VerifyEmailView(ViewSet, SerializerMixin):
+class VerifyEmailViewSet(ViewSet, SerializerMixin):
     serializer_class = serializers.VerificationTokenSerializer
 
     @action(detail=False, methods=["post"])

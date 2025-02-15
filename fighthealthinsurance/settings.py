@@ -44,7 +44,8 @@ class Base(Configuration):
     REST_FRAMEWORK = {
         "DEFAULT_AUTHENTICATION_CLASSES": [
             "rest_framework.authentication.SessionAuthentication",
-        ]
+        ],
+        "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     }
 
     # Quick-start development settings - unsuitable for production
@@ -109,6 +110,7 @@ class Base(Configuration):
         "corsheaders",
         "channels",
         "django_prometheus",
+        "drf_spectacular",
     ]
 
     COMPRESS_JS_FILTERS = [

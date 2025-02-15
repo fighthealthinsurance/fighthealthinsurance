@@ -145,4 +145,4 @@ class EmailVerifierSerializer(serializers.Serializer):
 class MailingListSubscriberSerializer(serializers.ModelSerializer):
     class Meta:
         model = MailingListSubscriber
-        fields = ["email", "name", "notes"]
+        fields = ["email", "name"]

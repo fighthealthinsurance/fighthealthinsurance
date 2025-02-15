@@ -29,7 +29,7 @@ class Command(BaseCommand):
         domain = options["domain"]
         if not UserDomain.objects.filter(name=domain).exists():
             UserDomain.objects.create(name=domain, active=True)
-        username = combine_domain_and_username(raw_user, domain)
+        username = combine_domain_and_username(raw_user, domain_name=domain)
         if not User.objects.filter(username=username).exists():
             User.objects.create_user(
                 username=username,
