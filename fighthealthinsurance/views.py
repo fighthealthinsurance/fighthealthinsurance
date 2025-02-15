@@ -18,6 +18,7 @@ from django.http import HttpRequest, HttpResponseBase, HttpResponse, FileRespons
 from fighthealthinsurance import common_view_logic
 from fighthealthinsurance import forms as core_forms
 from fighthealthinsurance import models
+from fighthealthinsurance import followup_emails
 
 
 def render_ocr_error(request: HttpRequest, text: str) -> HttpResponseBase:
@@ -65,9 +66,14 @@ class BRB(generic.TemplateView):
 class ProVersionView(generic.FormView):
     template_name = "professional.html"
     form_class = core_forms.InterestedProfessionalForm
+    sender = followup_emails.ThankyouEmailSender()
 
     def form_valid(self, form):
         interested_professional = form.save()
+        try:
+            self.sender.dosend(interested_pro=interested_professional)
+        except Exception as e:
+            logger.opt(exception=True).error("Failed to send thank you email")
 
         if not (
             "clicked_for_paid" in form.cleaned_data

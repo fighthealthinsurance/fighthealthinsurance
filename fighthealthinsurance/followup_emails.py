@@ -11,7 +11,7 @@ from django.utils.decorators import method_decorator
 from django.views import View, generic
 
 from fighthealthinsurance.forms import FollowUpTestForm
-from fighthealthinsurance.models import Denial, FollowUpSched
+from fighthealthinsurance.models import Denial, FollowUpSched, InterestedProfessional
 
 
 class ScheduleFollowUps(View):
@@ -53,6 +53,83 @@ class FollowUpEmailSenderView(generic.FormView):
         except ValueError:
             sent = s.dosend(email=field)
         return HttpResponse(str(sent))
+
+
+class ThankyouSenderView(generic.FormView):
+    """A view to test the thankyou sender."""
+
+    template_name = "followup_test.html"
+    form_class = FollowUpTestForm
+
+    def form_valid(self, form):
+        s = ThankyouEmailSender()
+        field = form.cleaned_data.get("email")
+        try:
+            count = int(field)
+            sent = s.send_all(count=field)
+        except ValueError:
+            sent = s.dosend(email=field)
+        return HttpResponse(str(sent))
+
+
+class ThankyouEmailSender(object):
+    def find_candidates(
+        self,
+    ) -> QuerySet[InterestedProfessional, InterestedProfessional]:
+        candidates = InterestedProfessional.objects.filter(thankyou_email_sent=False)
+        return candidates
+
+    def send_all(self, count: Optional[int] = None) -> int:
+        candidates = self.find_candidates()
+        selected_candidates = candidates
+        if count is not None:
+            selected_candidates = candidates[:count]
+        return len(
+            list(map(lambda f: self.dosend(interested_pro=f), selected_candidates))
+        )
+
+    def dosend(
+        self,
+        email: Optional[str] = None,
+        interested_pro: Optional[InterestedProfessional] = None,
+    ) -> bool:
+        if email is not None:
+            interested_pro = InterestedProfessional.objects.filter(email=email)[0]
+        if interested_pro is None:
+            return False
+        email = interested_pro.email
+        context = {
+            "name": interested_pro.name,
+        }
+        # First, render the plain text content.
+        text_content = render_to_string(
+            "emails/professional_thankyou.txt",
+            context=context,
+        )
+
+        # Secondly, render the HTML content.
+        html_content = render_to_string(
+            "emails/professional_thankyou.html",
+            context=context,
+        )
+
+        # Then, create a multipart email instance.
+        msg = EmailMultiAlternatives(
+            "Thank you for signing up for Fight Health Insurance Pro Beta!",
+            text_content,
+            "support42@fighthealthinsurance.com",
+            [email],
+        )
+
+        # Lastly, attach the HTML content to the email instance and send.
+        msg.attach_alternative(html_content, "text/html")
+        interested_pro.thankyou_email_sent = True
+        interested_pro.save()
+        try:
+            msg.send()
+            return True
+        except:
+            return False
 
 
 class FollowUpEmailSender(object):

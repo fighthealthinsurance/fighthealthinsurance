@@ -30,6 +30,7 @@ from django.contrib.staticfiles.storage import staticfiles_storage
 from fighthealthinsurance import views
 from fighthealthinsurance import fax_views
 from fighthealthinsurance.followup_emails import (
+    ThankyouSenderView,
     FollowUpEmailSenderView,
     ScheduleFollowUps,
 )
@@ -59,6 +60,10 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
     path(
         "timbit/help/followup_sender_test",
         staff_member_required(FollowUpEmailSenderView.as_view()),
+    ),
+    path(
+        "timbit/help/thankyou_sender_test",
+        staff_member_required(ThankyouSenderView.as_view()),
     ),
     path(
         "timbit/help/followup_fax_test",

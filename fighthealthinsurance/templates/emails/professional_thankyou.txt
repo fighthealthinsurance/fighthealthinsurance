@@ -1,0 +1,13 @@
+Dear {{name}},
+
+You are a PRO! Thank you for signing up for the Pro Version of Fight Health Insurance, which we call “Fight Paperwork” as we aim to solve more than just insurance problems in the long term. 
+
+We hope to launch our Pro Version BETA in March – but you know how optimistic engineers can be with timelines. 
+
+Please continue to support us by sharing with friends, and stay tuned for your next update! 
+
+Your participation has a huge impact!  If you’ve got any questions, please feel free to reach out to us at support42@fighthealthinsurance.com :) We are also planning on conducting some user studies the end of this month if your willing to share feedback with us on the new workflow before we release it drop us an e-mail at support42@fighthealthinsurance.com :)
+
+A huge thank you, 
+
+FHI Team

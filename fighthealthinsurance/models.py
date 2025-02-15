@@ -47,6 +47,7 @@ class InterestedProfessional(ExportModelOperationsMixin("InterestedProfessional"
     # Note: Was initially auto_now so data is kind of junk-ish prior to Feb 3rd
     signup_date = models.DateField(auto_now_add=True)
     mod_date = models.DateField(auto_now=True)
+    thankyou_email_sent = models.BooleanField(default=False)
 
 
 # Everyone else:
