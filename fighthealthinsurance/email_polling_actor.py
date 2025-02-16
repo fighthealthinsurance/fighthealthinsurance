@@ -21,7 +21,10 @@ class EmailPollingActor:
         _application = get_wsgi_application()
         print(f"wsgi started")
         # Now we can import the follow up e-mails logic
-        from fighthealthinsurance.followup_emails import ThankyouEmailSender, FollowUpEmailSender
+        from fighthealthinsurance.followup_emails import (
+            ThankyouEmailSender,
+            FollowUpEmailSender,
+        )
 
         self.followup_sender = FollowUpEmailSender()
         self.thankyou_sender = ThankyouEmailSender()
@@ -32,9 +35,13 @@ class EmailPollingActor:
         self.running = True
         while self.running:
             try:
-                followup_candidates = await sync_to_async(self.followup_sender.find_candidates)()
+                followup_candidates = await sync_to_async(
+                    self.followup_sender.find_candidates
+                )()
                 print(f"Top follow up candidates: {followup_candidates[0:4]}")
-                thankyou_candidates = await sync_to_async(self.thankyou_sender.find_candidates)()
+                thankyou_candidates = await sync_to_async(
+                    self.thankyou_sender.find_candidates
+                )()
                 print(f"Top follow up candidates: {thankyou_candidates[0:4]}")
                 await asyncio.sleep(10)
             except Exception as e:

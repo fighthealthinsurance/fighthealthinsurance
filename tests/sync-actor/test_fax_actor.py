@@ -4,15 +4,20 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import ray
-from django.test import TestCase
+from django.test import TransactionTestCase
 from django.utils import timezone
 from django.db import connection
 
 from fighthealthinsurance.fax_actor import FaxActor
 from fighthealthinsurance.models import Denial, FaxesToSend
 
+runtime_env = dict(os.environ)
 
-class TestFaxActor(TestCase):
+
+# We can unify the DB stuff and remove the test remote creation if and only if
+# we switch from sqlite since otherwise the transaction test wraps each one
+# and the regular testcase leaves the db locked.
+class TestFaxActor(TransactionTestCase):
     fixtures = ["fighthealthinsurance/fixtures/initial.yaml"]
 
     def setUp(self):
@@ -22,6 +27,7 @@ class TestFaxActor(TestCase):
                 ignore_reinit_error=True,
                 # We need this to point to the same testing DB but then no async
                 # local_mode=True,
+                runtime_env=runtime_env,
             )
         self.fax_actor = FaxActor.remote()
         self.maxDiff = None
@@ -52,6 +58,7 @@ class TestFaxActor(TestCase):
                     hashed_email="test_hash",
                     email="test@example.com",
                     destination="1234567890",
+                    name="Test",
                     should_send=True,
                     sent=False,
                     paid=False,
@@ -77,6 +84,7 @@ class TestFaxActor(TestCase):
                 hashed_email="test_hash",
                 email="test@example.com",
                 destination="1234567890",
+                name="Test",
                 should_send=True,
                 sent=False,
                 paid=False,

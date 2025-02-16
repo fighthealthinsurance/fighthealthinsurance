@@ -497,67 +497,6 @@ class FlexibleFaxMagic(object):
     def _add_backend(self, backend: FaxSenderBase) -> None:
         self.backends.append(backend)
 
-    async def _convert_input(self, input_path: str) -> Optional[str]:
-        if input_path.endswith(".pdf"):
-            return input_path
-        else:
-            await asyncio.sleep(0)
-            base_convert_command = [
-                "pandoc",
-                "--wrap=auto",
-                input_path,
-                f"-o{input_path}.pdf",
-            ]
-            try:
-                await check_call(base_convert_command)
-                return f"{input_path}.pdf"
-            # pandoc failures are often character encoding issues
-            except Exception as e:
-                # try to convert if we've got txt input
-                new_input_path = input_path
-                if input_path.endswith(".txt"):
-                    try:
-                        command = [
-                            "iconv",
-                            "-c",
-                            "-t utf8",
-                            f"-o{input_path}.u8.txt",
-                            input_path,
-                        ]
-                        await check_call(command)
-                        new_input_path = f"{input_path}.u8.txt"
-                    except:
-                        pass
-                # Try a different engine
-                for engine in ["lualatex", "xelatex"]:
-                    convert_command = base_convert_command
-                    convert_command.extend([f"--pdf-engine={engine}"])
-                    try:
-                        await check_call(base_convert_command)
-                        return f"{input_path}.pdf"
-                    except:
-                        pass
-                return None
-
-    async def assemble_single_output(
-        self, user_header: str, extra: str, input_paths: list[str]
-    ) -> str:
-        """Assembles all the inputs into one output. Will need to be chunked."""
-        merger = PdfMerger()
-        converted_paths = await asyncio.gather(
-            *(self._convert_input(path) for path in input_paths)
-        )
-
-        for pdf_path in filter(None, converted_paths):
-            merger.append(pdf_path)
-
-        with tempfile.NamedTemporaryFile(
-            suffix=".pdf", prefix="alltogether", mode="w+t", delete=False
-        ) as t:
-            merger.write(t.name)
-            merger.close()
-            return t.name
-
     def assemble_outputs(
         self, user_header: str, extra: str, input_paths: list[str]
     ) -> list[str]:

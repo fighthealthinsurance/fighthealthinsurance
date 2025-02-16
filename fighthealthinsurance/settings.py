@@ -394,12 +394,12 @@ class TestSync(Dev):
 class TestActor(Dev):
     # We _may_ use "real" files for actor tests since we have seperate processes for actors.
     dt = str(int(time.time()))
-    dbname = os.getenv("DBNAME", f"{BASE_DIR}/test{dt}.db.sqlite3")
+    dbname = os.getenv("DBNAME", f"{BASE_DIR}/test2{dt}.db.sqlite3")
     os.environ["DBNAME"] = dbname
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.sqlite3",
-            "TIMEOUT": 4,
+            "TIMEOUT": 10,
             "NAME": dbname,
             "TEST": {
                 "NAME": dbname,

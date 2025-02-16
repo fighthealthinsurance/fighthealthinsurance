@@ -116,6 +116,53 @@ jobs:
           GOOGLE_CLIENT_SECRETS_TEXT: ${{ secrets.GOOGLE_CLIENT_SECRETS_TEXT }}
           STRIPE_TEST_SECRET_KEY: ${{ secrets.STRIPE_TEST_SECRET_KEY }}
 
+  tests-sync-actor:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.10']
+        django: ['50']
+        include:
+          - python: '3.10'
+            django: '50'
+    name: Run the sync actor test suite (Python ${{ matrix.python }}, Django ${{ matrix.django }})
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup node
+        uses: actions/setup-node@v3
+
+      - name: Install system level packages
+        run: sudo apt-get update && sudo apt-get install -y tesseract-ocr texlive && sudo apt-get clean
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Install tox
+        run: uv tool install tox --with tox-uv
+
+      - name: Install pandoc
+        uses: pandoc/actions/setup@v1
+        with:
+          version: 2.19
+
+      - name: Build npm js (needed for the e2e tests in django)
+        run:
+          cd fighthealthinsurance/static/js && npm i && npm run build && npm cache clean --force
+
+      - name: Run tests
+        run: tox -e py${{ matrix.python }}-django${{ matrix.django }}-sync-actor
+        env:
+          FARTS: "farts"
+          GOOGLE_CLIENT_SECRETS_TEXT: ${{ secrets.GOOGLE_CLIENT_SECRETS_TEXT }}
+          STRIPE_TEST_SECRET_KEY: ${{ secrets.STRIPE_TEST_SECRET_KEY }}
+
+
   build-docker-ray-container:
     runs-on: ubuntu-latest
     strategy:

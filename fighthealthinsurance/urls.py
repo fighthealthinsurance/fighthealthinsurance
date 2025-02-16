@@ -119,7 +119,7 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
     ),
     # View an appeal
     path(
-        "v0/appeal/<uuid:appeal_uuid>/",
+        "v0/appeal/<uuid:appeal_uuid>/appeal.pdf",
         views.AppealFileView.as_view(),
         name="appeal_file_view",
     ),

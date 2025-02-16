@@ -39,6 +39,7 @@ from fhi_users.auth.auth_utils import (
     create_user,
     combine_domain_and_username,
     user_is_admin_in_domain,
+    resolve_domain_id,
 )
 from fighthealthinsurance.rest_mixins import CreateMixin, SerializerMixin
 from rest_framework.serializers import Serializer
@@ -315,11 +316,11 @@ class RestLoginView(ViewSet, SerializerMixin):
         domain: str = data.get("domain")
         phone: str = data.get("phone")
         try:
+            domain_id = resolve_domain_id(domain_name=domain, phone_number=phone)
             username = combine_domain_and_username(
-                username, phone_number=phone, domain_name=domain
+                username, phone_number=phone, domain_id=domain_id
             )
         except Exception as e:
-            print(f"Bloop! {e}")
             return Response(
                 {
                     "status": "failure",
@@ -327,9 +328,9 @@ class RestLoginView(ViewSet, SerializerMixin):
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        print("Mok?")
         user = authenticate(username=username, password=password)
         if user:
+            request.session["domain_id"] = domain_id
             login(request, user)
             return Response({"status": "success"})
         return Response(

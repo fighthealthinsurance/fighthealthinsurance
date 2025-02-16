@@ -5,7 +5,12 @@ from drf_braces.serializers.form_serializer import (
     FormSerializer,
 )
 from fighthealthinsurance import forms as core_forms
-from fighthealthinsurance.models import Appeal, DenialTypes, MailingListSubscriber
+from fighthealthinsurance.models import (
+    Appeal,
+    DenialTypes,
+    MailingListSubscriber,
+    ProposedAppeal,
+)
 from rest_framework import serializers
 
 
@@ -90,12 +95,12 @@ class FollowUpFormSerializer(FormSerializer):
         field_mapping = {forms.UUIDField: serializers.CharField}
 
 
-class AppealRequestSerializer(serializers.Serializer):
-    provider_id = serializers.IntegerField()
-    patient_id = serializers.IntegerField()
-    denial_letter = serializers.FileField(required=False)
-    denial_reason = serializers.CharField()
-    send_to_patient = serializers.BooleanField(default=False)
+# Model serializers
+
+
+class ProposedAppealSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProposedAppeal
 
 
 class AppealSummarySerializer(serializers.ModelSerializer):
@@ -127,10 +132,21 @@ class AppealDetailSerializer(serializers.ModelSerializer):
         return None
 
 
-class AppealSubmissionResponseSerializer(serializers.Serializer):
-    appeal_id = serializers.IntegerField()
-    status = serializers.CharField()
-    message = serializers.CharField()
+class AssembleAppealRequestSerializer(serializers.Serializer):
+    denial_uuid = serializers.CharField(required=True)
+    completed_appeal_text = serializers.CharField(required=True)
+    insurance_company = serializers.CharField(required=False)
+    fax_phone = serializers.CharField(required=False)
+    pubmed_articles_to_include = serializers.ListField(
+        child=serializers.CharField(), required=False
+    )
+    include_provided_health_history = serializers.BooleanField(required=False)
+
+
+class AssembleAppealResponseSerializer(serializers.Serializer):
+    appeal_id = serializers.CharField(required=True)
+    status = serializers.CharField(required=False)
+    message = serializers.CharField(required=False)
 
 
 class EmailVerifierSerializer(serializers.Serializer):
@@ -146,3 +162,13 @@ class MailingListSubscriberSerializer(serializers.ModelSerializer):
     class Meta:
         model = MailingListSubscriber
         fields = ["email", "name"]
+
+
+class SendToUserSerializer(serializers.Serializer):
+    appeal_id = serializers.IntegerField()
+    professional_final_review = serializers.BooleanField()
+
+
+class SendFax(serializers.Serializer):
+    appeal_id = serializers.IntegerField(required=True)
+    fax_number = serializers.CharField(required=False)

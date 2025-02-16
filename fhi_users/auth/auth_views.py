@@ -4,7 +4,7 @@ from django.urls import reverse, reverse_lazy
 from django.views import generic, View
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth import get_user_model
-from .auth_utils import combine_domain_and_username
+from .auth_utils import combine_domain_and_username, resolve_domain_id
 from .auth_forms import LoginForm
 import fhi_users
 from django.views.decorators.csrf import csrf_exempt
@@ -41,8 +41,11 @@ class LoginView(generic.FormView):
                 context["invalid"] = True
                 context["need_phone_or_domain"] = True
             else:
+                domain_id = resolve_domain_id(
+                    domain_name=domain, phone_number=phone_number
+                )
                 username = combine_domain_and_username(
-                    raw_username, domain_name=domain, phone_number=phone_number
+                    raw_username, domain_id=domain_id
                 )
                 user = authenticate(username=username, password=password)
                 if user is None:
@@ -50,6 +53,7 @@ class LoginView(generic.FormView):
                     context["bad_credentials"] = True
                     return render(request, "login.html", context)
                 else:
+                    request.session["domain_id"] = domain_id
                     login(request, user)
                     return HttpResponseRedirect(reverse("root"))
         except UserDomain.DoesNotExist:

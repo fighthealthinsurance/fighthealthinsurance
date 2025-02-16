@@ -178,14 +178,14 @@ class AppealFileViewTest(TestCase):
         # Create the appeals manually
         self.appeal = Appeal.objects.create(
             appeal_text="This is a test appeal.",
-            combined_document_enc=SimpleUploadedFile("farts.pdf", b"Test PDF content"),
+            document_enc=SimpleUploadedFile("farts.pdf", b"Test PDF content"),
             patient_user=self.primary_patient_user,
             primary_professional=self.professional_user,
             domain=UserDomain.objects.get(name=self.domain),
         )
         self.secondary_appeal = Appeal.objects.create(
             appeal_text="This is a test appeal.",
-            combined_document_enc=SimpleUploadedFile("farts.pdf", b"Test PDF content"),
+            document_enc=SimpleUploadedFile("farts.pdf", b"Test PDF content"),
             patient_user=self.secondary_patient_user,
             primary_professional=self.professional_user,
             domain=UserDomain.objects.get(name=self.domain),

@@ -51,6 +51,7 @@ class UserDomain(models.Model):
     default_procedure = models.CharField(
         primary_key=False, blank=False, null=True, max_length=300, unique=False
     )
+    cover_template_string = models.CharField(max_length=5000, null=True)
     # Maybe include:
     # List of common procedures
     # Common appeal templates
@@ -88,6 +89,9 @@ class PatientUser(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE)
     active = models.BooleanField(default=False)
 
+    def get_full_name(self) -> str:
+        return f"{self.user.first_name} {self.user.last_name}"
+
 
 class ProfessionalUser(models.Model):
     id = models.AutoField(primary_key=True)
@@ -96,6 +100,8 @@ class ProfessionalUser(models.Model):
     active = models.BooleanField()
     provider_type = models.CharField(blank=True, null=True, max_length=300)
     most_common_denial = models.CharField(blank=True, null=True, max_length=300)
+    # Override the professional domain fax number
+    fax_number = models.CharField(blank=True, null=True, max_length=40)
 
     def admin_domains(self):
         return UserDomain.objects.filter(

@@ -295,7 +295,7 @@ class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # t
     email = models.CharField(max_length=300)
     name = models.CharField(max_length=300, null=True)
     appeal_text = models.TextField()
-    pmids = models.CharField(max_length=300, blank=True)
+    pmids = models.CharField(max_length=600, blank=True)
     health_history = models.TextField(null=True, blank=True)
     combined_document = models.FileField(null=True, storage=settings.COMBINED_STORAGE)
     combined_document_enc = EncryptedFileField(
@@ -312,6 +312,8 @@ class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # t
     denial_id = models.ForeignKey("Denial", on_delete=models.CASCADE, null=True)
     destination = models.CharField(max_length=20, null=True)
     should_send = models.BooleanField(default=False)
+    # Professional we may use different backends.
+    professional = models.BooleanField(default=False)
 
     def get_temporary_document_path(self):
         combined_document = self.combined_document or self.combined_document_enc
@@ -402,6 +404,7 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     patient_user = models.ForeignKey(PatientUser, null=True, on_delete=models.SET_NULL)
     domain = models.ForeignKey(UserDomain, null=True, on_delete=models.SET_NULL)
     patient_visible = models.BooleanField(default=True)
+    professional_to_finish = models.BooleanField(default=False)
 
     @classmethod
     def filter_to_allowed_denials(cls, current_user: User):
@@ -486,6 +489,7 @@ class Appeal(ExportModelOperationsMixin("Appeal"), models.Model):  # type: ignor
     for_denial = models.ForeignKey(
         Denial, on_delete=models.CASCADE, null=True, blank=True
     )
+    hashed_email = models.CharField(max_length=300, primary_key=False)
     primary_professional = models.ForeignKey(
         ProfessionalUser, null=True, on_delete=models.SET_NULL
     )
@@ -493,10 +497,8 @@ class Appeal(ExportModelOperationsMixin("Appeal"), models.Model):  # type: ignor
     domain = models.ForeignKey(UserDomain, null=True, on_delete=models.SET_NULL)
     document_enc = EncryptedFileField(null=True, storage=settings.COMBINED_STORAGE)
     pending = models.BooleanField(default=True)
-    combined_document_enc = EncryptedFileField(
-        null=True, storage=settings.COMBINED_STORAGE
-    )
     patient_visible = models.BooleanField(default=True)
+    pubmed_ids_json = models.CharField(max_length=600, blank=True)
 
     # Similar to the method on denial -- TODO refactor to a mixin / DRY
     @classmethod
@@ -542,9 +544,9 @@ class Appeal(ExportModelOperationsMixin("Appeal"), models.Model):  # type: ignor
 
     def __str__(self):
         if self.appeal_text is not None:
-            return f"{self.appeal_text[0:100]}"
+            return f"{self.uuid} -- {self.appeal_text[0:100]}"
         else:
-            return f"{self.appeal_text}"
+            return f"{self.uuid} -- {self.appeal_text}"
 
 
 # Secondary relations for denials and appeals

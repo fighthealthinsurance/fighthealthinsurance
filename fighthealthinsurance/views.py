@@ -14,6 +14,7 @@ from django.utils.safestring import mark_safe
 from django.views import View, generic
 from django.http import HttpRequest, HttpResponseBase, HttpResponse, FileResponse
 
+from django_encrypted_filefield.crypt import Cryptographer
 
 from fighthealthinsurance import common_view_logic
 from fighthealthinsurance import forms as core_forms
@@ -555,9 +556,9 @@ class AppealFileView(View):
         appeal = get_object_or_404(
             models.Appeal.filter_to_allowed_appeals(current_user), uuid=appeal_uuid
         )
-        return FileResponse(
-            appeal.combined_document_enc, content_type="application/pdf"
-        )
+        file = appeal.document_enc.open()
+        content = Cryptographer.decrypted(file.read())
+        return HttpResponse(content, content_type="application/pdf")
 
 
 class StripeWebhookView(View):
