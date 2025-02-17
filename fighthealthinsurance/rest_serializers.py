@@ -103,6 +103,23 @@ class ProposedAppealSerializer(serializers.ModelSerializer):
         model = ProposedAppeal
 
 
+class AppaealListRequestSerializer(serializers.Serializer):
+    status_filter = serializers.ChoiceField(
+        choices=[
+            "pending",
+            "submitted",
+            "overdue",
+            "denied",
+            "approved",
+            "in_progress",
+            "all",
+        ],
+        required=False,
+    )
+    insurance_company_filter = serializers.CharField(required=False)
+    procedure_filter = serializers.CharField(required=False)
+
+
 class AppealSummarySerializer(serializers.ModelSerializer):
     class Meta:
         model = Appeal

@@ -120,57 +120,28 @@ class CheckMlBackend(APIView):
         return Response(status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
 
-class AppealViewSet(viewsets.ViewSet):
+class AppealViewSet(viewsets.ViewSet, SerializerMixin):
     appeal_assembly_helper = AppealAssemblyHelper()
 
-    def filter_to_allowed_appeals(self):
-        current_user: User = request.user  # type: ignore
-        if current_user.is_superuser or current_user.is_staff:
-            return Appeal.objects.all()
-
-        query_set = Appeal.objects.none()
-
-        # Patients can view their own appeals
-        try:
-            patient_user = PatientUser.objects.get(user=current_user)
-            query_set |= Appeal.objects.filter(
-                patient_user=patient_user,
-            )
-        except PatientUser.DoesNotExist:
-            pass
-
-        # Providers can view appeals they created or were added to as a provider
-        # or are a domain admin in.
-        try:
-            # Appeals they created
-            professional_user = ProfessionalUser.objects.get(user=current_user)
-            query_set |= Appeal.objects.filter(primary_professional=professional_user)
-            # Appeals they were add to.
-            additional_appeals = SecondaryAppealProfessionalRelation.objects.filter(
-                professional=professional_user
-            )
-            query_set |= Appeal.objects.filter(
-                id__in=[a.appeal.id for a in additional_appeals]
-            )
-            # Practice/UserDomain admins can view all appeals in their practice
-            try:
-                user_admin_domains = UserDomain.objects.filter(
-                    professionaldomainrelation__professional__user=current_user,
-                    professionaldomainrelation__admin=True,
-                )
-                query_set |= Appeal.objects.filter(domain__in=user_admin_domains)
-            except ProfessionalDomainRelation.DoesNotExist:
-                pass
-        except ProfessionalUser.DoesNotExist:
-            pass
-        return query_set
+    def get_serializer_class(self):
+        if self.action == "list":
+            return serializers.AppaealListRequestSerializer
+        elif self.action == "send_fax":
+            return serializers.SendFax
+        elif self.action == "assemble_appeal":
+            return serializers.AssembleAppealRequestSerializer
+        else:
+            return None
 
     def list(self, request: Request) -> Response:
         # Lets figure out what appeals they _should_ see
         current_user: User = request.user  # type: ignore
         appeals = Appeal.filter_to_allowed_appeals(current_user)
-        serializer = serializers.AppealSummarySerializer(appeals, many=True)
-        return Response(serializer.data)
+        # Parse the filters
+        input_serializer = self.deserialize(data=request.data)
+        # TODO: Handle the filters
+        output_serializer = serializers.AppealSummarySerializer(appeals, many=True)
+        return Response(output_serializer.data)
 
     def retrieve(self, request: Request, pk: int) -> Response:
         current_user: User = request.user  # type: ignore
@@ -183,7 +154,7 @@ class AppealViewSet(viewsets.ViewSet):
     @action(detail=False, methods=["post"])
     def send_fax(self, request) -> Response:
         current_user: User = request.user  # type: ignore
-        serializer = serializers.SendFax(request.data)
+        serializer = self.deserialize(data=request.data)
         serializer.is_valid(raise_exception=True)
         appeal = get_object_or_404(
             Appeal.filter_to_allowed_appeals(current_user), pk=serializer["appeal_id"]
@@ -213,7 +184,7 @@ class AppealViewSet(viewsets.ViewSet):
     @action(detail=False, methods=["post"])
     def assemble_appeal(self, request) -> Response:
         current_user: User = request.user  # type: ignore
-        serializer = serializers.AssembleAppealRequestSerializer(request.data)
+        serializer = self.deserialize(data=request.data)
         serializer.is_valid(raise_exception=True)
         # Make sure the user has permission to this denial
         denial_uuid = serializer.validated_data["denial_uuid"]
