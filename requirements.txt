@@ -53,8 +53,6 @@ packaging>=20.0
 pandoc
 paramiko
 Pillow
-psycopg2
-psycopg-pool
 pyarrow
 pymupdf
 pyOpenSSL
