@@ -134,16 +134,16 @@ class Base(Configuration):
 
     MIDDLEWARE = [
         "django_prometheus.middleware.PrometheusBeforeMiddleware",
-        "corsheaders.middleware.CorsMiddleware",
-        "django.middleware.security.SecurityMiddleware",
         "django.contrib.sessions.middleware.SessionMiddleware",
-        "django.middleware.common.CommonMiddleware",
-        "django.middleware.csrf.CsrfViewMiddleware",
         "django.contrib.auth.middleware.AuthenticationMiddleware",
         "django.contrib.messages.middleware.MessageMiddleware",
         "django.middleware.clickjacking.XFrameOptionsMiddleware",
         "cookie_consent.middleware.CleanCookiesMiddleware",
         "django_user_agents.middleware.UserAgentMiddleware",
+        "corsheaders.middleware.CorsMiddleware",
+        "django.middleware.common.CommonMiddleware",
+        "django.middleware.csrf.CsrfViewMiddleware",
+        "django.middleware.security.SecurityMiddleware",
         "django_prometheus.middleware.PrometheusAfterMiddleware",
     ]
 
@@ -264,7 +264,7 @@ class Base(Configuration):
     DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
     # CORS settings
-    CORS_URLS_REGEX = r"^/ziggy/.*$"
+    # CORS_URLS_REGEX = r"^/ziggy/.*$"
     # CORS_ALLOWED_ORIGINS_REGEXES = [
     #    "https://fhi-react.vercel.app",
     #    "http://localhost:\d+",

@@ -15,4 +15,5 @@ if [ ${npm_dep_check} != 0 ]; then
 fi
 npm run build
 popd
+rm -rf static
 ./manage.py collectstatic
