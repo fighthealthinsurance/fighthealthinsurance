@@ -33,6 +33,7 @@ class UserDomain(models.Model):
     )
     active = models.BooleanField()
     display_name = models.CharField(max_length=300, null=False)
+    professionals = models.ManyToManyField("ProfessionalUser", through="ProfessionalDomainRelation") # type: ignore
     # The visible phone number should be unique... ish? Maybe?
     # We _could_ allow users to log in with visible phone number IFF
     # it's unique among active domains. We're going to TRY and have it
@@ -102,6 +103,8 @@ class ProfessionalUser(models.Model):
     most_common_denial = models.CharField(blank=True, null=True, max_length=300)
     # Override the professional domain fax number
     fax_number = models.CharField(blank=True, null=True, max_length=40)
+    domains = models.ManyToManyField("UserDomain", through="ProfessionalDomainRelation") # type: ignore
+
 
     def admin_domains(self):
         return UserDomain.objects.filter(

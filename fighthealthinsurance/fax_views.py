@@ -17,24 +17,6 @@ from fighthealthinsurance.utils import *
 from fighthealthinsurance.stripe_utils import get_or_create_price
 
 
-class FollowUpFaxSenderView(generic.FormView):
-    """A view to test the follow up sender."""
-
-    template_name = "followup_test.html"
-    form_class = core_forms.FollowUpTestForm
-
-    def form_valid(self, form):
-        field = form.cleaned_data.get("email")
-        helper = common_view_logic.SendFaxHelper
-
-        if field.isdigit():
-            sent = helper.blocking_dosend_all(count=field)
-        else:
-            sent = helper.blocking_dosend_target(email=field)
-
-        return HttpResponse(str(sent))
-
-
 class FaxFollowUpView(generic.FormView):
     template_name = "faxfollowup.html"
     form_class = core_forms.FaxResendForm

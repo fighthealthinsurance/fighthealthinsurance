@@ -29,11 +29,7 @@ from django.contrib.staticfiles.storage import staticfiles_storage
 
 from fighthealthinsurance import views
 from fighthealthinsurance import fax_views
-from fighthealthinsurance.followup_emails import (
-    ThankyouSenderView,
-    FollowUpEmailSenderView,
-    ScheduleFollowUps,
-)
+from fighthealthinsurance import staff_views
 from django.views.decorators.debug import sensitive_post_parameters
 import os
 
@@ -56,18 +52,26 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
     path("timbit/charts/", include(("charts.urls", "charts"), namespace="charts")),
     path("timbit/admin/", admin.site.urls),
     path("", include("django_prometheus.urls")),
-    path("timbit/help/followup_sched", ScheduleFollowUps.as_view()),
+    path(
+        "timbit/help/followup_sched",
+        staff_member_required(staff_views.ScheduleFollowUps.as_view()),
+    ),
     path(
         "timbit/help/followup_sender_test",
-        staff_member_required(FollowUpEmailSenderView.as_view()),
+        staff_member_required(staff_views.FollowUpEmailSenderView.as_view()),
     ),
     path(
         "timbit/help/thankyou_sender_test",
-        staff_member_required(ThankyouSenderView.as_view()),
+        staff_member_required(staff_views.ThankyouSenderView.as_view()),
     ),
     path(
         "timbit/help/followup_fax_test",
-        staff_member_required(fax_views.FollowUpFaxSenderView.as_view()),
+        staff_member_required(staff_views.FollowUpFaxSenderView.as_view()),
+    ),
+    path(
+        "timbit/help/activate_pro",
+        staff_member_required(staff_views.ActivateProUserView.as_view()),
+        name="activate_pro",
     ),
     # Authentication
     path("v0/auth/", include("fhi_users.urls")),

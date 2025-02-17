@@ -206,3 +206,8 @@ class FollowUpForm(forms.Form):
         required=False,
         label="Optional: Any documents you wish to share",
     )
+
+
+# New form for activating pro users
+class ActivateProForm(forms.Form):
+    phonenumber = forms.CharField(required=True)

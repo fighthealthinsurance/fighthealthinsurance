@@ -14,64 +14,6 @@ from fighthealthinsurance.forms import FollowUpTestForm
 from fighthealthinsurance.models import Denial, FollowUpSched, InterestedProfessional
 
 
-class ScheduleFollowUps(View):
-    """A view to go through and schedule any missing follow ups."""
-
-    @method_decorator(staff_member_required)
-    def get(self, request):
-        denials = (
-            Denial.objects.filter(raw_email__isnull=False)
-            .filter(followupsched__isnull=True)
-            .iterator()
-        )
-        c = 0
-        for denial in denials:
-            # Shouldn't happen but makes the type checker happy.
-            if denial.raw_email is None:
-                continue
-            FollowUpSched.objects.create(
-                email=denial.raw_email,
-                follow_up_date=denial.date + datetime.timedelta(days=15),
-                denial_id=denial,
-            )
-            c = c + 1
-        return HttpResponse(str(c))
-
-
-class FollowUpEmailSenderView(generic.FormView):
-    """A view to test the follow up sender."""
-
-    template_name = "followup_test.html"
-    form_class = FollowUpTestForm
-
-    def form_valid(self, form):
-        s = FollowUpEmailSender()
-        field = form.cleaned_data.get("email")
-        try:
-            count = int(field)
-            sent = s.send_all(count=field)
-        except ValueError:
-            sent = s.dosend(email=field)
-        return HttpResponse(str(sent))
-
-
-class ThankyouSenderView(generic.FormView):
-    """A view to test the thankyou sender."""
-
-    template_name = "followup_test.html"
-    form_class = FollowUpTestForm
-
-    def form_valid(self, form):
-        s = ThankyouEmailSender()
-        field = form.cleaned_data.get("email")
-        try:
-            count = int(field)
-            sent = s.send_all(count=field)
-        except ValueError:
-            sent = s.dosend(email=field)
-        return HttpResponse(str(sent))
-
-
 class ThankyouEmailSender(object):
     def find_candidates(
         self,
