@@ -8,6 +8,7 @@ from django.contrib.auth.tokens import default_token_generator
 from django.contrib.sites.shortcuts import get_current_site
 from typing import TYPE_CHECKING
 from fhi_users.models import VerificationToken
+from django.utils.html import strip_tags
 
 if TYPE_CHECKING:
     from django.contrib.auth.models import User
@@ -47,8 +48,19 @@ def send_provider_started_appeal_email(patient_email, context):
     )
 
 
-def send_password_reset_email(user_email, context):
-    send_fallback_email("Password Reset", "password_reset", context, user_email)
+def send_password_reset_email(user_email: str, token: str) -> None:
+    """
+    Send password reset email with reset token.
+    """
+    subject = "Reset your password"
+    send_fallback_email(
+        subject,
+        "password_reset",
+        {
+            "reset_url": f"https://www.fightpaperwork.com/reset-password/finish?token={token}"
+        },
+        user_email,
+    )
 
 
 def send_email_confirmation(user_email, context):

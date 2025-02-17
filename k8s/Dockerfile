@@ -24,6 +24,7 @@ RUN export PATH=/root/.local/bin:$PATH && \
     uv pip install --system -r /opt/fighthealthinsurance/deploy-requirements.txt
 RUN mkdir -p /external_data
 # We copy static early ish since it could also be cached nicely
+# Remember to update the combined ray docker file for these copies
 ADD --chown=www-data:www-data static /opt/fighthealthinsurance/static
 ADD --chown=www-data:www-data fighthealthinsurance /opt/fighthealthinsurance/fighthealthinsurance
 ADD --chown=www-data:www-data fhi_users /opt/fighthealthinsurance/fhi_users

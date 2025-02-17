@@ -41,7 +41,7 @@ class TestEmails:
     def test_send_password_reset_email(self, context):
         send_password_reset_email("user@example.com", context)
         assert len(mail.outbox) == 1
-        assert mail.outbox[0].subject == "Password Reset"
+        assert mail.outbox[0].subject == "Reset your password"
 
     def test_send_email_confirmation(self, context):
         send_email_confirmation("user@example.com", context)

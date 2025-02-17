@@ -165,9 +165,9 @@ jobs:
 
   build-docker-ray-container:
     runs-on: ubuntu-latest
+    name: Build the docker ray containers
     strategy:
       fail-fast: false
-    name: Build the docker ray containers
     steps:
       -
         name: Checkout
@@ -177,6 +177,13 @@ jobs:
         # https://github.com/docker/setup-qemu-action
         name: Set up QEMU
         uses: docker/setup-qemu-action@v3
+      # We need python for collect static
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Install our build env
+        run:
+          pwd && uv venv build_venv --python python3.11 && source build_venv/bin/activate && uv pip install -r requirements.txt
       -
         name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3

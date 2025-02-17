@@ -17,6 +17,9 @@ RUN $HOME/anaconda3/bin/pip install --upgrade pip
 RUN $HOME/anaconda3/bin/pip install -r requirements.txt
 RUN $HOME/anaconda3/bin/pip install -r deploy-requirements.txt
 RUN mkdir -p ./fhi
+
 COPY fighthealthinsurance ./fhi/fighthealthinsurance
+COPY fhi_users ./fhi/fhi_users
+COPY  charts ./fhi/charts
 COPY setup.py ./fhi/setup.py
 RUN $HOME/anaconda3/bin/pip install -e ./fhi/

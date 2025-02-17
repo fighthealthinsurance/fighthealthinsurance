@@ -23,7 +23,7 @@ class AppealFileViewTest(TestCase):
         data = {
             "user_signup_info": {
                 "username": "newprouser_domain_admin",
-                "password": "newpass",
+                "password": "newLongerPasswordMagicCheetoCheeto123",
                 "email": "newprouser_domain_admin@example.com",
                 "first_name": "New",
                 "last_name": "User",
@@ -50,7 +50,7 @@ class AppealFileViewTest(TestCase):
         data = {
             "user_signup_info": {
                 "username": "newprouser_unrelated",
-                "password": "newpass",
+                "password": "newLongerPasswordMagicCheetoCheeto123",
                 "email": "newprouser_unrelated@example.com",
                 "first_name": "New",
                 "last_name": "User",
@@ -66,7 +66,7 @@ class AppealFileViewTest(TestCase):
         data = {
             "user_signup_info": {
                 "username": "newprouser_creator",
-                "password": "newpass",
+                "password": "newLongerPasswordMagicCheetoCheeto123",
                 "email": "newprouser_creator@example.com",
                 "first_name": "New",
                 "last_name": "User",
@@ -82,7 +82,7 @@ class AppealFileViewTest(TestCase):
         create_patient_url = reverse("create_patient_user-list")
         initial_patient_data = {
             "username": "newuserp1",
-            "password": "newpass",
+            "password": "newLongerPasswordMagicCheetoCheeto123",
             "email": "intiial_patient@example.com",
             "provider_phone_number": "1234567890",
             "country": "USA",
@@ -105,7 +105,7 @@ class AppealFileViewTest(TestCase):
         # Create a second patient user in the same domain (should not have access)
         second_patient_data = {
             "username": "newuserp2",
-            "password": "newpass",
+            "password": "newLongerPasswordMagicCheetoCheeto123",
             "email": "secondary_patient@example.com",
             "provider_phone_number": "1234567890",
             "country": "USA",
@@ -210,7 +210,10 @@ class AppealFileViewTest(TestCase):
 
     def test_appeal_file_view_authenticated_admin(self):
         # Check for the domain admin
-        self.do_login(username="newprouser_domain_admin", password="newpass")
+        self.do_login(
+            username="newprouser_domain_admin",
+            password="newLongerPasswordMagicCheetoCheeto123",
+        )
         response = self.client.get(
             reverse("appeal_file_view", kwargs={"appeal_uuid": self.appeal.uuid})
         )
@@ -219,21 +222,28 @@ class AppealFileViewTest(TestCase):
 
     def test_appeal_file_view_authenticated(self):
         # Check for self
-        self.do_login(username="newuserp1", password="newpass")
+        self.do_login(
+            username="newuserp1", password="newLongerPasswordMagicCheetoCheeto123"
+        )
         response = self.client.get(
             reverse("appeal_file_view", kwargs={"appeal_uuid": self.appeal.uuid})
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response["Content-Type"], "application/pdf")
         # Check for provider
-        self.do_login(username="newprouser_creator", password="newpass")
+        self.do_login(
+            username="newprouser_creator",
+            password="newLongerPasswordMagicCheetoCheeto123",
+        )
         response = self.client.get(
             reverse("appeal_file_view", kwargs={"appeal_uuid": self.appeal.uuid})
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response["Content-Type"], "application/pdf")
         # Secondary patient is not activated so they should not be able to see their appeal yet.
-        self.do_login(username="newuserp2", password="newpass")
+        self.do_login(
+            username="newuserp2", password="newLongerPasswordMagicCheetoCheeto123"
+        )
         response = self.client.get(
             reverse(
                 "appeal_file_view", kwargs={"appeal_uuid": self.secondary_appeal.uuid}
@@ -243,13 +253,18 @@ class AppealFileViewTest(TestCase):
 
     def test_appeal_file_view_authenticated_incorrect(self):
         # Check for different patient
-        self.do_login(username="newuserp2", password="newpass")
+        self.do_login(
+            username="newuserp2", password="newLongerPasswordMagicCheetoCheeto123"
+        )
         response = self.client.get(
             reverse("appeal_file_view", kwargs={"appeal_uuid": self.appeal.uuid})
         )
         self.assertEqual(response.status_code, 404)
         # For different non-domain admin provider
-        self.do_login(username="newprouser_unrelated", password="newpass")
+        self.do_login(
+            username="newprouser_unrelated",
+            password="newLongerPasswordMagicCheetoCheeto123",
+        )
         response = self.client.get(
             reverse("appeal_file_view", kwargs={"appeal_uuid": self.appeal.uuid})
         )

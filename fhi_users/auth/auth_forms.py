@@ -17,6 +17,18 @@ class TOTPForm(forms.Form):
     totp = forms.CharField(required=True)
 
 
-class PasswordResetForm(forms.Form):
+class RequestPasswordResetForm(forms.Form):
     username = forms.CharField(required=True)
-    domain = forms.CharField(required=True)
+    domain = forms.CharField(required=False)
+    phone = forms.CharField(required=False)
+
+
+class ChangePasswordForm(forms.Form):
+    old_password = forms.CharField(required=True)
+    new_password = forms.CharField(required=True)
+    confirm_new_password = forms.CharField(required=True)
+
+
+class FinishPasswordResetForm(forms.Form):
+    token = forms.CharField(required=True)
+    new_password = forms.CharField(required=True)

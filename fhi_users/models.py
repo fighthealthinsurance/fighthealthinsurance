@@ -159,3 +159,18 @@ class VerificationToken(models.Model):
             else:
                 self.expires_at = datetime.datetime.now() + datetime.timedelta(hours=24)
         super().save(*args, **kwargs)
+
+
+class ResetToken(models.Model):
+    user = models.OneToOneField(User, on_delete=models.CASCADE)
+    token = models.CharField(max_length=255, default=uuid.uuid4().hex)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+
+    def save(self, *args, **kwargs):
+        if not self.expires_at:
+            if self.created_at:
+                self.expires_at = self.created_at + datetime.timedelta(hours=24)
+            else:
+                self.expires_at = datetime.datetime.now() + datetime.timedelta(hours=24)
+        super().save(*args, **kwargs)

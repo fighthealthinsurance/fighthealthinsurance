@@ -165,7 +165,7 @@ class Procedures(models.Model):
     regex = RegexField(max_length=400, re_flags=re.IGNORECASE | re.UNICODE | re.M)
 
     def __str__(self):
-        return "{self.id}:{self.name}"
+        return f"{self.id}:{self.name}"
 
 
 class DenialTypes(models.Model):
@@ -231,7 +231,7 @@ class AppealTemplates(models.Model):
     appeal_text = models.TextField(max_length=3000, primary_key=False, blank=True)
 
     def __str__(self):
-        return "{self.id}:{self.name}"
+        return f"{self.id}:{self.name}"
 
 
 class DataSource(models.Model):
@@ -239,7 +239,7 @@ class DataSource(models.Model):
     name = models.CharField(max_length=100)
 
     def __str__(self):
-        return "{self.id}:{self.name}"
+        return f"{self.id}:{self.name}"
 
 
 class PlanDocuments(models.Model):

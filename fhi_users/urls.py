@@ -6,10 +6,10 @@ import mfa.TrustedDevice
 from fhi_users.auth import rest_auth_views
 from fhi_users.auth import auth_views
 from fhi_users.auth.rest_auth_views import (
-    ResendVerificationEmailView,
     RestLoginView,
     CreatePatientUserViewSet,
     VerifyEmailViewSet,
+    PasswordResetViewSet,
 )
 from rest_framework import routers
 
@@ -29,11 +29,7 @@ router.register(
     r"api/create_patient_user", CreatePatientUserViewSet, basename="create_patient_user"
 )
 router.register(r"rest_verify_email", VerifyEmailViewSet, basename="rest_verify_email")
-router.register(
-    r"resend_verification_email",
-    ResendVerificationEmailView,
-    basename="resend_verification_email",
-)
+router.register(r"password_reset", PasswordResetViewSet, basename="password_reset")
 
 urlpatterns = [
     # Rest APIs served under here
