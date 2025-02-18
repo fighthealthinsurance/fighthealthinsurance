@@ -398,8 +398,11 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     reference_summary = models.TextField(primary_key=False, null=True, blank=True)
     appeal_fax_number = models.CharField(max_length=40, null=True, blank=True)
     your_state = models.CharField(max_length=40, null=True)
+    creating_professional = models.ForeignKey(
+        ProfessionalUser, null=True, on_delete=models.SET_NULL, related_name="denials_created"
+    )
     primary_professional = models.ForeignKey(
-        ProfessionalUser, null=True, on_delete=models.SET_NULL
+        ProfessionalUser, null=True, on_delete=models.SET_NULL, related_name="denials_primary"
     )
     patient_user = models.ForeignKey(PatientUser, null=True, on_delete=models.SET_NULL)
     domain = models.ForeignKey(UserDomain, null=True, on_delete=models.SET_NULL)
@@ -430,6 +433,7 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
             # Appeals they created
             professional_user = ProfessionalUser.objects.get(user=current_user)
             query_set |= Denial.objects.filter(primary_professional=professional_user)
+            query_set |= Denial.objects.filter(creating_professional=professional_user)
             # Appeals they were add to.
             additional = SecondaryDenialProfessionalRelation.objects.filter(
                 professional=professional_user
@@ -490,8 +494,11 @@ class Appeal(ExportModelOperationsMixin("Appeal"), models.Model):  # type: ignor
         Denial, on_delete=models.CASCADE, null=True, blank=True
     )
     hashed_email = models.CharField(max_length=300, primary_key=False)
+    creating_professional = models.ForeignKey(
+        ProfessionalUser, null=True, on_delete=models.SET_NULL, related_name="appeals_created"
+    )
     primary_professional = models.ForeignKey(
-        ProfessionalUser, null=True, on_delete=models.SET_NULL
+        ProfessionalUser, null=True, on_delete=models.SET_NULL, related_name="appeals_primary"
     )
     patient_user = models.ForeignKey(PatientUser, null=True, on_delete=models.SET_NULL)
     domain = models.ForeignKey(UserDomain, null=True, on_delete=models.SET_NULL)
@@ -525,6 +532,7 @@ class Appeal(ExportModelOperationsMixin("Appeal"), models.Model):  # type: ignor
             # Appeals they created
             professional_user = ProfessionalUser.objects.get(user=current_user)
             query_set |= Appeal.objects.filter(primary_professional=professional_user)
+            query_set |= Appeal.objects.filter(creating_professional=professional_user)
             # Appeals they were add to.
             additional_appeals = SecondaryAppealProfessionalRelation.objects.filter(
                 professional=professional_user

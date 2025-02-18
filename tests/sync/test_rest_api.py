@@ -5,6 +5,7 @@ from asgiref.sync import sync_to_async, async_to_sync
 import pytest
 from channels.testing import WebsocketCommunicator
 
+import typing
 
 import hashlib
 import os
@@ -13,16 +14,22 @@ import sys
 import json
 
 from django.urls import reverse
+from django.contrib.auth import get_user_model
+
 
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from fighthealthinsurance.models import Denial
+from fighthealthinsurance.models import Denial, UserDomain, ExtraUserProperties, ProfessionalUser
 from fighthealthinsurance.websockets import (
     StreamingEntityBackend,
     StreamingAppealsBackend,
 )
 
+if typing.TYPE_CHECKING:
+    from django.contrib.auth.models import User
+else:
+    User = get_user_model()
 
 class Delete(APITestCase):
     """Test just the delete API."""
@@ -56,7 +63,38 @@ class DenialLongEmployerName(APITestCase):
 
     fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
 
+    def setUp(self):
+        self.domain = UserDomain.objects.create(
+            name="testdomain",
+            visible_phone_number="1234567890",
+            internal_phone_number="0987654321",
+            active=True,
+            display_name="Test Domain",
+            country="USA",
+            state="CA",
+            city="Test City",
+            address1="123 Test St",
+            zipcode="12345",
+        )
+        self.user = User.objects.create_user(
+            username=f"testuser🐼{self.domain.id}",
+            password="testpass",
+            email="test@example.com",
+        )
+        self.username = f"testuser🐼{self.domain.id}"
+        self.password = "testpass"
+        self.prouser = ProfessionalUser.objects.create(
+            user=self.user, active=True, npi_number="1234567890"
+        )
+        self.user.is_active = True
+        self.user.save()
+        ExtraUserProperties.objects.create(user=self.user, email_verified=True)
+
     def test_long_employer_name(self):
+        # Now we need to log in
+        login_result = self.client.login(
+            username=self.username,
+            password=self.password)
         denial_text = "Group Name: "
         for a in range(0, 300):
             denial_text += str(a)
@@ -95,8 +133,39 @@ class DenialEndToEnd(APITestCase):
 
     fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
 
+    def setUp(self):
+        self.domain = UserDomain.objects.create(
+            name="testdomain",
+            visible_phone_number="1234567890",
+            internal_phone_number="0987654321",
+            active=True,
+            display_name="Test Domain",
+            country="USA",
+            state="CA",
+            city="Test City",
+            address1="123 Test St",
+            zipcode="12345",
+        )
+        self.user = User.objects.create_user(
+            username=f"testuser🐼{self.domain.id}",
+            password="testpass",
+            email="test@example.com",
+        )
+        self.username = f"testuser🐼{self.domain.id}"
+        self.password = "testpass"
+        self.prouser = ProfessionalUser.objects.create(
+            user=self.user, active=True, npi_number="1234567890"
+        )
+        self.user.is_active = True
+        self.user.save()
+        ExtraUserProperties.objects.create(user=self.user, email_verified=True)
+
     @pytest.mark.asyncio
     async def test_denial_end_to_end(self):
+        login_result = await sync_to_async(self.client.login)(
+            username=self.username,
+            password=self.password)
+        self.assertTrue(login_result)
         url = reverse("denials-list")
         email = "timbit@fighthealthinsurance.com"
         hashed_email = Denial.get_hashed_email(email)

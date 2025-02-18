@@ -150,6 +150,25 @@ class AcceptProfessionalUserSerializer(serializers.Serializer):
     domain_id = serializers.CharField()
 
 
+class ProfessionalSummary(serializers.Serializer):
+    """
+    Serializer for professional user summary.
+    """
+
+    professional_user_id = serializers.IntegerField(read_only=True)
+    npi = serializers.CharField(read_only=True)
+    name = serializers.CharField(read_only=True)
+
+    def to_representation(self, instance):
+        # instance is a ProfessionalUser
+        user: User = instance.user
+        return {
+            "professional_user_id": instance.id,
+            "npi": instance.npi_number if instance.npi_number else "",
+            "name": f"{user.first_name} {user.last_name}",
+        }
+
+
 class VerificationTokenSerializer(serializers.Serializer):
     """
     Verifies email activation or password reset tokens for a specific user.

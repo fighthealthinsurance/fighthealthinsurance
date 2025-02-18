@@ -192,7 +192,9 @@ class AppealAssemblyHelper:
         denial: Optional[Denial] = None,
         denial_id: Optional[str] = None,
         semi_sekret: Optional[str] = None,
-        professional: Optional[ProfessionalUser] = None,
+        creating_professional: Optional[ProfessionalUser] = None,
+        primary_professional: Optional[ProfessionalUser] = None,
+        patient_user: Optional[PatientUser] = None,
         domain: Optional[UserDomain] = None,
         patient_address: Optional[str] = None,
         patient_fax: Optional[str] = None,
@@ -216,18 +218,16 @@ class AppealAssemblyHelper:
             raise Exception("No denial ID or denial provided.")
         # Build our cover page
         professional_name: Optional[str] = None
-        if professional:
-            professional_name = (
-                f"{professional.user.first_name} {professional.user.last_name}"
-            )
+        if primary_professional:
+            professional_name = f"{primary_professional.user.first_name} {primary_professional.user.last_name}"
         # Get the reply fax number
         professional_fax_number: Optional[str] = None
         if (
-            professional
-            and professional.fax_number is not None
-            and len(professional.fax_number) > 5
+            primary_professional
+            and primary_professional.fax_number is not None
+            and len(primary_professional.fax_number) > 5
         ):
-            professional_fax_number = professional.fax_number
+            professional_fax_number = primary_professional.fax_number
         elif domain and domain.office_fax:
             professional_fax_number = domain.office_fax
         hashed_email = Denial.get_hashed_email(email)
@@ -268,7 +268,9 @@ class AppealAssemblyHelper:
                 appeal_text=completed_appeal_text,
                 hashed_email=hashed_email,
                 document_enc=File(t, name=doc_fname),
-                primary_professional=professional,
+                primary_professional=primary_professional,
+                creating_professional=creating_professional,
+                patient_user=patient_user,
             )
             appeal.save()
             return appeal
@@ -712,6 +714,9 @@ class DenialCreatorHelper:
         use_external_models=False,
         store_raw_email=False,
         plan_documents=None,
+        creating_professional: Optional[ProfessionalUser] = None,
+        primary_professional: Optional[ProfessionalUser] = None,
+        patient_user: Optional[PatientUser] = None,
     ):
         hashed_email = Denial.get_hashed_email(email)
         # If they ask us to store their raw e-mail we do
@@ -727,6 +732,9 @@ class DenialCreatorHelper:
                 use_external=use_external_models,
                 raw_email=possible_email,
                 health_history=health_history,
+                creating_professional=creating_professional,
+                primary_professional=primary_professional,
+                patient_user=patient_user,
             )
         except Exception as e:
             # This is a temporary hack to drop non-ASCII characters

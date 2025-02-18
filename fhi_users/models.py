@@ -33,7 +33,7 @@ class UserDomain(models.Model):
     )
     active = models.BooleanField()
     display_name = models.CharField(max_length=300, null=False)
-    professionals = models.ManyToManyField("ProfessionalUser", through="ProfessionalDomainRelation") # type: ignore
+    professionals = models.ManyToManyField("ProfessionalUser", through="ProfessionalDomainRelation")  # type: ignore
     # The visible phone number should be unique... ish? Maybe?
     # We _could_ allow users to log in with visible phone number IFF
     # it's unique among active domains. We're going to TRY and have it
@@ -53,6 +53,17 @@ class UserDomain(models.Model):
         primary_key=False, blank=False, null=True, max_length=300, unique=False
     )
     cover_template_string = models.CharField(max_length=5000, null=True)
+
+    def get_professional_users(self, **relation_filters):
+        from .models import (
+            ProfessionalDomainRelation,
+        )  # local import to avoid circular dependencies
+
+        relations = ProfessionalDomainRelation.objects.filter(
+            domain=self, **relation_filters
+        )
+        return [relation.professional for relation in relations]
+
     # Maybe include:
     # List of common procedures
     # Common appeal templates
@@ -103,8 +114,7 @@ class ProfessionalUser(models.Model):
     most_common_denial = models.CharField(blank=True, null=True, max_length=300)
     # Override the professional domain fax number
     fax_number = models.CharField(blank=True, null=True, max_length=40)
-    domains = models.ManyToManyField("UserDomain", through="ProfessionalDomainRelation") # type: ignore
-
+    domains = models.ManyToManyField("UserDomain", through="ProfessionalDomainRelation")  # type: ignore
 
     def admin_domains(self):
         return UserDomain.objects.filter(
@@ -166,7 +176,7 @@ class VerificationToken(models.Model):
 
 class ResetToken(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE)
-    token = models.CharField(max_length=255, default=uuid.uuid4().hex)
+    token = models.CharField(max_length=255, default=uuid.uuid4)
     created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField()
 

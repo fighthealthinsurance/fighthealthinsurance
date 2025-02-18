@@ -24,6 +24,8 @@ from django.utils import timezone
 from django.template.loader import render_to_string
 from django.contrib.sites.shortcuts import get_current_site
 from django.contrib.auth.tokens import default_token_generator
+from django.shortcuts import get_object_or_404
+
 
 import stripe
 
@@ -76,6 +78,41 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         else:
             permission_classes = []
         return [permission() for permission in permission_classes]
+
+    @action(detail=False, methods=["post"])
+    def list_active_in_domain(self, request) -> Response:
+        domain_id = request.session["domain_id"]
+        domain = UserDomain.objects.get(id=domain_id)
+        # Ensure current user is an active professional in domain
+        current_user: User = request.user
+        professional_user = ProfessionalUser.objects.get(user=current_user)
+        get_object_or_404(
+            ProfessionalDomainRelation.objects.filter(
+                professional=ProfessionalUser.objects.get(user=current_user),
+                domain=domain,
+                active=True,
+            )
+        )
+        professionals = domain.get_professional_users(active=True)
+        serializer = serializers.ProfessionalSummary(professionals, many=True)
+        return Response({"active_professionals": serializer.data})
+
+    @action(detail=False, methods=["post"])
+    def list_pending_in_domain(self, request) -> Response:
+        domain_id = request.session["domain_id"]
+        domain = UserDomain.objects.get(id=domain_id)
+        # Ensure current user is active in domain
+        current_user: User = request.user
+        get_object_or_404(
+            ProfessionalDomainRelation.objects.filter(
+                professional=ProfessionalUser.objects.get(user=current_user),
+                domain=domain,
+                active=True,
+            )
+        )
+        professionals = domain.get_professional_users(pending=True)
+        serializer = serializers.ProfessionalSummary(professionals, many=True)
+        return Response({"pending_professionals": serializer.data})
 
     @action(detail=False, methods=["post"])
     def reject(self, request) -> Response:

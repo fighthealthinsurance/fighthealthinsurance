@@ -78,10 +78,17 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
     serializer_class = serializers.DenialFormSerializer
 
     def perform_create(self, request: Request, serializer):
+        current_user: User = request.user  # type: ignore
+        creating_professional = ProfessionalUser.objects.get(user=current_user)
         serializer = self.deserialize(data=request.data)
         serializer.is_valid(raise_exception=True)
+        if "primary_professional" in serializer.validated_data and serializer.validated_data["primary_professional"] is not None:
+            primary_professional = ProfessionalUser.objects.get(
+                id=serializer.validated_data["primary_professional"]
+            )
+            serializer.validated_data["primary_professional"] = primary_professional
         denial = common_view_logic.DenialCreatorHelper.create_denial(
-            **serializer.validated_data
+            creating_professional=creating_professional, **serializer.validated_data
         )
 
         return serializers.DenialResponseInfoSerializer(instance=denial)
@@ -219,16 +226,15 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
             email=current_user.email,
             include_provided_health_history=include_provided_health_history,
             denial=denial,
-            professional=denial.primary_professional,
+            primary_professional=denial.primary_professional,
+            creating_professional=denial.creating_professional,
             domain=user_domain,
             cover_template_path="faxes/fpw_cover.html",
             cover_template_string=user_domain.cover_template_string or None,
             company_phone_number="202-938-3266",
             company_fax_number="415-840-7591",
+            patient_user=denial.patient_user.get(),
         )
-        appeal.primary_professional = denial.primary_professional
-        appeal.domain = user_domain
-        appeal.patient_user = denial.patient_user
         appeal.save()
         return Response(
             serializers.AssembleAppealResponseSerializer({"appeal_id": appeal.id}),
