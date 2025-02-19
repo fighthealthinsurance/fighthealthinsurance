@@ -29,7 +29,7 @@ from fighthealthinsurance.forms import questions as question_forms
 from fighthealthinsurance.utils import interleave_iterator_for_keep_alive
 from fhi_users.models import ProfessionalUser, UserDomain
 from .pubmed_tools import PubMedTools
-from .utils import check_call
+from .utils import check_call, send_fallback_email
 
 appealGenerator = AppealGenerator()
 
@@ -180,7 +180,7 @@ class AppealAssemblyHelper:
         merger.close()
         return target
 
-    def create_appeal(
+    def create_or_update_appeal(
         self,
         fax_phone: str,
         completed_appeal_text: str,
@@ -192,6 +192,7 @@ class AppealAssemblyHelper:
         denial: Optional[Denial] = None,
         denial_id: Optional[str] = None,
         semi_sekret: Optional[str] = None,
+        appeal: Optional[Appeal] = None,
         creating_professional: Optional[ProfessionalUser] = None,
         primary_professional: Optional[ProfessionalUser] = None,
         patient_user: Optional[PatientUser] = None,
@@ -263,15 +264,26 @@ class AppealAssemblyHelper:
             t.flush()
             t.seek(0)
             doc_fname = os.path.basename(t.name)
-            appeal = Appeal.objects.create(
-                for_denial=denial,
-                appeal_text=completed_appeal_text,
-                hashed_email=hashed_email,
-                document_enc=File(t, name=doc_fname),
-                primary_professional=primary_professional,
-                creating_professional=creating_professional,
-                patient_user=patient_user,
-            )
+            if appeal is None:
+                appeal = Appeal.objects.create(
+                    for_denial=denial,
+                    appeal_text=completed_appeal_text,
+                    hashed_email=hashed_email,
+                    document_enc=File(t, name=doc_fname),
+                    primary_professional=primary_professional,
+                    creating_professional=creating_professional,
+                    patient_user=patient_user,
+                )
+            else:
+                appeal.update(
+                    for_denial=denial,
+                    appeal_text=completed_appeal_text,
+                    hashed_email=hashed_email,
+                    document_enc=File(t, name=doc_fname),
+                    primary_professional=primary_professional,
+                    creating_professional=creating_professional,
+                    patient_user=patient_user,
+                )
             appeal.save()
             return appeal
 
@@ -660,12 +672,59 @@ class DenialResponseInfo:
     selected_denial_type: list[DenialTypes]
     all_denial_types: list[DenialTypes]
     denial_id: int
+    uuid: str
     your_state: Optional[str]
     procedure: Optional[str]
     diagnosis: Optional[str]
     employer_name: Optional[str]
     semi_sekret: str
     appeal_fax_number: Optional[str]
+
+
+class PatientNotificationHelper:
+    @classmethod
+    def send_signup_invitation(
+        cls, email: str, professional_name: Optional[str], practice_number: str
+    ):
+        subject = "Welcome to Fight Paperwork"
+        if professional_name:
+            subject += " from {professional_name}"
+        return send_fallback_email(
+            subject=subject,
+            template_name="welcome_patient",
+            context={"practice_number": practice_number},
+            to_email=email,
+        )
+
+    @classmethod
+    def notify_of_draft_appeal(
+        cls, email: str, professional_name: Optional[str], practice_number: str
+    ):
+        subject = "Draft Appeal on Fight Paperwork"
+        if professional_name:
+            subject += " from {professional_name}"
+        return send_fallback_email(
+            subject=subject,
+            template_name="draft_appeal",
+            context={"practice_number": practice_number},
+            to_email=email,
+        )
+
+
+class ProfessionalNotificationHelper:
+    @classmethod
+    def send_signup_invitation(
+        cls, email: str, professional_name: str, practice_number: str
+    ):
+        return send_fallback_email(
+            subject="You are invited to join your coworker on Fight Paperwork",
+            template_name="welcome_professional",
+            context={
+                "professional_name": professional_name,
+                "practice_number": practice_number,
+            },
+            to_email=email,
+        )
 
 
 class DenialCreatorHelper:
@@ -918,6 +977,7 @@ class DenialCreatorHelper:
         return DenialResponseInfo(
             selected_denial_type=denial.denial_type.all(),
             all_denial_types=cls.all_denial_types(),
+            uuid=denial.uuid,
             denial_id=denial.denial_id,
             your_state=denial.your_state,
             procedure=denial.procedure,

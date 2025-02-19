@@ -1,6 +1,3 @@
-from django.core.mail import send_mail
-from django.core.mail import EmailMultiAlternatives
-from django.template.loader import render_to_string
 from django.conf import settings
 from django.utils.http import urlsafe_base64_encode
 from django.utils.encoding import force_bytes
@@ -8,35 +5,11 @@ from django.contrib.auth.tokens import default_token_generator
 from django.contrib.sites.shortcuts import get_current_site
 from typing import TYPE_CHECKING
 from fhi_users.models import VerificationToken
+from fighthealthinsurance.utils import send_fallback_email
 from django.utils.html import strip_tags
 
 if TYPE_CHECKING:
     from django.contrib.auth.models import User
-
-
-def send_fallback_email(subject, template_name, context, to_email):
-    # First, render the plain text content if present
-    text_content = render_to_string(
-        f"emails/{template_name}.txt",
-        context=context,
-    )
-
-    # Secondly, render the HTML content if present
-    html_content = render_to_string(
-        f"emails/{template_name}.html",
-        context=context,
-    )
-    # Then, create a multipart email instance.
-    msg = EmailMultiAlternatives(
-        subject,
-        text_content,
-        settings.EMAIL_HOST_USER,
-        [to_email],
-    )
-
-    # Lastly, attach the HTML content to the email instance and send.
-    msg.attach_alternative(html_content, "text/html")
-    msg.send()
 
 
 def send_provider_started_appeal_email(patient_email, context):

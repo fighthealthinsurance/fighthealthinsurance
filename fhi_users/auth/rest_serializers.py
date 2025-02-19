@@ -118,13 +118,20 @@ class ProfessionalSignupSerializer(serializers.ModelSerializer):
 
     user_signup_info = UserSignupSerializer()
     make_new_domain = serializers.BooleanField()
+    skip_stripe = serializers.BooleanField(default=False)
     # If they're joining an existing domain user_domain *MUST NOT BE POPULATED*
     user_domain = UserDomainSerializer(required=False)
     npi_number = serializers.CharField(required=False, allow_blank=True)
 
     class Meta(object):
         model = ProfessionalUser
-        fields = ["npi_number", "make_new_domain", "user_signup_info", "user_domain"]
+        fields = [
+            "npi_number",
+            "make_new_domain",
+            "user_signup_info",
+            "user_domain",
+            "skip_stripe",
+        ]
 
     def validate_npi_number(self, value):
         # Only validate if a value is provided
@@ -176,6 +183,22 @@ class VerificationTokenSerializer(serializers.Serializer):
 
     token = serializers.CharField()
     user_id = serializers.IntegerField()
+
+
+class GetOrCreatePendingPatientSerializer(serializers.Serializer):
+    """
+    Handles pending patient user creation
+    """
+
+    username = serializers.CharField()
+
+
+class PatientReferenceSerializer(serializers.Serializer):
+    """
+    Return the patient id
+    """
+
+    id = serializers.IntegerField()
 
 
 class CreatePatientUserSerializer(serializers.ModelSerializer):

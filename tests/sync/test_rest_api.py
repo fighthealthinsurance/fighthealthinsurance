@@ -20,7 +20,12 @@ from django.contrib.auth import get_user_model
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from fighthealthinsurance.models import Denial, UserDomain, ExtraUserProperties, ProfessionalUser
+from fighthealthinsurance.models import (
+    Denial,
+    UserDomain,
+    ExtraUserProperties,
+    ProfessionalUser,
+)
 from fighthealthinsurance.websockets import (
     StreamingEntityBackend,
     StreamingAppealsBackend,
@@ -30,6 +35,7 @@ if typing.TYPE_CHECKING:
     from django.contrib.auth.models import User
 else:
     User = get_user_model()
+
 
 class Delete(APITestCase):
     """Test just the delete API."""
@@ -92,9 +98,7 @@ class DenialLongEmployerName(APITestCase):
 
     def test_long_employer_name(self):
         # Now we need to log in
-        login_result = self.client.login(
-            username=self.username,
-            password=self.password)
+        login_result = self.client.login(username=self.username, password=self.password)
         denial_text = "Group Name: "
         for a in range(0, 300):
             denial_text += str(a)
@@ -163,8 +167,8 @@ class DenialEndToEnd(APITestCase):
     @pytest.mark.asyncio
     async def test_denial_end_to_end(self):
         login_result = await sync_to_async(self.client.login)(
-            username=self.username,
-            password=self.password)
+            username=self.username, password=self.password
+        )
         self.assertTrue(login_result)
         url = reverse("denials-list")
         email = "timbit@fighthealthinsurance.com"

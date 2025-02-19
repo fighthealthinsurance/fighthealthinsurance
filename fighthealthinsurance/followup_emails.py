@@ -12,6 +12,7 @@ from django.views import View, generic
 
 from fighthealthinsurance.forms import FollowUpTestForm
 from fighthealthinsurance.models import Denial, FollowUpSched, InterestedProfessional
+from fighthealthinsurance.utils import send_fallback_email
 
 
 class ThankyouEmailSender(object):
@@ -43,32 +44,16 @@ class ThankyouEmailSender(object):
         context = {
             "name": interested_pro.name,
         }
-        # First, render the plain text content.
-        text_content = render_to_string(
-            "emails/professional_thankyou.txt",
-            context=context,
-        )
 
-        # Secondly, render the HTML content.
-        html_content = render_to_string(
-            "emails/professional_thankyou.html",
-            context=context,
-        )
-
-        # Then, create a multipart email instance.
-        msg = EmailMultiAlternatives(
-            "Thank you for signing up for Fight Health Insurance Pro Beta!",
-            text_content,
-            "support42@fighthealthinsurance.com",
-            [email],
-        )
-
-        # Lastly, attach the HTML content to the email instance and send.
-        msg.attach_alternative(html_content, "text/html")
-        interested_pro.thankyou_email_sent = True
-        interested_pro.save()
         try:
-            msg.send()
+            send_fallback_email(
+                template_name="professional_thankyou",
+                subject="Thank you for signing up for Fight Health Insurance Pro Beta!",
+                context=context,
+                to_email=email,
+            )
+            interested_pro.thankyou_email_sent = True
+            interested_pro.save()
             return True
         except:
             return False
@@ -118,30 +103,13 @@ class FollowUpEmailSender(object):
             ),
         }
 
-        # First, render the plain text content.
-        text_content = render_to_string(
-            "emails/followup.txt",
-            context=context,
-        )
-
-        # Secondly, render the HTML content.
-        html_content = render_to_string(
-            "emails/followup.html",
-            context=context,
-        )
-
-        # Then, create a multipart email instance.
-        msg = EmailMultiAlternatives(
-            "Following up from Fight Health Insurance",
-            text_content,
-            "support42@fighthealthinsurance.com",
-            [email],
-        )
-
-        # Lastly, attach the HTML content to the email instance and send.
-        msg.attach_alternative(html_content, "text/html")
         try:
-            msg.send()
+            send_fallback_email(
+                template_name="followup",
+                subject="Following up from Fight Health Insurance",
+                context=context,
+                to_email=email,
+            )
             follow_up_sched.follow_up_sent = True
             follow_up_sched.save()
             return True

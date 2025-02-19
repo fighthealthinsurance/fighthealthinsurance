@@ -58,7 +58,9 @@ class StageFaxView(generic.FormView):
         form_data["company_name"] = (
             "Fight Health Insurance -- a service of Totally Legit Co"
         )
-        appeal = common_view_logic.AppealAssemblyHelper().create_appeal(**form_data)
+        appeal = common_view_logic.AppealAssemblyHelper().create_or_update_appeal(
+            **form_data
+        )
         staged = common_view_logic.SendFaxHelper.stage_appeal_as_fax(
             appeal=appeal, email=form_data["email"]
         )

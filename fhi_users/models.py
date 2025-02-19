@@ -100,8 +100,15 @@ class PatientUser(models.Model):
     id = models.AutoField(primary_key=True)
     user = models.OneToOneField(User, on_delete=models.CASCADE)
     active = models.BooleanField(default=False)
+    display_name = models.CharField(max_length=300, null=True)
 
-    def get_full_name(self) -> str:
+    def get_display_name(self) -> str:
+        if self.display_name and len(self.display_name) > 1:
+            return self.display_name
+        else:
+            return self.get_legal_name()
+
+    def get_legal_name(self) -> str:
         return f"{self.user.first_name} {self.user.last_name}"
 
 
@@ -115,6 +122,13 @@ class ProfessionalUser(models.Model):
     # Override the professional domain fax number
     fax_number = models.CharField(blank=True, null=True, max_length=40)
     domains = models.ManyToManyField("UserDomain", through="ProfessionalDomainRelation")  # type: ignore
+    display_name = models.CharField(max_length=400, null=True)
+
+    def get_display_name(self):
+        if self.display_name and len(self.display_name) > 0:
+            return self.display_name
+        else:
+            return f"{self.user.first_name} {self.user.last_name}"
 
     def admin_domains(self):
         return UserDomain.objects.filter(
@@ -131,7 +145,6 @@ class ProfessionalDomainRelation(models.Model):
     active = models.BooleanField(default=False)
     admin = models.BooleanField(default=False)
     read_only = models.BooleanField(default=False)
-    display_name = models.CharField(max_length=400, null=True)
     professional_type = models.CharField(max_length=400, null=True)
     pending = models.BooleanField(default=True)
     suspended = models.BooleanField(default=False)
@@ -161,7 +174,7 @@ class ExtraUserProperties(models.Model):
 
 class VerificationToken(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE)
-    token = models.CharField(max_length=255)
+    token = models.CharField(max_length=255, default=uuid.uuid4)
     created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField()
 

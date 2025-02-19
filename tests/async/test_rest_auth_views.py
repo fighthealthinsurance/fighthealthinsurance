@@ -8,6 +8,7 @@ from django.utils.encoding import force_bytes
 from django.contrib.auth.tokens import default_token_generator
 from django.core import mail
 from django.utils import timezone
+from unittest import mock
 
 from rest_framework.test import APIClient
 from rest_framework import status
@@ -41,9 +42,10 @@ class RestAuthViewsTests(TestCase):
             address1="123 Test St",
             zipcode="12345",
         )
+        self.user_password = "testpass"
         self.user = User.objects.create_user(
             username=f"testuser🐼{self.domain.id}",
-            password="testpass",
+            password=self.user_password,
             email="test@example.com",
         )
         self.user.is_active = True
@@ -109,7 +111,7 @@ class RestAuthViewsTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
     def test_create_patient_user_view(self) -> None:
-        url = reverse("create_patient_user-list")
+        url = reverse("patient_user-list")
         data = {
             "username": "newuser",
             "password": "newLongerPasswordMagicCheetoCheeto123",
@@ -132,6 +134,32 @@ class RestAuthViewsTests(TestCase):
         self.assertFalse(new_user_user_extra_properties.email_verified)
         self.assertIsNotNone(UserContactInfo.objects.get(user=new_user))
         self.assertIsNotNone(PatientUser.objects.get(user=new_user))
+        # Make sure they can't login yet
+        self.assertFalse(
+            self.client.login(
+                username=new_user.username,
+                password="newLongerPasswordMagicCheetoCheeto123",
+            )
+        )
+        # Then make sure they can log in post verification
+        verify_url = reverse("rest_verify_email-verify")
+        print(f"Making verification for {new_user} w/pk {new_user.pk}")
+        verify_data = {
+            "token": VerificationToken.objects.get(user=new_user).token,
+            "user_id": new_user.pk,
+        }
+        response = self.client.post(verify_url, verify_data, format="json")
+        self.assertIn(response.status_code, range(200, 300))
+        new_user.refresh_from_db()
+        self.assertTrue(new_user.is_active)
+        new_user_user_extra_properties = ExtraUserProperties.objects.get(user=new_user)
+        self.assertTrue(new_user_user_extra_properties.email_verified)
+        self.assertTrue(
+            self.client.login(
+                username=new_user.username,
+                password="newLongerPasswordMagicCheetoCheeto123",
+            )
+        )
 
     def test_verify_email_view(self) -> None:
         url = reverse("rest_verify_email-verify")
@@ -151,7 +179,7 @@ class RestAuthViewsTests(TestCase):
         self.assertTrue(new_user_user_extra_properties.email_verified)
 
     def test_send_verification_email_after_user_creation(self) -> None:
-        url = reverse("create_patient_user-list")
+        url = reverse("patient_user-list")
         data = {
             "username": "newuser",
             "password": "newLongerPasswordMagicCheetoCheeto123",
@@ -177,6 +205,12 @@ class RestAuthViewsTests(TestCase):
 
     def test_email_confirmation_with_verification_token(self) -> None:
         url = reverse("rest_verify_email-verify")
+        self.user.is_active = False
+        self.user.save()
+        # Verify the user can not login until verification
+        self.assertFalse(
+            self.client.login(username=self.user.username, password=self.user_password)
+        )
         VerificationToken.objects.create(
             user=self.user, token=default_token_generator.make_token(self.user)
         )
@@ -190,6 +224,10 @@ class RestAuthViewsTests(TestCase):
         self.assertTrue(self.user.is_active)
         new_user_user_extra_properties = ExtraUserProperties.objects.get(user=self.user)
         self.assertTrue(new_user_user_extra_properties.email_verified)
+        # Verify the user can login now
+        self.assertTrue(
+            self.client.login(username=self.user.username, password=self.user_password)
+        )
 
     def test_email_confirmation_with_invalid_token(self) -> None:
         url = reverse("rest_verify_email-verify")
@@ -385,3 +423,111 @@ class RestAuthViewsTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(response.json()["status"], "failure")
         self.assertEqual(response.json()["message"], "Reset token has expired")
+
+    def test_rest_login_view_with_nonexistent_domain(self) -> None:
+        url = reverse("rest_login-login")
+        data = {
+            "username": "testuser",
+            "password": "testpass",
+            "domain": "nonexistentdomain",
+            "phone": "",
+        }
+        response = self.client.post(url, data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.json()["status"], "failure")
+
+    def test_rest_login_view_with_invalid_phone(self) -> None:
+        url = reverse("rest_login-login")
+        data = {
+            "username": "testuser",
+            "password": "testpass",
+            "domain": "",
+            "phone": "9999999999",
+        }
+        response = self.client.post(url, data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.json()["status"], "failure")
+
+    def test_rest_login_view_with_inactive_user(self) -> None:
+        self.user.is_active = False
+        self.user.save()
+        url = reverse("rest_login-login")
+        data = {
+            "username": "testuser",
+            "password": "testpass",
+            "domain": "testdomain",
+            "phone": "",
+        }
+        response = self.client.post(url, data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_verify_email_with_nonexistent_user(self) -> None:
+        url = reverse("rest_verify_email-verify")
+        data = {
+            "token": "sometoken",
+            "user_id": 99999,
+        }
+        response = self.client.post(url, data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.json()["status"], "failure")
+
+    def test_verify_email_without_token(self) -> None:
+        url = reverse("rest_verify_email-verify")
+        data = {"user_id": self.user.pk}
+        response = self.client.post(url, data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_create_professional_user_without_required_fields(self) -> None:
+        url = reverse("professional_user-list")
+        data = {
+            "user_signup_info": {
+                "username": "newprouser4",
+                "password": "newLongerPasswordMagicCheetoCheeto123",
+            },
+            "make_new_domain": True,
+            "user_domain": {
+                "name": "newdomain2",
+            },
+        }
+        response = self.client.post(url, data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_create_professional_user_with_invalid_email(self) -> None:
+        url = reverse("professional_user-list")
+        data = {
+            "user_signup_info": {
+                "username": "newprouser5",
+                "password": "newLongerPasswordMagicCheetoCheeto123",
+                "email": "invalid-email",
+                "first_name": "New",
+                "last_name": "User",
+                "domain_name": "newdomain3",
+                "visible_phone_number": "1234567893",
+                "continue_url": "http://example.com/continue",
+            },
+            "make_new_domain": True,
+            "user_domain": {
+                "name": "newdomain3",
+                "visible_phone_number": "1234567893",
+                "internal_phone_number": "0987654325",
+                "display_name": "New Domain 3",
+                "country": "USA",
+                "state": "CA",
+                "city": "Test City",
+                "address1": "123 Test St",
+                "zipcode": "12345",
+            },
+        }
+        response = self.client.post(url, data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_request_password_reset_nonexistent_user(self) -> None:
+        url = reverse("password_reset-request-reset")
+        data = {
+            "username": "nonexistentuser",
+            "domain": "testdomain",
+            "phone": "",
+        }
+        response = self.client.post(url, data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.json()["status"], "failure")

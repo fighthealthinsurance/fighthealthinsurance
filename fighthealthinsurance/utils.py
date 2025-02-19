@@ -1,4 +1,9 @@
 from django.db import connections
+from django.core.mail import send_mail
+from django.core.mail import EmailMultiAlternatives
+from django.template.loader import render_to_string
+from django.conf import settings
+
 import nest_asyncio
 import asyncstdlib
 import asyncio
@@ -33,6 +38,31 @@ common_bad_result = [
 ]
 
 maybe_bad_url_endings = re.compile("^(.*)[\\.\\:\\;\\,\\?\\>]+$")
+
+
+def send_fallback_email(subject: str, template_name: str, context, to_email: str):
+    # First, render the plain text content if present
+    text_content = render_to_string(
+        f"emails/{template_name}.txt",
+        context=context,
+    )
+
+    # Secondly, render the HTML content if present
+    html_content = render_to_string(
+        f"emails/{template_name}.html",
+        context=context,
+    )
+    # Then, create a multipart email instance.
+    msg = EmailMultiAlternatives(
+        subject,
+        text_content,
+        settings.EMAIL_HOST_USER,
+        [to_email],
+    )
+
+    # Lastly, attach the HTML content to the email instance and send.
+    msg.attach_alternative(html_content, "text/html")
+    msg.send()
 
 
 async def check_call(cmd, max_retries=0, **kwargs):

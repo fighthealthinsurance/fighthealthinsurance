@@ -399,10 +399,16 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     appeal_fax_number = models.CharField(max_length=40, null=True, blank=True)
     your_state = models.CharField(max_length=40, null=True)
     creating_professional = models.ForeignKey(
-        ProfessionalUser, null=True, on_delete=models.SET_NULL, related_name="denials_created"
+        ProfessionalUser,
+        null=True,
+        on_delete=models.SET_NULL,
+        related_name="denials_created",
     )
     primary_professional = models.ForeignKey(
-        ProfessionalUser, null=True, on_delete=models.SET_NULL, related_name="denials_primary"
+        ProfessionalUser,
+        null=True,
+        on_delete=models.SET_NULL,
+        related_name="denials_primary",
     )
     patient_user = models.ForeignKey(PatientUser, null=True, on_delete=models.SET_NULL)
     domain = models.ForeignKey(UserDomain, null=True, on_delete=models.SET_NULL)
@@ -418,7 +424,7 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
 
         # Patients can view their own appeals
         try:
-            patient_user = PatientUser.objects.get(user=current_user)
+            patient_user = PatientUser.objects.get(user=current_user, active=True)
             if patient_user and patient_user.active:
                 query_set |= Denial.objects.filter(
                     patient_user=patient_user,
@@ -431,7 +437,9 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
         # or are a domain admin in.
         try:
             # Appeals they created
-            professional_user = ProfessionalUser.objects.get(user=current_user)
+            professional_user = ProfessionalUser.objects.get(
+                user=current_user, active=True
+            )
             query_set |= Denial.objects.filter(primary_professional=professional_user)
             query_set |= Denial.objects.filter(creating_professional=professional_user)
             # Appeals they were add to.
@@ -495,17 +503,39 @@ class Appeal(ExportModelOperationsMixin("Appeal"), models.Model):  # type: ignor
     )
     hashed_email = models.CharField(max_length=300, primary_key=False)
     creating_professional = models.ForeignKey(
-        ProfessionalUser, null=True, on_delete=models.SET_NULL, related_name="appeals_created"
+        ProfessionalUser,
+        null=True,
+        on_delete=models.SET_NULL,
+        related_name="appeals_created",
     )
     primary_professional = models.ForeignKey(
-        ProfessionalUser, null=True, on_delete=models.SET_NULL, related_name="appeals_primary"
+        ProfessionalUser,
+        null=True,
+        on_delete=models.SET_NULL,
+        related_name="appeals_primary",
     )
     patient_user = models.ForeignKey(PatientUser, null=True, on_delete=models.SET_NULL)
     domain = models.ForeignKey(UserDomain, null=True, on_delete=models.SET_NULL)
     document_enc = EncryptedFileField(null=True, storage=settings.COMBINED_STORAGE)
+    # TODO: Use signals on pending
     pending = models.BooleanField(default=True)
+    pending_patient = models.BooleanField(default=False)
+    pending_professional = models.BooleanField(default=True)
+    # And signals on sent from fax objects
+    sent = models.BooleanField(default=False)
+    # Who do we want to send the appeal?
+    professional_send = models.BooleanField(default=True)
+    patient_send = models.BooleanField(default=True)
     patient_visible = models.BooleanField(default=True)
     pubmed_ids_json = models.CharField(max_length=600, blank=True)
+    response_document_enc = EncryptedFileField(
+        null=True, storage=settings.COMBINED_STORAGE
+    )
+    response_text = models.TextField(
+        max_length=3000000000, primary_key=False, null=True
+    )
+    response_date = models.DateField(auto_now=False, null=True)
+    mod_date = models.DateField(auto_now=True, null=True)
 
     # Similar to the method on denial -- TODO refactor to a mixin / DRY
     @classmethod
@@ -517,7 +547,7 @@ class Appeal(ExportModelOperationsMixin("Appeal"), models.Model):  # type: ignor
 
         # Patients can view their own appeals
         try:
-            patient_user = PatientUser.objects.get(user=current_user)
+            patient_user = PatientUser.objects.get(user=current_user, active=True)
             if patient_user and patient_user.active:
                 query_set |= Appeal.objects.filter(
                     patient_user=patient_user,
@@ -530,7 +560,9 @@ class Appeal(ExportModelOperationsMixin("Appeal"), models.Model):  # type: ignor
         # or are a domain admin in.
         try:
             # Appeals they created
-            professional_user = ProfessionalUser.objects.get(user=current_user)
+            professional_user = ProfessionalUser.objects.get(
+                user=current_user, active=True
+            )
             query_set |= Appeal.objects.filter(primary_professional=professional_user)
             query_set |= Appeal.objects.filter(creating_professional=professional_user)
             # Appeals they were add to.

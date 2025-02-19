@@ -36,6 +36,12 @@ class DenialTypesSerializer(serializers.ModelSerializer):
         fields = ["id", "name"]
 
 
+class ChooseAppealRequestSerializer(serializers.Serializer):
+    generated_appeal_text = serializers.CharField()
+    editted_appeal_text = serializers.CharField()
+    denial_id = serializers.CharField()
+
+
 class DenialTypesListField(serializers.ListField):
     child = DenialTypesSerializer()
 
@@ -48,17 +54,6 @@ class DenialResponseInfoSerializer(serializers.Serializer):
     procedure = serializers.CharField()
     diagnosis = serializers.CharField()
     semi_sekret = serializers.CharField()
-
-
-# Signup options
-
-
-class ProviderSingupSerializer(serializers.Serializer):
-    first_name = serializers.CharField()
-    middle_name = serializers.CharField()
-    last_name = serializers.CharField()
-    npi_number = serializers.CharField()
-    domain_name = serializers.CharField()
 
 
 # Forms
@@ -78,6 +73,9 @@ class ChooseAppealFormSerializer(FormSerializer):
 
 
 class DenialFormSerializer(FormSerializer):
+    primary_professional = serializers.IntegerField(required=False)
+    user_id = forms.IntegerField(required=True)
+
     class Meta(object):
         form = core_forms.DenialForm
         exclude = ("plan_documents",)
@@ -121,9 +119,21 @@ class AppaealListRequestSerializer(serializers.Serializer):
 
 
 class AppealSummarySerializer(serializers.ModelSerializer):
+    status = serializers.SerializerMethodField()
+
     class Meta:
         model = Appeal
         fields = ["uuid", "status", "response_text", "response_date" "pending"]
+
+    def get_status(self, obj):
+        if obj.pending_patient:
+            return "pending patient"
+        elif obj.pending_professional:
+            return "pending professional"
+        elif obj.sent:
+            return "sent"
+        else:
+            return "unkown"
 
 
 class AppealDetailSerializer(serializers.ModelSerializer):
@@ -147,6 +157,18 @@ class AppealDetailSerializer(serializers.ModelSerializer):
             # TODO: Use reverse here rather than hardcoding
             return reverse("appeal_file_view", kwargs={"appeal_uuid": obj.uuid})
         return None
+
+
+class NotifyPatientRequestSerializer(serializers.Serializer):
+    patient_id = serializers.IntegerField()
+    include_provider = serializers.BooleanField(default=False)
+
+
+class AppealFullSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = Appeal
+        exclude: list[str] = []
 
 
 class AssembleAppealRequestSerializer(serializers.Serializer):
@@ -189,3 +211,15 @@ class SendToUserSerializer(serializers.Serializer):
 class SendFax(serializers.Serializer):
     appeal_id = serializers.IntegerField(required=True)
     fax_number = serializers.CharField(required=False)
+
+
+class InviteProviderSerializer(serializers.Serializer):
+    professional_id = serializers.IntegerField(required=False)
+    email = serializers.EmailField(required=False)
+
+    def validate(self, data):
+        if not data.get("professional_id") and not data.get("email"):
+            raise serializers.ValidationError(
+                "Either professional_id or email must be provided."
+            )
+        return data

@@ -7,7 +7,7 @@ from fhi_users.auth import rest_auth_views
 from fhi_users.auth import auth_views
 from fhi_users.auth.rest_auth_views import (
     RestLoginView,
-    CreatePatientUserViewSet,
+    PatientUserViewSet,
     VerifyEmailViewSet,
     PasswordResetViewSet,
 )
@@ -25,9 +25,7 @@ router.register(
     basename="professional_user",
 )
 router.register(r"api/login", RestLoginView, basename="rest_login")
-router.register(
-    r"api/create_patient_user", CreatePatientUserViewSet, basename="create_patient_user"
-)
+router.register(r"api/patient_user", PatientUserViewSet, basename="patient_user")
 router.register(r"rest_verify_email", VerifyEmailViewSet, basename="rest_verify_email")
 router.register(r"password_reset", PasswordResetViewSet, basename="password_reset")
 

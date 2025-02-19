@@ -73,7 +73,6 @@ class DenialForm(forms.Form):
     use_external_models = forms.BooleanField(required=False)
     denial_text = forms.CharField(required=True)
     email = forms.EmailField(required=True)
-    primary_professional = forms.IntegerField(required=False, widget=forms.HiddenInput())
 
 
 class DenialRefForm(forms.Form):

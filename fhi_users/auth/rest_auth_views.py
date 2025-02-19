@@ -31,6 +31,7 @@ import stripe
 
 from fhi_users.models import (
     UserDomain,
+    PatientUser,
     ProfessionalUser,
     ProfessionalDomainRelation,
     VerificationToken,
@@ -43,6 +44,7 @@ from fhi_users.auth.auth_utils import (
     combine_domain_and_username,
     user_is_admin_in_domain,
     resolve_domain_id,
+    get_patient_or_create_pending_patient,
 )
 from fighthealthinsurance.rest_mixins import CreateMixin, SerializerMixin
 from rest_framework.serializers import Serializer
@@ -276,6 +278,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             first_name=first_name,
             last_name=last_name,
         )
+        send_verification_email(request, user)
         professional_user = ProfessionalUser.objects.create(
             user=user,
             active=False,
@@ -288,66 +291,35 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             pending=True,
         )
 
-        # TODO: Update to use stripe utils
-        stripe.api_key = settings.STRIPE_API_SECRET_KEY
-        # Check if the product already exists
-        products = stripe.Product.list(limit=100)
-        product = next(
-            (p for p in products.data if p.name == "Basic Professional Subscription"),
-            None,
-        )
-
-        if product is None:
-            product = stripe.Product.create(name="Basic Professional Subscription")
-
-        # Check if the price already exists for the product
-        prices = stripe.Price.list(product=product["id"], limit=100)
-        product_price = next(
-            (
-                p
-                for p in prices.data
-                if p.unit_amount == 2500
-                and p.currency == "usd"
-                and p.id == product["id"]
-            ),
-            None,
-        )
-
-        if product_price is None:
-            product_price = stripe.Price.create(
-                unit_amount=2500, currency="usd", product=product["id"]
+        if settings.DEBUG and data["skip_stripe"]:
+            product_id, price_id = stripe_utils.get_or_create_price(
+                "Basic Professional Subscription", 2500, recurring=True
             )
-        items = [
-            {
-                "price": product_price["id"],
-                "quantity": 1,
-            }
-        ]
 
-        product_id, price_id = stripe_utils.get_or_create_price(
-            "Basic Professional Subscription", 2500, recurring=True
-        )
-
-        checkout_session = stripe.checkout.Session.create(
-            payment_method_types=["card"],
-            line_items=[{"price": price_id, "quantity": 1}],
-            mode="subscription",
-            success_url=user_signup_info["continue_url"],
-            cancel_url=user_signup_info["continue_url"],
-            customer_email=email,
-            metadata={
-                "payment_type": "professional_domain_subscription",
-                "professional_id": str(professional_user.id),
-                "domain_id": str(user_domain.id),
-            },
-        )
-        extra_user_properties = ExtraUserProperties.objects.create(
-            user=user, email_verified=False
-        )
-        subscription_id = checkout_session.subscription
-        return serializers.ProfessionalSignupResponseSerializer(
-            {"next_url": checkout_session.url}
-        )
+            checkout_session = stripe.checkout.Session.create(
+                payment_method_types=["card"],
+                line_items=[{"price": price_id, "quantity": 1}],
+                mode="subscription",
+                success_url=user_signup_info["continue_url"],
+                cancel_url=user_signup_info["continue_url"],
+                customer_email=email,
+                metadata={
+                    "payment_type": "professional_domain_subscription",
+                    "professional_id": str(professional_user.id),
+                    "domain_id": str(user_domain.id),
+                },
+            )
+            extra_user_properties = ExtraUserProperties.objects.create(
+                user=user, email_verified=False
+            )
+            subscription_id = checkout_session.subscription
+            return serializers.ProfessionalSignupResponseSerializer(
+                {"next_url": checkout_session.url}
+            )
+        else:
+            return serializers.ProfessionalSignupResponseSerializer(
+                {"next_url": "https://www.fightpaperwork.com/?q=testmode"}
+            )
 
 
 class RestLoginView(ViewSet, SerializerMixin):
@@ -358,14 +330,14 @@ class RestLoginView(ViewSet, SerializerMixin):
         serializer = self.deserialize(request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
-        username: str = data.get("username")
+        raw_username: str = data.get("username")
         password: str = data.get("password")
         domain: str = data.get("domain")
         phone: str = data.get("phone")
         try:
             domain_id = resolve_domain_id(domain_name=domain, phone_number=phone)
             username = combine_domain_and_username(
-                username, phone_number=phone, domain_id=domain_id
+                raw_username, phone_number=phone, domain_id=domain_id
             )
         except Exception as e:
             return Response(
@@ -381,21 +353,38 @@ class RestLoginView(ViewSet, SerializerMixin):
             login(request, user)
             return Response({"status": "success"})
         return Response(
-            {"status": "failure", "message": "Invalid credentials"},
+            {"status": "failure", "message": f"Invalid credentials"},
             status=status.HTTP_401_UNAUTHORIZED,
         )
 
 
-class CreatePatientUserViewSet(ViewSet, CreateMixin):
+class PatientUserViewSet(ViewSet, CreateMixin):
     """Create a new patient user."""
 
-    serializer_class = serializers.CreatePatientUserSerializer
+    def get_serializer_class(self):
+        if self.action == "create":
+            return serializers.CreatePatientUserSerializer
+        else:
+            return serializers.GetOrCreatePendingPatientSerializer
 
     def perform_create(self, request: Request, serializer) -> Response:
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
         send_verification_email(request, user)
         return Response({"status": "pending"})
+
+    @action(detail=False, methods=["post"])
+    def get_or_create_pending(self, request: Request) -> Response:
+        serializer = self.deserialize(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        domain = UserDomain.objects.get(id=request.session["domain_id"])
+        user = get_patient_or_create_pending_patient(
+            email=serializer.validated_data["username"],
+            raw_username=serializer.validated_data["username"],
+            domain=domain,
+        )
+        response_serializer = serializers.PatientReferenceSerializer(user)
+        return Response(response_serializer.data)
 
 
 class VerifyEmailViewSet(ViewSet, SerializerMixin):
@@ -413,35 +402,42 @@ class VerifyEmailViewSet(ViewSet, SerializerMixin):
             uid = serializer.validated_data["user_id"]
             user = User.objects.get(pk=uid)
         except (TypeError, ValueError, OverflowError, User.DoesNotExist) as e:
-            user = None
-        if user is not None:
-            token = serializer.validated_data["token"]
-            try:
-                verification_token = VerificationToken.objects.get(
-                    user=user, token=token
-                )
-                if timezone.now() > verification_token.expires_at:
-                    return Response(
-                        {"status": "failure", "message": "Activation link has expired"},
-                        status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    )
-                user.is_active = True
-                try:
-                    extraproperties = ExtraUserProperties.objects.get(user=user)
-                except:
-                    extraproperties = ExtraUserProperties.objects.create(user=user)
-                extraproperties.email_verified = True
-                extraproperties.save()
-                verification_token.delete()
-                return Response({"status": "success"})
-            except VerificationToken.DoesNotExist as e:
-                return Response(
-                    {"status": "failure", "message": "Invalid activation link"},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-        else:
             return Response(
-                {"status": "failure", "message": "Activation link is invalid"},
+                {
+                    "status": "failure",
+                    "message": "Invalid activation link [user not found]",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        token = serializer.validated_data["token"]
+        try:
+            verification_token = VerificationToken.objects.get(user=user, token=token)
+            if timezone.now() > verification_token.expires_at:
+                return Response(
+                    {"status": "failure", "message": "Activation link has expired"},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+            user.is_active = True
+            user.save()
+            try:
+                extraproperties = ExtraUserProperties.objects.get(user=user)
+            except:
+                extraproperties = ExtraUserProperties.objects.create(user=user)
+            extraproperties.email_verified = True
+            extraproperties.save()
+            verification_token.delete()
+            try:
+                PatientUser.objects.filter(user=user).update(is_active=True)
+            except:
+                pass
+            try:
+                ProfessionalUser.objects.filter(user=user).update(is_active=True)
+            except:
+                pass
+            return Response({"status": "success"})
+        except VerificationToken.DoesNotExist as e:
+            return Response(
+                {"status": "failure", "message": "Invalid activation link"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
