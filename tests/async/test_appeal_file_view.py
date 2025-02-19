@@ -268,3 +268,171 @@ class AppealFileViewTest(TestCase):
         response = self.client.get(
             reverse("appeal_file_view", kwargs={"appeal_uuid": self.appeal.uuid})
         )
+        
+    def test_appeal_file_view_wrong_http_method(self):
+        # Test wrong HTTP methods
+        self.do_login(username="newuserp1", password="newpass")
+        for method in ['post', 'put', 'patch', 'delete']:
+            response = getattr(self.client, method)(
+                reverse("appeal_file_view", kwargs={"appeal_uuid": self.appeal.uuid})
+            )
+            self.assertEqual(response.status_code, 405)  # Method Not Allowed
+
+    def test_appeal_file_view_inactive_domain(self):
+        # Test when domain is inactive
+        domain = UserDomain.objects.get(name=self.domain)
+        domain.active = False
+        domain.save()
+        self.do_login(username="newuserp1", password="newpass")
+        response = self.client.get(
+            reverse("appeal_file_view", kwargs={"appeal_uuid": self.appeal.uuid})
+        )
+        self.assertEqual(response.status_code, 404)
+
+    def test_appeal_file_view_suspended_professional(self):
+        # Test access when professional is suspended
+        self.do_login(username="newprouser_creator", password="newpass")
+        self.professional_user.suspended = True
+        self.professional_user.save()
+        response = self.client.get(
+            reverse("appeal_file_view", kwargs={"appeal_uuid": self.appeal.uuid})
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_appeal_file_view_expired_session(self):
+        # Test with expired session
+        self.do_login(username="newuserp1", password="newpass")
+        self.client.session.set_expiry(-1)
+        self.client.session.save()
+        response = self.client.get(
+            reverse("appeal_file_view", kwargs={"appeal_uuid": self.appeal.uuid})
+        )
+        self.assertEqual(response.status_code, 401)
+
+    def test_appeal_file_view_concurrent_access(self):
+        # Test concurrent access from same user different sessions
+        self.do_login(username="newuserp1", password="newpass")
+        client2 = APIClient()
+        self.do_login(username="newuserp1", password="newpass")
+       
+        response1 = self.client.get(
+            reverse("appeal_file_view", kwargs={"appeal_uuid": self.appeal.uuid})
+        )
+        response2 = client2.get(
+            reverse("appeal_file_view", kwargs={"appeal_uuid": self.appeal.uuid})
+        )
+       
+        self.assertEqual(response1.status_code, 200)
+        self.assertEqual(response2.status_code, 200)
+
+    def test_appeal_file_view_large_file(self):
+        # Test handling of large files (e.g., 5MB)
+        large_content = b"x" * (5 * 1024 * 1024)
+        large_appeal = Appeal.objects.create(
+            appeal_text="Large file test",
+            document_enc=SimpleUploadedFile("large.pdf", large_content),
+            patient_user=self.primary_patient_user,
+            primary_professional=self.professional_user,
+            domain=UserDomain.objects.get(name=self.domain),
+        )
+       
+        self.do_login(username="newuserp1", password="newpass")
+        response = self.client.get(
+            reverse("appeal_file_view", kwargs={"appeal_uuid": large_appeal.uuid})
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.content), len(large_content))
+
+    def test_appeal_file_view_permission_changes(self):
+        # Test access after permission changes
+        self.do_login(username="newuserp1", password="newpass")
+       
+        # Initial access
+        response1 = self.client.get(
+            reverse("appeal_file_view", kwargs={"appeal_uuid": self.appeal.uuid})
+        )
+        self.assertEqual(response1.status_code, 200)
+
+        # Remove permissions
+        self.primary_patient_user.active = False
+        self.primary_patient_user.save()
+
+        # Try access after permission removal
+        response2 = self.client.get(
+            reverse("appeal_file_view", kwargs={"appeal_uuid": self.appeal.uuid})
+        )
+        self.assertEqual(response2.status_code, 404)
+
+    def test_appeal_file_view_corrupted_file(self):
+        # Test handling of corrupted files
+        corrupted_appeal = Appeal.objects.create(
+            appeal_text="Corrupted file test",
+            document_enc=SimpleUploadedFile("corrupted.pdf", b"Invalid PDF content"),
+            patient_user=self.primary_patient_user,
+            primary_professional=self.professional_user,
+            domain=UserDomain.objects.get(name=self.domain),
+        )
+       
+        self.do_login(username="newuserp1", password="newpass")
+        response = self.client.get(
+            reverse("appeal_file_view", kwargs={"appeal_uuid": corrupted_appeal.uuid})
+        )
+        self.assertEqual(response.status_code, 200)
+
+    def test_appeal_file_view_content_type_validation(self):
+        # Test different content types
+        for content_type in ['application/pdf', 'image/jpeg', 'image/png']:
+            appeal = Appeal.objects.create(
+                appeal_text="Content type test",
+                document_enc=SimpleUploadedFile(
+                    f"test.{content_type.split('/')[-1]}",
+                    b"Test content",
+                    content_type=content_type
+                ),
+                patient_user=self.primary_patient_user,
+                primary_professional=self.professional_user,
+                domain=UserDomain.objects.get(name=self.domain),
+            )
+           
+            self.do_login(username="newuserp1", password="newpass")
+            response = self.client.get(
+                reverse("appeal_file_view", kwargs={"appeal_uuid": appeal.uuid})
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response['Content-Type'], content_type)
+
+    def test_appeal_file_view_cache_headers(self):
+        # Test cache headers
+        self.do_login(username="newuserp1", password="newpass")
+        response = self.client.get(
+            reverse("appeal_file_view", kwargs={"appeal_uuid": self.appeal.uuid})
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('Cache-Control', response)
+        self.assertIn('Last-Modified', response)
+        self.assertIn('ETag', response)
+
+    def test_appeal_file_view_conditional_requests(self):
+        # Test conditional GET requests
+        self.do_login(username="newuserp1", password="newpass")
+       
+        # Get initial response
+        response1 = self.client.get(
+            reverse("appeal_file_view", kwargs={"appeal_uuid": self.appeal.uuid})
+        )
+        etag = response1['ETag']
+        last_modified = response1['Last-Modified']
+
+        # Test If-None-Match
+        response2 = self.client.get(
+            reverse("appeal_file_view", kwargs={"appeal_uuid": self.appeal.uuid}),
+            HTTP_IF_NONE_MATCH=etag
+        )
+        self.assertEqual(response2.status_code, 304)
+
+        # Test If-Modified-Since
+        response3 = self.client.get(
+            reverse("appeal_file_view", kwargs={"appeal_uuid": self.appeal.uuid}),
+            HTTP_IF_MODIFIED_SINCE=last_modified
+        )
+        self.assertEqual(response3.status_code, 304)
