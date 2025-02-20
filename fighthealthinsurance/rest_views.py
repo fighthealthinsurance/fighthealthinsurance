@@ -88,11 +88,16 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
         if "denial_id" in serializer.validated_data:
             if serializer.validated_data["denial_id"]:
                 denial_id = serializer.validated_data["denial_id"]
-                denial = Denial.filter_to_allowed_denials(current_user).get(denial_id=denial_id)
+                denial = Denial.filter_to_allowed_denials(current_user).get(
+                    denial_id=denial_id
+                )
             del serializer.validated_data["denial_id"]
-        denial_response_info = common_view_logic.DenialCreatorHelper.create_or_update_denial(
-            denial=denial,
-            creating_professional=creating_professional, **serializer.validated_data
+        denial_response_info = (
+            common_view_logic.DenialCreatorHelper.create_or_update_denial(
+                denial=denial,
+                creating_professional=creating_professional,
+                **serializer.validated_data
+            )
         )
         denial = Denial.objects.get(uuid=denial_response_info.uuid)
         # Creating a pending appeal

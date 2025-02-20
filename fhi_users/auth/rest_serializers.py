@@ -66,6 +66,18 @@ class TOTPResponse(serializers.Serializer):
     totp_info = serializers.CharField()
 
 
+class WhoAmiSerializer(serializers.Serializer):
+    """
+    Return the current user.
+    """
+
+    email = serializers.CharField()
+    domain_name = serializers.CharField()
+    patient = serializers.BooleanField()
+    professional = serializers.BooleanField()
+    admin = serializers.BooleanField()
+
+
 class UserSignupSerializer(serializers.ModelSerializer):
     """
     Base serializer for user sign-up fields, intended to be extended.

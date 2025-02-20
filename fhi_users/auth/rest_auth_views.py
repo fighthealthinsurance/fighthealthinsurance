@@ -57,6 +57,55 @@ else:
     User = get_user_model()
 
 
+class WhoAmIViewSet(viewsets.ViewSet):
+    def list(self, request: Request):
+        user: User = request.user # type: ignore
+        if user.is_authenticated:
+            # Get the user domain from the session
+            domain_id = request.session.get("domain_id")
+            user_domain = UserDomain.objects.get(id=domain_id)
+            patient = False
+            professional = False
+            admin = False
+            try:
+                PatientUser.objects.get(user=user, active=True)
+                patient = True
+            except PatientUser.DoesNotExist:
+                pass
+            try:
+                _professional = ProfessionalUser.objects.get(user=user, active=True)
+                professional = True
+                try:
+                    ProfessionalDomainRelation.objects.get(
+                        professional=_professional,
+                        domain=user_domain,
+                        active=True,
+                        admin=True,
+                    )
+                    admin = True
+                except ProfessionalDomainRelation.DoesNotExist:
+                    pass
+            except ProfessionalUser.DoesNotExist:
+                pass
+            return Response(
+                serializers.WhoAmiSerializer(
+                    {
+                        "email": user.email,
+                        "domain_name": user_domain.name,
+                        "patient": patient,
+                        "professional": professional,
+                        "admin": admin,
+                    }
+                ),
+                status=status.HTTP_200_OK,
+            )
+        else:
+            return Response(
+                {"error": "User is not authenticated"},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+
 class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
     """
     Handles professional user sign-up and domain acceptance or rejection.
@@ -352,6 +401,15 @@ class RestLoginView(ViewSet, SerializerMixin):
             request.session["domain_id"] = domain_id
             login(request, user)
             return Response({"status": "success"})
+        try:
+            user = User.objects.get(username=username)
+            if not user.is_active:
+                return Response(
+                    {"status": "failure", "message": "User is inactive -- please verify your e-mail"},
+                    status=status.HTTP_401_UNAUTHORIZED,
+                )
+        except User.DoesNotExist:
+            pass
         return Response(
             {"status": "failure", "message": f"Invalid credentials"},
             status=status.HTTP_401_UNAUTHORIZED,
