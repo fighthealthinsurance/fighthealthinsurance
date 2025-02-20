@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: uploads
+  name: uploads2
   namespace: totallylegitco
 spec:
   accessModes:
@@ -9,7 +9,7 @@ spec:
   storageClassName: longhorn
   resources:
     requests:
-      storage: 200Gi
+      storage: 50Gi
 ---
 apiVersion: batch/v1
 kind: Job
