@@ -434,7 +434,7 @@ class InitialProcessView(generic.FormView):
         pass
 
     def form_valid(self, form):
-        denial_response = common_view_logic.DenialCreatorHelper.create_denial(
+        denial_response = common_view_logic.DenialCreatorHelper.create_or_update_denial(
             **form.cleaned_data,
         )
 

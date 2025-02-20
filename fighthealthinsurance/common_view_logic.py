@@ -761,7 +761,7 @@ class DenialCreatorHelper:
         return cls._all_denial_types
 
     @classmethod
-    def create_denial(
+    def create_or_update_denial(
         cls,
         email,
         denial_text,
@@ -773,6 +773,7 @@ class DenialCreatorHelper:
         use_external_models=False,
         store_raw_email=False,
         plan_documents=None,
+        denial: Optional[Denial] = None,
         creating_professional: Optional[ProfessionalUser] = None,
         primary_professional: Optional[ProfessionalUser] = None,
         patient_user: Optional[PatientUser] = None,
@@ -784,8 +785,35 @@ class DenialCreatorHelper:
         if store_raw_email:
             possible_email = email
 
-        try:
-            denial = Denial.objects.create(
+        # If we don't have a denial we're making a new one
+        if denial is None:
+            try:
+                denial = Denial.objects.create(
+                    denial_text=denial_text,
+                    hashed_email=hashed_email,
+                    use_external=use_external_models,
+                    raw_email=possible_email,
+                    health_history=health_history,
+                    creating_professional=creating_professional,
+                    primary_professional=primary_professional,
+                    patient_user=patient_user,
+                )
+            except Exception as e:
+                # This is a temporary hack to drop non-ASCII characters
+                denial_text = (
+                    denial_text.encode("ascii", errors="ignore")
+                    .decode(errors="ignore")
+                    .replace("\x00", "")
+                )
+                denial = Denial.objects.create(
+                    denial_text=denial_text,
+                    hashed_email=hashed_email,
+                    use_external=use_external_models,
+                    raw_email=possible_email,
+                    health_history=health_history,
+                )
+        else:
+            denial.update(
                 denial_text=denial_text,
                 hashed_email=hashed_email,
                 use_external=use_external_models,
@@ -795,20 +823,7 @@ class DenialCreatorHelper:
                 primary_professional=primary_professional,
                 patient_user=patient_user,
             )
-        except Exception as e:
-            # This is a temporary hack to drop non-ASCII characters
-            denial_text = (
-                denial_text.encode("ascii", errors="ignore")
-                .decode(errors="ignore")
-                .replace("\x00", "")
-            )
-            denial = Denial.objects.create(
-                denial_text=denial_text,
-                hashed_email=hashed_email,
-                use_external=use_external_models,
-                raw_email=possible_email,
-                health_history=health_history,
-            )
+            denial.save()
 
         if possible_email is not None:
             FollowUpSched.objects.create(
