@@ -123,7 +123,7 @@ class AppealSummarySerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Appeal
-        fields = ["uuid", "status", "response_text", "response_date" "pending"]
+        fields = ["uuid", "status", "response_text", "response_date", "pending"]
 
     def get_status(self, obj):
         if obj.pending_patient:
