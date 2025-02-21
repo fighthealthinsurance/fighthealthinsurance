@@ -531,3 +531,116 @@ class RestAuthViewsTests(TestCase):
         response = self.client.post(url, data, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(response.json()["status"], "failure")
+
+    def test_whoami_view_authed(self):
+        # Log in
+        url = reverse("rest_login-login")
+        data = {
+            "username": "testuser",
+            "password": "testpass",
+            "domain": "testdomain",
+            "phone": "1234567890",
+        }
+        response = self.client.post(url, data, format="json")
+        self.assertIn(response.status_code, range(200, 300))
+        self.assertEqual(response.json()["status"], "success")
+        # Check whoami
+        url = reverse("whoami-list")
+        response = self.client.get(url, format="json")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["email"], self.user.email)
+
+
+class TestE2EProfessionalUserSignupFlow(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+
+    def test_end_to_end_happy_path(self):
+        domain_name = "new_test_domain"
+        phone_number = "1234567890"
+        signup_url = reverse("professional_user-list")
+        data = {
+            "user_signup_info": {
+                "username": "testpro@example.com",
+                "password": "temp12345",
+                "email": "testpro@example.com",
+                "first_name": "Test",
+                "last_name": "Pro",
+                "domain_name": domain_name,
+                "visible_phone_number": phone_number,
+                "continue_url": "http://example.com/continue",
+            },
+            "make_new_domain": True,
+            "user_domain": {
+                "name": domain_name,
+                "visible_phone_number": phone_number,
+                "internal_phone_number": "0987654321",
+                "display_name": "Test Domain Display",
+                "country": "USA",
+                "state": "CA",
+                "city": "TestCity",
+                "address1": "123 Test St",
+                "zipcode": "99999",
+            },
+        }
+        response = self.client.post(signup_url, data, format="json")
+        self.assertEqual(response.status_code, 201)
+        self.assertGreaterEqual(len(mail.outbox), 1)
+        new_user = User.objects.get(email="testpro@example.com")
+        # User can not log in pre-verification
+        self.assertFalse(
+            self.client.login(username=new_user.username, password="temp12345")
+        )
+        # Check the verification
+        verify_url = reverse("rest_verify_email-verify")
+        token = VerificationToken.objects.get(user=new_user)
+        response = self.client.post(
+            verify_url, {"token": token.token, "user_id": new_user.pk}, format="json"
+        )
+        self.assertIn(response.status_code, range(200, 300))
+        new_user.refresh_from_db()
+        self.assertTrue(
+            self.client.login(username=new_user.username, password="temp12345")
+        )
+        # Ok but hit the rest endpoint for the login so we have a domain id
+        login_url = reverse("rest_login-login")
+        data = {
+            "username": "testpro@example.com",
+            "password": "temp12345",
+            "domain": domain_name,
+        }
+        response = self.client.post(login_url, data, format="json")
+        self.assertIn(response.status_code, range(200, 300))
+        self.assertEqual(response.json()["status"], "success")
+        # Have the now logged in pro-user start to make an appeal
+        get_pending_url = reverse("patient_user-get-or-create-pending")
+        data = {
+            "username": "testpro@example.com",
+            "first_name": "fname",
+            "last_name": "lname",
+        }
+        response = self.client.post(get_pending_url, data, format="json")
+        print(response)
+        self.assertIn(response.status_code, range(200, 300))
+        patient_id = response.json()["id"]
+
+        # Let’s pretend to create a denial record via DenialFormSerializer
+        denial_create_url = reverse("denials-list")
+        denial_data = {
+            "insurance_company": "Test Insurer",
+            "denial_text": "Sample denial text",
+            "email": "testpro@example.com",
+            "patient_id": patient_id,
+            "pii": True,
+            "tos": True,
+            "privacy": True,
+        }
+        response = self.client.post(denial_create_url, denial_data, format="json")
+
+        # Validate response has data we can use for the generate appeal websocket
+        denial_response = response.json()
+        self.assertIn("denial_id", denial_response)
+        denial_id = denial_response["denial_id"]
+
+        # Now we need to call the websocket...

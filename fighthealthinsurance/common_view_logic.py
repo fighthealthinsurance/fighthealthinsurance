@@ -773,6 +773,8 @@ class DenialCreatorHelper:
         use_external_models=False,
         store_raw_email=False,
         plan_documents=None,
+        patient_id = None,
+        insurance_company: Optional[str] = None,
         denial: Optional[Denial] = None,
         creating_professional: Optional[ProfessionalUser] = None,
         primary_professional: Optional[ProfessionalUser] = None,
@@ -797,6 +799,7 @@ class DenialCreatorHelper:
                     creating_professional=creating_professional,
                     primary_professional=primary_professional,
                     patient_user=patient_user,
+                    insurance_company=insurance_company,
                 )
             except Exception as e:
                 # This is a temporary hack to drop non-ASCII characters
@@ -811,6 +814,10 @@ class DenialCreatorHelper:
                     use_external=use_external_models,
                     raw_email=possible_email,
                     health_history=health_history,
+                    creating_professional=creating_professional,
+                    primary_professional=primary_professional,
+                    patient_user=patient_user,
+                    insurance_company=insurance_company,
                 )
         else:
             denial.update(
@@ -822,6 +829,7 @@ class DenialCreatorHelper:
                 creating_professional=creating_professional,
                 primary_professional=primary_professional,
                 patient_user=patient_user,
+                insurance_company=insurance_company,
             )
             denial.save()
 

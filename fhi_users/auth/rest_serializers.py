@@ -203,6 +203,8 @@ class GetOrCreatePendingPatientSerializer(serializers.Serializer):
     """
 
     username = serializers.CharField()
+    first_name = serializers.CharField()
+    last_name = serializers.CharField()
 
 
 class PatientReferenceSerializer(serializers.Serializer):

@@ -154,7 +154,9 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         sensitive_post_parameters("email")(views.OtherResourcesView.as_view()),
         name="other-resources",
     ),
-    path("pro_version", csrf_exempt(views.ProVersionView.as_view()), name="pro_version"),
+    path(
+        "pro_version", csrf_exempt(views.ProVersionView.as_view()), name="pro_version"
+    ),
     path(
         "pro_version_thankyou",
         csrf_exempt(views.ProVersionThankYouView.as_view()),

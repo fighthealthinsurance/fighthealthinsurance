@@ -59,10 +59,15 @@ else:
 
 class WhoAmIViewSet(viewsets.ViewSet):
     def list(self, request: Request):
-        user: User = request.user # type: ignore
+        user: User = request.user  # type: ignore
         if user.is_authenticated:
             # Get the user domain from the session
             domain_id = request.session.get("domain_id")
+            if not domain_id:
+                return Response(
+                    {"error": "Domain ID not found in session"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             user_domain = UserDomain.objects.get(id=domain_id)
             patient = False
             professional = False
@@ -96,7 +101,7 @@ class WhoAmIViewSet(viewsets.ViewSet):
                         "professional": professional,
                         "admin": admin,
                     }
-                ),
+                ).data,
                 status=status.HTTP_200_OK,
             )
         else:
@@ -405,7 +410,10 @@ class RestLoginView(ViewSet, SerializerMixin):
             user = User.objects.get(username=username)
             if not user.is_active:
                 return Response(
-                    {"status": "failure", "message": "User is inactive -- please verify your e-mail"},
+                    {
+                        "status": "failure",
+                        "message": "User is inactive -- please verify your e-mail",
+                    },
                     status=status.HTTP_401_UNAUTHORIZED,
                 )
         except User.DoesNotExist:
@@ -440,8 +448,10 @@ class PatientUserViewSet(ViewSet, CreateMixin):
             email=serializer.validated_data["username"],
             raw_username=serializer.validated_data["username"],
             domain=domain,
+            fname=serializer.validated_data["first_name"],
+            lname=serializer.validated_data["last_name"],
         )
-        response_serializer = serializers.PatientReferenceSerializer(user)
+        response_serializer = serializers.PatientReferenceSerializer({"id": user.id})
         return Response(response_serializer.data)
 
 

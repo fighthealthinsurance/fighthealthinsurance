@@ -154,7 +154,6 @@ class AppealFileViewTest(TestCase):
         self.professional_user_domain_relation.pending = False
         self.professional_user_domain_relation.save()
 
-
         # Activate the domain admin
         self._professional_user_domain_admin = User.objects.get(
             email="newprouser_domain_admin@example.com"
@@ -166,8 +165,11 @@ class AppealFileViewTest(TestCase):
         )
         self.professional_user_domain_admin.active = True
         self.professional_user_domain_admin.save()
-        self.professional_user_domain_admin_relation = ProfessionalDomainRelation.objects.get(
-            professional=self.professional_user_domain_admin, domain__name=self.domain
+        self.professional_user_domain_admin_relation = (
+            ProfessionalDomainRelation.objects.get(
+                professional=self.professional_user_domain_admin,
+                domain__name=self.domain,
+            )
         )
         self.professional_user_domain_admin_relation.pending = False
         self.professional_user_domain_admin_relation.save()

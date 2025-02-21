@@ -93,7 +93,7 @@ def combine_domain_and_username(
 
 
 def get_patient_or_create_pending_patient(
-    email: str, raw_username: str, domain: UserDomain
+    email: str, raw_username: str, domain: UserDomain, fname: str, lname: str
 ) -> PatientUser:
     """Create a new user with the given email and password.
 
@@ -114,8 +114,8 @@ def get_patient_or_create_pending_patient(
             username=username,
             email=email,
             password=None,
-            first_name="",
-            last_name="",
+            first_name=fname,
+            last_name=lname,
             is_active=False,
         )
     try:
@@ -155,8 +155,6 @@ def create_user(
             email=email,
             password=None,
             is_active=False,
-            first_name="",
-            last_name="",
         )
         user.password = password
         user.first_name = first_name

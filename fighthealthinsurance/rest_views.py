@@ -76,27 +76,33 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
         creating_professional = ProfessionalUser.objects.get(user=current_user)
         serializer = self.deserialize(data=request.data)
         serializer.is_valid(raise_exception=True)
+        serializer_data = serializer.validated_data
         if (
-            "primary_professional" in serializer.validated_data
-            and serializer.validated_data["primary_professional"] is not None
+            "primary_professional" in serializer_data
+            and serializer_data["primary_professional"] is not None
         ):
             primary_professional = ProfessionalUser.objects.get(
-                id=serializer.validated_data["primary_professional"]
+                id=serializer_data.pop("primary_professional")
             )
-            serializer.validated_data["primary_professional"] = primary_professional
+            serializer_data["primary_professional"] = primary_professional
         denial: Optional[Denial] = None
-        if "denial_id" in serializer.validated_data:
-            if serializer.validated_data["denial_id"]:
-                denial_id = serializer.validated_data["denial_id"]
+        if "denial_id" in serializer_data:
+            if serializer_data["denial_id"]:
+                denial_id = serializer_data.pop("denial_id")
                 denial = Denial.filter_to_allowed_denials(current_user).get(
                     denial_id=denial_id
                 )
-            del serializer.validated_data["denial_id"]
+        if "patient_id" in serializer_data:
+            patient_id = serializer_data.pop("patient_id")
+            if patient_id:
+                serializer_data["patient_user"] = PatientUser.objects.get(
+                    id=patient_id
+                )
         denial_response_info = (
             common_view_logic.DenialCreatorHelper.create_or_update_denial(
                 denial=denial,
                 creating_professional=creating_professional,
-                **serializer.validated_data
+                **serializer_data
             )
         )
         denial = Denial.objects.get(uuid=denial_response_info.uuid)
