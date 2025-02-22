@@ -19,6 +19,14 @@ elif [ -n "$POLLING_ACTORS" ]; then
   sleep 10
   exit 0
 fi
+# Same for dev _except_ we don't exit when were done since we use the locally created sqllite db to party on.
+if [ "$ENVIRONMENT" == "Dev" ]; then
+  python manage.py migrate || (sleep 600; exit 1)
+  python manage.py loaddata initial
+  python manage.py loaddata followup
+  python manage.py loaddata plan_source
+  python manage.py ensure_adminuser --no-input
+fi
 # Start gunicorn
 # Needed for https://github.com/MacHu-GWU/uszipcode-project/blob/21242cad7cbb7eaf73235086b89499bd90c36531/uszipcode/db.py#L23
 HOME=$(pwd)

@@ -24,6 +24,10 @@ export MYORG
 # Build the django container first
 source "${SCRIPT_DIR}/build_django.sh"
 
+# Deploy dev
+envsubst < k8s/deploy_dev.yaml | kubectl apply -f -
+read -rp "Have you checked dev and are ready to deploy to staging? (y/n) " yn
+
 # Deploy a staging env
 envsubst < k8s/deploy_staging.yaml | kubectl apply -f -
 read -rp "Have you checked staging and are ready to deploy to prod? (y/n) " yn
