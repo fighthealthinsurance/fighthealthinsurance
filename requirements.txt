@@ -34,6 +34,8 @@ django_user_agents
 django-otp
 django-two-factor-auth
 django-mfa2
+django-nose
+coverage
 drf-spectacular
 easy_thumbnails
 exceptionite

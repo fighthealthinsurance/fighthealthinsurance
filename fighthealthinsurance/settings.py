@@ -102,6 +102,7 @@ class Base(Configuration):
         "compressor_toolkit",
         "django_extensions",
         "django_tables2",
+        "django_nose",
         "static_thumbnails",
         "memoize",
         "django_recaptcha",
@@ -544,3 +545,6 @@ class Prod(Base):
     BB_STORAGE_SECRET_KEY = os.getenv("BB_STORAGE_SECRET_KEY", None)
     BB_STORAGE_MEDIA_BUCKET_NAME = os.getenv("BB_STORAGE_MEDIA_BUCKET_NAME", None)
     BB_REGION_NAME = os.getenv("BB_REGION_NAME", "True") == "True"
+
+
+TEST_RUNNER = 'django_nose.NoseTestSuiteRunner'

@@ -86,7 +86,6 @@ class TestCommonViewLogic(TestCase):
                 yield item
 
         async def test():
-            # TODO: Wire this up correctly.
             mock_appeal_generator.generate_appeals.return_value = async_generator(
                 ["test"]
             )
@@ -97,14 +96,11 @@ class TestCommonViewLogic(TestCase):
                     "semi_sekret": denial.semi_sekret,
                 }
             )
-            # Create a BytesIO to capture the response
             buf = io.StringIO()
 
-            # Write each chunk to the BytesIO
             async for chunk in response:
                 buf.write(chunk)
 
-            # Go back to the beginning of the BytesIO
             buf.seek(0)
             string_data = buf.getvalue()
 

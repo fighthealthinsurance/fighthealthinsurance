@@ -1,0 +1,7 @@
+[coverage:run]
+omit =
+    tests/*
+    */tests/*
+
+source =
+    fighthealthinsurance

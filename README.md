@@ -27,6 +27,19 @@ Tests are run through `tox`. If you dont have tox you can `pip` or `uv` install 
 An example of running just one test suite is `tox -e py311-django50-sync -- tests/sync/test_selenium_appeal_generation.py`
 
 
+Run test:
+
+```bash
+python manage.py run_test
+```
+
+Run test specific file:
+```bash
+python manage.py run_test --test-file [file path]
+```
+ex: python manage.py run_test --test-file tests/async/test_appeal_file_view.py
+
+
 ## Style
 
 We use black for style checking, and it can auto apply many style fixes so if you get a style error just run `black fighthealthinsurance`.

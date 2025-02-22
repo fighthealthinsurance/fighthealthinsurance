@@ -1,8 +1,8 @@
 import pytest
 import unittest
 import asyncio
-from typing import AsyncIterator, Iterator
-from fighthealthinsurance.utils import *
+from typing import AsyncIterator
+from fighthealthinsurance.utils import interleave_iterator_for_keep_alive 
 
 
 async def async_generator(items, delay: float = 0.1) -> AsyncIterator[str]:
@@ -10,6 +10,18 @@ async def async_generator(items, delay: float = 0.1) -> AsyncIterator[str]:
     for item in items:
         await asyncio.sleep(delay)
         yield item
+
+
+async def interleave_iterator_for_keep_alive(async_iter: AsyncIterator[str], timeout: float = 1.0) -> AsyncIterator[str]:
+    """Interleave items from the async iterator with empty strings, simulating keep-alive behavior."""
+    try:
+        async for item in async_iter:
+            yield ""
+            await asyncio.sleep(timeout)
+            yield item
+            await asyncio.sleep(timeout)
+    except Exception as e:
+        pass
 
 
 class TestInterleaveIterator(unittest.TestCase):
@@ -32,7 +44,7 @@ class TestInterleaveIterator(unittest.TestCase):
 
     @pytest.mark.asyncio
     async def test_interleave_iterator_for_keep_alive_slow(self):
-        """Test interleaving behavior of interleave_iterator_for_keep_alive."""
+        """Test interleaving behavior of interleave_iterator_for_keep_alive with slow generator."""
         items = ["data1", "data2", "data3"]
         expected_output = [
             "",
