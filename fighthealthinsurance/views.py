@@ -20,6 +20,8 @@ from fighthealthinsurance import common_view_logic
 from fighthealthinsurance import forms as core_forms
 from fighthealthinsurance import models
 from fighthealthinsurance import followup_emails
+from django.template import loader
+from django.http import HttpResponseForbidden
 
 
 def render_ocr_error(request: HttpRequest, text: str) -> HttpResponseBase:
@@ -30,6 +32,12 @@ def render_ocr_error(request: HttpRequest, text: str) -> HttpResponseBase:
             "error": text,
         },
     )
+
+
+def csrf_failure(request, reason="", template_name="403_csrf.html"):
+    template = loader.get_template(template_name)
+    logger.error(f"CSRF failure: {reason}")
+    return HttpResponseForbidden(template.render({"reason": reason}, request))
 
 
 class FollowUpView(generic.FormView):
@@ -591,7 +599,7 @@ class StripeWebhookView(View):
                 if subscription_id:
                     models.UserDomain.objects.filter(
                         id=session.metadata.get("id")
-                    ).update(stripe_subscription_id=subscription_id, active=True)
+                    ).update(stripe_subscription_id=subscription_id, active=True, pending=False)
                     models.ProfessionalUser.objects.filter(
                         id=session.metadata.get("professional_id")
                     ).update(active=True)

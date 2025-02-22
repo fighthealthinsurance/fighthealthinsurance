@@ -404,6 +404,7 @@ class RestLoginView(ViewSet, SerializerMixin):
         user = authenticate(username=username, password=password)
         if user:
             request.session["domain_id"] = domain_id
+            logger.info(f"User {user.username} logged in setting domain id to {domain_id}")
             login(request, user)
             return Response({"status": "success"})
         try:
@@ -439,8 +440,9 @@ class PatientUserViewSet(ViewSet, CreateMixin):
         send_verification_email(request, user)
         return Response({"status": "pending"})
 
-    @action(detail=False, methods=["post"])
+    @action(detail=False, methods=["post", "options"])
     def get_or_create_pending(self, request: Request) -> Response:
+        print(f"Called...")
         serializer = self.deserialize(data=request.data)
         serializer.is_valid(raise_exception=True)
         domain = UserDomain.objects.get(id=request.session["domain_id"])
@@ -451,6 +453,7 @@ class PatientUserViewSet(ViewSet, CreateMixin):
             fname=serializer.validated_data["first_name"],
             lname=serializer.validated_data["last_name"],
         )
+        print(f"User is {user}")
         response_serializer = serializers.PatientReferenceSerializer({"id": user.id})
         return Response(response_serializer.data)
 

@@ -24,6 +24,8 @@ from django.core.files.storage import Storage
 from minio_storage.storage import MinioStorage
 import time
 from dj_easy_log import load_loguru
+from corsheaders.defaults import default_methods
+
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "fighthealthinsurance.settings")
 os.environ.setdefault("DJANGO_CONFIGURATION", os.getenv("ENVIRONMENT", "Dev"))
@@ -31,11 +33,17 @@ os.environ.setdefault("DJANGO_CONFIGURATION", os.getenv("ENVIRONMENT", "Dev"))
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+from rest_framework.authentication import SessionAuthentication, BasicAuthentication 
+
+class CsrfExemptSessionAuthentication(SessionAuthentication):
+
+    def enforce_csrf(self, request):
+        return  # To not perform the csrf check previously happening
 
 class Base(Configuration):
     SENTRY_ENDPOINT = os.getenv("SENTRY_ENDPOINT")
-    COOKIE_CONSENT_ENABLED = True
-    COOKIE_CONSENT_LOG_ENABLED = True
+    COOKIE_CONSENT_ENABLED = False
+    COOKIE_CONSENT_LOG_ENABLED = False
     LOGIN_URL = "login"
     LOGIN_REDIRECT_URL = "/"
     THUMBNAIL_DEBUG = True
@@ -47,6 +55,11 @@ class Base(Configuration):
         ],
         "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     }
+
+    # Session cookie configs
+    SESSION_COOKIE_SECURE = True # https only (up to the browser to enforce)
+    SESSION_COOKIE_HTTPONLY = False # allow js access
+    SESSION_COOKIE_SAMESITE = "Lax" # cross site happytimes.
 
     # Quick-start development settings - unsuitable for production
     # See https://docs.djangoproject.com/en/4.0/howto/deployment/checklist/
@@ -108,10 +121,10 @@ class Base(Configuration):
         "django_recaptcha",
         "rest_framework",
         "mfa",
-        "corsheaders",
         "channels",
         "django_prometheus",
         "drf_spectacular",
+        "corsheaders",
     ]
 
     COMPRESS_JS_FILTERS = [
@@ -134,6 +147,7 @@ class Base(Configuration):
     )
 
     MIDDLEWARE = [
+        "corsheaders.middleware.CorsMiddleware",
         "django_prometheus.middleware.PrometheusBeforeMiddleware",
         "django.contrib.sessions.middleware.SessionMiddleware",
         "django.contrib.auth.middleware.AuthenticationMiddleware",
@@ -141,7 +155,6 @@ class Base(Configuration):
         "django.middleware.clickjacking.XFrameOptionsMiddleware",
         "cookie_consent.middleware.CleanCookiesMiddleware",
         "django_user_agents.middleware.UserAgentMiddleware",
-        "corsheaders.middleware.CorsMiddleware",
         "django.middleware.common.CommonMiddleware",
         "django.middleware.csrf.CsrfViewMiddleware",
         "django.middleware.security.SecurityMiddleware",
@@ -192,6 +205,8 @@ class Base(Configuration):
         "django.contrib.auth.hashers.ScryptPasswordHasher",
         "mfa.recovery.Hash",
     ]
+
+    CSRF_COOKIE_HTTPONLY = False
 
     # Password validation
     # https://docs.djangoproject.com/en/4.0/ref/settings/#auth-password-validators
@@ -265,7 +280,7 @@ class Base(Configuration):
     DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
     # CORS settings
-    # CORS_URLS_REGEX = r"^/ziggy/.*$"
+    # CORS_URLS_REGEX = r"^/.*$"
     # CORS_ALLOWED_ORIGINS_REGEXES = [
     #    "https://fhi-react.vercel.app",
     #    "http://localhost:\d+",
@@ -275,6 +290,22 @@ class Base(Configuration):
     CORS_ALLOW_ALL_ORIGINS = True
     CORS_ALLOW_PRIVATE_NETWORK = True
     CORS_ALLOW_CREDENTIALS = True
+    CORS_ALLOW_HEADERS = (*default_methods, 'accept', 'accept-encoding', 'accept-language', 'connection', 'authorization', 'content-type', 'dnt', 'origin', 'user-agent', 'x-csrftoken', 'x-requested-with', 'cookie')
+    CORS_ALLOW_METHODS = [
+        "DELETE",
+        "GET",
+        "OPTIONS",
+        "PATCH",
+        "POST",
+        "PUT",
+    ]
+    CSRF_TRUSTED_ORIGINS = [
+        'https://fightpaperwork.com',
+        'https://fighthealthinsurance.com',
+        'https://www.fightpaperwork.com',
+        'https://www.fighthealthinsurance.com',
+    ]
+
 
     PROMETHEUS_METRIC_NAMESPACE = "fhi"
 
@@ -338,6 +369,11 @@ class Base(Configuration):
 
 
 class Dev(Base):
+    CSRF_TRUSTED_ORIGINS = [
+        'https://fightpaperwork.com',
+        'https://localhost:3000',
+        'https://localhost:8000',
+    ]
     DEFF_SALT = os.getenv("DEFF_SALT", "dev-salt")
     DEFF_PASSWORD = os.getenv("DEFF_PASSWORD", "dev-password")
     DEBUG = True
@@ -363,8 +399,46 @@ class Dev(Base):
         },
     }
 
+    LOGGING = {
+        'version': 1,
+        'filters': {
+            'require_debug_true': {
+                '()': 'django.utils.log.RequireDebugTrue',
+            }
+        },
+        'handlers': {
+            'console': {
+                'level': 'DEBUG',
+                'filters': ['require_debug_true'],
+                'class': 'logging.StreamHandler',
+            }
+        },
+        'loggers': {
+            'django': {
+                'handlers': ['console'],
+                'level': 'INFO',
+                'propagate': True,
+            },
+            'django.middleware': {
+                'handlers': ['console'],
+                'level': 'DEBUG',
+                'propagate': True,
+            },
+            'django.contrib.sessions': {
+                'handlers': ['console'],
+                'level': 'DEBUG',
+                'propagate': True,
+            },
+            'django.contrib.auth': {
+                'handlers': ['console'],
+                'level': 'DEBUG',
+                'propagate': True,
+            },
+        },
+    }
     # Configure logging
     load_loguru(globals())
+    CSRF_FAILURE_VIEW = "fighthealthinsurance.views.csrf_failure"
 
 
 class Test(Dev):
