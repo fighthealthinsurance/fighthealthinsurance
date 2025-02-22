@@ -170,6 +170,7 @@ class AppealFullSerializer(serializers.ModelSerializer):
 
 class AssembleAppealRequestSerializer(serializers.Serializer):
     denial_uuid = serializers.CharField(required=True)
+    denial_id = serializers.CharField(required=True)
     completed_appeal_text = serializers.CharField(required=True)
     insurance_company = serializers.CharField(required=False)
     fax_phone = serializers.CharField(required=False)

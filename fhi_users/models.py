@@ -111,6 +111,14 @@ class PatientUser(models.Model):
     def get_legal_name(self) -> str:
         return f"{self.user.first_name} {self.user.last_name}"
 
+    def get_combined_name(self) -> str:
+        legal_name = self.get_legal_name()
+        display_name = self.get_display_name()
+        if legal_name == display_name:
+            return legal_name
+        else:
+            return f"{display_name} ({legal_name})"
+
 
 class ProfessionalUser(models.Model):
     id = models.AutoField(primary_key=True)

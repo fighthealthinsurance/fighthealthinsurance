@@ -289,9 +289,19 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
         serializer.is_valid(raise_exception=True)
         # Make sure the user has permission to this denial
         denial_uuid = serializer.validated_data["denial_uuid"]
-        denial = Denial.filter_to_allowed_denials(current_user).get(
-            denial_uuid=denial_uuid
-        )
+        denial_opt: Optional[Denial] = None
+        if denial_uuid:
+            denial_opt = Denial.filter_to_allowed_denials(current_user).get(
+                denial_uuid=denial_uuid
+            )
+        else:
+            denial_id = serializer.validated_data["denial_id"]
+            denial_opt = Denial.filter_to_allowed_denials(current_user).get(
+                denial_id=denial_id
+            )
+        if denial_opt is None:
+            raise Exception("Denial not found")
+        denial: Denial = denial_opt  # type: ignore
         appeal = None
         try:
             appeal = Appeal.filter_to_allowed_appeals(current_user).get(
@@ -317,9 +327,13 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
         include_provided_health_history = serializer.validated_data[
             "include_provided_health_history"
         ]
+        patient_user = denial.patient_user
+        patient_name: str = "unkown"
+        if patient_user is not None:
+            patient_name = patient_user.get_combined_name()
         appeal = self.appeal_assembly_helper.create_or_update_appeal(
             appeal=appeal,
-            name=denial.patient_user.get_full_name(),
+            name=patient_name,
             insurance_company=insurance_company,
             fax_phone=fax_phone,
             completed_appeal_text=completed_appeal_text,
@@ -335,7 +349,7 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
             cover_template_string=user_domain.cover_template_string or None,
             company_phone_number="202-938-3266",
             company_fax_number="415-840-7591",
-            patient_user=denial.patient_user.get(),
+            patient_user=patient_user,
         )
         appeal.save()
         return Response(
