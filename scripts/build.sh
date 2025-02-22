@@ -8,7 +8,8 @@ BUILDX_CMD=${BUILDX_CMD:-push}
 source "${SCRIPT_DIR}/setup_templates.sh"
 
 # BUILDKIT_NO_CLIENT_TOKEN=true
-FHI_VERSION=v0.10.9a
+FHI_VERSION=v0.10.9c
+
 MYORG=${MYORG:-holdenk}
 RAY_BASE=${RAY_BASE:-${MYORG}/fhi-ray}
 FHI_BASE=${FHI_BASE:-${MYORG}/fhi-base}
@@ -21,12 +22,28 @@ export FHI_BASE
 export RAY_BASE
 export MYORG
 
-# Build the django container first
+# Build the django dev container first
+FHI_VERSION_OG=${FHI_VERSION}
+FHI_VERSION=${FHI_VERSION}-dev
+export FHI_VERSION
+
 source "${SCRIPT_DIR}/build_django.sh"
 
 # Deploy dev
+envsubst < k8s/deploy_dev.yaml | kubectl delete -f - || echo "No existing dev deployment present"
 envsubst < k8s/deploy_dev.yaml | kubectl apply -f -
 read -rp "Have you checked dev and are ready to deploy to staging? (y/n) " yn
+case $yn in
+    [Yy]* ) echo "Proceeding...";;
+    [Nn]* ) echo "Exiting..."; exit;;
+    * ) echo "Invalid response. Please enter y or n.";;
+esac
+
+# Reset to non-dev
+FHI_VERSION_OG=${FHI_VERSION}
+FHI_VERSION=${FHI_VERSION_OG}
+export FHI_VERSION
+
 
 # Deploy a staging env
 envsubst < k8s/deploy_staging.yaml | kubectl apply -f -
