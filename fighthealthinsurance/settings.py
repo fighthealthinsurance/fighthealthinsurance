@@ -33,12 +33,14 @@ os.environ.setdefault("DJANGO_CONFIGURATION", os.getenv("ENVIRONMENT", "Dev"))
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-from rest_framework.authentication import SessionAuthentication, BasicAuthentication 
+from rest_framework.authentication import SessionAuthentication, BasicAuthentication
+
 
 class CsrfExemptSessionAuthentication(SessionAuthentication):
 
     def enforce_csrf(self, request):
         return  # To not perform the csrf check previously happening
+
 
 class Base(Configuration):
     SENTRY_ENDPOINT = os.getenv("SENTRY_ENDPOINT")
@@ -57,9 +59,9 @@ class Base(Configuration):
     }
 
     # Session cookie configs
-    SESSION_COOKIE_SECURE = True # https only (up to the browser to enforce)
-    SESSION_COOKIE_HTTPONLY = False # allow js access
-    SESSION_COOKIE_SAMESITE = "Lax" # cross site happytimes.
+    SESSION_COOKIE_SECURE = True  # https only (up to the browser to enforce)
+    SESSION_COOKIE_HTTPONLY = False  # allow js access
+    SESSION_COOKIE_SAMESITE = "Lax"  # cross site happytimes.
 
     # Quick-start development settings - unsuitable for production
     # See https://docs.djangoproject.com/en/4.0/howto/deployment/checklist/
@@ -290,7 +292,21 @@ class Base(Configuration):
     CORS_ALLOW_ALL_ORIGINS = True
     CORS_ALLOW_PRIVATE_NETWORK = True
     CORS_ALLOW_CREDENTIALS = True
-    CORS_ALLOW_HEADERS = (*default_methods, 'accept', 'accept-encoding', 'accept-language', 'connection', 'authorization', 'content-type', 'dnt', 'origin', 'user-agent', 'x-csrftoken', 'x-requested-with', 'cookie')
+    CORS_ALLOW_HEADERS = (
+        *default_methods,
+        "accept",
+        "accept-encoding",
+        "accept-language",
+        "connection",
+        "authorization",
+        "content-type",
+        "dnt",
+        "origin",
+        "user-agent",
+        "x-csrftoken",
+        "x-requested-with",
+        "cookie",
+    )
     CORS_ALLOW_METHODS = [
         "DELETE",
         "GET",
@@ -300,12 +316,11 @@ class Base(Configuration):
         "PUT",
     ]
     CSRF_TRUSTED_ORIGINS = [
-        'https://fightpaperwork.com',
-        'https://fighthealthinsurance.com',
-        'https://www.fightpaperwork.com',
-        'https://www.fighthealthinsurance.com',
+        "https://fightpaperwork.com",
+        "https://fighthealthinsurance.com",
+        "https://www.fightpaperwork.com",
+        "https://www.fighthealthinsurance.com",
     ]
-
 
     PROMETHEUS_METRIC_NAMESPACE = "fhi"
 
@@ -370,9 +385,9 @@ class Base(Configuration):
 
 class Dev(Base):
     CSRF_TRUSTED_ORIGINS = [
-        'https://fightpaperwork.com',
-        'https://localhost:3000',
-        'https://localhost:8000',
+        "https://fightpaperwork.com",
+        "https://localhost:3000",
+        "https://localhost:8000",
     ]
     DEFF_SALT = os.getenv("DEFF_SALT", "dev-salt")
     DEFF_PASSWORD = os.getenv("DEFF_PASSWORD", "dev-password")
@@ -400,39 +415,39 @@ class Dev(Base):
     }
 
     LOGGING = {
-        'version': 1,
-        'filters': {
-            'require_debug_true': {
-                '()': 'django.utils.log.RequireDebugTrue',
+        "version": 1,
+        "filters": {
+            "require_debug_true": {
+                "()": "django.utils.log.RequireDebugTrue",
             }
         },
-        'handlers': {
-            'console': {
-                'level': 'DEBUG',
-                'filters': ['require_debug_true'],
-                'class': 'logging.StreamHandler',
+        "handlers": {
+            "console": {
+                "level": "DEBUG",
+                "filters": ["require_debug_true"],
+                "class": "logging.StreamHandler",
             }
         },
-        'loggers': {
-            'django': {
-                'handlers': ['console'],
-                'level': 'INFO',
-                'propagate': True,
+        "loggers": {
+            "django": {
+                "handlers": ["console"],
+                "level": "INFO",
+                "propagate": True,
             },
-            'django.middleware': {
-                'handlers': ['console'],
-                'level': 'DEBUG',
-                'propagate': True,
+            "django.middleware": {
+                "handlers": ["console"],
+                "level": "DEBUG",
+                "propagate": True,
             },
-            'django.contrib.sessions': {
-                'handlers': ['console'],
-                'level': 'DEBUG',
-                'propagate': True,
+            "django.contrib.sessions": {
+                "handlers": ["console"],
+                "level": "DEBUG",
+                "propagate": True,
             },
-            'django.contrib.auth': {
-                'handlers': ['console'],
-                'level': 'DEBUG',
-                'propagate': True,
+            "django.contrib.auth": {
+                "handlers": ["console"],
+                "level": "DEBUG",
+                "propagate": True,
             },
         },
     }
@@ -621,4 +636,4 @@ class Prod(Base):
     BB_REGION_NAME = os.getenv("BB_REGION_NAME", "True") == "True"
 
 
-TEST_RUNNER = 'django_nose.NoseTestSuiteRunner'
+TEST_RUNNER = "django_nose.NoseTestSuiteRunner"

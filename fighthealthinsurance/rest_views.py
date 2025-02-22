@@ -69,7 +69,28 @@ class NextStepsViewSet(viewsets.ViewSet, CreateMixin):
 
 
 class DenialViewSet(viewsets.ViewSet, CreateMixin):
+
     serializer_class = serializers.DenialFormSerializer
+
+    def get_serializer_class(self):
+        print(self.action)
+        if self.action == "create":
+            return serializers.DenialFormSerializer
+        else:
+            return None
+
+    def retrieve(self, request: Request, pk: int) -> Response:
+        current_user: User = request.user  # type: ignore
+        denial = get_object_or_404(
+            Denial.filter_to_allowed_denials(current_user), pk=pk
+        )
+        denial_response_info = (
+            common_view_logic.DenialCreatorHelper.format_denial_response_info(denial)
+        )
+        response_serializer = serializers.DenialResponseInfoSerializer(
+            instance=denial_response_info
+        )
+        return Response(response_serializer.data)
 
     def perform_create(self, request: Request, serializer):
         current_user: User = request.user  # type: ignore
@@ -95,9 +116,7 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
         if "patient_id" in serializer_data:
             patient_id = serializer_data.pop("patient_id")
             if patient_id:
-                serializer_data["patient_user"] = PatientUser.objects.get(
-                    id=patient_id
-                )
+                serializer_data["patient_user"] = PatientUser.objects.get(id=patient_id)
         denial_response_info = (
             common_view_logic.DenialCreatorHelper.create_or_update_denial(
                 denial=denial,

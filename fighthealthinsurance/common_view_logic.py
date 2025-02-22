@@ -588,6 +588,7 @@ class FindNextStepsHelper:
         plan_source=None,
         employer_name: Optional[str] = None,
         appeal_fax_number: Optional[str] = None,
+        patient_health_history: Optional[str] = None,
     ) -> NextStepInfo:
         hashed_email = Denial.get_hashed_email(email)
         # Update the denial
@@ -606,6 +607,8 @@ class FindNextStepsHelper:
             denial.diagnosis = diagnosis
         if plan_source is not None:
             denial.plan_source.set(plan_source)
+        if patient_health_history:
+            denial.health_history = patient_health_history
         denial.save()
         # Only set employer name if it's not too long
         if employer_name is not None and len(employer_name) < 300:
@@ -773,7 +776,7 @@ class DenialCreatorHelper:
         use_external_models=False,
         store_raw_email=False,
         plan_documents=None,
-        patient_id = None,
+        patient_id=None,
         insurance_company: Optional[str] = None,
         denial: Optional[Denial] = None,
         creating_professional: Optional[ProfessionalUser] = None,
@@ -997,6 +1000,10 @@ class DenialCreatorHelper:
             denial.health_history = health_history
             denial.save()
         # Return the current the state
+        return cls.format_denial_response_info(denial)
+
+    @classmethod
+    def format_denial_response_info(cls, denial):
         return DenialResponseInfo(
             selected_denial_type=denial.denial_type.all(),
             all_denial_types=cls.all_denial_types(),
