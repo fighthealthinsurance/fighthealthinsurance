@@ -6,22 +6,24 @@ import pytest
 import asyncio
 from fighthealthinsurance.fax_utils import SonicFax
 
+
 class SonicFaxTest(unittest.TestCase):
 
-    
     def _sonic_is_configured() -> bool:
         keys = ["SONIC_USERNAME", "SONIC_PASSWORD", "SONIC_TOKEN"]
         for key in keys:
             if key not in environ:
-                return False  
-        return True  
+                return False
+        return True
 
     # @pytest.mark.skipif(_sonic_is_configured(), reason="Not configured")
     @pytest.mark.skip
     def test_sonic_fax_success(self):
         """Test faxing with a valid fax number."""
         s = SonicFax()
-        with tempfile.NamedTemporaryFile(suffix=".txt", prefix="meeps", mode="w+t", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            suffix=".txt", prefix="meeps", mode="w+t", delete=False
+        ) as f:
             f.write("This is a test fax")
             f.close()
             os.sync()
@@ -38,15 +40,16 @@ class SonicFaxTest(unittest.TestCase):
                 )
                 self.assertTrue(result)
             finally:
-                os.remove(file_name) 
-
+                os.remove(file_name)
 
     # @pytest.mark.skipif(_sonic_is_configured(), reason="Not configured")
     @pytest.mark.skip
     def test_sonic_fax_failure(self):
         """Test faxing with an invalid fax number."""
         s = SonicFax()
-        with tempfile.NamedTemporaryFile(suffix=".txt", prefix="meeps", mode="w+t", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            suffix=".txt", prefix="meeps", mode="w+t", delete=False
+        ) as f:
             f.write("This is a test fax")
             f.close()
             os.sync()
@@ -69,7 +72,9 @@ class SonicFaxTest(unittest.TestCase):
     def test_invalid_file(self):
         """Test sending an invalid file format."""
         s = SonicFax()
-        with tempfile.NamedTemporaryFile(suffix=".pdf", prefix="meeps", mode="w+t", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            suffix=".pdf", prefix="meeps", mode="w+t", delete=False
+        ) as f:
             f.write("This is an invalid fax file for testing.")
             f.close()
             os.sync()
@@ -83,7 +88,7 @@ class SonicFaxTest(unittest.TestCase):
                         blocking=True,
                     )
                 )
-                self.assertFalse(result) 
+                self.assertFalse(result)
             finally:
                 os.remove(file_name)
 
@@ -92,8 +97,10 @@ class SonicFaxTest(unittest.TestCase):
     def test_empty_file(self):
         """Test sending an empty file."""
         s = SonicFax()
-        with tempfile.NamedTemporaryFile(suffix=".txt", prefix="empty_meeps", mode="w+t", delete=False) as f:
-            f.write("")  
+        with tempfile.NamedTemporaryFile(
+            suffix=".txt", prefix="empty_meeps", mode="w+t", delete=False
+        ) as f:
+            f.write("")
             f.close()
             os.sync()
 
@@ -106,6 +113,6 @@ class SonicFaxTest(unittest.TestCase):
                         blocking=True,
                     )
                 )
-                self.assertFalse(result) 
+                self.assertFalse(result)
             finally:
                 os.remove(file_name)

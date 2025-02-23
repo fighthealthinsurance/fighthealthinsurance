@@ -1123,25 +1123,27 @@ class AppealsBackendHelper:
             non_ai_appeals=non_ai_appeals,
         )
 
-        async def save_appeal(appeal_text: str) -> str:
+        async def save_appeal(appeal_text: str) -> dict[str, str]:
             # Save all of the proposed appeals, so we can use RL later.
             t = time.time()
             logger.debug(f"{t}: Saving {appeal_text}")
             await asyncio.sleep(0)
             # YOLO on saving appeals, sqllite gets sad.
+            id = "unkown"
             try:
                 pa = ProposedAppeal(appeal_text=appeal_text, for_denial=denial)
                 await pa.asave()
+                id = str(pa.id)
             except Exception as e:
                 logger.opt(exception=True).warning(
                     "Failed to save proposed appeal: {e}"
                 )
                 pass
-            return appeal_text
+            return {"id": id, "content": appeal_text}
 
-        async def sub_in_appeals(appeal: str) -> str:
+        async def sub_in_appeals(appeal: dict[str, str]) -> dict[str, str]:
             await asyncio.sleep(0)
-            s = Template(appeal)
+            s = Template(appeal["content"])
             ret = s.safe_substitute(
                 {
                     "insurance_company": denial.insurance_company
@@ -1159,16 +1161,21 @@ class AppealsBackendHelper:
                     "{procedure}": denial.procedure or "{procedure}",
                 }
             )
-            return ret
+            appeal["content"] = ret
+            return appeal
 
-        async def format_response(response: str) -> str:
+        async def format_response(response: dict[str, str]) -> str:
             return json.dumps(response) + "\n"
 
         filtered_appeals: Iterator[str] = filter(lambda x: x != None, appeals)
 
         # We convert to async here.
-        saved_appeals: AsyncIterator[str] = a.map(save_appeal, filtered_appeals)
-        subbed_appeals: AsyncIterator[str] = a.map(sub_in_appeals, saved_appeals)
+        saved_appeals: AsyncIterator[dict[str, str]] = a.map(
+            save_appeal, filtered_appeals
+        )
+        subbed_appeals: AsyncIterator[dict[str, str]] = a.map(
+            sub_in_appeals, saved_appeals
+        )
         subbed_appeals_json: AsyncIterator[str] = a.map(format_response, subbed_appeals)
         # StreamignHttpResponse needs a synchronous iterator otherwise it blocks.
         interleaved: AsyncIterator[str] = interleave_iterator_for_keep_alive(

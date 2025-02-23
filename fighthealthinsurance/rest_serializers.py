@@ -90,6 +90,11 @@ class FollowUpFormSerializer(FormSerializer):
         field_mapping = {forms.UUIDField: serializers.CharField}
 
 
+class QAResponsesSerializer(serializers.Serializer):
+    denial_id = serializers.CharField()
+    qa = serializers.DictField(child=serializers.CharField())
+
+
 # Model serializers
 
 

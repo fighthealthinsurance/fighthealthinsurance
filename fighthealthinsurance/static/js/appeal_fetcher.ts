@@ -64,13 +64,14 @@ function processResponseChunk(chunk: string): void {
 
 	    try {
 		const parsedLine = JSON.parse(line);
+		const appealText = parsedLine.content;
 
-		if (appealsSoFar.some((appeal) => JSON.stringify(appeal) === JSON.stringify(parsedLine))) {
+		if (appealsSoFar.some((appeal) => JSON.stringify(appeal) === JSON.stringify(appealText))) {
 		    console.log('Duplicate appeal found. Skipping.');
 		    return;
 		}
 
-		appealsSoFar.push(parsedLine);
+		appealsSoFar.push(appealText);
 		appealId++;
 
 		// Clone and configure the form
@@ -84,8 +85,8 @@ function processResponseChunk(chunk: string): void {
 		submitButton.prop('id', `submit${appealId}`);
 
 		const appealTextElem = clonedForm.find('textarea');
-		appealTextElem.text(parsedLine);
-		appealTextElem.val(parsedLine);
+		appealTextElem.text(appealText);
+		appealTextElem.val(appealText);
 		appealTextElem.prop('form', `form_${appealId}`);
 		appealTextElem[0].setAttribute('form', `form_${appealId}`);
 

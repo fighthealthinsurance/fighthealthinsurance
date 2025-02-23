@@ -2,7 +2,7 @@ import pytest
 import unittest
 import asyncio
 from typing import AsyncIterator
-from fighthealthinsurance.utils import interleave_iterator_for_keep_alive 
+from fighthealthinsurance.utils import interleave_iterator_for_keep_alive
 
 
 async def async_generator(items, delay: float = 0.1) -> AsyncIterator[str]:
@@ -12,7 +12,9 @@ async def async_generator(items, delay: float = 0.1) -> AsyncIterator[str]:
         yield item
 
 
-async def interleave_iterator_for_keep_alive(async_iter: AsyncIterator[str], timeout: float = 1.0) -> AsyncIterator[str]:
+async def interleave_iterator_for_keep_alive(
+    async_iter: AsyncIterator[str], timeout: float = 1.0
+) -> AsyncIterator[str]:
     """Interleave items from the async iterator with empty strings, simulating keep-alive behavior."""
     try:
         async for item in async_iter:

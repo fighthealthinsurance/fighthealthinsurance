@@ -27,7 +27,7 @@ from fighthealthinsurance.rest_mixins import (
     DeleteMixin,
     DeleteOnlyMixin,
 )
-from fighthealthinsurance.models import Appeal, Denial
+from fighthealthinsurance.models import Appeal, Denial, DenialQA
 
 from fhi_users.models import (
     UserDomain,
@@ -121,7 +121,7 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
             common_view_logic.DenialCreatorHelper.create_or_update_denial(
                 denial=denial,
                 creating_professional=creating_professional,
-                **serializer_data
+                **serializer_data,
             )
         )
         denial = Denial.objects.get(uuid=denial_response_info.uuid)
@@ -137,6 +137,37 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
                 pending=True,
             )
         return serializers.DenialResponseInfoSerializer(instance=denial_response_info)
+
+
+class QAResponseViewSet(viewsets.ViewSet, CreateMixin):
+    serializer_class = serializers.QAResponsesSerializer
+
+    def perform_create(self, request: Request, serializer):
+        user: User = request.user  # type: ignore
+        denial = Denial.filter_to_allowed_denials(user).get(
+            denial_id=serializer.validated_data["denial_id"]
+        )
+        for key, value in serializer.validated_data["qa"].items():
+            if not key or not value or len(value) == 0:
+                continue
+            try:
+                dqa = DenialQA.objects.filter(denial=denial).get(question=key)
+                dqa.text_answer = value
+                dqa.save()
+            except DenialQA.DoesNotExist:
+                DenialQA.objects.create(
+                    denial=denial,
+                    question=key,
+                    text_answer=value,
+                )
+        qa_context = ""
+        for key, value in DenialQA.objects.filter(denial=denial).values_list(
+            "question", "text_answer"
+        ):
+            qa_context += f"{key}: {value}\n"
+        denial.qa_context = qa_context
+        denial.save()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class FollowUpViewSet(viewsets.ViewSet, CreateMixin):

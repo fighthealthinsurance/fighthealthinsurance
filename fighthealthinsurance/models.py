@@ -472,6 +472,14 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
         return hashlib.sha512(encoded_email).hexdigest()
 
 
+class DenialQA(models.Model):
+    id = models.AutoField(primary_key=True)
+    denial = models.ForeignKey("Denial", on_delete=models.CASCADE)
+    question = models.TextField(max_length=3000, primary_key=False)
+    text_answer = models.TextField(max_length=3000, primary_key=False)
+    bool_answer = models.BooleanField(default=False)
+
+
 class ProposedAppeal(ExportModelOperationsMixin("ProposedAppeal"), models.Model):  # type: ignore
     appeal_text = models.TextField(max_length=3000000000, primary_key=False, null=True)
     for_denial = models.ForeignKey(
