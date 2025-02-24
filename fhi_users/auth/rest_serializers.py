@@ -162,7 +162,7 @@ class FullProfessionalSerializer(serializers.ModelSerializer):
 
     class Meta(object):
         model = ProfessionalUser
-        exclude = []
+        exclude: list[str] = []
 
     def get_fullname(self, obj):
         user: User = obj.user
