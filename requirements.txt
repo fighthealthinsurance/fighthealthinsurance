@@ -78,6 +78,7 @@ totallylegit-django-rest-framework-braces # forked from django-rest-framework-br
 types-paramiko
 types-requests
 typing-extensions
+types-python-dateutil
 urllib3
 uszipcode
 uvicorn[standard]

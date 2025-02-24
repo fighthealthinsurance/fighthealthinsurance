@@ -106,7 +106,7 @@ class ProposedAppealSerializer(serializers.ModelSerializer):
         model = ProposedAppeal
 
 
-class AppaealListRequestSerializer(serializers.Serializer):
+class AppealListRequestSerializer(serializers.Serializer):
     status_filter = serializers.ChoiceField(
         choices=[
             "pending",
@@ -121,14 +121,36 @@ class AppaealListRequestSerializer(serializers.Serializer):
     )
     insurance_company_filter = serializers.CharField(required=False)
     procedure_filter = serializers.CharField(required=False)
+    provider_filter = serializers.CharField(required=False)
+    patient_filter = serializers.CharField(required=False)
+    date_from = serializers.DateField(required=False)
+    date_to = serializers.DateField(required=False)
+    
+    page = serializers.IntegerField(min_value=1, required=False, default=1)
+    page_size = serializers.IntegerField(min_value=1, required=False, default=10)
 
 
 class AppealSummarySerializer(serializers.ModelSerializer):
     status = serializers.SerializerMethodField()
+    provider_name = serializers.SerializerMethodField()
+    patient_name = serializers.SerializerMethodField()
+    denial_reason = serializers.SerializerMethodField()
 
     class Meta:
         model = Appeal
-        fields = ["uuid", "status", "response_text", "response_date", "pending"]
+        fields = [
+            "uuid", 
+            "status", 
+            "response_text", 
+            "response_date", 
+            "pending",
+            "provider_name",
+            "patient_name",
+            "insurance_company",
+            "denial_reason",
+            "created_at",
+            "updated_at",
+        ]
 
     def get_status(self, obj):
         if obj.pending_patient:
@@ -138,7 +160,16 @@ class AppealSummarySerializer(serializers.ModelSerializer):
         elif obj.sent:
             return "sent"
         else:
-            return "unkown"
+            return "unknown"
+
+    def get_provider_name(self, obj):
+        return obj.provider.get_full_name() if obj.provider else None
+
+    def get_patient_name(self, obj):
+        return obj.patient.get_full_name() if obj.patient else None
+
+    def get_denial_reason(self, obj):
+        return obj.denial.reason if obj.denial else None
 
 
 class AppealDetailSerializer(serializers.ModelSerializer):
@@ -230,6 +261,30 @@ class InviteProviderSerializer(serializers.Serializer):
             )
         return data
 
+
+class StatisticsSerializer(serializers.Serializer):
+    current_total_appeals = serializers.IntegerField()
+    current_success_rate = serializers.FloatField()
+    current_total_tips = serializers.IntegerField()
+    current_total_patients = serializers.IntegerField()
+    
+    previous_total_appeals = serializers.IntegerField()
+    previous_success_rate = serializers.FloatField()
+    previous_total_tips = serializers.IntegerField()
+    previous_total_patients = serializers.IntegerField()
+    
+    period_start = serializers.DateTimeField()
+    period_end = serializers.DateTimeField()
+
+
+class SearchResultSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    uuid = serializers.CharField()
+    appeal_text = serializers.CharField()
+    pending = serializers.BooleanField()
+    sent = serializers.BooleanField()
+    mod_date = serializers.DateField()
+    has_response = serializers.BooleanField()
 
 class AppealAttachmentSerializer(serializers.ModelSerializer):
     class Meta:
