@@ -8,7 +8,7 @@ BUILDX_CMD=${BUILDX_CMD:-push}
 source "${SCRIPT_DIR}/setup_templates.sh"
 
 # BUILDKIT_NO_CLIENT_TOKEN=true
-FHI_VERSION=v0.10.9e
+FHI_VERSION=v0.10.10a
 
 MYORG=${MYORG:-holdenk}
 RAY_BASE=${RAY_BASE:-${MYORG}/fhi-ray}
