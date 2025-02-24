@@ -44,6 +44,7 @@ from fhi_users.models import (
 
 from stopit import ThreadingTimeout as Timeout
 from .common_view_logic import AppealAssemblyHelper
+from .utils import is_convertible_to_int
 
 
 if typing.TYPE_CHECKING:
@@ -115,8 +116,10 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
             serializer_data["primary_professional"] = primary_professional
         denial: Optional[Denial] = None
         if "denial_id" in serializer_data:
-            if serializer_data["denial_id"]:
-                denial_id = serializer_data.pop("denial_id")
+            if serializer_data["denial_id"] and is_convertible_to_int(
+                serializer_data["denial_id"]
+            ):
+                denial_id = int(serializer_data.pop("denial_id"))
                 denial = Denial.filter_to_allowed_denials(current_user).get(
                     denial_id=denial_id
                 )

@@ -40,6 +40,14 @@ common_bad_result = [
 maybe_bad_url_endings = re.compile("^(.*)[\\.\\:\\;\\,\\?\\>]+$")
 
 
+def is_convertible_to_int(s):
+    try:
+        int(s)
+        return True
+    except ValueError:
+        return False
+
+
 def send_fallback_email(subject: str, template_name: str, context, to_email: str):
     # First, render the plain text content if present
     text_content = render_to_string(
