@@ -266,10 +266,10 @@ class AppealFullSerializer(serializers.ModelSerializer):
 
 
 class AssembleAppealRequestSerializer(serializers.Serializer):
-    denial_uuid = serializers.CharField(required=True)
-    denial_id = serializers.CharField(required=True)
+    denial_uuid = serializers.CharField(required=False)
+    denial_id = serializers.CharField(required=False)
     completed_appeal_text = serializers.CharField(required=True)
-    insurance_company = serializers.CharField(required=False)
+    insurance_company = serializers.CharField(required=False, allow_blank=True)
     fax_phone = serializers.CharField(required=False)
     pubmed_articles_to_include = serializers.ListField(
         child=serializers.CharField(), required=False

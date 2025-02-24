@@ -275,16 +275,21 @@ class AppealAssemblyHelper:
                     patient_user=patient_user,
                 )
             else:
-                appeal.update(
-                    for_denial=denial,
-                    appeal_text=completed_appeal_text,
-                    hashed_email=hashed_email,
-                    document_enc=File(t, name=doc_fname),
-                    primary_professional=primary_professional,
-                    creating_professional=creating_professional,
-                    patient_user=patient_user,
-                )
-            appeal.save()
+                # Instead of using update(), set values individually preserving existing ones if not provided
+                if denial:
+                    appeal.for_denial = denial
+                if completed_appeal_text:
+                    appeal.appeal_text = completed_appeal_text
+                if hashed_email:
+                    appeal.hashed_email = hashed_email
+                appeal.document_enc = File(t, name=doc_fname)
+                if primary_professional:
+                    appeal.primary_professional = primary_professional
+                if creating_professional:
+                    appeal.creating_professional = creating_professional
+                if patient_user:
+                    appeal.patient_user = patient_user
+                appeal.save()
             return appeal
 
     # TODO: Asyncify
