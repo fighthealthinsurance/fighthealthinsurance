@@ -627,3 +627,19 @@ class StripePrice(models.Model):
     amount = models.IntegerField()
     currency = models.CharField(max_length=3)
     active = models.BooleanField(default=True)
+
+
+class AppealAttachment(models.Model):
+    appeal = models.ForeignKey(
+        Appeal, on_delete=models.CASCADE, related_name="attachments"
+    )
+    file = EncryptedFileField(null=True, storage=settings.COMBINED_STORAGE)
+    filename = models.CharField(max_length=255)
+    mime_type = models.CharField(max_length=127)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    @classmethod
+    def filter_to_allowed_attachments(cls, user):
+        """Filter attachments to only those the user has permission to access"""
+        allowed_appeals = Appeal.filter_to_allowed_appeals(user)
+        return cls.objects.filter(appeal__in=allowed_appeals)

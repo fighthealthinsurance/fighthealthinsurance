@@ -29,6 +29,11 @@ router.register(
 
 router.register(r"appeals", AppealViewSet, basename="appeals")
 router.register(
+    r"appeal_attachments",
+    rest_views.AppealAttachmentViewSet,
+    basename="appeal_attachments",
+)
+router.register(
     r"mailinglist_subscribe", MailingListSubscriberViewSet, basename="subscribe"
 )
 

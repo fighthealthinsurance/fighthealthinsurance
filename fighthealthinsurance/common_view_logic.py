@@ -682,6 +682,7 @@ class DenialResponseInfo:
     employer_name: Optional[str]
     semi_sekret: str
     appeal_fax_number: Optional[str]
+    appeal_id: Optional[int]
 
 
 class PatientNotificationHelper:
@@ -1004,6 +1005,11 @@ class DenialCreatorHelper:
 
     @classmethod
     def format_denial_response_info(cls, denial):
+        appeal_id = None
+        try:
+            appeal_id = Appeal.objects.get(for_denial=denial).id
+        except:
+            logger.opt(exception=True).warning("Could not find appeal for {denial}")
         return DenialResponseInfo(
             selected_denial_type=denial.denial_type.all(),
             all_denial_types=cls.all_denial_types(),
@@ -1015,6 +1021,7 @@ class DenialCreatorHelper:
             employer_name=denial.employer_name,
             semi_sekret=denial.semi_sekret,
             appeal_fax_number=denial.appeal_fax_number,
+            appeal_id=appeal_id,
         )
 
 
