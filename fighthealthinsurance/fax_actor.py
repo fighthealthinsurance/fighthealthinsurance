@@ -34,8 +34,16 @@ class FaxActor:
         """Bump this to restart the fax actor."""
         return 1
 
+    def _require_test_env(self):
+        """Call this at the start of test only functions."""
+        env = os.getenv("DJANGO_CONFIGURATION")
+        if env not in ["Test", "TestActor", "TestSync"]:
+            raise Exception(f"Tried to call test migrate in non-test env -- {env}")
+
     def test_create_fax_object(self, **kwargs):
         from fighthealthinsurance.models import FaxesToSend
+
+        self._require_test_env()
 
         fax = FaxesToSend.objects.create(**kwargs)
         # reset the date to the specified old date for testing.
@@ -45,15 +53,15 @@ class FaxActor:
         return fax
 
     def test_delete(self, fax):
+        self._require_test_env()
         return fax.delete()
 
     def test_migrate(self):
         from fighthealthinsurance.models import FaxesToSend
         from django.core.management import call_command
 
-        env = os.getenv("DJANGO_CONFIGURATION")
-        if env != "Test" and env != "TestActor" and env != "TestSync":
-            raise Exception(f"Tried to call test migrate in non-test env -- {env}")
+        self._require_test_env()
+
         try:
             FaxesToSend.objects.all().delete()
         except Exception as e:
