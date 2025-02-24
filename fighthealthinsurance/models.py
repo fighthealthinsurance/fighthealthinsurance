@@ -544,6 +544,7 @@ class Appeal(ExportModelOperationsMixin("Appeal"), models.Model):  # type: ignor
     )
     response_date = models.DateField(auto_now=False, null=True)
     mod_date = models.DateField(auto_now=True, null=True)
+    creation_date = models.DateField(auto_now_add=True, null=True)
 
     # Similar to the method on denial -- TODO refactor to a mixin / DRY
     @classmethod

@@ -139,6 +139,7 @@ class AppealSummarySerializer(serializers.ModelSerializer):
     class Meta:
         model = Appeal
         fields = [
+            "id",
             "uuid", 
             "status", 
             "response_text", 
@@ -148,8 +149,8 @@ class AppealSummarySerializer(serializers.ModelSerializer):
             "patient_name",
             "insurance_company",
             "denial_reason",
-            "created_at",
-            "updated_at",
+            "creation_date",
+            "mod_date",
         ]
 
     def get_status(self, obj):

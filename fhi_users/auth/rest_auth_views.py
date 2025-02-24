@@ -71,6 +71,7 @@ class WhoAmIViewSet(viewsets.ViewSet):
             user_domain = UserDomain.objects.get(id=domain_id)
             patient = False
             professional = False
+            professional_id: Optional[int] = None
             admin = False
             try:
                 PatientUser.objects.get(user=user, active=True)
@@ -80,6 +81,7 @@ class WhoAmIViewSet(viewsets.ViewSet):
             try:
                 _professional = ProfessionalUser.objects.get(user=user, active=True)
                 professional = True
+                professional_id = _professional.id
                 try:
                     ProfessionalDomainRelation.objects.get(
                         professional=_professional,
@@ -99,6 +101,7 @@ class WhoAmIViewSet(viewsets.ViewSet):
                         "domain_name": user_domain.name,
                         "patient": patient,
                         "professional": professional,
+                        "current_professional_id": professional_id,
                         "admin": admin,
                     }
                 ).data,
