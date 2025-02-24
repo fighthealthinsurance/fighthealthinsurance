@@ -113,6 +113,14 @@ class UserSignupSerializer(serializers.ModelSerializer):
             "This serializer should not be used directly -- use Patient or Professional version"
         )
 
+class UserSerializer(serializers.ModelSerializer):
+    """
+    Serializer for the base django user model
+    """
+
+    class Meta(object):
+        model = UserDomain
+        include = ("first_name", "last_name", "email", "username", "is_active")
 
 class UserDomainSerializer(serializers.ModelSerializer):
     """

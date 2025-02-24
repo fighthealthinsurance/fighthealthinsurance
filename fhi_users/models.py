@@ -114,6 +114,9 @@ class PatientUser(models.Model):
     def get_combined_name(self) -> str:
         legal_name = self.get_legal_name()
         display_name = self.get_display_name()
+        email = self.user.email
+        if max(len(legal_name), len(display_name)) < 2:
+            return email
         if legal_name == display_name:
             return legal_name
         else:
@@ -135,8 +138,10 @@ class ProfessionalUser(models.Model):
     def get_display_name(self):
         if self.display_name and len(self.display_name) > 0:
             return self.display_name
-        else:
+        elif len(self.user.first_name) > 0:
             return f"{self.user.first_name} {self.user.last_name}"
+        else:
+            return self.user.email
 
     def admin_domains(self):
         return UserDomain.objects.filter(

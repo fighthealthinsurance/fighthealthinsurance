@@ -171,14 +171,17 @@ class AppealSummarySerializer(serializers.ModelSerializer):
         return obj.for_denial.insurance_company if obj.for_denial else None
 
     def get_professional_name(self, obj):
-        return (
-            obj.primary_professional.get_full_name()
-            if obj.primary_professional
-            else None
-        )
+        if obj.primary_professional:
+            return obj.primary_professional.get_display_name()
+        elif obj.creating_professional:
+            return obj.creating_professional.get_display_name()
+        else:
+            return None
 
     def get_patient_name(self, obj):
-        return obj.patient_user.get_combined_name() if obj.patient_user else None
+        if obj.patient_user:
+            # Use the get_combined_name method to get the patient's name
+            return obj.patient_user.get_combined_name()
 
     def get_denial_reason(self, obj):
         return (

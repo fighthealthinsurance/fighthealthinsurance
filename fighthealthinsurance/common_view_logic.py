@@ -791,6 +791,10 @@ class DenialCreatorHelper:
         if store_raw_email:
             possible_email = email
 
+        if not isinstance(primary_professional, ProfessionalUser):
+            primary_professional = None
+        if not isinstance(creating_professional, ProfessionalUser):
+            creating_professional = None
         # If we don't have a denial we're making a new one
         if denial is None:
             try:
@@ -1006,10 +1010,10 @@ class DenialCreatorHelper:
     @classmethod
     def format_denial_response_info(cls, denial):
         appeal_id = None
-        try:
+        if Appeal.objects.filter(for_denial=denial).exists():
             appeal_id = Appeal.objects.get(for_denial=denial).id
-        except:
-            logger.opt(exception=True).warning("Could not find appeal for {denial}")
+        else:
+            logger.debug("Could not find appeal for {denial}")
         return DenialResponseInfo(
             selected_denial_type=denial.denial_type.all(),
             all_denial_types=cls.all_denial_types(),
