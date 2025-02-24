@@ -283,8 +283,9 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
             )
         return Response(status=status.HTTP_200_OK)
 
-    @action(detail=False, methods=["post"])
-    def get_full_details(self, request: Request, pk: int) -> Response:
+    @action(detail=False, methods=["get"])
+    def get_full_details(self, request: Request) -> Response:
+        pk = request.query_params.get("pk")
         current_user: User = request.user  # type: ignore
         appeal = get_object_or_404(
             Appeal.filter_to_allowed_appeals(current_user), pk=pk
@@ -461,17 +462,20 @@ class StatisticsAPIViewSet(viewsets.ViewSet):
     """
     ViewSet for statistics API
     """
+
     def list(self, request):
         now = timezone.now()
-        
+
         # Define current period (current month)
-        current_period_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        current_period_start = now.replace(
+            day=1, hour=0, minute=0, second=0, microsecond=0
+        )
         current_period_end = now
-        
+
         # Define previous period
-        previous_period_start = (current_period_start - relativedelta(months=1))
+        previous_period_start = current_period_start - relativedelta(months=1)
         previous_period_end = current_period_start - relativedelta(microseconds=1)
-        
+
         # Calculate current period statistics
         current_appeals = Appeal.filter_to_allowed_appeals(request.user).filter(
             mod_date__range=(current_period_start.date(), current_period_end.date())
@@ -480,7 +484,7 @@ class StatisticsAPIViewSet(viewsets.ViewSet):
         current_pending = current_appeals.filter(pending=True).count()
         current_sent = current_appeals.filter(sent=True).count()
         current_with_response = current_appeals.exclude(response_date=None).count()
-        
+
         # Calculate previous period statistics
         previous_appeals = Appeal.filter_to_allowed_appeals(request.user).filter(
             mod_date__range=(previous_period_start.date(), previous_period_end.date())
@@ -489,22 +493,28 @@ class StatisticsAPIViewSet(viewsets.ViewSet):
         previous_pending = previous_appeals.filter(pending=True).count()
         previous_sent = previous_appeals.filter(sent=True).count()
         previous_with_response = previous_appeals.exclude(response_date=None).count()
-        
+
         statistics = {
-            'current_total_appeals': current_total,
-            'current_pending_appeals': current_pending,
-            'current_sent_appeals': current_sent,
-            'current_response_rate': (current_with_response / current_total * 100) if current_total > 0 else 0,
-            
-            'previous_total_appeals': previous_total,
-            'previous_pending_appeals': previous_pending,
-            'previous_sent_appeals': previous_sent,
-            'previous_response_rate': (previous_with_response / previous_total * 100) if previous_total > 0 else 0,
-            
-            'period_start': current_period_start,
-            'period_end': current_period_end
+            "current_total_appeals": current_total,
+            "current_pending_appeals": current_pending,
+            "current_sent_appeals": current_sent,
+            "current_response_rate": (
+                (current_with_response / current_total * 100)
+                if current_total > 0
+                else 0
+            ),
+            "previous_total_appeals": previous_total,
+            "previous_pending_appeals": previous_pending,
+            "previous_sent_appeals": previous_sent,
+            "previous_response_rate": (
+                (previous_with_response / previous_total * 100)
+                if previous_total > 0
+                else 0
+            ),
+            "period_start": current_period_start,
+            "period_end": current_period_end,
         }
-        
+
         return Response(statistics)
 
 
@@ -512,52 +522,60 @@ class SearchAPIViewSet(viewsets.ViewSet):
     """
     ViewSet for search API
     """
+
     def list(self, request):
-        query = request.GET.get('q', '')
+        query = request.GET.get("q", "")
         if not query:
             return Response(
-                {'error': 'Please provide a search query parameter "q"'},
-                status=status.HTTP_400_BAD_REQUEST
+                {"error": 'Please provide a search query parameter "q"'},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         # Search in Appeals with user permissions
         appeals = Appeal.filter_to_allowed_appeals(request.user).filter(
-            Q(uuid__icontains=query) |
-            Q(appeal_text__icontains=query) |
-            Q(response_text__icontains=query)
+            Q(uuid__icontains=query)
+            | Q(appeal_text__icontains=query)
+            | Q(response_text__icontains=query)
         )
 
         # Convert appeals to search results
         search_results = []
         for appeal in appeals:
-            search_results.append({
-                'id': appeal.id,
-                'uuid': appeal.uuid,
-                'appeal_text': appeal.appeal_text[:200] if appeal.appeal_text else '',
-                'pending': appeal.pending,
-                'sent': appeal.sent,
-                'mod_date': appeal.mod_date,
-                'has_response': appeal.response_date is not None
-            })
+            search_results.append(
+                {
+                    "id": appeal.id,
+                    "uuid": appeal.uuid,
+                    "appeal_text": (
+                        appeal.appeal_text[:200] if appeal.appeal_text else ""
+                    ),
+                    "pending": appeal.pending,
+                    "sent": appeal.sent,
+                    "mod_date": appeal.mod_date,
+                    "has_response": appeal.response_date is not None,
+                }
+            )
 
         # Sort results by modification date (newest first)
-        search_results.sort(key=lambda x: x['mod_date'], reverse=True)
+        search_results.sort(key=lambda x: x["mod_date"], reverse=True)
 
         # Paginate results
-        page_size = int(request.GET.get('page_size', 10))
-        page = int(request.GET.get('page', 1))
+        page_size = int(request.GET.get("page_size", 10))
+        page = int(request.GET.get("page", 1))
         start_idx = (page - 1) * page_size
         end_idx = start_idx + page_size
 
         paginated_results = search_results[start_idx:end_idx]
-        
-        return Response({
-            'count': len(search_results),
-            'next': page < len(search_results) // page_size + 1,
-            'previous': page > 1,
-            'results': paginated_results
-        })
-      
+
+        return Response(
+            {
+                "count": len(search_results),
+                "next": page < len(search_results) // page_size + 1,
+                "previous": page > 1,
+                "results": paginated_results,
+            }
+        )
+
+
 class AppealAttachmentViewSet(viewsets.ViewSet):
     def list(self, request: Request) -> Response:
         """List attachments for a given appeal"""
