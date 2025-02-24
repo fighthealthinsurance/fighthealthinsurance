@@ -153,6 +153,22 @@ class ProfessionalSignupSerializer(serializers.ModelSerializer):
         return value
 
 
+class FullProfessionalSerializer(serializers.ModelSerializer):
+    """
+    Serialize all of the professional
+    """
+
+    fullname = serializers.SerializerMethodField()
+
+    class Meta(object):
+        model = ProfessionalUser
+        exclude = []
+
+    def get_fullname(self, obj):
+        user: User = obj.user
+        return f"{user.first_name} {user.last_name}"
+
+
 class ProfessionalSignupResponseSerializer(serializers.Serializer):
     """
     Returns a 'next_url' guiding the user to checkout or follow-up steps.

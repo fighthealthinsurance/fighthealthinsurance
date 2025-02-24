@@ -15,6 +15,8 @@ from fighthealthinsurance.models import (
 )
 from rest_framework import serializers
 
+from fhi_users.auth import rest_serializers as auth_serializers
+
 
 # Common
 class StringListField(serializers.ListField):
@@ -224,6 +226,7 @@ class AppealFullSerializer(serializers.ModelSerializer):
     appeal_pdf_url = serializers.SerializerMethodField()
     denial = serializers.SerializerMethodField()
     in_userdomain = serializers.SerializerMethodField()
+    primary_professional = serializers.SerializerMethodField()
 
     class Meta:
         model = Appeal
@@ -243,11 +246,19 @@ class AppealFullSerializer(serializers.ModelSerializer):
         return None
 
     def get_in_userdomain(self, obj):
-        # Generate a URL for downloading the appeal PDF
         if obj.domain:
-            from fhi_users.auth import rest_serializers as auth_serializers
-
             return auth_serializers.UserDomainSerializer(obj.domain).data
+        return None
+
+    def get_primary_professional(self, obj):
+        if obj.primary_professional:
+            return auth_serializers.FullProfessionalSerializer(
+                obj.primary_professional
+            ).data
+        if obj.creating_professional:
+            return auth_serializers.FullProfessionalSerializer(
+                obj.creating_professional
+            ).data
         return None
 
 

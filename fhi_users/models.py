@@ -145,6 +145,9 @@ class ProfessionalUser(models.Model):
             professionaldomainrelation__active=True,
         )
 
+    def get_full_name(self):
+        return f"{self.user.first_name} {self.user.last_name}"
+
 
 class ProfessionalDomainRelation(models.Model):
     professional = models.ForeignKey("ProfessionalUser", on_delete=models.CASCADE)
