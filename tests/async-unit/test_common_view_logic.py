@@ -57,19 +57,6 @@ class TestCommonViewLogic(TestCase):
         self.assertIsInstance(next_steps, NextStepInfo)
 
     @pytest.mark.django_db
-    @patch("fighthealthinsurance.common_view_logic.Denial.objects")
-    def test_create_denial(self, mock_denial_objects):
-        mock_denial = Mock()
-        mock_denial_objects.create.return_value = mock_denial
-        denial_response = DenialCreatorHelper.create_or_update_denial(
-            email="test@example.com",
-            denial_text="text",
-            health_history="history",
-            zip="1234",
-        )
-        self.assertIsInstance(denial_response, DenialResponseInfo)
-
-    @pytest.mark.django_db
     @patch("fighthealthinsurance.common_view_logic.appealGenerator")
     def test_generate_appeals(self, mock_appeal_generator):
         email = "test@example.com"

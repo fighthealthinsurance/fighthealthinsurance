@@ -109,6 +109,7 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
         if (
             "primary_professional" in serializer_data
             and serializer_data["primary_professional"] is not None
+            and is_convertible_to_int(serializer_data["primary_professional"])
         ):
             primary_professional = ProfessionalUser.objects.get(
                 id=serializer_data.pop("primary_professional")
@@ -123,7 +124,9 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
                 denial = Denial.filter_to_allowed_denials(current_user).get(
                     denial_id=denial_id
                 )
-        if "patient_id" in serializer_data:
+        if "patient_id" in serializer_data and is_convertible_to_int(
+            serializer_data["patient_id"]
+        ):
             patient_id = serializer_data.pop("patient_id")
             if patient_id:
                 serializer_data["patient_user"] = PatientUser.objects.get(id=patient_id)
