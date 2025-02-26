@@ -9,11 +9,13 @@ import warnings
 import uuid
 from fighthealthinsurance.models import Appeal, User, PatientUser, ProfessionalUser
 
+
 @contextmanager
 def suppress_deprecation_warnings():
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
         yield
+
 
 class SearchAPITest(APITestCase):
     @classmethod
@@ -22,13 +24,10 @@ class SearchAPITest(APITestCase):
         with suppress_deprecation_warnings():
             # Create test users
             cls.user = User.objects.create_user(
-                username='testuser',
-                email='test@example.com',
-                password='testpass123'
+                username="testuser", email="test@example.com", password="testpass123"
             )
             cls.professional_user = ProfessionalUser.objects.create(
-                user=cls.user,
-                active=True
+                user=cls.user, active=True
             )
 
     def setUp(self):
@@ -42,9 +41,9 @@ class SearchAPITest(APITestCase):
                 sent=False,
                 creating_professional=self.professional_user,
                 mod_date=timezone.now().date(),
-                hashed_email='test@example.com'
+                hashed_email="test@example.com",
             )
-            
+
             self.appeal2 = Appeal.objects.create(
                 uuid=str(uuid.uuid4()),
                 appeal_text="Heart surgery appeal request",
@@ -54,7 +53,7 @@ class SearchAPITest(APITestCase):
                 mod_date=timezone.now().date(),
                 response_text="Approved for cardiac treatment",
                 response_date=timezone.now().date(),
-                hashed_email='test@example.com'
+                hashed_email="test@example.com",
             )
 
     def tearDown(self):
@@ -65,30 +64,30 @@ class SearchAPITest(APITestCase):
         """Test searching appeals by appeal text"""
         with suppress_deprecation_warnings():
             self.client.force_authenticate(user=self.user)
-            url = reverse('search-list')
-            
+            url = reverse("search-list")
+
             # Test search for 'diabetes'
             response = self.client.get(f"{url}?q=diabetes")
             self.assertEqual(response.status_code, status.HTTP_200_OK)
-            self.assertEqual(response.data['count'], 1)
-            self.assertTrue('Diabetes' in response.data['results'][0]['appeal_text'])
-            
+            self.assertEqual(response.data["count"], 1)
+            self.assertTrue("Diabetes" in response.data["results"][0]["appeal_text"])
+
             # Test search for 'heart'
             response = self.client.get(f"{url}?q=heart")
             self.assertEqual(response.status_code, status.HTTP_200_OK)
-            self.assertEqual(response.data['count'], 1)
-            self.assertTrue('Heart' in response.data['results'][0]['appeal_text'])
+            self.assertEqual(response.data["count"], 1)
+            self.assertTrue("Heart" in response.data["results"][0]["appeal_text"])
 
     def test_search_appeals_no_results(self):
         """Test search with no matching results"""
         with suppress_deprecation_warnings():
             self.client.force_authenticate(user=self.user)
-            url = reverse('search-list')
-            
+            url = reverse("search-list")
+
             response = self.client.get(f"{url}?q=nonexistent")
             self.assertEqual(response.status_code, status.HTTP_200_OK)
-            self.assertEqual(response.data['count'], 0)
-            self.assertEqual(len(response.data['results']), 0)
+            self.assertEqual(response.data["count"], 0)
+            self.assertEqual(len(response.data["results"]), 0)
 
     def test_search_appeals_pagination(self):
         """Test search results pagination"""
@@ -102,56 +101,58 @@ class SearchAPITest(APITestCase):
                     sent=False,
                     creating_professional=self.professional_user,
                     mod_date=timezone.now().date(),
-                    hashed_email='test@example.com'
+                    hashed_email="test@example.com",
                 )
 
             self.client.force_authenticate(user=self.user)
-            url = reverse('search-list')
-            
+            url = reverse("search-list")
+
             # Test first page
             response = self.client.get(f"{url}?q=test&page=1&page_size=10")
             self.assertEqual(response.status_code, status.HTTP_200_OK)
-            self.assertEqual(len(response.data['results']), 10)
-            self.assertTrue(response.data['next'])
-            self.assertFalse(response.data['previous'])
-            
+            self.assertEqual(len(response.data["results"]), 10)
+            self.assertTrue(response.data["next"])
+            self.assertFalse(response.data["previous"])
+
             # Test second page
             response = self.client.get(f"{url}?q=test&page=2&page_size=10")
             self.assertEqual(response.status_code, status.HTTP_200_OK)
-            self.assertTrue(len(response.data['results']) > 0)
-            self.assertFalse(response.data['next'])
-            self.assertTrue(response.data['previous'])
+            self.assertTrue(len(response.data["results"]) > 0)
+            self.assertFalse(response.data["next"])
+            self.assertTrue(response.data["previous"])
 
     def test_search_appeals_no_query(self):
         """Test search without query parameter"""
         with suppress_deprecation_warnings():
             self.client.force_authenticate(user=self.user)
-            url = reverse('search-list')
-            
+            url = reverse("search-list")
+
             response = self.client.get(url)
             self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-            self.assertEqual(response.data['error'], 'Please provide a search query parameter "q"')
+            self.assertEqual(
+                response.data["error"], 'Please provide a search query parameter "q"'
+            )
 
     def test_search_appeals_case_insensitive(self):
         """Test case-insensitive search"""
         with suppress_deprecation_warnings():
             self.client.force_authenticate(user=self.user)
-            url = reverse('search-list')
-            
+            url = reverse("search-list")
+
             # Test lowercase
             response = self.client.get(f"{url}?q=diabetes")
             self.assertEqual(response.status_code, status.HTTP_200_OK)
-            self.assertEqual(response.data['count'], 1)
-            
+            self.assertEqual(response.data["count"], 1)
+
             # Test uppercase
             response = self.client.get(f"{url}?q=DIABETES")
             self.assertEqual(response.status_code, status.HTTP_200_OK)
-            self.assertEqual(response.data['count'], 1)
-            
+            self.assertEqual(response.data["count"], 1)
+
             # Test mixed case
             response = self.client.get(f"{url}?q=DiAbEtEs")
             self.assertEqual(response.status_code, status.HTTP_200_OK)
-            self.assertEqual(response.data['count'], 1)
+            self.assertEqual(response.data["count"], 1)
 
     def test_search_appeals_special_characters(self):
         """Test search with special characters"""
@@ -164,13 +165,13 @@ class SearchAPITest(APITestCase):
                 sent=False,
                 creating_professional=self.professional_user,
                 mod_date=timezone.now().date(),
-                hashed_email='test@example.com'
+                hashed_email="test@example.com",
             )
 
             self.client.force_authenticate(user=self.user)
-            url = reverse('search-list')
-            
+            url = reverse("search-list")
+
             # Test search with special characters
             response = self.client.get(f"{url}?q=@example")
             self.assertEqual(response.status_code, status.HTTP_200_OK)
-            self.assertEqual(response.data['count'], 1)
+            self.assertEqual(response.data["count"], 1)

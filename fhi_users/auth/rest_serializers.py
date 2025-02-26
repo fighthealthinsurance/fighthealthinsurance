@@ -154,6 +154,7 @@ class ProfessionalSignupSerializer(serializers.ModelSerializer):
             "user_signup_info",
             "user_domain",
             "skip_stripe",
+            "provider_type",
         ]
 
     def validate_npi_number(self, value):

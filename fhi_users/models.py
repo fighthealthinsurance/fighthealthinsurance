@@ -32,6 +32,8 @@ class UserDomain(models.Model):
         primary_key=False, blank=False, null=False, max_length=300, unique=True
     )
     active = models.BooleanField()
+    # Business name can be blank, we'll use display name then.
+    business_name = models.CharField(max_length=300, null=True)
     display_name = models.CharField(max_length=300, null=False)
     professionals = models.ManyToManyField("ProfessionalUser", through="ProfessionalDomainRelation")  # type: ignore
     # The visible phone number should be unique... ish? Maybe?
@@ -40,7 +42,9 @@ class UserDomain(models.Model):
     # be unique and hope we don't have to remove this. The real world is
     # tricky.
     visible_phone_number = models.CharField(max_length=150, null=False, unique=True)
-    internal_phone_number = models.CharField(max_length=150, null=False)
+    internal_phone_number = models.CharField(
+        max_length=150, null=True, unique=False, blank=True
+    )
     office_fax = models.CharField(max_length=150, null=True)
     country = models.CharField(max_length=150, default="USA")
     state = models.CharField(max_length=50, null=False)

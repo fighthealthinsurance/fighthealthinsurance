@@ -76,6 +76,7 @@ class DenialLongEmployerName(APITestCase):
             internal_phone_number="0987654321",
             active=True,
             display_name="Test Domain",
+            business_name="Test Business",
             country="USA",
             state="CA",
             city="Test City",

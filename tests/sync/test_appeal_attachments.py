@@ -6,6 +6,7 @@ from django.contrib.auth import get_user_model
 from django.urls import reverse
 import json
 
+
 class AppealAttachmentTests(TestCase):
     def setUp(self):
         self.client = APIClient()
@@ -136,7 +137,7 @@ class AppealAttachmentTests(TestCase):
 
         response = self.client.get(
             reverse("appeal_attachments-list") + f"?appeal_id={self.appeal.id}"
-            )
+        )
         self.assertEqual(response.status_code, 200)
         loaded = json.loads(response.content)
         self.assertEqual(len(loaded), 1)
