@@ -2,18 +2,40 @@ import uuid
 import time
 import datetime
 import typing
-
 from django.db import models
 from django.contrib.auth import get_user_model
-
 from django.db.models.signals import pre_save
 from django.dispatch import receiver
-
+from enum import Enum
 
 if typing.TYPE_CHECKING:
     from django.contrib.auth.models import User
 else:
     User = get_user_model()
+
+
+# Define user role enum
+class UserRole(str, Enum):
+    """
+    Enum representing possible user roles in the system, in order of increasing permissions.
+    """
+
+    NONE = "none"
+    PATIENT = "patient"
+    PROFESSIONAL = "professional"
+    ADMIN = "admin"
+
+    @classmethod
+    def get_highest_role(cls, is_patient, is_professional, is_admin):
+        """Determine the highest role a user has"""
+        if is_admin:
+            return cls.ADMIN
+        elif is_professional:
+            return cls.PROFESSIONAL
+        elif is_patient:
+            return cls.PATIENT
+        else:
+            return cls.NONE
 
 
 # Auth-ish-related models
@@ -139,7 +161,7 @@ class ProfessionalUser(models.Model):
     domains = models.ManyToManyField("UserDomain", through="ProfessionalDomainRelation")  # type: ignore
     display_name = models.CharField(max_length=400, null=True)
 
-    def get_display_name(self):
+    def get_display_name(self) -> str:
         if self.display_name and len(self.display_name) > 0:
             return self.display_name
         elif len(self.user.first_name) > 0:

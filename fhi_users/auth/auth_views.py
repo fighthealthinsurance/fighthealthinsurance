@@ -67,6 +67,9 @@ class LogoutView(generic.TemplateView):
     def get(self, request, *args, **kwargs):
         logout(request)
         response = super().get(request, *args, **kwargs)
+        # Clear session cookies
+        request.session.flush()
+        response.delete_cookie("sessionid")
         return response
 
 

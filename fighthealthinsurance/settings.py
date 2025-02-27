@@ -59,7 +59,7 @@ class Base(Configuration):
     }
 
     # Session cookie configs
-    SESSION_COOKIE_SECURE = True  # https only (up to the browser to enforce)
+    SESSION_COOKIE_SECURE = False  # https only (up to the browser to enforce)
     SESSION_COOKIE_HTTPONLY = False  # allow js access
     SESSION_COOKIE_SAMESITE = "Lax"  # cross site happytimes.
 

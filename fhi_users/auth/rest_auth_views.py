@@ -37,6 +37,7 @@ from fhi_users.models import (
     VerificationToken,
     ExtraUserProperties,
     ResetToken,
+    UserRole,
 )
 from fhi_users.auth import rest_serializers as serializers
 from fhi_users.auth.auth_utils import (
@@ -51,6 +52,8 @@ from rest_framework.serializers import Serializer
 from fighthealthinsurance import stripe_utils
 from fhi_users.emails import send_verification_email, send_password_reset_email
 
+from drf_spectacular.utils import extend_schema
+
 if TYPE_CHECKING:
     from django.contrib.auth.models import User
 else:
@@ -58,6 +61,11 @@ else:
 
 
 class WhoAmIViewSet(viewsets.ViewSet):
+    """
+    Returns the current user's information, including their roles and domain.
+    """
+
+    @extend_schema(responses=serializers.WhoAmiSerializer)
     def list(self, request: Request):
         user: User = request.user  # type: ignore
         if user.is_authenticated:
@@ -94,16 +102,26 @@ class WhoAmIViewSet(viewsets.ViewSet):
                     pass
             except ProfessionalUser.DoesNotExist:
                 pass
+
+            # Use the UserRole enum to get the highest role
+            highest_role = UserRole.get_highest_role(
+                is_patient=patient, is_professional=professional, is_admin=admin
+            )
+
             return Response(
                 serializers.WhoAmiSerializer(
-                    {
-                        "email": user.email,
-                        "domain_name": user_domain.name,
-                        "patient": patient,
-                        "professional": professional,
-                        "current_professional_id": professional_id,
-                        "admin": admin,
-                    }
+                    [
+                        {
+                            "email": user.email,
+                            "domain_name": user_domain.name,
+                            "patient": patient,
+                            "professional": professional,
+                            "current_professional_id": professional_id,
+                            "highest_role": highest_role.value,
+                            "admin": admin,
+                        }
+                    ],
+                    many=True,  # This is to match list endpoints returning arrays.
                 ).data,
                 status=status.HTTP_200_OK,
             )
@@ -138,6 +156,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             permission_classes = []
         return [permission() for permission in permission_classes]
 
+    @extend_schema(responses=serializers.ProfessionalSummary)
     @action(detail=False, methods=["post"])
     def list_active_in_domain(self, request) -> Response:
         domain_id = request.session["domain_id"]
@@ -156,6 +175,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         serializer = serializers.ProfessionalSummary(professionals, many=True)
         return Response({"active_professionals": serializer.data})
 
+    @extend_schema(responses=serializers.ProfessionalSummary)
     @action(detail=False, methods=["post"])
     def list_pending_in_domain(self, request) -> Response:
         domain_id = request.session["domain_id"]
@@ -173,6 +193,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         serializer = serializers.ProfessionalSummary(professionals, many=True)
         return Response({"pending_professionals": serializer.data})
 
+    @extend_schema(responses=serializers.StatusResponseSerializer)
     @action(detail=False, methods=["post"])
     def reject(self, request) -> Response:
         """
@@ -197,6 +218,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         relation.save()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+    @extend_schema(responses=serializers.StatusResponseSerializer)
     @action(detail=False, methods=["post"])
     def accept(self, request) -> Response:
         """
@@ -252,8 +274,15 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
+    @extend_schema(responses=serializers.ProfessionalSignupResponseSerializer)
+    def create(self, request: Request) -> Response:
+        """
+        Creates a new professional user and optionally a new domain.
+        """
+        return super().create(request)
+
     def perform_create(
-        self, request: HttpRequest, serializer: Serializer
+        self, request: Request, serializer: Serializer
     ) -> Response | serializers.ProfessionalSignupResponseSerializer:
         data: dict[str, bool | str | dict[str, str]] = serializer.validated_data  # type: ignore
         user_signup_info: dict[str, str] = data["user_signup_info"]  # type: ignore
@@ -382,6 +411,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
 class RestLoginView(ViewSet, SerializerMixin):
     serializer_class = serializers.LoginFormSerializer
 
+    @extend_schema(responses=serializers.StatusResponseSerializer)
     @action(detail=False, methods=["post"])
     def login(self, request: Request) -> Response:
         serializer = self.deserialize(request.data)
@@ -439,12 +469,18 @@ class PatientUserViewSet(ViewSet, CreateMixin):
         else:
             return serializers.GetOrCreatePendingPatientSerializer
 
+    @extend_schema(responses=serializers.StatusResponseSerializer)
+    def create(self, request: Request) -> Response:
+        return super().create(request)
+
+    @extend_schema(responses=serializers.StatusResponseSerializer)
     def perform_create(self, request: Request, serializer) -> Response:
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
         send_verification_email(request, user)
         return Response({"status": "pending"})
 
+    @extend_schema(responses=serializers.PatientReferenceSerializer)
     @action(detail=False, methods=["post", "options"])
     def get_or_create_pending(self, request: Request) -> Response:
         print(f"Called...")
@@ -470,6 +506,7 @@ class VerifyEmailViewSet(ViewSet, SerializerMixin):
 
     serializer_class = serializers.VerificationTokenSerializer
 
+    @extend_schema(responses=serializers.StatusResponseSerializer)
     @action(detail=False, methods=["post"])
     def verify(self, request: Request) -> Response:
         serializer = self.deserialize(data=request.data)
@@ -517,6 +554,7 @@ class VerifyEmailViewSet(ViewSet, SerializerMixin):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+    @extend_schema(responses=serializers.StatusResponseSerializer)
     @action(detail=False, methods=["post"])
     def resend(self, request: Request) -> Response:
         """
@@ -539,6 +577,7 @@ class PasswordResetViewSet(ViewSet, SerializerMixin):
             return serializers.FinishPasswordResetFormSerializer
         return serializers.RequestPasswordResetFormSerializer
 
+    @extend_schema(responses=serializers.StatusResponseSerializer)
     @action(detail=False, methods=["post"])
     def request_reset(self, request: Request) -> Response:
         """Request a password reset."""
@@ -574,6 +613,7 @@ class PasswordResetViewSet(ViewSet, SerializerMixin):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+    @extend_schema(responses=serializers.StatusResponseSerializer)
     @action(detail=False, methods=["post"])
     def finish_reset(self, request: Request) -> Response:
         """Complete a password reset."""

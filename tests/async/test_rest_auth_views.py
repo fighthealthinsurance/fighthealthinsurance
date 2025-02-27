@@ -548,7 +548,7 @@ class RestAuthViewsTests(TestCase):
         url = reverse("whoami-list")
         response = self.client.get(url, format="json")
         self.assertEqual(response.status_code, 200)
-        data = response.json()
+        data = response.json()[0]
         self.assertEqual(data["email"], self.user.email)
 
 

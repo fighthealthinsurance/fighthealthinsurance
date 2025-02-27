@@ -76,10 +76,14 @@ class WhoAmiSerializer(serializers.Serializer):
     patient = serializers.BooleanField()
     professional = serializers.BooleanField()
     current_professional_id = serializers.IntegerField(required=False)
+    highest_role = serializers.ChoiceField(
+        choices=[(role.value, role.name) for role in UserRole],
+        help_text="The highest permission level role of the user: none, patient, professional, or admin",
+    )
     admin = serializers.BooleanField()
 
 
-class UserSignupSerializer(serializers.ModelSerializer):
+class UserSignupSerializer(serializers.Serializer):
     """
     Base serializer for user sign-up fields, intended to be extended.
     """
@@ -87,21 +91,11 @@ class UserSignupSerializer(serializers.ModelSerializer):
     domain_name = serializers.CharField(required=False)
     visible_phone_number = serializers.CharField(required=True)
     continue_url = serializers.CharField()  # URL to send user to post signup / payment
-
-    class Meta(object):
-        model = User
-        fields = [
-            # Ones from the django model
-            "username",
-            "first_name",
-            "last_name",
-            "password",
-            "email",
-            # Our own internal fields
-            "domain_name",
-            "visible_phone_number",
-            "continue_url",
-        ]
+    username = serializers.CharField(required=True)
+    first_name = serializers.CharField(required=True)
+    last_name = serializers.CharField(required=True)
+    password = serializers.CharField(required=True, write_only=True)
+    email = serializers.EmailField(required=True)
 
     def validate_password(self, value):
         if len(value) < 8:
@@ -120,7 +114,7 @@ class UserSerializer(serializers.ModelSerializer):
     """
 
     class Meta(object):
-        model = UserDomain
+        model = User
         include = ("first_name", "last_name", "email", "username", "is_active")
 
 
@@ -131,7 +125,7 @@ class UserDomainSerializer(serializers.ModelSerializer):
 
     class Meta(object):
         model = UserDomain
-        exclude = ("id", "stripe_subscription_id", "active")
+        exclude = ("id", "stripe_subscription_id", "active", "professionals")
 
 
 class ProfessionalSignupSerializer(serializers.ModelSerializer):
@@ -316,3 +310,8 @@ class CreatePatientUserSerializer(serializers.ModelSerializer):
         )
 
         return user
+
+
+class StatusResponseSerializer(serializers.Serializer):
+    status = serializers.CharField()
+    message = serializers.CharField(required=False, allow_blank=True)
