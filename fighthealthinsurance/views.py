@@ -445,6 +445,10 @@ class InitialProcessView(generic.FormView):
         denial_response = common_view_logic.DenialCreatorHelper.create_or_update_denial(
             **form.cleaned_data,
         )
+        
+        # Store the denial ID in the session to maintain state across the multi-step form process
+        # This allows the SessionRequiredMixin to verify the user is working with a valid denial
+        self.request.session['denial_uuid'] = denial_response.denial_id
 
         form = core_forms.HealthHistory(
             initial={
@@ -464,7 +468,20 @@ class InitialProcessView(generic.FormView):
         )
 
 
-class EntityExtractView(generic.FormView):
+class SessionRequiredMixin(View):
+    """Verify that the current user has an active session."""
+    
+    def dispatch(self, request, *args, **kwargs):
+        if not request.session.get('denial_uuid'):
+            denial_id = request.POST.get('denial_id') or request.GET.get('denial_id')
+            if denial_id:
+                request.session['denial_uuid'] = denial_id
+            else:
+                return redirect('process')
+        return super().dispatch(request, *args, **kwargs)
+
+
+class EntityExtractView(SessionRequiredMixin, View):
     form_class = core_forms.EntityExtractForm
     template_name = "entity_extract.html"
 
@@ -495,7 +512,7 @@ class EntityExtractView(generic.FormView):
         )
 
 
-class PlanDocumentsView(generic.FormView):
+class PlanDocumentsView(SessionRequiredMixin, View):
     form_class = core_forms.HealthHistory
     template_name = "health_history.html"
 
@@ -522,7 +539,7 @@ class PlanDocumentsView(generic.FormView):
         )
 
 
-class DenialCollectedView(generic.FormView):
+class DenialCollectedView(SessionRequiredMixin, View):
     form_class = core_forms.PlanDocumentsForm
     template_name = "plan_documents.html"
 

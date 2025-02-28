@@ -14,12 +14,15 @@ from seleniumbase import BaseCase
 BaseCase.main(__name__, __file__)
 
 
-class SeleniumTestAppealGenerationBase(FHISeleniumBase, StaticLiveServerTestCase):
+class SeleniumTestAppealGeneration:
     fixtures = [
         "fighthealthinsurance/fixtures/initial.yaml",
         "fighthealthinsurance/fixtures/followup.yaml",
         "fighthealthinsurance/fixtures/plan_source.yaml",
     ]
+
+    test_username = "testuser"
+    test_password = "testpassword123"
 
     @classmethod
     def setUpClass(cls):
