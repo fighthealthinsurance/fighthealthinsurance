@@ -10,8 +10,9 @@ https://docs.djangoproject.com/en/4.1/howto/deployment/wsgi/
 import os
 
 from configurations.wsgi import get_wsgi_application
+from fighthealthinsurance.utils import get_env_variable
 
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "fighthealthinsurance.settings")
-os.environ.setdefault("DJANGO_CONFIGURATION", "Dev")
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", get_env_variable("DJANGO_SETTINGS_MODULE", "fighthealthinsurance.settings"))
+os.environ.setdefault("DJANGO_CONFIGURATION", get_env_variable("ENVIRONMENT", "Dev"))
 
 application = get_wsgi_application()

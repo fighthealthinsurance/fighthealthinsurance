@@ -6,6 +6,8 @@ import asyncio
 
 from asgiref.sync import sync_to_async
 
+from fighthealthinsurance.utils import get_env_variable
+
 name = "EmailPollingActor"
 
 
@@ -14,10 +16,10 @@ class EmailPollingActor:
     def __init__(self):
         print(f"Starting actor")
         time.sleep(1)
-        # This is a bit of a hack but we do this so we have the app configured
+        
+        os.environ.setdefault("DJANGO_SETTINGS_MODULE", get_env_variable("DJANGO_SETTINGS_MODULE", "fighthealthinsurance.settings"))
+        
         from configurations.wsgi import get_wsgi_application
-
-        os.environ.setdefault("DJANGO_SETTINGS_MODULE", "fighthealthinsurance.settings")
         _application = get_wsgi_application()
         print(f"wsgi started")
         # Now we can import the follow up e-mails logic

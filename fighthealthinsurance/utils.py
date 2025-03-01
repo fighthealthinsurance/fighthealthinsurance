@@ -3,6 +3,7 @@ from django.core.mail import send_mail
 from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
 from django.conf import settings
+from decouple import config, UndefinedValueError
 
 import nest_asyncio
 import asyncstdlib
@@ -204,3 +205,9 @@ async def _interleave_iterator_for_keep_alive(
         except StopAsyncIteration:
             # Break the loop if iteration is complete
             break
+
+def get_env_variable(var_name, default=None):
+    try:
+        return config(var_name, default=default)
+    except UndefinedValueError:
+        raise RuntimeError(f"Critical environment variable {var_name} is missing. Ensure it is set securely.")

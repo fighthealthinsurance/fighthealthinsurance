@@ -2,15 +2,15 @@
 """Django's command-line utility for administrative tasks."""
 import os
 import sys
-
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "fighthealthinsurance.settings")
-
-os.environ.setdefault("DJANGO_CONFIGURATION", os.getenv("ENVIRONMENT", "Dev"))
-
+from decouple import config, UndefinedValueError
+from fighthealthinsurance.utils import get_env_variable
 
 def main():
     """Run administrative tasks."""
-    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "fighthealthinsurance.settings")
+    
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", get_env_variable("DJANGO_SETTINGS_MODULE", "fighthealthinsurance.settings"))
+    os.environ.setdefault("DJANGO_CONFIGURATION", get_env_variable("ENVIRONMENT", "Dev"))
+    
     try:
         from configurations.management import execute_from_command_line
     except ImportError as exc:
