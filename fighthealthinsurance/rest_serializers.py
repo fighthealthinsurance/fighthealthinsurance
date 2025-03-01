@@ -62,6 +62,9 @@ class DenialResponseInfoSerializer(serializers.Serializer):
     diagnosis = serializers.CharField()
     semi_sekret = serializers.CharField()
     fax_number = serializers.CharField(required=False)
+    date_of_service = serializers.CharField(required=False)
+    plan_id = serializers.CharField(required=False)
+    claim_id = serializers.CharField(required=False)
 
 
 # Forms
@@ -87,6 +90,7 @@ class DenialFormSerializer(FormSerializer):
 
 
 class PostInferedFormSerializer(FormSerializer):
+    date_of_service = serializers.CharField(required=False)
     class Meta(object):
         form = core_forms.PostInferedForm
 

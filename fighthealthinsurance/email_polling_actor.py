@@ -16,10 +16,14 @@ class EmailPollingActor:
     def __init__(self):
         print(f"Starting actor")
         time.sleep(1)
-        
-        os.environ.setdefault("DJANGO_SETTINGS_MODULE", get_env_variable("DJANGO_SETTINGS_MODULE", "fighthealthinsurance.settings"))
-        
+
+        os.environ.setdefault(
+            "DJANGO_SETTINGS_MODULE",
+            get_env_variable("DJANGO_SETTINGS_MODULE", "fighthealthinsurance.settings"),
+        )
+
         from configurations.wsgi import get_wsgi_application
+
         _application = get_wsgi_application()
         print(f"wsgi started")
         # Now we can import the follow up e-mails logic

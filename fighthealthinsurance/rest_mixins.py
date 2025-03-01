@@ -46,6 +46,7 @@ class DeleteMixin(SerializerMixin):
         self.perform_delete(request, serializer, *args, **kwargs)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+
 class DeleteOnlyMixin:
     """Extra mixin that allows router display for delete-only resources"""
 

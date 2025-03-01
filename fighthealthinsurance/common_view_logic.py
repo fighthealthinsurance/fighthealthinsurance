@@ -204,6 +204,7 @@ class AppealAssemblyHelper:
         company_phone_number: str = "202-938-3266",
         company_fax_number: str = "415-840-7591",
         pubmed_ids_parsed: Optional[List[str]] = None,
+        pending: Optional[bool] = None,
     ) -> Appeal:
         if denial is None:
             if denial_id is not None:
@@ -273,6 +274,7 @@ class AppealAssemblyHelper:
                     primary_professional=primary_professional,
                     creating_professional=creating_professional,
                     patient_user=patient_user,
+                    domain=domain,
                 )
             else:
                 # Instead of using update(), set values individually preserving existing ones if not provided
@@ -289,7 +291,11 @@ class AppealAssemblyHelper:
                     appeal.creating_professional = creating_professional
                 if patient_user:
                     appeal.patient_user = patient_user
-                appeal.save()
+                if domain:
+                    appeal.domain = domain
+            if pending is not None:
+                appeal.pending = pending
+            appeal.save()
             return appeal
 
     # TODO: Asyncify
@@ -594,6 +600,7 @@ class FindNextStepsHelper:
         employer_name: Optional[str] = None,
         appeal_fax_number: Optional[str] = None,
         patient_health_history: Optional[str] = None,
+        date_of_service: Optional[str] = None,
     ) -> NextStepInfo:
         hashed_email = Denial.get_hashed_email(email)
         # Update the denial
@@ -688,6 +695,8 @@ class DenialResponseInfo:
     semi_sekret: str
     appeal_fax_number: Optional[str]
     appeal_id: Optional[int]
+    claim_id: Optional[str]
+    date_of_service: Optional[str]
 
 
 class PatientNotificationHelper:
@@ -1031,6 +1040,8 @@ class DenialCreatorHelper:
             semi_sekret=denial.semi_sekret,
             appeal_fax_number=denial.appeal_fax_number,
             appeal_id=appeal_id,
+            claim_id=None,
+            date_of_service=None,
         )
 
 

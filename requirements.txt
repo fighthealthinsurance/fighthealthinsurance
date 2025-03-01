@@ -49,7 +49,6 @@ icd10-cm
 loguru
 markdown_strings
 metapub==0.5.12
-mypy
 nest_asyncio
 packaging>=20.0
 pandoc
@@ -70,7 +69,7 @@ ray==2.38.0
 ray[client]==2.38.0
 requests
 sentry-sdk[django]
-setuptools
+setuptools>=58
 sorl-thumbnail
 sqlalchemy_mate==2.0.0.0 # uszipcode issue see https://github.com/MacHu-GWU/uszipcode-project/issues/79
 stopit

@@ -2,6 +2,8 @@
 # This may seem kind of silly -- but given the requirement that username be unique
 # _even_ if you define a custom user model this feels like the most reasonable workaround.
 
+import uuid
+
 from fhi_users.models import UserDomain
 from django.contrib.auth.models import AbstractUser  # Add this import
 from django.contrib.auth import get_user_model
@@ -16,6 +18,10 @@ if TYPE_CHECKING:
     from django.contrib.auth.models import User
 else:
     User = get_user_model()
+
+
+def get_next_fake_username() -> str:
+    return f"{str(uuid.uuid4())}-fake@fighthealthinsurance.com"
 
 
 def validate_username(username: str) -> bool:

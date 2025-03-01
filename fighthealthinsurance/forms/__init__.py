@@ -136,6 +136,7 @@ class PostInferedForm(DenialRefForm):
     )
     plan_id = forms.CharField(required=False)
     claim_id = forms.CharField(required=False)
+    date_of_service = forms.CharField(required=False)
     insurance_company = forms.CharField(required=False)
     plan_source = forms.ModelMultipleChoiceField(
         queryset=PlanSource.objects.all(), required=False
@@ -157,7 +158,6 @@ class PostInferedForm(DenialRefForm):
         + 'including things like "high risk homosexual behavior" (yeah that\'s a real one)',
         required=False,
     )
-
     captcha = forms.CharField(required=False, widget=forms.HiddenInput())
     # Instead of the default behaviour we skip the recaptcha field entirely for dev.
     if "RECAPTCHA_PUBLIC_KEY" in os.environ and (

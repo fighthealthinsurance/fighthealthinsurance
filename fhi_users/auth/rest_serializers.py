@@ -224,7 +224,7 @@ class GetOrCreatePendingPatientSerializer(serializers.Serializer):
     Handles pending patient user creation
     """
 
-    username = serializers.CharField()
+    username = serializers.CharField(required=False, allow_blank=True)
     first_name = serializers.CharField()
     last_name = serializers.CharField()
 

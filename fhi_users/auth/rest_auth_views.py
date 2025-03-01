@@ -26,6 +26,7 @@ from django.contrib.sites.shortcuts import get_current_site
 from django.contrib.auth.tokens import default_token_generator
 from django.shortcuts import get_object_or_404
 from django.views.decorators.cache import cache_control
+from django.views.decorators.vary import vary_on_cookie
 from django.utils.decorators import method_decorator
 
 
@@ -48,6 +49,7 @@ from fhi_users.auth.auth_utils import (
     user_is_admin_in_domain,
     resolve_domain_id,
     get_patient_or_create_pending_patient,
+    get_next_fake_username,
 )
 from fighthealthinsurance.rest_mixins import CreateMixin, SerializerMixin
 from rest_framework.serializers import Serializer
@@ -68,8 +70,9 @@ class WhoAmIViewSet(viewsets.ViewSet):
     """
 
     @method_decorator(
-        cache_control(max_age=1800, private=True, vary="Cookie")
-    )  # Cache for 30 minutes, private to user
+        cache_control(max_age=600, private=True)
+    )  # Cache for 10 minutes, private to user, vary only on cookie header
+    @method_decorator(vary_on_cookie)  # Vary only on the session cookie
     @extend_schema(responses=serializers.WhoAmiSerializer)
     def list(self, request: Request):
         user: User = request.user  # type: ignore
@@ -162,8 +165,9 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         return [permission() for permission in permission_classes]
 
     @method_decorator(
-        cache_control(max_age=1800, private=True, vary="Cookie")
-    )  # Cache for 30 minutes, private to user
+        cache_control(max_age=600, private=True)
+    )  # Cache for 10 minutes, private to user, vary only on cookie header
+    @method_decorator(vary_on_cookie)  # Vary only on the session cookie
     @extend_schema(responses=serializers.ProfessionalSummary)
     @action(detail=False, methods=["post"])
     def list_active_in_domain(self, request) -> Response:
@@ -184,8 +188,9 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         return Response({"active_professionals": serializer.data})
 
     @method_decorator(
-        cache_control(max_age=300, private=True, vary="Cookie")
-    )  # Cache for 5 minutes, private to user
+        cache_control(max_age=600, private=True)
+    )  # Cache for 10 minutes, private to user, vary only on cookie header
+    @method_decorator(vary_on_cookie)  # Vary only on the session cookie
     @extend_schema(responses=serializers.ProfessionalSummary)
     @action(detail=False, methods=["post"])
     def list_pending_in_domain(self, request) -> Response:
@@ -497,6 +502,12 @@ class PatientUserViewSet(ViewSet, CreateMixin):
         print(f"Called...")
         serializer = self.deserialize(data=request.data)
         serializer.is_valid(raise_exception=True)
+        email = None
+        # We allow for creation without a patient e-mail but we make a fake ID
+        if "username" in serializer.validated_data:
+            email = serializer.validated_data["username"]
+        if not email or len(email) == 0:
+            email = get_next_fake_username()
         domain = UserDomain.objects.get(id=request.session["domain_id"])
         user = get_patient_or_create_pending_patient(
             email=serializer.validated_data["username"],

@@ -8,15 +8,24 @@ https://docs.djangoproject.com/en/4.1/howto/deployment/asgi/
 """
 
 import os
-from fighthealthinsurance.utils import get_env_variable
+from fighthealthinsurance.env_utils import get_env_variable
+
+
+print("Setting default envs")
+env = get_env_variable("DJANGO_CONFIGURATION", get_env_variable("ENVIRONMENT", "Dev"))
+print(f"Using env {env}")
+
+os.environ.setdefault(
+    "DJANGO_SETTINGS_MODULE",
+    get_env_variable("DJANGO_SETTINGS_MODULE", "fighthealthinsurance.settings"),
+)
+os.environ.setdefault("DJANGO_CONFIGURATION", env)
+
+# We make sure we have the env variables configured first
 from configurations.asgi import get_asgi_application
 from fighthealthinsurance.routing import websocket_urlpatterns
 from channels.auth import AuthMiddlewareStack
 from channels.routing import ProtocolTypeRouter, URLRouter
-
-
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", get_env_variable("DJANGO_SETTINGS_MODULE", "fighthealthinsurance.settings"))
-os.environ.setdefault("DJANGO_CONFIGURATION", get_env_variable("ENVIRONMENT", "Dev"))
 
 application = ProtocolTypeRouter(
     {

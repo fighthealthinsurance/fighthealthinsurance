@@ -52,6 +52,7 @@ python manage.py loaddata plan_source
 # Make sure we have an admin user so folks can test the admin view
 FIGHT_HEALTH_ADMIN_USER="admin" FIGHT_HEALTH_ADMIN_PASSWORD="admin" python manage.py ensure_adminuser --no-input
 
-python manage.py make_user  --username test_user --domain farts --password farts2
+# Make a test user with UserDomain and everything
+python manage.py make_user  --username test_user --domain testfarts1 --password farts12345678 --email "test@test.com" --visible-phone-number 42
 
 RECAPTCHA_TESTING=true OAUTHLIB_RELAX_TOKEN_SCOPE=1 uvicorn fighthealthinsurance.asgi:application --reload --reload-dir fighthealthinsurance --reload-include="*.py" --reload-exclude "*.pyc,__pycache__/*,*.pyo,*~,#*#,.#*,node_modules,static" --access-log --log-config conf/uvlog_config.yaml --port 8000 --ssl-keyfile key.pem --ssl-certfile cert.pem $@

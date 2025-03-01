@@ -335,8 +335,10 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
         current_user: User = request.user  # type: ignore
         serializer = self.deserialize(data=request.data)
         serializer.is_valid(raise_exception=True)
+        appeal_id = serializer.validated_data["appeal_id"]
+        print(f"Looking up for {appeal_id}")
         appeal = get_object_or_404(
-            Appeal.filter_to_allowed_appeals(current_user), pk=serializer["appeal_id"]
+            Appeal.filter_to_allowed_appeals(current_user), pk=appeal_id
         )
         if serializer["fax_number"] is not None:
             appeal.fax_number = serializer["fax_number"]
@@ -350,8 +352,16 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
             appeal.patient_user == patient_user
             and appeal.for_denial.professional_to_finish
         ):
+            appeal.pending_patient = False
+            appeal.pending_professional = True
+            appeal.pending = True
+            appeal.save()
             raise Exception("Provider wants to finish appeal")
         else:
+            appeal.pending_patient = False
+            appeal.pending_professional = False
+            appeal.pending = False
+            appeal.save()
             staged = common_view_logic.SendFaxHelper.stage_appeal_as_fax(
                 appeal, email=current_user.email, professional=True
             )

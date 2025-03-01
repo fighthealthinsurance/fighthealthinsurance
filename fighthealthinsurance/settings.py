@@ -27,7 +27,10 @@ from dj_easy_log import load_loguru
 from corsheaders.defaults import default_methods
 from fighthealthinsurance.utils import get_env_variable
 
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", get_env_variable("DJANGO_SETTINGS_MODULE", "fighthealthinsurance.settings"))
+os.environ.setdefault(
+    "DJANGO_SETTINGS_MODULE",
+    get_env_variable("DJANGO_SETTINGS_MODULE", "fighthealthinsurance.settings"),
+)
 os.environ.setdefault("DJANGO_CONFIGURATION", get_env_variable("ENVIRONMENT", "Dev"))
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
