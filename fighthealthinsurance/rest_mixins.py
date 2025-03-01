@@ -2,20 +2,20 @@ import typing
 from rest_framework import status
 from rest_framework.serializers import Serializer
 from rest_framework.response import Response
-from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError
 
 
 class SerializerMixin:
     serializer_class: typing.Optional[typing.Type[Serializer]] = None
 
-    def get_serializer_class(self):
+    def get_serializer_class(self) -> typing.Type[Serializer]:
+        if self.serializer_class is None:
+            raise ValidationError("serializer_class must not be None")
         return self.serializer_class
 
-    def deserialize(self, data=None):
-        if self.get_serializer_class() is None:
-            raise ValueError("serializer_class must be defined and not None")
-        else:
-            return self.get_serializer_class()(data=data)
+    def deserialize(self, data=None) -> Serializer:
+        serializer_cls = self.get_serializer_class()
+        return serializer_cls(data=data)
 
 
 class CreateMixin(SerializerMixin):
@@ -38,15 +38,13 @@ class CreateMixin(SerializerMixin):
 
 class DeleteMixin(SerializerMixin):
     def perform_delete(self, request, serializer):
-        pass
+        raise NotImplementedError("Subclasses must implement perform_delete()")
 
-    def delete(self, request, *args, **kwargs):
-        """For some reason"""
+    def delete(self, request, *args, **kwargs) -> Response:
         serializer = self.deserialize(data=request.data)
         serializer.is_valid(raise_exception=True)
         self.perform_delete(request, serializer, *args, **kwargs)
         return Response(status=status.HTTP_204_NO_CONTENT)
-
 
 class DeleteOnlyMixin:
     """Extra mixin that allows router display for delete-only resources"""
