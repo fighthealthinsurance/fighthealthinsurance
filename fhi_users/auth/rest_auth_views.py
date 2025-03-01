@@ -25,6 +25,8 @@ from django.template.loader import render_to_string
 from django.contrib.sites.shortcuts import get_current_site
 from django.contrib.auth.tokens import default_token_generator
 from django.shortcuts import get_object_or_404
+from django.views.decorators.cache import cache_control
+from django.utils.decorators import method_decorator
 
 
 import stripe
@@ -65,6 +67,9 @@ class WhoAmIViewSet(viewsets.ViewSet):
     Returns the current user's information, including their roles and domain.
     """
 
+    @method_decorator(
+        cache_control(max_age=1800, private=True, vary="Cookie")
+    )  # Cache for 30 minutes, private to user
     @extend_schema(responses=serializers.WhoAmiSerializer)
     def list(self, request: Request):
         user: User = request.user  # type: ignore
@@ -156,6 +161,9 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             permission_classes = []
         return [permission() for permission in permission_classes]
 
+    @method_decorator(
+        cache_control(max_age=1800, private=True, vary="Cookie")
+    )  # Cache for 30 minutes, private to user
     @extend_schema(responses=serializers.ProfessionalSummary)
     @action(detail=False, methods=["post"])
     def list_active_in_domain(self, request) -> Response:
@@ -175,6 +183,9 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         serializer = serializers.ProfessionalSummary(professionals, many=True)
         return Response({"active_professionals": serializer.data})
 
+    @method_decorator(
+        cache_control(max_age=300, private=True, vary="Cookie")
+    )  # Cache for 5 minutes, private to user
     @extend_schema(responses=serializers.ProfessionalSummary)
     @action(detail=False, methods=["post"])
     def list_pending_in_domain(self, request) -> Response:
