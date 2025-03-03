@@ -59,11 +59,18 @@ appeal_assembly_helper = AppealAssemblyHelper()
 class DataRemovalViewSet(viewsets.ViewSet, DeleteMixin, DeleteOnlyMixin):
     serializer_class = serializers.DeleteDataFormSerializer
 
-    @extend_schema(responses=serializers.StatusResponseSerializer)
+    @extend_schema(
+        responses={204: serializers.SuccessSerializer, 400: serializers.ErrorSerializer}
+    )
     def perform_delete(self, request: Request, serializer):
         email: str = serializer.validated_data["email"]
         common_view_logic.RemoveDataHelper.remove_data_for_email(email)
-        return Response({"status": "deleted"}, status=status.HTTP_204_NO_CONTENT)
+        return Response(
+            serializers.SuccessSerializer(
+                {"message": "Data deleted successfully"}
+            ).data,
+            status=status.HTTP_204_NO_CONTENT,
+        )
 
 
 class NextStepsViewSet(viewsets.ViewSet, CreateMixin):
@@ -278,7 +285,9 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
         serializer = serializers.AppealDetailSerializer(appeal)
         return Response(serializer.data)
 
-    @extend_schema(responses=serializers.StatusResponseSerializer)
+    @extend_schema(
+        responses={200: serializers.SuccessSerializer, 404: serializers.ErrorSerializer}
+    )
     @action(detail=False, methods=["post"])
     def notify_patient(self, request: Request) -> Response:
         serializer = self.deserialize(request.data)
@@ -291,7 +300,8 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
         patient_user: Optional[PatientUser] = appeal.patient_user
         if patient_user is None:
             return Response(
-                {"status": "Patient not found"}, status=status.HTTP_404_NOT_FOUND
+                serializers.ErrorSerializer({"error": "Patient not found"}).data,
+                status=status.HTTP_404_NOT_FOUND,
             )
         professional_name = None
         if include_professional:
@@ -317,7 +327,10 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
                     id=request.session["domain_id"]
                 ).visible_phone_number,
             )
-        return Response(status=status.HTTP_200_OK)
+        return Response(
+            serializers.SuccessSerializer({"message": "Notification sent"}).data,
+            status=status.HTTP_200_OK,
+        )
 
     @extend_schema(responses=serializers.AppealFullSerializer)
     @action(detail=False, methods=["get"])
@@ -484,20 +497,28 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
                     ).visible_phone_number,
                 )
 
-        return Response({"status": "ok"}, status=status.HTTP_200_OK)
+        return Response(
+            serializers.SuccessSerializer(
+                {"message": "Provider invited successfully"}
+            ).data,
+            status=status.HTTP_200_OK,
+        )
 
 
 class MailingListSubscriberViewSet(viewsets.ViewSet, CreateMixin, DeleteMixin):
     serializer_class = serializers.MailingListSubscriberSerializer
 
-    @extend_schema(responses=serializers.MailingListSubscriberSerializer)
+    @extend_schema(responses=serializers.StatusResponseSerializer)
     def create(self, request: Request) -> Response:
         return super().create(request)
 
-    @extend_schema(responses=serializers.MailingListSubscriberSerializer)
+    @extend_schema(responses=serializers.StatusResponseSerializer)
     def perform_create(self, request: Request, serializer):
         serializer.save()
-        return Response({"status": "subscribed"}, status=status.HTTP_201_CREATED)
+        return Response(
+            serializers.StatusResponseSerializer({"status": "subscribed"}).data,
+            status=status.HTTP_201_CREATED,
+        )
 
     @extend_schema(responses=serializers.StatusResponseSerializer)
     def perform_delete(self, request: Request, serializer):
@@ -591,11 +612,19 @@ class SearchAPIViewSet(viewsets.ViewSet):
     ViewSet for search API
     """
 
+    @extend_schema(
+        responses={
+            200: serializers.SearchResultSerializer,
+            400: serializers.ErrorSerializer,
+        }
+    )
     def list(self, request):
         query = request.GET.get("q", "")
         if not query:
             return Response(
-                {"error": 'Please provide a search query parameter "q"'},
+                serializers.ErrorSerializer(
+                    {"error": 'Please provide a search query parameter "q"'}
+                ).data,
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -647,13 +676,19 @@ class SearchAPIViewSet(viewsets.ViewSet):
 class AppealAttachmentViewSet(viewsets.ViewSet):
     serializer_class = serializers.AppealAttachmentSerializer
 
-    @extend_schema(responses=serializers.AppealAttachmentSerializer)
+    @extend_schema(
+        responses={
+            200: serializers.AppealAttachmentSerializer,
+            400: serializers.ErrorSerializer,
+        }
+    )
     def list(self, request: Request) -> Response:
         """List attachments for a given appeal"""
         appeal_id = request.query_params.get("appeal_id")
         if not appeal_id:
             return Response(
-                {"error": "appeal_id required"}, status=status.HTTP_400_BAD_REQUEST
+                serializers.ErrorSerializer({"error": "appeal_id required"}).data,
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         current_user: User = request.user  # type: ignore

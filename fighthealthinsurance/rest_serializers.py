@@ -91,6 +91,7 @@ class DenialFormSerializer(FormSerializer):
 
 class PostInferedFormSerializer(FormSerializer):
     date_of_service = serializers.CharField(required=False)
+
     class Meta(object):
         form = core_forms.PostInferedForm
 
@@ -413,4 +414,14 @@ class AppealAttachmentUploadSerializer(serializers.Serializer):
 
 class StatusResponseSerializer(serializers.Serializer):
     status = serializers.CharField()
+    message = serializers.CharField(required=False, allow_blank=True)
+
+
+class ErrorSerializer(serializers.Serializer):
+    error = serializers.CharField()
+    message = serializers.CharField(required=False, allow_blank=True)
+
+
+class SuccessSerializer(serializers.Serializer):
+    success = serializers.BooleanField(default=True)
     message = serializers.CharField(required=False, allow_blank=True)
