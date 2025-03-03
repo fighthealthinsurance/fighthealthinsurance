@@ -22,6 +22,7 @@ class FaxSenderBase(object):
     cost_per_page = 0
     # Avoid calling 211/etc.
     special_naps = re.compile(r"^1?(\d11|\d\d\d\d11)")
+    professional = False
 
     def estimate_cost(self, destination: str, pages: int) -> int:
         return self.base_cost + self.cost_per_page * pages
@@ -273,6 +274,7 @@ class HylaFaxClient(FaxSenderBase):
     base_cost = 0
     cost_per_page = 0
     host: Optional[str]
+    professional = True
     # Going above 9600 causes issues sometimes
     max_speed = 9600
     # Default is no modem specified which uses any modem on host
@@ -497,6 +499,10 @@ class FlexibleFaxMagic(object):
     def _add_backend(self, backend: FaxSenderBase) -> None:
         self.backends.append(backend)
 
+    @property
+    def professional_backends(self) -> list[FaxSenderBase]:
+        return list(filter(lambda backend: backend.professional, self.backends))
+
     def assemble_outputs(
         self, user_header: str, extra: str, input_paths: list[str]
     ) -> list[str]:
@@ -578,7 +584,12 @@ class FlexibleFaxMagic(object):
         return results
 
     async def send_fax(
-        self, input_paths: list[str], extra: str, destination: str, blocking: bool
+        self,
+        input_paths: list[str],
+        extra: str,
+        destination: str,
+        blocking: bool,
+        professional: bool,
     ) -> bool:
         import uuid
 
@@ -587,7 +598,10 @@ class FlexibleFaxMagic(object):
         transmission_files = self.assemble_outputs(myuuidStr, extra, input_paths)
         for transmission in transmission_files:
             r = await self._send_fax(
-                path=transmission, destination=destination, blocking=blocking
+                path=transmission,
+                destination=destination,
+                blocking=blocking,
+                professional=professional,
             )
             if r is False:
                 return r
@@ -597,12 +611,19 @@ class FlexibleFaxMagic(object):
             os.remove(f)
         return True
 
-    async def _send_fax(self, path: str, destination: str, blocking: bool) -> bool:
+    async def _send_fax(
+        self, path: str, destination: str, blocking: bool, professional: bool
+    ) -> bool:
         page_count = len(PdfReader(path).pages)
         backends_by_cost = sorted(
             self.backends,
             key=lambda backend: backend.estimate_cost(destination, page_count),
         )
+        if professional:
+            backends_by_cost = sorted(
+                self.professional_backends,
+                key=lambda backend: backend.estimate_cost(destination, page_count),
+            )
         for backend in backends_by_cost:
             print(f"Entering timeout ctx")
             with Timeout(1300.0) as _timeout_ctx:

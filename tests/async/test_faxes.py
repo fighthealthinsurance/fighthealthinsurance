@@ -86,3 +86,98 @@ class FaxSendBaseTest(unittest.TestCase):
                 self.assertIn("Test", text)
                 text = reader.pages[2].extract_text()
                 self.assertIn("Sup", text)
+
+    def test_professional_backends_filter(self):
+        """Test that professional_backends property correctly filters backends"""
+        # Create backends with different professional settings
+        regular_backend = FaxSenderBase()
+        regular_backend.professional = False
+
+        pro_backend = FaxSenderBase()
+        pro_backend.professional = True
+
+        # Create FlexibleFaxMagic with mixed backends
+        fax_magic = FlexibleFaxMagic([regular_backend, pro_backend])
+
+        # Check professional backends filter
+        pro_backends = fax_magic.professional_backends
+        self.assertEqual(len(pro_backends), 1)
+        self.assertTrue(pro_backends[0].professional)
+
+    def test_send_fax_uses_professional_backends(self):
+        """Test that send_fax uses professional backends when professional flag is True"""
+
+        # Create mock backends for testing
+        class MockFaxSenderBase(FaxSenderBase):
+            def __init__(self, professional=False, name="mock"):
+                self.professional = professional
+                self.name = name
+                self.called = False
+
+            async def send_fax(self, destination, path, dest_name=None, blocking=False):
+                self.called = True
+                return True
+
+            def estimate_cost(self, destination, pages):
+                return 10  # Same cost for both backends
+
+        regular_backend = MockFaxSenderBase(professional=False, name="regular")
+        pro_backend = MockFaxSenderBase(professional=True, name="pro")
+
+        # Original _send_fax method to replace after test
+        original_send_fax = FlexibleFaxMagic._send_fax
+
+        with tempfile.NamedTemporaryFile(
+            suffix=".txt", prefix="short_meeps", mode="w+t", delete=True
+        ) as t1:
+            t1.write("Test ")
+            t1.flush()
+            time.sleep(1)
+            try:
+                # Create a subclass to track which backends are selected
+                class TestFlexibleFaxMagic(FlexibleFaxMagic):
+                    last_used_backends = None
+
+                    async def _send_fax(self, path, destination, blocking, professional):
+                        # Record which backends would be used
+                        if professional:
+                            self.last_used_backends = self.professional_backends
+                        else:
+                            self.last_used_backends = self.backends
+                        return True
+
+                # Test with professional=False
+                fax_magic = TestFlexibleFaxMagic([regular_backend, pro_backend])
+                import asyncio
+
+                asyncio.run(
+                    fax_magic.send_fax(
+                        input_paths=[t1.name],
+                        extra="",
+                        destination="14255555555",
+                        blocking=False,
+                        professional=False,
+                    )
+               )
+
+                # Should use all backends
+                self.assertEqual(len(fax_magic.last_used_backends), 2)
+
+                # Test with professional=True
+                asyncio.run(
+                    fax_magic.send_fax(
+                        input_paths=[t1.name],
+                        extra="",
+                        destination="14255555555",
+                        blocking=False,
+                        professional=True,
+                    )
+                )
+
+                # Should only use professional backends
+                self.assertEqual(len(fax_magic.last_used_backends), 1)
+                self.assertTrue(fax_magic.last_used_backends[0].professional)
+
+            finally:
+                # Restore original method
+                FlexibleFaxMagic._send_fax = original_send_fax

@@ -108,38 +108,17 @@ class FaxActor:
 
     def _update_fax_for_sent(self, fax, fax_success):
         print(f"Fax send command returned :)")
+        email = fax.email
         fax.sent = True
         fax.fax_success = fax_success
         fax.save()
-
-    def do_send_fax_object(self, fax) -> bool:
-        email = fax.email
-        denial = fax.denial_id
-        if denial is None:
-            return False
-        if fax.destination is None:
-            return False
-        extra = ""
-        if denial.claim_id is not None and len(denial.claim_id) > 2:
-            extra += f"This is regarding claim id {denial.claim_id}."
-        if fax.name is not None and len(fax.name) > 2:
-            extra += f"This fax is sent on behalf of {fax.name}."
-        self._update_fax_for_sending(fax)
-        print(f"Kicking of fax sending")
-        fax_sent = False
-        try:
-            fax_sent = asyncio.run(
-                flexible_fax_magic.send_fax(
-                    input_paths=[fax.get_temporary_document_path()],
-                    extra=extra,
-                    destination=fax.destination,
-                    blocking=True,
-                )
-            )
-        except Exception as e:
-            print(f"Error running async send_fax {e}")
-        self._update_fax_for_sent(fax, fax_sent)
-        print(f"Notifing user of result {fax_sent}")
+        print(f"Checking if we should notify user of result {fax_success}")
+        if fax.professional:
+            print(f"Professional fax, no need to notify user -- updating appeal")
+            appeal = fax.for_appeal.get()
+            appeal.sent = fax_success
+            appeal.save()
+            return True
         fax_redo_link = "https://www.fighthealthinsurance.com" + reverse(
             "fax-followup",
             kwargs={
@@ -149,7 +128,7 @@ class FaxActor:
         )
         context = {
             "name": fax.name,
-            "success": fax_sent,
+            "success": fax_success,
             "fax_redo_link": fax_redo_link,
         }
         # First, render the plain text content.
@@ -173,4 +152,32 @@ class FaxActor:
         msg.attach_alternative(html_content, "text/html")
         msg.send()
         print(f"E-mail sent!")
+
+    def do_send_fax_object(self, fax) -> bool:
+        denial = fax.denial_id
+        if denial is None:
+            return False
+        if fax.destination is None:
+            return False
+        extra = ""
+        if denial.claim_id is not None and len(denial.claim_id) > 2:
+            extra += f"This is regarding claim id {denial.claim_id}."
+        if fax.name is not None and len(fax.name) > 2:
+            extra += f"This fax is sent on behalf of {fax.name}."
+        self._update_fax_for_sending(fax)
+        print(f"Kicking of fax sending")
+        fax_sent = False
+        try:
+            fax_sent = asyncio.run(
+                flexible_fax_magic.send_fax(
+                    input_paths=[fax.get_temporary_document_path()],
+                    extra=extra,
+                    destination=fax.destination,
+                    blocking=True,
+                    professional=fax.professional,
+                )
+            )
+        except Exception as e:
+            print(f"Error running async send_fax {e}")
+        self._update_fax_for_sent(fax, fax_sent)
         return True

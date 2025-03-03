@@ -436,6 +436,8 @@ class SendFaxHelper:
             destination=appeal_fax_number,
             professional=professional,
         )
+        appeal.fax = fts
+        appeal.save()
         fax_actor_ref.get.do_send_fax.remote(fts.hashed_email, fts.uuid)
         return FaxHelperResults(uuid=fts.uuid, hashed_email=hashed_email)
 

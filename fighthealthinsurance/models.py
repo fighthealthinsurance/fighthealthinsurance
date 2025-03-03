@@ -314,6 +314,7 @@ class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # t
     should_send = models.BooleanField(default=False)
     # Professional we may use different backends.
     professional = models.BooleanField(default=False)
+    for_appeal = models.ForeignKey("Appeal", on_delete=models.SET_NULL, null=True)
 
     def get_temporary_document_path(self):
         combined_document = self.combined_document or self.combined_document_enc
@@ -529,8 +530,8 @@ class Appeal(ExportModelOperationsMixin("Appeal"), models.Model):  # type: ignor
     pending = models.BooleanField(default=True)
     pending_patient = models.BooleanField(default=False)
     pending_professional = models.BooleanField(default=True)
-    # And signals on sent from fax objects
     sent = models.BooleanField(default=False)
+    fax = models.ForeignKey("FaxesToSend", on_delete=models.SET_NULL, null=True)
     # Who do we want to send the appeal?
     professional_send = models.BooleanField(default=True)
     patient_send = models.BooleanField(default=True)
