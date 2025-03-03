@@ -29,7 +29,7 @@ def validate_username(username: str) -> bool:
 
 
 def is_valid_domain(domain_name: str) -> bool:
-    return UserDomain.objects.filter(name=domain_name).exists()
+    return UserDomain.find_by_name(domain_name).exists()
 
 
 def user_is_admin_in_domain(
@@ -68,13 +68,13 @@ def resolve_domain_id(
         return domain_id
     elif domain_name and len(domain_name) > 0:
         # Try and resolve with domain name then fall back to phone number if it fails
-        try:
-            return UserDomain.objects.get(name=domain_name).id
-        except UserDomain.DoesNotExist as e:
-            if phone_number:
-                return UserDomain.objects.get(visible_phone_number=phone_number).id
-            else:
-                raise e
+        # Use the new find_by_name method that strips URLs
+        domains = UserDomain.find_by_name(domain_name)
+        if domains.exists():
+            return domains.first().id # type: ignore
+        if phone_number:
+            return UserDomain.objects.get(visible_phone_number=phone_number).id
+        raise UserDomain.DoesNotExist()
     elif phone_number and len(phone_number) > 0:
         return UserDomain.objects.get(visible_phone_number=phone_number).id
     else:

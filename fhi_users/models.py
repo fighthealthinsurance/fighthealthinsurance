@@ -2,6 +2,7 @@ import uuid
 import time
 import datetime
 import typing
+import re
 from django.db import models
 from django.contrib.auth import get_user_model
 from django.db.models.signals import pre_save
@@ -50,8 +51,9 @@ class UserDomain(models.Model):
     # Money
     stripe_subscription_id = models.CharField(max_length=300, null=True)
     # Info
+    # https://docs.djangoproject.com/en/5.1/ref/models/fields/#django.db.models.Field.null
     name = models.CharField(
-        primary_key=False, blank=False, null=False, max_length=300, unique=True
+        primary_key=False, blank=True, null=True, max_length=300, unique=True
     )
     active = models.BooleanField()
     # Business name can be blank, we'll use display name then.
@@ -67,18 +69,40 @@ class UserDomain(models.Model):
     internal_phone_number = models.CharField(
         max_length=150, null=True, unique=False, blank=True
     )
-    office_fax = models.CharField(max_length=150, null=True)
+    office_fax = models.CharField(max_length=150, null=True, blank=True)
     country = models.CharField(max_length=150, default="USA")
     state = models.CharField(max_length=50, null=False)
     city = models.CharField(max_length=150, null=False)
     address1 = models.CharField(max_length=200, null=False)
-    address2 = models.CharField(max_length=200, null=True)
+    address2 = models.CharField(max_length=200, null=True, blank=True)
     zipcode = models.CharField(max_length=20, null=False)
     # Customize the defaults
     default_procedure = models.CharField(
         primary_key=False, blank=False, null=True, max_length=300, unique=False
     )
     cover_template_string = models.CharField(max_length=5000, null=True)
+
+    def save(self, *args, **kwargs):
+        # Strip URL prefixes from name if it's set
+        if self.name:
+            self.name = self._clean_name(self.name)
+        super().save(*args, **kwargs)
+
+    @staticmethod
+    def _clean_name(name: str) -> str:
+        """Strip URL prefixes from name string"""
+        if name:
+            # Remove http://, https://, and www.
+            return re.sub(r"^https?://(?:www\.)?|^www\.", "", name)
+        return name
+
+    @classmethod
+    def find_by_name(cls, name: typing.Optional[str]) -> models.QuerySet["UserDomain"]:
+        """Find domains by name, cleaning the input name first"""
+        if name:
+            cleaned_name = cls._clean_name(name)
+            return cls.objects.filter(name=cleaned_name)
+        return cls.objects.none()
 
     def get_professional_users(self, **relation_filters):
         from .models import (

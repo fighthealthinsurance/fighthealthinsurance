@@ -88,7 +88,7 @@ class UserSignupSerializer(serializers.Serializer):
     Base serializer for user sign-up fields, intended to be extended.
     """
 
-    domain_name = serializers.CharField(required=False)
+    domain_name = serializers.CharField(required=False, allow_blank=True)
     visible_phone_number = serializers.CharField(required=True)
     continue_url = serializers.CharField()  # URL to send user to post signup / payment
     username = serializers.CharField(required=True)
