@@ -180,10 +180,9 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
     )  # Cache for 10 minutes, private to user, vary only on cookie header
     @method_decorator(vary_on_cookie)  # Vary only on the session cookie
     @extend_schema(
-        responses=[
-            serializers.ProfessionalSummary,
-            serializers.StatusResponseSerializer,
-        ]
+        responses={
+            200: serializers.ProfessionalSummary,
+        }
     )
     @action(detail=False, methods=["post"])
     def list_active_in_domain(self, request) -> Response:
@@ -201,17 +200,16 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         )
         professionals = domain.get_professional_users(active=True)
         serializer = serializers.ProfessionalSummary(professionals, many=True)
-        return Response({"active_professionals": serializer.data})
+        return Response(serializer.data)
 
     @method_decorator(
         cache_control(max_age=600, private=True)
     )  # Cache for 10 minutes, private to user, vary only on cookie header
     @method_decorator(vary_on_cookie)  # Vary only on the session cookie
     @extend_schema(
-        responses=[
-            serializers.ProfessionalSummary,
-            serializers.StatusResponseSerializer,
-        ]
+        responses={
+            200: serializers.ProfessionalSummary,
+        }
     )
     @action(detail=False, methods=["post"])
     def list_pending_in_domain(self, request) -> Response:

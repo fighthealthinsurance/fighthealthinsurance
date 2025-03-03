@@ -138,7 +138,9 @@ class FaxSendBaseTest(unittest.TestCase):
                 class TestFlexibleFaxMagic(FlexibleFaxMagic):
                     last_used_backends = None
 
-                    async def _send_fax(self, path, destination, blocking, professional):
+                    async def _send_fax(
+                        self, path, destination, blocking, professional
+                    ):
                         # Record which backends would be used
                         if professional:
                             self.last_used_backends = self.professional_backends
@@ -158,7 +160,7 @@ class FaxSendBaseTest(unittest.TestCase):
                         blocking=False,
                         professional=False,
                     )
-               )
+                )
 
                 # Should use all backends
                 self.assertEqual(len(fax_magic.last_used_backends), 2)

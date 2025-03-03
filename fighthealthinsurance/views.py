@@ -77,33 +77,36 @@ class BRB(generic.TemplateView):
 def safe_redirect(request, url):
     """
     Safely redirect to a URL after validating it's safe.
-    
+
     Args:
         request: The HTTP request
         url: The URL to redirect to
-    
+
     Returns:
         HttpResponseRedirect to a safe URL
-    
+
     Raises:
         SuspiciousOperation if the URL is not safe
     """
     ALLOWED_HOSTS = [
-        request.get_host(),  
-        'checkout.stripe.com',
+        request.get_host(),
+        "checkout.stripe.com",
     ]
 
-    if not url.startswith('/'):
-        # For URLs, we need to validate the domain        
+    if not url.startswith("/"):
+        # For URLs, we need to validate the domain
         from urllib.parse import urlparse
+
         parsed_url = urlparse(url)
 
         if parsed_url.netloc and parsed_url.netloc not in ALLOWED_HOSTS:
             logger.warning(f"Suspicious redirect attempt to: {url}")
-            raise SuspiciousOperation(f"Redirect to untrusted domain: {parsed_url.netloc}")
-        
+            raise SuspiciousOperation(
+                f"Redirect to untrusted domain: {parsed_url.netloc}"
+            )
+
         logger.info(f"Redirecting to: {url}")
-        
+
         return HttpResponseRedirect(url)
 
 

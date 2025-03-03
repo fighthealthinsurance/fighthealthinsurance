@@ -6,6 +6,7 @@ from django.apps import apps
 from fighthealthinsurance.models import StripeProduct, StripePrice
 from loguru import logger
 
+
 def get_or_create_price(
     product_name: str, amount: int, currency: str = "usd", recurring: bool = False
 ) -> Tuple[str, str]:
@@ -23,7 +24,7 @@ def get_or_create_price(
         # Create in Stripe and save to DB
         stripe_product = None
         product = None
-        
+
         try:
             stripe_product = stripe.Product.create(name=product_name)
             product = StripeProduct.objects.create(
@@ -55,13 +56,17 @@ def get_or_create_price(
                 try:
                     stripe.Product.delete(stripe_product.id)
                 except Exception as cleanup_error:
-                    logger.error(f"Error cleaning up Stripe product: {str(cleanup_error)}")
-            
+                    logger.error(
+                        f"Error cleaning up Stripe product: {str(cleanup_error)}"
+                    )
+
             # Clean up product in DB if it was created
             if product:
                 try:
                     product.delete()
                 except Exception as db_cleanup_error:
-                    logger.error(f"Error cleaning up product in database: {str(db_cleanup_error)}")
-            
+                    logger.error(
+                        f"Error cleaning up product in database: {str(db_cleanup_error)}"
+                    )
+
             raise

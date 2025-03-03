@@ -64,7 +64,7 @@ class SearchAPITest(APITestCase):
         """Test searching appeals by appeal text"""
         with suppress_deprecation_warnings():
             self.client.force_authenticate(user=self.user)
-            url = reverse("search-list")
+            url = reverse("appeals-search")
 
             # Test search for 'diabetes'
             response = self.client.get(f"{url}?q=diabetes")
@@ -82,7 +82,7 @@ class SearchAPITest(APITestCase):
         """Test search with no matching results"""
         with suppress_deprecation_warnings():
             self.client.force_authenticate(user=self.user)
-            url = reverse("search-list")
+            url = reverse("appeals-search")
 
             response = self.client.get(f"{url}?q=nonexistent")
             self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -105,7 +105,7 @@ class SearchAPITest(APITestCase):
                 )
 
             self.client.force_authenticate(user=self.user)
-            url = reverse("search-list")
+            url = reverse("appeals-search")
 
             # Test first page
             response = self.client.get(f"{url}?q=test&page=1&page_size=10")
@@ -125,7 +125,7 @@ class SearchAPITest(APITestCase):
         """Test search without query parameter"""
         with suppress_deprecation_warnings():
             self.client.force_authenticate(user=self.user)
-            url = reverse("search-list")
+            url = reverse("appeals-search")
 
             response = self.client.get(url)
             self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
@@ -137,7 +137,7 @@ class SearchAPITest(APITestCase):
         """Test case-insensitive search"""
         with suppress_deprecation_warnings():
             self.client.force_authenticate(user=self.user)
-            url = reverse("search-list")
+            url = reverse("appeals-search")
 
             # Test lowercase
             response = self.client.get(f"{url}?q=diabetes")
@@ -169,7 +169,7 @@ class SearchAPITest(APITestCase):
             )
 
             self.client.force_authenticate(user=self.user)
-            url = reverse("search-list")
+            url = reverse("appeals-search")
 
             # Test search with special characters
             response = self.client.get(f"{url}?q=@example")

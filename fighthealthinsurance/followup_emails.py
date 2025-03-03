@@ -15,6 +15,7 @@ from fighthealthinsurance.models import Denial, FollowUpSched, InterestedProfess
 from fighthealthinsurance.utils import send_fallback_email
 from loguru import logger
 
+
 class ThankyouEmailSender(object):
     def find_candidates(
         self,

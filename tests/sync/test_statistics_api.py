@@ -72,7 +72,7 @@ class StatisticsAPITest(APITestCase):
             try:
                 self.client.force_authenticate(user=self.user)
 
-                url = reverse("statistics-list")
+                url = reverse("appeals-stats")
                 response = self.client.get(url)
 
                 print(f"\nResponse status code: {response.status_code}")
@@ -115,6 +115,6 @@ class StatisticsAPITest(APITestCase):
 
     # def test_statistics_unauthorized(self):
     #     with suppress_deprecation_warnings():
-    #         url = reverse('statistics-list')
+    #         url = reverse('appeals-stats')
     #         response = self.client.get(url)
     #         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)

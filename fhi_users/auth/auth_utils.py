@@ -71,7 +71,7 @@ def resolve_domain_id(
         # Use the new find_by_name method that strips URLs
         domains = UserDomain.find_by_name(domain_name)
         if domains.exists():
-            return domains.first().id # type: ignore
+            return domains.first().id  # type: ignore
         if phone_number:
             return UserDomain.objects.get(visible_phone_number=phone_number).id
         raise UserDomain.DoesNotExist()
