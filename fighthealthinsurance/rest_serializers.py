@@ -441,7 +441,6 @@ class ErrorSerializer(StatusResponseSerializer):
         super().__init__(data, *args, **kwargs)
 
 
-
 class SuccessSerializer(StatusResponseSerializer):
     success = serializers.BooleanField(default=True)
 
