@@ -13,6 +13,8 @@ from django.urls import reverse
 from django.utils.safestring import mark_safe
 from django.views import View, generic
 from django.http import HttpRequest, HttpResponseBase, HttpResponse, FileResponse
+from django.core.exceptions import SuspiciousOperation
+from django.http import HttpResponseRedirect
 
 from django_encrypted_filefield.crypt import Cryptographer
 
@@ -72,6 +74,39 @@ class BRB(generic.TemplateView):
         return response
 
 
+def safe_redirect(request, url):
+    """
+    Safely redirect to a URL after validating it's safe.
+    
+    Args:
+        request: The HTTP request
+        url: The URL to redirect to
+    
+    Returns:
+        HttpResponseRedirect to a safe URL
+    
+    Raises:
+        SuspiciousOperation if the URL is not safe
+    """
+    ALLOWED_HOSTS = [
+        request.get_host(),  
+        'checkout.stripe.com',
+    ]
+
+    if not url.startswith('/'):
+        # For URLs, we need to validate the domain        
+        from urllib.parse import urlparse
+        parsed_url = urlparse(url)
+
+        if parsed_url.netloc and parsed_url.netloc not in ALLOWED_HOSTS:
+            logger.warning(f"Suspicious redirect attempt to: {url}")
+            raise SuspiciousOperation(f"Redirect to untrusted domain: {parsed_url.netloc}")
+        
+        logger.info(f"Redirecting to: {url}")
+        
+        return HttpResponseRedirect(url)
+
+
 class ProVersionView(generic.FormView):
     template_name = "professional.html"
     form_class = core_forms.InterestedProfessionalForm
@@ -101,7 +136,6 @@ class ProVersionView(generic.FormView):
         if product is None:
             product = stripe.Product.create(name="Pre-Signup -- New")
 
-        # Check if the price already exists for the product
         prices = stripe.Price.list(product=product["id"], limit=100)
         product_price = next(
             (
@@ -142,7 +176,7 @@ class ProVersionView(generic.FormView):
         if checkout_url is None:
             raise Exception("Could not create checkout url")
         else:
-            return redirect(checkout_url)
+            return safe_redirect(self.request, checkout_url)
 
 
 class IndexView(generic.TemplateView):
