@@ -799,7 +799,7 @@ class DenialCreatorHelper:
         creating_professional: Optional[ProfessionalUser] = None,
         primary_professional: Optional[ProfessionalUser] = None,
         patient_user: Optional[PatientUser] = None,
-        patient_visible: bool = False
+        patient_visible: bool = False,
     ):
         hashed_email = Denial.get_hashed_email(email)
         # If they ask us to store their raw e-mail we do
@@ -807,7 +807,6 @@ class DenialCreatorHelper:
         validate_email(email)
         if store_raw_email:
             possible_email = email
-
         if not isinstance(primary_professional, ProfessionalUser):
             primary_professional = None
         if not isinstance(creating_professional, ProfessionalUser):
@@ -847,17 +846,25 @@ class DenialCreatorHelper:
                     patient_visible=patient_visible,
                 )
         else:
-            denial.update(
-                denial_text=denial_text,
-                hashed_email=hashed_email,
-                use_external=use_external_models,
-                raw_email=possible_email,
-                health_history=health_history,
-                creating_professional=creating_professional,
-                primary_professional=primary_professional,
-                patient_user=patient_user,
-                insurance_company=insurance_company,
-            )
+            # Directly update denial object fields instead of using denial.update()
+            denial.denial_text = denial_text
+            denial.hashed_email = hashed_email
+            denial.use_external = use_external_models
+            denial.raw_email = possible_email
+            denial.health_history = health_history
+
+            # Only update these fields if they're provided
+            if creating_professional is not None:
+                denial.creating_professional = creating_professional
+            if primary_professional is not None:
+                denial.primary_professional = primary_professional
+            if patient_user is not None:
+                denial.patient_user = patient_user
+            if insurance_company is not None:
+                denial.insurance_company = insurance_company
+            if patient_visible is not None:
+                denial.patient_visible = patient_visible
+
             denial.save()
 
         if possible_email is not None:

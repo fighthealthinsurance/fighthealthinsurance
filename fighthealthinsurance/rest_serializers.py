@@ -93,8 +93,9 @@ class DenialFormSerializer(FormSerializer):
 
 class PostInferedFormSerializer(FormSerializer):
     """
-    Confirm the details we infered about the denial.
+    Confirm the details we inferred about the denial.
     """
+
     class Meta(object):
         form = core_forms.PostInferedForm
 
