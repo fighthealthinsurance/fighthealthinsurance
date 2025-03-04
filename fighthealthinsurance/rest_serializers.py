@@ -65,6 +65,8 @@ class DenialResponseInfoSerializer(serializers.Serializer):
     date_of_service = serializers.CharField(required=False)
     plan_id = serializers.CharField(required=False)
     claim_id = serializers.CharField(required=False)
+    insurance_company = serializers.CharField(required=False)
+    date_of_service = serializers.CharField(required=False)
 
 
 # Forms
@@ -431,12 +433,12 @@ class StatusResponseSerializer(serializers.Serializer):
 class ErrorSerializer(StatusResponseSerializer):
     error = serializers.CharField()
 
-    def __init__(self, data, *args, **kwargs):
+    def __init__(self, data=None, *args, **kwargs):
         # Set status to "error" if not explicitly provided
-        if "status" not in data:
+        if data and "status" not in data:
             data["status"] = "error"
         # Set message to error value if not explicitly provided
-        if "error" in data and "message" not in data:
+        if data and "error" in data and "message" not in data:
             data["message"] = data["error"]
         super().__init__(data, *args, **kwargs)
 
@@ -444,10 +446,10 @@ class ErrorSerializer(StatusResponseSerializer):
 class SuccessSerializer(StatusResponseSerializer):
     success = serializers.BooleanField(default=True)
 
-    def __init__(self, data, *args, **kwargs):
+    def __init__(self, data=None, *args, **kwargs):
         # Set status to "success" if not explicitly provided
-        if "status" not in data:
+        if data and "status" not in data:
             data["status"] = "success"
-        if "message" not in data:
+        if data and "message" not in data:
             data["message"] = "Operation completed successfully."
         super().__init__(data, *args, **kwargs)

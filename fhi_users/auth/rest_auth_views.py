@@ -157,10 +157,12 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
     """
 
     def get_serializer_class(self):
-        if self.action == "accept":
+        if self.action == "accept" or self.action == "reject":
             return serializers.AcceptProfessionalUserSerializer
-        else:
+        elif self.action == "create":
             return serializers.ProfessionalSignupSerializer
+        else:
+            return None
 
     def get_permissions(self):
         """
@@ -186,6 +188,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
     )
     @action(detail=False, methods=["post"])
     def list_active_in_domain(self, request) -> Response:
+        """List the active users in a given domain"""
         domain_id = request.session["domain_id"]
         domain = UserDomain.objects.get(id=domain_id)
         # Ensure current user is an active professional in domain
@@ -213,6 +216,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
     )
     @action(detail=False, methods=["post"])
     def list_pending_in_domain(self, request) -> Response:
+        """List the pending user in a given domain"""
         domain_id = request.session["domain_id"]
         domain = UserDomain.objects.get(id=domain_id)
         # Ensure current user is active in domain

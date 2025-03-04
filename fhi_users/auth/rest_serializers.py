@@ -184,7 +184,7 @@ class ProfessionalSignupResponseSerializer(serializers.Serializer):
 
 class AcceptProfessionalUserSerializer(serializers.Serializer):
     """
-    Needed for accepting professional users into a domain.
+    Needed for accepting (or rejecting) professional users into a domain.
     """
 
     professional_user_id = serializers.IntegerField()
