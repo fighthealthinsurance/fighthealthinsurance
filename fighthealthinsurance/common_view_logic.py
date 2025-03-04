@@ -799,6 +799,7 @@ class DenialCreatorHelper:
         creating_professional: Optional[ProfessionalUser] = None,
         primary_professional: Optional[ProfessionalUser] = None,
         patient_user: Optional[PatientUser] = None,
+        patient_visible: bool = False
     ):
         hashed_email = Denial.get_hashed_email(email)
         # If they ask us to store their raw e-mail we do
@@ -824,6 +825,7 @@ class DenialCreatorHelper:
                     primary_professional=primary_professional,
                     patient_user=patient_user,
                     insurance_company=insurance_company,
+                    patient_visible=patient_visible,
                 )
             except Exception as e:
                 # This is a temporary hack to drop non-ASCII characters
@@ -842,6 +844,7 @@ class DenialCreatorHelper:
                     primary_professional=primary_professional,
                     patient_user=patient_user,
                     insurance_company=insurance_company,
+                    patient_visible=patient_visible,
                 )
         else:
             denial.update(

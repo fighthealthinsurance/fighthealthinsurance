@@ -92,8 +92,9 @@ class DenialFormSerializer(FormSerializer):
 
 
 class PostInferedFormSerializer(FormSerializer):
-    date_of_service = serializers.CharField(required=False)
-
+    """
+    Confirm the details we infered about the denial.
+    """
     class Meta(object):
         form = core_forms.PostInferedForm
 

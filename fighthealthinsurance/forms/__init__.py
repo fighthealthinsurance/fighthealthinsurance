@@ -77,6 +77,7 @@ class DenialForm(forms.Form):
     primary_professional = forms.CharField(required=False)
     patient_id = forms.CharField(required=False)
     insurance_company = forms.CharField(required=False)
+    patient_visible = forms.BooleanField(required=False)
 
 
 class DenialRefForm(forms.Form):
