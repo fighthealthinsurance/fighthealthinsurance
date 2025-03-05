@@ -96,7 +96,6 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
     serializer_class = serializers.DenialFormSerializer
 
     def get_serializer_class(self):
-        print(self.action)
         if self.action == "create":
             return serializers.DenialFormSerializer
         else:
@@ -262,6 +261,8 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
             return serializers.AssembleAppealRequestSerializer
         elif self.action == "notify_patient":
             return serializers.NotifyPatientRequestSerializer
+        elif self.action == "invite_provider":
+            return serializers.InviteProviderSerializer
         else:
             return None
 
@@ -291,12 +292,23 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
     @action(detail=False, methods=["post"])
     def notify_patient(self, request: Request) -> Response:
         serializer = self.deserialize(request.data)
+        if not serializer.is_valid():
+            return Response(
+                serializers.ErrorSerializer({"error": serializer.errors}).data,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         pk = serializer.validated_data["id"]
-        include_professional = serializer.validated_data["professional_name"]
+        include_professional = False
+        if "include_professional" in serializer.validated_data:
+            include_professional = serializer.validated_data["include_professional"]
         current_user: User = request.user  # type: ignore
         appeal = get_object_or_404(
             Appeal.filter_to_allowed_appeals(current_user), pk=pk
         )
+        # Notifying the patient makes it visible.
+        if not appeal.patient_visible:
+            appeal.patient_visible = True
+            appeal.save()
         patient_user: Optional[PatientUser] = appeal.patient_user
         if patient_user is None:
             return Response(
@@ -344,12 +356,11 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
 
     @extend_schema(responses=serializers.StatusResponseSerializer)
     @action(detail=False, methods=["post"])
-    def send_fax(self, request) -> Response:
+    def send_fax(self, request: Request) -> Response:
         current_user: User = request.user  # type: ignore
         serializer = self.deserialize(data=request.data)
         serializer.is_valid(raise_exception=True)
         appeal_id = serializer.validated_data["appeal_id"]
-        print(f"Looking up for {appeal_id}")
         appeal = get_object_or_404(
             Appeal.filter_to_allowed_appeals(current_user), pk=appeal_id
         )
@@ -369,7 +380,10 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
             appeal.pending_professional = True
             appeal.pending = True
             appeal.save()
-            raise Exception("Provider wants to finish appeal")
+            return Response(data = serializers.StatusResponseSerializer({
+                "message": "Pending professional",
+                "status": "pending_professional",
+                }).data, status=status.HTTP_200_OK)
         else:
             appeal.pending_patient = False
             appeal.pending_professional = False
@@ -467,13 +481,14 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
 
     @extend_schema(responses=serializers.StatusResponseSerializer)
     @action(detail=False, methods=["post"])
-    def invite_provider(self, request: Request, pk: int) -> Response:
+    def invite_provider(self, request: Request) -> Response:
         current_user: User = request.user  # type: ignore
+        serializer = serializers.InviteProviderSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        pk = serializer.validated_data["appeal_id"]
         appeal = get_object_or_404(
             Appeal.filter_to_allowed_appeals(current_user), pk=pk
         )
-        serializer = serializers.InviteProviderSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
         professional_id = serializer.validated_data.get("professional_id")
         email = serializer.validated_data.get("email")
 
@@ -489,9 +504,10 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
                     appeal=appeal, professional=professional_user
                 )
             except ProfessionalUser.DoesNotExist:
+                inviting_professional = ProfessionalUser.objects.get(user=current_user)
                 common_view_logic.ProfessionalNotificationHelper.send_signup_invitation(
                     email=email,
-                    professional_name=professional.get_display_name(),
+                    professional_name=inviting_professional.get_display_name(),
                     practice_number=UserDomain.objects.get(
                         id=request.session["domain_id"]
                     ).visible_phone_number,

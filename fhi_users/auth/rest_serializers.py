@@ -315,3 +315,7 @@ class CreatePatientUserSerializer(serializers.ModelSerializer):
 class StatusResponseSerializer(serializers.Serializer):
     status = serializers.CharField()
     message = serializers.CharField(required=False, allow_blank=True)
+
+
+class EmptySerializer(serializers.Serializer):
+    pass

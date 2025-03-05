@@ -161,8 +161,13 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             return serializers.AcceptProfessionalUserSerializer
         elif self.action == "create":
             return serializers.ProfessionalSignupSerializer
+        elif (
+            self.action == "list_active_in_domain"
+            or self.action == "list_pending_in_domain"
+        ):
+            return serializers.EmptySerializer
         else:
-            return None
+            return serializers.EmptySerializer
 
     def get_permissions(self):
         """

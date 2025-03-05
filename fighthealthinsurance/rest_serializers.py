@@ -290,7 +290,8 @@ class AppealDetailSerializer(serializers.ModelSerializer):
 
 
 class NotifyPatientRequestSerializer(serializers.Serializer):
-    patient_id = serializers.IntegerField()
+    # We either notify by patient id or appeal id and resolve to the patient
+    id = serializers.IntegerField(required=False)
     include_provider = serializers.BooleanField(default=False)
 
 
@@ -382,6 +383,7 @@ class SendFax(serializers.Serializer):
 class InviteProviderSerializer(serializers.Serializer):
     professional_id = serializers.IntegerField(required=False)
     email = serializers.EmailField(required=False)
+    appeal_id = serializers.IntegerField(required=True)
 
     def validate(self, data: dict) -> dict:
         if not data.get("professional_id") and not data.get("email"):

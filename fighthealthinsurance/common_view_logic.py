@@ -717,7 +717,7 @@ class PatientNotificationHelper:
             subject += " from {professional_name}"
         return send_fallback_email(
             subject=subject,
-            template_name="welcome_patient",
+            template_name="new_patient",
             context={"practice_number": practice_number},
             to_email=email,
         )
@@ -744,7 +744,7 @@ class ProfessionalNotificationHelper:
     ):
         return send_fallback_email(
             subject="You are invited to join your coworker on Fight Paperwork",
-            template_name="welcome_professional",
+            template_name="invite_professional",
             context={
                 "professional_name": professional_name,
                 "practice_number": practice_number,
