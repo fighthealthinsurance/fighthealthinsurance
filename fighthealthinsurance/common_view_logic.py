@@ -5,10 +5,14 @@ import datetime
 import json
 from dataclasses import dataclass
 from string import Template
-from typing import AsyncIterator, Awaitable, Any, Optional, Tuple, Iterable
+from typing import AsyncIterator, Awaitable, Any, Optional, Tuple, Iterable, List
 from loguru import logger
 from PyPDF2 import PdfMerger, PdfReader, PdfWriter
 import ray
+import tempfile
+import os
+import uuid
+import re
 
 from django.core.files import File
 from django.core.validators import validate_email
@@ -699,6 +703,8 @@ class DenialResponseInfo:
     appeal_id: Optional[int]
     claim_id: Optional[str]
     date_of_service: Optional[str]
+    insurance_company: Optional[str]
+    plan_id: Optional[str]
 
 
 class PatientNotificationHelper:
@@ -904,39 +910,251 @@ class DenialCreatorHelper:
 
     @classmethod
     def start_background(cls, denial_id):
-        async_to_sync(cls._start_background(denial_id))
+        async_to_sync(cls.run_background_extractions)(denial_id)
 
     @classmethod
     async def extract_entity(cls, denial_id: int) -> AsyncIterator[str]:
-        # Fax extraction is fire and forget and can run in parallel to the other tass
-        asyncio.create_task(cls.extract_set_fax_number(denial_id))
-        asyncs: list[Awaitable[Any]] = [
-            # Denial type depends on denial and diagnosis
-            cls.extract_set_denial_and_diagnosis(denial_id),
-            cls.extract_set_denialtype(denial_id),
-            asyncio.sleep(0, result=""),
+        # Define a wrapper function that returns both the name and result
+        async def named_task(awaitable: Awaitable[Any], name: str) -> tuple[str, Any]:
+            try:
+                result = await awaitable
+                return name, result
+            except Exception as e:
+                logger.opt(exception=True).warning(f"Failed in task {name}: {e}")
+                return name, None
+
+        # Best effort extractions
+        optional_awaitables: list[Awaitable[tuple[str, Any]]] = [
+            named_task(cls.extract_set_fax_number(denial_id), "fax"),
+            named_task(
+                cls.extract_set_insurance_company(denial_id), "insurance company"
+            ),
+            named_task(cls.extract_set_plan_id(denial_id), "plan id"),
+            named_task(cls.extract_set_claim_id(denial_id), "claim id"),
+            named_task(cls.extract_set_date_of_service(denial_id), "date of service"),
         ]
 
-        async def waitAndReturnNewline(a: Awaitable) -> str:
-            try:
-                await a
-            except:
-                logger.opt(exception=True).warning("Failed to process {a}")
-            return "\n"
+        required_awaitables: list[Awaitable[tuple[str, Any]]] = [
+            # Denial type depends on denial and diagnosis
+            named_task(cls.extract_set_denial_and_diagnosis(denial_id), "diagnosis"),
+            named_task(cls.extract_set_denialtype(denial_id), "type of denial"),
+        ]
 
-        # I don't live this but in SQLLite we end up with locking issues
-        # TODO: Fix this.
-        formatted: AsyncIterator[str] = a.map(waitAndReturnNewline, asyncs)
-        # StreamignHttpResponse needs a synchronous iterator otherwise it blocks.
-        interleaved: AsyncIterator[str] = interleave_iterator_for_keep_alive(formatted)
-        return interleaved
+        async def just_the_name(task: Awaitable[tuple[str, Any]]) -> str:
+            try:
+                name, _ = await task
+                return f"Extracted {name}\n"
+            except Exception as e:
+                logger.opt(exception=True).warning(f"Failed to process task: {e}")
+                return f"Failed extracting task: {str(e)}\n"
+
+        # First create task objects for the required tasks.
+        required_tasks = [
+            asyncio.create_task(just_the_name(task)) for task in required_awaitables
+        ]
+
+        # Create Task objects for all optional operations
+        optional_tasks = [
+            asyncio.create_task(just_the_name(task)) for task in optional_awaitables
+        ]
+        # We create both sets of tasks at the same time since they're mostly independent and having
+        # the optional ones running at the same time gives us a chance to get more done.
+
+        # First, execute required tasks (no timeout)
+        for task in asyncio.as_completed(required_tasks):
+            result: str = await task
+            # Yield each result immediately for streaming
+            yield result
+
+        # Now we see what optional tasks we can wrap up in the last 30 seconds.
+        try:
+            for task in asyncio.as_completed(optional_tasks, timeout=30):
+                result = await task
+                yield result
+        except Exception as e:
+            logger.opt(exception=True).debug(f"Error processing optional tasks: {e}")
+            yield f"Error processing optional tasks: {str(e)}\n"
+
+        yield "Extraction completed\n"
 
     @classmethod
-    async def _start_background(cls, denial_id):
-        """Run"""
-        asyncio.ensure_future(cls.extract_set_fax_number(denial_id))
-        await cls.extract_set_denialtype(denial_id)
-        await cls.extract_set_denial_and_diagnosis(denial_id)
+    async def extract_set_denial_and_diagnosis(cls, denial_id: int):
+        denial = await Denial.objects.filter(denial_id=denial_id).aget()
+        try:
+            (procedure, diagnosis) = await appealGenerator.get_procedure_and_diagnosis(
+                denial_text=denial.denial_text
+            )
+            if procedure is not None and len(procedure) < 200:
+                denial.procedure = procedure
+            if diagnosis is not None and len(diagnosis) < 200:
+                denial.diagnosis = diagnosis
+        except Exception as e:
+            logger.opt(exception=True).warning(
+                f"Failed to extract procedure and diagnosis for denial {denial_id}: {e}"
+            )
+        finally:
+            denial.extract_procedure_diagnosis_finished = True
+            await denial.asave()
+
+    @classmethod
+    async def extract_set_insurance_company(cls, denial_id):
+        """Extract insurance company name from denial text"""
+        denial = await Denial.objects.filter(denial_id=denial_id).aget()
+        insurance_company = None
+        try:
+            insurance_company = await appealGenerator.get_insurance_company(
+                denial_text=denial.denial_text
+            )
+
+            # Validate insurance company name - simple validation to avoid hallucinations
+            if insurance_company is not None:
+                # Check if the name appears in the text or is reasonable length
+                if (insurance_company in denial.denial_text) or len(
+                    insurance_company
+                ) < 50:
+                    denial.insurance_company = insurance_company
+                    await denial.asave()
+                    logger.debug(
+                        f"Successfully extracted insurance company: {insurance_company}"
+                    )
+                    return insurance_company
+                else:
+                    logger.debug(
+                        f"Rejected insurance company extraction: {insurance_company}"
+                    )
+        except Exception as e:
+            logger.opt(exception=True).warning(
+                f"Failed to extract insurance company for denial {denial_id}: {e}"
+            )
+        return None
+
+    @classmethod
+    async def extract_set_plan_id(cls, denial_id):
+        """Extract plan ID from denial text"""
+        denial = await Denial.objects.filter(denial_id=denial_id).aget()
+        plan_id = None
+        try:
+            # Extract plan ID - could be in various formats (alphanumeric)
+            plan_id = await appealGenerator.get_plan_id(denial_text=denial.denial_text)
+
+            # Simple validation to avoid hallucinations
+            if plan_id is not None and len(plan_id) < 30:
+                denial.plan_id = plan_id
+                await denial.asave()
+                logger.debug(f"Successfully extracted plan ID: {plan_id}")
+                return plan_id
+            else:
+                logger.debug(f"Rejected plan ID extraction: {plan_id}")
+        except Exception as e:
+            logger.opt(exception=True).warning(
+                f"Failed to extract plan ID for denial {denial_id}: {e}"
+            )
+        return None
+
+    @classmethod
+    async def extract_set_claim_id(cls, denial_id):
+        """Extract claim ID from denial text"""
+        denial = await Denial.objects.filter(denial_id=denial_id).aget()
+        claim_id = None
+        try:
+            claim_id = await appealGenerator.get_claim_id(
+                denial_text=denial.denial_text
+            )
+
+            # Simple validation to avoid hallucinations
+            if claim_id is not None and len(claim_id) < 30:
+                denial.claim_id = claim_id
+                await denial.asave()
+                logger.debug(f"Successfully extracted claim ID: {claim_id}")
+                return claim_id
+            else:
+                logger.debug(f"Rejected claim ID extraction: {claim_id}")
+        except Exception as e:
+            logger.opt(exception=True).warning(
+                f"Failed to extract claim ID for denial {denial_id}: {e}"
+            )
+        return None
+
+    @classmethod
+    async def extract_set_date_of_service(cls, denial_id):
+        """Extract date of service from denial text"""
+        denial = await Denial.objects.filter(denial_id=denial_id).aget()
+        date_of_service = None
+        try:
+            date_of_service = await appealGenerator.get_date_of_service(
+                denial_text=denial.denial_text
+            )
+
+            # Validate date of service
+            if date_of_service is not None:
+                # Store as string since model may expect string format
+                denial.date_of_service = date_of_service
+                await denial.asave()
+                logger.debug(
+                    f"Successfully extracted date of service: {date_of_service}"
+                )
+                return date_of_service
+            else:
+                logger.debug(f"No date of service found")
+        except Exception as e:
+            logger.opt(exception=True).warning(
+                f"Failed to extract date of service for denial {denial_id}: {e}"
+            )
+        return None
+
+    @classmethod
+    async def run_background_extractions(cls, denial_id):
+        """Run extraction tasks in the background with timeouts"""
+        # Create tasks for all extractions and run them in parallel
+        tasks = [
+            cls.extract_set_fax_number(denial_id),
+            cls.extract_set_insurance_company(denial_id),
+            cls.extract_set_plan_id(denial_id),
+            cls.extract_set_claim_id(denial_id),
+            cls.extract_set_date_of_service(denial_id),
+            cls.extract_set_denialtype(denial_id),
+            cls.extract_set_denial_and_diagnosis(denial_id),
+        ]
+
+        # Run all tasks with timeouts
+        try:
+            await asyncio.gather(
+                *[asyncio.wait_for(task, timeout=15.0) for task in tasks]
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"Some extraction tasks timed out for denial {denial_id}")
+        except Exception as e:
+            logger.opt(exception=True).warning(f"Error in background tasks: {e}")
+
+    @classmethod
+    async def extract_set_fax_number(cls, denial_id):
+        # Try and extract the appeal fax number
+        denial = await Denial.objects.filter(denial_id=denial_id).aget()
+        appeal_fax_number = None
+        try:
+            appeal_fax_number = await appealGenerator.get_fax_number(
+                denial_text=denial.denial_text
+            )
+        except Exception as e:
+            logger.opt(exception=True).warning(
+                f"Failed to extract fax number for denial {denial_id}: {e}"
+            )
+
+        # Slight guard against hallucinations
+        if appeal_fax_number is not None:
+            # TODO: More flexible regex matching
+            if (
+                appeal_fax_number not in denial.denial_text
+                and "Fax" not in denial.denial_text
+            ) or len(appeal_fax_number) > 30:
+                appeal_fax_number = None
+
+        if appeal_fax_number is not None:
+            denial.fax_number = appeal_fax_number
+            await denial.asave()
+            logger.debug(f"Successfully extracted fax number: {appeal_fax_number}")
+            return appeal_fax_number
+        return None
 
     @classmethod
     async def extract_set_denialtype(cls, denial_id):
@@ -957,49 +1175,6 @@ class DenialCreatorHelper:
             except:
                 logger.opt(exception=True).debug(f"Failed setting denial type")
         logger.debug(f"Done setting denial types")
-
-    @classmethod
-    async def extract_set_fax_number(cls, denial_id):
-        # Try and extract the appeal fax number
-        denial = await Denial.objects.filter(denial_id=denial_id).aget()
-        appeal_fax_number = None
-        try:
-            appeal_fax_number = await appealGenerator.get_fax_number(
-                denial_text=denial.denial_text, use_external=denial.use_external_models
-            )
-        except:
-            pass
-        # Slight gaurd against halucinations
-        if appeal_fax_number is not None:
-            # TODO: More flexible regex matching
-            if (
-                appeal_fax_number not in denial.denial_text
-                and "Fax" not in denial.denial_text
-            ) or len(appeal_fax_number) > 30:
-                appeal_fax_number = None
-        if appeal_fax_number is not None:
-            denial = await Denial.objects.filter(denial_id=denial_id).aget()
-            denial.fax_number = appeal_fax_number
-            await denial.asave()
-
-    @classmethod
-    async def extract_set_denial_and_diagnosis(cls, denial_id: int):
-        denial = await Denial.objects.filter(denial_id=denial_id).aget()
-        try:
-            (procedure, diagnosis) = await appealGenerator.get_procedure_and_diagnosis(
-                denial_text=denial.denial_text, use_external=denial.use_external
-            )
-            if procedure is not None and len(procedure) < 200:
-                denial.procedure = procedure
-            if diagnosis is not None and len(diagnosis) < 200:
-                denial.diagnosis = diagnosis
-        except Exception as e:
-            logger.opt(exception=True).warning(
-                f"Failed to extract procedure and diagnosis for denial {denial_id}"
-            )
-        finally:
-            denial.extract_procedure_diagnosis_finished = True
-            await denial.asave()
 
     @classmethod
     def update_denial(
@@ -1040,7 +1215,7 @@ class DenialCreatorHelper:
             appeal_id = Appeal.objects.get(for_denial=denial).id
         else:
             logger.debug("Could not find appeal for {denial}")
-        return DenialResponseInfo(
+        r = DenialResponseInfo(
             selected_denial_type=denial.denial_type.all(),
             all_denial_types=cls.all_denial_types(),
             uuid=denial.uuid,
@@ -1052,16 +1227,20 @@ class DenialCreatorHelper:
             semi_sekret=denial.semi_sekret,
             appeal_fax_number=denial.appeal_fax_number,
             appeal_id=appeal_id,
-            claim_id=None,
-            date_of_service=None,
+            claim_id=denial.claim_id,
+            date_of_service=denial.date_of_service,
+            insurance_company=denial.insurance_company,
+            plan_id=denial.plan_id,
         )
+        print(f"Formatting {denial} as {r}")
+        return r
 
 
 class AppealsBackendHelper:
     regex_denial_processor = ProcessDenialRegex()
 
     @classmethod
-    async def generate_appeals(cls, parameters):
+    async def generate_appeals(cls, parameters) -> AsyncIterator[str]:
         denial_id = parameters["denial_id"]
         email = parameters["email"]
         semi_sekret = parameters["semi_sekret"]
@@ -1220,4 +1399,5 @@ class AppealsBackendHelper:
         interleaved: AsyncIterator[str] = interleave_iterator_for_keep_alive(
             subbed_appeals_json
         )
-        return interleaved
+        async for i in interleaved:
+            yield i

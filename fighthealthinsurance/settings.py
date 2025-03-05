@@ -460,6 +460,7 @@ class Dev(Base):
 
 
 class Test(Dev):
+    DEBUG = True
     DEFF_SALT = os.getenv("DEFF_SALT", "test-salt")
     DEFF_PASSWORD = os.getenv("DEFF_PASSWORD", "test-password")
     # For async tests we do in memory for increased isolation
@@ -475,6 +476,7 @@ class Test(Dev):
 
 
 class TestSync(Dev):
+    DEBUG = True
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.sqlite3",
@@ -485,6 +487,7 @@ class TestSync(Dev):
 
 
 class TestActor(Dev):
+    DEBUG = True
     # We _may_ use "real" files for actor tests since we have seperate processes for actors.
     dt = str(int(time.time()))
     dbname = os.getenv("DBNAME", f"{BASE_DIR}/test2{dt}.db.sqlite3")

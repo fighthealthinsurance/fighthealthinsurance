@@ -1,11 +1,12 @@
+import asyncio
 import itertools
 import random
+import re
 import time
 import traceback
 from concurrent.futures import Future
-from typing import Any, Iterator, List, Optional, Tuple
+from typing import Any, Iterator, List, Optional, Tuple, Pattern, Callable
 from loguru import logger
-
 
 from fighthealthinsurance.denial_base import DenialBase
 from fighthealthinsurance.exec import *
@@ -43,15 +44,259 @@ class AppealGenerator(object):
         self.regex_denial_processor = ProcessDenialRegex()
         self.pmt = PubMedTools()
 
+    async def _extract_entity_with_regexes_and_model(
+        self,
+        denial_text: str,
+        patterns: List[str],
+        flags: int = re.IGNORECASE,
+        use_external: bool = False,
+        model_method_name: Optional[str] = None,
+        prompt_template: Optional[str] = None,
+        find_in_denial=True,
+    ) -> Optional[str]:
+        """
+        Common base function for extracting entities using regex patterns first,
+        then falling back to ML models if needed.
+
+        Args:
+            denial_text: The text to extract from
+            patterns: List of regex patterns to try
+            flags: Regex flags to apply
+            use_external: Whether to use external models
+            model_method_name: Name of the method to call on ML models
+            prompt_template: Template for prompting extraction if ML models are needed
+
+        Returns:
+            Extracted entity or None
+        """
+        # First try regex patterns
+        for pattern in patterns:
+            match = re.search(pattern, denial_text, flags)
+            if match:
+                return match.group(1).strip()
+
+        denial_lowered = denial_text.lower()
+        # If regex fails, try ML models
+        if model_method_name:
+            models_to_try = ml_router.entity_extract_backends(use_external)
+            for model in models_to_try:
+                if hasattr(model, model_method_name):
+                    c = 0
+                    method = getattr(model, model_method_name)
+                    # Gentle retry
+                    while c < 3:
+                        await asyncio.sleep(1)
+                        c = c + 1
+                        extracted: Optional[str] = await method(
+                            denial_text
+                        )  # type:ignore
+                        if extracted is not None:
+                            extracted_lowered = extracted.lower()
+                            if (
+                                "unknown" not in extracted_lowered
+                                and extracted_lowered != "false"
+                                # Since this occurs often in our training set it can be bad
+                                and "independent medical review"
+                                not in extracted_lowered
+                            ):
+                                if (
+                                    not find_in_denial
+                                    or extracted_lowered in denial_lowered
+                                ):
+                                    return extracted
+        return None
+
     async def get_fax_number(
         self, denial_text=None, use_external=False
     ) -> Optional[str]:
+        """
+        Extract fax number from denial text
+
+        Args:
+            denial_text: The text of the denial letter
+            use_external: Whether to use external models
+
+        Returns:
+            Extracted fax number or None
+        """
+        if denial_text is None:
+            return None
+
+        # Common fax number regex patterns
+        fax_patterns = [
+            r"[Ff]ax(?:\s*(?:number|#|:))?\s*[:=]?\s*(\d{3}[-.\s]?\d{3}[-.\s]?\d{4})",
+            r"[Ff]ax(?:\s*(?:to|at))?\s*[:=]?\s*(\d{3}[-.\s]?\d{3}[-.\s]?\d{4})",
+            r"[Aa]ppeal.*?[Ff]ax.*?(\d{3}[-.\s]?\d{3}[-.\s]?\d{4})",
+            r"[Ff]ax.*?[Aa]ppeal.*?(\d{3}[-.\s]?\d{3}[-.\s]?\d{4})",
+        ]
+
+        return await self._extract_entity_with_regexes_and_model(
+            denial_text=denial_text,
+            patterns=fax_patterns,
+            flags=re.IGNORECASE | re.DOTALL,
+            use_external=use_external,
+            model_method_name="get_fax_number",
+            find_in_denial=False,  # Since we might have -s or other formatting
+        )
+
+    async def get_insurance_company(
+        self, denial_text=None, use_external=False
+    ) -> Optional[str]:
+        """
+        Extract insurance company name from denial text
+
+        Args:
+            denial_text: The text of the denial letter
+            use_external: Whether to use external models
+
+        Returns:
+            Extracted insurance company name or None
+        """
+        if denial_text is None:
+            return None
+
+        # Try regex patterns first
+        company_patterns = [
+            r"^([A-Z][A-Za-z\s&]+(?:Insurance|Health|Healthcare|Medical|Plan|Benefits|Blue|Cross|Shield)(?:\s[A-Za-z&\s]+)?)\n",
+            r"letterhead:\s*([A-Z][A-Za-z\s&]+(?:Insurance|Health|Healthcare|Medical|Plan|Benefits|Blue|Cross|Shield)(?:\s[A-Za-z&\s]+)?)",
+            r"from:\s*([A-Z][A-Za-z\s&]+(?:Insurance|Health|Healthcare|Medical|Plan|Benefits|Blue|Cross|Shield)(?:\s[A-Za-z&\s]+)?)",
+        ]
+
+        # Try direct regex matches
+        for pattern in company_patterns:
+            match = re.search(pattern, denial_text, re.IGNORECASE | re.MULTILINE)
+            if match:
+                return match.group(1).strip()
+
+        # Try to find well-known insurance companies
+        known_companies = [
+            "Aetna",
+            "Anthem",
+            "Blue Cross",
+            "Blue Shield",
+            "Cigna",
+            "Humana",
+            "Kaiser Permanente",
+            "UnitedHealthcare",
+            "United Healthcare",
+            "Centene",
+            "Molina Healthcare",
+            "WellCare",
+            "CVS Health",
+            # These are often mentioned even when not the insurer
+            # "Medicare",
+            # "Medicaid",
+        ]
+
+        for company in known_companies:
+            if company in denial_text:
+                # Find the full company name (looking for patterns like "Aetna Health Insurance")
+                pattern = rf"({company}\s+[A-Za-z\s&]+(?:Insurance|Health|Healthcare|Medical|Plan|Benefits))"
+                match = re.search(pattern, denial_text, re.IGNORECASE)
+                if match:
+                    return match.group(1).strip()
+                return company
+
+        # If regex fails, use ML models
         models_to_try = ml_router.entity_extract_backends(use_external)
         for model in models_to_try:
-            fax_number: Optional[str] = await model.get_fax_number(denial_text)
-            if fax_number is not None and "UNKNOWN" not in fax_number:
-                return fax_number
+            if hasattr(model, "get_insurance_company"):
+                insurance_company: Optional[str] = await model.get_insurance_company(
+                    denial_text
+                )
+                if insurance_company is not None and "UNKNOWN" not in insurance_company:
+                    return insurance_company
+
         return None
+
+    async def get_plan_id(self, denial_text=None, use_external=False) -> Optional[str]:
+        """
+        Extract plan ID from denial text
+
+        Args:
+            denial_text: The text of the denial letter
+            use_external: Whether to use external models
+
+        Returns:
+            Extracted plan ID or None
+        """
+        if denial_text is None:
+            return None
+
+        # Common plan ID patterns
+        plan_patterns = [
+            r"[Pp]lan(?:\s*(?:ID|Number|#|:))?\s*[:=]?\s*([A-Z0-9]{5,20})",
+            r"[Gg]roup(?:\s*(?:ID|Number|#|:))?\s*[:=]?\s*([A-Z0-9]{5,20})",
+            r"[Pp]olicy(?:\s*(?:ID|Number|#|:))?\s*[:=]?\s*([A-Z0-9]{5,20})",
+            r"[Mm]ember(?:\s*(?:ID|Number|#|:))?\s*[:=]?\s*([A-Z0-9]{5,20})",
+        ]
+
+        return await self._extract_entity_with_regexes_and_model(
+            denial_text=denial_text,
+            patterns=plan_patterns,
+            use_external=use_external,
+            model_method_name="get_plan_id",
+        )
+
+    async def get_claim_id(self, denial_text=None, use_external=False) -> Optional[str]:
+        """
+        Extract claim ID from denial text
+
+        Args:
+            denial_text: The text of the denial letter
+            use_external: Whether to use external models
+
+        Returns:
+            Extracted claim ID or None
+        """
+        if denial_text is None:
+            return None
+
+        # Common claim ID patterns
+        claim_patterns = [
+            r"[Cc]laim(?:\s*(?:ID|Number|#|:))?\s*[:=]?\s*([A-Z0-9]{5,20})",
+            r"[Cc]laim(?:\s*(?:ID|Number|#|:))?\s*[:=]?\s*([A-Z0-9-]{5,20})",
+            r"[Rr]eference(?:\s*(?:ID|Number|#|:))?\s*[:=]?\s*([A-Z0-9-]{5,20})",
+        ]
+
+        return await self._extract_entity_with_regexes_and_model(
+            denial_text=denial_text,
+            patterns=claim_patterns,
+            use_external=use_external,
+            model_method_name="get_claim_id",
+        )
+
+    async def get_date_of_service(
+        self, denial_text=None, use_external=False
+    ) -> Optional[str]:
+        """
+        Extract date of service from denial text
+
+        Args:
+            denial_text: The text of the denial letter
+            use_external: Whether to use external models
+
+        Returns:
+            Extracted date of service or None
+        """
+        if denial_text is None:
+            return None
+
+        # Common date patterns (MM/DD/YYYY, MM-DD-YYYY, Month DD, YYYY)
+        date_patterns = [
+            r"[Dd]ate(?:\s*(?:of|for))?\s*[Ss]ervice\s*[:=]?\s*(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})",
+            r"[Dd]ate(?:\s*(?:of|for))?\s*[Ss]ervice\s*[:=]?\s*([A-Za-z]+\s+\d{1,2},?\s*\d{2,4})",
+            r"[Ss]ervice(?:\s*(?:date|period))?\s*[:=]?\s*(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})",
+            r"[Ss]ervice(?:\s*(?:date|period))?\s*[:=]?\s*([A-Za-z]+\s+\d{1,2},?\s*\d{2,4})",
+        ]
+
+        result = await self._extract_entity_with_regexes_and_model(
+            denial_text=denial_text,
+            patterns=date_patterns,
+            use_external=use_external,
+            model_method_name="get_date_of_service",
+        )
+        return result
 
     async def get_procedure_and_diagnosis(
         self, denial_text=None, use_external=False
@@ -60,11 +305,12 @@ class AppealGenerator(object):
         models_to_try: list[DenialBase] = [
             self.regex_denial_processor,
         ]
-        models_to_try.extend(ml_router.entity_extract_backends(use_external))
+        ml_entity_models = ml_router.entity_extract_backends(use_external)
+        models_to_try.extend(ml_entity_models)
         procedure = None
         diagnosis = None
         for model in models_to_try:
-            logger.debug(f"Exploring model {model}")
+            logger.debug(f"Hiiii Exploring model {model}")
             procedure_diagnosis = await model.get_procedure_and_diagnosis(denial_text)
             if procedure_diagnosis is not None:
                 if len(procedure_diagnosis) > 1:
@@ -134,8 +380,12 @@ class AppealGenerator(object):
             return None
 
     def make_appeals(
-        self, denial, template_generator, medical_reasons=[], non_ai_appeals=[]
+        self, denial, template_generator, medical_reasons=None, non_ai_appeals=None
     ) -> Iterator[str]:
+        if medical_reasons is None:
+            medical_reasons = []
+        if non_ai_appeals is None:
+            non_ai_appeals = []
 
         open_prompt = self.make_open_prompt(
             denial_text=denial.denial_text,

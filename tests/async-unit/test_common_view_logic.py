@@ -76,7 +76,7 @@ class TestCommonViewLogic(TestCase):
             mock_appeal_generator.generate_appeals.return_value = async_generator(
                 ["test"]
             )
-            response = await AppealsBackendHelper.generate_appeals(
+            responses = AppealsBackendHelper.generate_appeals(
                 {
                     "denial_id": 1,
                     "email": email,
@@ -85,7 +85,7 @@ class TestCommonViewLogic(TestCase):
             )
             buf = io.StringIO()
 
-            async for chunk in response:
+            async for chunk in responses:
                 buf.write(chunk)
 
             buf.seek(0)

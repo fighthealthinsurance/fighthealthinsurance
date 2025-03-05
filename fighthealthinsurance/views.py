@@ -1,3 +1,5 @@
+import os
+
 import json
 import stripe
 from stripe import error as stripe_error
@@ -485,7 +487,8 @@ class InitialProcessView(generic.FormView):
 
         # Store the denial ID in the session to maintain state across the multi-step form process
         # This allows the SessionRequiredMixin to verify the user is working with a valid denial
-        self.request.session["denial_uuid"] = denial_response.denial_id
+        self.request.session["denial_uuid"] = str(denial_response.uuid)
+        self.request.session["denial_id"] = denial_response.denial_id
 
         form = core_forms.HealthHistory(
             initial={
@@ -509,16 +512,24 @@ class SessionRequiredMixin(View):
     """Verify that the current user has an active session."""
 
     def dispatch(self, request, *args, **kwargs):
-        if not request.session.get("denial_uuid"):
+        print(request.session)
+        # Don't enforce this rule for now in prod we want to wait for everyone to have a session
+        force_session = settings.DEBUG or os.environ.get("TESTING", False)
+        if (
+            force_session
+            and not request.session.get("denial_uuid")
+            and not request.session.get("denial_id")
+        ):
+            print("Huzzah doing le check")
             denial_id = request.POST.get("denial_id") or request.GET.get("denial_id")
             if denial_id:
-                request.session["denial_uuid"] = denial_id
+                request.session["denial_id"] = denial_id
             else:
                 return redirect("process")
-        return super().dispatch(request, *args, **kwargs)
+        return super().dispatch(request, *args, **kwargs)  # type: ignore
 
 
-class EntityExtractView(SessionRequiredMixin, View):
+class EntityExtractView(SessionRequiredMixin, generic.FormView):
     form_class = core_forms.EntityExtractForm
     template_name = "entity_extract.html"
 
@@ -536,6 +547,10 @@ class EntityExtractView(SessionRequiredMixin, View):
                 "procedure": denial_response.procedure,
                 "diagnosis": denial_response.diagnosis,
                 "semi_sekret": denial_response.semi_sekret,
+                "insurance_company": denial_response.insurance_company,
+                "plan_id": denial_response.plan_id,
+                "claim_id": denial_response.claim_id,
+                "date_of_service": denial_response.date_of_service,
             }
         )
 
@@ -549,7 +564,7 @@ class EntityExtractView(SessionRequiredMixin, View):
         )
 
 
-class PlanDocumentsView(SessionRequiredMixin, View):
+class PlanDocumentsView(SessionRequiredMixin, generic.FormView):
     form_class = core_forms.HealthHistory
     template_name = "health_history.html"
 
@@ -576,7 +591,7 @@ class PlanDocumentsView(SessionRequiredMixin, View):
         )
 
 
-class DenialCollectedView(SessionRequiredMixin, View):
+class DenialCollectedView(SessionRequiredMixin, generic.FormView):
     form_class = core_forms.PlanDocumentsForm
     template_name = "plan_documents.html"
 
