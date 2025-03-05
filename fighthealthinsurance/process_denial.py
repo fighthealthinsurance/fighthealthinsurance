@@ -25,14 +25,14 @@ class ProcessDenialCodes(DenialBase):
         # These will match many things which are not ICD10 codes or CPT codes but
         # then the lookup will hopefully fail.
         self.icd10_re = re.compile(
-            "[\\(\\s:\\.,]+([A-TV-Z][0-9][0-9AB]\\.?[0-9A-TV-Z]{0,4})[\\s:\\.\\),]",
+            r"[\(\s:\.,]+([A-TV-Z][0-9][0-9AB]\.?[0-9A-TV-Z]{0,4})[\s:\.\),]",
             re.M | re.UNICODE,
         )
         self.cpt_code_re = re.compile(
-            "[\\(\\s:,]+(\\d{4,4}[A-Z0-9])[\\s:\\.\\),]", re.M | re.UNICODE
+            r"[\(\s:,]+(\d{4}[A-Z0-9])[\s:\.\),]", re.M | re.UNICODE
         )
         self.preventive_regex = re.compile(
-            "(exposure to human immunodeficiency virus|preventive|high risk homosexual)",
+            r"(exposure to human immunodeficiency virus|preventive|high risk homosexual)",
             re.M | re.UNICODE | re.IGNORECASE,
         )
         try:
