@@ -53,7 +53,7 @@ class UserDomain(models.Model):
     # Info
     # https://docs.djangoproject.com/en/5.1/ref/models/fields/#django.db.models.Field.null
     name = models.CharField(
-        primary_key=False, blank=True, null=True, max_length=300, unique=True
+        blank=True, null=True, max_length=300, unique=True
     )
     active = models.BooleanField()
     # Business name can be blank, we'll use display name then.
@@ -78,7 +78,7 @@ class UserDomain(models.Model):
     zipcode = models.CharField(max_length=20, null=False)
     # Customize the defaults
     default_procedure = models.CharField(
-        primary_key=False, blank=False, null=True, max_length=300, unique=False
+        blank=False, null=True, max_length=300, unique=False
     )
     cover_template_string = models.CharField(max_length=5000, null=True)
 
