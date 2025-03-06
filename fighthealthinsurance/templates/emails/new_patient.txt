@@ -1,7 +1,7 @@
 
 You have been invited to join your healthcare professional in appealing the health insurance denial you have received.
 
-According to studies appeals when patients are involved have a close to 90% success rate.
+According to some studies, when patients are involved, appeals have nearly a 90% success rate.
 
 To make sure you're in the right group when you sign up, make sure to use the practice phone number {{ practice_number }}.
 

@@ -395,17 +395,32 @@ class InviteProviderSerializer(serializers.Serializer):
 
 class StatisticsSerializer(serializers.Serializer):
     current_total_appeals = serializers.IntegerField()
+    current_pending_appeals = serializers.IntegerField()
+    current_sent_appeals = serializers.IntegerField()
     current_success_rate = serializers.FloatField()
-    current_total_tips = serializers.IntegerField()
+    current_estimated_payment_value = serializers.FloatField(
+        required=False, allow_null=True
+    )
     current_total_patients = serializers.IntegerField()
-
     previous_total_appeals = serializers.IntegerField()
+    previous_pending_appeals = serializers.IntegerField()
+    previous_sent_appeals = serializers.IntegerField()
     previous_success_rate = serializers.FloatField()
-    previous_total_tips = serializers.IntegerField()
+    previous_estimated_payment_value = serializers.FloatField(
+        required=False, allow_null=True
+    )
     previous_total_patients = serializers.IntegerField()
-
     period_start = serializers.DateTimeField()
     period_end = serializers.DateTimeField()
+
+
+class AbsoluteStatisticsSerializer(serializers.Serializer):
+    total_appeals = serializers.IntegerField()
+    pending_appeals = serializers.IntegerField()
+    sent_appeals = serializers.IntegerField()
+    success_rate = serializers.FloatField()
+    estimated_payment_value = serializers.FloatField(required=False, allow_null=True)
+    total_patients = serializers.IntegerField()
 
 
 class SearchResultSerializer(serializers.Serializer):

@@ -28,15 +28,9 @@ else:
 class InterestedProfessional(ExportModelOperationsMixin("InterestedProfessional"), models.Model):  # type: ignore
     id = models.AutoField(primary_key=True)
     name = models.CharField(max_length=300, default="", blank=True)
-    business_name = models.CharField(
-        max_length=300, default="", blank=True
-    )
-    phone_number = models.CharField(
-        max_length=300, default="", blank=True
-    )
-    address = models.CharField(
-        max_length=1000, default="", blank=True
-    )
+    business_name = models.CharField(max_length=300, default="", blank=True)
+    phone_number = models.CharField(max_length=300, default="", blank=True)
+    address = models.CharField(max_length=1000, default="", blank=True)
     email = models.EmailField()
     comments = models.TextField(default="", blank=True)
     most_common_denial = models.CharField(max_length=300, default="", blank=True)
@@ -302,9 +296,7 @@ class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # t
     combined_document_enc = EncryptedFileField(
         null=True, storage=settings.COMBINED_STORAGE
     )
-    uuid = models.CharField(
-        max_length=300, default=uuid.uuid4, editable=False
-    )
+    uuid = models.CharField(max_length=300, default=uuid.uuid4, editable=False)
     sent = models.BooleanField(default=False)
     attempting_to_send_as_of = models.DateTimeField(
         auto_now=False, auto_now_add=False, null=True, blank=True
@@ -352,14 +344,10 @@ class PlanSourceRelation(models.Model):
 
 class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignore
     denial_id = models.AutoField(primary_key=True, null=False)
-    uuid = models.CharField(
-        max_length=300, default=uuid.uuid4, editable=False
-    )
+    uuid = models.CharField(max_length=300, default=uuid.uuid4, editable=False)
     hashed_email = models.CharField(max_length=300, primary_key=False)
     denial_text = models.TextField(primary_key=False)
-    denial_type_text = models.TextField(
-        max_length=200, null=True, blank=True
-    )
+    denial_type_text = models.TextField(max_length=200, null=True, blank=True)
     date = models.DateField(auto_now=False, auto_now_add=True)
     denial_type = models.ManyToManyField(DenialTypes, through=DenialTypesRelation)
     plan_type = models.ManyToManyField(PlanType, through=PlanTypesRelation)
@@ -371,20 +359,14 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     urgent = models.BooleanField(default=False)
     pre_service = models.BooleanField(default=False)
     denial_date = models.DateField(auto_now=False, null=True, blank=True)
-    insurance_company = models.CharField(
-        max_length=300, null=True, blank=True
-    )
-    claim_id = models.CharField(
-        max_length=300, null=True, blank=True
-    )
+    insurance_company = models.CharField(max_length=300, null=True, blank=True)
+    claim_id = models.CharField(max_length=300, null=True, blank=True)
     procedure = models.CharField(max_length=300, null=True)
     diagnosis = models.CharField(max_length=300, null=True)
     # Keep track of if the async thread finished extracting procedure and diagnosis
     extract_procedure_diagnosis_finished = models.BooleanField(default=False, null=True)
     appeal_text = models.TextField(null=True, blank=True)
-    raw_email = models.TextField(
-        max_length=300, null=True, blank=True
-    )
+    raw_email = models.TextField(max_length=300, null=True, blank=True)
     created = models.DateTimeField(db_default=Now(), null=True)
     use_external = models.BooleanField(default=False)
     health_history = models.TextField(null=True, blank=True)
@@ -542,10 +524,10 @@ class Appeal(ExportModelOperationsMixin("Appeal"), models.Model):  # type: ignor
     response_document_enc = EncryptedFileField(
         null=True, storage=settings.COMBINED_STORAGE
     )
-    response_text = models.TextField(
-        max_length=3000000000, null=True
-    )
+    response_text = models.TextField(max_length=3000000000, null=True)
     response_date = models.DateField(auto_now=False, null=True)
+    # Track whether an appeal was successful (not just if it got a response)
+    success = models.BooleanField(default=False, null=True)
     mod_date = models.DateField(auto_now=True, null=True)
     creation_date = models.DateField(auto_now_add=True, null=True)
 

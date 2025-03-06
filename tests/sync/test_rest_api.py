@@ -15,6 +15,8 @@ import json
 
 from django.urls import reverse
 from django.contrib.auth import get_user_model
+from django.utils import timezone
+from dateutil.relativedelta import relativedelta
 
 
 from rest_framework import status
@@ -32,6 +34,10 @@ from fighthealthinsurance.models import (
 from fighthealthinsurance.websockets import (
     StreamingEntityBackend,
     StreamingAppealsBackend,
+)
+from fhi_users.models import (
+    PatientDomainRelation,
+    ProfessionalDomainRelation,
 )
 
 if typing.TYPE_CHECKING:
@@ -148,6 +154,7 @@ class DenialEndToEnd(APITestCase):
             internal_phone_number="0987654321",
             active=True,
             display_name="Test Domain",
+            business_name="Test Business",
             country="USA",
             state="CA",
             city="Test City",
@@ -360,13 +367,11 @@ class NotifyPatientTest(APITestCase):
             password="patientpass",
             email="patient@example.com",
             first_name="Test",
-            last_name="Patient"
+            last_name="Patient",
         )
         self.patient_user.is_active = True
         self.patient_user.save()
-        self.patient = PatientUser.objects.create(
-            user=self.patient_user
-        )
+        self.patient = PatientUser.objects.create(user=self.patient_user)
 
         # Create a denial
         self.denial = Denial.objects.create(
@@ -553,7 +558,6 @@ class SendFaxTest(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn("Pending", response.json()["message"])
 
-
         # Verify the pending flags were updated correctly
         self.appeal.refresh_from_db()
         self.assertEqual(self.appeal.pending, True)
@@ -583,10 +587,6 @@ class SendFaxTest(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
         self.appeal.refresh_from_db()
         self.assertEqual(self.appeal.pending, False)
-
-
-
-
 
 
 class InviteProviderTest(APITestCase):
@@ -684,7 +684,12 @@ class InviteProviderTest(APITestCase):
 
         response = self.client.post(
             url,
-            json.dumps({"professional_id": self.secondary_professional.id, "appeal_id": self.appeal.id}),
+            json.dumps(
+                {
+                    "professional_id": self.secondary_professional.id,
+                    "appeal_id": self.appeal.id,
+                }
+            ),
             content_type="application/json",
         )
 
@@ -736,3 +741,274 @@ class InviteProviderTest(APITestCase):
             appeal=self.appeal
         ).exists()
         self.assertFalse(relation)
+
+
+class StatisticsTest(APITestCase):
+    """Test the statistics API endpoints."""
+
+    fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
+
+    def setUp(self):
+        # Create domain
+        self.domain = UserDomain.objects.create(
+            name="testdomain",
+            visible_phone_number="1234567890",
+            internal_phone_number="0987654321",
+            active=True,
+            display_name="Test Domain",
+            business_name="Test Business",
+            country="USA",
+            state="CA",
+            city="Test City",
+            address1="123 Test St",
+            zipcode="12345",
+        )
+
+        # Create professional user
+        self.pro_user = User.objects.create_user(
+            username=f"prouser🐼{self.domain.id}",
+            password="testpass",
+            email="pro@example.com",
+        )
+        self.pro_username = f"prouser🐼{self.domain.id}"
+        self.pro_password = "testpass"
+        self.professional = ProfessionalUser.objects.create(
+            user=self.pro_user, active=True, npi_number="1234567890"
+        )
+        self.pro_user.is_active = True
+        self.pro_user.save()
+
+        # Create ExtraUserProperties for professional
+        ExtraUserProperties.objects.create(user=self.pro_user, email_verified=True)
+
+        # Create professional domain relation
+        ProfessionalDomainRelation.objects.create(
+            professional=self.professional,
+            domain=self.domain,
+            active=True,
+            admin=True,
+            pending=False,
+        )
+
+        # Create patient users
+        self.patient_user1 = User.objects.create_user(
+            username="patientuser1",
+            password="patientpass",
+            email="patient1@example.com",
+            first_name="Test1",
+            last_name="Patient",
+        )
+        self.patient_user1.is_active = True
+        self.patient_user1.save()
+        self.patient1 = PatientUser.objects.create(user=self.patient_user1, active=True)
+
+        # Create ExtraUserProperties for patient1
+        ExtraUserProperties.objects.create(user=self.patient_user1, email_verified=True)
+
+        # Create patient domain relation
+        PatientDomainRelation.objects.create(
+            patient=self.patient1,
+            domain=self.domain,
+        )
+
+        self.patient_user2 = User.objects.create_user(
+            username="patientuser2",
+            password="patientpass",
+            email="patient2@example.com",
+            first_name="Test2",
+            last_name="Patient",
+        )
+        self.patient_user2.is_active = True
+        self.patient_user2.save()
+        self.patient2 = PatientUser.objects.create(user=self.patient_user2, active=True)
+
+        # Create ExtraUserProperties for patient2
+        ExtraUserProperties.objects.create(user=self.patient_user2, email_verified=True)
+
+        # Create patient domain relation
+        PatientDomainRelation.objects.create(
+            patient=self.patient2,
+            domain=self.domain,
+        )
+
+        # Set up session
+        self.client.login(username=self.pro_username, password=self.pro_password)
+        session = self.client.session
+        session["domain_id"] = str(self.domain.id)
+        session.save()
+
+        # Get current date and previous month
+        self.now = timezone.now()
+        self.current_month = self.now.replace(
+            day=1, hour=0, minute=0, second=0, microsecond=0
+        )
+        self.previous_month = self.current_month - relativedelta(months=2)
+
+        # Create denials and appeals for current month
+        self.current_denial1 = Denial.objects.create(
+            denial_text="Current test denial 1",
+            primary_professional=self.professional,
+            creating_professional=self.professional,
+            patient_user=self.patient1,
+            domain=self.domain,
+            hashed_email=Denial.get_hashed_email(self.patient_user1.email),
+        )
+
+        self.current_appeal1 = Appeal.objects.create(
+            for_denial=self.current_denial1,
+            pending=False,
+            sent=True,
+            patient_user=self.patient2,
+            primary_professional=self.professional,
+            creating_professional=self.professional,
+            domain=self.domain,
+            mod_date=self.now.date(),
+            creation_date=self.now.date(),
+            response_date=self.now,
+        )
+
+        self.current_denial2 = Denial.objects.create(
+            denial_text="Current test denial 2",
+            primary_professional=self.professional,
+            creating_professional=self.professional,
+            patient_user=self.patient1,
+            domain=self.domain,
+            hashed_email=Denial.get_hashed_email(self.patient_user1.email),
+        )
+
+        self.current_appeal2 = Appeal.objects.create(
+            for_denial=self.current_denial2,
+            pending=True,
+            sent=False,
+            patient_user=self.patient1,
+            primary_professional=self.professional,
+            creating_professional=self.professional,
+            domain=self.domain,
+            mod_date=self.now.date(),
+            creation_date=self.now.date(),
+        )
+
+        prev_month_date = (self.previous_month + relativedelta(days=5)).date()
+        print(f"Creaint old appeals around {prev_month_date}")
+
+        # Create denials and appeals for previous month
+        self.prev_denial1 = Denial.objects.create(
+            denial_text="Previous test denial 1",
+            primary_professional=self.professional,
+            creating_professional=self.professional,
+            patient_user=self.patient2,
+            domain=self.domain,
+            hashed_email=Denial.get_hashed_email(self.patient_user2.email),
+        )
+
+        self.prev_appeal1 = Appeal.objects.create(
+            for_denial=self.prev_denial1,
+            pending=False,
+            sent=True,
+            patient_user=self.patient2,
+            primary_professional=self.professional,
+            creating_professional=self.professional,
+            domain=self.domain,
+            mod_date=prev_month_date,
+            response_date=self.previous_month + relativedelta(days=10),
+        )
+        # Needs to be set after creation to avoid auto_now_add
+        self.prev_appeal1.creation_date = prev_month_date
+        self.prev_appeal1.save()
+
+        self.prev_denial2 = Denial.objects.create(
+            denial_text="Previous test denial 2",
+            primary_professional=self.professional,
+            creating_professional=self.professional,
+            patient_user=self.patient2,
+            domain=self.domain,
+            hashed_email=Denial.get_hashed_email(self.patient_user2.email),
+        )
+
+        self.prev_appeal2 = Appeal.objects.create(
+            for_denial=self.prev_denial2,
+            pending=True,
+            sent=False,
+            patient_user=self.patient2,
+            primary_professional=self.professional,
+            creating_professional=self.professional,
+            domain=self.domain,
+            mod_date=prev_month_date,
+        )
+        # Needs to be set after creation to avoid auto_now_add
+        self.prev_appeal2.creation_date = prev_month_date
+        self.prev_appeal2.save()
+
+    def test_relative_statistics_endpoint(self):
+        """Test the relative statistics endpoint with default Month over Month (MoM) comparison."""
+        url = reverse("appeals-stats")
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+
+        # Verify all required fields exist
+        required_fields = [
+            "current_total_appeals",
+            "current_success_rate",
+            "current_estimated_payment_value",
+            "current_total_patients",
+            "previous_total_appeals",
+            "previous_success_rate",
+            "previous_estimated_payment_value",
+            "previous_total_patients",
+            "period_start",
+            "period_end",
+        ]
+
+        for field in required_fields:
+            self.assertIn(field, data)
+
+        # Verify correct counts
+        self.assertEqual(data["current_total_appeals"], 2)
+        self.assertEqual(data["previous_total_appeals"], 2)
+
+        # Verify patient counts - should now be total patients in domain
+        self.assertEqual(data["current_total_patients"], 2)
+        self.assertEqual(data["previous_total_patients"], 1)
+
+    def test_absolute_statistics_endpoint(self):
+        """Test the absolute statistics endpoint."""
+        url = reverse("appeals-absolute-stats")
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+
+        # Verify all required fields exist
+        required_fields = [
+            "total_appeals",
+            "success_rate",
+            "estimated_payment_value",
+            "total_patients",
+        ]
+
+        for field in required_fields:
+            self.assertIn(field, data)
+
+        # Verify counts - should be all appeals (current + previous = 4)
+        self.assertEqual(data["total_appeals"], 4)
+
+        # Verify success rate (no visible responses)
+        self.assertEqual(data["success_rate"], 0.0)
+
+        # Verify estimated payment is None until we implement it.
+        self.assertEqual(data["estimated_payment_value"], None)
+
+        # Verify patient count (should be all patients in domain = 2)
+        self.assertEqual(data["total_patients"], 2)
+
+        # Mark an appeal as replied to that is visible to the user
+        self.current_appeal2.response_date = self.now
+        self.current_appeal2.success = True
+        self.current_appeal2.save()
+        response = self.client.get(url)
+        data = response.json()
+
+        # Verify success rate (no visible responses)
+        self.assertEqual(int(data["success_rate"]), 33)

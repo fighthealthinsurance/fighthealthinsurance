@@ -52,9 +52,7 @@ class UserDomain(models.Model):
     stripe_subscription_id = models.CharField(max_length=300, null=True)
     # Info
     # https://docs.djangoproject.com/en/5.1/ref/models/fields/#django.db.models.Field.null
-    name = models.CharField(
-        blank=True, null=True, max_length=300, unique=True
-    )
+    name = models.CharField(blank=True, null=True, max_length=300, unique=True)
     active = models.BooleanField()
     # Business name can be blank, we'll use display name then.
     business_name = models.CharField(max_length=300, null=True)

@@ -380,10 +380,15 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
             appeal.pending_professional = True
             appeal.pending = True
             appeal.save()
-            return Response(data = serializers.StatusResponseSerializer({
-                "message": "Pending professional",
-                "status": "pending_professional",
-                }).data, status=status.HTTP_200_OK)
+            return Response(
+                data=serializers.StatusResponseSerializer(
+                    {
+                        "message": "Pending professional",
+                        "status": "pending_professional",
+                    }
+                ).data,
+                status=status.HTTP_200_OK,
+            )
         else:
             appeal.pending_patient = False
             appeal.pending_professional = False
@@ -523,59 +528,168 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
     @extend_schema(responses=serializers.StatisticsSerializer)
     @action(detail=False, methods=["get"])
     def stats(self, request: Request) -> Response:
+        """Get relative statistics with comparison to previous period"""
         now = timezone.now()
         user: User = request.user  # type: ignore
+        delta = request.GET.get("delta", "MoM")  # Default to Month over Month
 
-        # Define current period (current month)
-        current_period_start = now.replace(
-            day=1, hour=0, minute=0, second=0, microsecond=0
-        )
+        current_period_start = now
         current_period_end = now
 
-        # Define previous period
-        previous_period_start = current_period_start - relativedelta(months=1)
-        previous_period_end = current_period_start - relativedelta(microseconds=1)
+        # Define previous period based on delta parameter
+        if delta == "MoM":  # Month over Month
+            current_period_start = current_period_start - relativedelta(months=1)
+            previous_period_start = current_period_start - relativedelta(months=1)
+            previous_period_end = current_period_start - relativedelta(microseconds=1)
+        elif delta == "YoY":  # Year over Year
+            current_period_start = current_period_start - relativedelta(years=1)
+            previous_period_start = current_period_start - relativedelta(years=1)
+            previous_period_end = (
+                previous_period_start
+                + relativedelta(months=1)
+                - relativedelta(microseconds=1)
+            )
+        elif delta == "QoQ":  # Quarter over Quarter
+            current_period_start = current_period_start - relativedelta(months=3)
+            previous_period_start = current_period_start - relativedelta(months=3)
+            previous_period_end = current_period_start - relativedelta(microseconds=1)
+        else:
+            # Default to Month over Month if invalid delta
+            current_period_start = current_period_start - relativedelta(months=1)
+            previous_period_start = current_period_start - relativedelta(months=1)
+            previous_period_end = current_period_start - relativedelta(microseconds=1)
 
-        # Calculate current period statistics
+        # Get user domain to calculate patients
+        domain_id = request.session.get("domain_id")
+        user_domain = None
+        if domain_id:
+            try:
+                user_domain = UserDomain.objects.get(id=domain_id)
+            except UserDomain.DoesNotExist:
+                pass
+
+        # Get current period statistics
         current_appeals = Appeal.filter_to_allowed_appeals(user).filter(
-            mod_date__range=(current_period_start.date(), current_period_end.date())
+            creation_date__range=(current_period_start.date(), current_period_end.date())
         )
         current_total = current_appeals.count()
         current_pending = current_appeals.filter(pending=True).count()
         current_sent = current_appeals.filter(sent=True).count()
+
+        # Use success field instead of response_date
+        current_successful = current_appeals.filter(success=True).count()
         current_with_response = current_appeals.exclude(response_date=None).count()
 
-        # Calculate previous period statistics
+        # Since we're looking for patients in the current range we can't use the UserDomain
+        current_patients = (
+            PatientUser.objects.filter(appeal__in=current_appeals).distinct().count()
+        )
+
+        # Get previous period statistics
         previous_appeals = Appeal.filter_to_allowed_appeals(user).filter(
-            mod_date__range=(previous_period_start.date(), previous_period_end.date())
+            creation_date__range=(previous_period_start.date(), previous_period_end.date())
         )
         previous_total = previous_appeals.count()
         previous_pending = previous_appeals.filter(pending=True).count()
         previous_sent = previous_appeals.filter(sent=True).count()
+
+        # Use success field instead of response_date
+        previous_successful = previous_appeals.filter(success=True).count()
         previous_with_response = previous_appeals.exclude(response_date=None).count()
+
+        # Get previous period patient count
+        # Get the patients with appeals in previous period
+        previous_patients = (
+            PatientUser.objects.filter(appeal__in=previous_appeals).distinct().count()
+        )
+
+        # Set estimated payment value to None for now
+        current_estimated_payment_value = None
+        previous_estimated_payment_value = None
 
         statistics = {
             "current_total_appeals": current_total,
             "current_pending_appeals": current_pending,
             "current_sent_appeals": current_sent,
-            "current_response_rate": (
-                (current_with_response / current_total * 100)
-                if current_total > 0
+            "current_success_rate": (
+                (current_successful / current_with_response * 100)
+                if current_with_response > 0
                 else 0
             ),
+            "current_estimated_payment_value": current_estimated_payment_value,
+            "current_total_patients": current_patients,
             "previous_total_appeals": previous_total,
             "previous_pending_appeals": previous_pending,
             "previous_sent_appeals": previous_sent,
-            "previous_response_rate": (
-                (previous_with_response / previous_total * 100)
-                if previous_total > 0
+            "previous_success_rate": (
+                (previous_successful / previous_with_response * 100)
+                if previous_with_response > 0
                 else 0
             ),
+            "previous_estimated_payment_value": previous_estimated_payment_value,
+            "previous_total_patients": previous_patients,
             "period_start": current_period_start,
             "period_end": current_period_end,
         }
 
-        return Response(statistics)
+        return Response(serializers.StatisticsSerializer(statistics).data)
+
+    @extend_schema(responses=serializers.AbsoluteStatisticsSerializer)
+    @action(detail=False, methods=["get"])
+    def absolute_stats(self, request: Request) -> Response:
+        """Get absolute statistics without time windowing"""
+        user: User = request.user  # type: ignore
+
+        # Get user domain to calculate patients
+        domain_id = request.session.get("domain_id")
+        user_domain = None
+        if domain_id:
+            try:
+                user_domain = UserDomain.objects.get(id=domain_id)
+            except UserDomain.DoesNotExist:
+                pass
+
+        # Get all appeals the user has access to
+        all_appeals = Appeal.filter_to_allowed_appeals(user)
+        total_appeals = all_appeals.count()
+        pending_appeals = all_appeals.filter(pending=True).count()
+        sent_appeals = all_appeals.filter(sent=True).count()
+
+        # Use success field instead of response_date
+        successful_appeals = all_appeals.filter(success=True).count()
+        with_response = all_appeals.exclude(response_date=None).count()
+        success_rate = (
+                (successful_appeals / with_response * 100) if with_response > 0 else 0.0
+        )
+
+        # Set estimated payment value to None for now
+        estimated_payment_value = None
+
+        # Get total patient count based on domain
+        total_patients = 0
+        if user_domain:
+            # Get all patients related to this domain
+            total_patients = (
+                PatientUser.objects.filter(patientdomainrelation__domain=user_domain)
+                .distinct()
+                .count()
+            )
+        else:
+            # Fallback to patients with appeals if domain not available
+            total_patients = (
+                PatientUser.objects.filter(appeal__in=all_appeals).distinct().count()
+            )
+
+        statistics = {
+            "total_appeals": total_appeals,
+            "pending_appeals": pending_appeals,
+            "sent_appeals": sent_appeals,
+            "success_rate": success_rate,
+            "estimated_payment_value": estimated_payment_value,
+            "total_patients": total_patients,
+        }
+
+        return Response(serializers.AbsoluteStatisticsSerializer(statistics).data)
 
     @extend_schema(
         responses={
