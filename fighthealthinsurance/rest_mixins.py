@@ -13,7 +13,7 @@ class SerializerMixin:
             raise ValidationError("serializer_class must not be None")
         return self.serializer_class
 
-    def deserialize(self, data=None) -> Serializer:
+    def deserialize(self, data={}) -> Serializer:
         serializer_cls = self.get_serializer_class()
         return serializer_cls(data=data)
 
