@@ -21,6 +21,8 @@ from rest_framework.views import APIView
 from rest_framework.decorators import action
 
 from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import OpenApiParameter
+from drf_spectacular.types import OpenApiTypes
 
 from fighthealthinsurance import common_view_logic
 from fighthealthinsurance.models import (
@@ -352,7 +354,10 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
             status=status.HTTP_200_OK,
         )
 
-    @extend_schema(responses=serializers.AppealFullSerializer)
+    @extend_schema(
+        responses=serializers.AppealFullSerializer,
+        parameters=[OpenApiParameter(name="pk", type=OpenApiTypes.INT)],
+    )
     @action(detail=False, methods=["get"])
     def get_full_details(self, request: Request) -> Response:
         pk = request.query_params.get("pk")
