@@ -86,8 +86,11 @@ class ChooseAppealFormSerializer(FormSerializer):
 
 
 class DenialFormSerializer(FormSerializer):
+    # Only used during updates
+    denial_id = serializers.IntegerField(required=False)
+
     class Meta(object):
-        form = core_forms.DenialForm
+        form = core_forms.ProDenialForm
         exclude = ("plan_documents",)
 
 
@@ -97,7 +100,7 @@ class PostInferedFormSerializer(FormSerializer):
     """
 
     class Meta(object):
-        form = core_forms.PostInferedForm
+        form = core_forms.ProPostInferedForm
 
 
 class FollowUpFormSerializer(FormSerializer):
@@ -300,12 +303,13 @@ class AppealFullSerializer(serializers.ModelSerializer):
     denial = serializers.SerializerMethodField()
     in_userdomain = serializers.SerializerMethodField()
     primary_professional = serializers.SerializerMethodField()
+    patient = serializers.SerializerMethodField()
 
     class Meta:
         model = Appeal
         exclude: list[str] = []
 
-    @extend_schema_field(serializers.CharField)
+    @extend_schema_field(serializers.CharField(allow_null=True))
     def get_appeal_pdf_url(self, obj: Appeal) -> Optional[str]:
         # Generate a URL for downloading the appeal PDF
         if obj.document_enc:
@@ -313,36 +317,46 @@ class AppealFullSerializer(serializers.ModelSerializer):
             return reverse("appeal_file_view", kwargs={"appeal_uuid": obj.uuid})
         return None
 
-    def get_denial(self, obj: Appeal) -> Optional[Dict[str, Any]]:
+    @extend_schema_field(DenialModelSerializer(allow_null=True))
+    def get_denial(self, obj: Appeal):
         if obj.for_denial:
-            return DenialModelSerializer(obj.for_denial).data  # type: ignore
-        return None
+            return DenialModelSerializer(obj.for_denial).data
+        return None  # type: ignore
 
-    def get_in_userdomain(self, obj: Appeal) -> Optional[Dict[str, Any]]:
+    @extend_schema_field(auth_serializers.UserDomainSerializer(allow_null=True))
+    def get_in_userdomain(self, obj: Appeal):
         if obj.domain:
             return auth_serializers.UserDomainSerializer(obj.domain).data  # type: ignore
-        return None
+        return None  # type: ignore
 
-    def get_primary_professional(self, obj: Appeal) -> Optional[Dict[str, Any]]:
+    @extend_schema_field(auth_serializers.FullProfessionalSerializer(allow_null=True))
+    def get_primary_professional(self, obj: Appeal):
         if obj.primary_professional:
-            ser_data: Dict[str, Any] = auth_serializers.FullProfessionalSerializer(
+            ser_data = auth_serializers.FullProfessionalSerializer(
                 obj.primary_professional
-            ).data  # type: ignore
+            ).data
             return ser_data
         if obj.creating_professional:
             ser_data = auth_serializers.FullProfessionalSerializer(
                 obj.creating_professional
-            ).data  # type: ignore
+            ).data
+            return ser_data
+        return None
+
+    @extend_schema_field(auth_serializers.PatientUserSerializer(allow_null=True))
+    def get_patient(self, obj: Appeal):
+        if obj.patient_user:
+            ser_data = auth_serializers.PatientUserSerializer(obj.patient_user).data
             return ser_data
         return None
 
 
 class AssembleAppealRequestSerializer(serializers.Serializer):
-    denial_uuid = serializers.CharField(required=False)
-    denial_id = serializers.CharField(required=False)
+    denial_uuid = serializers.CharField(required=False, allow_blank=True)
+    denial_id = serializers.CharField(required=False, allow_blank=True)
     completed_appeal_text = serializers.CharField(required=True)
     insurance_company = serializers.CharField(required=False, allow_blank=True)
-    fax_phone = serializers.CharField(required=False)
+    fax_phone = serializers.CharField(required=False, allow_blank=True)
     pubmed_articles_to_include = serializers.ListField(
         child=serializers.CharField(), required=False
     )

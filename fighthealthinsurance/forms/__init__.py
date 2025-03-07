@@ -64,7 +64,7 @@ class ShareAppealForm(forms.Form):
     appeal_text = forms.CharField(required=True)
 
 
-class DenialForm(forms.Form):
+class BaseDenialForm(forms.Form):
     zip = forms.CharField(required=False)
     pii = forms.BooleanField(required=True)
     tos = forms.BooleanField(required=True)
@@ -73,7 +73,14 @@ class DenialForm(forms.Form):
     use_external_models = forms.BooleanField(required=False)
     denial_text = forms.CharField(required=True)
     email = forms.EmailField(required=True)
-    # Only used in pro
+
+
+class DenialForm(BaseDenialForm):
+    pass
+
+
+class ProDenialForm(BaseDenialForm):
+    # In pro we can fetch email from the patient object
     primary_professional = forms.CharField(required=False)
     patient_id = forms.CharField(required=False)
     insurance_company = forms.CharField(required=False)
@@ -120,7 +127,7 @@ class FaxResendForm(forms.Form):
     hashed_email = forms.CharField(required=True, widget=forms.HiddenInput)
 
 
-class PostInferedForm(DenialRefForm):
+class BasePostInferedForm(DenialRefForm):
     """The form to double check what we inferred. This leads to our next steps /
     FindNextSteps."""
 
@@ -129,7 +136,9 @@ class PostInferedForm(DenialRefForm):
     denial_id = forms.IntegerField(required=True, widget=forms.HiddenInput())
     email = forms.CharField(required=True, widget=forms.HiddenInput())
     denial_type = forms.ModelMultipleChoiceField(
-        queryset=DenialTypes.objects.all(), required=False
+        queryset=DenialTypes.objects.all(),
+        required=False,
+        label="Denial type (if known)",
     )
     denial_type_text = forms.CharField(
         required=False,
@@ -159,6 +168,9 @@ class PostInferedForm(DenialRefForm):
         + 'including things like "high risk homosexual behavior" (yeah that\'s a real one)',
         required=False,
     )
+
+
+class PostInferedForm(BasePostInferedForm):
     captcha = forms.CharField(required=False, widget=forms.HiddenInput())
     # Instead of the default behaviour we skip the recaptcha field entirely for dev.
     if "RECAPTCHA_PUBLIC_KEY" in os.environ and (
@@ -166,6 +178,11 @@ class PostInferedForm(DenialRefForm):
         or os.environ["RECAPTCHA_TESTING"].lower() != "true"
     ):
         captcha = ReCaptchaField(widget=ReCaptchaV2Checkbox())
+
+
+class ProPostInferedForm(BasePostInferedForm):
+    single_case = forms.BooleanField(required=False)
+    in_network = forms.BooleanField(required=False)
 
 
 class FollowUpTestForm(forms.Form):

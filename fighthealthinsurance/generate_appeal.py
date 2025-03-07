@@ -17,6 +17,8 @@ from fighthealthinsurance.utils import as_available_nested
 from typing_extensions import reveal_type
 from .pubmed_tools import PubMedTools
 
+import json
+
 
 class AppealTemplateGenerator(object):
     def __init__(self, prefaces: list[str], main: list[str], footer: list[str]):
@@ -491,7 +493,13 @@ class AppealGenerator(object):
 
         medical_context = ""
         if denial.qa_context is not None:
-            medical_context += denial.qa_context
+            try:
+                qa_context = json.loads(denial.qa_context)
+                formatted = "\n".join(f"{k}:{v}" for k, v in qa_context.items())
+                medical_context += formatted
+            except (json.JSONDecodeError, TypeError) as e:
+                # Fall back to original string if JSON parsing fails
+                medical_context += denial.qa_context
         if denial.health_history is not None:
             medical_context += denial.health_history
         plan_context = denial.plan_context

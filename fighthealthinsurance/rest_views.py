@@ -46,7 +46,7 @@ from fhi_users.models import (
 from stopit import ThreadingTimeout as Timeout
 from .common_view_logic import AppealAssemblyHelper
 from .utils import is_convertible_to_int
-
+import json
 
 if typing.TYPE_CHECKING:
     from django.contrib.auth.models import User
@@ -144,12 +144,20 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
                 denial = Denial.filter_to_allowed_denials(current_user).get(
                     denial_id=denial_id
                 )
+            else:
+                del serializer_data["denial_id"]
         if "patient_id" in serializer_data and is_convertible_to_int(
             serializer_data["patient_id"]
         ):
             patient_id = serializer_data.pop("patient_id")
             if patient_id:
                 serializer_data["patient_user"] = PatientUser.objects.get(id=patient_id)
+            if (
+                "email" not in serializer_data
+                or serializer_data["email"] is None
+                or len(serializer_data["email"]) == 0
+            ):
+                serializer_data["email"] = serializer_data["patient_user"].user.email
         denial_response_info = (
             common_view_logic.DenialCreatorHelper.create_or_update_denial(
                 denial=denial,
@@ -199,12 +207,12 @@ class QAResponseViewSet(viewsets.ViewSet, CreateMixin):
                     question=key,
                     text_answer=value,
                 )
-        qa_context = ""
+        qa_context = {}
         for key, value in DenialQA.objects.filter(denial=denial).values_list(
             "question", "text_answer"
         ):
-            qa_context += f"{key}: {value}\n"
-        denial.qa_context = qa_context
+            qa_context[key] = value
+        denial.qa_context = json.dumps(qa_context)
         denial.save()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -537,27 +545,18 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
         current_period_end = now
 
         # Define previous period based on delta parameter
-        if delta == "MoM":  # Month over Month
-            current_period_start = current_period_start - relativedelta(months=1)
-            previous_period_start = current_period_start - relativedelta(months=1)
-            previous_period_end = current_period_start - relativedelta(microseconds=1)
-        elif delta == "YoY":  # Year over Year
+        if delta == "YoY":  # Year over Year
             current_period_start = current_period_start - relativedelta(years=1)
             previous_period_start = current_period_start - relativedelta(years=1)
-            previous_period_end = (
-                previous_period_start
-                + relativedelta(months=1)
-                - relativedelta(microseconds=1)
-            )
         elif delta == "QoQ":  # Quarter over Quarter
             current_period_start = current_period_start - relativedelta(months=3)
             previous_period_start = current_period_start - relativedelta(months=3)
-            previous_period_end = current_period_start - relativedelta(microseconds=1)
-        else:
+        else:  # MoM
             # Default to Month over Month if invalid delta
             current_period_start = current_period_start - relativedelta(months=1)
             previous_period_start = current_period_start - relativedelta(months=1)
-            previous_period_end = current_period_start - relativedelta(microseconds=1)
+        # Regardless end the previous period one microsend before the start of the current
+        previous_period_end = current_period_start - relativedelta(microseconds=1)
 
         # Get user domain to calculate patients
         domain_id = request.session.get("domain_id")
@@ -570,7 +569,10 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
 
         # Get current period statistics
         current_appeals = Appeal.filter_to_allowed_appeals(user).filter(
-            creation_date__range=(current_period_start.date(), current_period_end.date())
+            creation_date__range=(
+                current_period_start.date(),
+                current_period_end.date(),
+            )
         )
         current_total = current_appeals.count()
         current_pending = current_appeals.filter(pending=True).count()
@@ -587,7 +589,10 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
 
         # Get previous period statistics
         previous_appeals = Appeal.filter_to_allowed_appeals(user).filter(
-            creation_date__range=(previous_period_start.date(), previous_period_end.date())
+            creation_date__range=(
+                previous_period_start.date(),
+                previous_period_end.date(),
+            )
         )
         previous_total = previous_appeals.count()
         previous_pending = previous_appeals.filter(pending=True).count()
@@ -659,7 +664,7 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
         successful_appeals = all_appeals.filter(success=True).count()
         with_response = all_appeals.exclude(response_date=None).count()
         success_rate = (
-                (successful_appeals / with_response * 100) if with_response > 0 else 0.0
+            (successful_appeals / with_response * 100) if with_response > 0 else 0.0
         )
 
         # Set estimated payment value to None for now

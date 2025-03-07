@@ -23,13 +23,11 @@ from django.db import connections
 
 
 import uszipcode
-from fighthealthinsurance import forms as core_forms
 from fighthealthinsurance.fax_actor_ref import fax_actor_ref
 from fighthealthinsurance.fax_utils import flexible_fax_magic
 from fighthealthinsurance.form_utils import *
 from fighthealthinsurance.generate_appeal import *
 from fighthealthinsurance.models import *
-from fighthealthinsurance.forms import questions as question_forms
 from fighthealthinsurance.utils import interleave_iterator_for_keep_alive
 from fhi_users.models import ProfessionalUser, UserDomain
 from .pubmed_tools import PubMedTools
@@ -343,7 +341,7 @@ class AppealAssemblyHelper:
         # Render the cover content
         if cover_template_string and len(cover_template_string) > 0:
             cover_content = Template(cover_template_string).substitute(cover_context)
-            print(
+            logger.debug(
                 f"Rendering cover letter from string {cover_template_string} and got {cover_content}"
             )
         else:
@@ -351,7 +349,7 @@ class AppealAssemblyHelper:
                 cover_template_path,
                 context=cover_context,
             )
-            print(
+            logger.debug(
                 f"Rendering cover letter from path {cover_template_path} and got {cover_content}"
             )
         files_for_fax: list[str] = []
@@ -607,6 +605,8 @@ class FindNextStepsHelper:
         appeal_fax_number: Optional[str] = None,
         patient_health_history: Optional[str] = None,
         date_of_service: Optional[str] = None,
+        in_network: Optional[bool] = None,
+        single_case: Optional[bool] = None,
     ) -> NextStepInfo:
         hashed_email = Denial.get_hashed_email(email)
         # Update the denial
@@ -616,8 +616,6 @@ class FindNextStepsHelper:
             hashed_email=hashed_email,
             semi_sekret=semi_sekret,
         ).get()
-        if denial_date:
-            denial.denial_date = denial_date
 
         if procedure is not None and len(procedure) < 200:
             denial.procedure = procedure
@@ -675,17 +673,42 @@ class FindNextStepsHelper:
             denial.denial_type_text = denial_type_text
         if denial_type:
             denial.denial_type.set(denial_type)
+
+        existing_answers: dict[str, str] = {}
+        if denial.qa_context is not None:
+            existing_answers = json.loads(denial.qa_context)
+
         if your_state:
             denial.state = your_state
+        if denial_date is not None:
+            denial.denial_date = denial_date
+            if "denial date" not in existing_answers:
+                existing_answers["denial date"] = str(denial_date)
+        if date_of_service is not None:
+            denial.date_of_service = date_of_service
+            if "date of service" not in existing_answers:
+                existing_answers["date of service"] = date_of_service
+        if in_network is not None:
+            denial.provider_in_network = in_network
+            if "in_network" not in existing_answers:
+                existing_answers["in_network"] = str(in_network)
+        if single_case is not None:
+            denial.single_case = single_case
+
         denial.save()
+
         question_forms = []
         for dt in denial.denial_type.all():
             new_form = dt.get_form()
             if new_form is not None:
                 new_form = new_form(initial={"medical_reason": dt.appeal_text})
                 question_forms.append(new_form)
-        combined_form = magic_combined_form(question_forms)
-        return NextStepInfo(outside_help_details, combined_form, semi_sekret)
+        combined_form = magic_combined_form(question_forms, existing_answers)
+        return NextStepInfo(
+            outside_help_details=outside_help_details,
+            combined_form=combined_form,
+            semi_sekret=semi_sekret,
+        )
 
 
 @dataclass
@@ -1232,7 +1255,6 @@ class DenialCreatorHelper:
             insurance_company=denial.insurance_company,
             plan_id=denial.plan_id,
         )
-        print(f"Formatting {denial} as {r}")
         return r
 
 
@@ -1330,7 +1352,11 @@ class AppealsBackendHelper:
 
         # Add the context to the denial
         if medical_context is not None:
-            denial.qa_context = " ".join(medical_context)
+            qa_context = {}
+            if denial.qa_context is not None:
+                qa_context = json.loads(denial.qa_context)
+            qa_context["medical_context"] = " ".join(medical_context)
+            denial.qa_context = json.dumps(qa_context)
         if plan_context is not None:
             denial.plan_context = " ".join(set(plan_context))
         await denial.asave()

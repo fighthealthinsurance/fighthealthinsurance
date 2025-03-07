@@ -839,10 +839,7 @@ class StatisticsTest(APITestCase):
 
         # Get current date and previous month
         self.now = timezone.now()
-        self.current_month = self.now.replace(
-            day=1, hour=0, minute=0, second=0, microsecond=0
-        )
-        self.previous_month = self.current_month - relativedelta(months=2)
+        self.previous_month = self.now - relativedelta(months=2)
 
         # Create denials and appeals for current month
         self.current_denial1 = Denial.objects.create(
@@ -887,9 +884,12 @@ class StatisticsTest(APITestCase):
             mod_date=self.now.date(),
             creation_date=self.now.date(),
         )
+        # Needs to be set after creation to avoid auto_now_add
+        self.current_appeal2.creation_date = self.now.date() - relativedelta(days=10)
+        self.current_appeal2.save()
 
         prev_month_date = (self.previous_month + relativedelta(days=5)).date()
-        print(f"Creaint old appeals around {prev_month_date}")
+        print(f"Creating old appeals around {prev_month_date}")
 
         # Create denials and appeals for previous month
         self.prev_denial1 = Denial.objects.create(
@@ -1012,3 +1012,174 @@ class StatisticsTest(APITestCase):
 
         # Verify success rate (no visible responses)
         self.assertEqual(int(data["success_rate"]), 33)
+
+
+class GetFullDetailsTest(APITestCase):
+    """Test the get_full_details action of AppealViewSet."""
+
+    fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
+
+    def setUp(self):
+        # Create domain
+        self.domain = UserDomain.objects.create(
+            name="testdomain",
+            visible_phone_number="1234567890",
+            internal_phone_number="0987654321",
+            active=True,
+            display_name="Test Domain",
+            business_name="Test Business",
+            country="USA",
+            state="CA",
+            city="Test City",
+            address1="123 Test St",
+            zipcode="12345",
+        )
+
+        # Create professional user
+        self.pro_user = User.objects.create_user(
+            username=f"prouser🐼{self.domain.id}",
+            password="testpass",
+            email="pro@example.com",
+            first_name="Test",
+            last_name="Provider",
+        )
+        self.pro_username = f"prouser🐼{self.domain.id}"
+        self.pro_password = "testpass"
+        self.professional = ProfessionalUser.objects.create(
+            user=self.pro_user, active=True, npi_number="1234567890"
+        )
+        self.pro_user.is_active = True
+        self.pro_user.save()
+        ExtraUserProperties.objects.create(user=self.pro_user, email_verified=True)
+
+        # Create professional domain relation
+        ProfessionalDomainRelation.objects.create(
+            professional=self.professional,
+            domain=self.domain,
+            active=True,
+            admin=True,
+            pending=False,
+        )
+
+        # Create patient user
+        self.patient_user = User.objects.create_user(
+            username="patientuser",
+            password="patientpass",
+            email="patient@example.com",
+            first_name="Test",
+            last_name="Patient",
+        )
+        self.patient_user.is_active = True
+        self.patient_user.save()
+        self.patient = PatientUser.objects.create(user=self.patient_user, active=True)
+
+        # Create a denial
+        self.denial = Denial.objects.create(
+            denial_text="Test denial text",
+            primary_professional=self.professional,
+            creating_professional=self.professional,
+            patient_user=self.patient,
+            hashed_email=Denial.get_hashed_email(self.patient_user.email),
+            insurance_company="Test Insurance Co",
+            procedure="Test Procedure",
+            diagnosis="Test Diagnosis",
+            domain=self.domain,
+        )
+
+        # Create an appeal
+        self.appeal = Appeal.objects.create(
+            for_denial=self.denial,
+            pending=True,
+            patient_user=self.patient,
+            primary_professional=self.professional,
+            creating_professional=self.professional,
+            domain=self.domain,
+            appeal_text="This is a test appeal letter",
+        )
+
+        # Set up session
+        self.client.login(username=self.pro_username, password=self.pro_password)
+        session = self.client.session
+        session["domain_id"] = str(self.domain.id)
+        session.save()
+
+    def test_get_full_details(self):
+        """Test retrieving full details of an appeal."""
+        url = reverse("appeals-get-full-details")
+        response = self.client.get(f"{url}?pk={self.appeal.id}")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        # Verify appeal data
+        data = response.json()
+        self.assertEqual(data["id"], self.appeal.id)
+        self.assertEqual(data["appeal_text"], "This is a test appeal letter")
+        self.assertEqual(data["pending"], True)
+
+        # Verify denial data is included
+        self.assertIsNotNone(data["denial"])
+        self.assertEqual(data["denial"]["denial_text"], "Test denial text")
+        self.assertEqual(data["denial"]["insurance_company"], "Test Insurance Co")
+        self.assertEqual(data["denial"]["procedure"], "Test Procedure")
+        self.assertEqual(data["denial"]["diagnosis"], "Test Diagnosis")
+
+        # Verify domain data is included
+        self.assertIsNotNone(data["in_userdomain"])
+        self.assertEqual(data["in_userdomain"]["name"], "testdomain")
+        self.assertEqual(data["in_userdomain"]["display_name"], "Test Domain")
+
+        # Verify professional data is included
+        self.assertIsNotNone(data["primary_professional"])
+        self.assertTrue("id" in data["primary_professional"])
+        self.assertEqual(data["primary_professional"]["npi_number"], "1234567890")
+        self.assertEqual(data["primary_professional"]["fullname"], "Test Provider")
+
+        # Verify patient data is included
+        self.assertIsNotNone(data["patient"])
+        self.assertTrue("id" in data["patient"])
+
+    def test_get_full_details_unauthorized_user(self):
+        """Test retrieving full details with an unauthorized user."""
+        # Create another professional and patient not associated with this appeal
+        other_pro_user = User.objects.create_user(
+            username=f"otherprouser🐼{self.domain.id}",
+            password="testpass",
+            email="otherpro@example.com",
+        )
+        other_pro_user.is_active = True
+        other_pro_user.save()
+        other_professional = ProfessionalUser.objects.create(
+            user=other_pro_user, active=True
+        )
+
+        # Create a different domain
+        other_domain = UserDomain.objects.create(
+            name="otherdomain",
+            visible_phone_number="9876543210",
+            active=True,
+        )
+
+        # Associate the other professional with the other domain
+        ProfessionalDomainRelation.objects.create(
+            professional=other_professional,
+            domain=other_domain,
+            active=True,
+            admin=False,
+            pending=False,
+        )
+
+        # Login as the other professional
+        self.client.logout()
+        self.client.login(
+            username=f"otherprouser🐼{self.domain.id}", password="testpass"
+        )
+        session = self.client.session
+        session["domain_id"] = str(other_domain.id)
+        session.save()
+
+        # Attempt to access the appeal
+        url = reverse("appeals-get-full-details")
+        response = self.client.get(f"{url}?pk={self.appeal.id}")
+
+        # Should return 404 because this user doesn't have access to this appeal
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)

@@ -481,6 +481,10 @@ class InitialProcessView(generic.FormView):
         pass
 
     def form_valid(self, form):
+        # Legacy doesn't have denial id
+        cleaned_data = form.cleaned_data
+        if "denial_id" in cleaned_data:
+            del cleaned_data["denial_id"]
         denial_response = common_view_logic.DenialCreatorHelper.create_or_update_denial(
             **form.cleaned_data,
         )

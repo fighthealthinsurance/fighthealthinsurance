@@ -606,14 +606,15 @@ class PatientUserViewSet(ViewSet, CreateMixin):
             email = get_next_fake_username()
         domain = UserDomain.objects.get(id=request.session["domain_id"])
         user = get_patient_or_create_pending_patient(
-            email=serializer.validated_data["username"],
-            raw_username=serializer.validated_data["username"],
+            email=email,
+            raw_username=email,
             domain=domain,
             fname=serializer.validated_data["first_name"],
             lname=serializer.validated_data["last_name"],
         )
-        print(f"User is {user}")
-        response_serializer = serializers.PatientReferenceSerializer({"id": user.id})
+        response_serializer = serializers.PatientReferenceSerializer(
+            {"id": user.id, "email": email}
+        )
         return Response(response_serializer.data)
 
 
