@@ -56,7 +56,7 @@ class DenialResponseInfoSerializer(serializers.Serializer):
     selected_denial_type = DenialTypesListField()
     all_denial_types = DenialTypesListField()
     denial_id = serializers.CharField()
-    appeal_id = serializers.CharField(required=False)
+    appeal_id = serializers.IntegerField(required=False)
     your_state = serializers.CharField(required=False)
     procedure = serializers.CharField()
     diagnosis = serializers.CharField()
@@ -364,7 +364,7 @@ class AssembleAppealRequestSerializer(serializers.Serializer):
 
 
 class AssembleAppealResponseSerializer(serializers.Serializer):
-    appeal_id = serializers.CharField(required=True)
+    appeal_id = serializers.IntegerField(required=True)
     status = serializers.CharField(required=False)
     message = serializers.CharField(required=False)
 
