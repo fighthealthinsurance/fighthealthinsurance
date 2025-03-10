@@ -53,11 +53,20 @@ class UserDomain(models.Model):
         unique=True,
     )
     stripe_subscription_id = models.CharField(max_length=300, null=True)
+    # Info
+    # https://docs.djangoproject.com/en/5.1/ref/models/fields/#django.db.models.Field.null
+
     name = models.CharField(blank=True, null=True, max_length=300, unique=True)
     active = models.BooleanField()
+    # Business name can be blank, we'll use display name then.
     business_name = models.CharField(max_length=300, null=True)
     display_name = models.CharField(max_length=300, null=False)
     professionals = models.ManyToManyField("ProfessionalUser", through="ProfessionalDomainRelation")  # type: ignore
+    # The visible phone number should be unique... ish? Maybe?
+    # We _could_ allow users to log in with visible phone number IFF
+    # it's unique among active domains. We're going to TRY and have it
+    # be unique and hope we don't have to remove this. The real world is
+    # tricky.
     visible_phone_number = models.CharField(max_length=150, null=False, unique=True)
     internal_phone_number = models.CharField(max_length=150, null=True, blank=True)
     office_fax = models.CharField(max_length=150, null=True, blank=True)
@@ -67,8 +76,15 @@ class UserDomain(models.Model):
     address1 = models.CharField(max_length=200, null=False)
     address2 = models.CharField(max_length=200, null=True, blank=True)
     zipcode = models.CharField(max_length=20, null=False)
+    # Customize the defaults
     default_procedure = models.CharField(blank=False, null=True, max_length=300, unique=False)
     cover_template_string = models.CharField(max_length=5000, null=True)
+
+    def save(self, *args, **kwargs):
+        # Strip URL prefixes from name if it's set
+        if self.name:
+            self.name = self._clean_name(self.name)
+        super().save(*args, **kwargs)
 
     @staticmethod
     def _clean_name(name: str) -> str:
@@ -92,6 +108,16 @@ class UserDomain(models.Model):
         from .models import ProfessionalDomainRelation  # local import to avoid circular dependencies
         relations = ProfessionalDomainRelation.objects.filter(domain=self, **relation_filters)
         return [relation.professional for relation in relations]
+        # Maybe include:
+        # List of common procedures
+        # Common appeal templates
+        # Extra model prompt
+
+
+        # As its set up a user can be in multiple domains & pro & patient
+        # however (for now) the usernames & domains are scoped so that we can
+        # allow admin to reset passwords within the domain. But we can later
+        # add "global" users that aggregate multiple sub-users. Maybe. idk
 
 
 class GlobalUserRelation(models.Model):
