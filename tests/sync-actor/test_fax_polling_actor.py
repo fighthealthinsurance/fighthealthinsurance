@@ -1,14 +1,10 @@
 import os
-from datetime import datetime, timedelta
-from unittest.mock import MagicMock, patch
 
 import pytest
 import ray
 from django.test import TestCase
-from django.utils import timezone
 
 from fighthealthinsurance.fax_polling_actor import FaxPollingActor
-from fighthealthinsurance.models import Denial, FaxesToSend
 
 
 @pytest.mark.django_db

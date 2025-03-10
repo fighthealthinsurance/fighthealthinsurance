@@ -1,8 +1,6 @@
 import stripe
 from django.conf import settings
-from django.db import models
-from typing import Optional, Tuple, Dict, Any
-from django.apps import apps
+from typing import Tuple, Dict, Any
 from fighthealthinsurance.models import StripeProduct, StripePrice
 from loguru import logger
 

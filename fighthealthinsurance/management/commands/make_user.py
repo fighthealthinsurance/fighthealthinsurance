@@ -1,4 +1,3 @@
-import re
 from typing import Any
 from django.core.management.base import BaseCommand, CommandParser, CommandError
 from django.core.validators import validate_email

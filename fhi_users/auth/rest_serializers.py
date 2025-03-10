@@ -10,11 +10,7 @@ from .auth_forms import (
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from fhi_users.models import *
-from fhi_users.auth.auth_utils import (
-    combine_domain_and_username,
-    create_user,
-    resolve_domain_id,
-)
+from fhi_users.auth.auth_utils import create_user
 from typing import Any, Optional
 import re
 

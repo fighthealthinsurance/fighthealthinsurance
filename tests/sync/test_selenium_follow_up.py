@@ -1,11 +1,5 @@
 """Use SeleniumBase to test Submitting an appeal"""
 
-import hashlib
-import os
-import time
-import sys
-
-import pytest
 from django.contrib.staticfiles.testing import StaticLiveServerTestCase
 from fighthealthinsurance.models import *
 from seleniumbase import BaseCase

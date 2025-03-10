@@ -8,7 +8,6 @@ import sys
 import pytest
 from django.contrib.staticfiles.testing import StaticLiveServerTestCase
 from fighthealthinsurance.models import *
-from .fhi_selenium_base import FHISeleniumBase
 from seleniumbase import BaseCase
 
 BaseCase.main(__name__, __file__)
