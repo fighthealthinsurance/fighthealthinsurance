@@ -2,7 +2,6 @@ import ray
 from fighthealthinsurance.fax_actor import FaxActor
 import asyncio
 import logging
-from fighthealthinsurance.fax_actor import FaxActor
 
 @ray.remote(max_restarts=3, max_task_retries=3)
 class FaxPollingActor:
@@ -44,7 +43,8 @@ class FaxPollingActor:
                 logging.exception("Error while checking outbound faxes")
                 self.aec += 1
             finally:
-                await asyncio.sleep(5)
+                print("Waiting for next run")
+                await asyncio.sleep(self.interval)
         return True
 
     async def stop(self) -> None:
