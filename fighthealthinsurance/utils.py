@@ -77,6 +77,7 @@ def send_fallback_email(subject: str, template_name: str, context, to_email: str
 
     except Exception as e:
         logger.exception("Failed to send email '%s' to %s", subject, to_email)
+        raise
 
 
 async def check_call(cmd, max_retries=0, **kwargs):
