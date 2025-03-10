@@ -1,20 +1,14 @@
 import datetime
-from typing import Optional
 
-from django.core.mail import EmailMultiAlternatives
-from django.db.models import QuerySet
 from django.http import HttpResponse
-from django.template.loader import render_to_string
-from django.urls import reverse
 from django.views import View, generic
 
 from fighthealthinsurance import common_view_logic
 from fighthealthinsurance import forms as core_forms
-from fighthealthinsurance.forms import FollowUpTestForm, ActivateProForm
+from fighthealthinsurance.forms import FollowUpTestForm
 from fighthealthinsurance.models import (
     Denial,
     FollowUpSched,
-    InterestedProfessional,
     ProfessionalUser,
     UserDomain,
     ProfessionalDomainRelation,

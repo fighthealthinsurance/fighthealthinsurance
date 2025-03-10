@@ -16,7 +16,7 @@ from fighthealthinsurance.models import (
 from rest_framework import serializers
 
 from fhi_users.auth import rest_serializers as auth_serializers
-from typing import Optional, List, Dict, Any
+from typing import Optional, List
 from drf_spectacular.utils import extend_schema_field
 
 

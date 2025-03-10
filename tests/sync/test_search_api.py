@@ -1,13 +1,11 @@
-from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework.test import APITestCase
 from rest_framework import status
-from datetime import timedelta
 from contextlib import contextmanager
 import warnings
 import uuid
-from fighthealthinsurance.models import Appeal, User, PatientUser, ProfessionalUser
+from fighthealthinsurance.models import Appeal, User, ProfessionalUser
 
 
 @contextmanager

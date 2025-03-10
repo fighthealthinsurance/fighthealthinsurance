@@ -1,4 +1,5 @@
 import ray
+from fighthealthinsurance.fax_actor import FaxActor
 import asyncio
 import logging
 from fighthealthinsurance.fax_actor import FaxActor

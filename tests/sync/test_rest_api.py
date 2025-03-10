@@ -1,6 +1,6 @@
 """Test the rest API functionality"""
 
-from asgiref.sync import sync_to_async, async_to_sync
+from asgiref.sync import sync_to_async
 
 import pytest
 from channels.testing import WebsocketCommunicator
@@ -8,9 +8,6 @@ from channels.testing import WebsocketCommunicator
 import typing
 
 import hashlib
-import os
-import time
-import sys
 import json
 
 from django.urls import reverse

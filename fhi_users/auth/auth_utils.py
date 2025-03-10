@@ -5,14 +5,12 @@
 import uuid
 
 from fhi_users.models import UserDomain
-from django.contrib.auth.models import AbstractUser  # Add this import
 from django.contrib.auth import get_user_model
 
 # See https://github.com/typeddjango/django-stubs/issues/599
 from typing import TYPE_CHECKING, Optional
 
 from fhi_users.models import ProfessionalDomainRelation, UserDomain, PatientUser
-from fhi_users.emails import send_verification_email
 
 from loguru import logger
 
