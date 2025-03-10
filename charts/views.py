@@ -8,7 +8,6 @@ from bokeh.embed import components
 from bokeh.models import ColumnDataSource
 import pandas as pd
 import csv
-from django.http import HttpResponse
 
 
 @staff_member_required
