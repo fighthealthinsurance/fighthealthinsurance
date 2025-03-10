@@ -13,7 +13,7 @@ class FaxPollingActor:
         """
         Initialize the FaxPollingActor with a specified polling interval.
         """
-        self.fax_actor = FaxActor.options(name="fpa-worker", namespace="fhi").remote()
+        self.fax_actor = FaxActor.options(name="fpa-worker", namespace="fhi").remote()  # type: ignore[attr-defined]
         self.interval = interval
         self.c = 0
         self.e = 0

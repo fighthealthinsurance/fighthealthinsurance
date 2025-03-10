@@ -452,7 +452,7 @@ class AppealGenerator(object):
             try:
                 if isinstance(model, RemoteFullOpenLike):
                     logger.debug(f"Using {model}'s parallel inference")
-                    reveal_type(model)
+                    # reveal_type(model)
                     results = model.parallel_infer(
                         prompt=prompt,
                         patient_context=patient_context,
