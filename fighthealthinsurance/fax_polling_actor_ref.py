@@ -1,7 +1,4 @@
-import time
 from functools import cached_property
-
-import ray
 from fighthealthinsurance.fax_polling_actor import FaxPollingActor
 
 
