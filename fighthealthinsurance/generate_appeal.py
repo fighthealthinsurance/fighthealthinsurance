@@ -5,7 +5,7 @@ import re
 import time
 import traceback
 from concurrent.futures import Future
-from typing import Any, Iterator, List, Optional, Tuple, Pattern, Callable
+from typing import Any, Iterator, List, Optional, Tuple
 from loguru import logger
 
 from fighthealthinsurance.denial_base import DenialBase

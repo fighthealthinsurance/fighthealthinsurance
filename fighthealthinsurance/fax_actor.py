@@ -24,7 +24,6 @@ class FaxActor:
             get_env_variable("DJANGO_SETTINGS_MODULE", "fighthealthinsurance.settings"),
         )
         get_wsgi_application()
-        from fighthealthinsurance.models import FaxesToSend
 
     def hi(self):
         return "ok"

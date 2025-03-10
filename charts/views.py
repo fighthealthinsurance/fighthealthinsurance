@@ -1,18 +1,13 @@
-import django
 from django.http import HttpResponse
 from django.shortcuts import render
-from django.template import loader
 from django.contrib.admin.views.decorators import staff_member_required
-from django.db.models import Count, Min, Q
-from bokeh.models import Range1d
+from django.db.models import Count, Q
 from fighthealthinsurance.models import Denial, InterestedProfessional
 from bokeh.plotting import figure
 from bokeh.embed import components
-from bokeh.models import DatetimeTickFormatter
 from bokeh.models import ColumnDataSource
 import pandas as pd
 import csv
-from django.http import HttpResponse, StreamingHttpResponse
 
 
 @staff_member_required

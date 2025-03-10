@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from string import Template
 from typing import AsyncIterator, Awaitable, Any, Optional, Tuple, Iterable, List
 from loguru import logger
-from PyPDF2 import PdfMerger, PdfReader, PdfWriter
+from PyPDF2 import PdfMerger
 import ray
 import tempfile
 import os
@@ -19,12 +19,10 @@ from django.core.validators import validate_email
 from django.forms import Form
 from django.template.loader import render_to_string
 from django.db.models import QuerySet
-from django.db import connections
 
 
 import uszipcode
 from fighthealthinsurance.fax_actor_ref import fax_actor_ref
-from fighthealthinsurance.fax_utils import flexible_fax_magic
 from fighthealthinsurance.form_utils import *
 from fighthealthinsurance.generate_appeal import *
 from fighthealthinsurance.models import *

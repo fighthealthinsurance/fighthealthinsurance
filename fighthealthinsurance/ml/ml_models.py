@@ -1,4 +1,4 @@
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 import asyncio
 import aiohttp
 import itertools
@@ -7,9 +7,7 @@ import re
 import traceback
 from concurrent.futures import Future
 from dataclasses import dataclass
-from functools import cache
-from typing import Callable, List, Optional, Tuple, Iterable, Union, Awaitable
-import requests
+from typing import Callable, List, Optional, Tuple, Iterable, Union
 from stopit import ThreadingTimeout as Timeout
 from loguru import logger
 

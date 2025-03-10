@@ -1,6 +1,5 @@
 import pytest
 from django.core import mail
-from django.conf import settings
 from fhi_users.emails import (
     send_provider_started_appeal_email,
     send_password_reset_email,
