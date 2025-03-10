@@ -5,8 +5,7 @@ import typing
 import re
 from enum import Enum
 
-from django.db import models, transaction, IntegrityError
-from django.core.exceptions import ValidationError
+from django.db import models
 from django.contrib.auth import get_user_model
 from django.db.models.signals import pre_save
 from django.dispatch import receiver
