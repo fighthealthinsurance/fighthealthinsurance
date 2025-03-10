@@ -1,12 +1,10 @@
 import typing
 from typing import Optional
 
-from django.views.decorators.csrf import csrf_exempt
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.shortcuts import get_object_or_404
-from django.db.models import Q, Count
-from django.urls import reverse
+from django.db.models import Q
 from django.utils import timezone
 from dateutil.relativedelta import relativedelta
 from django.http import FileResponse

@@ -1,5 +1,4 @@
 import os
-from os import environ
 import unittest
 from fighthealthinsurance.fax_utils import FaxSenderBase, FlexibleFaxMagic
 import tempfile

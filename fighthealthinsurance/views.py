@@ -14,7 +14,7 @@ from django.shortcuts import redirect, render, get_object_or_404
 from django.urls import reverse
 from django.utils.safestring import mark_safe
 from django.views import View, generic
-from django.http import HttpRequest, HttpResponseBase, HttpResponse, FileResponse
+from django.http import HttpRequest, HttpResponseBase, HttpResponse
 from django.core.exceptions import SuspiciousOperation
 from django.http import HttpResponseRedirect
 

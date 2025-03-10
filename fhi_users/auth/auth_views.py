@@ -1,26 +1,16 @@
 from django.shortcuts import render
-from django.http import HttpResponseRedirect, JsonResponse, HttpResponse
+from django.http import HttpResponseRedirect, HttpResponse
 from django.urls import reverse, reverse_lazy
 from django.views import generic, View
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth import get_user_model
 from .auth_utils import combine_domain_and_username, resolve_domain_id
 from .auth_forms import LoginForm
-import fhi_users
-from django.views.decorators.csrf import csrf_exempt
-from django.core.mail import send_mail
-from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
-from django.utils.encoding import force_bytes, force_str
-from django.template.loader import render_to_string
-from django.contrib.sites.shortcuts import get_current_site
+from django.utils.http import urlsafe_base64_decode
+from django.utils.encoding import force_str
 from django.contrib.auth.tokens import default_token_generator
-from django.shortcuts import get_object_or_404
-from django.conf import settings
-import json
 from fhi_users.models import UserDomain
-from fhi_users.emails import send_verification_email
 
-from typing import Any
 
 User = get_user_model()
 

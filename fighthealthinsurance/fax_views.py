@@ -1,4 +1,3 @@
-import json
 import stripe
 from loguru import logger
 from typing import *
@@ -7,7 +6,6 @@ from django.conf import settings
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.views import View, generic
-from django.http import HttpResponse
 
 from fighthealthinsurance import forms as core_forms
 from fighthealthinsurance import common_view_logic

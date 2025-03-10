@@ -1,15 +1,11 @@
 import os
 from datetime import datetime, timedelta
-from unittest.mock import MagicMock, patch
-
-import pytest
 import ray
 from django.test import TransactionTestCase
 from django.utils import timezone
 from django.db import connection
 
 from fighthealthinsurance.fax_actor import FaxActor
-from fighthealthinsurance.models import Denial, FaxesToSend
 
 runtime_env = dict(os.environ)
 

@@ -2,20 +2,17 @@ import asyncio
 import json
 import io
 from asgiref.sync import async_to_sync
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 from typing import AsyncIterator
 from fighthealthinsurance.common_view_logic import (
     RemoveDataHelper,
-    SendFaxHelper,
     FindNextStepsHelper,
-    DenialCreatorHelper,
     AppealsBackendHelper,
-    DenialResponseInfo,
     NextStepInfo,
 )
-from fighthealthinsurance.models import Denial, DenialTypes, FaxesToSend
+from fighthealthinsurance.models import Denial, DenialTypes
 import pytest
-from django.test import TestCase, Client
+from django.test import TestCase
 
 
 class TestCommonViewLogic(TestCase):
