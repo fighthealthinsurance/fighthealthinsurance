@@ -1,57 +1,71 @@
-import os
-
 import ray
-from fighthealthinsurance.fax_actor import FaxActor
-from asgiref.sync import sync_to_async
-import time
 import asyncio
+import logging
+from fighthealthinsurance.fax_actor import FaxActor
 
-
-@ray.remote(max_restarts=-1, max_task_retries=-1)
+@ray.remote(max_restarts=3, max_task_retries=3)
 class FaxPollingActor:
-    def __init__(self, i=60):
-        # This is seperate from the global one
-        name = "fpa-worker"
-        print(f"Starting fax polling actor")
-        time.sleep(1)
-        self.fax_actor = FaxActor.options(  # type: ignore
-            name=name, namespace="fhi"
-        ).remote()
-        print(f"Created fpa-worker {self.fax_actor}")
-        self.interval = i
+    """
+    Actor that polls for delayed remote faxes and processes them.
+    """
+
+    def __init__(self, interval: int = 60):
+        """
+        Initialize the FaxPollingActor with a specified polling interval.
+        """
+        self.fax_actor = FaxActor.options(name="fpa-worker", namespace="fhi").remote()
+        self.interval = interval
         self.c = 0
         self.e = 0
         self.aec = 0
+        self.running = False
 
     async def hello(self) -> str:
+        """
+        Return a greeting.
+        """
         return "Hi"
 
     async def run(self) -> bool:
-        print(f"Starting run")
+        """
+        Continuously poll for delayed remote faxes and process them until stopped.
+        Detailed error logging is provided for debugging.
+        """
         self.running = True
         while self.running:
-            # Like yield
             await asyncio.sleep(1)
             try:
-                print(f"Checked for delayed remote faxes")
-                (c, f) = await self.fax_actor.send_delayed_faxes.remote()
-                self.e += f
+                logging.info("Checked for delayed remote faxes")
+                c, f = await self.fax_actor.send_delayed_faxes.remote()
                 self.c += c
-            except Exception as e:
-                print(f"Error {e} while checking outbound faxes")
+                self.e += f
+            except Exception as exc:
+                logging.exception("Error while checking outbound faxes")
                 self.aec += 1
             finally:
-                # Success or failure we wait.
-                print(f"Waiting for next run")
                 await asyncio.sleep(5)
-        print(f"Done running? what?")
         return True
 
+    async def stop(self) -> None:
+        """
+        Stop the polling loop.
+        """
+        self.running = False
+
     async def count(self) -> int:
+        """
+        Return the count of processed faxes.
+        """
         return self.c
 
     async def error_count(self) -> int:
+        """
+        Return the count of fax processing errors.
+        """
         return self.e
 
     async def actor_error_count(self) -> int:
+        """
+        Return the count of actor-level errors.
+        """
         return self.aec
