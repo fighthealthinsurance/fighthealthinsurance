@@ -29,7 +29,6 @@ from django.views.decorators.cache import cache_control
 from django.views.decorators.vary import vary_on_cookie
 from django.utils.decorators import method_decorator
 
-
 import stripe
 
 from fhi_users.models import (
@@ -371,15 +370,23 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         domain_name: Optional[str] = user_signup_info["domain_name"]  # type: ignore
         visible_phone_number: Optional[str] = user_signup_info["visible_phone_number"]  # type: ignore
         new_domain: bool = bool(data["make_new_domain"])  # type: ignore
+        user_domain_opt: Optional[UserDomain] = None
 
         if not new_domain:
             # In practice the serializer may enforce these for us
             try:
-                UserDomain.find_by_name(name=domain_name).get()
+                if not domain_name or len(domain_name) == 0:
+                    raise UserDomain.DoesNotExist()
+                user_domain_opt = UserDomain.find_by_name(name=domain_name).get()
             except UserDomain.DoesNotExist:
                 try:
-                    UserDomain.objects.get(visible_phone_number=visible_phone_number)
-                except:
+                    user_domain_opt = UserDomain.objects.get(
+                        visible_phone_number=visible_phone_number
+                    )
+                except UserDomain.DoesNotExist:
+                    logger.opt(exception=True).error(
+                        f"Error finding domain {domain_name} / {visible_phone_number}"
+                    )
                     return Response(
                         serializers.StatusResponseSerializer(
                             {"status": "failure", "message": "Domain does not exist"}
@@ -446,13 +453,15 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                         ).data,
                         status=status.HTTP_400_BAD_REQUEST,
                     )
-            UserDomain.objects.create(
+            user_domain_opt = UserDomain.objects.create(
                 active=False,
                 **user_domain_info,
             )
 
-        user_domain: UserDomain = UserDomain.find_by_name(name=domain_name).get()
-        raw_username: str = user_signup_info["username"]  # type: ignore
+        if not user_domain_opt:
+            raise Exception("No user domain found or created")
+        user_domain: UserDomain = user_domain_opt  # type: ignore
+        raw_username: str = user_signup_info["email"]  # type: ignore
         email: str = user_signup_info["email"]  # type: ignore
         password: str = user_signup_info["password"]  # type: ignore
         first_name: str = user_signup_info["first_name"]  # type: ignore
