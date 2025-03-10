@@ -3,8 +3,6 @@ from django.apps import apps
 from django.contrib import admin
 
 from fighthealthinsurance.models import *
-from fhi_users.models import User
-from django.contrib.auth.admin import UserAdmin
 
 # Auto magic
 models = apps.get_models()

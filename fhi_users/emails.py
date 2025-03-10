@@ -1,12 +1,8 @@
-from django.conf import settings
-from django.utils.http import urlsafe_base64_encode
-from django.utils.encoding import force_bytes
 from django.contrib.auth.tokens import default_token_generator
 from django.contrib.sites.shortcuts import get_current_site
 from typing import TYPE_CHECKING
 from fhi_users.models import VerificationToken
 from fighthealthinsurance.utils import send_fallback_email
-from django.utils.html import strip_tags
 
 if TYPE_CHECKING:
     from django.contrib.auth.models import User
