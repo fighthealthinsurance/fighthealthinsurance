@@ -24,6 +24,7 @@ from fighthealthinsurance import common_view_logic
 from fighthealthinsurance import forms as core_forms
 from fighthealthinsurance import models
 from fighthealthinsurance import followup_emails
+from fighthealthinsurance.stripe_utils import get_or_create_price
 from django.template import loader
 from django.http import HttpResponseForbidden
 
@@ -130,38 +131,16 @@ class ProVersionView(generic.FormView):
         ):
             return render(self.request, "professional_thankyou.html")
 
-        stripe.api_key = settings.STRIPE_API_SECRET_KEY
-
-        # Check if the product already exists
-        products = stripe.Product.list(limit=100)
-        product = next(
-            (p for p in products.data if p.name == "Pre-Signup -- New"), None
+        (_, price_id) = get_or_create_price(
+            "Professional Pre-Signup",
+            1000,
+            recurring=False
         )
-
-        if product is None:
-            product = stripe.Product.create(name="Pre-Signup -- New")
-
-        prices = stripe.Price.list(product=product["id"], limit=100)
-        product_price = next(
-            (
-                p
-                for p in prices.data
-                if p.unit_amount == 1000
-                and p.currency == "usd"
-                and p.id == product["id"]
-            ),
-            None,
-        )
-
-        if product_price is None:
-            product_price = stripe.Price.create(
-                unit_amount=1000, currency="usd", product=product["id"]
-            )
 
         checkout = stripe.checkout.Session.create(
             line_items=[
                 {
-                    "price": product_price["id"],
+                    "price": price_id,
                     "quantity": 1,
                 }
             ],
