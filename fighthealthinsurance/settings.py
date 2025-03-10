@@ -390,6 +390,7 @@ class Dev(Base):
     CSRF_TRUSTED_ORIGINS = [
         "https://fightpaperwork.com",
         "https://localhost:3000",
+        "http://localhost:3000",
         "https://localhost:8000",
     ]
     DEFF_SALT = os.getenv("DEFF_SALT", "dev-salt")
