@@ -1,11 +1,16 @@
-import re
 from typing import Any
 from django.core.management.base import BaseCommand, CommandParser, CommandError
 from django.core.validators import validate_email
 from django.core.exceptions import ValidationError
 from django.contrib.auth import get_user_model
 from fhi_users.auth.auth_utils import combine_domain_and_username
-from fhi_users.models import UserDomain
+from fhi_users.models import (
+    UserDomain,
+    PatientUser,
+    PatientDomainRelation,
+    ProfessionalUser,
+    ProfessionalDomainRelation,
+)
 
 
 class Command(BaseCommand):
@@ -17,7 +22,7 @@ class Command(BaseCommand):
         parser.add_argument(
             "--username",
             required=True,
-            help="User's username (alphanumeric characters and underscores only).",
+            help="User's username (generally same as e-mail).",
         )
         parser.add_argument(
             "--email", required=True, help="User's valid email address."
@@ -52,11 +57,6 @@ class Command(BaseCommand):
         domain_input = options["domain"]
         visible_phone_number = options.get("visible_phone_number", "0")
         is_provider = options.get("is_provider", True)
-
-        if not re.match(r"^\w+$", username_raw):
-            raise CommandError(
-                "Invalid username. Only alphanumeric characters and underscores are allowed."
-            )
 
         try:
             validate_email(email)
@@ -110,3 +110,39 @@ class Command(BaseCommand):
                 )
             except Exception as e:
                 raise CommandError(f"Failed to create user: {str(e)}")
+        user = User.objects.get(username=combined_username)
+        if ProfessionalUser.objects.filter(user=user).exists():
+            self.stdout.write(
+                f"ProfessionalUser with user '{user.username}' already exists."
+            )
+            pro_user = ProfessionalUser.objects.filter(user=user).get()
+            if not ProfessionalDomainRelation.objects.filter(
+                professional=pro_user,
+                domain=user_domain,
+            ).exists():
+                ProfessionalDomainRelation.objects.create(
+                    professional=pro_user,
+                    domain=user_domain,
+                    active=True,
+                    pending=False,
+                    admin=True,
+                )
+        elif is_provider:
+            pro_user = ProfessionalUser.objects.create(user=user, active=True)
+            ProfessionalDomainRelation.objects.create(
+                professional=pro_user,
+                domain=user_domain,
+                active=True,
+                pending=False,
+                admin=True,
+            )
+        elif PatientUser.objects.filter(user=user).exists():
+            self.stdout.write(
+                f"PatientUser with user '{user.username}' already exists."
+            )
+        else:
+            patient_user = PatientUser.objects.create(user=user, active=True)
+            PatientDomainRelation.objects.create(
+                patient=patient_user,
+                domain=user_domain,
+            )

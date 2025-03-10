@@ -29,7 +29,7 @@ class MLRouter(object):
                     if m.model is None:
                         m.model = backend(model=m.internal_name)
                         logger.debug(f"Built {m.model}")
-                    if not m.model.external():
+                    if not m.model.external:
                         building_internal_models_by_cost.append(m)
                         building_internal_models_by_cost = (
                             building_internal_models_by_cost

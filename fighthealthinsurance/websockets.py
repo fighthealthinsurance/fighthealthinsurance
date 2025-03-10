@@ -18,7 +18,7 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
 
     async def receive(self, text_data):
         data = json.loads(text_data)
-        aitr = await common_view_logic.AppealsBackendHelper.generate_appeals(data)
+        aitr = common_view_logic.AppealsBackendHelper.generate_appeals(data)
         async for record in aitr:
             await self.send(record)
             await self.send("\n")
@@ -37,9 +37,7 @@ class StreamingEntityBackend(AsyncWebsocketConsumer):
 
     async def receive(self, text_data):
         data = json.loads(text_data)
-        aitr = await common_view_logic.DenialCreatorHelper.extract_entity(
-            data["denial_id"]
-        )
+        aitr = common_view_logic.DenialCreatorHelper.extract_entity(data["denial_id"])
 
         async for record in aitr:
             logger.debug(f"Sending record {record}")

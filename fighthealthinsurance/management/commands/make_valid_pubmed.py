@@ -1,10 +1,7 @@
-# As part of the migration to postgres we need to remove nulls from strings.
-import os
-
 from typing import Any
 
 from fighthealthinsurance.models import PubMedArticleSummarized
-from django.core.management.base import BaseCommand, CommandParser
+from django.core.management.base import BaseCommand
 from django.db import models
 
 

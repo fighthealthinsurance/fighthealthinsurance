@@ -1,4 +1,3 @@
-import json
 import stripe
 from loguru import logger
 from typing import *
@@ -7,7 +6,6 @@ from django.conf import settings
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.views import View, generic
-from django.http import HttpResponse
 
 from fighthealthinsurance import forms as core_forms
 from fighthealthinsurance import common_view_logic
@@ -43,14 +41,13 @@ class StageFaxView(generic.FormView):
     def form_valid(self, form):
         form_data = form.cleaned_data
         # Get all of the articles the user wants to send
-        logger.debug(f"Items {list(self.request.POST.items())}")
         pubmed_checkboxes = [
             key[len("pubmed_") :]
             for key, value in self.request.POST.items()
             if key.startswith("pubmed_") and value == "on"
         ]
         form_data["pubmed_ids_parsed"] = pubmed_checkboxes
-        logger.debug(f"Staging fax with {form_data}")
+        logger.debug(f"Pubmed IDs: {pubmed_checkboxes}")
         # Make sure the denial secret is present
         denial = Denial.objects.filter(semi_sekret=form_data["semi_sekret"]).get(
             denial_id=form_data["denial_id"]
@@ -79,6 +76,10 @@ class StageFaxView(generic.FormView):
                 "quantity": 1,
             }
         ]
+        metadata = {
+            "payment_type": "fax",
+            "fax_request_uuid": staged.uuid,
+        }
         checkout = stripe.checkout.Session.create(
             line_items=items,  # type: ignore
             mode="payment",  # No subscriptions
@@ -93,10 +94,7 @@ class StageFaxView(generic.FormView):
             ),
             cancel_url=self.request.build_absolute_uri(reverse("root")),
             customer_email=form.cleaned_data["email"],
-            metadata={
-                "payment_type": "fax",
-                "fax_request_uuid": staged.uuid,
-            },
+            metadata=metadata,
         )
         checkout_url = checkout.url
         if checkout_url is None:

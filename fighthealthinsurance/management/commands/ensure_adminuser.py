@@ -24,7 +24,7 @@ class Command(BaseCommand):
 
         if "no_input" in options and options["no_input"]:
             options["username"] = os.environ["FIGHT_HEALTH_ADMIN_USER"]
-            options["email"] = os.environ["FIGHT_HEALTH_ADMIN_USER"]
+            options["email"] = os.environ["FIGHT_HEALTH_ADMIN_USER"] + "@farts.com"
             options["password"] = os.environ["FIGHT_HEALTH_ADMIN_PASSWORD"]
 
         if not User.objects.filter(username=options["username"]).exists():
@@ -33,4 +33,6 @@ class Command(BaseCommand):
                 email=options["email"],
                 password=options["password"],
             )
+        else:
+            self.stdout.write("Admin user already exists")
         return

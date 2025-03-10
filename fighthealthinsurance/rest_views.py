@@ -1,12 +1,10 @@
 import typing
 from typing import Optional
 
-from django.views.decorators.csrf import csrf_exempt
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.shortcuts import get_object_or_404
-from django.db.models import Q, Count
-from django.urls import reverse
+from django.db.models import Q
 from django.utils import timezone
 from dateutil.relativedelta import relativedelta
 from django.http import FileResponse
@@ -21,6 +19,8 @@ from rest_framework.views import APIView
 from rest_framework.decorators import action
 
 from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import OpenApiParameter
+from drf_spectacular.types import OpenApiTypes
 
 from fighthealthinsurance import common_view_logic
 from fighthealthinsurance.models import (
@@ -46,7 +46,7 @@ from fhi_users.models import (
 from stopit import ThreadingTimeout as Timeout
 from .common_view_logic import AppealAssemblyHelper
 from .utils import is_convertible_to_int
-
+import json
 
 if typing.TYPE_CHECKING:
     from django.contrib.auth.models import User
@@ -96,7 +96,6 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
     serializer_class = serializers.DenialFormSerializer
 
     def get_serializer_class(self):
-        print(self.action)
         if self.action == "create":
             return serializers.DenialFormSerializer
         else:
@@ -145,12 +144,20 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
                 denial = Denial.filter_to_allowed_denials(current_user).get(
                     denial_id=denial_id
                 )
+            else:
+                del serializer_data["denial_id"]
         if "patient_id" in serializer_data and is_convertible_to_int(
             serializer_data["patient_id"]
         ):
             patient_id = serializer_data.pop("patient_id")
             if patient_id:
                 serializer_data["patient_user"] = PatientUser.objects.get(id=patient_id)
+            if (
+                "email" not in serializer_data
+                or serializer_data["email"] is None
+                or len(serializer_data["email"]) == 0
+            ):
+                serializer_data["email"] = serializer_data["patient_user"].user.email
         denial_response_info = (
             common_view_logic.DenialCreatorHelper.create_or_update_denial(
                 denial=denial,
@@ -200,12 +207,12 @@ class QAResponseViewSet(viewsets.ViewSet, CreateMixin):
                     question=key,
                     text_answer=value,
                 )
-        qa_context = ""
+        qa_context = {}
         for key, value in DenialQA.objects.filter(denial=denial).values_list(
             "question", "text_answer"
         ):
-            qa_context += f"{key}: {value}\n"
-        denial.qa_context = qa_context
+            qa_context[key] = value
+        denial.qa_context = json.dumps(qa_context)
         denial.save()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -262,6 +269,8 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
             return serializers.AssembleAppealRequestSerializer
         elif self.action == "notify_patient":
             return serializers.NotifyPatientRequestSerializer
+        elif self.action == "invite_provider":
+            return serializers.InviteProviderSerializer
         else:
             return None
 
@@ -291,12 +300,23 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
     @action(detail=False, methods=["post"])
     def notify_patient(self, request: Request) -> Response:
         serializer = self.deserialize(request.data)
+        if not serializer.is_valid():
+            return Response(
+                serializers.ErrorSerializer({"error": serializer.errors}).data,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         pk = serializer.validated_data["id"]
-        include_professional = serializer.validated_data["professional_name"]
+        include_professional = False
+        if "include_professional" in serializer.validated_data:
+            include_professional = serializer.validated_data["include_professional"]
         current_user: User = request.user  # type: ignore
         appeal = get_object_or_404(
             Appeal.filter_to_allowed_appeals(current_user), pk=pk
         )
+        # Notifying the patient makes it visible.
+        if not appeal.patient_visible:
+            appeal.patient_visible = True
+            appeal.save()
         patient_user: Optional[PatientUser] = appeal.patient_user
         if patient_user is None:
             return Response(
@@ -332,7 +352,10 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
             status=status.HTTP_200_OK,
         )
 
-    @extend_schema(responses=serializers.AppealFullSerializer)
+    @extend_schema(
+        responses=serializers.AppealFullSerializer,
+        parameters=[OpenApiParameter(name="pk", type=OpenApiTypes.INT)],
+    )
     @action(detail=False, methods=["get"])
     def get_full_details(self, request: Request) -> Response:
         pk = request.query_params.get("pk")
@@ -344,12 +367,11 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
 
     @extend_schema(responses=serializers.StatusResponseSerializer)
     @action(detail=False, methods=["post"])
-    def send_fax(self, request) -> Response:
+    def send_fax(self, request: Request) -> Response:
         current_user: User = request.user  # type: ignore
         serializer = self.deserialize(data=request.data)
         serializer.is_valid(raise_exception=True)
         appeal_id = serializer.validated_data["appeal_id"]
-        print(f"Looking up for {appeal_id}")
         appeal = get_object_or_404(
             Appeal.filter_to_allowed_appeals(current_user), pk=appeal_id
         )
@@ -369,7 +391,15 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
             appeal.pending_professional = True
             appeal.pending = True
             appeal.save()
-            raise Exception("Provider wants to finish appeal")
+            return Response(
+                data=serializers.StatusResponseSerializer(
+                    {
+                        "message": "Pending professional",
+                        "status": "pending_professional",
+                    }
+                ).data,
+                status=status.HTTP_200_OK,
+            )
         else:
             appeal.pending_patient = False
             appeal.pending_professional = False
@@ -467,13 +497,14 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
 
     @extend_schema(responses=serializers.StatusResponseSerializer)
     @action(detail=False, methods=["post"])
-    def invite_provider(self, request: Request, pk: int) -> Response:
+    def invite_provider(self, request: Request) -> Response:
         current_user: User = request.user  # type: ignore
+        serializer = serializers.InviteProviderSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        pk = serializer.validated_data["appeal_id"]
         appeal = get_object_or_404(
             Appeal.filter_to_allowed_appeals(current_user), pk=pk
         )
-        serializer = serializers.InviteProviderSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
         professional_id = serializer.validated_data.get("professional_id")
         email = serializer.validated_data.get("email")
 
@@ -489,9 +520,10 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
                     appeal=appeal, professional=professional_user
                 )
             except ProfessionalUser.DoesNotExist:
+                inviting_professional = ProfessionalUser.objects.get(user=current_user)
                 common_view_logic.ProfessionalNotificationHelper.send_signup_invitation(
                     email=email,
-                    professional_name=professional.get_display_name(),
+                    professional_name=inviting_professional.get_display_name(),
                     practice_number=UserDomain.objects.get(
                         id=request.session["domain_id"]
                     ).visible_phone_number,
@@ -507,59 +539,165 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
     @extend_schema(responses=serializers.StatisticsSerializer)
     @action(detail=False, methods=["get"])
     def stats(self, request: Request) -> Response:
+        """Get relative statistics with comparison to previous period"""
         now = timezone.now()
         user: User = request.user  # type: ignore
+        delta = request.GET.get("delta", "MoM")  # Default to Month over Month
 
-        # Define current period (current month)
-        current_period_start = now.replace(
-            day=1, hour=0, minute=0, second=0, microsecond=0
-        )
+        current_period_start = now
         current_period_end = now
 
-        # Define previous period
-        previous_period_start = current_period_start - relativedelta(months=1)
+        # Define previous period based on delta parameter
+        if delta == "YoY":  # Year over Year
+            current_period_start = current_period_start - relativedelta(years=1)
+            previous_period_start = current_period_start - relativedelta(years=1)
+        elif delta == "QoQ":  # Quarter over Quarter
+            current_period_start = current_period_start - relativedelta(months=3)
+            previous_period_start = current_period_start - relativedelta(months=3)
+        else:  # MoM
+            # Default to Month over Month if invalid delta
+            current_period_start = current_period_start - relativedelta(months=1)
+            previous_period_start = current_period_start - relativedelta(months=1)
+        # Regardless end the previous period one microsend before the start of the current
         previous_period_end = current_period_start - relativedelta(microseconds=1)
 
-        # Calculate current period statistics
+        # Get user domain to calculate patients
+        domain_id = request.session.get("domain_id")
+        user_domain = None
+        if domain_id:
+            try:
+                user_domain = UserDomain.objects.get(id=domain_id)
+            except UserDomain.DoesNotExist:
+                pass
+
+        # Get current period statistics
         current_appeals = Appeal.filter_to_allowed_appeals(user).filter(
-            mod_date__range=(current_period_start.date(), current_period_end.date())
+            creation_date__range=(
+                current_period_start.date(),
+                current_period_end.date(),
+            )
         )
         current_total = current_appeals.count()
         current_pending = current_appeals.filter(pending=True).count()
         current_sent = current_appeals.filter(sent=True).count()
+
+        # Use success field instead of response_date
+        current_successful = current_appeals.filter(success=True).count()
         current_with_response = current_appeals.exclude(response_date=None).count()
 
-        # Calculate previous period statistics
+        # Since we're looking for patients in the current range we can't use the UserDomain
+        current_patients = (
+            PatientUser.objects.filter(appeal__in=current_appeals).distinct().count()
+        )
+
+        # Get previous period statistics
         previous_appeals = Appeal.filter_to_allowed_appeals(user).filter(
-            mod_date__range=(previous_period_start.date(), previous_period_end.date())
+            creation_date__range=(
+                previous_period_start.date(),
+                previous_period_end.date(),
+            )
         )
         previous_total = previous_appeals.count()
         previous_pending = previous_appeals.filter(pending=True).count()
         previous_sent = previous_appeals.filter(sent=True).count()
+
+        # Use success field instead of response_date
+        previous_successful = previous_appeals.filter(success=True).count()
         previous_with_response = previous_appeals.exclude(response_date=None).count()
+
+        # Get previous period patient count
+        # Get the patients with appeals in previous period
+        previous_patients = (
+            PatientUser.objects.filter(appeal__in=previous_appeals).distinct().count()
+        )
+
+        # Set estimated payment value to None for now
+        current_estimated_payment_value = None
+        previous_estimated_payment_value = None
 
         statistics = {
             "current_total_appeals": current_total,
             "current_pending_appeals": current_pending,
             "current_sent_appeals": current_sent,
-            "current_response_rate": (
-                (current_with_response / current_total * 100)
-                if current_total > 0
+            "current_success_rate": (
+                (current_successful / current_with_response * 100)
+                if current_with_response > 0
                 else 0
             ),
+            "current_estimated_payment_value": current_estimated_payment_value,
+            "current_total_patients": current_patients,
             "previous_total_appeals": previous_total,
             "previous_pending_appeals": previous_pending,
             "previous_sent_appeals": previous_sent,
-            "previous_response_rate": (
-                (previous_with_response / previous_total * 100)
-                if previous_total > 0
+            "previous_success_rate": (
+                (previous_successful / previous_with_response * 100)
+                if previous_with_response > 0
                 else 0
             ),
+            "previous_estimated_payment_value": previous_estimated_payment_value,
+            "previous_total_patients": previous_patients,
             "period_start": current_period_start,
             "period_end": current_period_end,
         }
 
-        return Response(statistics)
+        return Response(serializers.StatisticsSerializer(statistics).data)
+
+    @extend_schema(responses=serializers.AbsoluteStatisticsSerializer)
+    @action(detail=False, methods=["get"])
+    def absolute_stats(self, request: Request) -> Response:
+        """Get absolute statistics without time windowing"""
+        user: User = request.user  # type: ignore
+
+        # Get user domain to calculate patients
+        domain_id = request.session.get("domain_id")
+        user_domain = None
+        if domain_id:
+            try:
+                user_domain = UserDomain.objects.get(id=domain_id)
+            except UserDomain.DoesNotExist:
+                pass
+
+        # Get all appeals the user has access to
+        all_appeals = Appeal.filter_to_allowed_appeals(user)
+        total_appeals = all_appeals.count()
+        pending_appeals = all_appeals.filter(pending=True).count()
+        sent_appeals = all_appeals.filter(sent=True).count()
+
+        # Use success field instead of response_date
+        successful_appeals = all_appeals.filter(success=True).count()
+        with_response = all_appeals.exclude(response_date=None).count()
+        success_rate = (
+            (successful_appeals / with_response * 100) if with_response > 0 else 0.0
+        )
+
+        # Set estimated payment value to None for now
+        estimated_payment_value = None
+
+        # Get total patient count based on domain
+        total_patients = 0
+        if user_domain:
+            # Get all patients related to this domain
+            total_patients = (
+                PatientUser.objects.filter(patientdomainrelation__domain=user_domain)
+                .distinct()
+                .count()
+            )
+        else:
+            # Fallback to patients with appeals if domain not available
+            total_patients = (
+                PatientUser.objects.filter(appeal__in=all_appeals).distinct().count()
+            )
+
+        statistics = {
+            "total_appeals": total_appeals,
+            "pending_appeals": pending_appeals,
+            "sent_appeals": sent_appeals,
+            "success_rate": success_rate,
+            "estimated_payment_value": estimated_payment_value,
+            "total_patients": total_patients,
+        }
+
+        return Response(serializers.AbsoluteStatisticsSerializer(statistics).data)
 
     @extend_schema(
         responses={

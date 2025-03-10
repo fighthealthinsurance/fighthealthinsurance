@@ -1,34 +1,22 @@
 from loguru import logger
-from typing import Any, Optional, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING
 
 from rest_framework import status
 from rest_framework import viewsets
-from rest_framework.views import APIView
 from rest_framework.decorators import action
 from rest_framework.request import Request
 from rest_framework.response import Response
-from rest_framework import permissions
 from rest_framework.viewsets import ViewSet
-from rest_framework.mixins import CreateModelMixin, ListModelMixin
-from rest_framework.viewsets import GenericViewSet
 from rest_framework.permissions import IsAuthenticated
 
-from django.http import HttpRequest
 from django.conf import settings
-from django.urls import reverse
 from django.contrib.auth import get_user_model
 from django.contrib.auth import authenticate, login
-from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
-from django.utils.encoding import force_bytes, force_str
 from django.utils import timezone
-from django.template.loader import render_to_string
-from django.contrib.sites.shortcuts import get_current_site
-from django.contrib.auth.tokens import default_token_generator
 from django.shortcuts import get_object_or_404
 from django.views.decorators.cache import cache_control
 from django.views.decorators.vary import vary_on_cookie
 from django.utils.decorators import method_decorator
-
 
 import stripe
 
@@ -157,10 +145,17 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
     """
 
     def get_serializer_class(self):
-        if self.action == "accept":
+        if self.action == "accept" or self.action == "reject":
             return serializers.AcceptProfessionalUserSerializer
-        else:
+        elif self.action == "create":
             return serializers.ProfessionalSignupSerializer
+        elif (
+            self.action == "list_active_in_domain"
+            or self.action == "list_pending_in_domain"
+        ):
+            return serializers.EmptySerializer
+        else:
+            return serializers.EmptySerializer
 
     def get_permissions(self):
         """
@@ -186,6 +181,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
     )
     @action(detail=False, methods=["post"])
     def list_active_in_domain(self, request) -> Response:
+        """List the active users in a given domain"""
         domain_id = request.session["domain_id"]
         domain = UserDomain.objects.get(id=domain_id)
         # Ensure current user is an active professional in domain
@@ -213,6 +209,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
     )
     @action(detail=False, methods=["post"])
     def list_pending_in_domain(self, request) -> Response:
+        """List the pending user in a given domain"""
         domain_id = request.session["domain_id"]
         domain = UserDomain.objects.get(id=domain_id)
         # Ensure current user is active in domain
@@ -362,15 +359,23 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         domain_name: Optional[str] = user_signup_info["domain_name"]  # type: ignore
         visible_phone_number: Optional[str] = user_signup_info["visible_phone_number"]  # type: ignore
         new_domain: bool = bool(data["make_new_domain"])  # type: ignore
+        user_domain_opt: Optional[UserDomain] = None
 
         if not new_domain:
             # In practice the serializer may enforce these for us
             try:
-                UserDomain.find_by_name(name=domain_name).get()
+                if not domain_name or len(domain_name) == 0:
+                    raise UserDomain.DoesNotExist()
+                user_domain_opt = UserDomain.find_by_name(name=domain_name).get()
             except UserDomain.DoesNotExist:
                 try:
-                    UserDomain.objects.get(visible_phone_number=visible_phone_number)
-                except:
+                    user_domain_opt = UserDomain.objects.get(
+                        visible_phone_number=visible_phone_number
+                    )
+                except UserDomain.DoesNotExist:
+                    logger.opt(exception=True).error(
+                        f"Error finding domain {domain_name} / {visible_phone_number}"
+                    )
                     return Response(
                         serializers.StatusResponseSerializer(
                             {"status": "failure", "message": "Domain does not exist"}
@@ -437,13 +442,15 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                         ).data,
                         status=status.HTTP_400_BAD_REQUEST,
                     )
-            UserDomain.objects.create(
+            user_domain_opt = UserDomain.objects.create(
                 active=False,
                 **user_domain_info,
             )
 
-        user_domain: UserDomain = UserDomain.find_by_name(name=domain_name).get()
-        raw_username: str = user_signup_info["username"]  # type: ignore
+        if not user_domain_opt:
+            raise Exception("No user domain found or created")
+        user_domain: UserDomain = user_domain_opt  # type: ignore
+        raw_username: str = user_signup_info["email"]  # type: ignore
         email: str = user_signup_info["email"]  # type: ignore
         password: str = user_signup_info["password"]  # type: ignore
         first_name: str = user_signup_info["first_name"]  # type: ignore
@@ -597,14 +604,15 @@ class PatientUserViewSet(ViewSet, CreateMixin):
             email = get_next_fake_username()
         domain = UserDomain.objects.get(id=request.session["domain_id"])
         user = get_patient_or_create_pending_patient(
-            email=serializer.validated_data["username"],
-            raw_username=serializer.validated_data["username"],
+            email=email,
+            raw_username=email,
             domain=domain,
             fname=serializer.validated_data["first_name"],
             lname=serializer.validated_data["last_name"],
         )
-        print(f"User is {user}")
-        response_serializer = serializers.PatientReferenceSerializer({"id": user.id})
+        response_serializer = serializers.PatientReferenceSerializer(
+            {"id": user.id, "email": email}
+        )
         return Response(response_serializer.data)
 
 

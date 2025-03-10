@@ -1,4 +1,4 @@
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 import asyncio
 import aiohttp
 import itertools
@@ -7,9 +7,7 @@ import re
 import traceback
 from concurrent.futures import Future
 from dataclasses import dataclass
-from functools import cache
-from typing import Callable, List, Optional, Tuple, Iterable, Union, Awaitable
-import requests
+from typing import Callable, List, Optional, Tuple, Iterable, Union
 from stopit import ThreadingTimeout as Timeout
 from loguru import logger
 
@@ -22,7 +20,13 @@ from fighthealthinsurance.process_denial import DenialBase
 
 class RemoteModelLike(DenialBase):
     def infer(self, prompt, patient_context, plan_context, pubmed_context, infer_type):
-        return None
+        """
+        Abstract method for inference
+
+        Returns:
+            Result from the model
+        """
+        pass
 
     @abstractmethod
     async def _infer(
@@ -39,33 +43,86 @@ class RemoteModelLike(DenialBase):
         return None
 
     async def get_denialtype(self, denial_text, procedure, diagnosis) -> Optional[str]:
-        """What is the denial type?"""
-        await asyncio.sleep(0)  # yield
+        """Get the denial type from the text and procedure/diagnosis"""
         return None
 
     async def get_regulator(self, text) -> Optional[str]:
-        """Who is the regulator most likely associated with a given denial."""
-        await asyncio.sleep(0)  # yield
+        """Get the regulator from the text"""
         return None
 
     async def get_plan_type(self, text) -> Optional[str]:
-        """What is the plan type."""
-        await asyncio.sleep(0)  # yield
+        """Get the plan type from the text"""
         return None
 
     async def get_procedure_and_diagnosis(
         self, prompt
     ) -> Tuple[Optional[str], Optional[str]]:
-        """Single call to get procedure and diagnosis."""
-        await asyncio.sleep(0)  # yield
+        """Get the procedure and diagnosis from the prompt"""
         return (None, None)
 
     async def get_fax_number(self, prompt) -> Optional[str]:
-        """Try and extract the fax number."""
-        return await asyncio.sleep(0, result=None)
+        """
+        Extract fax number from the denial text
 
+        Args:
+            prompt: The denial letter text
+
+        Returns:
+            Extracted fax number or None
+        """
+        return None
+
+    async def get_insurance_company(self, prompt) -> Optional[str]:
+        """
+        Extract insurance company name from the denial text
+
+        Args:
+            prompt: The denial letter text
+
+        Returns:
+            Extracted insurance company name or None
+        """
+        return None
+
+    async def get_plan_id(self, prompt) -> Optional[str]:
+        """
+        Extract plan ID from the denial text
+
+        Args:
+            prompt: The denial letter text
+
+        Returns:
+            Extracted plan ID or None
+        """
+        return None
+
+    async def get_claim_id(self, prompt) -> Optional[str]:
+        """
+        Extract claim ID from the denial text
+
+        Args:
+            prompt: The denial letter text
+
+        Returns:
+            Extracted claim ID or None
+        """
+        return None
+
+    async def get_date_of_service(self, prompt) -> Optional[str]:
+        """
+        Extract date of service from the denial text
+
+        Args:
+            prompt: The denial letter text
+
+        Returns:
+            Extracted date of service or None
+        """
+        return None
+
+    @property
     def external(self):
-        """Is this an external model. This is important for privacy conscious folks & pro."""
+        """Whether this is an external model"""
         return True
 
 
@@ -253,8 +310,80 @@ class RemoteOpenLike(RemoteModel):
     async def get_fax_number(self, denial: str) -> Optional[str]:
         return await self._infer(
             system_prompt="You are a helpful assistant.",
-            prompt=f"Tell me the to appeal fax number is within the provided denial. If the fax number is unknown write UNKNOWN. If known just output the fax number without any pre-amble and as a snipper from the original doc. The denial follows: {denial}",
+            prompt=f"When possible output in the same format as is found in the denial. Tell me the appeal fax number is within the provided denial. If the fax number is unknown write UNKNOWN. If known just output the fax number without any pre-amble and as a snipper from the original doc. DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN. The denial follows: {denial}. Remember DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN.",
         )
+
+    async def get_insurance_company(self, denial: str) -> Optional[str]:
+        """
+        Extract insurance company name from the denial text
+
+        Args:
+            prompt: The denial letter text
+
+        Returns:
+            Extracted insurance company name or None
+        """
+        result = await self._infer(
+            system_prompt="You are a helpful assistant.",
+            prompt=f"When possible output in the same format as is found in the denial. Tell me which insurance company is within the provided denial. If it is not present or otherwise unknown write UNKNOWN. If known just output the answer without any pre-amble and as a snipper from the original doc. Remember: DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN. The denial follows: {denial}. Remember DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN.",
+        )
+        if result and "The insurance company is" in result:
+            return result.split("The insurance company is")[1].strip()
+        return result
+
+    async def get_plan_id(self, denial: str) -> Optional[str]:
+        """
+        Extract plan ID from the denial text
+
+        Args:
+            prompt: The denial letter text
+
+        Returns:
+            Extracted plan ID or None
+        """
+        result = await self._infer(
+            system_prompt="You are a helpful assistant.",
+            prompt=f"When possible output in the same format as is found in the denial. Tell me the what plan ID is present is within the provided denial. If it is not present or unknown write UNKNOWN. If known just output the answer without any pre-amble and as a snipper from the original doc. DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN. The denial follows: {denial}. Remember DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN.",
+        )
+        if result and "The plan ID is" in result:
+            return result.split("The plan ID is")[1].strip()
+        return result
+
+    async def get_claim_id(self, denial: str) -> Optional[str]:
+        """
+        Extract claim ID from the denial text
+
+        Args:
+            prompt: The denial letter text
+
+        Returns:
+            Extracted claim ID or None
+        """
+        result = await self._infer(
+            system_prompt="You are a helpful assistant.",
+            prompt=f"When possible output in the same format as is found in the denial. Tell me the what claim ID was denied within the provided denial (it could be multiple but it's normally just one). If it is not present or otherwise unknown write UNKNOWN. If known just output the answer without any pre-amble and as a snipper from the original doc. DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN.. The denial follows: {denial}. REMEMBER DO NOT GUESS.",
+        )
+        if result and "Claim ID is" in result:
+            return result.split("Claim ID is")[1].strip()
+        return result
+
+    async def get_date_of_service(self, denial: str) -> Optional[str]:
+        """
+        Extract date of service from the denial text
+
+        Args:
+            prompt: The denial letter text
+
+        Returns:
+            Extracted date of service or None
+        """
+        result = await self._infer(
+            system_prompt="You are a helpful assistant.",
+            prompt=f"When possible output in the same format as is found in the denial. Tell me the what the date of service was within the provided denial (it could be multiple or a date range, but it can also just be one day). If it is not present or otherwise unknown write UNKNOWN. If known just output the asnwer without any pre-amble and as a snipper from the original doc. The denial follows: {denial}",
+        )
+        if result and "Date of service is" in result:
+            return result.split("Date of service is")[1].strip()
+        return result
 
     async def questions(
         self, prompt: str, patient_context: str, plan_context
@@ -490,6 +619,7 @@ class RemoteHealthInsurance(RemoteFullOpenLike):
             self.url, token="", backup_api_base=self.backup_url, model=model
         )
 
+    @property
     def external(self):
         return False
 

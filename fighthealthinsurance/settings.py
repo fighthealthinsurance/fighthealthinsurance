@@ -15,8 +15,7 @@ from pathlib import Path
 import re
 import traceback
 from functools import cached_property
-from typing import Optional, List
-
+from typing import Optional
 from configurations import Configuration
 from fighthealthinsurance.combined_storage import CombinedStorage
 import minio as m
@@ -36,7 +35,7 @@ os.environ.setdefault("DJANGO_CONFIGURATION", get_env_variable("ENVIRONMENT", "D
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-from rest_framework.authentication import SessionAuthentication, BasicAuthentication
+from rest_framework.authentication import SessionAuthentication
 
 
 class CsrfExemptSessionAuthentication(SessionAuthentication):
@@ -390,6 +389,7 @@ class Dev(Base):
     CSRF_TRUSTED_ORIGINS = [
         "https://fightpaperwork.com",
         "https://localhost:3000",
+        "http://localhost:3000",
         "https://localhost:8000",
     ]
     DEFF_SALT = os.getenv("DEFF_SALT", "dev-salt")
@@ -460,6 +460,7 @@ class Dev(Base):
 
 
 class Test(Dev):
+    DEBUG = True
     DEFF_SALT = os.getenv("DEFF_SALT", "test-salt")
     DEFF_PASSWORD = os.getenv("DEFF_PASSWORD", "test-password")
     # For async tests we do in memory for increased isolation
@@ -475,6 +476,7 @@ class Test(Dev):
 
 
 class TestSync(Dev):
+    DEBUG = True
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.sqlite3",
@@ -485,6 +487,7 @@ class TestSync(Dev):
 
 
 class TestActor(Dev):
+    DEBUG = True
     # We _may_ use "real" files for actor tests since we have seperate processes for actors.
     dt = str(int(time.time()))
     dbname = os.getenv("DBNAME", f"{BASE_DIR}/test2{dt}.db.sqlite3")

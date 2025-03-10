@@ -5,14 +5,14 @@
 import uuid
 
 from fhi_users.models import UserDomain
-from django.contrib.auth.models import AbstractUser  # Add this import
 from django.contrib.auth import get_user_model
 
 # See https://github.com/typeddjango/django-stubs/issues/599
 from typing import TYPE_CHECKING, Optional
 
 from fhi_users.models import ProfessionalDomainRelation, UserDomain, PatientUser
-from fhi_users.emails import send_verification_email
+
+from loguru import logger
 
 if TYPE_CHECKING:
     from django.contrib.auth.models import User
@@ -82,7 +82,7 @@ def resolve_domain_id(
 
 
 def combine_domain_and_username(
-    username: str,
+    raw_username: str,
     *ignore,
     domain: Optional[UserDomain] = None,
     domain_id: Optional[str] = None,
@@ -95,7 +95,9 @@ def combine_domain_and_username(
         phone_number=phone_number,
         domain=domain,
     )
-    return f"{username}🐼{domain_id}"
+    username = f"{raw_username}🐼{domain_id}"
+    logger.debug(f"Made user username: {username}")
+    return username
 
 
 def get_patient_or_create_pending_patient(

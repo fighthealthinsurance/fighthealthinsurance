@@ -10,13 +10,12 @@ from .auth_forms import (
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from fhi_users.models import *
-from fhi_users.auth.auth_utils import (
-    combine_domain_and_username,
-    create_user,
-    resolve_domain_id,
-)
+from fhi_users.auth.auth_utils import create_user
 from typing import Any, Optional
 import re
+
+# Add missing import for extend_schema_field
+from drf_spectacular.utils import extend_schema_field
 
 if typing.TYPE_CHECKING:
     from django.contrib.auth.models import User
@@ -95,7 +94,8 @@ class UserSignupSerializer(serializers.Serializer):
     first_name = serializers.CharField(required=True)
     last_name = serializers.CharField(required=True)
     password = serializers.CharField(required=True, write_only=True)
-    email = serializers.EmailField(required=True)
+    # We'll make a "fake" e-mail on the backend if no e-mail provided
+    email = serializers.EmailField(required=False, allow_blank=True)
 
     def validate_password(self, value):
         if len(value) < 8:
@@ -115,7 +115,7 @@ class UserSerializer(serializers.ModelSerializer):
 
     class Meta(object):
         model = User
-        include = ("first_name", "last_name", "email", "username", "is_active")
+        fields = ("first_name", "last_name", "email")
 
 
 class UserDomainSerializer(serializers.ModelSerializer):
@@ -184,7 +184,7 @@ class ProfessionalSignupResponseSerializer(serializers.Serializer):
 
 class AcceptProfessionalUserSerializer(serializers.Serializer):
     """
-    Needed for accepting professional users into a domain.
+    Needed for accepting (or rejecting) professional users into a domain.
     """
 
     professional_user_id = serializers.IntegerField()
@@ -231,10 +231,11 @@ class GetOrCreatePendingPatientSerializer(serializers.Serializer):
 
 class PatientReferenceSerializer(serializers.Serializer):
     """
-    Return the patient id
+    Return the patient id and email.
     """
 
     id = serializers.IntegerField()
+    email = serializers.CharField()
 
 
 class CreatePatientUserSerializer(serializers.ModelSerializer):
@@ -312,6 +313,50 @@ class CreatePatientUserSerializer(serializers.ModelSerializer):
         return user
 
 
+# Define UserContactInfoSerializer before PatientUserSerializer
+class UserContactInfoSerializer(serializers.ModelSerializer):
+    """
+    Serializer for user contact information.
+    """
+
+    class Meta:
+        model = UserContactInfo
+        exclude: list[str] = []
+
+
+class PatientUserSerializer(serializers.ModelSerializer):
+    """
+    Serializer for the patient user model.
+    """
+
+    user_contact_info = serializers.SerializerMethodField()
+    user = serializers.SerializerMethodField()
+
+    class Meta:
+        model = PatientUser
+        exclude: list[str] = []
+
+    @extend_schema_field(UserContactInfoSerializer(allow_null=True))
+    def get_user_contact_info(self, obj):
+        if obj.user:
+            # Fix: Use objects.filter instead of filter and reference obj.user instead of undefined user
+            if UserContactInfo.objects.filter(user=obj.user).exists():
+                return UserContactInfoSerializer(
+                    UserContactInfo.objects.get(user=obj.user)
+                ).data
+            return None
+
+    @extend_schema_field(UserSerializer(allow_null=True))
+    def get_user(self, obj):
+        if obj.user:
+            return UserSerializer(obj.user).data
+        return None
+
+
 class StatusResponseSerializer(serializers.Serializer):
     status = serializers.CharField()
     message = serializers.CharField(required=False, allow_blank=True)
+
+
+class EmptySerializer(serializers.Serializer):
+    pass

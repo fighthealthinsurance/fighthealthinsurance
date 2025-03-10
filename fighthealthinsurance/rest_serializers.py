@@ -16,7 +16,7 @@ from fighthealthinsurance.models import (
 from rest_framework import serializers
 
 from fhi_users.auth import rest_serializers as auth_serializers
-from typing import Optional, List, Dict, Any
+from typing import Optional, List
 from drf_spectacular.utils import extend_schema_field
 
 
@@ -56,7 +56,7 @@ class DenialResponseInfoSerializer(serializers.Serializer):
     selected_denial_type = DenialTypesListField()
     all_denial_types = DenialTypesListField()
     denial_id = serializers.CharField()
-    appeal_id = serializers.CharField(required=False)
+    appeal_id = serializers.IntegerField(required=False)
     your_state = serializers.CharField(required=False)
     procedure = serializers.CharField()
     diagnosis = serializers.CharField()
@@ -65,6 +65,8 @@ class DenialResponseInfoSerializer(serializers.Serializer):
     date_of_service = serializers.CharField(required=False)
     plan_id = serializers.CharField(required=False)
     claim_id = serializers.CharField(required=False)
+    insurance_company = serializers.CharField(required=False)
+    date_of_service = serializers.CharField(required=False)
 
 
 # Forms
@@ -84,16 +86,21 @@ class ChooseAppealFormSerializer(FormSerializer):
 
 
 class DenialFormSerializer(FormSerializer):
+    # Only used during updates
+    denial_id = serializers.IntegerField(required=False)
+
     class Meta(object):
-        form = core_forms.DenialForm
+        form = core_forms.ProDenialForm
         exclude = ("plan_documents",)
 
 
 class PostInferedFormSerializer(FormSerializer):
-    date_of_service = serializers.CharField(required=False)
+    """
+    Confirm the details we inferred about the denial.
+    """
 
     class Meta(object):
-        form = core_forms.PostInferedForm
+        form = core_forms.ProPostInferedForm
 
 
 class FollowUpFormSerializer(FormSerializer):
@@ -286,7 +293,8 @@ class AppealDetailSerializer(serializers.ModelSerializer):
 
 
 class NotifyPatientRequestSerializer(serializers.Serializer):
-    patient_id = serializers.IntegerField()
+    # We either notify by patient id or appeal id and resolve to the patient
+    id = serializers.IntegerField(required=False)
     include_provider = serializers.BooleanField(default=False)
 
 
@@ -295,12 +303,13 @@ class AppealFullSerializer(serializers.ModelSerializer):
     denial = serializers.SerializerMethodField()
     in_userdomain = serializers.SerializerMethodField()
     primary_professional = serializers.SerializerMethodField()
+    patient = serializers.SerializerMethodField()
 
     class Meta:
         model = Appeal
         exclude: list[str] = []
 
-    @extend_schema_field(serializers.CharField)
+    @extend_schema_field(serializers.CharField(allow_null=True))
     def get_appeal_pdf_url(self, obj: Appeal) -> Optional[str]:
         # Generate a URL for downloading the appeal PDF
         if obj.document_enc:
@@ -308,36 +317,46 @@ class AppealFullSerializer(serializers.ModelSerializer):
             return reverse("appeal_file_view", kwargs={"appeal_uuid": obj.uuid})
         return None
 
-    def get_denial(self, obj: Appeal) -> Optional[Dict[str, Any]]:
+    @extend_schema_field(DenialModelSerializer(allow_null=True))
+    def get_denial(self, obj: Appeal):
         if obj.for_denial:
-            return DenialModelSerializer(obj.for_denial).data  # type: ignore
-        return None
+            return DenialModelSerializer(obj.for_denial).data
+        return None  # type: ignore
 
-    def get_in_userdomain(self, obj: Appeal) -> Optional[Dict[str, Any]]:
+    @extend_schema_field(auth_serializers.UserDomainSerializer(allow_null=True))
+    def get_in_userdomain(self, obj: Appeal):
         if obj.domain:
             return auth_serializers.UserDomainSerializer(obj.domain).data  # type: ignore
-        return None
+        return None  # type: ignore
 
-    def get_primary_professional(self, obj: Appeal) -> Optional[Dict[str, Any]]:
+    @extend_schema_field(auth_serializers.FullProfessionalSerializer(allow_null=True))
+    def get_primary_professional(self, obj: Appeal):
         if obj.primary_professional:
-            ser_data: Dict[str, Any] = auth_serializers.FullProfessionalSerializer(
+            ser_data = auth_serializers.FullProfessionalSerializer(
                 obj.primary_professional
-            ).data  # type: ignore
+            ).data
             return ser_data
         if obj.creating_professional:
             ser_data = auth_serializers.FullProfessionalSerializer(
                 obj.creating_professional
-            ).data  # type: ignore
+            ).data
+            return ser_data
+        return None
+
+    @extend_schema_field(auth_serializers.PatientUserSerializer(allow_null=True))
+    def get_patient(self, obj: Appeal):
+        if obj.patient_user:
+            ser_data = auth_serializers.PatientUserSerializer(obj.patient_user).data
             return ser_data
         return None
 
 
 class AssembleAppealRequestSerializer(serializers.Serializer):
-    denial_uuid = serializers.CharField(required=False)
-    denial_id = serializers.CharField(required=False)
+    denial_uuid = serializers.CharField(required=False, allow_blank=True)
+    denial_id = serializers.CharField(required=False, allow_blank=True)
     completed_appeal_text = serializers.CharField(required=True)
     insurance_company = serializers.CharField(required=False, allow_blank=True)
-    fax_phone = serializers.CharField(required=False)
+    fax_phone = serializers.CharField(required=False, allow_blank=True)
     pubmed_articles_to_include = serializers.ListField(
         child=serializers.CharField(), required=False
     )
@@ -345,7 +364,7 @@ class AssembleAppealRequestSerializer(serializers.Serializer):
 
 
 class AssembleAppealResponseSerializer(serializers.Serializer):
-    appeal_id = serializers.CharField(required=True)
+    appeal_id = serializers.IntegerField(required=True)
     status = serializers.CharField(required=False)
     message = serializers.CharField(required=False)
 
@@ -378,6 +397,7 @@ class SendFax(serializers.Serializer):
 class InviteProviderSerializer(serializers.Serializer):
     professional_id = serializers.IntegerField(required=False)
     email = serializers.EmailField(required=False)
+    appeal_id = serializers.IntegerField(required=True)
 
     def validate(self, data: dict) -> dict:
         if not data.get("professional_id") and not data.get("email"):
@@ -389,17 +409,32 @@ class InviteProviderSerializer(serializers.Serializer):
 
 class StatisticsSerializer(serializers.Serializer):
     current_total_appeals = serializers.IntegerField()
+    current_pending_appeals = serializers.IntegerField()
+    current_sent_appeals = serializers.IntegerField()
     current_success_rate = serializers.FloatField()
-    current_total_tips = serializers.IntegerField()
+    current_estimated_payment_value = serializers.FloatField(
+        required=False, allow_null=True
+    )
     current_total_patients = serializers.IntegerField()
-
     previous_total_appeals = serializers.IntegerField()
+    previous_pending_appeals = serializers.IntegerField()
+    previous_sent_appeals = serializers.IntegerField()
     previous_success_rate = serializers.FloatField()
-    previous_total_tips = serializers.IntegerField()
+    previous_estimated_payment_value = serializers.FloatField(
+        required=False, allow_null=True
+    )
     previous_total_patients = serializers.IntegerField()
-
     period_start = serializers.DateTimeField()
     period_end = serializers.DateTimeField()
+
+
+class AbsoluteStatisticsSerializer(serializers.Serializer):
+    total_appeals = serializers.IntegerField()
+    pending_appeals = serializers.IntegerField()
+    sent_appeals = serializers.IntegerField()
+    success_rate = serializers.FloatField()
+    estimated_payment_value = serializers.FloatField(required=False, allow_null=True)
+    total_patients = serializers.IntegerField()
 
 
 class SearchResultSerializer(serializers.Serializer):
@@ -431,24 +466,23 @@ class StatusResponseSerializer(serializers.Serializer):
 class ErrorSerializer(StatusResponseSerializer):
     error = serializers.CharField()
 
-    def __init__(self, data, *args, **kwargs):
+    def __init__(self, data=None, *args, **kwargs):
         # Set status to "error" if not explicitly provided
-        if "status" not in data:
+        if data and "status" not in data:
             data["status"] = "error"
         # Set message to error value if not explicitly provided
-        if "error" in data and "message" not in data:
+        if data and "error" in data and "message" not in data:
             data["message"] = data["error"]
         super().__init__(data, *args, **kwargs)
-
 
 
 class SuccessSerializer(StatusResponseSerializer):
     success = serializers.BooleanField(default=True)
 
-    def __init__(self, data, *args, **kwargs):
+    def __init__(self, data=None, *args, **kwargs):
         # Set status to "success" if not explicitly provided
-        if "status" not in data:
+        if data and "status" not in data:
             data["status"] = "success"
-        if "message" not in data:
+        if data and "message" not in data:
             data["message"] = "Operation completed successfully."
         super().__init__(data, *args, **kwargs)

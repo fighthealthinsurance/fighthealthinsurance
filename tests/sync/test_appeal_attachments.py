@@ -2,7 +2,6 @@ from django.test import TestCase
 from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APIClient
 from fighthealthinsurance.models import *
-from django.contrib.auth import get_user_model
 from django.urls import reverse
 import json
 

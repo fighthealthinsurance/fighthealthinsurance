@@ -1,0 +1,11 @@
+
+{{ professional_name }} has invited you to join them on Fight Paperwork to collaborate on appealing an insurance denial.
+
+To make sure you're in the same group when you sign up, make sure to use the practice phone number {{ practice_number }} when
+signing up on https://www.fightpaperwork.com
+
+If you’ve got any questions, please feel free to reach out to us at support42@fighthealthinsurance.com
+
+A huge thank you,
+
+The Fight Paperwork team, our dogs, and our cats.
