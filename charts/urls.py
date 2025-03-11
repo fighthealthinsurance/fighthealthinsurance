@@ -1,5 +1,7 @@
 from django.urls import path
 
+from django.contrib.admin.views.decorators import staff_member_required
+
 from .views import (
     signups_by_day,
     users_by_day,
@@ -16,12 +18,12 @@ urlpatterns = [
     path("pro_signups_csv", pro_signups_csv, name="pro_signups_csv"),
     path(
         "emails_older_than_two_weeks",
-        OlderThanTwoWeeksEmailsCSV.as_view,
+        staff_member_required(OlderThanTwoWeeksEmailsCSV.as_view),
         name="emails_older_than_two_weeks",
     ),
     path(
         "emails_last_two_weeks",
-        LastTwoWeeksEmailsCSV.as_view,
+        staff_member_required(LastTwoWeeksEmailsCSV.as_view),
         name="emails_last_two_weeks",
     ),
 ]

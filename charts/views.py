@@ -1,5 +1,6 @@
 from django.http import HttpResponse
 from django.shortcuts import render
+
 from django.contrib.admin.views.decorators import staff_member_required
 from django.db.models import Count, Q
 from django.utils import timezone
@@ -12,24 +13,20 @@ import pandas as pd
 import csv
 
 
-class BaseEmailsWithRawEmailCSV:
+class BaseEmailsWithRawEmailCSV(View):
     """Base class for views that export email addresses from denials where raw_email is not null."""
 
-    @classmethod
-    def get_queryset(cls):
+    def get_queryset(self):
         """To be implemented by subclasses to filter the queryset."""
         raise NotImplementedError("Subclasses must implement get_queryset method")
 
-    @classmethod
-    def get_filename(cls):
+    def get_filename(self):
         """Return the filename for the CSV download."""
         raise NotImplementedError("Subclasses must implement get_filename method")
 
-    @classmethod
-    @staff_member_required
-    def as_view(cls, request):
+    def get(self, request):
         """Handle the request and return a CSV response."""
-        denials_qs = cls.get_queryset()
+        denials_qs = self.get_queryset()
 
         # Exclude test emails
         hashed_farts = Denial.get_hashed_email("farts@farts.com")
@@ -53,7 +50,9 @@ class BaseEmailsWithRawEmailCSV:
         )
 
         response = HttpResponse(content_type="text/csv")
-        response["Content-Disposition"] = f'attachment; filename="{cls.get_filename()}"'
+        response["Content-Disposition"] = (
+            f'attachment; filename="{self.get_filename()}"'
+        )
 
         writer = csv.writer(response)
         writer.writerow(["Email", "Date"])
@@ -72,30 +71,26 @@ class BaseEmailsWithRawEmailCSV:
 class OlderThanTwoWeeksEmailsCSV(BaseEmailsWithRawEmailCSV):
     """Export unique emails from denials that are older than two weeks."""
 
-    @classmethod
-    def get_queryset(cls):
+    def get_queryset(self):
         two_weeks_ago = timezone.now().date() - timedelta(days=14)
         return Denial.objects.filter(
             raw_email__isnull=False, date__lt=two_weeks_ago
         ).order_by("raw_email", "date")
 
-    @classmethod
-    def get_filename(cls):
+    def get_filename(self):
         return "emails_older_than_two_weeks.csv"
 
 
 class LastTwoWeeksEmailsCSV(BaseEmailsWithRawEmailCSV):
     """Export unique emails from denials from the last two weeks."""
 
-    @classmethod
-    def get_queryset(cls):
+    def get_queryset(self):
         two_weeks_ago = timezone.now().date() - timedelta(days=14)
         return Denial.objects.filter(
             raw_email__isnull=False, date__gte=two_weeks_ago
         ).order_by("raw_email", "date")
 
-    @classmethod
-    def get_filename(cls):
+    def get_filename(self):
         return "emails_last_two_weeks.csv"
 
 
