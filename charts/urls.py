@@ -18,12 +18,12 @@ urlpatterns = [
     path("pro_signups_csv", pro_signups_csv, name="pro_signups_csv"),
     path(
         "emails_older_than_two_weeks",
-        staff_member_required(OlderThanTwoWeeksEmailsCSV.as_view),
+        staff_member_required(OlderThanTwoWeeksEmailsCSV.as_view()),
         name="emails_older_than_two_weeks",
     ),
     path(
         "emails_last_two_weeks",
-        staff_member_required(LastTwoWeeksEmailsCSV.as_view),
+        staff_member_required(LastTwoWeeksEmailsCSV.as_view()),
         name="emails_last_two_weeks",
     ),
 ]

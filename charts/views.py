@@ -1,6 +1,7 @@
 from django.http import HttpResponse
 from django.shortcuts import render
 
+from django.views import View
 from django.contrib.admin.views.decorators import staff_member_required
 from django.db.models import Count, Q
 from django.utils import timezone
