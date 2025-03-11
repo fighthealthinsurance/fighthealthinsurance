@@ -1,7 +1,7 @@
 import ray
 from fighthealthinsurance.fax_actor import FaxActor
 import asyncio
-import logging
+from loguru import logger
 
 @ray.remote(max_restarts=3, max_task_retries=3)
 class FaxPollingActor:
@@ -32,19 +32,22 @@ class FaxPollingActor:
         Detailed error logging is provided for debugging.
         """
         self.running = True
+        logger.info("Starting FaxPollingActor polling loop")
         while self.running:
             await asyncio.sleep(1)
             try:
-                logging.info("Checked for delayed remote faxes")
+                logger.debug("Polling for delayed remote faxes")
                 c, f = await self.fax_actor.send_delayed_faxes.remote()
                 self.c += c
                 self.e += f
+                logger.debug(f"Processed faxes: {c} processed, {f} errors")
             except Exception as exc:
-                logging.exception("Error while checking outbound faxes")
+                logger.exception("Error while checking outbound faxes")
                 self.aec += 1
             finally:
-                print("Waiting for next run")
+                logger.debug("Waiting for next run")
                 await asyncio.sleep(self.interval)
+        logger.info("Exiting FaxPollingActor polling loop")
         return True
 
     async def stop(self) -> None:
@@ -52,6 +55,7 @@ class FaxPollingActor:
         Stop the polling loop.
         """
         self.running = False
+        logger.info("Stop signal received for FaxPollingActor polling loop")
 
     async def count(self) -> int:
         """
