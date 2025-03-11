@@ -546,6 +546,7 @@ class Appeal(ExportModelOperationsMixin("Appeal"), models.Model):  # type: ignor
     success = models.BooleanField(default=False, null=True)
     mod_date = models.DateField(auto_now=True, null=True)
     creation_date = models.DateField(auto_now_add=True, null=True)
+    billed = models.BooleanField(default=False)
 
     # Similar to the method on denial -- TODO refactor to a mixin / DRY
     @classmethod
@@ -628,6 +629,13 @@ class StripePrice(models.Model):
     stripe_id = models.CharField(max_length=300)
     amount = models.IntegerField()
     currency = models.CharField(max_length=3)
+    active = models.BooleanField(default=True)
+
+
+class StripeMeter(models.Model):
+    id = models.AutoField(primary_key=True)
+    stripe_meter_id = models.CharField(max_length=300)
+    name = models.CharField(max_length=300)
     active = models.BooleanField(default=True)
 
 

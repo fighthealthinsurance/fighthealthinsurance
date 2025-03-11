@@ -132,9 +132,7 @@ class ProVersionView(generic.FormView):
             return render(self.request, "professional_thankyou.html")
 
         (_, price_id) = get_or_create_price(
-            "Professional Pre-Signup",
-            1000,
-            recurring=False
+            "Professional Pre-Signup", 1000, recurring=False
         )
 
         checkout = stripe.checkout.Session.create(
