@@ -17,6 +17,8 @@ from django.shortcuts import get_object_or_404
 from django.views.decorators.cache import cache_control
 from django.views.decorators.vary import vary_on_cookie
 from django.utils.decorators import method_decorator
+from django.db import transaction
+
 
 import stripe
 
@@ -353,6 +355,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         """
         return super().create(request)
 
+    @transaction.atomic
     def perform_create(
         self, request: Request, serializer: Serializer
     ) -> Response | serializers.ProfessionalSignupResponseSerializer:
@@ -431,6 +434,9 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                         ).data,
                         status=status.HTTP_400_BAD_REQUEST,
                     )
+            # We want to allow null
+            if user_domain_info["name"] == "":
+                user_domain_info["name"] = None
             if visible_phone_number != user_domain_info["visible_phone_number"]:
                 if user_domain_info["visible_phone_number"] is None:
                     user_domain_info["visible_phone_number"] = visible_phone_number
@@ -479,14 +485,20 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             pending=True,
         )
 
-        if settings.DEBUG and data["skip_stripe"]:
-            product_id, price_id = stripe_utils.get_or_create_price(
+        if not (settings.DEBUG and data["skip_stripe"]):
+            base_product_id, base_price_id = stripe_utils.get_or_create_price(
                 "Basic Professional Subscription", 2500, recurring=True
+            )
+            metered_product_id, metered_price_id = stripe_utils.get_or_create_price(
+                "Incremental Appeal", 1000, recurring=True, metered=True
             )
 
             checkout_session = stripe.checkout.Session.create(
                 payment_method_types=["card"],
-                line_items=[{"price": price_id, "quantity": 1}],
+                line_items=[
+                    {"price": base_price_id, "quantity": 1},
+                    {"price": metered_price_id},
+                ],
                 mode="subscription",
                 success_url=user_signup_info["continue_url"],
                 cancel_url=user_signup_info["continue_url"],

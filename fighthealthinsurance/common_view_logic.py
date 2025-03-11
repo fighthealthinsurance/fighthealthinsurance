@@ -242,6 +242,11 @@ class AppealAssemblyHelper:
         health_history: Optional[str] = None
         if include_provided_health_history:
             health_history = denial.health_history
+        # Usage based billing goes here
+        if appeal.domain:
+            meter = appeal.domain.meter
+            if meter is not None:
+                meter.increment()
         with tempfile.NamedTemporaryFile(
             suffix=".pdf", prefix="alltogether", mode="w+b", delete=False
         ) as t:

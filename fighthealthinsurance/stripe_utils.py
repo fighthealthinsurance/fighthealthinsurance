@@ -22,15 +22,33 @@ def get_or_create_price(
             meter = StripeMeter.objects.filter(name=product_name, active=True).get()
             meter_id = meter.stripe_meter_id
         except StripeMeter.DoesNotExist:
-            meter_request = stripe.billing.Meter.create(
-                display_name=product_name,
-                event_name=product_name,
-                default_aggregation={"formula": "sum"},
-            )
-            meter_id = meter_request.id
-            meter = StripeMeter.objects.create(
-                name=product_name, stripe_meter_id=meter_id
-            )
+            try:
+                stripe_meters = stripe.billing.Meter.list()
+                for candidate in stripe_meters:
+                    if candidate.display_name == product_name:
+                        meter_id = candidate.id
+                        break
+                if meter_id is None:
+                    raise Exception("No meter")
+                meter = StripeMeter.objects.create(
+                    name=product_name,
+                    stripe_meter_id=meter_id,
+                )
+            except:
+                meter_request = stripe.billing.Meter.create(
+                    display_name=product_name,
+                    event_name=product_name,
+                    default_aggregation={"formula": "sum"},
+                    customer_mapping={
+                        "type": "by_id",
+                        "event_payload_key": "stripe_customer_id",
+                    },
+                )
+                meter_id = meter_request.id
+                meter = StripeMeter.objects.create(
+                    name=product_name,
+                    stripe_meter_id=meter_id,
+                )
     try:
         product = StripeProduct.objects.get(name=product_name, active=True)
         price = StripePrice.objects.get(
@@ -44,6 +62,7 @@ def get_or_create_price(
 
         try:
             stripe_product = stripe.Product.create(name=product_name)
+
             product = StripeProduct.objects.create(
                 name=product_name,
                 stripe_id=stripe_product.id,
@@ -61,12 +80,7 @@ def get_or_create_price(
                     price_data["recurring"] = {
                         "interval": "month",
                         "usage_type": "metered",
-                        "metered": {
-                            "usage_type": "metered",
-                            "amount": 1,
-                            "billing_scheme": "per_unit",
-                            "meter": meter_id,
-                        },
+                        "meter": meter_id,
                     }
 
             stripe_price = stripe.Price.create(**price_data)  # type: ignore
@@ -99,3 +113,11 @@ def get_or_create_price(
                     )
 
             raise
+
+
+def increment_meter(meter_id: str, quantity: int) -> None:
+    stripe.billing.MeterUsage.create(
+        meter=meter_id,
+        quantity=quantity,
+    )
+    logger.debug(f"Incremented meter {meter_id} by {quantity}")
