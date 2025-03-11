@@ -69,8 +69,7 @@ ray==2.38.0
 ray[client]==2.38.0
 requests
 sentry-sdk[django]
-setuptools>=58 \
-    --hash=sha256:1e489ad2169ac53dd0109eab1c14b85c090feae5b3f14772194c4e9df1208a56
+setuptools>=58
 sorl-thumbnail
 sqlalchemy_mate==2.0.0.0 # uszipcode issue see https://github.com/MacHu-GWU/uszipcode-project/issues/79
 stopit
