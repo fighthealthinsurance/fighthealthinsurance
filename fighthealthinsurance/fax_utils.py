@@ -7,11 +7,10 @@ from typing import Mapping, Optional, Tuple
 from paramiko import SSHClient
 from stopit import ThreadingTimeout as Timeout
 import asyncio, asyncssh
-from .utils import check_call
 
 import requests
 from requests import Session
-from PyPDF2 import PdfMerger, PdfReader, PdfWriter
+from PyPDF2 import PdfReader, PdfWriter
 
 FROM_FAX = os.getenv("FROM_FAX", "4158407591")
 FROM_VOICE = os.getenv("FROM_VOICE", "2029383266")

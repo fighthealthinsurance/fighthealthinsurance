@@ -1,34 +1,22 @@
 from loguru import logger
-from typing import Any, Optional, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING
 
 from rest_framework import status
 from rest_framework import viewsets
-from rest_framework.views import APIView
 from rest_framework.decorators import action
 from rest_framework.request import Request
 from rest_framework.response import Response
-from rest_framework import permissions
 from rest_framework.viewsets import ViewSet
-from rest_framework.mixins import CreateModelMixin, ListModelMixin
-from rest_framework.viewsets import GenericViewSet
 from rest_framework.permissions import IsAuthenticated
 
-from django.http import HttpRequest
 from django.conf import settings
-from django.urls import reverse
 from django.contrib.auth import get_user_model
 from django.contrib.auth import authenticate, login
-from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
-from django.utils.encoding import force_bytes, force_str
 from django.utils import timezone
-from django.template.loader import render_to_string
-from django.contrib.sites.shortcuts import get_current_site
-from django.contrib.auth.tokens import default_token_generator
 from django.shortcuts import get_object_or_404
 from django.views.decorators.cache import cache_control
 from django.views.decorators.vary import vary_on_cookie
 from django.utils.decorators import method_decorator
-
 
 import stripe
 
@@ -371,15 +359,23 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         domain_name: Optional[str] = user_signup_info["domain_name"]  # type: ignore
         visible_phone_number: Optional[str] = user_signup_info["visible_phone_number"]  # type: ignore
         new_domain: bool = bool(data["make_new_domain"])  # type: ignore
+        user_domain_opt: Optional[UserDomain] = None
 
         if not new_domain:
             # In practice the serializer may enforce these for us
             try:
-                UserDomain.find_by_name(name=domain_name).get()
+                if not domain_name or len(domain_name) == 0:
+                    raise UserDomain.DoesNotExist()
+                user_domain_opt = UserDomain.find_by_name(name=domain_name).get()
             except UserDomain.DoesNotExist:
                 try:
-                    UserDomain.objects.get(visible_phone_number=visible_phone_number)
-                except:
+                    user_domain_opt = UserDomain.objects.get(
+                        visible_phone_number=visible_phone_number
+                    )
+                except UserDomain.DoesNotExist:
+                    logger.opt(exception=True).error(
+                        f"Error finding domain {domain_name} / {visible_phone_number}"
+                    )
                     return Response(
                         serializers.StatusResponseSerializer(
                             {"status": "failure", "message": "Domain does not exist"}
@@ -446,13 +442,15 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                         ).data,
                         status=status.HTTP_400_BAD_REQUEST,
                     )
-            UserDomain.objects.create(
+            user_domain_opt = UserDomain.objects.create(
                 active=False,
                 **user_domain_info,
             )
 
-        user_domain: UserDomain = UserDomain.find_by_name(name=domain_name).get()
-        raw_username: str = user_signup_info["username"]  # type: ignore
+        if not user_domain_opt:
+            raise Exception("No user domain found or created")
+        user_domain: UserDomain = user_domain_opt  # type: ignore
+        raw_username: str = user_signup_info["email"]  # type: ignore
         email: str = user_signup_info["email"]  # type: ignore
         password: str = user_signup_info["password"]  # type: ignore
         first_name: str = user_signup_info["first_name"]  # type: ignore

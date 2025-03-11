@@ -1,14 +1,10 @@
-from django.db import connections
-from django.core.mail import send_mail
 from django.core.mail import EmailMultiAlternatives, BadHeaderError
 from django.template.loader import render_to_string
 from django.conf import settings
 
-import nest_asyncio
 import asyncstdlib
 import asyncio
-from asgiref.sync import sync_to_async, async_to_sync
-from inspect import isabstract, isawaitable
+from inspect import isabstract
 import concurrent
 import os
 import re
