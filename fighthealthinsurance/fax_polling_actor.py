@@ -32,7 +32,6 @@ class FaxPollingActor:
         Detailed error logging is provided for debugging.
         """
         self.running = True
-        logger.info("Starting FaxPollingActor polling loop")
         while self.running:
             await asyncio.sleep(1)
             try:
@@ -40,14 +39,12 @@ class FaxPollingActor:
                 c, f = await self.fax_actor.send_delayed_faxes.remote()
                 self.c += c
                 self.e += f
-                logger.debug(f"Processed faxes: {c} processed, {f} errors")
             except Exception as exc:
                 logger.exception("Error while checking outbound faxes")
                 self.aec += 1
             finally:
-                logger.debug("Waiting for next run")
+                print("Waiting for next run")
                 await asyncio.sleep(self.interval)
-        logger.info("Exiting FaxPollingActor polling loop")
         return True
 
     async def stop(self) -> None:
@@ -55,7 +52,6 @@ class FaxPollingActor:
         Stop the polling loop.
         """
         self.running = False
-        logger.info("Stop signal received for FaxPollingActor polling loop")
 
     async def count(self) -> int:
         """
