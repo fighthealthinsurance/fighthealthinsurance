@@ -1,13 +1,98 @@
 from django.http import HttpResponse
 from django.shortcuts import render
+
+from django.views import View
 from django.contrib.admin.views.decorators import staff_member_required
 from django.db.models import Count, Q
+from django.utils import timezone
+from datetime import timedelta
 from fighthealthinsurance.models import Denial, InterestedProfessional
 from bokeh.plotting import figure
 from bokeh.embed import components
 from bokeh.models import ColumnDataSource
 import pandas as pd
 import csv
+
+
+class BaseEmailsWithRawEmailCSV(View):
+    """Base class for views that export email addresses from denials where raw_email is not null."""
+
+    def get_queryset(self):
+        """To be implemented by subclasses to filter the queryset."""
+        raise NotImplementedError("Subclasses must implement get_queryset method")
+
+    def get_filename(self):
+        """Return the filename for the CSV download."""
+        raise NotImplementedError("Subclasses must implement get_filename method")
+
+    def get(self, request):
+        """Handle the request and return a CSV response."""
+        denials_qs = self.get_queryset()
+
+        # Exclude test emails
+        hashed_farts = Denial.get_hashed_email("farts@farts.com")
+        hashed_pcf = Denial.get_hashed_email("holden@pigscanfly.ca")
+        denials_qs = denials_qs.exclude(
+            Q(hashed_email=hashed_farts) | Q(hashed_email=hashed_pcf)
+        )
+
+        # Exclude professional denials
+        denials_qs = denials_qs.filter(
+            Q(creating_professional__isnull=True)
+            & Q(primary_professional__isnull=True)
+            & Q(domain__isnull=True)
+        )
+
+        # Get distinct raw_email values (exclude those that don't have a valid email)
+        denials_qs = (
+            denials_qs.filter(raw_email__contains="@")
+            .values("raw_email", "date")
+            .distinct("raw_email")
+        )
+
+        response = HttpResponse(content_type="text/csv")
+        response["Content-Disposition"] = (
+            f'attachment; filename="{self.get_filename()}"'
+        )
+
+        writer = csv.writer(response)
+        writer.writerow(["Email", "Date"])
+
+        for denial in denials_qs:
+            writer.writerow(
+                [
+                    denial["raw_email"],
+                    denial["date"].strftime("%Y-%m-%d"),
+                ]
+            )
+
+        return response
+
+
+class OlderThanTwoWeeksEmailsCSV(BaseEmailsWithRawEmailCSV):
+    """Export unique emails from denials that are older than two weeks."""
+
+    def get_queryset(self):
+        two_weeks_ago = timezone.now().date() - timedelta(days=14)
+        return Denial.objects.filter(
+            raw_email__isnull=False, date__lt=two_weeks_ago
+        ).order_by("raw_email", "date")
+
+    def get_filename(self):
+        return "emails_older_than_two_weeks.csv"
+
+
+class LastTwoWeeksEmailsCSV(BaseEmailsWithRawEmailCSV):
+    """Export unique emails from denials from the last two weeks."""
+
+    def get_queryset(self):
+        two_weeks_ago = timezone.now().date() - timedelta(days=14)
+        return Denial.objects.filter(
+            raw_email__isnull=False, date__gte=two_weeks_ago
+        ).order_by("raw_email", "date")
+
+    def get_filename(self):
+        return "emails_last_two_weeks.csv"
 
 
 @staff_member_required

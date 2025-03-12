@@ -76,7 +76,7 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: fight-health-insurance-staging-ingress
+  name: fight-health-insurance-dev-ingress
   namespace: totallylegitco
   annotations:
     nginx.org/websocket-services: dev-web-svc
