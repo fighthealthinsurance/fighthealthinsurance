@@ -191,7 +191,6 @@ jobs:
         run:
           ./scripts/build_ray.sh
         env:
-          PIP_REQUIRE_HASHES: "false"
           BUILDX_CMD: "load"
           FHI_VERSION: "ci"
           PLATFORM: linux/amd64
@@ -231,7 +230,6 @@ jobs:
         run:
           ./scripts/build_django.sh
         env:
-          PIP_REQUIRE_HASHES: "false"
           BUILDX_CMD: "load"
           FHI_VERSION: "ci"
           PLATFORM: linux/amd64
