@@ -72,87 +72,110 @@ class PubMedTools(object):
             if pmid is None or pmid == "":
                 continue
             try:
-                pubmed_docs.append(
-                    PubMedArticleSummarized.objects.filter(pmid == pmid)[0]
-                )
-            except:
-                try:
-                    fetched = pubmed_fetcher.article_by_pmid(pmid)
-                    if fetched is not None:
-                        article = PubMedArticleSummarized.objects.create(
-                            pmid=pmid,
-                            doi=fetched.doi,
-                            title=fetched.title.replace("\x00", ""),
-                            abstract=fetched.abstract.replace("\x00", ""),
-                            text=fetched.content.text.replace("\x00", ""),
-                        )
-                        pubmed_docs.append(article)
-                except:
-                    logger.debug(f"Skipping {pmid}")
+                article = PubMedArticleSummarized.objects.filter(pmid=pmid).first()
+                if article is not None:
+                    pubmed_docs.append(article)
+                else:
+                    try:
+                        fetched = pubmed_fetcher.article_by_pmid(pmid)
+                        if fetched is not None:
+                            title = fetched.title.replace("\x00", "") if fetched.title else ""
+                            abstract = fetched.abstract.replace("\x00", "") if fetched.abstract else ""
+                            text = fetched.content.text.replace("\x00", "") if fetched.content and fetched.content.text else ""
+                            
+                            article = PubMedArticleSummarized.objects.create(
+                                pmid=pmid,
+                                doi=fetched.doi or "",
+                                title=title,
+                                abstract=abstract,
+                                text=text,
+                            )
+                            pubmed_docs.append(article)
+                    except Exception as e:
+                        logger.debug(f"Failed to fetch article {pmid}: {e}")
+            except Exception as e:
+                logger.debug(f"Error retrieving article {pmid} from database: {e}")
         return pubmed_docs
 
     def do_article_summary(
         self, article_id, query
     ) -> Optional[PubMedArticleSummarized]:
-        possible_articles = PubMedArticleSummarized.objects.filter(
-            pmid=article_id,
-            basic_summary__isnull=False,
-        )[:1]
-        article = None
-        if len(possible_articles) > 0:
-            article = possible_articles[0]
+        try:
+            possible_articles = PubMedArticleSummarized.objects.filter(
+                pmid=article_id,
+                basic_summary__isnull=False,
+            )[:1]
+            article = possible_articles.first()
 
-        url = None
-        if article is None:
-            fetched = pubmed_fetcher.article_by_pmid(article_id)
-            src = FindIt(article_id)
-            url = src.url
-            article_text = ""
-            if url is not None:
-                response = requests.get(url)
-                if (
-                    ".pdf" in url
-                    or response.headers.get("Content-Type") == "application/pdf"
-                ):
-                    with tempfile.NamedTemporaryFile(
-                        suffix=".pdf", delete=False
-                    ) as my_data:
-                        my_data.write(response.content)
+            if article is None:
+                fetched = pubmed_fetcher.article_by_pmid(article_id)
+                if fetched is None:
+                    logger.debug(f"Could not fetch article {article_id}")
+                    return None
+                    
+                src = FindIt(article_id)
+                url = src.url
+                article_text = ""
+                
+                if url is not None:
+                    try:
+                        response = requests.get(url, timeout=10)
+                        if (
+                            ".pdf" in url
+                            or response.headers.get("Content-Type") == "application/pdf"
+                        ):
+                            with tempfile.NamedTemporaryFile(
+                                suffix=".pdf", delete=False
+                            ) as my_data:
+                                my_data.write(response.content)
 
-                        open_pdf_file = open(my_data.name, "rb")
-                        read_pdf = PyPDF2.PdfReader(open_pdf_file)
-                        if read_pdf.is_encrypted:
-                            read_pdf.decrypt("")
-                            for page in read_pdf.pages:
-                                article_text += page.extract_text()
+                                with open(my_data.name, "rb") as open_pdf_file:
+                                    read_pdf = PyPDF2.PdfReader(open_pdf_file)
+                                    if read_pdf.is_encrypted:
+                                        try:
+                                            read_pdf.decrypt("")
+                                        except Exception as e:
+                                            logger.debug(f"Could not decrypt PDF: {e}")
+                                            
+                                    for page in read_pdf.pages:
+                                        page_text = page.extract_text() or ""
+                                        article_text += page_text
                         else:
-                            for page in read_pdf.pages:
-                                article_text += page.extract_text()
+                            article_text += response.text
+                    except Exception as e:
+                        logger.debug(f"Error processing URL {url}: {e}")
                 else:
-                    article_text += response.text
-            else:
-                article_text = fetched.content.text
+                    article_text = fetched.content.text if fetched.content and fetched.content.text else ""
 
-            if fetched is not None and (
-                fetched.abstract is not None or article_text is not None
-            ):
-                article = PubMedArticleSummarized.objects.create(
-                    pmid=article_id,
-                    doi=fetched.doi,
-                    title=fetched.title,
-                    abstract=fetched.abstract,
-                    text=article_text,
-                    query=query,
-                    article_url=url,
-                    basic_summary=ml_router.summarize(
-                        query=query, abstract=fetched.abstract, text=article_text
-                    ),
-                )
-                return article
-            else:
-                logger.debug(f"Skipping {fetched}")
-                return None
-        return None
+                abstract = fetched.abstract or ""
+                title = fetched.title or ""
+                doi = fetched.doi or ""
+                
+                if abstract or article_text:
+                    try:
+                        article = PubMedArticleSummarized.objects.create(
+                            pmid=article_id,
+                            doi=doi,
+                            title=title,
+                            abstract=abstract,
+                            text=article_text,
+                            query=query,
+                            article_url=url,
+                            basic_summary=ml_router.summarize(
+                                query=query, abstract=abstract, text=article_text
+                            ),
+                        )
+                        return article
+                    except Exception as e:
+                        logger.debug(f"Failed to create article summary: {e}")
+                        return None
+                else:
+                    logger.debug(f"Skipping article {article_id}: insufficient content")
+                    return None
+            return article
+        except Exception as e:
+            logger.debug(f"Unexpected error in do_article_summary for {article_id}: {e}")
+            return None
 
     def article_as_pdf(self, article: PubMedArticleSummarized) -> Optional[str]:
         """Return the best PDF we can find of the article."""
