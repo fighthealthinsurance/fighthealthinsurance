@@ -158,3 +158,6 @@ test*.db.sqlite3*
 hlyafax.tar
 combined.tar
 a.tr
+
+# tracking the requirements hashes
+.requirements_checksum
