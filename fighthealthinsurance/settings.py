@@ -411,7 +411,7 @@ class Dev(Base):
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.sqlite3",
-            "NAME": BASE_DIR / "db.sqlite3",
+            "NAME": os.getenv("DEV_DB_LOC", BASE_DIR / "db.sqlite3"),
             "TEST": {
                 "NAME": BASE_DIR / "test.db.sqlite3",
             },

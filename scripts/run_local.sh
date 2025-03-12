@@ -17,6 +17,25 @@ elif [ -f ./.venv/bin/activate ]; then
   echo "Using .venv"
 fi
 
+# Check if requirements files have changed since last run
+REQ_CHECKSUM_FILE=".requirements_checksum"
+CURRENT_REQ_CHECKSUM=""
+STORED_REQ_CHECKSUM=""
+
+if [ -f "requirements.txt" ] && [ -f "requirements-dev.txt" ]; then
+  CURRENT_REQ_CHECKSUM=$(md5sum requirements.txt requirements-dev.txt | sort | md5sum | cut -d ' ' -f 1)
+  if [ -f "$REQ_CHECKSUM_FILE" ]; then
+    STORED_REQ_CHECKSUM=$(cat "$REQ_CHECKSUM_FILE")
+  fi
+
+  if [ "$CURRENT_REQ_CHECKSUM" != "$STORED_REQ_CHECKSUM" ]; then
+    echo "Requirements files have changed. Updating dependencies..."
+    pip install -r requirements.txt
+    pip install -r requirements-dev.txt
+    echo "$CURRENT_REQ_CHECKSUM" > "$REQ_CHECKSUM_FILE"
+  fi
+fi
+
 check_python_environment() {
 	python -c 'import configurations'  >/dev/null 2>&1
 	python_dep_check=$?
