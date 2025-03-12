@@ -69,6 +69,10 @@ def send_verification_email(request, user: "User") -> None:
     send_fallback_email(
         mail_subject,
         "acc_active_email",
-        {"user": user, "domain": current_site.domain, "activation_link": activation_link},
+        {
+            "user": user,
+            "domain": current_site.domain,
+            "activation_link": activation_link,
+        },
         user.email,
     )
