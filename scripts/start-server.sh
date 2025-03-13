@@ -6,6 +6,8 @@ export DJANGO_CONFIGURATION=${DJANGO_CONFIGURATION:-"Prod"}
 export DJANGO_SETTINGS_MODULE=${DJANGO_SETTINGS_MODULE:-"fighthealthinsurance.settings"}
 # Run migrations on the migrations container only
 if [ -n "$MIGRATIONS" ]; then
+  # Here we sleep for 10 minutes IF we fail so that we can debug -- I know it's a hack
+  # but it happens pretty rarely and it's a pain to debug otherwise.
   python manage.py migrate || (sleep 600; exit 1)
   python manage.py loaddata initial
   python manage.py loaddata followup
