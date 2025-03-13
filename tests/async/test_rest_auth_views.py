@@ -545,6 +545,9 @@ class RestAuthViewsTests(TestCase):
         self.assertEqual(response.status_code, 200)
         data = response.json()[0]
         self.assertEqual(data["email"], self.user.email)
+        self.assertEqual(data["domain_id"], str(self.domain.id))
+        self.assertEqual(data["domain_name"], self.domain.name)
+        self.assertIn("highest_role", data)
 
 
 class TestE2EProfessionalUserSignupFlow(TestCase):
