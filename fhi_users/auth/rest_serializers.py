@@ -72,6 +72,7 @@ class WhoAmiSerializer(serializers.Serializer):
 
     email = serializers.CharField()
     domain_name = serializers.CharField()
+    domain_id = serializers.CharField()
     patient = serializers.BooleanField()
     professional = serializers.BooleanField()
     current_professional_id = serializers.IntegerField(required=False)
