@@ -123,6 +123,7 @@ class WhoAmIViewSet(viewsets.ViewSet):
                             "professional": professional,
                             "current_professional_id": professional_id,
                             "highest_role": highest_role.value,
+                            "domain_id": user_domain.id,
                             "admin": admin,
                         }
                     ],
@@ -176,7 +177,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
     @method_decorator(vary_on_cookie)  # Vary only on the session cookie
     @extend_schema(
         responses={
-            200: serializers.ProfessionalSummary,
+            200: serializers.ProfessionalSummary(many=True),
         }
     )
     @action(detail=False, methods=["post"])
@@ -204,7 +205,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
     @method_decorator(vary_on_cookie)  # Vary only on the session cookie
     @extend_schema(
         responses={
-            200: serializers.ProfessionalSummary,
+            200: serializers.ProfessionalSummary(many=True),
         }
     )
     @action(detail=False, methods=["post"])
@@ -227,7 +228,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
 
     @extend_schema(
         responses={
-            204: serializers.StatusResponseSerializer,
+            200: serializers.StatusResponseSerializer,
             403: common_serializers.ErrorSerializer,
         }
     )
@@ -262,10 +263,15 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             serializers.StatusResponseSerializer(
                 {"status": "rejected", "message": "Professional user rejected"}
             ).data,
-            status=status.HTTP_204_NO_CONTENT,
+            status=status.HTTP_200_OK,
         )
 
-    @extend_schema(responses=serializers.StatusResponseSerializer)
+    @extend_schema(responses={
+        200: serializers.StatusResponseSerializer,
+        403: common_serializers.ErrorSerializer,
+        404: common_serializers.ErrorSerializer,
+        500: common_serializers.ErrorSerializer
+    })
     @action(detail=False, methods=["post"])
     def accept(self, request) -> Response:
         """
@@ -283,10 +289,9 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             if not current_user_admin_in_domain:
                 # Credentials are valid but does not have permissions
                 return Response(
-                    serializers.StatusResponseSerializer(
+                    common_serializers.ErrorSerializer(
                         {
-                            "status": "failure",
-                            "message": "User does not have admin privileges",
+                            "error": "User does not have admin privileges",
                         }
                     ).data,
                     status=status.HTTP_403_FORBIDDEN,
@@ -295,10 +300,8 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             # Unexecpted generic error, fail closed
             logger.opt(exception=e).error("Error in accepting professional user")
             return Response(
-                serializers.StatusResponseSerializer(
-                    {"status": "failure", "message": "Authentication error"}
-                ).data,
-                status=status.HTTP_401_UNAUTHORIZED,
+                common_serializers.ErrorSerializer({"error": f"Error {e}"}).data,
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
         try:
             relation = ProfessionalDomainRelation.objects.get(
@@ -335,10 +338,9 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             )
         except ProfessionalDomainRelation.DoesNotExist:
             return Response(
-                serializers.StatusResponseSerializer(
+                common_serializers.ErrorSerializer(
                     {
-                        "status": "failure",
-                        "message": "Relation not found or already accepted",
+                        "error": "Relation not found or already accepted",
                     }
                 ).data,
                 status=status.HTTP_404_NOT_FOUND,
