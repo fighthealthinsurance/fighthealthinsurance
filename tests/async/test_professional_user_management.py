@@ -156,7 +156,7 @@ class ProfessionalUserManagementTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
         # Should include only the pending professional
-        data = response.json()["pending_professionals"]
+        data = response.json()
         self.assertEqual(len(data), 1)
         self.assertEqual(data[0]["professional_user_id"], self.pending_professional.id)
         self.assertEqual(data[0]["name"], "Pending User")
@@ -195,7 +195,7 @@ class ProfessionalUserManagementTests(TestCase):
         # Check that listing pending users no longer includes this professional
         url = reverse("professional_user-list-pending-in-domain")
         response = self.client.post(url, format="json")
-        pending_data = response.json()["pending_professionals"]
+        pending_data = response.json()
         self.assertEqual(len(pending_data), 0)
 
         # Check that listing active users now includes this professional
@@ -235,7 +235,7 @@ class ProfessionalUserManagementTests(TestCase):
         # Check that listing pending users no longer includes this professional
         url = reverse("professional_user-list-pending-in-domain")
         response = self.client.post(url, format="json")
-        pending_data = response.json()["pending_professionals"]
+        pending_data = response.json()
         self.assertEqual(len(pending_data), 0)
 
         # Check that listing active users still doesn't include this professional
