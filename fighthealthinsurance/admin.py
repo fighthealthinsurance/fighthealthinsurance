@@ -38,6 +38,7 @@ from django.contrib.auth.admin import UserAdmin
 @admin.register(Denial)
 class DenialAdmin(admin.ModelAdmin):
     """Admin configuration for Denial model."""
+
     list_display = (
         "denial_id",
         "date",
@@ -59,6 +60,7 @@ class DenialAdmin(admin.ModelAdmin):
 @admin.register(InterestedProfessional)
 class InterestedProfessionalAdmin(admin.ModelAdmin):
     """Admin configuration for InterestedProfessional model."""
+
     list_display = (
         "id",
         "name",
@@ -74,6 +76,7 @@ class InterestedProfessionalAdmin(admin.ModelAdmin):
 @admin.register(MailingListSubscriber)
 class MailingListSubscriberAdmin(admin.ModelAdmin):
     """Admin configuration for MailingListSubscriber model."""
+
     list_display = ("id", "email", "name", "signup_date")
     search_fields = ("email", "name")
     list_filter = ("signup_date",)
@@ -83,6 +86,7 @@ class MailingListSubscriberAdmin(admin.ModelAdmin):
 @admin.register(FollowUpType)
 class FollowUpTypeAdmin(admin.ModelAdmin):
     """Admin configuration for FollowUpType model."""
+
     list_display = ("id", "name", "subject", "duration")
     search_fields = ("name", "subject", "text")
     ordering = ("name",)
@@ -91,6 +95,7 @@ class FollowUpTypeAdmin(admin.ModelAdmin):
 @admin.register(FollowUp)
 class FollowUpAdmin(admin.ModelAdmin):
     """Admin configuration for FollowUp model."""
+
     list_display = (
         "followup_result_id",
         "email",
@@ -106,6 +111,7 @@ class FollowUpAdmin(admin.ModelAdmin):
 @admin.register(FollowUpSched)
 class FollowUpSchedAdmin(admin.ModelAdmin):
     """Admin configuration for FollowUpSched model."""
+
     list_display = (
         "follow_up_id",
         "email",
@@ -121,6 +127,7 @@ class FollowUpSchedAdmin(admin.ModelAdmin):
 @admin.register(PlanType)
 class PlanTypeAdmin(admin.ModelAdmin):
     """Admin configuration for PlanType model."""
+
     list_display = ("id", "name", "alt_name")
     search_fields = ("name", "alt_name")
     ordering = ("name",)
@@ -129,6 +136,7 @@ class PlanTypeAdmin(admin.ModelAdmin):
 @admin.register(Regulator)
 class RegulatorAdmin(admin.ModelAdmin):
     """Admin configuration for Regulator model."""
+
     list_display = ("id", "name", "website", "alt_name")
     search_fields = ("name", "website")
     ordering = ("name",)
@@ -137,6 +145,7 @@ class RegulatorAdmin(admin.ModelAdmin):
 @admin.register(PlanSource)
 class PlanSourceAdmin(admin.ModelAdmin):
     """Admin configuration for PlanSource model."""
+
     list_display = ("id", "name")
     search_fields = ("name",)
     ordering = ("name",)
@@ -145,6 +154,7 @@ class PlanSourceAdmin(admin.ModelAdmin):
 @admin.register(Diagnosis)
 class DiagnosisAdmin(admin.ModelAdmin):
     """Admin configuration for Diagnosis model."""
+
     list_display = ("id", "name")
     search_fields = ("name",)
     ordering = ("id",)
@@ -153,6 +163,7 @@ class DiagnosisAdmin(admin.ModelAdmin):
 @admin.register(Procedures)
 class ProceduresAdmin(admin.ModelAdmin):
     """Admin configuration for Procedures model."""
+
     list_display = ("id", "name")
     search_fields = ("name",)
     ordering = ("id",)
@@ -161,6 +172,7 @@ class ProceduresAdmin(admin.ModelAdmin):
 @admin.register(DenialTypes)
 class DenialTypesAdmin(admin.ModelAdmin):
     """Admin configuration for DenialTypes model."""
+
     list_display = ("id", "name", "parent")
     search_fields = ("name",)
     list_filter = ("parent",)
@@ -170,6 +182,7 @@ class DenialTypesAdmin(admin.ModelAdmin):
 @admin.register(AppealTemplates)
 class AppealTemplatesAdmin(admin.ModelAdmin):
     """Admin configuration for AppealTemplates model."""
+
     list_display = ("id", "name")
     search_fields = ("name", "appeal_text")
     ordering = ("name",)
@@ -178,6 +191,7 @@ class AppealTemplatesAdmin(admin.ModelAdmin):
 @admin.register(DataSource)
 class DataSourceAdmin(admin.ModelAdmin):
     """Admin configuration for DataSource model."""
+
     list_display = ("id", "name")
     search_fields = ("name",)
     ordering = ("id",)
@@ -186,6 +200,7 @@ class DataSourceAdmin(admin.ModelAdmin):
 @admin.register(PlanDocuments)
 class PlanDocumentsAdmin(admin.ModelAdmin):
     """Admin configuration for PlanDocuments model."""
+
     list_display = ("plan_document_id", "denial")
     search_fields = ("denial__denial_text",)
     ordering = ("-plan_document_id",)
@@ -194,6 +209,7 @@ class PlanDocumentsAdmin(admin.ModelAdmin):
 @admin.register(FollowUpDocuments)
 class FollowUpDocumentsAdmin(admin.ModelAdmin):
     """Admin configuration for FollowUpDocuments model."""
+
     list_display = ("document_id", "denial", "follow_up_id")
     search_fields = ("denial__denial_text",)
     ordering = ("-document_id",)
@@ -202,6 +218,7 @@ class FollowUpDocumentsAdmin(admin.ModelAdmin):
 @admin.register(PubMedArticleSummarized)
 class PubMedArticleSummarizedAdmin(admin.ModelAdmin):
     """Admin configuration for PubMedArticleSummarized model."""
+
     list_display = ("pmid", "title", "publication_date")
     search_fields = ("pmid", "title")
     list_filter = ("publication_date",)
@@ -211,6 +228,7 @@ class PubMedArticleSummarizedAdmin(admin.ModelAdmin):
 @admin.register(PubMedQueryData)
 class PubMedQueryDataAdmin(admin.ModelAdmin):
     """Admin configuration for PubMedQueryData model."""
+
     list_display = ("internal_id", "query", "query_date", "denial_id")
     search_fields = ("query",)
     list_filter = ("query_date",)
@@ -220,6 +238,7 @@ class PubMedQueryDataAdmin(admin.ModelAdmin):
 @admin.register(FaxesToSend)
 class FaxesToSendAdmin(admin.ModelAdmin):
     """Admin configuration for FaxesToSend model."""
+
     list_display = (
         "fax_id",
         "email",
@@ -237,6 +256,7 @@ class FaxesToSendAdmin(admin.ModelAdmin):
 @admin.register(DenialTypesRelation)
 class DenialTypesRelationAdmin(admin.ModelAdmin):
     """Admin configuration for DenialTypesRelation model."""
+
     list_display = ("denial", "denial_type", "src")
     search_fields = ("denial__denial_text", "denial_type__name")
     ordering = ("denial",)
@@ -245,6 +265,7 @@ class DenialTypesRelationAdmin(admin.ModelAdmin):
 @admin.register(PlanTypesRelation)
 class PlanTypesRelationAdmin(admin.ModelAdmin):
     """Admin configuration for PlanTypesRelation model."""
+
     list_display = ("denial", "plan_type", "src")
     search_fields = ("denial__denial_text", "plan_type__name")
     ordering = ("denial",)
@@ -253,6 +274,7 @@ class PlanTypesRelationAdmin(admin.ModelAdmin):
 @admin.register(PlanSourceRelation)
 class PlanSourceRelationAdmin(admin.ModelAdmin):
     """Admin configuration for PlanSourceRelation model."""
+
     list_display = ("denial", "plan_source", "src")
     search_fields = ("denial__denial_text", "plan_source__name")
     ordering = ("denial",)
@@ -261,6 +283,7 @@ class PlanSourceRelationAdmin(admin.ModelAdmin):
 @admin.register(DenialQA)
 class DenialQAAdmin(admin.ModelAdmin):
     """Admin configuration for DenialQA model."""
+
     list_display = ("id", "denial", "bool_answer")
     search_fields = ("denial__denial_text", "question")
     list_filter = ("bool_answer",)
@@ -270,6 +293,7 @@ class DenialQAAdmin(admin.ModelAdmin):
 @admin.register(ProposedAppeal)
 class ProposedAppealAdmin(admin.ModelAdmin):
     """Admin configuration for ProposedAppeal model."""
+
     list_display = ("id", "for_denial", "chosen", "editted")
     search_fields = ("appeal_text",)
     list_filter = ("chosen", "editted")
@@ -279,6 +303,7 @@ class ProposedAppealAdmin(admin.ModelAdmin):
 @admin.register(Appeal)
 class AppealAdmin(admin.ModelAdmin):
     """Admin configuration for Appeal model."""
+
     list_display = (
         "id",
         "uuid",
@@ -296,6 +321,7 @@ class AppealAdmin(admin.ModelAdmin):
 @admin.register(SecondaryAppealProfessionalRelation)
 class SecondaryAppealProfessionalRelationAdmin(admin.ModelAdmin):
     """Admin configuration for SecondaryAppealProfessionalRelation model."""
+
     list_display = ("appeal", "professional")
     search_fields = ("appeal__uuid", "professional__user__email")
     ordering = ("appeal",)
@@ -304,6 +330,7 @@ class SecondaryAppealProfessionalRelationAdmin(admin.ModelAdmin):
 @admin.register(SecondaryDenialProfessionalRelation)
 class SecondaryDenialProfessionalRelationAdmin(admin.ModelAdmin):
     """Admin configuration for SecondaryDenialProfessionalRelation model."""
+
     list_display = ("denial", "professional")
     search_fields = ("denial__denial_text", "professional__user__email")
     ordering = ("denial",)
@@ -312,6 +339,7 @@ class SecondaryDenialProfessionalRelationAdmin(admin.ModelAdmin):
 @admin.register(StripeProduct)
 class StripeProductAdmin(admin.ModelAdmin):
     """Admin configuration for StripeProduct model."""
+
     list_display = ("id", "name", "stripe_id", "active")
     search_fields = ("name", "stripe_id")
     list_filter = ("active",)
@@ -321,6 +349,7 @@ class StripeProductAdmin(admin.ModelAdmin):
 @admin.register(StripePrice)
 class StripePriceAdmin(admin.ModelAdmin):
     """Admin configuration for StripePrice model."""
+
     list_display = ("id", "product", "stripe_id", "amount", "currency", "active")
     search_fields = ("stripe_id",)
     list_filter = ("active", "currency")
@@ -330,6 +359,7 @@ class StripePriceAdmin(admin.ModelAdmin):
 @admin.register(AppealAttachment)
 class AppealAttachmentAdmin(admin.ModelAdmin):
     """Admin configuration for AppealAttachment model."""
+
     list_display = ("appeal", "filename", "mime_type", "created_at")
     search_fields = ("filename", "mime_type", "appeal__uuid")
     list_filter = ("created_at",)
