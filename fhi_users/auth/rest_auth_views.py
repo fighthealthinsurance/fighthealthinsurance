@@ -224,7 +224,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         )
         professionals = domain.get_professional_users(pending=True)
         serializer = serializers.ProfessionalSummary(professionals, many=True)
-        return Response({"pending_professionals": serializer.data})
+        return Response(serializer.data)
 
     @extend_schema(
         responses={
