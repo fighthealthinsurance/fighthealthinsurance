@@ -21,6 +21,7 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
         aitr = common_view_logic.AppealsBackendHelper.generate_appeals(data)
         async for record in aitr:
             await self.send(record)
+            await asyncio.sleep(0)
             await self.send("\n")
         await asyncio.sleep(1)
         await self.close()
@@ -42,6 +43,7 @@ class StreamingEntityBackend(AsyncWebsocketConsumer):
         async for record in aitr:
             logger.debug(f"Sending record {record}")
             await self.send(record)
+            await asyncio.sleep(0)
             await self.send("\n")
         await asyncio.sleep(1)
         logger.debug(f"Sent all records")

@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: uploads
+  name: new-uploads-longhorn-backup3
   namespace: totallylegitco
 spec:
   accessModes:
@@ -9,7 +9,7 @@ spec:
   storageClassName: longhorn
   resources:
     requests:
-      storage: 200Gi
+      storage: 51Gi
 ---
 apiVersion: batch/v1
 kind: Job
@@ -101,7 +101,7 @@ spec:
             - containerPort: 80
               name: web
           volumeMounts:
-            - name: uploads
+            - name: new-uploads-longhorn-backup3
               mountPath: /external_data
           livenessProbe:
             httpGet:
@@ -121,9 +121,9 @@ spec:
             periodSeconds: 10
             failureThreshold: 45
       volumes:
-        - name: uploads
+        - name: new-uploads-longhorn-backup3
           persistentVolumeClaim:
-            claimName: uploads
+            claimName: new-uploads-longhorn-backup3
 ---
 apiVersion: v1
 kind: Service
