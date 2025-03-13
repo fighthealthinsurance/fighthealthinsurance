@@ -268,7 +268,7 @@ class ProfessionalUserManagementTests(TestCase):
 
         # Should be forbidden for non-admin users
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
-        self.assertEqual(response.json()["status"], "failure")
+        self.assertEqual(response.json()["status"], "error")
 
         # Try to reject the pending professional
         url = reverse("professional_user-reject")
