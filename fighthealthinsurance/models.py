@@ -151,6 +151,7 @@ class Diagnosis(models.Model):
     So called 'expert system' which is just a collection of regular
     expressions. We also use the ML models, but these are cheap to evaluate.
     """
+
     id = models.AutoField(primary_key=True)
     name = models.CharField(max_length=300, primary_key=False)
     regex = RegexField(max_length=400, re_flags=re.IGNORECASE | re.UNICODE | re.M)
@@ -163,6 +164,7 @@ class Procedures(models.Model):
     """
     Similar to diagnosis, but for procedures.
     """
+
     id = models.AutoField(primary_key=True)
     name = models.CharField(max_length=300, primary_key=False)
     regex = RegexField(max_length=400, re_flags=re.IGNORECASE | re.UNICODE | re.M)
