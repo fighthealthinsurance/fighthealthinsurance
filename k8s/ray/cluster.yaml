@@ -37,7 +37,7 @@ spec:
             volumeMounts:
               - mountPath: /tmp/ray
                 name: log-volume
-              - name: uploads
+              - name: new-uploads-longhorn-backup3
                 mountPath: /external_data
               - name: ssh-privatekey
                 readOnly: true
@@ -46,9 +46,9 @@ spec:
         volumes:
         - emptyDir: {}
           name: log-volume
-        - name: uploads
+        - name: new-uploads-longhorn-backup3
           persistentVolumeClaim:
-            claimName: uploads
+            claimName: new-uploads-longhorn-backup3
         - name: ssh-privatekey
           secret:
             secretName: ssh-privatekey
@@ -85,7 +85,7 @@ spec:
             volumeMounts:
             - mountPath: /tmp/ray
               name: log-volume
-            - name: uploads
+            - name: new-uploads-longhorn-backup3
               mountPath: /external_data
             - name: ssh-privatekey
               readOnly: true
@@ -94,9 +94,9 @@ spec:
         volumes:
         - emptyDir: {}
           name: log-volume
-        - name: uploads
+        - name: new-uploads-longhorn-backup3
           persistentVolumeClaim:
-            claimName: uploads
+            claimName: new-uploads-longhorn-backup3
         - name: ssh-privatekey
           secret:
             secretName: ssh-privatekey
