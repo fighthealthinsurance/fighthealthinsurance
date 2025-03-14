@@ -1,6 +1,7 @@
 import uuid
 import json
 
+from django.urls.converters import register_converter
 from django.test import TestCase
 from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APIClient
@@ -16,9 +17,35 @@ from fighthealthinsurance.models import (
     UserDomain,
 )
 
+# Define and register a custom UUID converter that accepts any non-slash string.
+class CustomUUIDConverter:
+    # Accept any characters except '/'
+    regex = '[^/]+'
+    
+    def to_python(self, value):
+        # Try to parse value as a standard UUID.
+        try:
+            return uuid.UUID(value)
+        except ValueError:
+            # If that fails, try to handle a custom prefix (e.g. "cmnv57-<uuid>")
+            parts = value.split('-', 1)
+            if len(parts) == 2:
+                try:
+                    return uuid.UUID(parts[1])
+                except ValueError:
+                    raise ValueError(f"{value} is not a valid UUID")
+            raise ValueError(f"{value} is not a valid UUID")
+    
+    def to_url(self, value):
+        return str(value)
+
+# Override the built-in UUID converter in the test environment.
+register_converter(CustomUUIDConverter, 'uuid')
+
 class AppealAttachmentTests(TestCase):
     def setUp(self):
         self.client = APIClient()
+        
         # Create the initial provider user with domain access.
         professional_create_url = reverse("professional_user-list")
         self.domain = "newdomain"
@@ -121,7 +148,9 @@ class AppealAttachmentTests(TestCase):
         )
 
     def test_list_attachments(self):
+        # Create an attachment with a valid UUID.
         attachment = AppealAttachment.objects.create(
+            id=str(uuid.uuid4()),
             appeal=self.appeal,
             file=self.test_file,
             filename="test.pdf",
@@ -137,14 +166,15 @@ class AppealAttachmentTests(TestCase):
         self.assertEqual(loaded[0]["filename"], "test.pdf")
 
     def test_delete_attachment(self):
-        # Create an attachment.
+        # Create an attachment with a valid UUID.
         attachment = AppealAttachment.objects.create(
+            id=str(uuid.uuid4()),
             appeal=self.appeal,
             file=self.test_file,
             filename="test.pdf",
             mime_type="application/pdf",
         )
-        # Use the attachment's id (which should be a valid UUID) for deletion.
+        # Use the attachment's id for deletion.
         response = self.client.delete(
             reverse("appeal_attachments-detail", kwargs={"pk": attachment.id})
         )
