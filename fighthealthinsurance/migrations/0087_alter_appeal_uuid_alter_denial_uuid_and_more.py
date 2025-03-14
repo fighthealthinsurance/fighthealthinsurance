@@ -15,7 +15,7 @@ class Migration(migrations.Migration):
             model_name="appeal",
             name="uuid",
             field=models.UUIDField(
-                default=uuid.uuid4(),
+                default=uuid.UUID("d65e722d-285a-42db-adb0-96ad7a899654"),
                 editable=False,
                 unique=True,
             ),
@@ -24,7 +24,7 @@ class Migration(migrations.Migration):
             model_name="denial",
             name="uuid",
             field=models.UUIDField(
-                default=uuid.uuid4(),
+                default=uuid.UUID("0ae2bdb4-12d7-477a-b5ef-5b631f77d66c"),
                 editable=False,
             ),
         ),
@@ -32,7 +32,7 @@ class Migration(migrations.Migration):
             model_name="faxestosend",
             name="uuid",
             field=models.UUIDField(
-                default=uuid.uuid4(),
+                default=uuid.UUID("cdae741e-6d97-45a7-858f-7694128d8384"),
                 editable=False,
             ),
         ),
