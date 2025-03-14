@@ -2,6 +2,7 @@
 
 import django.db.models.deletion
 from django.db import migrations, models
+import uuid
 
 
 class Migration(migrations.Migration):
@@ -16,7 +17,7 @@ class Migration(migrations.Migration):
             model_name="denialdomainrelation",
             name="domain",
             field=models.ForeignKey(
-                default="1235",
+                default=uuid.uuid4,
                 on_delete=django.db.models.deletion.CASCADE,
                 to="fhi_users.userdomain",
             ),

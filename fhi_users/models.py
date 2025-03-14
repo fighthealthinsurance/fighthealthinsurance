@@ -40,7 +40,7 @@ class UserRole(str, Enum):
 
 # Auth-ish-related models
 class UserDomain(models.Model):
-    id = models.CharField(
+    id = models.UUIDField(
         max_length=300,
         primary_key=True,
         default=uuid.uuid4,

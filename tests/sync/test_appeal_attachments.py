@@ -8,7 +8,6 @@ import json
 
 class AppealAttachmentTests(TestCase):
     def setUp(self):
-        self.client = APIClient()
         # Note: we need to use APIClient here not just regular client since we use the rest APIs
         # to setup a number of the users.
         self.client = APIClient()
