@@ -216,7 +216,7 @@ class VerificationTokenSerializer(serializers.Serializer):
     Verifies email activation or password reset tokens for a specific user.
     """
 
-    token = serializers.CharField()
+    token = serializers.UUIDField()
     user_id = serializers.IntegerField()
 
 

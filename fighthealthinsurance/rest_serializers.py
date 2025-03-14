@@ -371,7 +371,7 @@ class AssembleAppealResponseSerializer(serializers.Serializer):
 
 class EmailVerifierSerializer(serializers.Serializer):
     email = serializers.EmailField()
-    token = serializers.CharField()
+    token = serializers.UUIDField()
     user_id = serializers.IntegerField()
 
 
@@ -439,7 +439,7 @@ class AbsoluteStatisticsSerializer(serializers.Serializer):
 
 class SearchResultSerializer(serializers.Serializer):
     id = serializers.IntegerField()
-    uuid = serializers.CharField()
+    uuid = serializers.UUIDField()
     appeal_text = serializers.CharField()
     pending = serializers.BooleanField()
     sent = serializers.BooleanField()
