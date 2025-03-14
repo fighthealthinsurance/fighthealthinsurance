@@ -1,7 +1,7 @@
 """Use SeleniumBase to test Submitting an appeal"""
 
 from django.contrib.staticfiles.testing import StaticLiveServerTestCase
-from fighthealthinsurance.models import *
+from fighthealthinsurance.models import Denial, FollowUpSched
 from seleniumbase import BaseCase
 
 BaseCase.main(__name__, __file__)
@@ -71,8 +71,6 @@ class SeleniumFollowUp(BaseCase, StaticLiveServerTestCase):
             raw_email=email,
             health_history="",
         )
-        mylink = (
-            f"v0/followup/{denial.uuid}/{denial.hashed_email}/{denial.hashed_email}"
-        )
+        mylink = f"v0/followup/{denial.uuid}/{denial.hashed_email}/{denial.hashed_email}"
         self.open(f"{self.live_server_url}/{mylink}")
         self.assert_title("Server Error (500)")
