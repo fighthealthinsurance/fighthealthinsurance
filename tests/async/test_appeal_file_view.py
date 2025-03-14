@@ -233,7 +233,7 @@ class AppealFileViewTest(TestCase):
 
     def test_appeal_file_view_unauthenticated(self):
         response = self.client.get(
-            reverse("appeal_file_view", kwargs={"appeal_uuid": self.appeal.uuid})
+            reverse("appeal_file_view", kwargs={"appeal_uuid": str(self.appeal.uuid)})
         )
         self.assertEqual(response.status_code, 401)
 
