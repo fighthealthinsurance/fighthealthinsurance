@@ -115,9 +115,17 @@ def get_or_create_price(
             raise
 
 
-def increment_meter(meter_id: str, quantity: int) -> None:
-    stripe.billing.MeterUsage.create(
-        meter=meter_id,
-        quantity=quantity,
+def increment_meter(user_id: str, meter_name: str, quantity: int) -> None:
+    meter = StripeMeter.objects.filter(name=meter_name, active=True).first()
+    if meter is None:
+        logger.error(
+            "WARNING: we did not find a a meter to log usage for meter: " + meter_name
+        )
+    stripe.billing.MeterEvent.create(
+        event_name=meter_name,
+        payload={
+            "value": "1",
+            "stripe_customer_id": user_id,
+        },
     )
-    logger.debug(f"Incremented meter {meter_id} by {quantity}")
+    logger.debug(f"Incremented meter {meter_name} by {quantity}")

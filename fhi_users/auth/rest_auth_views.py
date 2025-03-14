@@ -268,12 +268,14 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             status=status.HTTP_200_OK,
         )
 
-    @extend_schema(responses={
-        200: serializers.StatusResponseSerializer,
-        403: common_serializers.ErrorSerializer,
-        404: common_serializers.ErrorSerializer,
-        500: common_serializers.ErrorSerializer
-    })
+    @extend_schema(
+        responses={
+            200: serializers.StatusResponseSerializer,
+            403: common_serializers.ErrorSerializer,
+            404: common_serializers.ErrorSerializer,
+            500: common_serializers.ErrorSerializer,
+        }
+    )
     @action(detail=False, methods=["post"])
     def accept(self, request) -> Response:
         """
@@ -420,7 +422,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                     ).data,
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-            user_domain_info: dict[str, str] = data["user_domain"]  # type: ignore
+            user_domain_info: dict[str, Optional[str]] = data["user_domain"]  # type: ignore
             if domain_name != user_domain_info["name"]:
                 if user_domain_info["name"] is None:
                     user_domain_info["name"] = domain_name
