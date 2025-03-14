@@ -733,7 +733,7 @@ class PasswordResetViewSet(ViewSet, SerializerMixin):
             reset_token = ResetToken.objects.create(user=user)
 
             # Send reset email
-            send_password_reset_email(user.email, reset_token.token)
+            send_password_reset_email(user.email, str(reset_token.token))
 
             return Response(
                 serializers.StatusResponseSerializer({"status": "reset_requested"}).data
