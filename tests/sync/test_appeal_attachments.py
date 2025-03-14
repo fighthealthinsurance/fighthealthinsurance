@@ -1,52 +1,18 @@
-import uuid
-import json
-
-from django.urls.converters import register_converter
 from django.test import TestCase
 from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APIClient
+from fighthealthinsurance.models import *
 from django.urls import reverse
+import json
 
-from fighthealthinsurance.models import (
-    Appeal,
-    AppealAttachment,
-    PatientUser,
-    ProfessionalUser,
-    ProfessionalDomainRelation,
-    User,
-    UserDomain,
-)
-
-# Define and register a custom UUID converter that accepts any non-slash string.
-class CustomUUIDConverter:
-    # Accept any characters except '/'
-    regex = '[^/]+'
-    
-    def to_python(self, value):
-        # Try to parse value as a standard UUID.
-        try:
-            return uuid.UUID(value)
-        except ValueError:
-            # If that fails, try to handle a custom prefix (e.g. "cmnv57-<uuid>")
-            parts = value.split('-', 1)
-            if len(parts) == 2:
-                try:
-                    return uuid.UUID(parts[1])
-                except ValueError:
-                    raise ValueError(f"{value} is not a valid UUID")
-            raise ValueError(f"{value} is not a valid UUID")
-    
-    def to_url(self, value):
-        return str(value)
-
-# Override the built-in UUID converter in the test environment.
-register_converter(CustomUUIDConverter, 'uuid')
 
 class AppealAttachmentTests(TestCase):
     def setUp(self):
         self.client = APIClient()
-        
-        # Create the initial provider user with domain access.
+        # Note: we need to use APIClient here not just regular client since we use the rest APIs
+        # to setup a number of the users.
+        self.client = APIClient()
+        # Create the initial provider user has domain access
         professional_create_url = reverse("professional_user-list")
         self.domain = "newdomain"
         self.user_password = "newLongerPasswordMagicCheetoCheeto123"
@@ -77,8 +43,7 @@ class AppealAttachmentTests(TestCase):
         }
         response = self.client.post(professional_create_url, data, format="json")
         self.assertIn(response.status_code, range(200, 300))
-
-        # Create the initial patient user in the same domain.
+        # Create the initial patient user in same domainm (should have access)
         create_patient_url = reverse("patient_user-list")
         initial_patient_data = {
             "username": "newuserp1",
@@ -93,39 +58,48 @@ class AppealAttachmentTests(TestCase):
             "zipcode": "12345",
             "domain_name": self.domain,
         }
-        response = self.client.post(create_patient_url, initial_patient_data, format="json")
-        self.assertIn(response.status_code, range(200, 300))
-
-        # Activate the primary patient.
-        ipu = PatientUser.objects.get(user=User.objects.get(email="intiial_patient@example.com"))
+        response = self.client.post(
+            create_patient_url, initial_patient_data, format="json"
+        )
+        # Activate the primary patient
+        ipu = PatientUser.objects.get(
+            user=User.objects.get(email="intiial_patient@example.com")
+        )
         ipu.active = True
         ipu.user.is_active = True
         ipu.user.save()
         ipu.save()
-
-        # Activate the domain admin.
-        self._professional_user_domain_admin = User.objects.get(email="newprouser_domain_admin@example.com")
+        self.assertIn(response.status_code, range(200, 300))
+        # Activate the domain admin
+        self._professional_user_domain_admin = User.objects.get(
+            email="newprouser_domain_admin@example.com"
+        )
         self._professional_user_domain_admin.is_active = True
         self._professional_user_domain_admin.save()
-        self.professional_user_domain_admin = ProfessionalUser.objects.get(user=self._professional_user_domain_admin)
+        self.professional_user_domain_admin = ProfessionalUser.objects.get(
+            user=self._professional_user_domain_admin
+        )
         self.professional_user_domain_admin.active = True
         self.professional_user_domain_admin.save()
-        self.professional_user_domain_admin_relation = ProfessionalDomainRelation.objects.get(
-            professional=self.professional_user_domain_admin,
-            domain__name=self.domain,
+        self.professional_user_domain_admin_relation = (
+            ProfessionalDomainRelation.objects.get(
+                professional=self.professional_user_domain_admin,
+                domain__name=self.domain,
+            )
         )
         self.professional_user_domain_admin_relation.pending = False
         self.professional_user_domain_admin_relation.save()
-
-        # Setup the primary patient user.
-        self._primary_patient_user = User.objects.get(email="intiial_patient@example.com")
-        self.primary_patient_user = PatientUser.objects.get(user=self._primary_patient_user)
+        # Setup the patients
+        self._primary_patient_user = User.objects.get(
+            email="intiial_patient@example.com"
+        )
+        self.primary_patient_user = PatientUser.objects.get(
+            user=self._primary_patient_user
+        )
         self.primary_patient_user.active = True
         self.primary_patient_user.save()
-
-        # Create an appeal with a valid UUID for its id.
+        # Create the appeals manually
         self.appeal = Appeal.objects.create(
-            id=str(uuid.uuid4()),
             appeal_text="This is a test appeal.",
             document_enc=SimpleUploadedFile("farts.pdf", b"Test PDF content"),
             patient_user=self.primary_patient_user,
@@ -133,7 +107,9 @@ class AppealAttachmentTests(TestCase):
             domain=UserDomain.objects.get(name=self.domain),
         )
 
-        self.test_file = SimpleUploadedFile("test.pdf", b"file_content", content_type="application/pdf")
+        self.test_file = SimpleUploadedFile(
+            "test.pdf", b"file_content", content_type="application/pdf"
+        )
         self.client.force_login(self._professional_user_domain_admin)
 
     def test_upload_attachment(self):
@@ -142,15 +118,16 @@ class AppealAttachmentTests(TestCase):
             {"appeal_id": self.appeal.id, "file": self.test_file},
             format="multipart",
         )
+
         self.assertEqual(response.status_code, 201)
         self.assertTrue(
-            AppealAttachment.objects.filter(appeal=self.appeal, filename="test.pdf").exists()
+            AppealAttachment.objects.filter(
+                appeal=self.appeal, filename="test.pdf"
+            ).exists()
         )
 
     def test_list_attachments(self):
-        # Create an attachment with a valid UUID.
         attachment = AppealAttachment.objects.create(
-            id=str(uuid.uuid4()),
             appeal=self.appeal,
             file=self.test_file,
             filename="test.pdf",
@@ -166,17 +143,15 @@ class AppealAttachmentTests(TestCase):
         self.assertEqual(loaded[0]["filename"], "test.pdf")
 
     def test_delete_attachment(self):
-        # Create an attachment with a valid UUID.
         attachment = AppealAttachment.objects.create(
-            id=str(uuid.uuid4()),
             appeal=self.appeal,
             file=self.test_file,
             filename="test.pdf",
             mime_type="application/pdf",
         )
-        # Use the attachment's id for deletion.
+
         response = self.client.delete(
-            reverse("appeal_attachments-detail", kwargs={"pk": attachment.id})
+            reverse("appeal_attachments-detail", kwargs={"pk": self.appeal.id})
         )
         self.assertEqual(response.status_code, 204)
         self.assertFalse(AppealAttachment.objects.filter(id=attachment.id).exists())
