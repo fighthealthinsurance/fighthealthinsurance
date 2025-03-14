@@ -3,16 +3,15 @@
 # _even_ if you define a custom user model this feels like the most reasonable workaround.
 
 import uuid
+from uuid import UUID
+from typing import Optional, Union
 
-from fhi_users.models import UserDomain
+from fhi_users.models import UserDomain, ProfessionalDomainRelation, PatientUser
 from django.contrib.auth import get_user_model
+from loguru import logger
 
 # See https://github.com/typeddjango/django-stubs/issues/599
-from typing import TYPE_CHECKING, Optional
-
-from fhi_users.models import ProfessionalDomainRelation, UserDomain, PatientUser
-
-from loguru import logger
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from django.contrib.auth.models import User
@@ -39,15 +38,16 @@ def user_is_admin_in_domain(
     phone_number: Optional[str] = None,
 ) -> bool:
     try:
-        domain_id = resolve_domain_id(
+        # resolve_domain_id now returns a UUID
+        domain_id_uuid = resolve_domain_id(
             domain_id=domain_id, domain_name=domain_name, phone_number=phone_number
         )
-    except Exception as e:
+    except Exception:
         return False
     return (
         ProfessionalDomainRelation.objects.filter(
             professional__user=user,
-            domain_id=domain_id,
+            domain_id=domain_id_uuid,
             admin=True,
             pending=False,
             active=True,
@@ -58,17 +58,19 @@ def user_is_admin_in_domain(
 
 def resolve_domain_id(
     domain: Optional[UserDomain] = None,
-    domain_id: Optional[str] = None,
+    domain_id: Optional[Union[str, UUID]] = None,
     domain_name: Optional[str] = None,
     phone_number: Optional[str] = None,
-) -> str:
+) -> UUID:
     if domain:
-        return domain.id
+        return domain.id  # domain.id is already a UUID
     if domain_id:
+        # Convert to UUID if provided as a string
+        if isinstance(domain_id, str):
+            return uuid.UUID(domain_id)
         return domain_id
     elif domain_name and len(domain_name) > 0:
-        # Try and resolve with domain name then fall back to phone number if it fails
-        # Use the new find_by_name method that strips URLs
+        # Try and resolve with domain name then fall back to phone number if it fails.
         domains = UserDomain.find_by_name(domain_name)
         if domains.exists():
             return domains.first().id  # type: ignore
@@ -85,10 +87,11 @@ def combine_domain_and_username(
     raw_username: str,
     *ignore,
     domain: Optional[UserDomain] = None,
-    domain_id: Optional[str] = None,
+    domain_id: Optional[Union[str, UUID]] = None,
     domain_name: Optional[str] = None,
     phone_number: Optional[str] = None,
 ) -> str:
+    # Now, this returns a UUID, which is converted to a string in the f-string.
     domain_id = resolve_domain_id(
         domain_id=domain_id,
         domain_name=domain_name,
@@ -103,17 +106,6 @@ def combine_domain_and_username(
 def get_patient_or_create_pending_patient(
     email: str, raw_username: str, domain: UserDomain, fname: str, lname: str
 ) -> PatientUser:
-    """Create a new user with the given email and password.
-
-    Args:
-        email: The user's email address
-        password: The user's password
-        first_name: The user's first name
-        last_name: The user's last name
-
-    Returns:
-        The newly created User object
-    """
     username = combine_domain_and_username(raw_username, domain=domain)
     try:
         user = User.objects.get(username=username)
@@ -142,18 +134,6 @@ def create_user(
     first_name: str,
     last_name: str,
 ) -> User:
-    """Create a new user with the given email and password.
-
-    Args:
-        email: The user's email address
-        password: The user's password
-        first_name: The user's first name
-        last_name: The user's last name
-
-    Returns:
-        The newly created User object -- the user is set to active false until they verify their email.
-    """
-
     username = combine_domain_and_username(
         raw_username, domain_name=domain_name, phone_number=phone_number
     )
