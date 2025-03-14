@@ -15,7 +15,7 @@ class Migration(migrations.Migration):
             model_name="appeal",
             name="uuid_field",
             field=models.CharField(
-                default=uuid.uuid4, editable=False, max_length=100, unique=True
+                default=uuid.uuid4(), editable=False, max_length=100, unique=True
             ),
         ),
     ]

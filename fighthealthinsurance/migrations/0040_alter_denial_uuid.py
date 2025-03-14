@@ -15,6 +15,6 @@ class Migration(migrations.Migration):
         migrations.AlterField(
             model_name="denial",
             name="uuid",
-            field=models.CharField(default=uuid.uuid4, editable=False, max_length=300),
+            field=models.CharField(default=uuid.uuid4(), editable=False, max_length=300),
         ),
     ]

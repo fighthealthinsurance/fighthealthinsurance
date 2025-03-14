@@ -17,7 +17,7 @@ class Migration(migrations.Migration):
             model_name="denialdomainrelation",
             name="domain",
             field=models.ForeignKey(
-                default=uuid.uuid4,
+                default=uuid.uuid4(),
                 on_delete=django.db.models.deletion.CASCADE,
                 to="fhi_users.userdomain",
             ),

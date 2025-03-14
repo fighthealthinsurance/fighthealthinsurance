@@ -107,7 +107,7 @@ class Migration(migrations.Migration):
             model_name="userdomain",
             name="id",
             field=models.CharField(
-                default=uuid.uuid4,
+                default=uuid.uuid4(),
                 editable=False,
                 max_length=300,
                 primary_key=True,
