@@ -15,7 +15,7 @@ class Migration(migrations.Migration):
             model_name="resettoken",
             name="token",
             field=models.CharField(
-                default=uuid.UUID("82c34eda-deef-47de-9f52-3dbd7fa84f3e"),
+                default=uuid.uuid4(),
                 max_length=255,
             ),
         ),
@@ -23,7 +23,7 @@ class Migration(migrations.Migration):
             model_name="userdomain",
             name="id",
             field=models.UUIDField(
-                default=uuid.UUID("31eeb415-b80e-46ed-9537-345233cdfe45"),
+                default=uuid.uuid4(),
                 editable=False,
                 primary_key=True,
                 serialize=False,
@@ -34,7 +34,7 @@ class Migration(migrations.Migration):
             model_name="verificationtoken",
             name="token",
             field=models.CharField(
-                default=uuid.UUID("fbcbf49f-8312-42cd-951f-66ce09728b18"),
+                default=uuid.uuid4(),
                 max_length=255,
             ),
         ),
