@@ -62,7 +62,7 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name="faxestosend",
             name="uuid",
-            field=models.CharField(default=uuid.uuid4(), editable=False, max_length=300),
+            field=models.CharField(default=uuid.uuid4, editable=False, max_length=300),
         ),
         migrations.AddField(
             model_name="pubmedquerydata",

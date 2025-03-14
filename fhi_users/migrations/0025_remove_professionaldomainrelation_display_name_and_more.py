@@ -28,6 +28,6 @@ class Migration(migrations.Migration):
         migrations.AlterField(
             model_name="verificationtoken",
             name="token",
-            field=models.CharField(default=uuid.uuid4(), max_length=255),
+            field=models.CharField(default=uuid.uuid4, max_length=255),
         ),
     ]
