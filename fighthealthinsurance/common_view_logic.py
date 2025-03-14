@@ -27,6 +27,7 @@ from fighthealthinsurance.form_utils import *
 from fighthealthinsurance.generate_appeal import *
 from fighthealthinsurance.models import *
 from fighthealthinsurance.utils import interleave_iterator_for_keep_alive
+from fighthealthinsurance import stripe_utils
 from fhi_users.models import ProfessionalUser, UserDomain
 from .pubmed_tools import PubMedTools
 from .utils import check_call, send_fallback_email
@@ -242,6 +243,15 @@ class AppealAssemblyHelper:
         health_history: Optional[str] = None
         if include_provided_health_history:
             health_history = denial.health_history
+        # Usage based billing goes here
+        if appeal and hasattr(appeal, "domain") and appeal.domain:
+            stripe_customer_id = appeal.domain.stripe_customer_id
+            if stripe_customer_id:
+                stripe_utils.increment_meter(
+                    user_id=stripe_customer_id,
+                    meter_name="Incremental Appeal",
+                    quantity=1,
+                )
         with tempfile.NamedTemporaryFile(
             suffix=".pdf", prefix="alltogether", mode="w+b", delete=False
         ) as t:
