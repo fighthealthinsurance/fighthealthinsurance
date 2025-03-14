@@ -233,7 +233,7 @@ class AppealFileViewTest(TestCase):
 
     def test_appeal_file_view_unauthenticated(self):
         response = self.client.get(
-            reverse("appeal_file_view", kwargs={"appeal_uuid": self.appeal.uuid})
+            reverse("appeal_file_view", kwargs={"appeal_uuid": str(self.appeal.uuid)})
         )
         self.assertEqual(response.status_code, 401)
 
@@ -244,7 +244,7 @@ class AppealFileViewTest(TestCase):
             password=self.user_password,
         )
         response = self.client.get(
-            reverse("appeal_file_view", kwargs={"appeal_uuid": self.appeal.uuid})
+            reverse("appeal_file_view", kwargs={"appeal_uuid": str(self.appeal.uuid)})
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response["Content-Type"], "application/pdf")
@@ -255,7 +255,7 @@ class AppealFileViewTest(TestCase):
             username="initiial_patient@example.com", password=self.user_password
         )
         response = self.client.get(
-            reverse("appeal_file_view", kwargs={"appeal_uuid": self.appeal.uuid})
+            reverse("appeal_file_view", kwargs={"appeal_uuid": str(self.appeal.uuid)})
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response["Content-Type"], "application/pdf")
@@ -265,7 +265,7 @@ class AppealFileViewTest(TestCase):
             password=self.user_password,
         )
         response = self.client.get(
-            reverse("appeal_file_view", kwargs={"appeal_uuid": self.appeal.uuid})
+            reverse("appeal_file_view", kwargs={"appeal_uuid": str(self.appeal.uuid)})
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response["Content-Type"], "application/pdf")
@@ -276,7 +276,7 @@ class AppealFileViewTest(TestCase):
             username="secondary_patient@example.com", password=self.user_password
         )
         response = self.client.get(
-            reverse("appeal_file_view", kwargs={"appeal_uuid": self.appeal.uuid})
+            reverse("appeal_file_view", kwargs={"appeal_uuid": str(self.appeal.uuid)})
         )
         self.assertEqual(response.status_code, 404)
         # For different non-domain admin provider
@@ -285,7 +285,7 @@ class AppealFileViewTest(TestCase):
             password=self.user_password,
         )
         response = self.client.get(
-            reverse("appeal_file_view", kwargs={"appeal_uuid": self.appeal.uuid})
+            reverse("appeal_file_view", kwargs={"appeal_uuid": str(self.appeal.uuid)})
         )
         self.assertEqual(response.status_code, 404)
 
@@ -296,7 +296,7 @@ class AppealFileViewTest(TestCase):
         )
         for method in ["post", "put", "patch", "delete"]:
             response = getattr(self.client, method)(
-                reverse("appeal_file_view", kwargs={"appeal_uuid": self.appeal.uuid})
+                reverse("appeal_file_view", kwargs={"appeal_uuid": str(self.appeal.uuid)})
             )
             self.assertEqual(response.status_code, 405)  # Method Not Allowed
 
@@ -309,7 +309,7 @@ class AppealFileViewTest(TestCase):
         self.professional_user.active = False
         self.professional_user.save()
         response = self.client.get(
-            reverse("appeal_file_view", kwargs={"appeal_uuid": self.appeal.uuid})
+            reverse("appeal_file_view", kwargs={"appeal_uuid": str(self.appeal.uuid)})
         )
         self.assertEqual(response.status_code, 404)
 
@@ -326,10 +326,10 @@ class AppealFileViewTest(TestCase):
         )
 
         response1 = self.client.get(
-            reverse("appeal_file_view", kwargs={"appeal_uuid": self.appeal.uuid})
+            reverse("appeal_file_view", kwargs={"appeal_uuid": str(self.appeal.uuid)})
         )
         response2 = client2.get(
-            reverse("appeal_file_view", kwargs={"appeal_uuid": self.appeal.uuid})
+            reverse("appeal_file_view", kwargs={"appeal_uuid": str(self.appeal.uuid)})
         )
 
         self.assertEqual(response1.status_code, 200)
@@ -350,7 +350,7 @@ class AppealFileViewTest(TestCase):
             username="initiial_patient@example.com", password=self.user_password
         )
         response = self.client.get(
-            reverse("appeal_file_view", kwargs={"appeal_uuid": large_appeal.uuid})
+            reverse("appeal_file_view", kwargs={"appeal_uuid": str(large_appeal.uuid)})
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(response.content), len(large_content))
@@ -363,7 +363,7 @@ class AppealFileViewTest(TestCase):
 
         # Initial access
         response1 = self.client.get(
-            reverse("appeal_file_view", kwargs={"appeal_uuid": self.appeal.uuid})
+            reverse("appeal_file_view", kwargs={"appeal_uuid": str(self.appeal.uuid)})
         )
         self.assertEqual(response1.status_code, 200)
 
@@ -373,7 +373,7 @@ class AppealFileViewTest(TestCase):
 
         # Try access after permission removal
         response2 = self.client.get(
-            reverse("appeal_file_view", kwargs={"appeal_uuid": self.appeal.uuid})
+            reverse("appeal_file_view", kwargs={"appeal_uuid": str(self.appeal.uuid)})
         )
         self.assertEqual(response2.status_code, 404)
 
@@ -391,6 +391,6 @@ class AppealFileViewTest(TestCase):
             username="initiial_patient@example.com", password=self.user_password
         )
         response = self.client.get(
-            reverse("appeal_file_view", kwargs={"appeal_uuid": corrupted_appeal.uuid})
+            reverse("appeal_file_view", kwargs={"appeal_uuid": str(corrupted_appeal.uuid)})
         )
         self.assertEqual(response.status_code, 200)
