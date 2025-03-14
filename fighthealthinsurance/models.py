@@ -286,12 +286,27 @@ class PubMedArticleSummarized(models.Model):
     article_url = models.TextField(blank=True, null=True)
 
 
+class PubMedMiniArticle(models.Model):
+    """PubMedArticles with a summary for the given query."""
+
+    pmid = models.TextField(blank=True)
+    title = models.TextField(blank=True, null=True)
+    abstract = models.TextField(blank=True, null=True)
+    created = models.DateTimeField(db_default=Now(), null=True)
+    article_url = models.TextField(blank=True, null=True)
+
+    def __str__(self):
+        return f"{self.pmid} -- {self.title}"
+
+
 class PubMedQueryData(models.Model):
     internal_id = models.AutoField(primary_key=True)
     query = models.TextField(null=False, max_length=300)
+    since = models.TextField(null=True)  # text date for the since query
     articles = models.TextField(null=True)  # json
     query_date = models.DateTimeField(auto_now_add=True)
     denial_id = models.ForeignKey("Denial", on_delete=models.SET_NULL, null=True)
+    created = models.DateTimeField(db_default=Now(), null=True)
 
 
 class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # type: ignore
@@ -416,6 +431,8 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     provider_in_network = models.BooleanField(default=False, null=True)
     health_history_anonymized = models.BooleanField(default=True)
     single_case = models.BooleanField(default=False, null=True)
+    # pubmed articles to be used to create the input context to the appeal
+    pubmed_ids_json = models.CharField(max_length=600, blank=True)
 
     @classmethod
     def filter_to_allowed_denials(cls, current_user: User):
@@ -536,6 +553,7 @@ class Appeal(ExportModelOperationsMixin("Appeal"), models.Model):  # type: ignor
     professional_send = models.BooleanField(default=True)
     patient_send = models.BooleanField(default=True)
     patient_visible = models.BooleanField(default=True)
+    # Pubmed IDs for the articles to be included in the appeal
     pubmed_ids_json = models.CharField(max_length=600, blank=True)
     response_document_enc = EncryptedFileField(
         null=True, storage=settings.COMBINED_STORAGE

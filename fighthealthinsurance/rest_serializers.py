@@ -12,6 +12,7 @@ from fighthealthinsurance.models import (
     ProposedAppeal,
     AppealAttachment,
     Denial,
+    PubMedMiniArticle,
 )
 from rest_framework import serializers
 
@@ -486,3 +487,18 @@ class SuccessSerializer(StatusResponseSerializer):
         if data and "message" not in data:
             data["message"] = "Operation completed successfully."
         super().__init__(data, *args, **kwargs)
+
+
+class PubMedMiniArticleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PubMedMiniArticle
+        fields = ["pmid", "title", "abstract", "article_url", "created"]
+
+
+class GetCandidateArticlesSerializer(serializers.Serializer):
+    denial_id = serializers.IntegerField(required=True)
+
+
+class SelectArticlesSerializer(serializers.Serializer):
+    denial_id = serializers.IntegerField(required=True)
+    pmids = serializers.ListField(child=serializers.CharField(), required=True)
