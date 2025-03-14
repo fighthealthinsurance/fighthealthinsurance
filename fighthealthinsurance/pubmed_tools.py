@@ -14,7 +14,7 @@ import PyPDF2
 import requests
 from fighthealthinsurance.ml.ml_router import ml_router
 import tempfile
-from typing import List, Optional, Dict, Tuple, Any
+from typing import List, Optional, Dict, Tuple, Any, Set
 from .exec import pubmed_executor
 import subprocess
 from loguru import logger
@@ -27,16 +27,29 @@ class PubMedTools(object):
     # Rough bias to "recent" articles
     since_list = ["2025", "2024", None]
 
-    def find_candidate_articles_for_denial(
-        self, denial: Denial, timeout=60.0
-    ) -> List[PubMedMiniArticle]:
-        """Find candidate articles for a given denial."""
-        pmids = []
-        articles = []
+    def find_pubmed_article_ids_for_query(
+        self,
+        query: str,
+        denial: Optional[Denial] = None,
+        timeout: float = 30.0,
+        max_results: int = 5,
+    ) -> List[str]:
+        """
+        Find PubMed article IDs for a given query.
+
+        Args:
+            query: The search query for PubMed
+            denial: Optional denial to associate with the query for caching
+            timeout: Maximum time to spend searching
+            max_results: Maximum number of results to return per "since" value (default: 5)
+
+        Returns:
+            List of PubMed IDs (PMIDs) matching the query
+        """
+        pmids: List[str] = []
+        unique_pmids: Set[str] = set()
 
         with Timeout(timeout) as _timeout_ctx:
-            query = f"{denial.procedure} {denial.diagnosis}"
-
             # Check if we already have query results from the last month
             month_ago = datetime.now() - timedelta(days=30)
             existing_queries = PubMedQueryData.objects.filter(
@@ -51,7 +64,11 @@ class PubMedTools(object):
                             article_ids = json.loads(
                                 query_data.articles.replace("\x00", "")
                             )
-                            pmids.extend(article_ids)
+                            # Add only new PMIDs to avoid duplicates
+                            for pmid in article_ids:
+                                if pmid not in unique_pmids:
+                                    unique_pmids.add(pmid)
+                                    pmids.append(pmid)
                         except json.JSONDecodeError:
                             logger.error(
                                 f"Error parsing cached articles JSON for {query}"
@@ -59,30 +76,59 @@ class PubMedTools(object):
             else:
                 # No cached results, fetch new ones
                 for since in self.since_list:
-                    fetched_pmids = pubmed_fetcher.pmids_for_query(query, since=since)
+                    logger.debug(
+                        f"Fetching PubMed articles for query '{query}' since {since}"
+                    )
+                    fetched_pmids = pubmed_fetcher.pmids_for_query(
+                        query, since=since, max_results=max_results
+                    )
                     if fetched_pmids:
-                        # Sometimes we get nulls...
-                        articles_json = json.dumps(fetched_pmids).replace("\x00", "")
-                        PubMedQueryData.objects.create(
-                            query=query,
-                            since=since,
-                            articles=articles_json,
-                            denial_id=denial,
-                        ).save()
-                        pmids.extend(fetched_pmids)
+                        # Store the results in the database for future use
+                        try:
+                            articles_json = json.dumps(fetched_pmids).replace(
+                                "\x00", ""
+                            )
+                            PubMedQueryData.objects.create(
+                                query=query,
+                                since=since,
+                                articles=articles_json,
+                                denial_id=denial,
+                            ).save()
 
-            # Remove duplicates while preserving order
-            unique_pmids = []
-            for pmid in pmids:
-                if pmid not in unique_pmids:
-                    unique_pmids.append(pmid)
-            pmids = unique_pmids[:20]  # Limit to top 20
+                            # Add only new PMIDs to avoid duplicates
+                            for pmid in fetched_pmids:
+                                if pmid not in unique_pmids:
+                                    unique_pmids.add(pmid)
+                                    pmids.append(pmid)
+                        except Exception as e:
+                            logger.error(f"Error saving PubMed query data: {e}")
 
+        # Return limited number to prevent overwhelming the system
+        return pmids[:20]  # Limit to top 20
+
+    def find_candidate_articles_for_denial(
+        self, denial: Denial, timeout=60.0, max_results: int = 5
+    ) -> List[PubMedMiniArticle]:
+        """Find candidate articles for a given denial."""
+        result_articles: List[PubMedMiniArticle] = []
+
+        # Build the query from the denial information
+        query = f"{denial.procedure} {denial.diagnosis}"
+
+        # First get the PMIDs
+        pmids = self.find_pubmed_article_ids_for_query(
+            query, denial, timeout=timeout / 2, max_results=max_results
+        )
+
+        # Then fetch article details for each PMID
+        with Timeout(timeout / 2) as _timeout_ctx:
             # Check if articles already exist in database
             for pmid in pmids:
                 mini_article = PubMedMiniArticle.objects.filter(pmid=pmid).first()
+
                 if mini_article:
-                    articles.append(mini_article)
+                    # Use existing article from database
+                    result_articles.append(mini_article)
                 else:
                     # Create a new mini article
                     try:
@@ -104,13 +150,15 @@ class PubMedTools(object):
                                 ),
                                 article_url=url,
                             )
-                            articles.append(mini_article)
+                            result_articles.append(mini_article)
                     except Exception as e:
                         logger.error(f"Error fetching article {pmid}: {e}")
 
-        return articles
+        return result_articles
 
-    def find_context_for_denial(self, denial: Denial, timeout=60.0) -> str:
+    def find_context_for_denial(
+        self, denial: Denial, timeout=60.0, max_results: int = 5
+    ) -> str:
         """
         Kind of hacky RAG routine that uses PubMed.
         """
@@ -129,71 +177,55 @@ class PubMedTools(object):
             logger.info(
                 f"Using {len(selected_pmids)} pre-selected PubMed articles for denial {denial.denial_id}"
             )
-            articles = []
+            selected_articles = []
             for pmid in selected_pmids:
                 article = self.do_article_summary(
                     pmid, f"{denial.procedure} {denial.diagnosis}"
                 )
                 if article:
-                    articles.append(article)
-
-            if articles:
+                    selected_articles.append(article)
+            if selected_articles:
                 return "\n".join(
-                    self.format_article_short(article) for article in articles
+                    self.format_article_short(article) for article in selected_articles
                 )
 
         # PubMed - fallback to regular search if no specific articles selected
-        pmids = None
-        pmid_text: list[str] = []
         article_futures: list[Future[Optional[PubMedArticleSummarized]]] = []
-        with Timeout(timeout) as _timeout_ctx:
-            query = f"{denial.procedure} {denial.diagnosis}"
-            year_list = ["2025", "2024", None]
-            for since in year_list:
-                # Check if we already have this query in the database
-                existing_query = PubMedQueryData.objects.filter(
-                    query=query,
-                    since=since,
-                    created__gte=datetime.now() - timedelta(days=30),
-                ).first()
 
-                if existing_query and existing_query.articles:
-                    pmids = json.loads(existing_query.articles.replace("\x00", ""))
-                else:
-                    # Not found or too old - fetch new results
-                    pmids = pubmed_fetcher.pmids_for_query(query, since=since)
-                    # Sometimes we get nulls...
-                    articles_json = json.dumps(pmids).replace("\x00", "")
-                    PubMedQueryData.objects.create(
-                        query=query,
-                        since=since,
-                        articles=articles_json,
-                        denial_id=denial,
-                    ).save()
+        # First get query and PMIDs
+        query = f"{denial.procedure} {denial.diagnosis}"
+        pmids = self.find_pubmed_article_ids_for_query(
+            query, denial, timeout=timeout / 3, max_results=max_results
+        )
 
-                for article_id in pmids[0:5]:
-                    logger.debug(f"Loading {article_id}")
-                    article_futures.append(
-                        pubmed_executor.submit(
-                            self.do_article_summary, article_id, query
-                        )
-                    )
+        # Now process the articles
+        with Timeout(timeout * 2 / 3) as _timeout_ctx:
+            for article_id in pmids[0:max_results]:
+                logger.debug(f"Loading {article_id}")
+                article_futures.append(
+                    pubmed_executor.submit(self.do_article_summary, article_id, query)
+                )
 
-        articles: list[PubMedArticleSummarized] = []
+        # Collect the results
+        result_articles: list[PubMedArticleSummarized] = []
+
         # Get the articles that we've summarized
         t = 10
         for f in article_futures:
             try:
                 result = f.result(timeout=t)
                 if result is not None:
-                    articles.append(result)
+                    result_articles.append(result)
                 t = t - 1
             except Exception as e:
                 logger.debug(
                     f"Skipping appending article from {f} due to {e} of {type(e)}"
                 )
-        if len(articles) > 0:
-            return "\n".join(self.format_article_short(article) for article in articles)
+
+        if len(result_articles) > 0:
+            return "\n".join(
+                self.format_article_short(article) for article in result_articles
+            )
         else:
             return ""
 
@@ -209,7 +241,7 @@ class PubMedTools(object):
                 continue
             try:
                 pubmed_docs.append(
-                    PubMedArticleSummarized.objects.filter(pmid == pmid)[0]
+                    PubMedArticleSummarized.objects.filter(pmid=pmid).first()
                 )
             except:
                 try:
@@ -225,7 +257,7 @@ class PubMedTools(object):
                         pubmed_docs.append(article)
                 except:
                     logger.debug(f"Skipping {pmid}")
-        return pubmed_docs
+        return [doc for doc in pubmed_docs if doc is not None]
 
     def do_article_summary(
         self, article_id, query
@@ -237,7 +269,6 @@ class PubMedTools(object):
         article = None
         if len(possible_articles) > 0:
             article = possible_articles[0]
-
         url = None
         if article is None:
             fetched = pubmed_fetcher.article_by_pmid(article_id)
@@ -254,7 +285,6 @@ class PubMedTools(object):
                         suffix=".pdf", delete=False
                     ) as my_data:
                         my_data.write(response.content)
-
                         open_pdf_file = open(my_data.name, "rb")
                         read_pdf = PyPDF2.PdfReader(open_pdf_file)
                         if read_pdf.is_encrypted:
@@ -268,7 +298,6 @@ class PubMedTools(object):
                     article_text += response.text
             else:
                 article_text = fetched.content.text
-
             if fetched is not None and (
                 fetched.abstract is not None or article_text is not None
             ):
@@ -315,9 +344,12 @@ class PubMedTools(object):
         except Exception as e:
             logger.debug(f"Error {e} fetching article for {article}")
             pass
+
         # Backup us markdown & pandoc -- but only if we have something to write
         if article.abstract is None and article.text is None:
             return None
+
+        article_id = article.pmid
         markdown_text = f"# {markdown_escape(article.title)} \n\n PMID {article.pmid} / DOI {article.doi}\n\n{markdown_escape(article.abstract)}\n\n---{markdown_escape(article.text)}"
         with tempfile.NamedTemporaryFile(
             prefix=f"{article_id}",
