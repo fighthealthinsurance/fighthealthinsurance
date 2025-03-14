@@ -371,7 +371,7 @@ class AssembleAppealResponseSerializer(serializers.Serializer):
 
 class EmailVerifierSerializer(serializers.Serializer):
     email = serializers.EmailField()
-    token = serializers.UUIDField()
+    token = serializers.CharField()
     user_id = serializers.IntegerField()
 
 
