@@ -124,7 +124,7 @@ def increment_meter(user_id: str, meter_name: str, quantity: int) -> None:
     stripe.billing.MeterEvent.create(
         event_name=meter_name,
         payload={
-            "value": "1",
+            "value": str(quantity),
             "stripe_customer_id": user_id,
         },
     )
