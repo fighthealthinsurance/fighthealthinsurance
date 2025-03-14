@@ -40,7 +40,7 @@ class UserRole(str, Enum):
 
 # Auth-ish-related models
 class UserDomain(models.Model):
-    id = models.CharField(
+    id = models.UUIDField(
         max_length=300,
         primary_key=True,
         default=uuid.uuid4,
@@ -237,7 +237,7 @@ class ExtraUserProperties(models.Model):
 
 class VerificationToken(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE)
-    token = models.CharField(max_length=255, default=uuid.uuid4)
+    token = models.UUIDField(max_length=255, default=uuid.uuid4)
     created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField()
 
@@ -252,7 +252,7 @@ class VerificationToken(models.Model):
 
 class ResetToken(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE)
-    token = models.CharField(max_length=255, default=uuid.uuid4)
+    token = models.UUIDField(max_length=255, default=uuid.uuid4)
     created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField()
 
