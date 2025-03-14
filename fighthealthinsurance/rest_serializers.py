@@ -439,7 +439,7 @@ class AbsoluteStatisticsSerializer(serializers.Serializer):
 
 class SearchResultSerializer(serializers.Serializer):
     id = serializers.IntegerField()
-    uuid = serializers.UUIDField()
+    uuid = serializers.CharField()
     appeal_text = serializers.CharField()
     pending = serializers.BooleanField()
     sent = serializers.BooleanField()
