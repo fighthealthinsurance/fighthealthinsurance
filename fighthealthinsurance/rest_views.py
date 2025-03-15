@@ -215,7 +215,7 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
     @extend_schema(responses=serializers.StatusResponseSerializer)
     @action(detail=False, methods=["post"])
     def select_articles(self, request: Request) -> Response:
-        """Select PubMed articles to include in the denial and appeal context."""
+        """Select PubMed articles to include in the denial context."""
         serializer = self.deserialize(data=request.data)
         serializer.is_valid(raise_exception=True)
 
@@ -228,21 +228,9 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
         pmids = serializer.validated_data["pmids"]
         denial.pubmed_ids_json = json.dumps(pmids)
         denial.save()
-
-        # If there's a pending appeal for this denial, update it too
-        try:
-            appeal = Appeal.filter_to_allowed_appeals(current_user).get(
-                for_denial=denial, pending=True
-            )
-            if appeal:
-                appeal.pubmed_ids_json = json.dumps(pmids)
-                appeal.save()
-        except Appeal.DoesNotExist:
-            pass
-
         return Response(
             serializers.SuccessSerializer(
-                {"message": f"Selected {len(pmids)} articles for this denial"}
+                {"message": f"Selected {len(pmids)} articles for this context"}
             ).data,
             status=status.HTTP_200_OK,
         )
