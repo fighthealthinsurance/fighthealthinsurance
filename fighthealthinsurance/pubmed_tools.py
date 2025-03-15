@@ -149,11 +149,11 @@ class PubMedTools(object):
         query = f"{denial.procedure} {denial.diagnosis}"
         article_futures: list[Future[Optional[PubMedArticleSummarized]]] = []
         articles: list[PubMedArticleSummarized] = []
-        # Check if the denial has specific pubmed IDs selected
-        selected_pmids = []
+        # Check if the denial has specific pubmed IDs selected already
+        selected_pmids: Optional[list[str]] = None
         if denial.pubmed_ids_json and denial.pubmed_ids_json.strip():
             try:
-                selected_pmids = json.loads(denial.pubmed_ids_json)
+                selected_pmids = json.loads(denial.pubmed_ids_json)  # type: ignore
             except json.JSONDecodeError:
                 logger.error(
                     f"Error parsing pubmed_ids_json for denial {denial.denial_id}"
@@ -166,21 +166,21 @@ class PubMedTools(object):
             )
             for pmid in selected_pmids:
                 article_futures.append(
-                    pubmed_executor.submit(self.do_article_summary, pmid, query)
+                    pubmed_executor.submit(self.do_article_summary, pmid)
                 )
         else:
             # PubMed - fallback to regular search if no specific articles selected
             mini_articles = self.find_pubmed_articles_for_denial(
-                denial, timeout=timeout
+                denial, timeout=(timeout / 2.0)
             )
             for article in mini_articles:
                 article_id = article.pmid
                 logger.debug(f"Loading {article_id}")
                 article_futures.append(
-                    pubmed_executor.submit(self.do_article_summary, article_id, query)
+                    pubmed_executor.submit(self.do_article_summary, article_id)
                 )
         # Get the articles that we've summarized
-        t = timeout
+        t = timeout / 2.0
         for f in article_futures:
             try:
                 result = f.result(timeout=t)
@@ -226,9 +226,7 @@ class PubMedTools(object):
                     logger.debug(f"Skipping {pmid}")
         return pubmed_docs
 
-    def do_article_summary(
-        self, article_id, query
-    ) -> Optional[PubMedArticleSummarized]:
+    def do_article_summary(self, article_id) -> Optional[PubMedArticleSummarized]:
         possible_articles = PubMedArticleSummarized.objects.filter(
             pmid=article_id,
             basic_summary__isnull=False,
@@ -277,10 +275,9 @@ class PubMedTools(object):
                     title=fetched.title,
                     abstract=fetched.abstract,
                     text=article_text,
-                    query=query,
                     article_url=url,
                     basic_summary=ml_router.summarize(
-                        query=query, abstract=fetched.abstract, text=article_text
+                        abstract=fetched.abstract, text=article_text
                     ),
                 )
                 return article
