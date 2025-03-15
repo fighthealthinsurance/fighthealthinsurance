@@ -49,28 +49,35 @@ def is_convertible_to_int(s):
 def send_fallback_email(subject: str, template_name: str, context, to_email: str):
     if to_email.endswith("-fake@fighthealthinsurance.com"):
         return
-    # First, render the plain text content if present
-    text_content = render_to_string(
-        f"emails/{template_name}.txt",
-        context=context,
-    )
 
-    # Secondly, render the HTML content if present
-    html_content = render_to_string(
-        f"emails/{template_name}.html",
-        context=context,
-    )
-    # Then, create a multipart email instance.
-    msg = EmailMultiAlternatives(
-        subject,
-        text_content,
-        settings.EMAIL_HOST_USER,
-        [to_email],
-    )
+    try:
+        # Render the plain text content
+        text_content = render_to_string(
+            f"emails/{template_name}.txt",
+            context=context,
+        )
 
-    # Lastly, attach the HTML content to the email instance and send.
-    msg.attach_alternative(html_content, "text/html")
-    msg.send()
+        # Render the HTML content
+        html_content = render_to_string(
+            f"emails/{template_name}.html",
+            context=context,
+        )
+
+        # Create the multipart email instance
+        msg = EmailMultiAlternatives(
+            subject,
+            text_content,
+            settings.EMAIL_HOST_USER,
+            [to_email],
+        )
+
+        # Attach the HTML content and send the email
+        msg.attach_alternative(html_content, "text/html")
+        msg.send()
+
+    except Exception as e:
+        logger.exception("Failed to send email '%s' to %s", subject, to_email)
+        raise
 
 
 async def check_call(cmd, max_retries=0, **kwargs):
