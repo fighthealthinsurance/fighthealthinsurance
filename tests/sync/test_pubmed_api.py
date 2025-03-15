@@ -1,0 +1,502 @@
+"""Test the PubMed-related API functionality"""
+
+import pytest
+import json
+import unittest.mock as mock
+from datetime import datetime, timedelta
+
+from django.urls import reverse
+from django.contrib.auth import get_user_model
+from django.utils import timezone
+from django.test import TestCase
+
+from rest_framework import status
+from rest_framework.test import APITestCase
+
+from fighthealthinsurance.models import (
+    Denial,
+    UserDomain,
+    ExtraUserProperties,
+    ProfessionalUser,
+    Appeal,
+    PatientUser,
+    PubMedMiniArticle,
+    PubMedQueryData,
+)
+from fighthealthinsurance.pubmed_tools import PubMedTools
+from fighthealthinsurance.common_view_logic import AppealAssemblyHelper
+
+if __name__ == "__main__":
+    from django.contrib.auth.models import User
+else:
+    User = get_user_model()
+
+
+class PubmedApiTest(APITestCase):
+    """Test the PubMed article API endpoints."""
+
+    fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
+
+    def setUp(self):
+        # Create domain
+        self.domain = UserDomain.objects.create(
+            name="testdomain",
+            visible_phone_number="1234567890",
+            internal_phone_number="0987654321",
+            active=True,
+            display_name="Test Domain",
+            business_name="Test Business",
+            country="USA",
+            state="CA",
+            city="Test City",
+            address1="123 Test St",
+            zipcode="12345",
+        )
+
+        # Create professional user
+        self.pro_user = User.objects.create_user(
+            username=f"prouser🐼{self.domain.id}",
+            password="testpass",
+            email="pro@example.com",
+        )
+        self.pro_username = f"prouser🐼{self.domain.id}"
+        self.pro_password = "testpass"
+        self.professional = ProfessionalUser.objects.create(
+            user=self.pro_user, active=True, npi_number="1234567890"
+        )
+        self.pro_user.is_active = True
+        self.pro_user.save()
+        ExtraUserProperties.objects.create(user=self.pro_user, email_verified=True)
+
+        # Create patient user
+        self.patient_user = User.objects.create_user(
+            username="patientuser",
+            password="patientpass",
+            email="patient@example.com",
+            first_name="Test",
+            last_name="Patient",
+        )
+        self.patient_user.is_active = True
+        self.patient_user.save()
+        self.patient = PatientUser.objects.create(user=self.patient_user)
+
+        # Create a denial
+        self.denial = Denial.objects.create(
+            denial_text="Test denial text about arthritis and physical therapy",
+            primary_professional=self.professional,
+            creating_professional=self.professional,
+            patient_user=self.patient,
+            hashed_email=Denial.get_hashed_email(self.patient_user.email),
+            insurance_company="Test Insurance Co",
+            procedure="physical therapy",
+            diagnosis="rheumatoid arthritis",
+            domain=self.domain,
+        )
+
+        # Create test PubMed articles
+        self.article1 = PubMedMiniArticle.objects.create(
+            pmid="12345678",
+            title="Effectiveness of physical therapy for rheumatoid arthritis",
+            abstract="This study demonstrates the effectiveness of physical therapy for patients with rheumatoid arthritis...",
+            article_url="https://pubmed.ncbi.nlm.nih.gov/12345678/",
+        )
+
+        self.article2 = PubMedMiniArticle.objects.create(
+            pmid="87654321",
+            title="Long-term outcomes of physical therapy in arthritis patients",
+            abstract="Research shows improved mobility and pain reduction with consistent physical therapy...",
+            article_url="https://pubmed.ncbi.nlm.nih.gov/87654321/",
+        )
+
+        # Create additional test articles with different PMIDs
+        self.article3 = PubMedMiniArticle.objects.create(
+            pmid="11112222",
+            title="Recent advances in arthritis treatment",
+            abstract="New research on arthritis treatment options...",
+            article_url="https://pubmed.ncbi.nlm.nih.gov/11112222/",
+            created=timezone.now() - timedelta(days=5),
+        )
+
+        self.article4 = PubMedMiniArticle.objects.create(
+            pmid="33334444",
+            title="Physical therapy protocols for inflammatory arthritis",
+            abstract="Standardized protocols for treating inflammatory arthritis with physical therapy...",
+            article_url="https://pubmed.ncbi.nlm.nih.gov/33334444/",
+            created=timezone.now() - timedelta(days=10),
+        )
+
+        # Create a cached PubMed query
+        self.query_data = PubMedQueryData.objects.create(
+            query="physical therapy rheumatoid arthritis",
+            articles=json.dumps(["12345678", "87654321"]),
+            denial_id=self.denial,
+            created=timezone.now(),
+        )
+
+        # Create additional queries with different "since" values
+        self.query_data_2024 = PubMedQueryData.objects.create(
+            query="physical therapy rheumatoid arthritis",
+            since="2024",
+            articles=json.dumps(["11112222"]),
+            denial_id=self.denial,
+            created=timezone.now() - timedelta(days=2),
+        )
+
+        self.query_data_2025 = PubMedQueryData.objects.create(
+            query="physical therapy rheumatoid arthritis",
+            since="2025",
+            articles=json.dumps(["33334444"]),
+            denial_id=self.denial,
+            created=timezone.now() - timedelta(days=1),
+        )
+
+        # Set up session
+        self.client.login(username=self.pro_username, password=self.pro_password)
+        session = self.client.session
+        session["domain_id"] = str(self.domain.id)
+        session.save()
+
+    def test_get_candidate_articles(self):
+        """Test retrieving candidate PubMed articles for a denial."""
+        url = reverse("denials-get-candidate-articles")
+
+        response = self.client.post(
+            url,
+            json.dumps({"denial_id": self.denial.denial_id}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+
+        # Should find at least the articles we created
+        self.assertGreaterEqual(len(data), 2)
+
+        # Check if our test articles are included
+        pmids = [article["pmid"] for article in data]
+        self.assertIn(self.article1.pmid, pmids)
+        self.assertIn(self.article2.pmid, pmids)
+
+        # Verify article structure
+        for article in data:
+            if article["pmid"] == self.article1.pmid:
+                self.assertEqual(article["title"], self.article1.title)
+                self.assertEqual(article["abstract"], self.article1.abstract)
+                self.assertEqual(article["article_url"], self.article1.article_url)
+
+    def test_select_articles(self):
+        """Test selecting PubMed articles for a denial."""
+        url = reverse("denials-select-articles")
+        selected_pmids = ["12345678", "87654321"]
+
+        response = self.client.post(
+            url,
+            json.dumps({"denial_id": self.denial.denial_id, "pmids": selected_pmids}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        # Verify the message in the response
+        self.assertIn("Selected 2 articles for this denial", response.json()["message"])
+
+        # Verify the denial was updated with selected PMIDs
+        updated_denial = Denial.objects.get(denial_id=self.denial.denial_id)
+        saved_pmids = json.loads(updated_denial.pubmed_ids_json)
+        self.assertEqual(saved_pmids, selected_pmids)
+
+    def test_coordinate_with_appeal(self):
+        """Test that selecting articles updates a pending appeal."""
+        # Create a pending appeal for the denial
+        appeal = Appeal.objects.create(
+            for_denial=self.denial,
+            pending=True,
+            patient_user=self.patient,
+            primary_professional=self.professional,
+            creating_professional=self.professional,
+        )
+
+        url = reverse("denials-select-articles")
+        selected_pmids = ["12345678"]
+
+        response = self.client.post(
+            url,
+            json.dumps({"denial_id": self.denial.denial_id, "pmids": selected_pmids}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        # Verify the appeal was updated
+        updated_appeal = Appeal.objects.get(id=appeal.id)
+        self.assertEqual(updated_appeal.pubmed_ids_json, json.dumps(selected_pmids))
+
+    @mock.patch("fighthealthinsurance.utils.pubmed_fetcher.pmids_for_query")
+    def test_find_pubmed_article_ids_for_query(self, mock_pmids_for_query):
+        """Test the new find_pubmed_article_ids_for_query function."""
+        # Mock the PubMed fetcher to avoid real API calls
+        mock_pmids_for_query.return_value = ["99998888", "77776666"]
+
+        pubmed_tools = PubMedTools()
+
+        # Test using an existing cached query
+        query = "physical therapy rheumatoid arthritis"
+        pmids = pubmed_tools.find_pubmed_article_ids_for_query(query, self.denial)
+
+        # Should get results from cache without calling the API
+        mock_pmids_for_query.assert_not_called()
+
+        # Should include the cached results with correct order
+        # Note expected ordering is based on the query_data objects we created in setUp
+        expected_pmids = ["12345678", "87654321", "11112222", "33334444"]
+        self.assertEqual(pmids[:4], expected_pmids)
+
+        # Test with a new query that's not cached
+        new_query = "unique query with no cache"
+        pmids = pubmed_tools.find_pubmed_article_ids_for_query(new_query, self.denial)
+
+        # Should call the API for each "since" value in since_list
+        self.assertEqual(mock_pmids_for_query.call_count, len(pubmed_tools.since_list))
+
+        # Should get results from the mock function
+        expected_new_pmids = ["99998888", "77776666"] * len(pubmed_tools.since_list)
+        self.assertEqual(pmids[:2], expected_new_pmids[:2])
+
+        # Verify new PubMedQueryData objects were created
+        self.assertTrue(
+            PubMedQueryData.objects.filter(
+                query=new_query, denial_id=self.denial
+            ).exists()
+        )
+
+    def test_find_candidate_articles_for_denial_using_cached_data(self):
+        """Test find_candidate_articles_for_denial using cached data."""
+        pubmed_tools = PubMedTools()
+
+        # First call creates cache if needed
+        articles = pubmed_tools.find_candidate_articles_for_denial(self.denial)
+
+        # Verify we got article objects back
+        pmids = [article.pmid for article in articles]
+        self.assertIn(self.article1.pmid, pmids)
+        self.assertIn(self.article2.pmid, pmids)
+
+        # Create another denial with same procedure/diagnosis to test cache sharing
+        denial2 = Denial.objects.create(
+            denial_text="Another denial with same condition",
+            primary_professional=self.professional,
+            patient_user=self.patient,
+            procedure=self.denial.procedure,
+            diagnosis=self.denial.diagnosis,
+        )
+
+        # This should use the cached data from the previous call
+        with mock.patch(
+            "fighthealthinsurance.utils.pubmed_fetcher.pmids_for_query"
+        ) as mock_fetch:
+            articles2 = pubmed_tools.find_candidate_articles_for_denial(denial2)
+            # Should not need to fetch new data
+            mock_fetch.assert_not_called()
+
+        # Should get same articles
+        pmids2 = [article.pmid for article in articles2]
+        self.assertEqual(set(pmids), set(pmids2))
+
+    def test_find_context_for_denial_with_selected_pmids(self):
+        """Test that find_context_for_denial prioritizes selected PMIDs."""
+        # Set selected PMIDs on the denial
+        selected_pmids = ["11112222", "33334444"]  # Using our additional test articles
+        self.denial.pubmed_ids_json = json.dumps(selected_pmids)
+        self.denial.save()
+
+        # Create mock for the article summary function to avoid actual processing
+        with mock.patch.object(PubMedTools, "do_article_summary") as mock_summary:
+            mock_summary.side_effect = lambda pmid, query: mock.MagicMock(
+                pmid=pmid,
+                title=f"Test Article {pmid}",
+                doi=f"10.1000/{pmid}",
+                basic_summary=f"Summary for {pmid}",
+            )
+
+            # Also mock out regular article search to ensure it's not used
+            with mock.patch.object(
+                PubMedTools, "find_pubmed_article_ids_for_query"
+            ) as mock_search:
+                pubmed_tools = PubMedTools()
+                context = pubmed_tools.find_context_for_denial(self.denial)
+
+                # Should not have called regular search
+                mock_search.assert_not_called()
+
+                # Should have called summary exactly for our selected PMIDs
+                self.assertEqual(mock_summary.call_count, len(selected_pmids))
+                mock_summary.assert_any_call(
+                    selected_pmids[0],
+                    f"{self.denial.procedure} {self.denial.diagnosis}",
+                )
+                mock_summary.assert_any_call(
+                    selected_pmids[1],
+                    f"{self.denial.procedure} {self.denial.diagnosis}",
+                )
+
+                # Context should contain our mocked article summaries
+                for pmid in selected_pmids:
+                    self.assertIn(f"Summary for {pmid}", context)
+
+    def test_old_query_data_refresh(self):
+        """Test that query data older than a month is refreshed."""
+        # Create an old query (more than 30 days old)
+        old_query = "physical therapy rheumatoid arthritis"
+        old_query_data = PubMedQueryData.objects.create(
+            query=old_query,
+            articles=json.dumps(["55556666"]),
+            denial_id=self.denial,
+            created=timezone.now() - timedelta(days=35),  # Older than 30 days
+        )
+
+        # Mock the PubMed fetcher
+        with mock.patch(
+            "fighthealthinsurance.utils.pubmed_fetcher.pmids_for_query"
+        ) as mock_fetch:
+            mock_fetch.return_value = ["99998888"]
+
+            pubmed_tools = PubMedTools()
+            pmids = pubmed_tools.find_pubmed_article_ids_for_query(
+                old_query, self.denial
+            )
+
+            # Should have called the API because the cached data is too old
+            mock_fetch.assert_called()
+
+            # Results should include the new mocked data
+            self.assertIn("99998888", pmids)
+
+            # A new query data record should have been created
+            self.assertTrue(
+                PubMedQueryData.objects.filter(
+                    query=old_query, created__gte=timezone.now() - timedelta(days=1)
+                ).exists()
+            )
+
+    @mock.patch("fighthealthinsurance.pubmed_tools.PubMedTools.get_articles")
+    @mock.patch("fighthealthinsurance.pubmed_tools.PubMedTools.article_as_pdf")
+    def test_appeal_assembly_with_pubmed_ids(
+        self, mock_article_as_pdf, mock_get_articles
+    ):
+        """Test that AppealAssemblyHelper properly includes PubMed articles when assembling appeals."""
+        # Set up mocks for PubMed article handling
+        mock_articles = [
+            mock.MagicMock(
+                pmid="12345678",
+                title="Test Article 1",
+                doi="10.1000/12345678",
+                abstract="Abstract 1",
+            ),
+            mock.MagicMock(
+                pmid="87654321",
+                title="Test Article 2",
+                doi="10.1000/87654321",
+                abstract="Abstract 2",
+            ),
+        ]
+        mock_get_articles.return_value = mock_articles
+        mock_article_as_pdf.side_effect = [
+            "/tmp/test_article_1.pdf",
+            "/tmp/test_article_2.pdf",
+        ]
+
+        # Set pubmed_ids_json on the denial
+        selected_pmids = ["12345678", "87654321"]
+        self.denial.pubmed_ids_json = json.dumps(selected_pmids)
+        self.denial.save()
+
+        # Create a mock for the document assembly process to avoid actual PDF creation
+        with mock.patch.object(
+            AppealAssemblyHelper, "_assemble_appeal_pdf"
+        ) as mock_assemble_pdf:
+            helper = AppealAssemblyHelper()
+
+            # Call create_or_update_appeal with pubmed_ids_parsed
+            appeal = helper.create_or_update_appeal(
+                appeal=None,
+                for_denial=self.denial,
+                name="Test Patient",
+                email="test@example.com",
+                insurance_company="Test Insurance",
+                fax_phone="123-456-7890",
+                completed_appeal_text="This is a test appeal text",
+                pubmed_ids_parsed=selected_pmids,
+                company_name="Test Company",
+            )
+
+            # Verify that PubMed articles were retrieved
+            mock_get_articles.assert_called_once_with(selected_pmids)
+
+            # Verify that PDF conversion was attempted for each article
+            self.assertEqual(mock_article_as_pdf.call_count, 2)
+
+            # Verify that the appeal was created with the pubmed IDs
+            self.assertEqual(appeal.pubmed_ids_json, json.dumps(selected_pmids))
+
+            # Verify the PDF assembly process was called with the pubmed_ids
+            mock_assemble_pdf.assert_called_once()
+            call_args = mock_assemble_pdf.call_args[1]
+
+            # Check that pubmed_ids_parsed was in the arguments
+            self.assertIn("pubmed_ids_parsed", call_args)
+            self.assertEqual(call_args["pubmed_ids_parsed"], selected_pmids)
+
+            # Verify the appeal has the selected PubMed IDs
+            self.assertEqual(appeal.pubmed_ids_json, json.dumps(selected_pmids))
+
+
+class PubMedToolsUnitTest(TestCase):
+    """Unit tests for PubMedTools class."""
+
+    def setUp(self):
+        self.pubmed_tools = PubMedTools()
+
+        # Create test articles
+        self.article1 = PubMedMiniArticle.objects.create(
+            pmid="12345678",
+            title="Test Article 1",
+            abstract="Test abstract 1",
+        )
+
+        self.article2 = PubMedMiniArticle.objects.create(
+            pmid="87654321",
+            title="Test Article 2",
+            abstract="Test abstract 2",
+        )
+
+        # Create a test denial
+        self.denial = Denial.objects.create(
+            denial_text="Test denial",
+            procedure="test procedure",
+            diagnosis="test diagnosis",
+        )
+
+        # Create cached query data
+        self.query_data = PubMedQueryData.objects.create(
+            query="test procedure test diagnosis",
+            articles=json.dumps(["12345678"]),
+            denial_id=self.denial,
+        )
+
+    @mock.patch("fighthealthinsurance.utils.pubmed_fetcher.pmids_for_query")
+    def test_find_pubmed_article_ids_empty_results(self, mock_pmids_for_query):
+        """Test handling of empty results from PubMed API."""
+        # First call returns empty list, second call returns some results
+        mock_pmids_for_query.side_effect = [[], ["99998888"]]
+
+        # Test with a new query
+        new_query = "query with no initial results"
+        pmids = self.pubmed_tools.find_pubmed_article_ids_for_query(new_query)
+
+        # Should still get results from second call
+        self.assertIn("99998888", pmids)
+
+        # Should have called the API for each "since" value
+        self.assertEqual(
+            mock_pmids_for_query.call_count, len(self.pubmed_tools.since_list)
+        )
