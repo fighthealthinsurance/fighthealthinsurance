@@ -205,7 +205,7 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
             denial_id=serializer.validated_data["denial_id"],
         )
 
-        articles = pubmed_tools.find_candidate_articles_for_denial(denial)
+        articles = pubmed_tools.find_pubmed_articles_for_denial(denial)
 
         return Response(
             serializers.PubMedMiniArticleSerializer(articles, many=True).data,
