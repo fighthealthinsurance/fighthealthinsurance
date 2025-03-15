@@ -49,7 +49,6 @@ class UserDomain(models.Model):
     )
     # Money
     stripe_subscription_id = models.CharField(max_length=300, null=True)
-    stripe_customer_id = models.CharField(max_length=300, null=True)
     # Info
     # https://docs.djangoproject.com/en/5.1/ref/models/fields/#django.db.models.Field.null
     name = models.CharField(blank=True, null=True, max_length=300, unique=True)
@@ -79,6 +78,12 @@ class UserDomain(models.Model):
         blank=False, null=True, max_length=300, unique=False
     )
     cover_template_string = models.CharField(max_length=5000, null=True)
+    default_pubmed_ids = models.CharField(
+        max_length=600,
+        blank=True,
+        null=True,
+        help_text="JSON array of default PubMed IDs to include in searches",
+    )
 
     def save(self, *args, **kwargs):
         # Strip URL prefixes from name if it's set

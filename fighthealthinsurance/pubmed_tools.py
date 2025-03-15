@@ -107,9 +107,23 @@ class PubMedTools(object):
         return pmids[:20]  # Limit to top 20
 
     def find_candidate_articles_for_denial(
-        self, denial: Denial, timeout=60.0, max_results: int = 5
+        self,
+        denial: Denial,
+        timeout=60.0,
+        max_results: int = 5,
+        additional_pmids: list = None,
     ) -> List[PubMedMiniArticle]:
-        """Find candidate articles for a given denial."""
+        """Find candidate articles for a given denial.
+
+        Args:
+            denial: The denial object to find articles for
+            timeout: Maximum time to spend searching
+            max_results: Maximum number of results per "since" parameter
+            additional_pmids: Optional list of additional PubMed IDs to include
+
+        Returns:
+            List of PubMed mini articles
+        """
         result_articles: List[PubMedMiniArticle] = []
 
         # Build the query from the denial information
@@ -119,6 +133,12 @@ class PubMedTools(object):
         pmids = self.find_pubmed_article_ids_for_query(
             query, denial, timeout=timeout / 2, max_results=max_results
         )
+
+        # Add any additional PMIDs
+        if additional_pmids:
+            for pmid in additional_pmids:
+                if pmid and pmid not in pmids:
+                    pmids.append(pmid)
 
         # Then fetch article details for each PMID
         with Timeout(timeout / 2) as _timeout_ctx:

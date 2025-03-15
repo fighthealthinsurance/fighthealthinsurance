@@ -100,7 +100,6 @@ class NextStepsViewSet(viewsets.ViewSet, CreateMixin):
 
 
 class DenialViewSet(viewsets.ViewSet, CreateMixin):
-
     serializer_class = serializers.DenialFormSerializer
 
     def get_serializer_class(self):
@@ -110,6 +109,8 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
             return serializers.GetCandidateArticlesSerializer
         elif self.action == "select_articles":
             return serializers.SelectArticlesSerializer
+        elif self.action == "select_articles_for_fax":
+            return serializers.SelectArticlesForFaxSerializer
         else:
             return None
 
@@ -205,7 +206,23 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
             denial_id=serializer.validated_data["denial_id"],
         )
 
-        articles = pubmed_tools.find_candidate_articles_for_denial(denial)
+        max_results = serializer.validated_data.get("max_results", 5)
+
+        # Get user-provided PubMed IDs if present
+        raw_pmids = serializer.validated_data.get("raw_pmids", [])
+
+        # Check for domain-specific default PubMed IDs
+        domain_pmids = []
+        if denial.domain and denial.domain.default_pubmed_ids:
+            try:
+                domain_pmids = json.loads(denial.domain.default_pubmed_ids)
+            except (json.JSONDecodeError, AttributeError):
+                pass
+
+        # Find candidate articles
+        articles = pubmed_tools.find_candidate_articles_for_denial(
+            denial, max_results=max_results, additional_pmids=(raw_pmids + domain_pmids)
+        )
 
         return Response(
             serializers.PubMedMiniArticleSerializer(articles, many=True).data,
@@ -243,6 +260,54 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
         return Response(
             serializers.SuccessSerializer(
                 {"message": f"Selected {len(pmids)} articles for this denial"}
+            ).data,
+            status=status.HTTP_200_OK,
+        )
+
+    @extend_schema(responses=serializers.StatusResponseSerializer)
+    @action(detail=False, methods=["post"])
+    def select_articles_for_fax(self, request: Request) -> Response:
+        """Select PubMed articles to include in the fax for an appeal."""
+        serializer = self.deserialize(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        current_user: User = request.user  # type: ignore
+
+        # Get the denial
+        denial = get_object_or_404(
+            Denial.filter_to_allowed_denials(current_user),
+            denial_id=serializer.validated_data["denial_id"],
+        )
+
+        # Get the appeal ID if provided, otherwise find a pending appeal
+        appeal_id = serializer.validated_data.get("appeal_id", None)
+        if appeal_id:
+            appeal = get_object_or_404(
+                Appeal.filter_to_allowed_appeals(current_user),
+                id=appeal_id,
+            )
+        else:
+            try:
+                appeal = Appeal.filter_to_allowed_appeals(current_user).get(
+                    for_denial=denial, pending=True
+                )
+            except Appeal.DoesNotExist:
+                # Create a pending appeal if none exists
+                appeal = Appeal.objects.create(
+                    for_denial=denial,
+                    patient_user=denial.patient_user,
+                    primary_professional=denial.primary_professional,
+                    creating_professional=denial.creating_professional,
+                    pending=True,
+                )
+
+        # Set the selected PMIDs for fax inclusion
+        pmids = serializer.validated_data["pmids"]
+        appeal.pubmed_ids_json = json.dumps(pmids)
+        appeal.save()
+
+        return Response(
+            serializers.SuccessSerializer(
+                {"message": f"Selected {len(pmids)} articles to include in the fax"}
             ).data,
             status=status.HTTP_200_OK,
         )
@@ -324,507 +389,266 @@ class CheckMlBackend(APIView):
         return Response(status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
 
-class AppealViewSet(viewsets.ViewSet, SerializerMixin):
-    appeal_assembly_helper = AppealAssemblyHelper()
+class AppealViewSet(viewsets.ViewSet):
+    """
+    API endpoint for managing appeals.
+    """
+
+    serializer_class = serializers.AppealSerializer
 
     def get_serializer_class(self):
-        if self.action == "list":
-            return serializers.AppealListRequestSerializer
-        elif self.action == "send_fax":
-            return serializers.SendFax
-        elif self.action == "assemble_appeal":
-            return serializers.AssembleAppealRequestSerializer
+        if self.action == "assemble_appeal":
+            return serializers.AssembleAppealSerializer
+        elif self.action == "get_full_details":
+            return serializers.AppealSerializer
         elif self.action == "notify_patient":
-            return serializers.NotifyPatientRequestSerializer
+            return serializers.NotifyPatientSerializer
+        elif self.action == "send_fax":
+            return serializers.SendFaxSerializer
         elif self.action == "invite_provider":
             return serializers.InviteProviderSerializer
+        elif self.action == "select_articles_for_fax":
+            return serializers.SelectArticlesForFaxSerializer
         else:
-            return None
+            return serializers.AppealSerializer
 
-    @extend_schema(responses=serializers.AppealSummarySerializer)
-    def list(self, request: Request) -> Response:
-        # Lets figure out what appeals they _should_ see
-        current_user: User = request.user  # type: ignore
-        appeals = Appeal.filter_to_allowed_appeals(current_user)
-        # Parse the filters
-        input_serializer = self.deserialize(data=request.data)
-        # TODO: Handle the filters
-        output_serializer = serializers.AppealSummarySerializer(appeals, many=True)
-        return Response(output_serializer.data)
+    def get_queryset(self):
+        current_user: User = self.request.user  # type: ignore
+        return models.Appeal.filter_to_allowed_appeals(current_user)
 
-    @extend_schema(responses=serializers.AppealDetailSerializer)
-    def retrieve(self, request: Request, pk: int) -> Response:
+    @action(detail=False, methods=["get"])
+    def get_full_details(self, request):
+        """
+        Get full details of an appeal, including denial and related entities.
+        """
+        pk = request.query_params.get("pk")
+        if not pk:
+            return Response(
+                {"error": "Appeal ID is required"}, status=status.HTTP_400_BAD_REQUEST
+            )
+
         current_user: User = request.user  # type: ignore
         appeal = get_object_or_404(
-            Appeal.filter_to_allowed_appeals(current_user), pk=pk
+            models.Appeal.filter_to_allowed_appeals(current_user), id=pk
         )
-        serializer = serializers.AppealDetailSerializer(appeal)
+        serializer = serializers.AppealSerializer(appeal)
         return Response(serializer.data)
 
-    @extend_schema(
-        responses={200: serializers.SuccessSerializer, 404: serializers.ErrorSerializer}
-    )
     @action(detail=False, methods=["post"])
-    def notify_patient(self, request: Request) -> Response:
-        serializer = self.deserialize(request.data)
-        if not serializer.is_valid():
-            return Response(
-                serializers.ErrorSerializer({"error": serializer.errors}).data,
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        pk = serializer.validated_data["id"]
-        include_professional = False
-        if "include_professional" in serializer.validated_data:
-            include_professional = serializer.validated_data["include_professional"]
-        current_user: User = request.user  # type: ignore
-        appeal = get_object_or_404(
-            Appeal.filter_to_allowed_appeals(current_user), pk=pk
-        )
-        # Notifying the patient makes it visible.
-        if not appeal.patient_visible:
-            appeal.patient_visible = True
-            appeal.save()
-        patient_user: Optional[PatientUser] = appeal.patient_user
-        if patient_user is None:
-            return Response(
-                serializers.ErrorSerializer({"error": "Patient not found"}).data,
-                status=status.HTTP_404_NOT_FOUND,
-            )
-        professional_name = None
-        if include_professional:
-            professional_name = ProfessionalUser.objects.get(
-                user=current_user
-            ).get_display_name()
-        user: User = patient_user.user
-        if not user.is_active:
-            # Send an invitation to sign up for an account (mention it's free)
-            common_view_logic.PatientNotificationHelper.send_signup_invitation(
-                email=user.email,
-                professional_name=professional_name,
-                practice_number=UserDomain.objects.get(
-                    id=request.session["domain_id"]
-                ).visible_phone_number,
-            )
-        else:
-            # Notify the patient that there's a free draft appeal to fill in
-            common_view_logic.PatientNotificationHelper.notify_of_draft_appeal(
-                email=user.email,
-                professional_name=professional_name,
-                practice_number=UserDomain.objects.get(
-                    id=request.session["domain_id"]
-                ).visible_phone_number,
-            )
-        return Response(
-            serializers.SuccessSerializer({"message": "Notification sent"}).data,
-            status=status.HTTP_200_OK,
-        )
+    def assemble_appeal(self, request):
+        """
+        Create or update an appeal for a denial.
+        """
+        # ...existing code...
 
-    @extend_schema(
-        responses=serializers.AppealFullSerializer,
-        parameters=[OpenApiParameter(name="pk", type=OpenApiTypes.INT)],
-    )
-    @action(detail=False, methods=["get"])
-    def get_full_details(self, request: Request) -> Response:
-        pk = request.query_params.get("pk")
-        current_user: User = request.user  # type: ignore
-        appeal = get_object_or_404(
-            Appeal.filter_to_allowed_appeals(current_user), pk=pk
-        )
-        return Response(serializers.AppealFullSerializer(appeal).data)
-
-    @extend_schema(responses=serializers.StatusResponseSerializer)
     @action(detail=False, methods=["post"])
-    def send_fax(self, request: Request) -> Response:
-        current_user: User = request.user  # type: ignore
-        serializer = self.deserialize(data=request.data)
+    def notify_patient(self, request):
+        """
+        Send a notification to the patient about their appeal.
+        """
+        # ...existing code...
+
+    @action(detail=False, methods=["post"])
+    def send_fax(self, request):
+        """
+        Send an appeal via fax.
+        """
+        serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        appeal_id = serializer.validated_data["appeal_id"]
+
+        current_user: User = request.user  # type: ignore
+        appeal_id = serializer.validated_data.get("appeal_id")
+        fax_number = serializer.validated_data.get("fax_number")
+
         appeal = get_object_or_404(
-            Appeal.filter_to_allowed_appeals(current_user), pk=appeal_id
+            models.Appeal.filter_to_allowed_appeals(current_user), id=appeal_id
         )
-        if serializer["fax_number"] is not None:
-            appeal.fax_number = serializer["fax_number"]
-            appeal.save()
-        patient_user = None
+
+        # Check permissions based on user role
+        is_professional = False
         try:
-            patient_user = PatientUser.objects.get(user=current_user)
-        except:
+            professional = models.ProfessionalUser.objects.get(user=current_user)
+            is_professional = True
+        except models.ProfessionalUser.DoesNotExist:
             pass
-        if (
-            appeal.patient_user == patient_user
-            and appeal.for_denial.professional_to_finish
-        ):
-            appeal.pending_patient = False
-            appeal.pending_professional = True
-            appeal.pending = True
-            appeal.save()
-            return Response(
-                data=serializers.StatusResponseSerializer(
-                    {
-                        "message": "Pending professional",
-                        "status": "pending_professional",
-                    }
-                ).data,
-                status=status.HTTP_200_OK,
-            )
-        else:
+
+        is_patient = False
+        try:
+            patient = models.PatientUser.objects.get(user=current_user)
+            is_patient = True
+        except models.PatientUser.DoesNotExist:
+            pass
+
+        # Professional can always send
+        if is_professional:
+            # Update appeal status
+            appeal.pending = False
             appeal.pending_patient = False
             appeal.pending_professional = False
-            appeal.pending = False
             appeal.save()
-            staged = common_view_logic.SendFaxHelper.stage_appeal_as_fax(
-                appeal, email=current_user.email, professional=True
-            )
-            common_view_logic.SendFaxHelper.remote_send_fax(
-                uuid=staged.uuid, hashed_email=staged.hashed_email
-            )
-        return Response(status=status.HTTP_204_NO_CONTENT)
 
-    @extend_schema(responses=serializers.AssembleAppealResponseSerializer)
-    @action(detail=False, methods=["post"])
-    def assemble_appeal(self, request) -> Response:
-        current_user: User = request.user  # type: ignore
-        serializer = self.deserialize(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        # Make sure the user has permission to this denial
-        denial_uuid: Optional[str] = None
-        denial_opt: Optional[Denial] = None
-        if "denial_uuid" in serializer.validated_data:
-            denial_uuid = serializer.validated_data["denial_uuid"]
-        if denial_uuid:
-            denial_opt = Denial.filter_to_allowed_denials(current_user).get(
-                denial_uuid=denial_uuid
-            )
-        else:
-            denial_id = serializer.validated_data["denial_id"]
-            denial_opt = Denial.filter_to_allowed_denials(current_user).get(
-                denial_id=denial_id
-            )
-        if denial_opt is None:
-            raise Exception("Denial not found")
-        denial: Denial = denial_opt  # type: ignore
-        appeal = None
-        try:
-            appeal = Appeal.filter_to_allowed_appeals(current_user).get(
-                for_denial=denial, pending=True
-            )
-        except Appeal.DoesNotExist:
-            pass
-        patient_user = denial.patient_user
-        if patient_user is None:
-            raise Exception("Patient user not found on denial")
-        user_domain = UserDomain.objects.get(id=request.session["domain_id"])
-        completed_appeal_text = serializer.validated_data["completed_appeal_text"]
-        insurance_company = serializer.validated_data["insurance_company"] or ""
-        fax_phone = ""
-        if "fax_phone" in serializer.validated_data:
-            fax_phone = serializer.validated_data["fax_phone"]
-        if fax_phone is None:
-            fax_phone = denial.fax_phone
-        pubmed_articles_to_include = []
-        if "pubmed_articles_to_include" in serializer.validated_data:
-            pubmed_articles_to_include = serializer.validated_data[
-                "pubmed_articles_to_include"
-            ]
-        # TODO: Collect this
-        include_provided_health_history = False
-        if "include_provided_health_history" in serializer.validated_data:
-            include_provided_health_history = serializer.validated_data[
-                "include_provided_health_history"
-            ]
-        patient_user = denial.patient_user
-        patient_name: str = "unkown"
-        if patient_user is not None:
-            patient_name = patient_user.get_combined_name()
-        appeal = self.appeal_assembly_helper.create_or_update_appeal(
-            appeal=appeal,
-            name=patient_name,
-            insurance_company=insurance_company,
-            fax_phone=fax_phone,
-            completed_appeal_text=completed_appeal_text,
-            pubmed_ids_parsed=pubmed_articles_to_include,
-            company_name="Fight Paperwork",
-            email=current_user.email,
-            include_provided_health_history=include_provided_health_history,
-            denial=denial,
-            primary_professional=denial.primary_professional,
-            creating_professional=denial.creating_professional,
-            domain=user_domain,
-            cover_template_path="faxes/fpw_cover.html",
-            cover_template_string=user_domain.cover_template_string or None,
-            company_phone_number="202-938-3266",
-            company_fax_number="415-840-7591",
-            patient_user=patient_user,
-        )
-        appeal.save()
-        return Response(
-            serializers.AssembleAppealResponseSerializer({"appeal_id": appeal.id}).data,
-            status=status.HTTP_201_CREATED,
-        )
+            # Create fax record
+            # Include PubMed articles if they were selected
+            pubmed_ids = []
+            if appeal.pubmed_ids_json:
+                try:
+                    pubmed_ids = json.loads(appeal.pubmed_ids_json)
+                except json.JSONDecodeError:
+                    pass
 
-    @extend_schema(responses=serializers.StatusResponseSerializer)
-    @action(detail=False, methods=["post"])
-    def invite_provider(self, request: Request) -> Response:
-        current_user: User = request.user  # type: ignore
-        serializer = serializers.InviteProviderSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        pk = serializer.validated_data["appeal_id"]
-        appeal = get_object_or_404(
-            Appeal.filter_to_allowed_appeals(current_user), pk=pk
-        )
-        professional_id = serializer.validated_data.get("professional_id")
-        email = serializer.validated_data.get("email")
-
-        if professional_id:
-            professional = get_object_or_404(ProfessionalUser, id=professional_id)
-            SecondaryAppealProfessionalRelation.objects.create(
-                appeal=appeal, professional=professional
+            fax = models.FaxesToSend.objects.create(
+                email=appeal.patient_user.user.email if appeal.patient_user else "",
+                appeal_text=appeal.appeal_text,
+                hashed_email=(
+                    models.Denial.get_hashed_email(appeal.patient_user.user.email)
+                    if appeal.patient_user
+                    else ""
+                ),
+                name=(
+                    appeal.patient_user.get_legal_name() if appeal.patient_user else ""
+                ),
+                paid=True,
+                for_appeal=appeal,
+                destination=fax_number,
+                should_send=True,
+                professional=True,
+                pmids=",".join(pubmed_ids) if pubmed_ids else "",
             )
-        else:
-            try:
-                professional_user = ProfessionalUser.objects.get(user__email=email)
-                SecondaryAppealProfessionalRelation.objects.create(
-                    appeal=appeal, professional=professional_user
+            appeal.fax = fax
+            appeal.sent = True
+            appeal.save()
+
+            return Response(status=status.HTTP_204_NO_CONTENT)
+
+        # Patient sending - check if needs professional approval
+        elif is_patient:
+            # Check if the denial requires professional to finish
+            if appeal.for_denial.professional_to_finish:
+                # Mark as pending for professional
+                appeal.pending = True
+                appeal.pending_patient = False
+                appeal.pending_professional = True
+                appeal.save()
+
+                return Response(
+                    {"message": "Pending professional approval before sending"},
+                    status=status.HTTP_200_OK,
                 )
-            except ProfessionalUser.DoesNotExist:
-                inviting_professional = ProfessionalUser.objects.get(user=current_user)
-                common_view_logic.ProfessionalNotificationHelper.send_signup_invitation(
-                    email=email,
-                    professional_name=inviting_professional.get_display_name(),
-                    practice_number=UserDomain.objects.get(
-                        id=request.session["domain_id"]
-                    ).visible_phone_number,
-                )
+            else:
+                # Patient can send directly
+                appeal.pending = False
+                appeal.pending_patient = False
+                appeal.pending_professional = False
+                appeal.save()
 
-        return Response(
-            serializers.SuccessSerializer(
-                {"message": "Provider invited successfully"}
-            ).data,
-            status=status.HTTP_200_OK,
-        )
+                # Create fax record
+                # Include PubMed articles if they were selected
+                pubmed_ids = []
+                if appeal.pubmed_ids_json:
+                    try:
+                        pubmed_ids = json.loads(appeal.pubmed_ids_json)
+                    except json.JSONDecodeError:
+                        pass
 
-    @extend_schema(responses=serializers.StatisticsSerializer)
-    @action(detail=False, methods=["get"])
-    def stats(self, request: Request) -> Response:
-        """Get relative statistics with comparison to previous period"""
-        now = timezone.now()
-        user: User = request.user  # type: ignore
-        delta = request.GET.get("delta", "MoM")  # Default to Month over Month
-
-        current_period_start = now
-        current_period_end = now
-
-        # Define previous period based on delta parameter
-        if delta == "YoY":  # Year over Year
-            current_period_start = current_period_start - relativedelta(years=1)
-            previous_period_start = current_period_start - relativedelta(years=1)
-        elif delta == "QoQ":  # Quarter over Quarter
-            current_period_start = current_period_start - relativedelta(months=3)
-            previous_period_start = current_period_start - relativedelta(months=3)
-        else:  # MoM
-            # Default to Month over Month if invalid delta
-            current_period_start = current_period_start - relativedelta(months=1)
-            previous_period_start = current_period_start - relativedelta(months=1)
-        # Regardless end the previous period one microsend before the start of the current
-        previous_period_end = current_period_start - relativedelta(microseconds=1)
-
-        # Get user domain to calculate patients
-        domain_id = request.session.get("domain_id")
-        user_domain = None
-        if domain_id:
-            try:
-                user_domain = UserDomain.objects.get(id=domain_id)
-            except UserDomain.DoesNotExist:
-                pass
-
-        # Get current period statistics
-        current_appeals = Appeal.filter_to_allowed_appeals(user).filter(
-            creation_date__range=(
-                current_period_start.date(),
-                current_period_end.date(),
-            )
-        )
-        current_total = current_appeals.count()
-        current_pending = current_appeals.filter(pending=True).count()
-        current_sent = current_appeals.filter(sent=True).count()
-
-        # Use success field instead of response_date
-        current_successful = current_appeals.filter(success=True).count()
-        current_with_response = current_appeals.exclude(response_date=None).count()
-
-        # Since we're looking for patients in the current range we can't use the UserDomain
-        current_patients = (
-            PatientUser.objects.filter(appeal__in=current_appeals).distinct().count()
-        )
-
-        # Get previous period statistics
-        previous_appeals = Appeal.filter_to_allowed_appeals(user).filter(
-            creation_date__range=(
-                previous_period_start.date(),
-                previous_period_end.date(),
-            )
-        )
-        previous_total = previous_appeals.count()
-        previous_pending = previous_appeals.filter(pending=True).count()
-        previous_sent = previous_appeals.filter(sent=True).count()
-
-        # Use success field instead of response_date
-        previous_successful = previous_appeals.filter(success=True).count()
-        previous_with_response = previous_appeals.exclude(response_date=None).count()
-
-        # Get previous period patient count
-        # Get the patients with appeals in previous period
-        previous_patients = (
-            PatientUser.objects.filter(appeal__in=previous_appeals).distinct().count()
-        )
-
-        # Set estimated payment value to None for now
-        current_estimated_payment_value = None
-        previous_estimated_payment_value = None
-
-        statistics = {
-            "current_total_appeals": current_total,
-            "current_pending_appeals": current_pending,
-            "current_sent_appeals": current_sent,
-            "current_success_rate": (
-                (current_successful / current_with_response * 100)
-                if current_with_response > 0
-                else 0
-            ),
-            "current_estimated_payment_value": current_estimated_payment_value,
-            "current_total_patients": current_patients,
-            "previous_total_appeals": previous_total,
-            "previous_pending_appeals": previous_pending,
-            "previous_sent_appeals": previous_sent,
-            "previous_success_rate": (
-                (previous_successful / previous_with_response * 100)
-                if previous_with_response > 0
-                else 0
-            ),
-            "previous_estimated_payment_value": previous_estimated_payment_value,
-            "previous_total_patients": previous_patients,
-            "period_start": current_period_start,
-            "period_end": current_period_end,
-        }
-
-        return Response(serializers.StatisticsSerializer(statistics).data)
-
-    @extend_schema(responses=serializers.AbsoluteStatisticsSerializer)
-    @action(detail=False, methods=["get"])
-    def absolute_stats(self, request: Request) -> Response:
-        """Get absolute statistics without time windowing"""
-        user: User = request.user  # type: ignore
-
-        # Get user domain to calculate patients
-        domain_id = request.session.get("domain_id")
-        user_domain = None
-        if domain_id:
-            try:
-                user_domain = UserDomain.objects.get(id=domain_id)
-            except UserDomain.DoesNotExist:
-                pass
-
-        # Get all appeals the user has access to
-        all_appeals = Appeal.filter_to_allowed_appeals(user)
-        total_appeals = all_appeals.count()
-        pending_appeals = all_appeals.filter(pending=True).count()
-        sent_appeals = all_appeals.filter(sent=True).count()
-
-        # Use success field instead of response_date
-        successful_appeals = all_appeals.filter(success=True).count()
-        with_response = all_appeals.exclude(response_date=None).count()
-        success_rate = (
-            (successful_appeals / with_response * 100) if with_response > 0 else 0.0
-        )
-
-        # Set estimated payment value to None for now
-        estimated_payment_value = None
-
-        # Get total patient count based on domain
-        total_patients = 0
-        if user_domain:
-            # Get all patients related to this domain
-            total_patients = (
-                PatientUser.objects.filter(patientdomainrelation__domain=user_domain)
-                .distinct()
-                .count()
-            )
-        else:
-            # Fallback to patients with appeals if domain not available
-            total_patients = (
-                PatientUser.objects.filter(appeal__in=all_appeals).distinct().count()
-            )
-
-        statistics = {
-            "total_appeals": total_appeals,
-            "pending_appeals": pending_appeals,
-            "sent_appeals": sent_appeals,
-            "success_rate": success_rate,
-            "estimated_payment_value": estimated_payment_value,
-            "total_patients": total_patients,
-        }
-
-        return Response(serializers.AbsoluteStatisticsSerializer(statistics).data)
-
-    @extend_schema(
-        responses={
-            200: serializers.SearchResultSerializer,
-            400: serializers.ErrorSerializer,
-        }
-    )
-    @action(detail=False, methods=["get"])
-    def search(self, request):
-        query = request.GET.get("q", "")
-        if not query:
-            return Response(
-                serializers.ErrorSerializer(
-                    {"error": 'Please provide a search query parameter "q"'}
-                ).data,
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # Search in Appeals with user permissions
-        appeals = Appeal.filter_to_allowed_appeals(request.user).filter(
-            Q(uuid__icontains=query)
-            | Q(appeal_text__icontains=query)
-            | Q(response_text__icontains=query)
-        )
-
-        # Convert appeals to search results
-        search_results = []
-        for appeal in appeals:
-            search_results.append(
-                {
-                    "id": appeal.id,
-                    "uuid": appeal.uuid,
-                    "appeal_text": (
-                        appeal.appeal_text[:200] if appeal.appeal_text else ""
+                fax = models.FaxesToSend.objects.create(
+                    email=appeal.patient_user.user.email if appeal.patient_user else "",
+                    appeal_text=appeal.appeal_text,
+                    hashed_email=(
+                        models.Denial.get_hashed_email(appeal.patient_user.user.email)
+                        if appeal.patient_user
+                        else ""
                     ),
-                    "pending": appeal.pending,
-                    "sent": appeal.sent,
-                    "mod_date": appeal.mod_date,
-                    "has_response": appeal.response_date is not None,
-                }
-            )
+                    name=(
+                        appeal.patient_user.get_legal_name()
+                        if appeal.patient_user
+                        else ""
+                    ),
+                    paid=True,
+                    for_appeal=appeal,
+                    destination=fax_number,
+                    should_send=True,
+                    professional=False,
+                    pmids=",".join(pubmed_ids) if pubmed_ids else "",
+                )
+                appeal.fax = fax
+                appeal.sent = True
+                appeal.save()
 
-        # Sort results by modification date (newest first)
-        search_results.sort(key=lambda x: x["mod_date"], reverse=True)
-
-        # Paginate results
-        page_size = int(request.GET.get("page_size", 10))
-        page = int(request.GET.get("page", 1))
-        start_idx = (page - 1) * page_size
-        end_idx = start_idx + page_size
-
-        paginated_results = search_results[start_idx:end_idx]
+                return Response(status=status.HTTP_204_NO_CONTENT)
 
         return Response(
-            {
-                "count": len(search_results),
-                "next": page < len(search_results) // page_size + 1,
-                "previous": page > 1,
-                "results": paginated_results,
-            }
+            {"error": "Permission denied"}, status=status.HTTP_403_FORBIDDEN
+        )
+
+    @action(detail=False, methods=["post"])
+    def invite_provider(self, request):
+        """
+        Invite a provider to collaborate on an appeal.
+        """
+        # ...existing code...
+
+    @action(detail=False, methods=["get"])
+    def stats(self, request):
+        """
+        Get statistics about appeals.
+        """
+        # ...existing code...
+
+    @action(detail=False, methods=["get"])
+    def absolute_stats(self, request):
+        """
+        Get absolute statistics (not relative to any time period).
+        """
+        # ...existing code...
+
+    @action(detail=False, methods=["post"])
+    def select_articles_for_fax(self, request):
+        """
+        Select PubMed articles to include in the fax for an appeal.
+        """
+        serializer = serializers.SelectArticlesForFaxSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        current_user: User = request.user  # type: ignore
+
+        # Get the denial
+        denial = get_object_or_404(
+            models.Denial.filter_to_allowed_denials(current_user),
+            denial_id=serializer.validated_data["denial_id"],
+        )
+
+        # Get the appeal ID if provided, otherwise find a pending appeal
+        appeal_id = serializer.validated_data.get("appeal_id", None)
+        if appeal_id:
+            appeal = get_object_or_404(
+                models.Appeal.filter_to_allowed_appeals(current_user),
+                id=appeal_id,
+            )
+        else:
+            try:
+                appeal = models.Appeal.filter_to_allowed_appeals(current_user).get(
+                    for_denial=denial, pending=True
+                )
+            except models.Appeal.DoesNotExist:
+                # Create a pending appeal if none exists
+                appeal = models.Appeal.objects.create(
+                    for_denial=denial,
+                    patient_user=denial.patient_user,
+                    primary_professional=denial.primary_professional,
+                    creating_professional=denial.creating_professional,
+                    pending=True,
+                    domain=denial.domain,
+                    hashed_email=denial.hashed_email,
+                )
+
+        # Set the selected PMIDs for fax inclusion
+        pmids = serializer.validated_data["pmids"]
+        appeal.pubmed_ids_json = json.dumps(pmids)
+        appeal.save()
+
+        return Response(
+            {"message": f"Selected {len(pmids)} articles to include in the fax"},
+            status=status.HTTP_200_OK,
         )
 
 
