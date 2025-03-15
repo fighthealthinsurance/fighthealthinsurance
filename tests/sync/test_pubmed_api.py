@@ -205,6 +205,48 @@ class PubmedApiTest(APITestCase):
         saved_pmids = json.loads(updated_denial.pubmed_ids_json)
         self.assertEqual(saved_pmids, selected_pmids)
 
+    def test_assemble_appeal_with_pubmed_articles(self):
+        """Test assembling an appeal with selected PubMed articles."""
+        # First, set up PubMed articles to use
+        selected_pmids = ["12345678", "87654321"]
+
+        # Create the URL for assemble_appeal endpoint
+        url = reverse("appeals-assemble-appeal")
+
+        # Create appeal data with PubMed articles
+        appeal_data = {
+            "denial_id": str(self.denial.denial_id),
+            "completed_appeal_text": "This appeal includes scientific evidence from PubMed articles.",
+            "insurance_company": "Test Insurance Co",
+            "fax_phone": "123-456-7890",
+            "pubmed_articles_to_include": selected_pmids,
+        }
+
+        # Mock the PDF assembly method to avoid actual file operations
+        with mock.patch.object(
+            AppealAssemblyHelper, "_assemble_appeal_pdf"
+        ) as mock_assemble_pdf:
+            # Call the endpoint
+            response = self.client.post(
+                url, json.dumps(appeal_data), content_type="application/json"
+            )
+
+            # Verify the response
+            self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+            appeal_id = response.data.get("appeal_id")
+            self.assertIsNotNone(appeal_id)
+
+            # Verify the appeal was created with the PubMed IDs
+            appeal = Appeal.objects.get(id=appeal_id)
+            self.assertEqual(appeal.pubmed_ids_json, json.dumps(selected_pmids))
+            self.assertEqual(appeal.for_denial, self.denial)
+
+            # Verify that the appeal assembly method was called with the right parameters
+            mock_assemble_pdf.assert_called_once()
+            call_args = mock_assemble_pdf.call_args[1]
+            self.assertIn("pubmed_ids_parsed", call_args)
+            self.assertEqual(call_args["pubmed_ids_parsed"], selected_pmids)
+
     def test_coordinate_with_appeal(self):
         """Test that selecting articles updates a pending appeal."""
         # Create a pending appeal for the denial
@@ -491,7 +533,9 @@ class PubMedToolsUnitTest(TestCase):
 
         # Test with a new query
         new_query = "query with no initial results"
-        pmids = self.pubmed_tools.find_pubmed_article_ids_for_query(new_query)
+        pmids = self.pubmed_tools.find_pubmed_article_ids_for_query(
+            new_query, since=None
+        )
 
         # Should still get results from second call
         self.assertIn("99998888", pmids)
