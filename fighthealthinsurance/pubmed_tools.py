@@ -20,7 +20,6 @@ import subprocess
 from loguru import logger
 import eutils
 from datetime import datetime, timedelta
-import json
 
 
 class PubMedTools(object):
@@ -37,7 +36,7 @@ class PubMedTools(object):
         Find PubMed article IDs for a given query. May pull from database.
         Args:
             query: The search query for PubMed
-            denial: Optional denial to associate with the query for caching
+            since: The year to start searching from (optional)
             timeout: Maximum time to spend searching
 
         Returns:
@@ -62,15 +61,15 @@ class PubMedTools(object):
                             try:
                                 article_ids: list[str] = json.loads(
                                     query_data.articles.replace("\x00", "")
-                                )  # type: ignore
-                                # Add only new PMIDs to avoid duplicates
+                                )
+                                # Return the cached IDs
                                 return article_ids
-                                # Continue from here
-                                continue
                             except json.JSONDecodeError:
                                 logger.error(
                                     f"Error parsing cached articles JSON for {query}"
                                 )
+
+                # If no cache or cache error, fetch from PubMed API
                 fetched_pmids = pubmed_fetcher.pmids_for_query(query, since=since)
                 if fetched_pmids:
                     # Sometimes we get nulls...
@@ -81,8 +80,9 @@ class PubMedTools(object):
                         articles=articles_json,
                     ).save()
                     pmids.extend(fetched_pmids)
-        except:
+        except Exception as e:
             # We might timeout
+            logger.debug(f"Error or timeout in find_pubmed_article_ids_for_query: {e}")
             pass
         return pmids
 
@@ -153,7 +153,7 @@ class PubMedTools(object):
         selected_pmids: Optional[list[str]] = None
         if denial.pubmed_ids_json and denial.pubmed_ids_json.strip():
             try:
-                selected_pmids = json.loads(denial.pubmed_ids_json)  # type: ignore
+                selected_pmids = json.loads(denial.pubmed_ids_json)
             except json.JSONDecodeError:
                 logger.error(
                     f"Error parsing pubmed_ids_json for denial {denial.denial_id}"
@@ -202,28 +202,48 @@ class PubMedTools(object):
         return f"PubMed DOI {article.doi} title {article.title} summary {article.basic_summary}"
 
     def get_articles(self, pubmed_ids: List[str]) -> List[PubMedArticleSummarized]:
+        """Get PubMed articles by their IDs."""
+        if not pubmed_ids:
+            return []
+
         pubmed_docs: List[PubMedArticleSummarized] = []
         for pmid in pubmed_ids:
             if pmid is None or pmid == "":
                 continue
+
             try:
-                pubmed_docs.append(
-                    PubMedArticleSummarized.objects.filter(pmid == pmid)[0]
-                )
-            except:
-                try:
+                # Look for existing articles in the database first
+                matching_articles = PubMedArticleSummarized.objects.filter(pmid=pmid)
+                if matching_articles.exists():
+                    pubmed_docs.append(matching_articles.first())
+                else:
+                    # Article not in database, fetch it
                     fetched = pubmed_fetcher.article_by_pmid(pmid)
                     if fetched is not None:
                         article = PubMedArticleSummarized.objects.create(
                             pmid=pmid,
-                            doi=fetched.doi,
-                            title=fetched.title.replace("\x00", ""),
-                            abstract=fetched.abstract.replace("\x00", ""),
-                            text=fetched.content.text.replace("\x00", ""),
+                            doi=fetched.doi if hasattr(fetched, "doi") else "",
+                            title=(
+                                fetched.title.replace("\x00", "")
+                                if hasattr(fetched, "title")
+                                else ""
+                            ),
+                            abstract=(
+                                fetched.abstract.replace("\x00", "")
+                                if hasattr(fetched, "abstract")
+                                else ""
+                            ),
+                            text=(
+                                fetched.content.text.replace("\x00", "")
+                                if hasattr(fetched, "content")
+                                and hasattr(fetched.content, "text")
+                                else ""
+                            ),
                         )
                         pubmed_docs.append(article)
-                except:
-                    logger.debug(f"Skipping {pmid}")
+            except Exception as e:
+                logger.debug(f"Skipping {pmid}: {e}")
+
         return pubmed_docs
 
     def do_article_summary(self, article_id) -> Optional[PubMedArticleSummarized]:
@@ -231,60 +251,72 @@ class PubMedTools(object):
             pmid=article_id,
             basic_summary__isnull=False,
         )[:1]
+
         article = None
-        if len(possible_articles) > 0:
+        if possible_articles:
             article = possible_articles[0]
 
-        url = None
         if article is None:
-            fetched = pubmed_fetcher.article_by_pmid(article_id)
-            src = FindIt(article_id)
-            url = src.url
-            article_text = ""
-            if url is not None:
-                response = requests.get(url)
-                if (
-                    ".pdf" in url
-                    or response.headers.get("Content-Type") == "application/pdf"
+            try:
+                fetched = pubmed_fetcher.article_by_pmid(article_id)
+                src = FindIt(article_id)
+                url = src.url
+                article_text = ""
+
+                if url is not None:
+                    response = requests.get(url)
+                    if (
+                        ".pdf" in url
+                        or response.headers.get("Content-Type") == "application/pdf"
+                    ):
+                        with tempfile.NamedTemporaryFile(
+                            suffix=".pdf", delete=False
+                        ) as my_data:
+                            my_data.write(response.content)
+
+                            open_pdf_file = open(my_data.name, "rb")
+                            read_pdf = PyPDF2.PdfReader(open_pdf_file)
+                            if read_pdf.is_encrypted:
+                                read_pdf.decrypt("")
+                                for page in read_pdf.pages:
+                                    article_text += page.extract_text()
+                            else:
+                                for page in read_pdf.pages:
+                                    article_text += page.extract_text()
+                    else:
+                        article_text += response.text
+                elif (
+                    fetched
+                    and hasattr(fetched, "content")
+                    and hasattr(fetched.content, "text")
                 ):
-                    with tempfile.NamedTemporaryFile(
-                        suffix=".pdf", delete=False
-                    ) as my_data:
-                        my_data.write(response.content)
+                    article_text = fetched.content.text
 
-                        open_pdf_file = open(my_data.name, "rb")
-                        read_pdf = PyPDF2.PdfReader(open_pdf_file)
-                        if read_pdf.is_encrypted:
-                            read_pdf.decrypt("")
-                            for page in read_pdf.pages:
-                                article_text += page.extract_text()
-                        else:
-                            for page in read_pdf.pages:
-                                article_text += page.extract_text()
-                else:
-                    article_text += response.text
-            else:
-                article_text = fetched.content.text
-
-            if fetched is not None and (
-                fetched.abstract is not None or article_text is not None
-            ):
-                article = PubMedArticleSummarized.objects.create(
-                    pmid=article_id,
-                    doi=fetched.doi,
-                    title=fetched.title,
-                    abstract=fetched.abstract,
-                    text=article_text,
-                    article_url=url,
-                    basic_summary=ml_router.summarize(
-                        abstract=fetched.abstract, text=article_text
-                    ),
-                )
-                return article
-            else:
-                logger.debug(f"Skipping {fetched}")
+                if fetched is not None and (
+                    (hasattr(fetched, "abstract") and fetched.abstract) or article_text
+                ):
+                    article = PubMedArticleSummarized.objects.create(
+                        pmid=article_id,
+                        doi=fetched.doi if hasattr(fetched, "doi") else "",
+                        title=fetched.title if hasattr(fetched, "title") else "",
+                        abstract=(
+                            fetched.abstract if hasattr(fetched, "abstract") else ""
+                        ),
+                        text=article_text,
+                        article_url=url,
+                        basic_summary=ml_router.summarize(
+                            abstract=(
+                                fetched.abstract if hasattr(fetched, "abstract") else ""
+                            ),
+                            text=article_text,
+                        ),
+                    )
+                    return article
+            except Exception as e:
+                logger.debug(f"Error in do_article_summary for {article_id}: {e}")
                 return None
-        return None
+
+        return article
 
     def article_as_pdf(self, article: PubMedArticleSummarized) -> Optional[str]:
         """Return the best PDF we can find of the article."""
@@ -311,12 +343,14 @@ class PubMedTools(object):
         except Exception as e:
             logger.debug(f"Error {e} fetching article for {article}")
             pass
+
         # Backup us markdown & pandoc -- but only if we have something to write
         if article.abstract is None and article.text is None:
             return None
+
         markdown_text = f"# {markdown_escape(article.title)} \n\n PMID {article.pmid} / DOI {article.doi}\n\n{markdown_escape(article.abstract)}\n\n---{markdown_escape(article.text)}"
         with tempfile.NamedTemporaryFile(
-            prefix=f"{article_id}",
+            prefix=f"{article.pmid}",
             suffix=".md",
             delete=False,
             encoding="utf-8",

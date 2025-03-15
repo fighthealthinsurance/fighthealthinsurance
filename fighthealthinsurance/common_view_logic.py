@@ -275,6 +275,12 @@ class AppealAssemblyHelper:
             t.flush()
             t.seek(0)
             doc_fname = os.path.basename(t.name)
+
+            # Create JSON representation of pubmed_ids if provided
+            pubmed_ids_json = None
+            if pubmed_ids_parsed:
+                pubmed_ids_json = json.dumps(pubmed_ids_parsed)
+
             if appeal is None:
                 appeal = Appeal.objects.create(
                     for_denial=denial,
@@ -285,6 +291,7 @@ class AppealAssemblyHelper:
                     creating_professional=creating_professional,
                     patient_user=patient_user,
                     domain=domain,
+                    pubmed_ids_json=pubmed_ids_json,
                 )
             else:
                 # Instead of using update(), set values individually preserving existing ones if not provided
@@ -303,6 +310,8 @@ class AppealAssemblyHelper:
                     appeal.patient_user = patient_user
                 if domain:
                     appeal.domain = domain
+                if pubmed_ids_json:
+                    appeal.pubmed_ids_json = pubmed_ids_json
             if pending is not None:
                 appeal.pending = pending
             appeal.save()

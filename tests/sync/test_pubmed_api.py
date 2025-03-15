@@ -126,6 +126,16 @@ class PubmedApiTest(APITestCase):
             created=timezone.now() - timedelta(days=10),
         )
 
+        # Create corresponding PubMedArticleSummarized objects for testing
+        for article in [self.article1, self.article2, self.article3, self.article4]:
+            PubMedArticleSummarized.objects.create(
+                pmid=article.pmid,
+                title=article.title,
+                abstract=article.abstract,
+                doi=f"10.1000/{article.pmid}",
+                basic_summary=f"Summary for {article.pmid}",
+            )
+
         # Create a cached PubMed query
         self.query_data = PubMedQueryData.objects.create(
             query="physical therapy rheumatoid arthritis",
@@ -233,6 +243,9 @@ class PubmedApiTest(APITestCase):
         with mock.patch.object(
             AppealAssemblyHelper, "_assemble_appeal_pdf"
         ) as mock_assemble_pdf:
+            # Configure the mock to do nothing
+            mock_assemble_pdf.return_value = None
+
             # Call the endpoint
             response = self.client.post(
                 url, json.dumps(appeal_data), content_type="application/json"
@@ -294,12 +307,15 @@ class PubmedApiTest(APITestCase):
 
         # Test using an existing cached query
         query = "physical therapy rheumatoid arthritis"
+        since = None
 
         # Call the function with the correct parameters
-        pmids = pubmed_tools.find_pubmed_article_ids_for_query(query, since=None)
+        pmids = pubmed_tools.find_pubmed_article_ids_for_query(query, since)
 
         # Should get results from cache without calling the API
         mock_pmids_for_query.assert_not_called()
+        self.assertIn("12345678", pmids)
+        self.assertIn("87654321", pmids)
 
         # Test with a new query that's not cached
         new_query = "unique query with no cache"
@@ -307,7 +323,7 @@ class PubmedApiTest(APITestCase):
         # Mock implementation for the since_list to control test behavior
         with mock.patch.object(pubmed_tools, "since_list", new=["2023"]):
             pmids = pubmed_tools.find_pubmed_article_ids_for_query(
-                new_query, since=None
+                new_query, since="2023"
             )
 
             # Should call the API once for the one item in the mocked since_list
@@ -359,22 +375,12 @@ class PubmedApiTest(APITestCase):
 
         # Create mock for the article summary function to avoid actual processing
         with mock.patch.object(PubMedTools, "do_article_summary") as mock_summary:
-            # Update the mock to match the expected call signature
-            # (do_article_summary requires article_id parameter only)
-            mock_summary.side_effect = lambda pmid: mock.MagicMock(
-                pmid=pmid,
-                title=f"Test Article {pmid}",
-                doi=f"10.1000/{pmid}",
-                basic_summary=f"Summary for {pmid}",
-            )
+            # Configure the mock to return appropriate objects
+            def mock_summary_side_effect(pmid):
+                # Return an existing summarized article
+                return PubMedArticleSummarized.objects.get(pmid=pmid)
 
-            # Pre-create summarized articles to be found by get_articles
-            for pmid in selected_pmids:
-                PubMedArticleSummarized.objects.create(
-                    pmid=pmid,
-                    title=f"Test Article {pmid}",
-                    basic_summary=f"Summary for {pmid}",
-                )
+            mock_summary.side_effect = mock_summary_side_effect
 
             # Also mock out article search to ensure it's not used
             with mock.patch.object(
@@ -386,7 +392,6 @@ class PubmedApiTest(APITestCase):
                 # Should not have called regular search
                 mock_search.assert_not_called()
 
-                # Should have called the get_articles method
                 # Context should contain our article summaries
                 for pmid in selected_pmids:
                     self.assertIn(f"Summary for {pmid}", context)
@@ -428,28 +433,10 @@ class PubmedApiTest(APITestCase):
                     ).exists()
                 )
 
-    @mock.patch("fighthealthinsurance.pubmed_tools.PubMedTools.get_articles")
     @mock.patch("fighthealthinsurance.pubmed_tools.PubMedTools.article_as_pdf")
-    def test_appeal_assembly_with_pubmed_ids(
-        self, mock_article_as_pdf, mock_get_articles
-    ):
+    def test_appeal_assembly_with_pubmed_ids(self, mock_article_as_pdf):
         """Test that AppealAssemblyHelper properly includes PubMed articles when assembling appeals."""
-        # Set up mocks for PubMed article handling
-        mock_articles = [
-            mock.MagicMock(
-                pmid="12345678",
-                title="Test Article 1",
-                doi="10.1000/12345678",
-                abstract="Abstract 1",
-            ),
-            mock.MagicMock(
-                pmid="87654321",
-                title="Test Article 2",
-                doi="10.1000/87654321",
-                abstract="Abstract 2",
-            ),
-        ]
-        mock_get_articles.return_value = mock_articles
+        # Set up mock for article_as_pdf function
         mock_article_as_pdf.side_effect = [
             "/tmp/test_article_1.pdf",
             "/tmp/test_article_2.pdf",
@@ -479,16 +466,7 @@ class PubmedApiTest(APITestCase):
                 include_provided_health_history=False,
             )
 
-            # Verify that PubMed articles were retrieved
-            mock_get_articles.assert_called_once_with(selected_pmids)
-
-            # Verify that PDF conversion was attempted for each article
-            self.assertEqual(mock_article_as_pdf.call_count, 2)
-
-            # Verify that the appeal was created with the pubmed IDs
-            self.assertEqual(appeal.pubmed_ids_json, json.dumps(selected_pmids))
-
-            # Verify the PDF assembly process was called with the pubmed_ids
+            # Verify that the PDF assembly process was called with the pubmed_ids
             mock_assemble_pdf.assert_called_once()
             call_args = mock_assemble_pdf.call_args[1]
 
@@ -498,6 +476,9 @@ class PubmedApiTest(APITestCase):
 
             # Verify the appeal has the selected PubMed IDs
             self.assertEqual(appeal.pubmed_ids_json, json.dumps(selected_pmids))
+
+            # Verify that article_as_pdf was called for each summarized article
+            self.assertEqual(mock_article_as_pdf.call_count, 2)
 
 
 class PubMedToolsUnitTest(TestCase):
@@ -533,6 +514,21 @@ class PubMedToolsUnitTest(TestCase):
             denial_id=self.denial,
         )
 
+        # Create corresponding PubMedArticleSummarized objects
+        PubMedArticleSummarized.objects.create(
+            pmid="12345678",
+            title="Test Article 1",
+            abstract="Test abstract 1",
+            basic_summary="Summary for 12345678",
+        )
+
+        PubMedArticleSummarized.objects.create(
+            pmid="87654321",
+            title="Test Article 2",
+            abstract="Test abstract 2",
+            basic_summary="Summary for 87654321",
+        )
+
     @mock.patch("fighthealthinsurance.utils.pubmed_fetcher.pmids_for_query")
     def test_find_pubmed_article_ids_empty_results(self, mock_pmids_for_query):
         """Test handling of empty results from PubMed API."""
@@ -552,3 +548,26 @@ class PubMedToolsUnitTest(TestCase):
 
             # Should have called the API for each "since" value in our mocked since_list
             self.assertEqual(mock_pmids_for_query.call_count, 2)
+
+    def test_get_articles(self):
+        """Test retrieving PubMedArticleSummarized objects by PMID."""
+        # Test with existing articles
+        pmids = ["12345678", "87654321"]
+        articles = self.pubmed_tools.get_articles(pmids)
+
+        self.assertEqual(len(articles), 2)
+        article_pmids = [article.pmid for article in articles]
+        self.assertIn("12345678", article_pmids)
+        self.assertIn("87654321", article_pmids)
+
+        # Test with empty list
+        articles = self.pubmed_tools.get_articles([])
+        self.assertEqual(len(articles), 0)
+
+        # Test with non-existent article (would require mocking the fetcher)
+        with mock.patch(
+            "fighthealthinsurance.utils.pubmed_fetcher.article_by_pmid"
+        ) as mock_fetch:
+            mock_fetch.return_value = None
+            articles = self.pubmed_tools.get_articles(["99999999"])
+            self.assertEqual(len(articles), 0)
