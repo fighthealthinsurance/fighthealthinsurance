@@ -399,14 +399,18 @@ class AppealAssemblyHelper:
 
         # PubMed articles
         if pubmed_ids_parsed is not None and len(pubmed_ids_parsed) > 0:
+            logger.debug(f"Processing PubMed articles: {pubmed_ids_parsed}")
             pmt = PubMedTools()
             pubmed_docs: list[PubMedArticleSummarized] = pmt.get_articles(
                 pubmed_ids_parsed
             )
-            pubmed_docs_paths = [
-                x for x in map(pmt.article_as_pdf, pubmed_docs) if x is not None
-            ]
-            files_for_fax.extend(pubmed_docs_paths)
+            logger.debug(f"Retrieved {len(pubmed_docs)} PubMed articles")
+            if pubmed_docs and len(pubmed_docs) > 0:
+                pubmed_docs_paths = [
+                    x for x in map(pmt.article_as_pdf, pubmed_docs) if x is not None
+                ]
+                files_for_fax.extend(pubmed_docs_paths)
+                logger.debug(f"Added {len(pubmed_docs_paths)} PubMed PDFs to fax")
         # TODO: Add more generic DOI handler.
 
         # Combine and return path

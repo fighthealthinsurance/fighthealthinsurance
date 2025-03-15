@@ -29,7 +29,7 @@ class PubMedTools(object):
     def find_pubmed_article_ids_for_query(
         self,
         query: str,
-        since: Optional[str],
+        since: Optional[str] = None,
         timeout: float = 30.0,
     ) -> List[str]:
         """
@@ -80,6 +80,31 @@ class PubMedTools(object):
                         articles=articles_json,
                     ).save()
                     pmids.extend(fetched_pmids)
+
+                # If we didn't get any results, but we're not restricted by 'since',
+                # try querying with each since value in our since_list until we find results
+                if not pmids and since is None:
+                    for year in self.since_list:
+                        if year is not None:
+                            # Don't re-try with None since we already did that
+                            logger.debug(
+                                f"No results for {query}, trying with since={year}"
+                            )
+                            year_pmids = pubmed_fetcher.pmids_for_query(
+                                query, since=year
+                            )
+                            if year_pmids:
+                                # Cache the results
+                                articles_json = json.dumps(year_pmids).replace(
+                                    "\x00", ""
+                                )
+                                PubMedQueryData.objects.create(
+                                    query=query,
+                                    since=year,
+                                    articles=articles_json,
+                                ).save()
+                                pmids.extend(year_pmids)
+                                break
         except Exception as e:
             # We might timeout
             logger.debug(f"Error or timeout in find_pubmed_article_ids_for_query: {e}")
@@ -146,52 +171,61 @@ class PubMedTools(object):
         """
         Kind of hacky RAG routine that uses PubMed.
         """
-        query = f"{denial.procedure} {denial.diagnosis}"
-        article_futures: list[Future[Optional[PubMedArticleSummarized]]] = []
         articles: list[PubMedArticleSummarized] = []
+
+        procedure_opt = denial.procedure if denial.procedure else ""
+        diagnosis_opt = denial.diagnosis if denial.diagnosis else ""
+        query = f"{procedure_opt} {diagnosis_opt}".strip()
+        if not query or query.strip() == "":
+            return articles
+
         # Check if the denial has specific pubmed IDs selected already
         selected_pmids: Optional[list[str]] = None
         if denial.pubmed_ids_json and denial.pubmed_ids_json.strip():
             try:
                 selected_pmids = json.loads(denial.pubmed_ids_json)
+                logger.info(
+                    f"Using {len(selected_pmids)} pre-selected PubMed articles for denial {denial.denial_id}"
+                )
+
+                # Directly fetch the selected articles from the database
+                articles = list(
+                    PubMedArticleSummarized.objects.filter(pmid__in=selected_pmids)
+                )
+                logger.debug(
+                    f"Found {len(articles)} pre-selected articles in the database"
+                )
+
+                # If we couldn't find all the articles in the database, try to fetch them
+                if len(articles) < len(selected_pmids):
+                    missing_pmids = [
+                        pmid
+                        for pmid in selected_pmids
+                        if not any(a.pmid == pmid for a in articles)
+                    ]
+                    logger.debug(f"Fetching {len(missing_pmids)} missing articles")
+                    fetched_articles = self.get_articles(missing_pmids)
+                    articles.extend(fetched_articles)
             except json.JSONDecodeError:
                 logger.error(
                     f"Error parsing pubmed_ids_json for denial {denial.denial_id}"
                 )
 
-        # If we have selected pmids, use those preferentially
-        if selected_pmids:
-            logger.info(
-                f"Using {len(selected_pmids)} pre-selected PubMed articles for denial {denial.denial_id}"
+        # If we still don't have any articles (no selected PMIDs or couldn't find them), search for some
+        if not articles:
+            logger.debug(
+                f"No pre-selected articles found, searching for PubMed articles"
             )
-            for pmid in selected_pmids:
-                article_futures.append(
-                    pubmed_executor.submit(self.do_article_summary, pmid)
-                )
-        else:
-            # PubMed - fallback to regular search if no specific articles selected
             mini_articles = self.find_pubmed_articles_for_denial(
                 denial, timeout=(timeout / 2.0)
             )
-            for article in mini_articles:
-                article_id = article.pmid
-                logger.debug(f"Loading {article_id}")
-                article_futures.append(
-                    pubmed_executor.submit(self.do_article_summary, article_id)
-                )
-        # Get the articles that we've summarized
-        t = timeout / 2.0
-        for f in article_futures:
-            try:
-                result = f.result(timeout=t)
-                if result is not None:
-                    articles.append(result)
-                t = t - 1
-            except Exception as e:
-                logger.debug(
-                    f"Skipping appending article from {f} due to {e} of {type(e)}"
-                )
-        if len(articles) > 0:
+
+            # Get the article details for each mini article
+            pmids = [article.pmid for article in mini_articles]
+            articles = self.get_articles(pmids)
+
+        # Format the articles for context
+        if articles:
             return "\n".join(self.format_article_short(article) for article in articles)
         else:
             return ""

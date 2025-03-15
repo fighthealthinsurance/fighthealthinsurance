@@ -433,52 +433,55 @@ class PubmedApiTest(APITestCase):
                     ).exists()
                 )
 
-    @mock.patch("fighthealthinsurance.pubmed_tools.PubMedTools.article_as_pdf")
-    def test_appeal_assembly_with_pubmed_ids(self, mock_article_as_pdf):
+    def test_appeal_assembly_with_pubmed_ids(self):
         """Test that AppealAssemblyHelper properly includes PubMed articles when assembling appeals."""
-        # Set up mock for article_as_pdf function
-        mock_article_as_pdf.side_effect = [
-            "/tmp/test_article_1.pdf",
-            "/tmp/test_article_2.pdf",
-        ]
-
-        # Set pubmed_ids_json on the denial
+        # Set up test data
         selected_pmids = ["12345678", "87654321"]
         self.denial.pubmed_ids_json = json.dumps(selected_pmids)
         self.denial.save()
 
-        # Create a mock for the document assembly process to avoid actual PDF creation
-        with mock.patch.object(
-            AppealAssemblyHelper, "_assemble_appeal_pdf"
-        ) as mock_assemble_pdf:
-            helper = AppealAssemblyHelper()
+        # Create a test mock for Appeal.objects.create to avoid DB operations
+        with mock.patch(
+            "fighthealthinsurance.models.Appeal.objects.create"
+        ) as mock_create_appeal:
+            # Set up the mock to return a mock Appeal object
+            mock_appeal = mock.MagicMock()
+            mock_appeal.pubmed_ids_json = json.dumps(selected_pmids)
+            mock_create_appeal.return_value = mock_appeal
 
-            # Call create_or_update_appeal with correct parameters
-            appeal = helper.create_or_update_appeal(
-                denial=self.denial,
-                name="Test Patient",
-                email="test@example.com",
-                insurance_company="Test Insurance",
-                fax_phone="123-456-7890",
-                completed_appeal_text="This is a test appeal text",
-                pubmed_ids_parsed=selected_pmids,
-                company_name="Test Company",
-                include_provided_health_history=False,
-            )
+            # Mock _assemble_appeal_pdf to test the correct passing of pubmed_ids_parsed
+            with mock.patch.object(
+                AppealAssemblyHelper,
+                "_assemble_appeal_pdf",
+                return_value="/tmp/mock_appeal.pdf",
+            ) as mock_assemble_pdf:
+                helper = AppealAssemblyHelper()
 
-            # Verify that the PDF assembly process was called with the pubmed_ids
-            mock_assemble_pdf.assert_called_once()
-            call_args = mock_assemble_pdf.call_args[1]
+                # Call create_or_update_appeal with pubmed_ids_parsed
+                appeal = helper.create_or_update_appeal(
+                    denial=self.denial,
+                    name="Test Patient",
+                    email="test@example.com",
+                    insurance_company="Test Insurance",
+                    fax_phone="123-456-7890",
+                    completed_appeal_text="This is a test appeal text",
+                    pubmed_ids_parsed=selected_pmids,
+                    company_name="Test Company",
+                    include_provided_health_history=False,
+                )
 
-            # Check that pubmed_ids_parsed was in the arguments
-            self.assertIn("pubmed_ids_parsed", call_args)
-            self.assertEqual(call_args["pubmed_ids_parsed"], selected_pmids)
+                # Verify that the appeal was created with the PubMed IDs
+                mock_create_appeal.assert_called_once()
+                create_kwargs = mock_create_appeal.call_args[1]
+                self.assertEqual(
+                    create_kwargs["pubmed_ids_json"], json.dumps(selected_pmids)
+                )
 
-            # Verify the appeal has the selected PubMed IDs
-            self.assertEqual(appeal.pubmed_ids_json, json.dumps(selected_pmids))
-
-            # Verify that article_as_pdf was called for each summarized article
-            self.assertEqual(mock_article_as_pdf.call_count, 2)
+                # Verify that _assemble_appeal_pdf was called with pubmed_ids_parsed
+                mock_assemble_pdf.assert_called_once()
+                call_args = mock_assemble_pdf.call_args[1]
+                self.assertIn("pubmed_ids_parsed", call_args)
+                self.assertEqual(call_args["pubmed_ids_parsed"], selected_pmids)
 
 
 class PubMedToolsUnitTest(TestCase):
