@@ -79,21 +79,13 @@ def send_verification_email(request, user: "User") -> None:
         )
     )
 
-    try:
-        send_fallback_email(
-            mail_subject,
-            "acc_active_email",
-            {
-                "user": user,
-                "domain": current_site.domain,
-                "activation_link": activation_link,
-            },
-            user.email,
-        )
-        logger.info(f"Verification email sent to {user.email}")
-    except (SMTPException, ImproperlyConfigured) as e:
-        logger.error(f"Failed to send verification email to {user.email}: {e}")
-        raise
-    except Exception as e:
-        logger.error(f"An unexpected error occurred when sending email to {user.email}: {e}")
-        raise
+    send_fallback_email(
+        mail_subject,
+        "acc_active_email",
+        {
+            "user": user,
+            "domain": current_site.domain,
+            "activation_link": activation_link,
+        },
+        user.email,
+    )

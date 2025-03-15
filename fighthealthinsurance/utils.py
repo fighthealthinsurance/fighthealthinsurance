@@ -48,8 +48,12 @@ def is_convertible_to_int(s):
         return False
 
 
-def send_fallback_email(subject: str, template_name: str, context, to_email: str) -> bool:
-    """Send an email with both text and HTML fallback, ensuring proper error handling."""
+def send_fallback_email(subject: str, template_name: str, context, to_email: str):
+    """Send an email with both text and HTML fallback.
+
+    Note: We expect our SMTP server to accept emails reliably.
+    If email sending fails, we raise an exception instead of suppressing errors.
+    """
     try:
         if not to_email:
             raise ValidationError("Recipient email is required.")
@@ -75,24 +79,23 @@ def send_fallback_email(subject: str, template_name: str, context, to_email: str
             msg.attach_alternative(html_content, "text/html")
 
         msg.send()
-        return True  # Email sent successfully
+        logger.info(f"Verification email successfully sent to {to_email}")
 
-    except BadHeaderError:
+    except BadHeaderError as e:
         logger.error("Invalid email header detected.")
-        return False
+        raise
 
     except SMTPException as e:
         logger.error(f"SMTP error while sending email to {to_email}: {e}")
-        return False
+        raise
 
     except ImproperlyConfigured as e:
         logger.error(f"Email settings misconfigured: {e}")
-        return False
+        raise
 
     except Exception as e:
         logger.error(f"Unexpected error while sending email to {to_email}: {e}", exc_info=True)
-        return False
-
+        raise
 
 async def check_call(cmd, max_retries=0, **kwargs):
     logger.debug(f"Running: {cmd}")
