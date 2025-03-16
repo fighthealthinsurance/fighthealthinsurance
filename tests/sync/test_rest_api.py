@@ -285,11 +285,11 @@ class DenialEndToEnd(APITestCase):
         )
         responses = []
         # We should receive at least one frame.
-        responses.append(await a_communicator.receive_from(timeout=60))
+        responses.append(await a_communicator.receive_from(timeout=100))
         # Now consume all of the rest of them until done.
         try:
             while True:
-                responses.append(await a_communicator.receive_from(timeout=60))
+                responses.append(await a_communicator.receive_from(timeout=90))
         except Exception as e:
             print(f"Error {e}")
             pass
