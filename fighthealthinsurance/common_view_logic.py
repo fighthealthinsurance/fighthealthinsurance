@@ -405,7 +405,7 @@ class AppealAssemblyHelper:
                 pubmed_ids_parsed
             )
             logger.debug(f"Retrieved {len(pubmed_docs)} PubMed articles")
-            if pubmed_docs and len(pubmed_docs) > 0:
+            if pubmed_docs:
                 pubmed_docs_paths = [
                     x for x in map(pmt.article_as_pdf, pubmed_docs) if x is not None
                 ]

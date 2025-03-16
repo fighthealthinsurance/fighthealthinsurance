@@ -115,14 +115,19 @@ class PubMedTools(object):
         self, denial: Denial, timeout=90.0
     ) -> List[PubMedMiniArticle]:
         pmids: List[str] = []
+        procedure_opt = denial.procedure if denial.procedure else ""
+        diagnosis_opt = denial.diagnosis if denial.diagnosis else ""
+        query = f"{procedure_opt} {diagnosis_opt}".strip()
         # Allow us to remove duplicates while preserving order
         unique_pmids: Set[str] = set()
-        queries = [
-            f"{denial.procedure} {denial.diagnosis}",
-        ]
+        queries = set(
+            query,
+            procedure_opt,
+            diagnosis_opt,
+        )
         for since in self.since_list:
-            count = 0
             for query in queries:
+                count = 0
                 if query is None or query.strip() == "":
                     continue
                 new_pmids = self.find_pubmed_article_ids_for_query(query, since=since)
@@ -171,41 +176,46 @@ class PubMedTools(object):
         """
         Kind of hacky RAG routine that uses PubMed.
         """
-        articles: list[PubMedArticleSummarized] = []
-
         procedure_opt = denial.procedure if denial.procedure else ""
         diagnosis_opt = denial.diagnosis if denial.diagnosis else ""
         query = f"{procedure_opt} {diagnosis_opt}".strip()
-        if not query or query.strip() == "":
-            return articles
+        articles: list[PubMedArticleSummarized] = []
 
         # Check if the denial has specific pubmed IDs selected already
         selected_pmids: Optional[list[str]] = None
         if denial.pubmed_ids_json and denial.pubmed_ids_json.strip():
             try:
                 selected_pmids = json.loads(denial.pubmed_ids_json)
-                logger.info(
-                    f"Using {len(selected_pmids)} pre-selected PubMed articles for denial {denial.denial_id}"
-                )
+                if selected_pmids:  # Check if not None and not empty
+                    logger.info(
+                        f"Using {len(selected_pmids)} pre-selected PubMed articles for denial {denial.denial_id}"
+                    )
 
-                # Directly fetch the selected articles from the database
-                articles = list(
-                    PubMedArticleSummarized.objects.filter(pmid__in=selected_pmids)
-                )
-                logger.debug(
-                    f"Found {len(articles)} pre-selected articles in the database"
-                )
+                    # Directly fetch the selected articles from the database
+                    articles = list(
+                        PubMedArticleSummarized.objects.filter(pmid__in=selected_pmids)
+                    )
+                    logger.debug(
+                        f"Found {len(articles)} pre-selected articles in the database"
+                    )
 
-                # If we couldn't find all the articles in the database, try to fetch them
-                if len(articles) < len(selected_pmids):
-                    missing_pmids = [
-                        pmid
-                        for pmid in selected_pmids
-                        if not any(a.pmid == pmid for a in articles)
-                    ]
-                    logger.debug(f"Fetching {len(missing_pmids)} missing articles")
-                    fetched_articles = self.get_articles(missing_pmids)
-                    articles.extend(fetched_articles)
+                    # If we couldn't find all the articles in the database, try to fetch them
+                    if (
+                        selected_pmids
+                        and articles
+                        and len(articles) < len(selected_pmids)
+                    ):
+                        missing_pmids = []
+                        for pmid in selected_pmids:
+                            if not any(a.pmid == pmid for a in articles):
+                                missing_pmids.append(pmid)
+
+                        if missing_pmids:
+                            logger.debug(
+                                f"Fetching {len(missing_pmids)} missing articles"
+                            )
+                            fetched_articles = self.get_articles(missing_pmids)
+                            articles.extend(fetched_articles)
             except json.JSONDecodeError:
                 logger.error(
                     f"Error parsing pubmed_ids_json for denial {denial.denial_id}"
@@ -216,6 +226,9 @@ class PubMedTools(object):
             logger.debug(
                 f"No pre-selected articles found, searching for PubMed articles"
             )
+            if not query or query.strip() == "":
+                return ""  # Return empty string if no query available
+
             mini_articles = self.find_pubmed_articles_for_denial(
                 denial, timeout=(timeout / 2.0)
             )
@@ -249,7 +262,9 @@ class PubMedTools(object):
                 # Look for existing articles in the database first
                 matching_articles = PubMedArticleSummarized.objects.filter(pmid=pmid)
                 if matching_articles.exists():
-                    pubmed_docs.append(matching_articles.first())
+                    article = matching_articles.first()
+                    if article is not None:
+                        pubmed_docs.append(article)
                 else:
                     # Article not in database, fetch it
                     fetched = pubmed_fetcher.article_by_pmid(pmid)
@@ -259,18 +274,19 @@ class PubMedTools(object):
                             doi=fetched.doi if hasattr(fetched, "doi") else "",
                             title=(
                                 fetched.title.replace("\x00", "")
-                                if hasattr(fetched, "title")
+                                if hasattr(fetched, "title") and fetched.title
                                 else ""
                             ),
                             abstract=(
                                 fetched.abstract.replace("\x00", "")
-                                if hasattr(fetched, "abstract")
+                                if hasattr(fetched, "abstract") and fetched.abstract
                                 else ""
                             ),
                             text=(
                                 fetched.content.text.replace("\x00", "")
                                 if hasattr(fetched, "content")
                                 and hasattr(fetched.content, "text")
+                                and fetched.content.text
                                 else ""
                             ),
                         )
