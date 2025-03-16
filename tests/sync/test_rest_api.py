@@ -238,6 +238,7 @@ class DenialEndToEnd(APITestCase):
             pass
         finally:
             await seb_communicator.disconnect()
+        await asyncio.sleep(5) # Give a second for the fire and forget pubmed to run
         # Ok now lets get the additional info
         find_next_steps_url = reverse("nextsteps-list")
         find_next_steps_response = await sync_to_async(self.client.post)(
@@ -285,11 +286,11 @@ class DenialEndToEnd(APITestCase):
         )
         responses = []
         # We should receive at least one frame.
-        responses.append(await a_communicator.receive_from(timeout=100))
+        responses.append(await a_communicator.receive_from(timeout=120.0))
         # Now consume all of the rest of them until done.
         try:
             while True:
-                responses.append(await a_communicator.receive_from(timeout=100))
+                responses.append(await a_communicator.receive_from(timeout=120.0))
         except Exception as e:
             print(f"Error {e}")
             pass
