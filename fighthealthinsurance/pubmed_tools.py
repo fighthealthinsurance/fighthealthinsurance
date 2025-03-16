@@ -120,7 +120,7 @@ class PubMedTools(object):
         query = f"{procedure_opt} {diagnosis_opt}".strip()
         # Allow us to remove duplicates while preserving order
         unique_pmids: Set[str] = set()
-        queries = set(
+        queries: Set[str] = set(
             query,
             procedure_opt,
             diagnosis_opt,
