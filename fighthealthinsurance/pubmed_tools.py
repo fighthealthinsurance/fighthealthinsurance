@@ -112,7 +112,7 @@ class PubMedTools(object):
         return pmids
 
     def find_pubmed_articles_for_denial(
-        self, denial: Denial, timeout=90.0
+        self, denial: Denial, timeout=60.0
     ) -> List[PubMedMiniArticle]:
         pmids: List[str] = []
         procedure_opt = denial.procedure if denial.procedure else ""

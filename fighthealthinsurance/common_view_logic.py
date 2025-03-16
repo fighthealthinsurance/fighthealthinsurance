@@ -708,7 +708,7 @@ class FindNextStepsHelper:
         if date_of_service is not None:
             denial.date_of_service = date_of_service
             if "date of service" not in existing_answers:
-                existing_answers["date of service"] = date_of_service
+                existing_answers["date_of service"] = date_of_service
         if in_network is not None:
             denial.provider_in_network = in_network
             if "in_network" not in existing_answers:
@@ -938,7 +938,6 @@ class DenialCreatorHelper:
         # Optionally:
         # Fire off some async requests to the model to extract info.
         # denial_id = denial.denial_id
-        # executor.submit(cls.start_background, denial_id)
         # For now we fire this off "later" on a dedicated page with javascript magic.
         r = re.compile(r"Group Name:\s*(.*?)(,|)\s*(INC|CO|LTD|LLC)\s+", re.IGNORECASE)
         g = r.search(denial_text)
@@ -955,10 +954,6 @@ class DenialCreatorHelper:
         return cls._update_denial(
             denial=denial, health_history=health_history, plan_documents=plan_documents
         )
-
-    @classmethod
-    def start_background(cls, denial_id):
-        async_to_sync(cls.run_background_extractions)(denial_id)
 
     @classmethod
     async def extract_entity(cls, denial_id: int) -> AsyncIterator[str]:
@@ -1043,6 +1038,24 @@ class DenialCreatorHelper:
         finally:
             denial.extract_procedure_diagnosis_finished = True
             await denial.asave()
+            # Launch a "fire and forget" task to find related PubMed articles
+            # now that we have diagnosis and procedure information
+            if denial.procedure or denial.diagnosis:
+
+                async def find_pubmed_articles():
+                    try:
+                        pubmed_tool = PubMedTools()
+                        # Find related articles based on diagnosis and procedure
+                        pubmed_tool.find_pubmed_articles_for_denial(
+                            denial, timeout=60.0
+                        )
+                    except Exception as e:
+                        logger.opt(exception=True).warning(
+                            f"Failed to find PubMed articles for denial {denial_id}: {e}"
+                        )
+
+                # Create the task but don't await it - fire and forget
+                asyncio.create_task(find_pubmed_articles())
 
     @classmethod
     async def extract_set_insurance_company(cls, denial_id):
@@ -1149,30 +1162,6 @@ class DenialCreatorHelper:
                 f"Failed to extract date of service for denial {denial_id}: {e}"
             )
         return None
-
-    @classmethod
-    async def run_background_extractions(cls, denial_id):
-        """Run extraction tasks in the background with timeouts"""
-        # Create tasks for all extractions and run them in parallel
-        tasks = [
-            cls.extract_set_fax_number(denial_id),
-            cls.extract_set_insurance_company(denial_id),
-            cls.extract_set_plan_id(denial_id),
-            cls.extract_set_claim_id(denial_id),
-            cls.extract_set_date_of_service(denial_id),
-            cls.extract_set_denialtype(denial_id),
-            cls.extract_set_denial_and_diagnosis(denial_id),
-        ]
-
-        # Run all tasks with timeouts
-        try:
-            await asyncio.gather(
-                *[asyncio.wait_for(task, timeout=15.0) for task in tasks]
-            )
-        except asyncio.TimeoutError:
-            logger.warning(f"Some extraction tasks timed out for denial {denial_id}")
-        except Exception as e:
-            logger.opt(exception=True).warning(f"Error in background tasks: {e}")
 
     @classmethod
     async def extract_set_fax_number(cls, denial_id):
