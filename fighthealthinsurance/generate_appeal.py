@@ -430,6 +430,7 @@ class AppealGenerator(object):
                 return []
             for model in model_backends:
                 try:
+                    logger.debug(f"Getting result on {model} backend for {model_name}")
                     return _get_model_result(
                         model=model,
                         prompt=prompt,
@@ -653,4 +654,6 @@ class AppealGenerator(object):
             logger.warning(f"Adding backup calls {backup_calls}")
             appeals = as_available_nested(make_async_model_calls(backup_calls))
         logger.debug(f"Sending back {appeals}")
+        appeals_list = list(appeals)
+        logger.debug(f"Appeals list was {appeals_list}")
         return appeals
