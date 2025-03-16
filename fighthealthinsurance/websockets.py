@@ -18,6 +18,7 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
 
     async def receive(self, text_data):
         data = json.loads(text_data)
+        logger.debug("Starting generation of appeals...")
         aitr = common_view_logic.AppealsBackendHelper.generate_appeals(data)
         async for record in aitr:
             logger.debug(f"Sending record {record}")
