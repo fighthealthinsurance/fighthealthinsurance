@@ -122,8 +122,6 @@ class PubMedTools(object):
         unique_pmids: Set[str] = set()
         queries: Set[str] = {
             query,
-            procedure_opt,
-            diagnosis_opt,
         }
         for since in self.since_list:
             for query in queries:
