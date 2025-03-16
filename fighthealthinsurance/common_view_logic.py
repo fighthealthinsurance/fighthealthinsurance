@@ -708,7 +708,9 @@ class FindNextStepsHelper:
         if date_of_service is not None:
             denial.date_of_service = date_of_service
             if "date of service" not in existing_answers:
-                existing_answers["date_of service"] = date_of_service
+                existing_answers["date of service"] = date_of_service
+            if "date_of_service" not in existing_answers:
+                existing_answers["date_of_service"] = date_of_service
         if in_network is not None:
             denial.provider_in_network = in_network
             if "in_network" not in existing_answers:
