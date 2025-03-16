@@ -19,7 +19,15 @@ from fighthealthinsurance.process_denial import DenialBase
 
 
 class RemoteModelLike(DenialBase):
-    def infer(self, prompt, patient_context, plan_context, pubmed_context, infer_type):
+    def infer(
+        self,
+        prompt,
+        patient_context,
+        plan_context,
+        pubmed_context,
+        infer_type,
+        for_patient: bool,
+    ):
         """
         Abstract method for inference
 
@@ -208,6 +216,7 @@ class RemoteOpenLike(RemoteModel):
         plan_context: Optional[str],
         pubmed_context: Optional[str],
         infer_type: str,
+        for_patient: bool = True,
     ) -> List[Future[Tuple[str, Optional[str]]]]:
         logger.debug(f"Running inference on {self} of type {infer_type}")
         temperatures = [0.5]

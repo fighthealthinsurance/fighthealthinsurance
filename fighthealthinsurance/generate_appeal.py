@@ -405,6 +405,10 @@ class AppealGenerator(object):
         except Exception as e:
             logger.debug(f"Error {e} looking up context for {denial}.")
 
+        for_patient = (
+            denial.primary_professional is None or not denial.professional_to_finish
+        )
+
         # TODO: use the streaming and cancellable APIs (maybe some fancy JS on the client side?)
 
         # For any model that we have a prompt for try to call it and return futures
@@ -433,6 +437,7 @@ class AppealGenerator(object):
                         plan_context=plan_context,
                         infer_type=infer_type,
                         pubmed_context=pubmed_context,
+                        for_patient=for_patient,
                     )
                 except Exception as e:
                     logger.debug(f"Backend {model} failed {e}")
@@ -446,6 +451,7 @@ class AppealGenerator(object):
             plan_context: Optional[str],
             infer_type: str,
             pubmed_context: Optional[str],
+            for_patient: bool,
         ) -> List[Future[Tuple[str, Optional[str]]]]:
             # If the model has parallelism use it
             results = None
@@ -459,6 +465,7 @@ class AppealGenerator(object):
                         plan_context=plan_context,
                         pubmed_context=pubmed_context,
                         infer_type=infer_type,
+                        for_patient=for_patient,
                     )
                 else:
                     logger.debug(f"Using system level parallel inference for {model}")
@@ -470,6 +477,7 @@ class AppealGenerator(object):
                             plan_context=plan_context,
                             infer_type=infer_type,
                             pubmed_context=pubmed_context,
+                            for_patient=for_patient,
                         )
                     ]
             except Exception as e:
@@ -484,6 +492,7 @@ class AppealGenerator(object):
                         plan_context=plan_context,
                         infer_type=infer_type,
                         pubmed_context=pubmed_context,
+                        for_patient=for_patient,
                     )
                 ]
             logger.debug(

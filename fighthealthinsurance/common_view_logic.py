@@ -861,6 +861,8 @@ class DenialCreatorHelper:
             primary_professional = None
         if not isinstance(creating_professional, ProfessionalUser):
             creating_professional = None
+        # For the pro flow we default to pro to finish
+        professional_to_finish = not creating_professional
         # If we don't have a denial we're making a new one
         if denial is None:
             try:
@@ -875,6 +877,7 @@ class DenialCreatorHelper:
                     patient_user=patient_user,
                     insurance_company=insurance_company,
                     patient_visible=patient_visible,
+                    professional_to_finish=professional_to_finish,
                 )
             except Exception as e:
                 # This is a temporary hack to drop non-ASCII characters
@@ -894,6 +897,7 @@ class DenialCreatorHelper:
                     patient_user=patient_user,
                     insurance_company=insurance_company,
                     patient_visible=patient_visible,
+                    professional_to_finish=professional_to_finish,
                 )
         else:
             # Directly update denial object fields instead of using denial.update()
@@ -1409,23 +1413,29 @@ class AppealsBackendHelper:
         async def sub_in_appeals(appeal: dict[str, str]) -> dict[str, str]:
             await asyncio.sleep(0)
             s = Template(appeal["content"])
-            ret = s.safe_substitute(
-                {
-                    "insurance_company": denial.insurance_company
-                    or "{insurance_company}",
-                    "[Insurance Company Name]": denial.insurance_company
-                    or "{insurance_company}",
-                    "[Insert Date]": denial.date or "{date}",
-                    "[Reference Number from Denial Letter]": denial.claim_id
-                    or "{claim_id}",
-                    "[Claim ID]": denial.claim_id or "{claim_id}",
-                    "{claim_id}": denial.claim_id or "{claim_id}",
-                    "[Diagnosis]": denial.diagnosis or "{diagnosis}",
-                    "[Procedure]": denial.procedure or "{procedure}",
-                    "{diagnosis}": denial.diagnosis or "{diagnosis}",
-                    "{procedure}": denial.procedure or "{procedure}",
-                }
-            )
+            subs = {
+                "insurance_company": denial.insurance_company or "{insurance_company}",
+                "[Insurance Company Name]": denial.insurance_company
+                or "{insurance_company}",
+                "[Insert Date]": denial.date or "{date}",
+                "[Reference Number from Denial Letter]": denial.claim_id
+                or "{claim_id}",
+                "[Claim ID]": denial.claim_id or "{claim_id}",
+                "{claim_id}": denial.claim_id or "{claim_id}",
+                "[Diagnosis]": denial.diagnosis or "{diagnosis}",
+                "[Procedure]": denial.procedure or "{procedure}",
+                "{diagnosis}": denial.diagnosis or "{diagnosis}",
+                "{procedure}": denial.procedure or "{procedure}",
+            }
+            if denial.patient_user is not None:
+                subs["[Patient Name]"] = denial.patient_user.get_legal_name()
+            if denial.primary_professional:
+                subs["[Professional Name]"] = (
+                    denial.primary_professional.get_full_name()
+                )
+            if denial.domain:
+                subs["[Professional Address]"] = denial.domain.get_address()
+            ret = s.safe_substitute(subs)
             appeal["content"] = ret
             return appeal
 
