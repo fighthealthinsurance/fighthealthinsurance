@@ -654,6 +654,4 @@ class AppealGenerator(object):
             logger.warning(f"Adding backup calls {backup_calls}")
             appeals = as_available_nested(make_async_model_calls(backup_calls))
         logger.debug(f"Sending back {appeals}")
-        appeals_list = list(appeals)
-        logger.debug(f"Appeals list was {appeals_list}")
-        return appeals_list
+        return appeals
