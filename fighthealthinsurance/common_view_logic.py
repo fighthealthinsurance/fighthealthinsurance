@@ -275,6 +275,12 @@ class AppealAssemblyHelper:
             t.flush()
             t.seek(0)
             doc_fname = os.path.basename(t.name)
+
+            # Create JSON representation of pubmed_ids if provided
+            pubmed_ids_json = None
+            if pubmed_ids_parsed:
+                pubmed_ids_json = json.dumps(pubmed_ids_parsed)
+
             if appeal is None:
                 appeal = Appeal.objects.create(
                     for_denial=denial,
@@ -285,6 +291,7 @@ class AppealAssemblyHelper:
                     creating_professional=creating_professional,
                     patient_user=patient_user,
                     domain=domain,
+                    pubmed_ids_json=pubmed_ids_json,
                 )
             else:
                 # Instead of using update(), set values individually preserving existing ones if not provided
@@ -303,6 +310,8 @@ class AppealAssemblyHelper:
                     appeal.patient_user = patient_user
                 if domain:
                     appeal.domain = domain
+                if pubmed_ids_json:
+                    appeal.pubmed_ids_json = pubmed_ids_json
             if pending is not None:
                 appeal.pending = pending
             appeal.save()
@@ -390,14 +399,18 @@ class AppealAssemblyHelper:
 
         # PubMed articles
         if pubmed_ids_parsed is not None and len(pubmed_ids_parsed) > 0:
+            logger.debug(f"Processing PubMed articles: {pubmed_ids_parsed}")
             pmt = PubMedTools()
             pubmed_docs: list[PubMedArticleSummarized] = pmt.get_articles(
                 pubmed_ids_parsed
             )
-            pubmed_docs_paths = [
-                x for x in map(pmt.article_as_pdf, pubmed_docs) if x is not None
-            ]
-            files_for_fax.extend(pubmed_docs_paths)
+            logger.debug(f"Retrieved {len(pubmed_docs)} PubMed articles")
+            if pubmed_docs:
+                pubmed_docs_paths = [
+                    x for x in map(pmt.article_as_pdf, pubmed_docs) if x is not None
+                ]
+                files_for_fax.extend(pubmed_docs_paths)
+                logger.debug(f"Added {len(pubmed_docs_paths)} PubMed PDFs to fax")
         # TODO: Add more generic DOI handler.
 
         # Combine and return path

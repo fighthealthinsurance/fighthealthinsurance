@@ -35,7 +35,14 @@ from fighthealthinsurance.rest_mixins import (
     DeleteMixin,
     DeleteOnlyMixin,
 )
-from fighthealthinsurance.models import Appeal, Denial, DenialQA, AppealAttachment
+from fighthealthinsurance.models import (
+    Appeal,
+    Denial,
+    DenialQA,
+    AppealAttachment,
+    PubMedMiniArticle,
+)
+from fighthealthinsurance.pubmed_tools import PubMedTools
 
 from fhi_users.models import (
     UserDomain,
@@ -54,6 +61,7 @@ else:
     User = get_user_model()
 
 appeal_assembly_helper = AppealAssemblyHelper()
+pubmed_tools = PubMedTools()
 
 
 class DataRemovalViewSet(viewsets.ViewSet, DeleteMixin, DeleteOnlyMixin):
@@ -98,6 +106,10 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
     def get_serializer_class(self):
         if self.action == "create":
             return serializers.DenialFormSerializer
+        elif self.action == "get_candidate_articles":
+            return serializers.GetCandidateArticlesSerializer
+        elif self.action == "select_articles":
+            return serializers.SelectArticlesSerializer
         else:
             return None
 
@@ -179,6 +191,49 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
             )
             denial_response_info.appeal_id = appeal.id
         return serializers.DenialResponseInfoSerializer(instance=denial_response_info)
+
+    @extend_schema(responses=serializers.PubMedMiniArticleSerializer(many=True))
+    @action(detail=False, methods=["post"])
+    def get_candidate_articles(self, request: Request) -> Response:
+        """Get candidate PubMed articles for a denial based on diagnosis and procedure."""
+        serializer = self.deserialize(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        current_user: User = request.user  # type: ignore
+        denial = get_object_or_404(
+            Denial.filter_to_allowed_denials(current_user),
+            denial_id=serializer.validated_data["denial_id"],
+        )
+
+        articles = pubmed_tools.find_pubmed_articles_for_denial(denial)
+
+        return Response(
+            serializers.PubMedMiniArticleSerializer(articles, many=True).data,
+            status=status.HTTP_200_OK,
+        )
+
+    @extend_schema(responses=serializers.StatusResponseSerializer)
+    @action(detail=False, methods=["post"])
+    def select_articles(self, request: Request) -> Response:
+        """Select PubMed articles to include in the denial context."""
+        serializer = self.deserialize(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        current_user: User = request.user  # type: ignore
+        denial = get_object_or_404(
+            Denial.filter_to_allowed_denials(current_user),
+            denial_id=serializer.validated_data["denial_id"],
+        )
+
+        pmids = serializer.validated_data["pmids"]
+        denial.pubmed_ids_json = json.dumps(pmids)
+        denial.save()
+        return Response(
+            serializers.SuccessSerializer(
+                {"message": f"Selected {len(pmids)} articles for this context"}
+            ).data,
+            status=status.HTTP_200_OK,
+        )
 
 
 class QAResponseViewSet(viewsets.ViewSet, CreateMixin):
