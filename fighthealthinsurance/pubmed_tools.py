@@ -211,8 +211,13 @@ class PubMedTools(object):
                     if not query or query.strip() == "":
                         return ""  # Return empty string if no query available
 
-                    selected_pmids = self.find_pubmed_articles_for_denial(
-                        denial, timeout=(timeout / 2.0)
+                    selected_pmids = list(
+                        map(
+                            lambda x: x.pmid,
+                            self.find_pubmed_articles_for_denial(
+                                denial, timeout=(timeout / 2.0)
+                            ),
+                        )
                     )
 
                 # Directly fetch the selected articles from the database
