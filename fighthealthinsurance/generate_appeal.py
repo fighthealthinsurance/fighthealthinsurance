@@ -645,11 +645,12 @@ class AppealGenerator(object):
             map(lambda appeal: executor.submit(random_delay, appeal), initial_appeals)
         )
         appeals: Iterator[str] = as_available_nested(generated_text_futures)
+        appeals = itertools.chain(appeals, as_available_nested(delayed_initial_appeals))
         # Check and make sure we have some AI powered results
         try:
             appeals = itertools.chain([appeals.__next__()], appeals)
         except StopIteration:
+            logger.warning(f"Adding backup calls {backup_calls}")
             appeals = as_available_nested(make_async_model_calls(backup_calls))
-        appeals = itertools.chain(appeals, as_available_nested(delayed_initial_appeals))
         logger.debug(f"Sending back {appeals}")
         return appeals
