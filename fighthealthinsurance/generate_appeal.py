@@ -656,4 +656,4 @@ class AppealGenerator(object):
         logger.debug(f"Sending back {appeals}")
         appeals_list = list(appeals)
         logger.debug(f"Appeals list was {appeals_list}")
-        return appeals
+        return appeals_list
