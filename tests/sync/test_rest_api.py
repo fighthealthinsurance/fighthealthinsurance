@@ -2,6 +2,8 @@
 
 from asgiref.sync import sync_to_async
 
+import asyncio
+
 import pytest
 from channels.testing import WebsocketCommunicator
 
