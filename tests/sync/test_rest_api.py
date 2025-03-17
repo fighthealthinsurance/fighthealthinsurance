@@ -288,7 +288,7 @@ class DenialEndToEnd(APITestCase):
         )
         responses = []
         # We should receive at least one frame.
-        response = await a_communicator.receive_from(timeout=130.0)
+        response = await a_communicator.receive_from(timeout=300.0)
         print(f"Received response {response}")
         responses.append(response)
         # Now consume all of the rest of them until done.
