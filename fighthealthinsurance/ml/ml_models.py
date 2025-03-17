@@ -39,8 +39,8 @@ class RemoteModelLike(DenialBase):
     @abstractmethod
     async def _infer(
         self,
-        system_prompt,
-        prompt,
+        system_prompts: list[str],
+        prompt: str,
         patient_context=None,
         plan_context=None,
         pubmed_context=None,
@@ -67,6 +67,26 @@ class RemoteModelLike(DenialBase):
     ) -> Tuple[Optional[str], Optional[str]]:
         """Get the procedure and diagnosis from the prompt"""
         return (None, None)
+
+    async def get_appeal_questions(
+        self,
+        denial_text: str,
+        patient_context: Optional[str] = None,
+        plan_context: Optional[str] = None,
+    ) -> List[str]:
+        """
+        Generate a list of questions that could help craft a better appeal for
+        this specific denial.
+
+        Args:
+            denial_text: The text of the denial letter
+            patient_context: Optional patient health history or context
+            plan_context: Optional insurance plan context
+
+        Returns:
+            A list of questions that would help create a better appeal
+        """
+        return []
 
     async def get_fax_number(self, prompt) -> Optional[str]:
         """
@@ -172,14 +192,14 @@ class RemoteOpenLike(RemoteModel):
         api_base,
         token,
         model,
-        system_prompts,
+        system_prompts_map,
         backup_api_base=None,
         expensive=False,
     ):
         self.api_base = api_base
         self.token = token
         self.model = model
-        self.system_prompts = system_prompts
+        self.system_prompts_map = system_prompts_map
         self.max_len = 4096 * 8
         self._timeout = 90
         self.invalid_diag_procedure_regex = re.compile(
@@ -194,6 +214,26 @@ class RemoteOpenLike(RemoteModel):
         )
         self.backup_api_base = backup_api_base
         self._expensive = expensive
+
+    def get_system_prompts(self, prompt_type: str, for_patient: bool = True) -> list[str]:
+        """
+        Get the appropriate system prompt based on type and audience.
+
+        Args:
+            prompt_type: The type of prompt to get (e.g., 'full', 'questions', etc.)
+            for_patient: Whether this is for patient (True) or professional (False)
+
+        Returns:
+            The system prompt as a string, or the first prompt if multiple are available
+        """
+        key = prompt_type
+        if not for_patient and f"{prompt_type}_not_patient" in self.system_prompts_map:
+            key = f"{prompt_type}_not_patient"
+
+        return self.system_prompts_map.get(
+            key,
+            ["Your are a helpful assistant with extensive medical knowledge who loves helping patients."]
+        )
 
     def bad_result(self, result: Optional[str]) -> bool:
         bad_ideas = [
@@ -223,9 +263,7 @@ class RemoteOpenLike(RemoteModel):
         if infer_type == "full" and not self._expensive:
             # Special case for the full one where we really want to explore the problem space
             temperatures = [0.6, 0.1]
-        system_prompts = self.system_prompts[infer_type]
-        if not for_patient and f"{infer_type}_not_patient" in self.system_prompts:
-            system_prompts = self.system_prompts[f"{infer_type}_not_patient"]
+        system_prompts = self.get_system_prompts(infer_type, for_patient)
         calls = itertools.chain.from_iterable(
             map(
                 lambda temperature: map(
@@ -401,7 +439,7 @@ class RemoteOpenLike(RemoteModel):
         self, prompt: str, patient_context: str, plan_context
     ) -> List[str]:
         result = await self._infer(
-            system_prompt=self.system_prompts["questions"],
+            system_prompts=self.get_system_prompts("question"),
             prompt=prompt,
             patient_context=patient_context,
             plan_context=plan_context,
@@ -415,16 +453,13 @@ class RemoteOpenLike(RemoteModel):
         self, prompt: str
     ) -> tuple[Optional[str], Optional[str]]:
         logger.debug(f"Getting procedure and diagnosis for {self} w/ {prompt}")
-        if self.system_prompts["procedure"] is None:
-            logger.debug(f"No procedure message for {self.model} skipping")
-            return (None, None)
         model_response = await self._infer(
-            system_prompt=self.system_prompts["procedure"], prompt=prompt
+            system_prompts=self.get_system_prompts("procedure"), prompt=prompt
         )
         if model_response is None or "Diagnosis" not in model_response:
             logger.debug("Retrying query.")
             model_response = await self._infer(
-                system_prompt=self.system_prompts["procedure"], prompt=prompt
+                system_prompts=self.get_system_prompts("procedure"), prompt=prompt
             )
         if model_response is not None:
             responses: list[str] = model_response.split("\n")
@@ -456,33 +491,37 @@ class RemoteOpenLike(RemoteModel):
 
     async def _infer(
         self,
-        system_prompt,
+        system_prompts: list[str],
         prompt,
         patient_context=None,
         plan_context=None,
         pubmed_context=None,
         temperature=0.7,
     ) -> Optional[str]:
-        r = await self.__timeout_infer(
-            system_prompt=system_prompt,
-            prompt=prompt,
-            patient_context=patient_context,
-            plan_context=plan_context,
-            pubmed_context=pubmed_context,
-            temperature=temperature,
-            model=self.model,
-        )
-        if r is None and self.backup_api_base is not None:
+        r: Optional[str] = None
+        for system_prompt in system_prompts:
             r = await self.__timeout_infer(
                 system_prompt=system_prompt,
                 prompt=prompt,
                 patient_context=patient_context,
                 plan_context=plan_context,
-                temperature=temperature,
                 pubmed_context=pubmed_context,
+                temperature=temperature,
                 model=self.model,
-                api_base=self.backup_api_base,
             )
+            if r is None and self.backup_api_base is not None:
+                r = await self.__timeout_infer(
+                    system_prompt=system_prompt,
+                    prompt=prompt,
+                    patient_context=patient_context,
+                    plan_context=plan_context,
+                    temperature=temperature,
+                    pubmed_context=pubmed_context,
+                    model=self.model,
+                    api_base=self.backup_api_base,
+                )
+            if r is not None:
+                return r
         return r
 
     async def __timeout_infer(
@@ -600,7 +639,15 @@ class RemoteFullOpenLike(RemoteOpenLike):
                 """You must be concise. You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters to identify the requested procedure and, if available, the associated diagnosis. Each word costs an extra dollar. Provide a concise response with the procedure on one line starting with "Procedure" and Diagnsosis on another line starting with Diagnosis. Do not say not specified. Diagnosis can also be reason for treatment even if it's not a disease (like high risk homosexual behaviour for prep or preventitive and the name of the diagnosis). Remember each result on a seperated line."""
             ],
             "questions": [
-                """Given the appeal and the context what questions should we ask the user to provide context to help generate their appeal? Put each question on a new line."""
+                """You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Generate 5-10 specific, detailed questions that would help craft a more effective appeal for a health insurance denial. Focus on questions that would gather information about:
+1. Medical necessity of the procedure/treatment
+2. Prior treatments tried and their outcomes
+3. Supporting medical evidence or studies
+4. Details about the denial reason
+5. Patient's specific situation related to the diagnosis
+6. Impact on the patient's health without this treatment
+7. Relevant insurance policy details
+Keep each question on a separate line and make them directly applicable to the specific denial case."""
             ],
             "medically_necessary": [
                 """You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters. Each word costs an extra dollar. Please provide a concise response. Do not use the 3rd person when refering to the patient (e.g. don't say "the patient", "patient's", "his", "hers"), instead use the first persion (I, my, mine,etc.) when talking about the patient. You are not a review and should not mention any. Write concisely in a professional tone akin to patio11. Do not say this is why the decission should be overturned. Just say why you believe it is medically necessary (e.g. to prevent X or to treat Y)."""
@@ -617,6 +664,63 @@ class RemoteFullOpenLike(RemoteOpenLike):
             expensive=expensive,
             backup_api_base=backup_api_base,
         )
+
+    async def get_appeal_questions(
+        self,
+        denial_text: str,
+        patient_context: Optional[str] = None,
+        plan_context: Optional[str] = None,
+    ) -> List[str]:
+        """
+        Generate a list of questions that could help craft a better appeal for
+        this specific denial.
+
+        Args:
+            denial_text: The text of the denial letter
+            patient_context: Optional patient health history or context
+            plan_context: Optional insurance plan context
+
+        Returns:
+            A list of questions that would help create a better appeal
+        """
+        prompt = f"Based on this denial letter, generate specific questions that would help create a more effective appeal:\n\n{denial_text}"
+
+        system_prompts: list[str] = self.get_system_prompt("questions")
+
+        result = await self._infer(
+            system_prompts=system_prompts,
+            prompt=prompt,
+            patient_context=patient_context,
+            plan_context=plan_context,
+            temperature=0.7,
+        )
+
+        if result is None:
+            logger.warning("Failed to generate appeal questions")
+            return []
+
+        # Process the result into a list of questions
+        questions = []
+        for line in result.split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+
+            # Remove numbering if present
+            if line[0].isdigit() and line[1:3] in [". ", ") ", "- "]:
+                line = line[3:].strip()
+            elif line[0] in ["•", "-", "*"] and line[1:2] == " ":
+                line = line[2:].strip()
+
+            if line and not line.lower().startswith(
+                ("here are", "questions", "additional")
+            ):
+                # Ensure line ends with a question mark
+                if not line.endswith("?"):
+                    line += "?"
+                questions.append(line)
+
+        return questions
 
 
 class RemoteHealthInsurance(RemoteFullOpenLike):

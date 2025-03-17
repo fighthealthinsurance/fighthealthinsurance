@@ -3,12 +3,13 @@ import json
 import io
 from asgiref.sync import async_to_sync
 from unittest.mock import Mock, patch
-from typing import AsyncIterator
+from typing import AsyncIterator, List
 from fighthealthinsurance.common_view_logic import (
     RemoveDataHelper,
     FindNextStepsHelper,
     AppealsBackendHelper,
     NextStepInfo,
+    DenialCreatorHelper,
 )
 from fighthealthinsurance.models import Denial, DenialTypes
 import pytest
@@ -101,3 +102,58 @@ class TestCommonViewLogic(TestCase):
             string_data = buf.getvalue()
 
         async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    async def test_generate_appeal_questions(self, mock_appeal_generator):
+        # Create a denial object for testing
+        email = "test@example.com"
+        denial = Denial.objects.create(
+            denial_id=1,
+            semi_sekret="sekret",
+            hashed_email=Denial.get_hashed_email(email),
+            denial_text="This is a test denial for medical service",
+            health_history="Patient has a history of condition X",
+        )
+
+        # Mock the get_appeal_questions method to return test questions
+        test_questions = [
+            "What medical evidence supports the necessity of this treatment?",
+            "Has the patient tried alternative treatments?",
+            "How does this treatment align with current medical guidelines?",
+        ]
+        mock_appeal_generator.get_appeal_questions.return_value = test_questions
+
+        # Call the method being tested
+        questions = await DenialCreatorHelper.generate_appeal_questions(
+            denial.denial_id
+        )
+
+        # Verify the mock was called with correct parameters
+        mock_appeal_generator.get_appeal_questions.assert_called_once_with(
+            denial_text=denial.denial_text,
+            patient_context=denial.health_history,
+            plan_context=denial.plan_context,
+        )
+
+        # Verify the questions were returned correctly
+        self.assertEqual(questions, test_questions)
+
+        # Verify the questions were stored in the denial object
+        updated_denial = await Denial.objects.aget(denial_id=denial.denial_id)
+        self.assertEqual(updated_denial.generated_questions, test_questions)
+
+        # Test that calling the method again doesn't call the ML model again
+        mock_appeal_generator.get_appeal_questions.reset_mock()
+        questions_again = await DenialCreatorHelper.generate_appeal_questions(
+            denial.denial_id
+        )
+
+        # Verify the mock wasn't called again
+        mock_appeal_generator.get_appeal_questions.assert_not_called()
+
+        # Verify we still get the same questions
+        self.assertEqual(questions_again, test_questions)
+
+        # Clean up
+        await Denial.objects.filter(denial_id=1).adelete()

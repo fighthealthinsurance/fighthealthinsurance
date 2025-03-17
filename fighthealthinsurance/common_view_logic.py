@@ -726,7 +726,50 @@ class FindNextStepsHelper:
             if new_form is not None:
                 new_form = new_form(initial={"medical_reason": dt.appeal_text})
                 question_forms.append(new_form)
+
+        # Generate questions for better appeal creation
+        try:
+            # If questions don't exist yet, generate them
+            if denial.generated_questions is None:
+                # Call the generate_appeal_questions method to get and store questions
+                # Using sync_to_async since we're in a synchronous method
+                async_to_sync(DenialCreatorHelper.generate_appeal_questions)(
+                    denial_id=denial.denial_id
+                )
+                # Refresh the denial object to get the updated questions
+                denial.refresh_from_db()
+
+            # Create a form with the questions as fields if we have generated questions
+            if denial.generated_questions:
+                from django import forms
+
+                # Create an AppealQuestionsForm to add to our question forms
+                class AppealQuestionsForm(forms.Form):
+                    def __init__(self, *args, **kwargs):
+                        super().__init__(*args, **kwargs)
+                        # Add fields for each question
+                        for i, question in enumerate(denial.generated_questions):
+                            field_name = f"appeal_question_{i}"
+                            # Make it a read-only textarea with the question as help text
+                            self.fields[field_name] = forms.CharField(
+                                label=f"Appeal Question {i+1}",
+                                help_text=question,
+                                widget=forms.TextInput(attrs={"readonly": "readonly"}),
+                                required=False,
+                                initial="",  # Empty initial value, the help_text has the question
+                            )
+
+                appeal_questions_form = AppealQuestionsForm()
+                # Add this form to our question forms list
+                question_forms.append(appeal_questions_form)
+        except Exception as e:
+            logger.opt(exception=True).warning(
+                f"Failed to process appeal questions for denial {denial_id}: {e}"
+            )
+
+        # Combine all forms
         combined_form = magic_combined_form(question_forms, existing_answers)
+
         return NextStepInfo(
             outside_help_details=outside_help_details,
             combined_form=combined_form,
@@ -831,6 +874,53 @@ class DenialCreatorHelper:
         if cls._all_denial_types is None:
             cls._all_denial_types = DenialTypes.objects.all()
         return cls._all_denial_types
+
+    @classmethod
+    async def generate_appeal_questions(cls, denial_id: int) -> List[str]:
+        """
+        Generate a list of questions that could help craft a better appeal for
+        this specific denial. The questions will be stored in the denial object's
+        generated_questions field.
+
+        Args:
+            denial_id: The ID of the denial to generate questions for
+
+        Returns:
+            A list of questions to help with appeal creation
+        """
+        denial = await Denial.objects.filter(denial_id=denial_id).aget()
+        if not denial:
+            logger.warning(f"Could not find denial with ID {denial_id}")
+            return []
+
+        try:
+            # Check if we already have questions generated
+            if denial.generated_questions is not None:
+                return denial.generated_questions
+
+            # Get required context for the questions
+            denial_text = denial.denial_text
+            patient_context = denial.health_history
+            plan_context = denial.plan_context
+
+            # Use the ML model to generate questions
+            questions = await appealGenerator.get_appeal_questions(
+                denial_text=denial_text,
+                patient_context=patient_context,
+                plan_context=plan_context,
+            )
+
+            # Store the questions in the generated_questions field
+            denial.generated_questions = questions
+            await denial.asave()
+
+            logger.debug(f"Generated {len(questions)} questions for denial {denial_id}")
+            return questions
+        except Exception as e:
+            logger.opt(exception=True).warning(
+                f"Failed to generate questions for denial {denial_id}: {e}"
+            )
+            return []
 
     @classmethod
     def create_or_update_denial(
