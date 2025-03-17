@@ -297,6 +297,7 @@ class NotifyPatientRequestSerializer(serializers.Serializer):
     # We either notify by patient id or appeal id and resolve to the patient
     id = serializers.IntegerField(required=False)
     include_provider = serializers.BooleanField(default=False)
+    professional_to_finish = serializers.BooleanField(default=True)
 
 
 class AppealFullSerializer(serializers.ModelSerializer):

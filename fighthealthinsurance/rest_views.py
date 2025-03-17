@@ -368,6 +368,11 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
         appeal = get_object_or_404(
             Appeal.filter_to_allowed_appeals(current_user), pk=pk
         )
+        denial = appeal.for_denial
+        if denial:
+            denial.professional_to_finish = serializer.validated_data[
+                "professional_to_finish"
+            ]
         # Notifying the patient makes it visible.
         if not appeal.patient_visible:
             appeal.patient_visible = True

@@ -709,6 +709,8 @@ class FindNextStepsHelper:
             denial.date_of_service = date_of_service
             if "date of service" not in existing_answers:
                 existing_answers["date of service"] = date_of_service
+            if "date_of_service" not in existing_answers:
+                existing_answers["date_of_service"] = date_of_service
         if in_network is not None:
             denial.provider_in_network = in_network
             if "in_network" not in existing_answers:
@@ -861,6 +863,8 @@ class DenialCreatorHelper:
             primary_professional = None
         if not isinstance(creating_professional, ProfessionalUser):
             creating_professional = None
+        # For the pro flow we default to pro to finish
+        professional_to_finish = not creating_professional
         # If we don't have a denial we're making a new one
         if denial is None:
             try:
@@ -875,6 +879,7 @@ class DenialCreatorHelper:
                     patient_user=patient_user,
                     insurance_company=insurance_company,
                     patient_visible=patient_visible,
+                    professional_to_finish=professional_to_finish,
                 )
             except Exception as e:
                 # This is a temporary hack to drop non-ASCII characters
@@ -894,6 +899,7 @@ class DenialCreatorHelper:
                     patient_user=patient_user,
                     insurance_company=insurance_company,
                     patient_visible=patient_visible,
+                    professional_to_finish=professional_to_finish,
                 )
         else:
             # Directly update denial object fields instead of using denial.update()
@@ -934,7 +940,6 @@ class DenialCreatorHelper:
         # Optionally:
         # Fire off some async requests to the model to extract info.
         # denial_id = denial.denial_id
-        # executor.submit(cls.start_background, denial_id)
         # For now we fire this off "later" on a dedicated page with javascript magic.
         r = re.compile(r"Group Name:\s*(.*?)(,|)\s*(INC|CO|LTD|LLC)\s+", re.IGNORECASE)
         g = r.search(denial_text)
@@ -951,10 +956,6 @@ class DenialCreatorHelper:
         return cls._update_denial(
             denial=denial, health_history=health_history, plan_documents=plan_documents
         )
-
-    @classmethod
-    def start_background(cls, denial_id):
-        async_to_sync(cls.run_background_extractions)(denial_id)
 
     @classmethod
     async def extract_entity(cls, denial_id: int) -> AsyncIterator[str]:
@@ -1039,6 +1040,24 @@ class DenialCreatorHelper:
         finally:
             denial.extract_procedure_diagnosis_finished = True
             await denial.asave()
+            # Launch a "fire and forget" task to find related PubMed articles
+            # now that we have diagnosis and procedure information
+            if denial.procedure or denial.diagnosis:
+
+                async def find_pubmed_articles():
+                    try:
+                        pubmed_tool = PubMedTools()
+                        # Find related articles based on diagnosis and procedure
+                        pubmed_tool.find_pubmed_articles_for_denial(
+                            denial, timeout=60.0
+                        )
+                    except Exception as e:
+                        logger.opt(exception=True).warning(
+                            f"Failed to find PubMed articles for denial {denial_id}: {e}"
+                        )
+
+                # Create the task but don't await it - fire and forget
+                asyncio.create_task(find_pubmed_articles())
 
     @classmethod
     async def extract_set_insurance_company(cls, denial_id):
@@ -1145,30 +1164,6 @@ class DenialCreatorHelper:
                 f"Failed to extract date of service for denial {denial_id}: {e}"
             )
         return None
-
-    @classmethod
-    async def run_background_extractions(cls, denial_id):
-        """Run extraction tasks in the background with timeouts"""
-        # Create tasks for all extractions and run them in parallel
-        tasks = [
-            cls.extract_set_fax_number(denial_id),
-            cls.extract_set_insurance_company(denial_id),
-            cls.extract_set_plan_id(denial_id),
-            cls.extract_set_claim_id(denial_id),
-            cls.extract_set_date_of_service(denial_id),
-            cls.extract_set_denialtype(denial_id),
-            cls.extract_set_denial_and_diagnosis(denial_id),
-        ]
-
-        # Run all tasks with timeouts
-        try:
-            await asyncio.gather(
-                *[asyncio.wait_for(task, timeout=15.0) for task in tasks]
-            )
-        except asyncio.TimeoutError:
-            logger.warning(f"Some extraction tasks timed out for denial {denial_id}")
-        except Exception as e:
-            logger.opt(exception=True).warning(f"Error in background tasks: {e}")
 
     @classmethod
     async def extract_set_fax_number(cls, denial_id):
@@ -1409,23 +1404,29 @@ class AppealsBackendHelper:
         async def sub_in_appeals(appeal: dict[str, str]) -> dict[str, str]:
             await asyncio.sleep(0)
             s = Template(appeal["content"])
-            ret = s.safe_substitute(
-                {
-                    "insurance_company": denial.insurance_company
-                    or "{insurance_company}",
-                    "[Insurance Company Name]": denial.insurance_company
-                    or "{insurance_company}",
-                    "[Insert Date]": denial.date or "{date}",
-                    "[Reference Number from Denial Letter]": denial.claim_id
-                    or "{claim_id}",
-                    "[Claim ID]": denial.claim_id or "{claim_id}",
-                    "{claim_id}": denial.claim_id or "{claim_id}",
-                    "[Diagnosis]": denial.diagnosis or "{diagnosis}",
-                    "[Procedure]": denial.procedure or "{procedure}",
-                    "{diagnosis}": denial.diagnosis or "{diagnosis}",
-                    "{procedure}": denial.procedure or "{procedure}",
-                }
-            )
+            subs = {
+                "insurance_company": denial.insurance_company or "{insurance_company}",
+                "[Insurance Company Name]": denial.insurance_company
+                or "{insurance_company}",
+                "[Insert Date]": denial.date or "{date}",
+                "[Reference Number from Denial Letter]": denial.claim_id
+                or "{claim_id}",
+                "[Claim ID]": denial.claim_id or "{claim_id}",
+                "{claim_id}": denial.claim_id or "{claim_id}",
+                "[Diagnosis]": denial.diagnosis or "{diagnosis}",
+                "[Procedure]": denial.procedure or "{procedure}",
+                "{diagnosis}": denial.diagnosis or "{diagnosis}",
+                "{procedure}": denial.procedure or "{procedure}",
+            }
+            if denial.patient_user is not None:
+                subs["[Patient Name]"] = denial.patient_user.get_legal_name()
+            if denial.primary_professional:
+                subs["[Professional Name]"] = (
+                    denial.primary_professional.get_full_name()
+                )
+            if denial.domain:
+                subs["[Professional Address]"] = denial.domain.get_address()
+            ret = s.safe_substitute(subs)
             appeal["content"] = ret
             return appeal
 
