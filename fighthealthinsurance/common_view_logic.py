@@ -27,6 +27,7 @@ from fighthealthinsurance.form_utils import *
 from fighthealthinsurance.generate_appeal import *
 from fighthealthinsurance.models import *
 from fighthealthinsurance.utils import interleave_iterator_for_keep_alive
+from fighthealthinsurance import stripe_utils
 from fhi_users.models import ProfessionalUser, UserDomain
 from .pubmed_tools import PubMedTools
 from .utils import check_call, send_fallback_email
@@ -242,6 +243,15 @@ class AppealAssemblyHelper:
         health_history: Optional[str] = None
         if include_provided_health_history:
             health_history = denial.health_history
+        # Usage based billing goes here
+        if appeal and hasattr(appeal, "domain") and appeal.domain:
+            stripe_customer_id = appeal.domain.stripe_customer_id
+            if stripe_customer_id:
+                stripe_utils.increment_meter(
+                    user_id=stripe_customer_id,
+                    meter_name="Incremental Appeal",
+                    quantity=1,
+                )
         with tempfile.NamedTemporaryFile(
             suffix=".pdf", prefix="alltogether", mode="w+b", delete=False
         ) as t:
@@ -265,6 +275,12 @@ class AppealAssemblyHelper:
             t.flush()
             t.seek(0)
             doc_fname = os.path.basename(t.name)
+
+            # Create JSON representation of pubmed_ids if provided
+            pubmed_ids_json = None
+            if pubmed_ids_parsed:
+                pubmed_ids_json = json.dumps(pubmed_ids_parsed)
+
             if appeal is None:
                 appeal = Appeal.objects.create(
                     for_denial=denial,
@@ -275,6 +291,7 @@ class AppealAssemblyHelper:
                     creating_professional=creating_professional,
                     patient_user=patient_user,
                     domain=domain,
+                    pubmed_ids_json=pubmed_ids_json,
                 )
             else:
                 # Instead of using update(), set values individually preserving existing ones if not provided
@@ -293,6 +310,8 @@ class AppealAssemblyHelper:
                     appeal.patient_user = patient_user
                 if domain:
                     appeal.domain = domain
+                if pubmed_ids_json:
+                    appeal.pubmed_ids_json = pubmed_ids_json
             if pending is not None:
                 appeal.pending = pending
             appeal.save()
@@ -380,14 +399,18 @@ class AppealAssemblyHelper:
 
         # PubMed articles
         if pubmed_ids_parsed is not None and len(pubmed_ids_parsed) > 0:
+            logger.debug(f"Processing PubMed articles: {pubmed_ids_parsed}")
             pmt = PubMedTools()
             pubmed_docs: list[PubMedArticleSummarized] = pmt.get_articles(
                 pubmed_ids_parsed
             )
-            pubmed_docs_paths = [
-                x for x in map(pmt.article_as_pdf, pubmed_docs) if x is not None
-            ]
-            files_for_fax.extend(pubmed_docs_paths)
+            logger.debug(f"Retrieved {len(pubmed_docs)} PubMed articles")
+            if pubmed_docs:
+                pubmed_docs_paths = [
+                    x for x in map(pmt.article_as_pdf, pubmed_docs) if x is not None
+                ]
+                files_for_fax.extend(pubmed_docs_paths)
+                logger.debug(f"Added {len(pubmed_docs_paths)} PubMed PDFs to fax")
         # TODO: Add more generic DOI handler.
 
         # Combine and return path
@@ -686,6 +709,8 @@ class FindNextStepsHelper:
             denial.date_of_service = date_of_service
             if "date of service" not in existing_answers:
                 existing_answers["date of service"] = date_of_service
+            if "date_of_service" not in existing_answers:
+                existing_answers["date_of_service"] = date_of_service
         if in_network is not None:
             denial.provider_in_network = in_network
             if "in_network" not in existing_answers:
@@ -838,6 +863,8 @@ class DenialCreatorHelper:
             primary_professional = None
         if not isinstance(creating_professional, ProfessionalUser):
             creating_professional = None
+        # For the pro flow we default to pro to finish
+        professional_to_finish = not creating_professional
         # If we don't have a denial we're making a new one
         if denial is None:
             try:
@@ -852,6 +879,7 @@ class DenialCreatorHelper:
                     patient_user=patient_user,
                     insurance_company=insurance_company,
                     patient_visible=patient_visible,
+                    professional_to_finish=professional_to_finish,
                 )
             except Exception as e:
                 # This is a temporary hack to drop non-ASCII characters
@@ -871,6 +899,7 @@ class DenialCreatorHelper:
                     patient_user=patient_user,
                     insurance_company=insurance_company,
                     patient_visible=patient_visible,
+                    professional_to_finish=professional_to_finish,
                 )
         else:
             # Directly update denial object fields instead of using denial.update()
@@ -911,7 +940,6 @@ class DenialCreatorHelper:
         # Optionally:
         # Fire off some async requests to the model to extract info.
         # denial_id = denial.denial_id
-        # executor.submit(cls.start_background, denial_id)
         # For now we fire this off "later" on a dedicated page with javascript magic.
         r = re.compile(r"Group Name:\s*(.*?)(,|)\s*(INC|CO|LTD|LLC)\s+", re.IGNORECASE)
         g = r.search(denial_text)
@@ -928,10 +956,6 @@ class DenialCreatorHelper:
         return cls._update_denial(
             denial=denial, health_history=health_history, plan_documents=plan_documents
         )
-
-    @classmethod
-    def start_background(cls, denial_id):
-        async_to_sync(cls.run_background_extractions)(denial_id)
 
     @classmethod
     async def extract_entity(cls, denial_id: int) -> AsyncIterator[str]:
@@ -1016,6 +1040,24 @@ class DenialCreatorHelper:
         finally:
             denial.extract_procedure_diagnosis_finished = True
             await denial.asave()
+            # Launch a "fire and forget" task to find related PubMed articles
+            # now that we have diagnosis and procedure information
+            if denial.procedure or denial.diagnosis:
+
+                async def find_pubmed_articles():
+                    try:
+                        pubmed_tool = PubMedTools()
+                        # Find related articles based on diagnosis and procedure
+                        pubmed_tool.find_pubmed_articles_for_denial(
+                            denial, timeout=60.0
+                        )
+                    except Exception as e:
+                        logger.opt(exception=True).warning(
+                            f"Failed to find PubMed articles for denial {denial_id}: {e}"
+                        )
+
+                # Create the task but don't await it - fire and forget
+                asyncio.create_task(find_pubmed_articles())
 
     @classmethod
     async def extract_set_insurance_company(cls, denial_id):
@@ -1122,30 +1164,6 @@ class DenialCreatorHelper:
                 f"Failed to extract date of service for denial {denial_id}: {e}"
             )
         return None
-
-    @classmethod
-    async def run_background_extractions(cls, denial_id):
-        """Run extraction tasks in the background with timeouts"""
-        # Create tasks for all extractions and run them in parallel
-        tasks = [
-            cls.extract_set_fax_number(denial_id),
-            cls.extract_set_insurance_company(denial_id),
-            cls.extract_set_plan_id(denial_id),
-            cls.extract_set_claim_id(denial_id),
-            cls.extract_set_date_of_service(denial_id),
-            cls.extract_set_denialtype(denial_id),
-            cls.extract_set_denial_and_diagnosis(denial_id),
-        ]
-
-        # Run all tasks with timeouts
-        try:
-            await asyncio.gather(
-                *[asyncio.wait_for(task, timeout=15.0) for task in tasks]
-            )
-        except asyncio.TimeoutError:
-            logger.warning(f"Some extraction tasks timed out for denial {denial_id}")
-        except Exception as e:
-            logger.opt(exception=True).warning(f"Error in background tasks: {e}")
 
     @classmethod
     async def extract_set_fax_number(cls, denial_id):
@@ -1386,23 +1404,29 @@ class AppealsBackendHelper:
         async def sub_in_appeals(appeal: dict[str, str]) -> dict[str, str]:
             await asyncio.sleep(0)
             s = Template(appeal["content"])
-            ret = s.safe_substitute(
-                {
-                    "insurance_company": denial.insurance_company
-                    or "{insurance_company}",
-                    "[Insurance Company Name]": denial.insurance_company
-                    or "{insurance_company}",
-                    "[Insert Date]": denial.date or "{date}",
-                    "[Reference Number from Denial Letter]": denial.claim_id
-                    or "{claim_id}",
-                    "[Claim ID]": denial.claim_id or "{claim_id}",
-                    "{claim_id}": denial.claim_id or "{claim_id}",
-                    "[Diagnosis]": denial.diagnosis or "{diagnosis}",
-                    "[Procedure]": denial.procedure or "{procedure}",
-                    "{diagnosis}": denial.diagnosis or "{diagnosis}",
-                    "{procedure}": denial.procedure or "{procedure}",
-                }
-            )
+            subs = {
+                "insurance_company": denial.insurance_company or "{insurance_company}",
+                "[Insurance Company Name]": denial.insurance_company
+                or "{insurance_company}",
+                "[Insert Date]": denial.date or "{date}",
+                "[Reference Number from Denial Letter]": denial.claim_id
+                or "{claim_id}",
+                "[Claim ID]": denial.claim_id or "{claim_id}",
+                "{claim_id}": denial.claim_id or "{claim_id}",
+                "[Diagnosis]": denial.diagnosis or "{diagnosis}",
+                "[Procedure]": denial.procedure or "{procedure}",
+                "{diagnosis}": denial.diagnosis or "{diagnosis}",
+                "{procedure}": denial.procedure or "{procedure}",
+            }
+            if denial.patient_user is not None:
+                subs["[Patient Name]"] = denial.patient_user.get_legal_name()
+            if denial.primary_professional:
+                subs["[Professional Name]"] = (
+                    denial.primary_professional.get_full_name()
+                )
+            if denial.domain:
+                subs["[Professional Address]"] = denial.domain.get_address()
+            ret = s.safe_substitute(subs)
             appeal["content"] = ret
             return appeal
 

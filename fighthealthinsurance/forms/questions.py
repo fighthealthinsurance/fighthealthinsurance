@@ -76,7 +76,9 @@ class MedicalNeccessaryQuestions(InsuranceQuestions):
         label="Why is this medically necessary (if you know)?",
         required=False,
     )
-    age = forms.CharField(required=False, label="What is your age?")
+    age = forms.CharField(
+        required=False, label="Age of the person with the denied claim?"
+    )
 
     def medical_context(self):
         response = ""

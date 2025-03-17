@@ -286,12 +286,27 @@ class PubMedArticleSummarized(models.Model):
     article_url = models.TextField(blank=True, null=True)
 
 
+class PubMedMiniArticle(models.Model):
+    """PubMedArticles with a summary for the given query."""
+
+    pmid = models.TextField(blank=True)
+    title = models.TextField(blank=True, null=True)
+    abstract = models.TextField(blank=True, null=True)
+    created = models.DateTimeField(db_default=Now(), null=True)
+    article_url = models.TextField(blank=True, null=True)
+
+    def __str__(self):
+        return f"{self.pmid} -- {self.title}"
+
+
 class PubMedQueryData(models.Model):
     internal_id = models.AutoField(primary_key=True)
     query = models.TextField(null=False, max_length=300)
+    since = models.TextField(null=True)  # text date for the since query
     articles = models.TextField(null=True)  # json
     query_date = models.DateTimeField(auto_now_add=True)
     denial_id = models.ForeignKey("Denial", on_delete=models.SET_NULL, null=True)
+    created = models.DateTimeField(db_default=Now(), null=True)
 
 
 class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # type: ignore
@@ -302,7 +317,7 @@ class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # t
     email = models.CharField(max_length=300)
     name = models.CharField(max_length=300, null=True)
     appeal_text = models.TextField()
-    pmids = models.CharField(max_length=600, blank=True)
+    pmids = models.CharField(max_length=600, blank=True, null=True)
     health_history = models.TextField(null=True, blank=True)
     combined_document = models.FileField(null=True, storage=settings.COMBINED_STORAGE)
     combined_document_enc = EncryptedFileField(
@@ -409,6 +424,7 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     patient_user = models.ForeignKey(PatientUser, null=True, on_delete=models.SET_NULL)
     domain = models.ForeignKey(UserDomain, null=True, on_delete=models.SET_NULL)
     patient_visible = models.BooleanField(default=True)
+    # If the professional is the one submitting the appeal
     professional_to_finish = models.BooleanField(default=False)
     # Date of service can be many things which are not a simple date.
     date_of_service = models.CharField(null=True, max_length=300, default="")
@@ -416,6 +432,8 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     provider_in_network = models.BooleanField(default=False, null=True)
     health_history_anonymized = models.BooleanField(default=True)
     single_case = models.BooleanField(default=False, null=True)
+    # pubmed articles to be used to create the input context to the appeal
+    pubmed_ids_json = models.CharField(max_length=600, blank=True)
 
     @classmethod
     def filter_to_allowed_denials(cls, current_user: User):
@@ -536,7 +554,8 @@ class Appeal(ExportModelOperationsMixin("Appeal"), models.Model):  # type: ignor
     professional_send = models.BooleanField(default=True)
     patient_send = models.BooleanField(default=True)
     patient_visible = models.BooleanField(default=True)
-    pubmed_ids_json = models.CharField(max_length=600, blank=True)
+    # Pubmed IDs for the articles to be included in the appeal
+    pubmed_ids_json = models.CharField(max_length=600, blank=True, null=True)
     response_document_enc = EncryptedFileField(
         null=True, storage=settings.COMBINED_STORAGE
     )
@@ -546,6 +565,7 @@ class Appeal(ExportModelOperationsMixin("Appeal"), models.Model):  # type: ignor
     success = models.BooleanField(default=False, null=True)
     mod_date = models.DateField(auto_now=True, null=True)
     creation_date = models.DateField(auto_now_add=True, null=True)
+    billed = models.BooleanField(default=False)
 
     # Similar to the method on denial -- TODO refactor to a mixin / DRY
     @classmethod
@@ -628,6 +648,13 @@ class StripePrice(models.Model):
     stripe_id = models.CharField(max_length=300)
     amount = models.IntegerField()
     currency = models.CharField(max_length=3)
+    active = models.BooleanField(default=True)
+
+
+class StripeMeter(models.Model):
+    id = models.AutoField(primary_key=True)
+    stripe_meter_id = models.CharField(max_length=300)
+    name = models.CharField(max_length=300)
     active = models.BooleanField(default=True)
 
 

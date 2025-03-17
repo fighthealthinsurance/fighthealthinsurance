@@ -49,6 +49,7 @@ class UserDomain(models.Model):
     )
     # Money
     stripe_subscription_id = models.CharField(max_length=300, null=True)
+    stripe_customer_id = models.CharField(max_length=300, null=True)
     # Info
     # https://docs.djangoproject.com/en/5.1/ref/models/fields/#django.db.models.Field.null
     name = models.CharField(blank=True, null=True, max_length=300, unique=True)
@@ -110,6 +111,10 @@ class UserDomain(models.Model):
             domain=self, **relation_filters
         )
         return [relation.professional for relation in relations]
+
+    def get_address(self) -> str:
+        mailing_name = self.business_name if self.business_name else self.display_name
+        return f"{mailing_name}, {self.address1}, {self.address2} {self.city}, {self.state} {self.zipcode}"
 
     # Maybe include:
     # List of common procedures
