@@ -462,7 +462,7 @@ class SendFaxHelper:
         appeal.fax = fts
         appeal.save()
         fax_actor_ref.get.do_send_fax.remote(fts.hashed_email, fts.uuid)
-        return FaxHelperResults(uuid=fts.uuid, hashed_email=hashed_email)
+        return FaxHelperResults(uuid=str(fts.uuid), hashed_email=hashed_email)
 
     @classmethod
     def blocking_dosend_target(cls, email) -> int:
