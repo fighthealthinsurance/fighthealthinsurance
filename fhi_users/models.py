@@ -112,6 +112,10 @@ class UserDomain(models.Model):
         )
         return [relation.professional for relation in relations]
 
+    def get_address(self) -> str:
+        mailing_name = self.business_name if self.business_name else self.display_name
+        return f"{mailing_name}, {self.address1}, {self.address2} {self.city}, {self.state} {self.zipcode}"
+
     # Maybe include:
     # List of common procedures
     # Common appeal templates

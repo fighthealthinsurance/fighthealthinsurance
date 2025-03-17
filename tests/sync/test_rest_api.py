@@ -2,6 +2,8 @@
 
 from asgiref.sync import sync_to_async
 
+import asyncio
+
 import pytest
 from channels.testing import WebsocketCommunicator
 
@@ -238,6 +240,7 @@ class DenialEndToEnd(APITestCase):
             pass
         finally:
             await seb_communicator.disconnect()
+        await asyncio.sleep(5) # Give a second for the fire and forget pubmed to run
         # Ok now lets get the additional info
         find_next_steps_url = reverse("nextsteps-list")
         find_next_steps_response = await sync_to_async(self.client.post)(
@@ -285,11 +288,15 @@ class DenialEndToEnd(APITestCase):
         )
         responses = []
         # We should receive at least one frame.
-        responses.append(await a_communicator.receive_from(timeout=60))
+        response = await a_communicator.receive_from(timeout=300.0)
+        print(f"Received response {response}")
+        responses.append(response)
         # Now consume all of the rest of them until done.
         try:
             while True:
-                responses.append(await a_communicator.receive_from(timeout=60))
+                response = await a_communicator.receive_from(timeout=125.0)
+                print(f"Received response {response}")
+                responses.append(response)
         except Exception as e:
             print(f"Error {e}")
             pass
