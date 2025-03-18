@@ -704,31 +704,60 @@ Keep each question on a separate line and make them directly applicable to the s
 
         # Process the result into a list of questions with potential answers
         questions_with_answers: List[Tuple[str, str]] = []
+
+        # Handle the case where the model returns a single block of text
+        if "\n" not in result and len(result) > 100:
+            # Try to extract questions with regex patterns
+            # Look for patterns like "1. Question? Answer" or numbering + question + question mark
+            potential_questions = re.findall(
+                r"(?:\d+\.|\*|\-|\•)?\s*(?:\*\*)?([^.!?]+\?)(?:\*\*)?\s*([^.!?\d][^.!?\d]*?)(?=(?:\d+\.|\*|\-|\•)?\s*(?:\*\*)?[A-Z]|\Z)",
+                result,
+            )
+            for q, a in potential_questions:
+                questions_with_answers.append((q.strip(), a.strip()))
+            if questions_with_answers:
+                return questions_with_answers
+
+        # Process line by line if we have multiple lines or the above extraction didn't work
         for line in result.split("\n"):
             line = line.strip()
             if not line:
                 continue
 
-            # Remove numbering if present
-            if line[0].isdigit() and line[1:3] in [". ", ") ", "- "]:
-                line = line[3:].strip()
-            elif line[0] in ["•", "-", "*"] and line[1:2] == " ":
-                line = line[2:].strip()
+            # Remove numbering and bullet points at the beginning of the line
+            # This handles formats like "1. ", "1) ", "• ", "- ", "* ", etc.
+            line = re.sub(r"^\s*(?:\d+[.)\-]|\*|\•|\-)\s+", "", line)
 
-            if line and not line.lower().startswith(
-                ("here are", "questions", "additional")
-            ):
-                # Parse potential answer if present (format: "Question? Answer")
-                question_parts = line.split("?", 1)
-                if len(question_parts) > 1 and len(question_parts[1].strip()) > 0:
-                    question_text = question_parts[0].strip() + "?"
-                    answer_text = question_parts[1].strip()
-                    questions_with_answers.append((question_text, answer_text))
-                else:
-                    # Ensure line ends with a question mark if it doesn't have one
-                    if not line.endswith("?"):
-                        line += "?"
-                    questions_with_answers.append((line, ""))
+            # Handle markdown-style bold formatting like "**Question?** Answer"
+            bold_match = re.search(r"\*\*([^*]+?)\*\*\s*(.*)", line)
+            if bold_match:
+                question = bold_match.group(1).strip()
+                answer = bold_match.group(2).strip()
+
+                # Make sure question ends with question mark
+                if not question.endswith("?"):
+                    question += "?"
+
+                questions_with_answers.append((question, answer))
+                continue
+
+            # Skip header lines
+            if line.lower().startswith(("here are", "questions", "additional")):
+                continue
+
+            # Parse potential answer if present (format: "Question? Answer")
+            question_parts = line.split("?", 1)
+            if len(question_parts) > 1:
+                question_text = question_parts[0].strip() + "?"
+                # Handle potential formatting in answers like "A: ", ": ", etc.
+                answer_text = question_parts[1].strip()
+                answer_text = re.sub(r"^[A:][\s:]*", "", answer_text)
+                questions_with_answers.append((question_text, answer_text))
+            else:
+                # Ensure line ends with a question mark if it doesn't have one
+                if not line.endswith("?"):
+                    line += "?"
+                questions_with_answers.append((line, ""))
 
         return questions_with_answers
 

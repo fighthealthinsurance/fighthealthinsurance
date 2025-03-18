@@ -100,7 +100,6 @@ class AppealGenerator(object):
                     return raw_questions
             except Exception as e:
                 logger.opt(exception=True).warning(f"Failed to generate questions: {e}")
-
         # If we got here, no models worked, return empty list
         return []
 
@@ -118,17 +117,52 @@ class AppealGenerator(object):
             A list of (question, answer) tuples
         """
         result = []
+
+        # First check if we received a single string with multiple lines
+        if len(questions) == 1 and "\n" in questions[0]:
+            # Split the single string into separate lines
+            questions = [
+                line.strip() for line in questions[0].split("\n") if line.strip()
+            ]
+
         for question in questions:
-            # Check if question contains an answer (format: "Question? Answer")
-            question_parts = question.split("?", 1)
-            if len(question_parts) > 1 and len(question_parts[1].strip()) > 0:
-                # If we have "Question? Answer", separate them
-                question_text = question_parts[0].strip() + "?"
-                initial_answer = question_parts[1].strip()
-                result.append((question_text, initial_answer))
+            # Skip empty lines
+            if not question.strip():
+                continue
+
+            # Remove numbering and bullet points at the beginning of the line
+            # This handles formats like "1. ", "1) ", "• ", "- ", "* ", etc.
+            question = re.sub(r"^\s*(?:\d+[.)\-]|\*|\•|\-)\s+", "", question.strip())
+
+            # Handle markdown-style bold formatting like "**Question?** Answer"
+            question = re.sub(r"\*\*([^*]+)\*\*", r"\1", question)
+
+            # Find the question part (everything up to the question mark)
+            question_mark_pos = question.find("?")
+            if question_mark_pos >= 0:
+                # We found a question mark, now separate question from answer
+                question_text = question[: question_mark_pos + 1].strip()
+
+                # Process the answer part (everything after the question mark)
+                if len(question) > question_mark_pos + 1:
+                    # Handle common prefixes in answers like "A: ", ": ", " - "
+                    answer_text = question[question_mark_pos + 1 :].strip()
+                    answer_text = re.sub(r"^[A:][\s:]*", "", answer_text)
+                    result.append((question_text, answer_text))
+                else:
+                    # No answer provided
+                    result.append((question_text, ""))
             else:
-                # If no answer found, use empty string as the answer
+                # No question mark found, treat the whole string as a question
                 result.append((question, ""))
+
+        # If we have a LLM output that's just text with no clear questions, try to extract them
+        if not result and len(questions) == 1 and len(questions[0]) > 100:
+            # Try to find question-answer pairs in the text
+            potential_questions = re.findall(r"([^.!?]+\?)\s*([^.!?]*)", questions[0])
+            for q, a in potential_questions:
+                result.append((q.strip(), a.strip()))
+
         return result
 
     async def _extract_entity_with_regexes_and_model(
