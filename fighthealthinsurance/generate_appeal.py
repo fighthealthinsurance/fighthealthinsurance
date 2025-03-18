@@ -6,10 +6,10 @@ import time
 import traceback
 from concurrent.futures import Future
 from typing import Any, Iterator, List, Optional, Tuple
+from blackd import executor
 from loguru import logger
 
 from fighthealthinsurance.denial_base import DenialBase
-from fighthealthinsurance.exec import 
 from fighthealthinsurance.ml.ml_models import RemoteFullOpenLike, RemoteModelLike
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.process_denial import ProcessDenialRegex  

@@ -26,7 +26,7 @@ import uszipcode
 from fighthealthinsurance.fax_actor_ref import fax_actor_ref
 from fighthealthinsurance.form_utils import magic_combined_form  
 from fighthealthinsurance.generate_appeal import AppealGenerator, AppealTemplateGenerator  
-from fighthealthinsurance.models import Appeal, DataSource, Denial, DenialTypes, DenialTypesRelation, FaxesToSend, FollowUp, FollowUpDocuments, FollowUpSched, ProposedAppeal, PubMedArticleSummarized, PubMedQueryData, Regulator
+from fighthealthinsurance.models import Appeal, DataSource, Denial, DenialTypes, DenialTypesRelation, FaxesToSend, FollowUp, FollowUpDocuments, FollowUpSched, PlanDocuments, ProposedAppeal, PubMedArticleSummarized, PubMedQueryData, Regulator
 from fighthealthinsurance.utils import interleave_iterator_for_keep_alive
 from fighthealthinsurance import stripe_utils
 from fhi_users.models import PatientUser, ProfessionalUser, UserDomain
@@ -1383,10 +1383,9 @@ class AppealsBackendHelper:
             medical_reasons=medical_reasons,
             non_ai_appeals=non_ai_appeals,
         )
-
         async def save_appeal(appeal_text: str) -> dict[str, str]:
             # Save all of the proposed appeals, so we can use RL later.
-            t = datetime.time.time()
+            t = datetime.datetime.now().time()
             logger.debug(f"{t}: Saving {appeal_text}")
             await asyncio.sleep(0)
             # YOLO on saving appeals, sqllite gets sad.
