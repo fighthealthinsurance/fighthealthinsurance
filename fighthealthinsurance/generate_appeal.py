@@ -46,6 +46,29 @@ class AppealGenerator(object):
         self.regex_denial_processor = ProcessDenialRegex()
         self.pmt = PubMedTools()
 
+    async def get_appeal_questions(
+            self,
+            denial_text: str,
+            patient_context: Optional[str],
+            use_exteranl: bool = False,
+    ) -> Optional[str]:
+        models_to_try = ml_router.get_appeal_questions(use_external)
+        for model in models_to_try:
+            if patient_context is not None:
+                result = await model.get_appeal_questions_with_answers(
+                    denial_text,
+                    patient_context
+                )
+                if result is not None:
+                    return result
+            result = await model.get_appeal_questions
+                    denial_text,
+                )
+            if result is not None:
+                return result
+
+
+
     async def _extract_entity_with_regexes_and_model(
         self,
         denial_text: str,

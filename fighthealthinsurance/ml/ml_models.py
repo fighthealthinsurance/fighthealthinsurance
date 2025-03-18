@@ -192,7 +192,7 @@ class RemoteOpenLike(RemoteModel):
         api_base,
         token,
         model,
-        system_prompts_map,
+        system_prompts_map: dict[str, list[str]],
         backup_api_base=None,
         expensive=False,
     ):
@@ -323,7 +323,7 @@ class RemoteOpenLike(RemoteModel):
             prompt=prompt,
             patient_context=patient_context,
             plan_context=plan_context,
-            system_prompt=system_prompt,
+            system_prompts=[system_prompt],
             pubmed_context=pubmed_context,
             temperature=temperature,
         )
@@ -334,7 +334,7 @@ class RemoteOpenLike(RemoteModel):
                 prompt=prompt,
                 patient_context=patient_context,
                 plan_context=plan_context,
-                system_prompt=system_prompt,
+                system_prompts=[system_prompt],
                 pubmed_context=pubmed_context,
                 temperature=temperature,
             )
@@ -359,7 +359,7 @@ class RemoteOpenLike(RemoteModel):
 
     async def get_fax_number(self, denial: str) -> Optional[str]:
         return await self._infer(
-            system_prompt="You are a helpful assistant.",
+            system_prompts=["You are a helpful assistant."],
             prompt=f"When possible output in the same format as is found in the denial. Tell me the appeal fax number is within the provided denial. If the fax number is unknown write UNKNOWN. If known just output the fax number without any pre-amble and as a snipper from the original doc. DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN. The denial follows: {denial}. Remember DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN.",
         )
 
@@ -374,7 +374,7 @@ class RemoteOpenLike(RemoteModel):
             Extracted insurance company name or None
         """
         result = await self._infer(
-            system_prompt="You are a helpful assistant.",
+            system_prompts=["You are a helpful assistant."],
             prompt=f"When possible output in the same format as is found in the denial. Tell me which insurance company is within the provided denial. If it is not present or otherwise unknown write UNKNOWN. If known just output the answer without any pre-amble and as a snipper from the original doc. Remember: DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN. The denial follows: {denial}. Remember DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN.",
         )
         if result and "The insurance company is" in result:
@@ -392,7 +392,7 @@ class RemoteOpenLike(RemoteModel):
             Extracted plan ID or None
         """
         result = await self._infer(
-            system_prompt="You are a helpful assistant.",
+            system_prompts=["You are a helpful assistant."],
             prompt=f"When possible output in the same format as is found in the denial. Tell me the what plan ID is present is within the provided denial. If it is not present or unknown write UNKNOWN. If known just output the answer without any pre-amble and as a snipper from the original doc. DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN. The denial follows: {denial}. Remember DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN.",
         )
         if result and "The plan ID is" in result:
@@ -410,7 +410,7 @@ class RemoteOpenLike(RemoteModel):
             Extracted claim ID or None
         """
         result = await self._infer(
-            system_prompt="You are a helpful assistant.",
+            system_prompts=["You are a helpful assistant."],
             prompt=f"When possible output in the same format as is found in the denial. Tell me the what claim ID was denied within the provided denial (it could be multiple but it's normally just one). If it is not present or otherwise unknown write UNKNOWN. If known just output the answer without any pre-amble and as a snipper from the original doc. DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN.. The denial follows: {denial}. REMEMBER DO NOT GUESS.",
         )
         if result and "Claim ID is" in result:
@@ -428,7 +428,7 @@ class RemoteOpenLike(RemoteModel):
             Extracted date of service or None
         """
         result = await self._infer(
-            system_prompt="You are a helpful assistant.",
+            system_prompts=["You are a helpful assistant."],
             prompt=f"When possible output in the same format as is found in the denial. Tell me the what the date of service was within the provided denial (it could be multiple or a date range, but it can also just be one day). If it is not present or otherwise unknown write UNKNOWN. If known just output the asnwer without any pre-amble and as a snipper from the original doc. The denial follows: {denial}",
         )
         if result and "Date of service is" in result:
@@ -685,7 +685,7 @@ Keep each question on a separate line and make them directly applicable to the s
         """
         prompt = f"Based on this denial letter, generate specific questions that would help create a more effective appeal:\n\n{denial_text}"
 
-        system_prompts: list[str] = self.get_system_prompt("questions")
+        system_prompts: list[str] = self.get_system_prompts("questions")
 
         result = await self._infer(
             system_prompts=system_prompts,

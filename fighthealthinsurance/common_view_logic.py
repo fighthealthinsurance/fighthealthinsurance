@@ -743,20 +743,24 @@ class FindNextStepsHelper:
             if denial.generated_questions:
                 from django import forms
 
+                generated_questions: list[tuple[str, str]] = denial.generated_questions  # type: ignore
+
                 # Create an AppealQuestionsForm to add to our question forms
                 class AppealQuestionsForm(forms.Form):
                     def __init__(self, *args, **kwargs):
                         super().__init__(*args, **kwargs)
                         # Add fields for each question
-                        for i, question in enumerate(denial.generated_questions):
-                            field_name = f"appeal_question_{i}"
+                        i = 0
+                        for question, initial in generated_questions:
+                            i = i + 1
+                            field_name = f"appeal_generated_question_{i}"
                             # Make it a read-only textarea with the question as help text
                             self.fields[field_name] = forms.CharField(
-                                label=f"Appeal Question {i+1}",
+                                label=question,
                                 help_text=question,
                                 widget=forms.TextInput(attrs={"readonly": "readonly"}),
                                 required=False,
-                                initial="",  # Empty initial value, the help_text has the question
+                                initial=initial,  # Empty initial value we'll restore it during magic_combined_form
                             )
 
                 appeal_questions_form = AppealQuestionsForm()
@@ -896,7 +900,7 @@ class DenialCreatorHelper:
         try:
             # Check if we already have questions generated
             if denial.generated_questions is not None:
-                return denial.generated_questions
+                return []
 
             # Get required context for the questions
             denial_text = denial.denial_text
@@ -904,7 +908,7 @@ class DenialCreatorHelper:
             plan_context = denial.plan_context
 
             # Use the ML model to generate questions
-            questions = await appealGenerator.get_appeal_questions(
+            questions: list[str] = await appealGenerator.get_appeal_questions(
                 denial_text=denial_text,
                 patient_context=patient_context,
                 plan_context=plan_context,
