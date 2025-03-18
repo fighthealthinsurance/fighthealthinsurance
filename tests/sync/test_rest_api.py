@@ -24,17 +24,17 @@ from rest_framework.test import APITestCase
 from fighthealthinsurance.models import (
     Denial,
     UserDomain,
+    ExtraUserProperties,
     ProfessionalUser,
     Appeal,
     PatientUser,
-    SecondaryAppealProfessionalRelation,
+    SecondaryAppealProfessionalRelation
 )
 from fighthealthinsurance.websockets import (
     StreamingEntityBackend,
     StreamingAppealsBackend,
 )
 from fhi_users.models import (
-    ExtraUserProperties,
     PatientDomainRelation,
     ProfessionalDomainRelation,
 )
