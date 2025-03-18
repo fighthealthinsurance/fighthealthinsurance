@@ -73,7 +73,7 @@ class RemoteModelLike(DenialBase):
         denial_text: str,
         patient_context: Optional[str] = None,
         plan_context: Optional[str] = None,
-    ) -> List[str]:
+    ) -> List[Tuple[str, str]]:
         """
         Generate a list of questions that could help craft a better appeal for
         this specific denial.
@@ -84,7 +84,7 @@ class RemoteModelLike(DenialBase):
             plan_context: Optional insurance plan context
 
         Returns:
-            A list of questions that would help create a better appeal
+            A list of tuples (question, answer) where answer may be empty
         """
         return []
 
@@ -215,7 +215,9 @@ class RemoteOpenLike(RemoteModel):
         self.backup_api_base = backup_api_base
         self._expensive = expensive
 
-    def get_system_prompts(self, prompt_type: str, for_patient: bool = True) -> list[str]:
+    def get_system_prompts(
+        self, prompt_type: str, for_patient: bool = True
+    ) -> list[str]:
         """
         Get the appropriate system prompt based on type and audience.
 
@@ -232,7 +234,9 @@ class RemoteOpenLike(RemoteModel):
 
         return self.system_prompts_map.get(
             key,
-            ["Your are a helpful assistant with extensive medical knowledge who loves helping patients."]
+            [
+                "Your are a helpful assistant with extensive medical knowledge who loves helping patients."
+            ],
         )
 
     def bad_result(self, result: Optional[str]) -> bool:
@@ -242,7 +246,7 @@ class RemoteOpenLike(RemoteModel):
         ]
         if result is None:
             return True
-        for bad in bad_ideas:
+        for bad in result:
             if bad in result:
                 return True
         if len(result.strip(" ")) < 5:
@@ -670,7 +674,7 @@ Keep each question on a separate line and make them directly applicable to the s
         denial_text: str,
         patient_context: Optional[str] = None,
         plan_context: Optional[str] = None,
-    ) -> List[str]:
+    ) -> List[Tuple[str, str]]:
         """
         Generate a list of questions that could help craft a better appeal for
         this specific denial.
@@ -681,7 +685,7 @@ Keep each question on a separate line and make them directly applicable to the s
             plan_context: Optional insurance plan context
 
         Returns:
-            A list of questions that would help create a better appeal
+            A list of tuples (question, answer) where answer may be empty
         """
         prompt = f"Based on this denial letter, generate specific questions that would help create a more effective appeal:\n\n{denial_text}"
 
@@ -699,8 +703,8 @@ Keep each question on a separate line and make them directly applicable to the s
             logger.warning("Failed to generate appeal questions")
             return []
 
-        # Process the result into a list of questions
-        questions = []
+        # Process the result into a list of questions with potential answers
+        questions_with_answers: List[Tuple[str, str]] = []
         for line in result.split("\n"):
             line = line.strip()
             if not line:
@@ -715,12 +719,19 @@ Keep each question on a separate line and make them directly applicable to the s
             if line and not line.lower().startswith(
                 ("here are", "questions", "additional")
             ):
-                # Ensure line ends with a question mark
-                if not line.endswith("?"):
-                    line += "?"
-                questions.append(line)
+                # Parse potential answer if present (format: "Question? Answer")
+                question_parts = line.split("?", 1)
+                if len(question_parts) > 1 and len(question_parts[1].strip()) > 0:
+                    question_text = question_parts[0].strip() + "?"
+                    answer_text = question_parts[1].strip()
+                    questions_with_answers.append((question_text, answer_text))
+                else:
+                    # Ensure line ends with a question mark if it doesn't have one
+                    if not line.endswith("?"):
+                        line += "?"
+                    questions_with_answers.append((line, ""))
 
-        return questions
+        return questions_with_answers
 
 
 class RemoteHealthInsurance(RemoteFullOpenLike):

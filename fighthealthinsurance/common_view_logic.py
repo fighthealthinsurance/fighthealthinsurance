@@ -743,16 +743,17 @@ class FindNextStepsHelper:
             if denial.generated_questions:
                 from django import forms
 
-                generated_questions: list[tuple[str, str]] = denial.generated_questions  # type: ignore
+                # The generated_questions field now contains tuples of (question, answer)
+                generated_questions: list[tuple[str, str]] = denial.generated_questions
 
                 # Create an AppealQuestionsForm to add to our question forms
                 class AppealQuestionsForm(forms.Form):
                     def __init__(self, *args, **kwargs):
                         super().__init__(*args, **kwargs)
                         # Add fields for each question
-                        i = 0
-                        for question, initial in generated_questions:
-                            i = i + 1
+                        for i, (question, initial_answer) in enumerate(
+                            generated_questions, 1
+                        ):
                             field_name = f"appeal_generated_question_{i}"
                             # Make it a read-only textarea with the question as help text
                             self.fields[field_name] = forms.CharField(
@@ -760,7 +761,7 @@ class FindNextStepsHelper:
                                 help_text=question,
                                 widget=forms.TextInput(attrs={"readonly": "readonly"}),
                                 required=False,
-                                initial=initial,  # Empty initial value we'll restore it during magic_combined_form
+                                initial=initial_answer,  # Use the answer from the tuple
                             )
 
                 appeal_questions_form = AppealQuestionsForm()
@@ -880,17 +881,17 @@ class DenialCreatorHelper:
         return cls._all_denial_types
 
     @classmethod
-    async def generate_appeal_questions(cls, denial_id: int) -> List[str]:
+    async def generate_appeal_questions(cls, denial_id: int) -> List[Tuple[str, str]]:
         """
         Generate a list of questions that could help craft a better appeal for
         this specific denial. The questions will be stored in the denial object's
-        generated_questions field.
+        generated_questions field as tuples of (question, answer).
 
         Args:
             denial_id: The ID of the denial to generate questions for
 
         Returns:
-            A list of questions to help with appeal creation
+            A list of (question, answer) tuples to help with appeal creation
         """
         denial = await Denial.objects.filter(denial_id=denial_id).aget()
         if not denial:
@@ -900,19 +901,30 @@ class DenialCreatorHelper:
         try:
             # Check if we already have questions generated
             if denial.generated_questions is not None:
-                return []
+                # Convert stored lists to tuples for consistency with return type
+                result_questions: List[Tuple[str, str]] = [
+                    (q[0], q[1]) if isinstance(q, list) else q
+                    for q in denial.generated_questions
+                ]
+                return result_questions
 
             # Get required context for the questions
             denial_text = denial.denial_text
             patient_context = denial.health_history
             plan_context = denial.plan_context
 
-            # Use the ML model to generate questions
-            questions: list[str] = await appealGenerator.get_appeal_questions(
+            # Use the ML model to generate questions with potential answers
+            raw_questions = await appealGenerator.get_appeal_questions(
                 denial_text=denial_text,
                 patient_context=patient_context,
                 plan_context=plan_context,
             )
+
+            # Ensure we're working with tuples
+            questions: List[Tuple[str, str]] = [
+                (q[0], q[1]) if isinstance(q, (list, tuple)) else (str(q), "")
+                for q in raw_questions
+            ]
 
             # Store the questions in the generated_questions field
             denial.generated_questions = questions

@@ -47,27 +47,89 @@ class AppealGenerator(object):
         self.pmt = PubMedTools()
 
     async def get_appeal_questions(
-            self,
-            denial_text: str,
-            patient_context: Optional[str],
-            use_exteranl: bool = False,
-    ) -> Optional[str]:
-        models_to_try = ml_router.get_appeal_questions(use_external)
+        self,
+        denial_text: str,
+        patient_context: Optional[str] = None,
+        plan_context: Optional[str] = None,
+        use_external: bool = False,
+    ) -> List[Tuple[str, str]]:
+        """
+        Generate a list of questions that could help craft a better appeal.
+        If answers are included in the format "Question? Answer", they will be parsed
+        and returned as tuples (question, answer).
+
+        Args:
+            denial_text: The text of the denial letter
+            patient_context: Optional patient health history or context
+            plan_context: Optional insurance plan context
+            use_external: Whether to use external models
+
+        Returns:
+            A list of tuples (question, answer) where answer may be empty if not provided
+        """
+        models_to_try = ml_router.entity_extract_backends(use_external)
         for model in models_to_try:
-            if patient_context is not None:
-                result = await model.get_appeal_questions_with_answers(
-                    denial_text,
-                    patient_context
-                )
-                if result is not None:
-                    return result
-            result = await model.get_appeal_questions
-                    denial_text,
-                )
-            if result is not None:
-                return result
+            # First try with patient context if available
+            if patient_context is not None and len(patient_context.strip()) > 0:
+                try:
+                    raw_questions = await model.get_appeal_questions(
+                        denial_text=denial_text,
+                        patient_context=patient_context,
+                        plan_context=plan_context,
+                    )
+                    if raw_questions and len(raw_questions) > 0:
+                        # Parse questions into (question, answer) tuples if they aren't already
+                        if isinstance(raw_questions[0], str):
+                            return self._parse_questions_with_answers(raw_questions)
+                        return raw_questions
+                except Exception as e:
+                    logger.opt(exception=True).warning(
+                        f"Failed to generate questions with patient context: {e}"
+                    )
 
+            # Then try without patient context
+            try:
+                raw_questions = await model.get_appeal_questions(
+                    denial_text=denial_text,
+                    plan_context=plan_context,
+                )
+                if raw_questions and len(raw_questions) > 0:
+                    # Parse questions into (question, answer) tuples if they aren't already
+                    if isinstance(raw_questions[0], str):
+                        return self._parse_questions_with_answers(raw_questions)
+                    return raw_questions
+            except Exception as e:
+                logger.opt(exception=True).warning(f"Failed to generate questions: {e}")
 
+        # If we got here, no models worked, return empty list
+        return []
+
+    def _parse_questions_with_answers(
+        self, questions: List[str]
+    ) -> List[Tuple[str, str]]:
+        """
+        Parse a list of string questions, some of which may contain answers,
+        into a list of (question, answer) tuples.
+
+        Args:
+            questions: A list of questions, possibly with answers after "?"
+
+        Returns:
+            A list of (question, answer) tuples
+        """
+        result = []
+        for question in questions:
+            # Check if question contains an answer (format: "Question? Answer")
+            question_parts = question.split("?", 1)
+            if len(question_parts) > 1 and len(question_parts[1].strip()) > 0:
+                # If we have "Question? Answer", separate them
+                question_text = question_parts[0].strip() + "?"
+                initial_answer = question_parts[1].strip()
+                result.append((question_text, initial_answer))
+            else:
+                # If no answer found, use empty string as the answer
+                result.append((question, ""))
+        return result
 
     async def _extract_entity_with_regexes_and_model(
         self,

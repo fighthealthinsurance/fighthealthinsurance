@@ -83,7 +83,9 @@ class MLRouter(object):
         for m in models:
             return asyncio.run(
                 m._infer(
-                    system_prompts=["You are a helpful assistant summarizing an article for a person or other LLM wriitng an appeal. Be very concise."],
+                    system_prompts=[
+                        "You are a helpful assistant summarizing an article for a person or other LLM wriitng an appeal. Be very concise."
+                    ],
                     prompt=f"Summarize the following for use in a health insurance appeal: {abstract_optional} {text_optional}.",
                 )
             )

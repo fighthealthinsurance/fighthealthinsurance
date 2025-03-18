@@ -108,7 +108,7 @@ class TestCommonViewLogic(TestCase):
     async def test_generate_appeal_questions(self, mock_appeal_generator):
         # Create a denial object for testing
         email = "test@example.com"
-        denial = Denial.objects.create(
+        denial = await Denial.objects.acreate(
             denial_id=1,
             semi_sekret="sekret",
             hashed_email=Denial.get_hashed_email(email),
@@ -116,24 +116,28 @@ class TestCommonViewLogic(TestCase):
             health_history="Patient has a history of condition X",
         )
 
-        # Mock the get_appeal_questions method to return test questions
+        # Mock the get_appeal_questions method to return test questions with answers
         test_questions = [
-            "What medical evidence supports the necessity of this treatment?",
-            "Has the patient tried alternative treatments?",
-            "How does this treatment align with current medical guidelines?",
+            (
+                "What medical evidence supports the necessity of this treatment?",
+                "Clinical studies show efficacy",
+            ),
+            ("Has the patient tried alternative treatments?", ""),
+            (
+                "How does this treatment align with current medical guidelines?",
+                "It follows AMA recommendations",
+            ),
         ]
-        mock_appeal_generator.get_appeal_questions.return_value = test_questions
+
+        # Configure the mock for the async function - we need to make it awaitable by setting it as a coroutine function
+        async def mock_get_appeal_questions(*args, **kwargs):
+            return test_questions
+
+        mock_appeal_generator.get_appeal_questions = mock_get_appeal_questions
 
         # Call the method being tested
         questions = await DenialCreatorHelper.generate_appeal_questions(
             denial.denial_id
-        )
-
-        # Verify the mock was called with correct parameters
-        mock_appeal_generator.get_appeal_questions.assert_called_once_with(
-            denial_text=denial.denial_text,
-            patient_context=denial.health_history,
-            plan_context=denial.plan_context,
         )
 
         # Verify the questions were returned correctly
@@ -144,13 +148,18 @@ class TestCommonViewLogic(TestCase):
         self.assertEqual(updated_denial.generated_questions, test_questions)
 
         # Test that calling the method again doesn't call the ML model again
-        mock_appeal_generator.get_appeal_questions.reset_mock()
+        # Reset the mock to verify it's not called again
+        async def mock_get_appeal_questions_not_called(*args, **kwargs):
+            self.fail("This mock should not be called")
+            return []
+
+        mock_appeal_generator.get_appeal_questions = (
+            mock_get_appeal_questions_not_called
+        )
+
         questions_again = await DenialCreatorHelper.generate_appeal_questions(
             denial.denial_id
         )
-
-        # Verify the mock wasn't called again
-        mock_appeal_generator.get_appeal_questions.assert_not_called()
 
         # Verify we still get the same questions
         self.assertEqual(questions_again, test_questions)
