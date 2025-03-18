@@ -755,11 +755,9 @@ class FindNextStepsHelper:
                             generated_questions, 1
                         ):
                             field_name = f"appeal_generated_question_{i}"
-                            # Make it a read-only textarea with the question as help text
                             self.fields[field_name] = forms.CharField(
                                 label=question,
                                 help_text=question,
-                                widget=forms.TextInput(attrs={"readonly": "readonly"}),
                                 required=False,
                                 initial=initial_answer,  # Use the answer from the tuple
                             )
