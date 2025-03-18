@@ -24,7 +24,6 @@ from rest_framework.test import APITestCase
 from fighthealthinsurance.models import (
     Denial,
     UserDomain,
-    ExtraUserProperties,
     ProfessionalUser,
     Appeal,
     PatientUser,
@@ -35,6 +34,7 @@ from fighthealthinsurance.websockets import (
     StreamingAppealsBackend,
 )
 from fhi_users.models import (
+    ExtraUserProperties,
     PatientDomainRelation,
     ProfessionalDomainRelation,
 )
