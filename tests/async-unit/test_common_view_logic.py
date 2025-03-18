@@ -145,7 +145,14 @@ class TestCommonViewLogic(TestCase):
 
         # Verify the questions were stored in the denial object
         updated_denial = await Denial.objects.aget(denial_id=denial.denial_id)
-        self.assertEqual(updated_denial.generated_questions, test_questions)
+
+        # Django's JSON serialization converts tuples to lists, so we need to convert
+        # the test_questions to lists for comparison or the stored questions to tuples
+        stored_questions_as_tuples = [
+            (q[0], q[1]) if isinstance(q, list) else q
+            for q in updated_denial.generated_questions
+        ]
+        self.assertEqual(stored_questions_as_tuples, test_questions)
 
         # Test that calling the method again doesn't call the ML model again
         # Reset the mock to verify it's not called again
