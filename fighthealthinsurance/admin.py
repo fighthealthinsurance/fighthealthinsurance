@@ -35,6 +35,27 @@ from fhi_users.models import ProfessionalUser, PatientUser, UserDomain
 from django.contrib.auth.admin import UserAdmin
 
 
+@admin.register(UserDomain)
+class UserDomainAdmin:
+    """User domains"""
+
+    list_display = ("id", "name", "visible_phone_number")
+
+
+@admin.register(ProfessionalUser)
+class ProfessionalUserAdmin:
+    """User domains"""
+
+    list_display = ("id", "user", "user__fname", "user__email")
+
+
+@admin.register(PatientUser)
+class PatientUserAdmin:
+    """User domains"""
+
+    list_display = ("id", "user", "user__fname", "user__email")
+
+
 @admin.register(Denial)
 class DenialAdmin(admin.ModelAdmin):
     """Admin configuration for Denial model."""
@@ -53,6 +74,7 @@ class DenialAdmin(admin.ModelAdmin):
         "plan_type__name",
         "denial_type__name",
         "date",
+        ("appeal_text", admin.EmptyFieldListFilter),
     )
     ordering = ("-date",)
 
