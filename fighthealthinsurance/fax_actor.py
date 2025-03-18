@@ -1,3 +1,4 @@
+import os
 from typing import Tuple
 import ray
 from fighthealthinsurance.fax_utils import *

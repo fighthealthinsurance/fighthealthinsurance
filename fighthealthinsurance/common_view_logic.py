@@ -5,7 +5,8 @@ import datetime
 import json
 from dataclasses import dataclass
 from string import Template
-from typing import AsyncIterator, Awaitable, Any, Optional, Tuple, Iterable, List
+from typing import AsyncIterator, Awaitable, Any, Iterator, Optional, Tuple, Iterable, List
+from fighthealthinsurance.process_denial import ProcessDenialCodes, ProcessDenialRegex
 from loguru import logger
 from PyPDF2 import PdfMerger
 import ray
@@ -23,12 +24,12 @@ from django.db.models import QuerySet
 
 import uszipcode
 from fighthealthinsurance.fax_actor_ref import fax_actor_ref
-from fighthealthinsurance.form_utils import *
-from fighthealthinsurance.generate_appeal import *
-from fighthealthinsurance.models import *
+from fighthealthinsurance.form_utils import magic_combined_form  
+from fighthealthinsurance.generate_appeal import AppealGenerator, AppealTemplateGenerator  
+from fighthealthinsurance.models import Appeal, DataSource, Denial, DenialTypes, DenialTypesRelation, FaxesToSend, FollowUp, FollowUpDocuments, FollowUpSched, ProposedAppeal, PubMedArticleSummarized, PubMedQueryData, Regulator
 from fighthealthinsurance.utils import interleave_iterator_for_keep_alive
 from fighthealthinsurance import stripe_utils
-from fhi_users.models import ProfessionalUser, UserDomain
+from fhi_users.models import PatientUser, ProfessionalUser, UserDomain
 from .pubmed_tools import PubMedTools
 from .utils import check_call, send_fallback_email
 
@@ -1385,7 +1386,7 @@ class AppealsBackendHelper:
 
         async def save_appeal(appeal_text: str) -> dict[str, str]:
             # Save all of the proposed appeals, so we can use RL later.
-            t = time.time()
+            t = datetime.time.time()
             logger.debug(f"{t}: Saving {appeal_text}")
             await asyncio.sleep(0)
             # YOLO on saving appeals, sqllite gets sad.

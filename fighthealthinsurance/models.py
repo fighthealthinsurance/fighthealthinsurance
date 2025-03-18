@@ -15,7 +15,7 @@ from django_encrypted_filefield.fields import EncryptedFileField
 from django.contrib.auth import get_user_model
 
 from fighthealthinsurance.utils import sekret_gen
-from fhi_users.models import *
+from fhi_users.models import PatientUser, ProfessionalDomainRelation, ProfessionalUser, UserDomain  
 from regex_field.fields import RegexField
 
 if typing.TYPE_CHECKING:
