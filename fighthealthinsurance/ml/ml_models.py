@@ -245,20 +245,7 @@ class RemoteOpenLike(RemoteModel):
         ]
         if result is None:
             return True
- def bad_result(self, result: Optional[str]) -> bool:
-     bad_ideas = [
-         "Therefore, the Health Plans denial should be overturned.",
-     ]
-     if result is None:
-         return True
--    for bad in result:
--        if bad in result:
-+    for phrase in bad_ideas:
-+        if phrase in result:
-+            return True
-     if len(result.strip(" ")) < 5:
-         return True
-     return False
+        for bad in result:
             if bad in result:
                 return True
         if len(result.strip(" ")) < 5:
