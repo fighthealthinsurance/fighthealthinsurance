@@ -118,6 +118,11 @@ class AppealGenerator(object):
         """
         result = []
 
+        # Handle empty input gracefully
+        if not questions:
+            logger.warning("Received empty question list")
+            return []
+
         # First check if we received a single string with multiple lines
         if len(questions) == 1 and "\n" in questions[0]:
             # Split the single string into separate lines
@@ -137,31 +142,60 @@ class AppealGenerator(object):
             # Handle markdown-style bold formatting like "**Question?** Answer"
             question = re.sub(r"\*\*([^*]+)\*\*", r"\1", question)
 
-            # Find the question part (everything up to the question mark)
-            question_mark_pos = question.find("?")
-            if question_mark_pos >= 0:
-                # We found a question mark, now separate question from answer
-                question_text = question[: question_mark_pos + 1].strip()
+            # Try to find multiple question-answer pairs in a single line
+            # This pattern looks for "Question1? Answer1. Question2? Answer2." etc.
+            multiple_qa_pattern = r"([^.!?]+\?)\s*([^.!?]*(?:\.|$))"
+            multiple_qa_matches = re.findall(multiple_qa_pattern, question)
 
-                # Process the answer part (everything after the question mark)
-                if len(question) > question_mark_pos + 1:
-                    # Handle common prefixes in answers like "A: ", ": ", " - "
-                    answer_text = question[question_mark_pos + 1 :].strip()
+            if len(multiple_qa_matches) > 1:
+                # We found multiple question-answer pairs in one line
+                for q, a in multiple_qa_matches:
+                    question_text = q.strip()
+                    answer_text = a.strip().rstrip(
+                        "."
+                    )  # Remove trailing period if present
+                    # Handle common prefixes in answers
                     answer_text = re.sub(r"^[A:][\s:]*", "", answer_text)
                     result.append((question_text, answer_text))
-                else:
-                    # No answer provided
-                    result.append((question_text, ""))
             else:
-                # No question mark found, treat the whole string as a question
-                result.append((question, ""))
+                # Process as a single question-answer pair
+                question_mark_pos = question.find("?")
+                if question_mark_pos >= 0:
+                    # We found a question mark, now separate question from answer
+                    question_text = question[: question_mark_pos + 1].strip()
+
+                    # Process the answer part (everything after the question mark)
+                    if len(question) > question_mark_pos + 1:
+                        # Handle common prefixes in answers like "A: ", ": ", " - "
+                        answer_text = question[question_mark_pos + 1 :].strip()
+                        answer_text = re.sub(r"^[A:][\s:]*", "", answer_text)
+                        result.append((question_text, answer_text))
+                    else:
+                        # No answer provided
+                        result.append((question_text, ""))
+                else:
+                    # No question mark found, treat the whole string as a question if it looks like one
+                    if re.search(r"^\s*\w.*\w+", question):
+                        # Ensure it ends with a question mark
+                        if not question.endswith("?"):
+                            question += "?"
+                        result.append((question, ""))
 
         # If we have a LLM output that's just text with no clear questions, try to extract them
-        if not result and len(questions) == 1 and len(questions[0]) > 100:
-            # Try to find question-answer pairs in the text
-            potential_questions = re.findall(r"([^.!?]+\?)\s*([^.!?]*)", questions[0])
-            for q, a in potential_questions:
-                result.append((q.strip(), a.strip()))
+        if not result and questions and len(" ".join(questions)) > 100:
+            try:
+                # Try more aggressive parsing with a broader pattern
+                combined_text = " ".join(questions)
+                potential_questions = re.findall(
+                    r"([^.!?]+\?)\s*([^?]*?)(?=\s*(?:\d+\.|\*|\-|\•)?\s*[A-Z]|\Z)",
+                    combined_text,
+                )
+                for q, a in potential_questions:
+                    result.append((q.strip(), a.strip()))
+            except Exception as e:
+                logger.warning(
+                    f"Error while trying to extract questions with regex: {e}"
+                )
 
         return result
 
