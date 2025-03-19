@@ -401,9 +401,9 @@ class AppealAssemblyHelper:
         if pubmed_ids_parsed is not None and len(pubmed_ids_parsed) > 0:
             logger.debug(f"Processing PubMed articles: {pubmed_ids_parsed}")
             pmt = PubMedTools()
-            pubmed_docs: list[PubMedArticleSummarized] = pmt.get_articles(
-                pubmed_ids_parsed
-            )
+            pubmed_docs: list[PubMedArticleSummarized] = async_to_sync(
+                pmt.get_articles
+            )(pubmed_ids_parsed)
             logger.debug(f"Retrieved {len(pubmed_docs)} PubMed articles")
             if pubmed_docs:
                 pubmed_docs_paths = [
@@ -1048,7 +1048,7 @@ class DenialCreatorHelper:
                     try:
                         pubmed_tool = PubMedTools()
                         # Find related articles based on diagnosis and procedure
-                        pubmed_tool.find_pubmed_articles_for_denial(
+                        await pubmed_tool.find_pubmed_articles_for_denial(
                             denial, timeout=60.0
                         )
                     except Exception as e:
@@ -1295,9 +1295,19 @@ class AppealsBackendHelper:
 
         # Get the current info
         await asyncio.sleep(0)
-        denial = await Denial.objects.filter(
-            denial_id=denial_id, semi_sekret=semi_sekret, hashed_email=hashed_email
-        ).aget()
+        denial = (
+            await Denial.objects.filter(
+                denial_id=denial_id, semi_sekret=semi_sekret, hashed_email=hashed_email
+            )
+            .select_related(
+                "patient_user",
+                "patient_user__user",
+                "domain",
+                "primary_professional",
+                "primary_professional__user",
+            )
+            .aget()
+        )
 
         non_ai_appeals: List[str] = list(
             map(
@@ -1384,11 +1394,11 @@ class AppealsBackendHelper:
         pubmed_context = None
         logger.debug("Looking up the pubmed context")
         try:
-            pubmed_context = await sync_to_async(cls.pmt.find_context_for_denial)(
-                denial
-            )
+            pubmed_context = await cls.pmt.find_context_for_denial(denial)
         except Exception as e:
-            logger.debug(f"Error {e} looking up context for {denial}.")
+            logger.opt(exception=True).debug(
+                f"Error {e} looking up context for {denial}."
+            )
         logger.debug("Pubmed context done.")
 
         try:
@@ -1440,18 +1450,17 @@ class AppealsBackendHelper:
                 "{diagnosis}": denial.diagnosis or "{diagnosis}",
                 "{procedure}": denial.procedure or "{procedure}",
             }
-            # TODO: Update for async
-            # if denial.patient_user is not None:
-            #    subs["[Patient Name]"] = denial.patient_user.get_legal_name()
-            # if denial and denial.primary_professional is not None:
-            #    subs["[Professional Name]"] = (
-            #        denial.primary_professional.get_full_name()
-            #    )
-            # if denial.domain:
-            #    subs["[Professional Address]"] = denial.domain.get_address()
+            if denial.patient_user is not None:
+                subs["[Patient Name]"] = denial.patient_user.get_legal_name()
+            if denial and denial.primary_professional is not None:
+                subs["[Professional Name]"] = (
+                    denial.primary_professional.get_full_name()
+                )
+            if denial.domain:
+                subs["[Professional Address]"] = denial.domain.get_address()
             ret = s.safe_substitute(subs)
             appeal["content"] = ret
-            logger.debug("Updated appeal to {ret}")
+            logger.debug(f"Updated appeal to {ret}")
             return appeal
 
         async def format_response(response: dict[str, str]) -> str:

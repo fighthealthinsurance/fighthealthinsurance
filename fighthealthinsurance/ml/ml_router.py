@@ -68,25 +68,37 @@ class MLRouter(object):
         else:
             return self.internal_models_by_cost
 
-    def summarize(self, text: Optional[str], abstract: Optional[str]) -> Optional[str]:
+    async def summarize(
+        self, text: Optional[str], abstract: Optional[str] = None
+    ) -> Optional[str]:
         models: list[RemoteModelLike] = []
         if "meta-llama/Llama-3.3-70B-Instruct-Turbo" in self.models_by_name:
-            models = self.models_by_name["meta-llama/Llama-3.3-70B-Instruct-Turbo"]
+            models = (
+                self.models_by_name["meta-llama/Llama-3.3-70B-Instruct-Turbo"]
+                + self.internal_models_by_cost
+            )
         else:
-            models = self.all_models_by_cost
+            models = self.internal_models_by_cost
         abstract_optional = ""
         text_optional = ""
         if abstract is not None:
-            abstract_optional = f"--- Current abstract: {abstract} ---"
+            abstract_optional = f"--- Current abstract: {abstract[0:1000]} ---"
         if text is not None:
-            text_optional = f"--- Full-ish article text: {text} ---"
+            text_optional = f"--- Full-ish article text: {text[0:1000]} ---"
         for m in models:
-            return asyncio.run(
-                m._infer(
-                    system_prompt="You are a helpful assistant summarizing an article for a person or other LLM wriitng an appeal. Be very concise.",
-                    prompt=f"Summarize the following for use in a health insurance appeal: {abstract_optional} {text_optional}.",
-                )
+            r = await m._infer(
+                system_prompt="You are a helpful assistant summarizing an article for a person or other LLM wriitng an appeal. Be very concise.",
+                prompt=f"Summarize the following for use in a health insurance appeal: {abstract_optional} {text_optional}. If present in the input include a list of the most relevant articles referenced (with PMID / DOIs or links if present in the input).",
             )
+            if r is not None:
+                return r
+            # Try again with only the abstract
+            r = await m._infer(
+                system_prompt="You are a helpful assistant summarizing an article for a person or other LLM wriitng an appeal. Be very concise.",
+                prompt=f"Summarize the following for use in a health insurance appeal: {abstract_optional}. If present in the input include a list of the most relevant articles referenced (with PMID / DOIs or links if present in the input).",
+            )
+            if r is not None:
+                return r
         return None
 
     def working(self) -> bool:

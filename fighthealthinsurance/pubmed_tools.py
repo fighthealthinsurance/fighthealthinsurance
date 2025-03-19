@@ -3,11 +3,13 @@ from fighthealthinsurance.models import (
     PubMedQueryData,
     PubMedMiniArticle,
 )
+from asgiref.sync import sync_to_async, async_to_sync
 from fighthealthinsurance.utils import pubmed_fetcher
 from .utils import markdown_escape
 from concurrent.futures import Future
 from metapub import FindIt
 from stopit import ThreadingTimeout as Timeout
+from stopit import TimeoutException
 from .models import Denial
 import json
 import PyPDF2
@@ -26,11 +28,11 @@ class PubMedTools(object):
     # Rough bias to "recent" articles
     since_list = ["2025", "2024", None]
 
-    def find_pubmed_article_ids_for_query(
+    async def find_pubmed_article_ids_for_query(
         self,
         query: str,
         since: Optional[str] = None,
-        timeout: float = 30.0,
+        timeout: float = 60.0,
     ) -> List[str]:
         """
         Find PubMed article IDs for a given query. May pull from database.
@@ -54,9 +56,9 @@ class PubMedTools(object):
                     since=since,
                 ).order_by("-created")
 
-                if existing_queries.exists():
+                if await existing_queries.aexists():
                     # Use cached query results
-                    for query_data in existing_queries:
+                    async for query_data in existing_queries:
                         if query_data.articles:
                             try:
                                 article_ids: list[str] = json.loads(
@@ -70,15 +72,17 @@ class PubMedTools(object):
                                 )
 
                 # If no cache or cache error, fetch from PubMed API
-                fetched_pmids = pubmed_fetcher.pmids_for_query(query, since=since)
+                fetched_pmids = await sync_to_async(pubmed_fetcher.pmids_for_query)(
+                    query, since=since
+                )
                 if fetched_pmids:
                     # Sometimes we get nulls...
                     articles_json = json.dumps(fetched_pmids).replace("\x00", "")
-                    PubMedQueryData.objects.create(
+                    await PubMedQueryData.objects.acreate(
                         query=query,
                         since=since,
                         articles=articles_json,
-                    ).save()
+                    )
                     pmids.extend(fetched_pmids)
 
                 # If we didn't get any results, but we're not restricted by 'since',
@@ -98,21 +102,23 @@ class PubMedTools(object):
                                 articles_json = json.dumps(year_pmids).replace(
                                     "\x00", ""
                                 )
-                                PubMedQueryData.objects.create(
+                                await PubMedQueryData.objects.acreate(
                                     query=query,
                                     since=year,
                                     articles=articles_json,
-                                ).save()
+                                )
                                 pmids.extend(year_pmids)
                                 break
         except Exception as e:
             # We might timeout
-            logger.debug(f"Error or timeout in find_pubmed_article_ids_for_query: {e}")
+            logger.opt(exception=True).debug(
+                f"Error or timeout in find_pubmed_article_ids_for_query: {e}"
+            )
             pass
         return pmids
 
-    def find_pubmed_articles_for_denial(
-        self, denial: Denial, timeout=30.0
+    async def find_pubmed_articles_for_denial(
+        self, denial: Denial, timeout=60.0
     ) -> List[PubMedMiniArticle]:
         pmids: List[str] = []
         articles: List[PubMedMiniArticle] = []
@@ -131,7 +137,7 @@ class PubMedTools(object):
                         count = 0
                         if query is None or query.strip() == "":
                             continue
-                        new_pmids = self.find_pubmed_article_ids_for_query(
+                        new_pmids = await self.find_pubmed_article_ids_for_query(
                             query, since=since
                         )
                         for pmid in new_pmids:
@@ -145,7 +151,9 @@ class PubMedTools(object):
 
                 # Check if articles already exist in database
                 for pmid in pmids:
-                    mini_article = PubMedMiniArticle.objects.filter(pmid=pmid).first()
+                    mini_article = await PubMedMiniArticle.objects.filter(
+                        pmid=pmid
+                    ).afirst()
                     if mini_article:
                         articles.append(mini_article)
                     else:
@@ -155,7 +163,7 @@ class PubMedTools(object):
                             if fetched:
                                 src = FindIt(pmid)
                                 url = src.url
-                                mini_article = PubMedMiniArticle.objects.create(
+                                mini_article = await PubMedMiniArticle.objects.acreate(
                                     pmid=pmid,
                                     title=(
                                         fetched.title.replace("\x00", "")
@@ -171,14 +179,16 @@ class PubMedTools(object):
                                 )
                                 articles.append(mini_article)
                         except Exception as e:
-                            logger.error(f"Error fetching article {pmid}: {e}")
-        except Timeout as e:
+                            logger.opt(exception=True).error(
+                                f"Error fetching article {pmid}: {e}"
+                            )
+        except TimeoutException as e:
             logger.debug(
                 f"Timeout in find_pubmed_articles_for_denial: {e} so far got {articles}"
             )
         return articles
 
-    def find_context_for_denial(self, denial: Denial, timeout=30.0) -> str:
+    async def find_context_for_denial(self, denial: Denial, timeout=60.0) -> str:
         """
         Kind of hacky RAG routine that uses PubMed.
         """
@@ -214,26 +224,32 @@ class PubMedTools(object):
                     selected_pmids = list(
                         map(
                             lambda x: x.pmid,
-                            self.find_pubmed_articles_for_denial(
+                            await self.find_pubmed_articles_for_denial(
                                 denial, timeout=(timeout / 2.0)
                             ),
                         )
                     )
 
+                denial.pubmed_ids_json = json.dumps(selected_pmids)
+                await denial.asave()
                 # Directly fetch the selected articles from the database
-                articles = list(
-                    PubMedArticleSummarized.objects.filter(pmid__in=selected_pmids)
-                )
+                articles = [
+                    article
+                    async for article in PubMedArticleSummarized.objects.filter(
+                        pmid__in=selected_pmids
+                    )
+                ]
                 logger.debug(
                     f"Found {len(articles)} pre-selected articles in the database"
                 )
 
                 # If we couldn't find all the articles in the database, try to fetch them
-                missing_pmids = []
                 if articles and len(articles) < len(selected_pmids):
                     for pmid in selected_pmids:
                         if not any(a.pmid == pmid for a in articles):
                             missing_pmids.append(pmid)
+                elif articles and len(articles) == len(selected_pmids):
+                    missing_pmids = []
                 else:
                     missing_pmids = selected_pmids
 
@@ -241,24 +257,40 @@ class PubMedTools(object):
                     logger.debug(f"Fetching {len(missing_pmids)} missing articles")
                 # Fetch in-order so we can be interrupted
                 for pmid in missing_pmids:
-                    articles.extend(self.get_articles([pmid]))
-        except Timeout as e:
+                    articles.extend(await self.get_articles([pmid]))
+        except TimeoutException as e:
             logger.debug(
                 f"Timeout in find_context_for_denial: {e} so far got {articles}"
             )
 
         # Format the articles for context
         if articles:
-            return "\n".join(self.format_article_short(article) for article in articles)
+            joined_contexts = "\n".join(
+                self.format_article_short(article) for article in articles
+            )
+            r = await ml_router.summarize(joined_contexts)
+            if r is None:
+                return joined_contexts
+            else:
+                return r
         else:
             return ""
 
     @staticmethod
     def format_article_short(article: PubMedArticleSummarized) -> str:
         """Helper function to format an article for context."""
-        return f"PubMed DOI {article.doi} title {article.title} summary {article.basic_summary}"
+        summary = None
+        if article.basic_summary:
+            summary = article.basic_summary
+        elif article.abstract:
+            summary = article.abstract[0:500]
+        summary_opt = "summary {summary}" if summary else ""
+        url_opt = f"from {article.article_url}" if article.article_url else ""
+        return f"PubMed DOI {article.doi} title {article.title} {url_opt} {summary_opt}"
 
-    def get_articles(self, pubmed_ids: List[str]) -> List[PubMedArticleSummarized]:
+    async def get_articles(
+        self, pubmed_ids: List[str]
+    ) -> List[PubMedArticleSummarized]:
         """Get PubMed articles by their IDs."""
         if not pubmed_ids:
             return []
@@ -271,50 +303,27 @@ class PubMedTools(object):
             try:
                 # Look for existing articles in the database first
                 matching_articles = PubMedArticleSummarized.objects.filter(pmid=pmid)
-                if matching_articles.exists():
-                    article = matching_articles.first()
+                if await matching_articles.aexists():
+                    article = await matching_articles.afirst()
                     if article is not None:
                         pubmed_docs.append(article)
                 else:
                     # Article not in database, fetch it
-                    fetched = pubmed_fetcher.article_by_pmid(pmid)
-                    if fetched is not None:
-                        article = PubMedArticleSummarized.objects.create(
-                            pmid=pmid,
-                            doi=fetched.doi if hasattr(fetched, "doi") else "",
-                            title=(
-                                fetched.title.replace("\x00", "")
-                                if hasattr(fetched, "title") and fetched.title
-                                else ""
-                            ),
-                            abstract=(
-                                fetched.abstract.replace("\x00", "")
-                                if hasattr(fetched, "abstract") and fetched.abstract
-                                else ""
-                            ),
-                            text=(
-                                fetched.content.text.replace("\x00", "")
-                                if hasattr(fetched, "content")
-                                and hasattr(fetched.content, "text")
-                                and fetched.content.text
-                                else ""
-                            ),
-                        )
+                    article = await self.do_article_summary(pmid)
+                    if article is not None:
                         pubmed_docs.append(article)
             except Exception as e:
                 logger.debug(f"Skipping {pmid}: {e}")
 
         return pubmed_docs
 
-    def do_article_summary(self, article_id) -> Optional[PubMedArticleSummarized]:
-        possible_articles = PubMedArticleSummarized.objects.filter(
-            pmid=article_id,
-            basic_summary__isnull=False,
-        )[:1]
-
-        article = None
-        if possible_articles:
-            article = possible_articles[0]
+    async def do_article_summary(self, article_id) -> Optional[PubMedArticleSummarized]:
+        article: Optional[PubMedArticleSummarized] = (
+            await PubMedArticleSummarized.objects.filter(
+                pmid=article_id,
+                basic_summary__isnull=False,
+            ).afirst()
+        )
 
         if article is None:
             try:
@@ -343,10 +352,14 @@ class PubMedTools(object):
                             else:
                                 for page in read_pdf.pages:
                                     article_text += page.extract_text()
-                    else:
+                    elif (
+                        "Something has gone wrong with our web server"
+                        not in response.text
+                    ):
                         article_text += response.text
-                elif (
-                    fetched
+                if (
+                    (article_text is None or article_text == "")
+                    and fetched
                     and hasattr(fetched, "content")
                     and hasattr(fetched.content, "text")
                 ):
@@ -355,7 +368,7 @@ class PubMedTools(object):
                 if fetched is not None and (
                     (hasattr(fetched, "abstract") and fetched.abstract) or article_text
                 ):
-                    article = PubMedArticleSummarized.objects.create(
+                    article = await PubMedArticleSummarized.objects.acreate(
                         pmid=article_id,
                         doi=fetched.doi if hasattr(fetched, "doi") else "",
                         title=fetched.title if hasattr(fetched, "title") else "",
@@ -364,7 +377,7 @@ class PubMedTools(object):
                         ),
                         text=article_text,
                         article_url=url,
-                        basic_summary=ml_router.summarize(
+                        basic_summary=await ml_router.summarize(
                             abstract=(
                                 fetched.abstract if hasattr(fetched, "abstract") else ""
                             ),
