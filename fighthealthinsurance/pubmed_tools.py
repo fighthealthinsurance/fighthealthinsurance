@@ -112,7 +112,7 @@ class PubMedTools(object):
         return pmids
 
     def find_pubmed_articles_for_denial(
-        self, denial: Denial, timeout=60.0
+        self, denial: Denial, timeout=30.0
     ) -> List[PubMedMiniArticle]:
         pmids: List[str] = []
         articles: List[PubMedMiniArticle] = []
@@ -178,7 +178,7 @@ class PubMedTools(object):
             )
         return articles
 
-    def find_context_for_denial(self, denial: Denial, timeout=60.0) -> str:
+    def find_context_for_denial(self, denial: Denial, timeout=30.0) -> str:
         """
         Kind of hacky RAG routine that uses PubMed.
         """

@@ -44,7 +44,6 @@ class AppealTemplateGenerator(object):
 class AppealGenerator(object):
     def __init__(self):
         self.regex_denial_processor = ProcessDenialRegex()
-        self.pmt = PubMedTools()
 
     async def _extract_entity_with_regexes_and_model(
         self,
@@ -382,8 +381,14 @@ class AppealGenerator(object):
             return None
 
     def make_appeals(
-        self, denial, template_generator, medical_reasons=None, non_ai_appeals=None
+        self,
+        denial,
+        template_generator,
+        medical_reasons=None,
+        non_ai_appeals=None,
+        pubmed_context=None,
     ) -> Iterator[str]:
+        logger.debug("Starting to make appeals...")
         if medical_reasons is None:
             medical_reasons = []
         if non_ai_appeals is None:
@@ -398,12 +403,6 @@ class AppealGenerator(object):
             procedure=denial.procedure,
             diagnosis=denial.diagnosis,
         )
-
-        pubmed_context = None
-        try:
-            pubmed_context = self.pmt.find_context_for_denial(denial)
-        except Exception as e:
-            logger.debug(f"Error {e} looking up context for {denial}.")
 
         for_patient = (
             denial.primary_professional is None or not denial.professional_to_finish
@@ -431,7 +430,7 @@ class AppealGenerator(object):
             for model in model_backends:
                 try:
                     logger.debug(f"Getting result on {model} backend for {model_name}")
-                    return _get_model_result(
+                    result = _get_model_result(
                         model=model,
                         prompt=prompt,
                         patient_context=patient_context,
@@ -440,6 +439,8 @@ class AppealGenerator(object):
                         pubmed_context=pubmed_context,
                         for_patient=for_patient,
                     )
+                    logger.debug("Got back {result} for {model_name} on {model}")
+                    return result
                 except Exception as e:
                     logger.debug(f"Backend {model} failed {e}")
             logger.debug(f"All backends for {model_name} failed")
@@ -645,11 +646,16 @@ class AppealGenerator(object):
         delayed_initial_appeals: List[Future[Iterator[str]]] = list(
             map(lambda appeal: executor.submit(random_delay, appeal), initial_appeals)
         )
-        appeals: Iterator[str] = as_available_nested(generated_text_futures)
-        appeals = itertools.chain(appeals, as_available_nested(delayed_initial_appeals))
+        core_futures: List[Future[Iterator[str]]] = (
+            delayed_initial_appeals + generated_text_futures
+        )
+        appeals: Iterator[str] = as_available_nested(core_futures)
+        logger.debug(f"Appeals itr starting with {appeals}")
         # Check and make sure we have some AI powered results
         try:
+            logger.debug(f"Getting first {appeals}")
             appeals = itertools.chain([appeals.__next__()], appeals)
+            logger.debug(f"First pulled off {appeals}")
         except StopIteration:
             logger.warning(f"Adding backup calls {backup_calls}")
             appeals = as_available_nested(make_async_model_calls(backup_calls))
