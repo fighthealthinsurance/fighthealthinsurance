@@ -2,10 +2,12 @@ import asyncstdlib as a
 from asgiref.sync import sync_to_async, async_to_sync
 import asyncio
 import datetime
+import time
 import json
 from dataclasses import dataclass
 from string import Template
-from typing import AsyncIterator, Awaitable, Any, Optional, Tuple, Iterable, List
+from typing import AsyncIterator, Awaitable, Any, Iterator, Optional, Tuple, Iterable, List
+from fighthealthinsurance.process_denial import ProcessDenialCodes, ProcessDenialRegex
 from loguru import logger
 from PyPDF2 import PdfMerger
 import ray
@@ -23,9 +25,26 @@ from django.db.models import QuerySet
 
 import uszipcode
 from fighthealthinsurance.fax_actor_ref import fax_actor_ref
-from fighthealthinsurance.form_utils import *
-from fighthealthinsurance.generate_appeal import *
-from fighthealthinsurance.models import *
+from fighthealthinsurance.form_utils import magic_combined_form  
+from fighthealthinsurance.generate_appeal import AppealGenerator, AppealTemplateGenerator  
+from fighthealthinsurance.models import (
+    Appeal,
+    DataSource,
+    Denial,
+    DenialTypes,
+    DenialTypesRelation,
+    FaxesToSend,
+    FollowUp,
+    FollowUpDocuments,
+    FollowUpSched,
+    PlanDocuments,
+    ProposedAppeal,
+    PubMedArticleSummarized,
+    PubMedQueryData,
+    Regulator,
+    PatientUser
+)
+
 from fighthealthinsurance.utils import interleave_iterator_for_keep_alive
 from fighthealthinsurance import stripe_utils
 from fhi_users.models import ProfessionalUser, UserDomain
@@ -1405,7 +1424,7 @@ class AppealsBackendHelper:
 
         async def save_appeal(appeal_text: str) -> dict[str, str]:
             # Save all of the proposed appeals, so we can use RL later.
-            t = time.time()
+            t = datetime.datetime.now().time()
             logger.debug(f"{t}: Saving {appeal_text}")
             await asyncio.sleep(0)
             # YOLO on saving appeals, sqllite gets sad.
@@ -1419,8 +1438,11 @@ class AppealsBackendHelper:
                     "Failed to save proposed appeal: {e}"
                 )
                 pass
-            passed = time.time() - t
-            logger.debug(f"Saved {appeal_text} after {passed} seconds")
+                start_time = time.time()
+                    # ... some operations later ...
+                passed = time.time() - start_time
+                logger.debug(f"Saved {appeal_text} after {passed} seconds")
+
             return {"id": id, "content": appeal_text}
 
         async def sub_in_appeals(appeal: dict[str, str]) -> dict[str, str]:

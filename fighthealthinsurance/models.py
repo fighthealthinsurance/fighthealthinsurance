@@ -15,7 +15,7 @@ from django_encrypted_filefield.fields import EncryptedFileField
 from django.contrib.auth import get_user_model
 
 from fighthealthinsurance.utils import sekret_gen
-from fhi_users.models import *
+from fhi_users.models import PatientUser, ProfessionalDomainRelation, ProfessionalUser, UserDomain, ExtraUserProperties  
 from regex_field.fields import RegexField
 
 if typing.TYPE_CHECKING:
@@ -344,7 +344,7 @@ class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # t
             f.write(combined_document.read())
             f.flush()
             f.close()
-            os.sync()
+            os.fsync(f.fileno())
             return f.name
 
     def __str__(self):

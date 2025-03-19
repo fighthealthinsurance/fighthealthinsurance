@@ -39,8 +39,7 @@ from fighthealthinsurance.models import (
     Appeal,
     Denial,
     DenialQA,
-    AppealAttachment,
-    PubMedMiniArticle,
+    AppealAttachment
 )
 from fighthealthinsurance.pubmed_tools import PubMedTools
 

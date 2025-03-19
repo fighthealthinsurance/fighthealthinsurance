@@ -3,7 +3,7 @@ from typing import List
 from loguru import logger
 from typing import Optional
 
-from fighthealthinsurance.ml.ml_models import *
+from fighthealthinsurance.ml.ml_models import ModelDescription, RemoteModelLike, candidate_model_backends
 
 
 class MLRouter(object):
