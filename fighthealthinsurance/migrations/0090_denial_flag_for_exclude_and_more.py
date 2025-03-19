@@ -20,12 +20,12 @@ class Migration(migrations.Migration):
         ),
         migrations.AddField(
             model_name="denial",
-            name="manual_deidentified_denail",
+            name="manual_deidentified_denial",
             field=models.TextField(default="", null=True),
         ),
         migrations.AddField(
             model_name="denial",
-            name="manual_deintified_appeal",
+            name="manual_deidentified_appeal",
             field=models.TextField(default="", null=True),
         ),
         migrations.AddField(
