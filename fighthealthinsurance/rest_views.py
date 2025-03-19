@@ -9,6 +9,8 @@ from django.utils import timezone
 from dateutil.relativedelta import relativedelta
 from django.http import FileResponse
 
+from asgiref.sync import sync_to_async, async_to_sync
+
 from django_encrypted_filefield.crypt import Cryptographer
 
 from rest_framework import status
@@ -205,7 +207,7 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
             denial_id=serializer.validated_data["denial_id"],
         )
 
-        articles = pubmed_tools.find_pubmed_articles_for_denial(denial)
+        articles = async_to_sync(pubmed_tools.find_pubmed_articles_for_denial)(denial)
 
         return Response(
             serializers.PubMedMiniArticleSerializer(articles, many=True).data,
