@@ -357,7 +357,7 @@ class HylaFaxClient(FaxSenderBase):
             print(f"Wrote phone number {destination} to {f.name}")
             f.write(destination)
             f.flush()
-            os.sync()
+            os.fsync(f.fileno())
             time.sleep(1)
             uploaded_destination_file = await self._upload_file(f.name)
             if uploaded_destination_file is None:

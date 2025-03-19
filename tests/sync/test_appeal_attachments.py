@@ -1,6 +1,6 @@
 from django.test import TestCase
 from django.core.files.uploadedfile import SimpleUploadedFile
-from fighthealthinsurance.models import Appeal, AppealAttachment,PatientUser, UserDomain, User, ProfessionalUser
+from fighthealthinsurance.models import *
 from rest_framework.test import APIClient
 from django.urls import reverse
 import json

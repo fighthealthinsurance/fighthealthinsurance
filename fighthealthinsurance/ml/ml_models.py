@@ -318,9 +318,7 @@ class RemoteOpenLike(RemoteModel):
             (
                 infer_type,
                 CleanerUtils.note_remover(
-                    CleanerUtils.url_fixer(
-                        CleanerUtils.tla_fixer(result), input_urls=input_urls
-                    )
+                    CleanerUtils.url_fixer(CleanerUtils.tla_fixer(result))
                 ),
             )
         ]

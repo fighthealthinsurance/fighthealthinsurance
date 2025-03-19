@@ -2,6 +2,7 @@ import asyncstdlib as a
 from asgiref.sync import sync_to_async, async_to_sync
 import asyncio
 import datetime
+import time
 import json
 from dataclasses import dataclass
 from string import Template
@@ -26,10 +27,27 @@ import uszipcode
 from fighthealthinsurance.fax_actor_ref import fax_actor_ref
 from fighthealthinsurance.form_utils import magic_combined_form  
 from fighthealthinsurance.generate_appeal import AppealGenerator, AppealTemplateGenerator  
-from fighthealthinsurance.models import Appeal, DataSource, Denial, DenialTypes, DenialTypesRelation, FaxesToSend, FollowUp, FollowUpDocuments, FollowUpSched, PlanDocuments, ProposedAppeal, PubMedArticleSummarized, PubMedQueryData, Regulator
+from fighthealthinsurance.models import (
+    Appeal,
+    DataSource,
+    Denial,
+    DenialTypes,
+    DenialTypesRelation,
+    FaxesToSend,
+    FollowUp,
+    FollowUpDocuments,
+    FollowUpSched,
+    PlanDocuments,
+    ProposedAppeal,
+    PubMedArticleSummarized,
+    PubMedQueryData,
+    Regulator,
+    PatientUser
+)
+
 from fighthealthinsurance.utils import interleave_iterator_for_keep_alive
 from fighthealthinsurance import stripe_utils
-from fhi_users.models import PatientUser, ProfessionalUser, UserDomain
+from fhi_users.models import ProfessionalUser, UserDomain
 from .pubmed_tools import PubMedTools
 from .utils import check_call, send_fallback_email
 
@@ -1420,8 +1438,11 @@ class AppealsBackendHelper:
                     "Failed to save proposed appeal: {e}"
                 )
                 pass
-            passed = time.time() - t
-            logger.debug(f"Saved {appeal_text} after {passed} seconds")
+                start_time = time.time()
+                    # ... some operations later ...
+                passed = time.time() - start_time
+                logger.debug(f"Saved {appeal_text} after {passed} seconds")
+
             return {"id": id, "content": appeal_text}
 
         async def sub_in_appeals(appeal: dict[str, str]) -> dict[str, str]:

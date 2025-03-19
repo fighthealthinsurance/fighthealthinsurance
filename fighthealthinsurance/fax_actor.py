@@ -1,7 +1,6 @@
-import os
 from typing import Tuple
 import ray
-from fighthealthinsurance.fax_utils import *
+from fighthealthinsurance.fax_utils import os, flexible_fax_magic
 from datetime import timedelta
 import time
 import asyncio

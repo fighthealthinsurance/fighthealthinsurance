@@ -344,7 +344,7 @@ class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # t
             f.write(combined_document.read())
             f.flush()
             f.close()
-            os.sync()
+            os.fsync(f.fileno())
             return f.name
 
     def __str__(self):
