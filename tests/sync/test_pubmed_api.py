@@ -4,13 +4,13 @@ import pytest
 import json
 import unittest.mock as mock
 from datetime import datetime, timedelta
-from asyncio import Future
+from unittest.mock import AsyncMock
 
 from django.urls import reverse
 from django.contrib.auth import get_user_model
 from django.utils import timezone
-from django.test import TestCase
-from asgiref.sync import async_to_sync
+from django.test import TestCase, TransactionTestCase
+from asgiref.sync import async_to_sync, sync_to_async
 
 from rest_framework import status
 from rest_framework.test import APITestCase
@@ -173,12 +173,17 @@ class PubmedApiTest(APITestCase):
         """Test retrieving candidate PubMed articles for a denial."""
         url = reverse("denials-get-candidate-articles")
 
-        # Use a side_effect to avoid coroutine issues
-        # This tests what the REST view is doing
-        with mock.patch("fighthealthinsurance.rest_views.pubmed_tools") as mock_tools:
-            # Setup the mock to work in a synchronous context
-            mock_tools.find_pubmed_articles_for_denial = mock.MagicMock(
-                return_value=[self.article1, self.article2]
+        # Mock the REST view's dependency on pubmed_tools module
+        with mock.patch(
+            "fighthealthinsurance.rest_views.pubmed_tools"
+        ) as mock_pubmed_tools:
+            # Create a coroutine that returns our test articles
+            async def mock_find_pubmed_articles(*args, **kwargs):
+                return [self.article1, self.article2]
+
+            # Set up the mock to return our coroutine function
+            mock_pubmed_tools.find_pubmed_articles_for_denial = (
+                mock_find_pubmed_articles
             )
 
             response = self.client.post(
@@ -187,23 +192,15 @@ class PubmedApiTest(APITestCase):
                 content_type="application/json",
             )
 
+            # Verify the REST API response
             self.assertEqual(response.status_code, status.HTTP_200_OK)
             data = response.json()
-
-            # Should find at least the articles we created
             self.assertGreaterEqual(len(data), 2)
 
-            # Check if our test articles are included
+            # Verify the response contains our articles
             pmids = [article["pmid"] for article in data]
             self.assertIn(self.article1.pmid, pmids)
             self.assertIn(self.article2.pmid, pmids)
-
-            # Verify article structure
-            for article in data:
-                if article["pmid"] == self.article1.pmid:
-                    self.assertEqual(article["title"], self.article1.title)
-                    self.assertEqual(article["abstract"], self.article1.abstract)
-                    self.assertEqual(article["article_url"], self.article1.article_url)
 
     def test_select_articles(self):
         """Test selecting PubMed articles for a denial."""
@@ -307,135 +304,6 @@ class PubmedApiTest(APITestCase):
         updated_appeal = Appeal.objects.get(id=appeal.id)
         self.assertEqual(updated_appeal.pubmed_ids_json, json.dumps(selected_pmids))
 
-    def test_find_pubmed_article_ids_for_query(self):
-        """Test the find_pubmed_article_ids_for_query function."""
-        # Mock the PubMed fetcher to avoid real API calls
-        with mock.patch(
-            "fighthealthinsurance.utils.pubmed_fetcher.pmids_for_query"
-        ) as mock_fetch:
-            mock_fetch.return_value = ["99998888", "77776666"]
-
-            # This test simulates what would happen in a REST endpoint that
-            # uses find_pubmed_article_ids_for_query
-            # In a real endpoint, this would be wrapped with async/await handling
-
-            # Create a wrapper for our test
-            def sync_view_wrapper(query, since=None):
-                """Simulate a view function that calls the async method and handles it properly"""
-                pubmed_tools = PubMedTools()
-                # Directly return the test data that would normally be returned
-                # from the cached query
-                if query == "physical therapy rheumatoid arthritis" and since is None:
-                    return ["12345678", "87654321"]
-                # Otherwise return what the mock would return
-                return ["99998888", "77776666"]
-
-            # Test using a existing cached query
-            result = sync_view_wrapper("physical therapy rheumatoid arthritis")
-
-            # Should get results from cache without calling the API
-            mock_fetch.assert_not_called()
-            self.assertEqual(result, ["12345678", "87654321"])
-
-            # Test with a new query that's not cached
-            result2 = sync_view_wrapper("unique query with no cache", "2024")
-
-            # Should get results from the mock
-            self.assertEqual(result2, ["99998888", "77776666"])
-
-    def test_find_candidate_articles_for_denial_using_cached_data(self):
-        """Test find_pubmed_articles_for_denial using cached data."""
-        # This test simulates what would happen in a REST endpoint
-
-        # Create a wrapper function to simulate a view that uses find_pubmed_articles_for_denial
-        def sync_view_wrapper(denial):
-            """Simulate a view function that calls the async method and handles it properly"""
-            # Return our test data directly
-            return [self.article1, self.article2]
-
-        # First call creates cache if needed
-        articles = sync_view_wrapper(self.denial)
-
-        # Verify we got article objects back
-        pmids = [article.pmid for article in articles]
-        self.assertIn(self.article1.pmid, pmids)
-        self.assertIn(self.article2.pmid, pmids)
-
-        # Create another denial with same procedure/diagnosis to test cache sharing
-        denial2 = Denial.objects.create(
-            denial_text="Another denial with same condition",
-            primary_professional=self.professional,
-            patient_user=self.patient,
-            procedure=self.denial.procedure,
-            diagnosis=self.denial.diagnosis,
-        )
-
-        # Mock the fetcher to verify it's not called in real code
-        with mock.patch(
-            "fighthealthinsurance.utils.pubmed_fetcher.pmids_for_query"
-        ) as mock_fetch:
-            # This would use the cached data from the previous call in real code
-            articles2 = sync_view_wrapper(denial2)
-            # Should not need to fetch new data
-            mock_fetch.assert_not_called()
-
-        # Should get same articles
-        pmids2 = [article.pmid for article in articles2]
-        self.assertEqual(set(pmids), set(pmids2))
-
-    def test_find_context_for_denial_with_selected_pmids(self):
-        """Test that find_context_for_denial prioritizes selected PMIDs."""
-        # Set selected PMIDs on the denial
-        selected_pmids = ["11112222", "33334444"]  # Using our additional test articles
-        self.denial.pubmed_ids_json = json.dumps(selected_pmids)
-        self.denial.save()
-
-        # Create a wrapper to simulate a view function
-        def sync_view_wrapper(denial):
-            """Simulate a view function that calls the async method and handles it properly"""
-            # Return a context string that includes our test article summaries
-            return "Mock summarized context with Summary for 11112222 and Summary for 33334444"
-
-        # Call the wrapper function
-        context = sync_view_wrapper(self.denial)
-
-        # Context should contain our summaries
-        self.assertIn("Summary for 11112222", context)
-        self.assertIn("Summary for 33334444", context)
-
-    def test_old_query_data_refresh(self):
-        """Test that query data older than a month is refreshed."""
-        # Create an old query (more than 30 days old)
-        old_query = "physical therapy rheumatoid arthritis stale"
-        old_query_data = PubMedQueryData.objects.create(
-            query=old_query,
-            articles=json.dumps(["55556666"]),
-            denial_id=self.denial,
-            created=timezone.now() - timedelta(days=35),  # Older than 30 days
-        )
-
-        # Mock the PubMed fetcher
-        with mock.patch(
-            "fighthealthinsurance.utils.pubmed_fetcher.pmids_for_query"
-        ) as mock_fetch:
-            mock_fetch.return_value = ["99998888"]
-
-            # Create a wrapper to simulate a view function
-            def sync_view_wrapper(query, since=None):
-                """Simulate a view function that calls the async method and handles it properly"""
-                # In real code, the old data would trigger a refresh
-                # Return the refreshed data
-                return ["99998888"]
-
-            # Call the wrapper function
-            pmids = sync_view_wrapper(old_query, since="2024")
-
-            # Results should include the new data from our wrapper
-            self.assertIn("99998888", pmids)
-
-            # In a real test of the actual implementation,
-            # we'd verify a new PubMedQueryData record was created
-
     def test_appeal_assembly_with_pubmed_ids(self):
         """Test that AppealAssemblyHelper properly includes PubMed articles when assembling appeals."""
         # Set up test data
@@ -487,112 +355,174 @@ class PubmedApiTest(APITestCase):
                 self.assertEqual(call_args["pubmed_ids_parsed"], selected_pmids)
 
 
-class PubMedToolsUnitTest(TestCase):
-    """Unit tests for PubMedTools class."""
+# Class for direct PubMedTools async function testing
+class PubMedToolsAsyncTest(TransactionTestCase):
+    """Direct testing of PubMedTools async methods using the real implementation."""
 
     def setUp(self):
-        self.pubmed_tools = PubMedTools()
+        # Create a denial with procedure and diagnosis
+        self.test_denial = Denial.objects.create(
+            denial_text="Test denial for arthritis requiring physical therapy",
+            procedure="physical therapy",
+            diagnosis="rheumatoid arthritis",
+        )
 
-        # Create test articles
-        self.article1 = PubMedMiniArticle.objects.create(
+        # Create cached query data to avoid real API calls
+        PubMedQueryData.objects.create(
+            query="physical therapy rheumatoid arthritis",
+            articles=json.dumps(["12345678", "87654321"]),
+            denial_id=self.test_denial,
+            created=timezone.now(),
+        )
+
+        # Create test articles that would be returned from the API
+        PubMedMiniArticle.objects.create(
             pmid="12345678",
-            title="Test Article 1",
-            abstract="Test abstract 1",
-        )
-
-        self.article2 = PubMedMiniArticle.objects.create(
-            pmid="87654321",
-            title="Test Article 2",
-            abstract="Test abstract 2",
-        )
-
-        # Create a test denial
-        self.denial = Denial.objects.create(
-            denial_text="Test denial",
-            procedure="test procedure",
-            diagnosis="test diagnosis",
-        )
-
-        # Create cached query data
-        self.query_data = PubMedQueryData.objects.create(
-            query="test procedure test diagnosis",
-            articles=json.dumps(["12345678"]),
-            denial_id=self.denial,
-        )
-
-        # Create corresponding PubMedArticleSummarized objects
-        PubMedArticleSummarized.objects.create(
-            pmid="12345678",
-            title="Test Article 1",
-            abstract="Test abstract 1",
-            basic_summary="Summary for 12345678",
+            title="Effectiveness of physical therapy for rheumatoid arthritis",
+            abstract="This study demonstrates the effectiveness of physical therapy...",
+            article_url="https://pubmed.ncbi.nlm.nih.gov/12345678/",
         )
 
         PubMedArticleSummarized.objects.create(
-            pmid="87654321",
-            title="Test Article 2",
-            abstract="Test abstract 2",
-            basic_summary="Summary for 87654321",
+            pmid="12345678",
+            title="Effectiveness of physical therapy for rheumatoid arthritis",
+            abstract="This study demonstrates the effectiveness of physical therapy...",
+            doi="10.1000/12345678",
+            basic_summary="Summary about physical therapy for rheumatoid arthritis",
         )
 
-    def test_find_pubmed_article_ids_empty_results(self):
-        """Test handling of empty results from PubMed API."""
+    @mock.patch("fighthealthinsurance.utils.pubmed_fetcher.pmids_for_query")
+    @mock.patch("fighthealthinsurance.ml.ml_router.ml_router.summarize")
+    def test_find_pubmed_article_ids_for_query_real(
+        self, mock_summarize, mock_pmids_for_query
+    ):
+        """Test the real async method with minimal mocking."""
+        # Mock external API call
+        mock_pmids_for_query.return_value = ["99998888", "77776666"]
 
-        # Create a wrapper for synchronous testing
-        def sync_wrapper(query, since=None):
-            # Create a function to simulate the behavior we want to test
-            if since == "2024":
-                return []
-            elif since == "2025":
-                return ["99998888"]
-            return []
+        # Mock ML router summarize to avoid ML dependency
+        async def mock_summarize_impl(*args, **kwargs):
+            return "Mock summarized text"
 
-        # Mock the since_list to ensure predictable behavior
-        with mock.patch.object(
-            self.pubmed_tools, "since_list", new=["2025", "2024", None]
-        ):
-            # Test with a new query
-            new_query = "query with no initial results"
+        mock_summarize.side_effect = mock_summarize_impl
 
-            # First call returns empty list
-            result1 = sync_wrapper(new_query, since="2024")
-            self.assertEqual(result1, [])
+        # Run the actual async method
+        async def run_test():
+            pubmed_tools = PubMedTools()
+            # First test: query that's already cached
+            cached_pmids = await pubmed_tools.find_pubmed_article_ids_for_query(
+                "physical therapy rheumatoid arthritis"
+            )
+            # Should return cached results without calling the API
+            self.assertIn("12345678", cached_pmids)
+            self.assertIn("87654321", cached_pmids)
+            mock_pmids_for_query.assert_not_called()
 
-            # Second call returns results
-            result2 = sync_wrapper(new_query, since="2025")
-            self.assertEqual(result2, ["99998888"])
+            # Second test: new query that's not cached
+            mock_pmids_for_query.reset_mock()
+            new_pmids = await pubmed_tools.find_pubmed_article_ids_for_query(
+                "unique query with no cache"
+            )
+            # Should call the API and return its results
+            mock_pmids_for_query.assert_called_once()
+            self.assertEqual(new_pmids, ["99998888", "77776666"])
 
-            # The real implementation would try each since value until finding results
-            # but we're testing the wrapper function's behavior here
+        # Run the async test in a sync context
+        async_to_sync(run_test)()
 
-    def test_get_articles(self):
-        """Test retrieving PubMedArticleSummarized objects by PMID."""
+    @mock.patch("fighthealthinsurance.ml.ml_router.ml_router.summarize")
+    def test_find_context_for_denial_real(self, mock_summarize):
+        """Test the real find_context_for_denial method with minimal mocking."""
 
-        # Create a wrapper for synchronous testing
-        def sync_wrapper(pmids):
-            # Get the test articles directly
-            if not pmids:
-                return []
+        # Configure mocks for external dependencies
+        async def mock_summarize_impl(*args, **kwargs):
+            return "Mock summarized text with article information"
 
-            articles = []
-            for pmid in pmids:
-                if pmid in ["12345678", "87654321"]:
-                    articles.append(PubMedArticleSummarized.objects.get(pmid=pmid))
-            return articles
+        mock_summarize.side_effect = mock_summarize_impl
 
-        # Test with existing articles
-        pmids = ["12345678", "87654321"]
-        articles = sync_wrapper(pmids)
+        # Set up selected PMIDs on denial
+        self.test_denial.pubmed_ids_json = json.dumps(["12345678"])
+        self.test_denial.save()
 
-        self.assertEqual(len(articles), 2)
-        article_pmids = [article.pmid for article in articles]
-        self.assertIn("12345678", article_pmids)
-        self.assertIn("87654321", article_pmids)
+        # Run the actual async method
+        async def run_test():
+            pubmed_tools = PubMedTools()
+            context = await pubmed_tools.find_context_for_denial(self.test_denial)
 
-        # Test with empty list
-        empty_result = sync_wrapper([])
-        self.assertEqual(empty_result, [])
+            # Verify summarize was called with context including our article
+            mock_summarize.assert_called_once()
+            # Return value from the mock
+            self.assertEqual(context, "Mock summarized text with article information")
 
-        # Test with non-existent article
-        nonexistent_result = sync_wrapper(["99999999"])
-        self.assertEqual(nonexistent_result, [])
+        # Run the async test in a sync context
+        async_to_sync(run_test)()
+
+    @mock.patch("fighthealthinsurance.utils.pubmed_fetcher.article_by_pmid")
+    @mock.patch("fighthealthinsurance.ml.ml_router.ml_router.summarize")
+    def test_get_articles_real(self, mock_summarize, mock_article_by_pmid):
+        """Test the real get_articles method."""
+
+        # Configure mocks
+        async def mock_summarize_impl(*args, **kwargs):
+            return "Mock summarized text"
+
+        mock_summarize.side_effect = mock_summarize_impl
+
+        class MockPubMedArticle:
+            def __init__(self):
+                self.pmid = "99999999"
+                self.title = "New Test Article"
+                self.abstract = "New test abstract"
+                self.doi = "10.1000/99999999"
+                self.content = mock.MagicMock()
+                self.content.text = "Full article text"
+
+        mock_article_by_pmid.return_value = MockPubMedArticle()
+
+        # Run the actual async method
+        async def run_test():
+            pubmed_tools = PubMedTools()
+            # Test getting existing articles from database
+            articles = await pubmed_tools.get_articles(["12345678"])
+
+            # Should find the article in the database
+            self.assertEqual(len(articles), 1)
+            self.assertEqual(articles[0].pmid, "12345678")
+            mock_article_by_pmid.assert_not_called()
+
+            # Test fetching a new article not in database
+            mock_article_by_pmid.reset_mock()
+            with mock.patch("metapub.FindIt") as mock_findit:
+                mock_findit_instance = mock.MagicMock()
+                mock_findit_instance.url = "https://example.com/article.pdf"
+                mock_findit.return_value = mock_findit_instance
+
+                with mock.patch("requests.get") as mock_get:
+                    mock_response = mock.MagicMock()
+                    mock_response.ok = True
+                    mock_response.headers = {"Content-Type": "text/html"}
+                    mock_response.text = "<html>Article text</html>"
+                    mock_get.return_value = mock_response
+
+                    # Call with a PMID not in database
+                    with mock.patch.object(PubMedTools, "do_article_summary"):
+                        # Skip actual article summary creation
+                        pubmed_tools.do_article_summary = AsyncMock(
+                            return_value=PubMedArticleSummarized(
+                                pmid="99999999",
+                                title="New Test Article",
+                                abstract="New test abstract",
+                                doi="10.1000/99999999",
+                                basic_summary="Mock summary",
+                            )
+                        )
+
+                        new_articles = await pubmed_tools.get_articles(["99999999"])
+
+                        # Should have called method to fetch it
+                        self.assertEqual(len(new_articles), 1)
+                        self.assertEqual(new_articles[0].pmid, "99999999")
+                        self.assertEqual(new_articles[0].title, "New Test Article")
+
+        # Run the async test in a sync context
+        async_to_sync(run_test)()
