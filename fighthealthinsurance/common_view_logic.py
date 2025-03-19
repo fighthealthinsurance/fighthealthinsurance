@@ -900,7 +900,11 @@ class DenialCreatorHelper:
             if denial.generated_questions is not None:
                 # Convert stored lists to tuples for consistency with return type
                 result_questions: List[Tuple[str, str]] = [
-                    (q[0], q[1]) if isinstance(q, list) else (q[0], q[1]) if isinstance(q, tuple) else (str(q), "")
+                    (
+                        (q[0], q[1])
+                        if isinstance(q, list)
+                        else (q[0], q[1]) if isinstance(q, tuple) else (str(q), "")
+                    )
                     for q in denial.generated_questions
                 ]
                 return result_questions
