@@ -148,6 +148,7 @@ class ProVersionView(generic.FormView):
             ),
             cancel_url=self.request.build_absolute_uri(reverse("pro_version_thankyou")),
             customer_email=form.cleaned_data["email"],
+            allow_promotion_codes=True,
             metadata={
                 "payment_type": "interested_professional_signup",
                 "interested_professional_id": interested_professional.id,
