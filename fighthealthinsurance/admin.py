@@ -36,21 +36,21 @@ from django.contrib.auth.admin import UserAdmin
 
 
 @admin.register(UserDomain)
-class UserDomainAdmin:
+class UserDomainAdmin(admin.ModelAdmin):
     """User domains"""
 
     list_display = ("id", "name", "visible_phone_number")
 
 
 @admin.register(ProfessionalUser)
-class ProfessionalUserAdmin:
+class ProfessionalUserAdmin(admin.ModelAdmin):
     """User domains"""
 
     list_display = ("id", "user", "user__fname", "user__email")
 
 
 @admin.register(PatientUser)
-class PatientUserAdmin:
+class PatientUserAdmin(admin.ModelAdmin):
     """User domains"""
 
     list_display = ("id", "user", "user__fname", "user__email")
