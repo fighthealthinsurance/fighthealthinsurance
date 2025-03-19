@@ -46,14 +46,14 @@ class UserDomainAdmin(admin.ModelAdmin):
 class ProfessionalUserAdmin(admin.ModelAdmin):
     """User domains"""
 
-    list_display = ("id", "user", "user__fname", "user__email")
+    list_display = ("id", "user", "user__first_name", "user__email")
 
 
 @admin.register(PatientUser)
 class PatientUserAdmin(admin.ModelAdmin):
     """User domains"""
 
-    list_display = ("id", "user", "user__fname", "user__email")
+    list_display = ("id", "user", "user__first_name", "user__email")
 
 
 @admin.register(Denial)
