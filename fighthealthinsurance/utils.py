@@ -64,7 +64,7 @@ def send_fallback_email(subject: str, template_name: str, context, to_email: str
     msg = EmailMultiAlternatives(
         subject,
         text_content,
-        settings.EMAIL_HOST_USER,
+        settings.DEFAULT_FROM_EMAIL,
         [to_email],
     )
 
