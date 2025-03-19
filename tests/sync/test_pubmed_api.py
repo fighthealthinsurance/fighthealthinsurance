@@ -186,18 +186,15 @@ class PubmedApiTest(APITestCase):
                 mock_find_pubmed_articles
             )
 
+        # Verify the REST API response
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         data = response.json()
+        self.assertGreaterEqual(len(data), 2)
 
-            # Verify the REST API response
-            self.assertEqual(response.status_code, status.HTTP_200_OK)
-            data = response.json()
-            self.assertGreaterEqual(len(data), 2)
-
-            # Verify the response contains our articles
-            pmids = [article["pmid"] for article in data]
-            self.assertIn(self.article1.pmid, pmids)
-            self.assertIn(self.article2.pmid, pmids)
+        # Verify the response contains our articles
+        pmids = [article["pmid"] for article in data]
+        self.assertIn(self.article1.pmid, pmids)
+        self.assertIn(self.article2.pmid, pmids)
 
     def test_select_articles(self):
         """Test selecting PubMed articles for a denial."""

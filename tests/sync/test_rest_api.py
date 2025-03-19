@@ -240,7 +240,7 @@ class DenialEndToEnd(APITestCase):
             pass
         finally:
             await seb_communicator.disconnect()
-        await asyncio.sleep(5) # Give a second for the fire and forget pubmed to run
+        await asyncio.sleep(5)  # Give a second for the fire and forget pubmed to run
         # Ok now lets get the additional info
         find_next_steps_url = reverse("nextsteps-list")
         find_next_steps_response = await sync_to_async(self.client.post)(
