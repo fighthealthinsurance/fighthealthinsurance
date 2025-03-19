@@ -28,6 +28,9 @@ class Command(BaseCommand):
             "--email", required=True, help="User's valid email address."
         )
         parser.add_argument(
+            "--first-name", required=True, help="User's first name"
+        )
+        parser.add_argument(
             "--password", required=True, help="User's password (minimum 8 characters)."
         )
         parser.add_argument(
@@ -55,6 +58,7 @@ class Command(BaseCommand):
         email = options["email"].strip()
         password = options["password"]
         domain_input = options["domain"]
+        first_name = options.get("first_name", "test_first_name")
         visible_phone_number = options.get("visible_phone_number", "0")
         is_provider = options.get("is_provider", True)
 
@@ -99,6 +103,7 @@ class Command(BaseCommand):
                     username=combined_username,
                     email=email,
                     password=password,
+                    first_name=first_name,
                 )
                 if hasattr(user, "is_provider"):
                     user.is_provider = is_provider
