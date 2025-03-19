@@ -28,7 +28,7 @@ from fighthealthinsurance.models import (
     ProfessionalUser,
     Appeal,
     PatientUser,
-    SecondaryAppealProfessionalRelation
+    SecondaryAppealProfessionalRelation,
 )
 from fighthealthinsurance.websockets import (
     StreamingEntityBackend,

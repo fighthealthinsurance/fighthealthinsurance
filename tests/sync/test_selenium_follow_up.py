@@ -1,7 +1,7 @@
 """Use SeleniumBase to test Submitting an appeal"""
 
 from django.contrib.staticfiles.testing import StaticLiveServerTestCase
-from fighthealthinsurance.models import Denial, FollowUpSched 
+from fighthealthinsurance.models import *
 from seleniumbase import BaseCase
 
 BaseCase.main(__name__, __file__)
