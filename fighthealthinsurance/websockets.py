@@ -11,9 +11,11 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
     """Streaming back the appeals as json :D"""
 
     async def connect(self):
+        logger.debug("Accepting connection for appeals")
         await self.accept()
 
     async def disconnect(self, close_code):
+        logger.debug("Disconnecting appeals")
         pass
 
     async def receive(self, text_data):
@@ -33,9 +35,11 @@ class StreamingEntityBackend(AsyncWebsocketConsumer):
     """Streaming Entity Extraction"""
 
     async def connect(self):
+        logger.debug("Accepting connection for entity extraction")
         await self.accept()
 
     async def disconnect(self, close_code):
+        logger.debug("Disconnecting entity extraction")
         pass
 
     async def receive(self, text_data):

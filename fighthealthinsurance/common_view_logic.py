@@ -1376,7 +1376,7 @@ class AppealsBackendHelper:
         if plan_context is not None:
             denial.plan_context = " ".join(set(plan_context))
         await denial.asave()
-        appeals: Iterable[str] = await sync_to_async(appealGenerator.make_appeals)(
+        appeals: Iterable[str] = appealGenerator.make_appeals(
             denial,
             AppealTemplateGenerator(prefaces, main, footer),
             medical_reasons=medical_reasons,
@@ -1448,4 +1448,5 @@ class AppealsBackendHelper:
             subbed_appeals_json
         )
         async for i in interleaved:
+            logger.debug(f"Yielding {i}")
             yield i
