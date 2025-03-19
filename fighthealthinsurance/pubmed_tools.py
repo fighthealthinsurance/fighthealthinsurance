@@ -179,7 +179,7 @@ class PubMedTools(object):
                                 )
                                 articles.append(mini_article)
                         except Exception as e:
-                            logger.opt(exception=True).error(
+                            logger.opt(exception=True).debug(
                                 f"Error fetching article {pmid}: {e}"
                             )
         except TimeoutException as e:

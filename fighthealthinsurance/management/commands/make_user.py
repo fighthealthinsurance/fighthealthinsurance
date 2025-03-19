@@ -27,9 +27,7 @@ class Command(BaseCommand):
         parser.add_argument(
             "--email", required=True, help="User's valid email address."
         )
-        parser.add_argument(
-            "--first-name", required=True, help="User's first name"
-        )
+        parser.add_argument("--first-name", required=True, help="User's first name")
         parser.add_argument(
             "--password", required=True, help="User's password (minimum 8 characters)."
         )
