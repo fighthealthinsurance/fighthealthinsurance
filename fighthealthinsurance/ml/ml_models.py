@@ -176,7 +176,7 @@ class RemoteModel(RemoteModelLike):
         """Return a list of supported models."""
         return []
 
-    def bad_result(self, result: Optional[str]) -> bool:
+    def bad_result(self, result: Optional[str], infer_type: str) -> bool:
         """Checker to see if a result is "reasonable" may be used to retry."""
         if result is None or len(result) < 3:
             return True
@@ -239,16 +239,19 @@ class RemoteOpenLike(RemoteModel):
             ],
         )
 
-    def bad_result(self, result: Optional[str]) -> bool:
-        bad_ideas = [
+    def bad_result(self, result: Optional[str], infer_type: str) -> bool:
+        # TODO: Unify this with the LLM synth data utils in llm-result-utils
+        generic_bad_ideas = [
             "Therefore, the Health Plans denial should be overturned.",
+            "llama llama virus",
         ]
         if result is None:
             return True
-        for bad in result:
-            if bad in result:
+        result_lower = result.lower()
+        for bad in generic_bad_ideas:
+            if bad.lower() in result_lower:
                 return True
-        if len(result.strip(" ")) < 5:
+        if len(result.strip(" ")) < 3:
             return True
         return False
 
@@ -332,7 +335,7 @@ class RemoteOpenLike(RemoteModel):
         )
         logger.debug(f"Got result {result} from {prompt} on {self}")
         # One retry
-        if self.bad_result(result):
+        if self.bad_result(result, infer_type):
             result = await self._infer(
                 prompt=prompt,
                 patient_context=patient_context,
@@ -341,7 +344,7 @@ class RemoteOpenLike(RemoteModel):
                 pubmed_context=pubmed_context,
                 temperature=temperature,
             )
-        if self.bad_result(result):
+        if self.bad_result(result, infer_type):
             return []
         return [
             (

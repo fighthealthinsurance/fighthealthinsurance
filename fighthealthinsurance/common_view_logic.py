@@ -895,13 +895,12 @@ class DenialCreatorHelper:
         if not denial:
             logger.warning(f"Could not find denial with ID {denial_id}")
             return []
-
         try:
             # Check if we already have questions generated
             if denial.generated_questions is not None:
                 # Convert stored lists to tuples for consistency with return type
                 result_questions: List[Tuple[str, str]] = [
-                    (q[0], q[1]) if isinstance(q, list) else q
+                    (q[0], q[1]) if isinstance(q, list) else (q[0], q[1]) if isinstance(q, tuple) else (str(q), "")
                     for q in denial.generated_questions
                 ]
                 return result_questions
@@ -927,7 +926,6 @@ class DenialCreatorHelper:
             # Store the questions in the generated_questions field
             denial.generated_questions = questions
             await denial.asave()
-
             logger.debug(f"Generated {len(questions)} questions for denial {denial_id}")
             return questions
         except Exception as e:
