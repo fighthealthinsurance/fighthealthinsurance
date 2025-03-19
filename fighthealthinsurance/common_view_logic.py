@@ -1276,6 +1276,7 @@ class DenialCreatorHelper:
 
 class AppealsBackendHelper:
     regex_denial_processor = ProcessDenialRegex()
+    pmt = PubMedTools()
 
     @classmethod
     async def generate_appeals(cls, parameters) -> AsyncIterator[str]:
@@ -1283,6 +1284,9 @@ class AppealsBackendHelper:
         email = parameters["email"]
         semi_sekret = parameters["semi_sekret"]
         hashed_email = Denial.get_hashed_email(email)
+
+        # Initial yield of newline.
+        yield "\n"
 
         if denial_id is None:
             raise Exception("Missing denial id")
@@ -1376,12 +1380,28 @@ class AppealsBackendHelper:
         if plan_context is not None:
             denial.plan_context = " ".join(set(plan_context))
         await denial.asave()
-        appeals: Iterable[str] = await sync_to_async(appealGenerator.make_appeals)(
-            denial,
-            AppealTemplateGenerator(prefaces, main, footer),
-            medical_reasons=medical_reasons,
-            non_ai_appeals=non_ai_appeals,
-        )
+        logger.debug("Calling make appeals")
+        pubmed_context = None
+        logger.debug("Looking up the pubmed context")
+        try:
+            pubmed_context = await sync_to_async(cls.pmt.find_context_for_denial)(
+                denial
+            )
+        except Exception as e:
+            logger.debug(f"Error {e} looking up context for {denial}.")
+        logger.debug("Pubmed context done.")
+
+        try:
+            appeals: Iterator[str] = await sync_to_async(appealGenerator.make_appeals)(
+                denial,
+                AppealTemplateGenerator(prefaces, main, footer),
+                medical_reasons=medical_reasons,
+                non_ai_appeals=non_ai_appeals,
+                pubmed_context=pubmed_context,
+            )
+        except Exception as e:
+            logger.opt(exception=True).warning("Error generating appeals")
+        logger.debug("Done!")
 
         async def save_appeal(appeal_text: str) -> dict[str, str]:
             # Save all of the proposed appeals, so we can use RL later.
@@ -1399,6 +1419,8 @@ class AppealsBackendHelper:
                     "Failed to save proposed appeal: {e}"
                 )
                 pass
+            passed = time.time() - t
+            logger.debug(f"Saved {appeal_text} after {passed} seconds")
             return {"id": id, "content": appeal_text}
 
         async def sub_in_appeals(appeal: dict[str, str]) -> dict[str, str]:
@@ -1418,16 +1440,18 @@ class AppealsBackendHelper:
                 "{diagnosis}": denial.diagnosis or "{diagnosis}",
                 "{procedure}": denial.procedure or "{procedure}",
             }
-            if denial.patient_user is not None:
-                subs["[Patient Name]"] = denial.patient_user.get_legal_name()
-            if denial.primary_professional:
-                subs["[Professional Name]"] = (
-                    denial.primary_professional.get_full_name()
-                )
-            if denial.domain:
-                subs["[Professional Address]"] = denial.domain.get_address()
+            # TODO: Update for async
+            # if denial.patient_user is not None:
+            #    subs["[Patient Name]"] = denial.patient_user.get_legal_name()
+            # if denial and denial.primary_professional is not None:
+            #    subs["[Professional Name]"] = (
+            #        denial.primary_professional.get_full_name()
+            #    )
+            # if denial.domain:
+            #    subs["[Professional Address]"] = denial.domain.get_address()
             ret = s.safe_substitute(subs)
             appeal["content"] = ret
+            logger.debug("Updated appeal to {ret}")
             return appeal
 
         async def format_response(response: dict[str, str]) -> str:
@@ -1448,4 +1472,5 @@ class AppealsBackendHelper:
             subbed_appeals_json
         )
         async for i in interleaved:
+            logger.debug(f"Yielding {i}")
             yield i

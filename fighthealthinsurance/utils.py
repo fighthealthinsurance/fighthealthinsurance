@@ -96,32 +96,6 @@ def markdown_escape(string: Optional[str]) -> str:
     return result
 
 
-def is_valid_url(url) -> bool:
-    try:
-        result = requests.get(url)
-        # If it we don't get a valid response try some quick cleanup.
-        if result.status_code != 200:
-            groups = maybe_bad_url_endings.search(url)
-            if groups is not None:
-                return is_valid_url(groups.group(1))
-            else:
-                return False
-        result_text = result.text.lower()
-        # Look for those craft 200 OKs which should be 404s
-        for bad_result_text in common_bad_result:
-            if bad_result_text.lower() in result_text:
-                logger.debug(f"Found bad result on {url}")
-                return False
-        return True
-    except RequestException as e:
-        logger.debug(f"Error {e} looking up {url}")
-        groups = maybe_bad_url_endings.search(url)
-        if groups is not None:
-            return is_valid_url(groups.group(1))
-        else:
-            return False
-
-
 def sekret_gen():
     return str(UUID(bytes=os.urandom(16), version=4))
 
