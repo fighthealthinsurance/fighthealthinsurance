@@ -13,6 +13,7 @@ import tempfile
 import os
 import uuid
 import re
+from stopit.utils import TimeoutException
 
 from django.core.files import File
 from django.core.validators import validate_email
@@ -1509,7 +1510,13 @@ class AppealsBackendHelper:
         pubmed_context = None
         logger.debug("Looking up the pubmed context")
         try:
-            pubmed_context = await cls.pmt.find_context_for_denial(denial, timeout=10.0)
+            pubmed_context = asyncio.wait_for(
+                cls.pmt.find_context_for_denial(denial), timeout=60
+            )
+        except TimeoutException as t:
+            logger.opt(exception=True).debug(
+                f"Timeout {t} looking up context for {denial}."
+            )
         except Exception as e:
             logger.opt(exception=True).debug(
                 f"Error {e} looking up context for {denial}."

@@ -23,6 +23,7 @@ import subprocess
 from loguru import logger
 import eutils
 from datetime import datetime, timedelta
+import asyncio
 
 
 PER_QUERY = 3
@@ -76,9 +77,11 @@ class PubMedTools(object):
                                 )
 
                 # If no cache or cache error, fetch from PubMed API
+                logger.debug(f"Querying pubmed for query {query}")
                 fetched_pmids = await sync_to_async(pubmed_fetcher.pmids_for_query)(
                     query, since=since
                 )
+                logger.debug(f"Got back initial pmids {fetched_pmids}")
                 if fetched_pmids:
                     # Sometimes we get nulls...
                     articles_json = json.dumps(fetched_pmids).replace("\x00", "")
@@ -87,32 +90,7 @@ class PubMedTools(object):
                         since=since,
                         articles=articles_json,
                     )
-                    pmids.extend(fetched_pmids)
-
-                # If we didn't get any results, but we're not restricted by 'since',
-                # try querying with each since value in our since_list until we find results
-                if not pmids and since is None:
-                    for year in self.since_list:
-                        if year is not None:
-                            # Don't re-try with None since we already did that
-                            logger.debug(
-                                f"No results for {query}, trying with since={year}"
-                            )
-                            year_pmids = await sync_to_async(
-                                pubmed_fetcher.pmids_for_query
-                            )(query, since=year)
-                            if year_pmids:
-                                # Cache the results
-                                articles_json = json.dumps(year_pmids).replace(
-                                    "\x00", ""
-                                )
-                                await PubMedQueryData.objects.acreate(
-                                    query=query,
-                                    since=year,
-                                    articles=articles_json,
-                                )
-                                pmids.extend(year_pmids)
-                                break
+                    return fetched_pmids
         except Exception as e:
             # We might timeout
             logger.opt(exception=True).debug(
@@ -168,7 +146,12 @@ class PubMedTools(object):
                             if fetched:
                                 url = None
                                 try:
-                                    src = await sync_to_async(FindIt)(pmid)
+                                    logger.debug(f"Looking for {pmid} with findit")
+                                    src = asyncio.wait_for(
+                                        sync_to_async(FindIt)(pmid),
+                                        timeout=timeout / 5.0,
+                                    )
+                                    logger.debug(f"Found it {src}")
                                     url = src.url
                                 except Exception:
                                     logger.debug("Findit failed.")
@@ -198,6 +181,7 @@ class PubMedTools(object):
         except Exception as e:
             logger.opt(exception=True).debug(f"Unexpected error {e}")
             raise e
+        logger.debug(f"Found {articles}")
         return articles
 
     async def find_context_for_denial(self, denial: Denial, timeout=60.0) -> str:
@@ -233,14 +217,14 @@ class PubMedTools(object):
                     if not query or query.strip() == "":
                         return ""  # Return empty string if no query available
 
-                    selected_pmids = list(
-                        map(
-                            lambda x: x.pmid,
-                            await self.find_pubmed_articles_for_denial(
-                                denial, timeout=(timeout / 2.0)
-                            ),
-                        )
+                    possible_articles = asyncio.wait_for(
+                        self.find_pubmed_articles_for_denial(
+                            denial, timeout=(timeout / 2.5)
+                        ),
+                        timeout=timeout / 2.0,
                     )
+
+                    selected_pmids = list(map(lambda x: x.pmid, possible_articles))
 
                 denial.pubmed_ids_json = selected_pmids
                 logger.debug(f"Updating denial to have some context selected...")
