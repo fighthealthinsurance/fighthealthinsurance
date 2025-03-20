@@ -739,7 +739,8 @@ class RemoteFullOpenLike(RemoteOpenLike):
         patient_context_opt = (
             "Optional patient context: {patient_context}" if patient_context else ""
         )
-        diagnosis_opt = "The primary diagnosis was {diagnosis}"
+        diagnosis_opt = "The primary diagnosis was {diagnosis}" if diagnosis else ""
+        # Procedure opt is in their multiple times intentionally. ~computers~
         prompt = f"""
         Some context which can help you in your task: {denial_text}
         {procedure_opt} \n
@@ -749,6 +750,7 @@ class RemoteFullOpenLike(RemoteOpenLike):
         Your task is to write one to three patient friendly questions about the patient history to help appeal this denial. \n
         Remember to keep the questions concise and patient-friendly and focused on the potential patient history.\n
         If you ask questions about the denial it's self the patient will be sad and give up so don't do that.
+        {procedure_opt} \n
         """
 
         system_prompts: list[str] = self.get_system_prompts("questions")
