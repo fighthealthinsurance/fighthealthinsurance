@@ -403,7 +403,7 @@ class AppealAssemblyHelper:
             logger.debug(f"Retrieved {len(pubmed_docs)} PubMed articles")
             if pubmed_docs:
                 pubmed_docs_paths = [
-                    x for x in map(pmt.article_as_pdf, pubmed_docs) if x is not None
+                    x for x in map(async_to_sync(pmt.article_as_pdf), pubmed_docs) if x is not None
                 ]
                 files_for_fax.extend(pubmed_docs_paths)
                 logger.debug(f"Added {len(pubmed_docs_paths)} PubMed PDFs to fax")
