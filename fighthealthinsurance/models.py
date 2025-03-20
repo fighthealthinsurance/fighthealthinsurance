@@ -434,6 +434,7 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     single_case = models.BooleanField(default=False, null=True)
     # pubmed articles to be used to create the input context to the appeal
     pubmed_ids_json = models.CharField(max_length=600, blank=True)
+    generated_questions = models.JSONField(null=True, blank=True)
 
     @classmethod
     def filter_to_allowed_denials(cls, current_user: User):
