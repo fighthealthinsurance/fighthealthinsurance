@@ -391,7 +391,9 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     procedure = models.CharField(max_length=300, null=True, blank=True)
     diagnosis = models.CharField(max_length=300, null=True, blank=True)
     # Keep track of if the async thread finished extracting procedure and diagnosis
-    extract_procedure_diagnosis_finished = models.BooleanField(default=False, null=True, blank=True)
+    extract_procedure_diagnosis_finished = models.BooleanField(
+        default=False, null=True, blank=True
+    )
     appeal_text = models.TextField(null=True, blank=True)
     raw_email = models.TextField(max_length=300, null=True, blank=True)
     created = models.DateTimeField(db_default=Now(), null=True)
@@ -423,13 +425,19 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
         related_name="denials_primary",
         blank=True,
     )
-    patient_user = models.ForeignKey(PatientUser, null=True, on_delete=models.SET_NULL, blank=True)
-    domain = models.ForeignKey(UserDomain, null=True, on_delete=models.SET_NULL, blank=True)
+    patient_user = models.ForeignKey(
+        PatientUser, null=True, on_delete=models.SET_NULL, blank=True
+    )
+    domain = models.ForeignKey(
+        UserDomain, null=True, on_delete=models.SET_NULL, blank=True
+    )
     patient_visible = models.BooleanField(default=True)
     # If the professional is the one submitting the appeal
     professional_to_finish = models.BooleanField(default=False)
     # Date of service can be many things which are not a simple date.
-    date_of_service = models.CharField(null=True, max_length=300, default="", blank=True)
+    date_of_service = models.CharField(
+        null=True, max_length=300, default="", blank=True
+    )
     # Provider in network
     provider_in_network = models.BooleanField(default=False, null=True)
     health_history_anonymized = models.BooleanField(default=True)

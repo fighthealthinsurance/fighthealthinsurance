@@ -349,7 +349,7 @@ class AppealAssemblyHelper:
             return
         if include_cover:
             # Build our cover page
-            onbehalf_of_name= f"{professional_name} and {patient_name}"
+            onbehalf_of_name = f"{professional_name} and {patient_name}"
             cover_context = {
                 "receiver_name": insurance_company or "",
                 "receiver_fax_number": fax_phone,
@@ -475,7 +475,8 @@ class SendFaxHelper:
         )
         appeal.fax = fts
         appeal.save()
-        fax_actor_ref.get.do_send_fax.remote(fts.hashed_email, fts.uuid)
+        # We call str on fts.uuid since it's a UUID object but when persisted it's a string
+        fax_actor_ref.get.do_send_fax.remote(fts.hashed_email, str(fts.uuid))
         return FaxHelperResults(uuid=fts.uuid, hashed_email=hashed_email)
 
     @classmethod

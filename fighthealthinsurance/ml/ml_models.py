@@ -1,4 +1,3 @@
-
 from asgiref.sync import sync_to_async, async_to_sync
 
 from abc import abstractmethod
@@ -315,16 +314,15 @@ class RemoteOpenLike(RemoteModel):
         system_prompt: str,
         temperature: float,
     ):
-        return async_to_sync(
-            self._checked_infer)(
-                prompt,
-                patient_context,
-                plan_context,
-                infer_type,
-                pubmed_context,
-                system_prompt,
-                temperature,
-            )
+        return async_to_sync(self._checked_infer)(
+            prompt,
+            patient_context,
+            plan_context,
+            infer_type,
+            pubmed_context,
+            system_prompt,
+            temperature,
+        )
 
     async def _checked_infer(
         self,

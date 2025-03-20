@@ -139,7 +139,7 @@ class TestCommonViewLogic(TestCase):
         self.assertEqual(fax.denial_id, denial)
         self.assertEqual(fax.appeal_text, appeal.appeal_text)
 
-        # Verify the fax actor was called to send the fax
+        # Verify the fax actor was called to send the fax with the uuid as a string
         mock_fax_actor_ref.get.do_send_fax.remote.assert_called_once_with(
             fax.hashed_email, fax.uuid
         )
