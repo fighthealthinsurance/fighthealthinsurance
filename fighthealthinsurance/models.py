@@ -438,6 +438,9 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     manual_deidentified_denial = models.TextField(
         primary_key=False, null=True, default=""
     )
+    manual_deidentified_ocr_cleaned_denial = models.TextField(
+        primary_key=False, null=True, default=""
+    )
     manual_deidentified_appeal = models.TextField(
         primary_key=False, null=True, default=""
     )
