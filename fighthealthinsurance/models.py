@@ -317,7 +317,7 @@ class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # t
     email = models.CharField(max_length=300)
     name = models.CharField(max_length=300, null=True)
     appeal_text = models.TextField()
-    pmids = models.CharField(max_length=600, blank=True, null=True)
+    pmids = models.JSONField(null=True, blank=True)
     health_history = models.TextField(null=True, blank=True)
     combined_document = models.FileField(null=True, storage=settings.COMBINED_STORAGE)
     combined_document_enc = EncryptedFileField(
@@ -562,7 +562,7 @@ class Appeal(ExportModelOperationsMixin("Appeal"), models.Model):  # type: ignor
     patient_send = models.BooleanField(default=True)
     patient_visible = models.BooleanField(default=True)
     # Pubmed IDs for the articles to be included in the appeal
-    pubmed_ids_json = models.CharField(max_length=600, blank=True, null=True)
+    pubmed_ids_json = models.JSONField(blank=True, null=True)
     response_document_enc = EncryptedFileField(
         null=True, storage=settings.COMBINED_STORAGE
     )

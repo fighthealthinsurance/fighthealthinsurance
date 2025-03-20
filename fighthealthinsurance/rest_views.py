@@ -228,7 +228,7 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
         )
 
         pmids = serializer.validated_data["pmids"]
-        denial.pubmed_ids_json = json.dumps(pmids)
+        denial.pubmed_ids_json = pmids
         denial.save()
         return Response(
             serializers.SuccessSerializer(

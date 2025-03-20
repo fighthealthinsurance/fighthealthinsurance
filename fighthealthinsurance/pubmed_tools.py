@@ -202,9 +202,9 @@ class PubMedTools(object):
             with Timeout(timeout) as _timeout_ctx:
                 # Check if the denial has specific pubmed IDs selected already
                 selected_pmids: Optional[list[str]] = None
-                if denial.pubmed_ids_json and denial.pubmed_ids_json.strip():
+                if denial.pubmed_ids_json and len(denial.pubmed_ids_json) > 0:
                     try:
-                        selected_pmids = json.loads(denial.pubmed_ids_json)
+                        selected_pmids = denial.pubmed_ids_json
                         if selected_pmids:  # Check if not None and not empty
                             logger.info(
                                 f"Using {len(selected_pmids)} pre-selected PubMed articles for denial {denial.denial_id}"
@@ -230,7 +230,7 @@ class PubMedTools(object):
                         )
                     )
 
-                denial.pubmed_ids_json = json.dumps(selected_pmids)
+                denial.pubmed_ids_json = selected_pmids
                 await denial.asave()
                 # Directly fetch the selected articles from the database
                 articles = [
