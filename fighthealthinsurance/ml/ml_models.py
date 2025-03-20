@@ -1,3 +1,6 @@
+
+from asgiref.sync import sync_to_async, async_to_sync
+
 from abc import abstractmethod
 import asyncio
 import aiohttp
@@ -312,8 +315,8 @@ class RemoteOpenLike(RemoteModel):
         system_prompt: str,
         temperature: float,
     ):
-        return asyncio.run(
-            self._checked_infer(
+        return async_to_sync(
+            self._checked_infer)(
                 prompt,
                 patient_context,
                 plan_context,
@@ -322,27 +325,26 @@ class RemoteOpenLike(RemoteModel):
                 system_prompt,
                 temperature,
             )
-        )
 
     async def _checked_infer(
         self,
         prompt: str,
-        patient_context,
-        plan_context,
-        infer_type,
-        pubmed_context,
+        patient_context: Optional[str],
+        plan_context: Optional[str],
+        infer_type: str,
+        pubmed_context: Optional[str],
         system_prompt: str,
         temperature: float,
     ):
         # Extract URLs from the prompt to avoid checking them
         input_urls = []
-        if prompt:
+        if prompt and isinstance(prompt, str):
             input_urls.extend(CleanerUtils.url_re.findall(prompt))
-        if patient_context:
+        if patient_context and isinstance(patient_context, str):
             input_urls.extend(CleanerUtils.url_re.findall(patient_context))
-        if plan_context:
+        if plan_context and isinstance(patient_context, str):
             input_urls.extend(CleanerUtils.url_re.findall(plan_context))
-        if pubmed_context:
+        if pubmed_context and isinstance(patient_context, str):
             input_urls.extend(CleanerUtils.url_re.findall(pubmed_context))
 
         result = await self._infer(

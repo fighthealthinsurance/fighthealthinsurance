@@ -1528,7 +1528,7 @@ class AppealsBackendHelper:
         pubmed_context = None
         logger.debug("Looking up the pubmed context")
         try:
-            pubmed_context = asyncio.wait_for(
+            pubmed_context = await asyncio.wait_for(
                 cls.pmt.find_context_for_denial(denial), timeout=60
             )
         except Exception as e:
@@ -1536,18 +1536,6 @@ class AppealsBackendHelper:
                 f"Error {e} looking up context for {denial}."
             )
         logger.debug("Pubmed context done.")
-
-        try:
-            appeals: Iterator[str] = await sync_to_async(appealGenerator.make_appeals)(
-                denial,
-                AppealTemplateGenerator(prefaces, main, footer),
-                medical_reasons=medical_reasons,
-                non_ai_appeals=non_ai_appeals,
-                pubmed_context=pubmed_context,
-            )
-        except Exception as e:
-            logger.opt(exception=True).warning("Error generating appeals")
-        logger.debug("Done!")
 
         async def save_appeal(appeal_text: str) -> dict[str, str]:
             # Save all of the proposed appeals, so we can use RL later.
@@ -1602,6 +1590,13 @@ class AppealsBackendHelper:
         async def format_response(response: dict[str, str]) -> str:
             return json.dumps(response) + "\n"
 
+        appeals: Iterator[str] = await sync_to_async(appealGenerator.make_appeals)(
+            denial,
+            AppealTemplateGenerator(prefaces, main, footer),
+            medical_reasons=medical_reasons,
+            non_ai_appeals=non_ai_appeals,
+            pubmed_context=pubmed_context,
+        )
         filtered_appeals: Iterator[str] = filter(lambda x: x != None, appeals)
 
         # We convert to async here.
