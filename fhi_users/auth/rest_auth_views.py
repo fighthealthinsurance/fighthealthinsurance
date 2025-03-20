@@ -489,12 +489,12 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
 
         if not (settings.DEBUG and data["skip_stripe"]):
             base_product_id, base_price_id = stripe_utils.get_or_create_price(
-                "Basic Professional Subscription", 2500, recurring=True
+                "FP Basic Professional Plan", 2500, recurring=True
             )
             metered_product_id, metered_price_id = stripe_utils.get_or_create_price(
-                "Incremental Appeal", 1000, recurring=True, metered=True
+                "Incremental FP Appeal", 1000, recurring=True, metered=True
             )
-
+            cancel_url = request.META.get("HTTP_REFERER", user_signup_info["continue_url"])
             checkout_session = stripe.checkout.Session.create(
                 payment_method_types=["card"],
                 line_items=[
@@ -503,8 +503,9 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 ],
                 mode="subscription",
                 success_url=user_signup_info["continue_url"],
-                cancel_url=user_signup_info["continue_url"],
+                cancel_url= cancel_url, #user_signup_info["continue_url"],
                 customer_email=email,
+                allow_promotion_codes=True, # Users can enter a promo code at checkout
                 metadata={
                     "payment_type": "professional_domain_subscription",
                     "professional_id": str(professional_user.id),
