@@ -265,6 +265,7 @@ class AppealAssemblyHelper:
         with tempfile.NamedTemporaryFile(
             suffix=".pdf", prefix="alltogether", mode="w+b", delete=False
         ) as t:
+            onbehalf_of_name = f"{professional_name} and {patient_name}"
             self._assemble_appeal_pdf(
                 insurance_company=insurance_company,
                 patient_name=name,
@@ -280,6 +281,7 @@ class AppealAssemblyHelper:
                 company_fax_number=company_fax_number,
                 professional_fax_number=professional_fax_number,
                 professional_name=professional_name,
+                onbehalf_of_name=onbehalf_of_name,
                 target=t.name,
                 include_cover=include_cover,
             )
