@@ -275,6 +275,9 @@ class PubMedTools(object):
             logger.debug(
                 f"Timeout in find_context_for_denial: {e} so far got {articles}"
             )
+        except Exception as e:
+            logger.opt(exception=True).debug("Non-timeout error -- {e}?")
+            raise e
 
         # Format the articles for context
         if articles:
