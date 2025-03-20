@@ -500,6 +500,11 @@ class GetCandidateArticlesSerializer(serializers.Serializer):
     denial_id = serializers.IntegerField(required=True)
 
 
-class SelectArticlesSerializer(serializers.Serializer):
+class SelectContextArticlesSerializer(serializers.Serializer):
     denial_id = serializers.IntegerField(required=True)
+    pmids = serializers.ListField(child=serializers.CharField(), required=True)
+
+
+class SelectAppealArticlesSerializer(serializers.Serializer):
+    appeal_id = serializers.IntegerField(required=True)
     pmids = serializers.ListField(child=serializers.CharField(), required=True)

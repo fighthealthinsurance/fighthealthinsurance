@@ -13,6 +13,7 @@ import tempfile
 import os
 import uuid
 import re
+from stopit.utils import TimeoutException
 
 from django.core.files import File
 from django.core.validators import validate_email
@@ -276,11 +277,6 @@ class AppealAssemblyHelper:
             t.seek(0)
             doc_fname = os.path.basename(t.name)
 
-            # Create JSON representation of pubmed_ids if provided
-            pubmed_ids_json = None
-            if pubmed_ids_parsed:
-                pubmed_ids_json = json.dumps(pubmed_ids_parsed)
-
             if appeal is None:
                 appeal = Appeal.objects.create(
                     for_denial=denial,
@@ -291,7 +287,7 @@ class AppealAssemblyHelper:
                     creating_professional=creating_professional,
                     patient_user=patient_user,
                     domain=domain,
-                    pubmed_ids_json=pubmed_ids_json,
+                    pubmed_ids_json=pubmed_ids_parsed,
                 )
             else:
                 # Instead of using update(), set values individually preserving existing ones if not provided
@@ -310,8 +306,8 @@ class AppealAssemblyHelper:
                     appeal.patient_user = patient_user
                 if domain:
                     appeal.domain = domain
-                if pubmed_ids_json:
-                    appeal.pubmed_ids_json = pubmed_ids_json
+                if pubmed_ids_parsed:
+                    appeal.pubmed_ids_json = pubmed_ids_parsed
             if pending is not None:
                 appeal.pending = pending
             appeal.save()
@@ -401,9 +397,9 @@ class AppealAssemblyHelper:
         if pubmed_ids_parsed is not None and len(pubmed_ids_parsed) > 0:
             logger.debug(f"Processing PubMed articles: {pubmed_ids_parsed}")
             pmt = PubMedTools()
-            pubmed_docs: list[PubMedArticleSummarized] = pmt.get_articles(
-                pubmed_ids_parsed
-            )
+            pubmed_docs: list[PubMedArticleSummarized] = async_to_sync(
+                pmt.get_articles
+            )(pubmed_ids_parsed)
             logger.debug(f"Retrieved {len(pubmed_docs)} PubMed articles")
             if pubmed_docs:
                 pubmed_docs_paths = [
@@ -895,6 +891,8 @@ class DenialCreatorHelper:
         if not denial:
             logger.warning(f"Could not find denial with ID {denial_id}")
             return []
+        # For now this is disabled
+        return []
         try:
             # Check if we already have questions generated
             if denial.generated_questions is not None:
@@ -914,24 +912,32 @@ class DenialCreatorHelper:
             patient_context = denial.health_history
             plan_context = denial.plan_context
 
-            # Use the ML model to generate questions with potential answers
-            raw_questions = await appealGenerator.get_appeal_questions(
-                denial_text=denial_text,
-                patient_context=patient_context,
-                plan_context=plan_context,
-            )
+            if denial.procedure:
 
-            # Ensure we're working with tuples
-            questions: List[Tuple[str, str]] = [
-                (q[0], q[1]) if isinstance(q, (list, tuple)) else (str(q), "")
-                for q in raw_questions
-            ]
+                # Use the ML model to generate questions with potential answers
+                raw_questions = await appealGenerator.get_appeal_questions(
+                    denial_text=denial_text,
+                    diagnosis=denial.diagnosis,
+                    procedure=denial.procedure,
+                    patient_context=patient_context,
+                    plan_context=plan_context,
+                )
 
-            # Store the questions in the generated_questions field
-            denial.generated_questions = questions
-            await denial.asave()
-            logger.debug(f"Generated {len(questions)} questions for denial {denial_id}")
-            return questions
+                # Ensure we're working with tuples
+                questions: List[Tuple[str, str]] = [
+                    (q[0], q[1]) if isinstance(q, (list, tuple)) else (str(q), "")
+                    for q in raw_questions
+                ]
+
+                # Store the questions in the generated_questions field
+                denial.generated_questions = questions
+                await denial.asave()
+                logger.debug(
+                    f"Generated {len(questions)} questions for denial {denial_id}"
+                )
+                return questions
+            else:
+                return []
         except Exception as e:
             logger.opt(exception=True).warning(
                 f"Failed to generate questions for denial {denial_id}: {e}"
@@ -1117,13 +1123,15 @@ class DenialCreatorHelper:
             # Yield each result immediately for streaming
             yield result
 
-        # Now we see what optional tasks we can wrap up in the last 30 seconds.
+        # Now we see what optional tasks we can wrap up in the last 45 seconds.
         try:
-            for task in asyncio.as_completed(optional_tasks, timeout=30):
+            for task in asyncio.as_completed(optional_tasks, timeout=45):
                 result = await task
                 yield result
+        except asyncio.TimeoutError:
+            logger.debug("Ran out of time for optional tasks -- moving on")
         except Exception as e:
-            logger.opt(exception=True).debug(f"Error processing optional tasks: {e}")
+            logger.debug(f"Error processing optional tasks: {e}")
             yield f"Error processing optional tasks: {str(e)}\n"
 
         yield "Extraction completed\n"
@@ -1154,7 +1162,7 @@ class DenialCreatorHelper:
                     try:
                         pubmed_tool = PubMedTools()
                         # Find related articles based on diagnosis and procedure
-                        pubmed_tool.find_pubmed_articles_for_denial(
+                        await pubmed_tool.find_pubmed_articles_for_denial(
                             denial, timeout=60.0
                         )
                     except Exception as e:
@@ -1359,7 +1367,9 @@ class DenialCreatorHelper:
         if Appeal.objects.filter(for_denial=denial).exists():
             appeal_id = Appeal.objects.get(for_denial=denial).id
         else:
-            logger.debug("Could not find appeal for {denial}")
+            logger.debug(
+                f"Could not find appeal for {denial} -- expected for consumer version"
+            )
         r = DenialResponseInfo(
             selected_denial_type=denial.denial_type.all(),
             all_denial_types=cls.all_denial_types(),
@@ -1401,9 +1411,19 @@ class AppealsBackendHelper:
 
         # Get the current info
         await asyncio.sleep(0)
-        denial = await Denial.objects.filter(
-            denial_id=denial_id, semi_sekret=semi_sekret, hashed_email=hashed_email
-        ).aget()
+        denial = (
+            await Denial.objects.filter(
+                denial_id=denial_id, semi_sekret=semi_sekret, hashed_email=hashed_email
+            )
+            .select_related(
+                "patient_user",
+                "patient_user__user",
+                "domain",
+                "primary_professional",
+                "primary_professional__user",
+            )
+            .aget()
+        )
 
         non_ai_appeals: List[str] = list(
             map(
@@ -1490,11 +1510,17 @@ class AppealsBackendHelper:
         pubmed_context = None
         logger.debug("Looking up the pubmed context")
         try:
-            pubmed_context = await sync_to_async(cls.pmt.find_context_for_denial)(
-                denial
+            pubmed_context = asyncio.wait_for(
+                cls.pmt.find_context_for_denial(denial), timeout=60
+            )
+        except TimeoutException as t:
+            logger.opt(exception=True).debug(
+                f"Timeout {t} looking up context for {denial}."
             )
         except Exception as e:
-            logger.debug(f"Error {e} looking up context for {denial}.")
+            logger.opt(exception=True).debug(
+                f"Error {e} looking up context for {denial}."
+            )
         logger.debug("Pubmed context done.")
 
         try:
@@ -1546,18 +1572,17 @@ class AppealsBackendHelper:
                 "{diagnosis}": denial.diagnosis or "{diagnosis}",
                 "{procedure}": denial.procedure or "{procedure}",
             }
-            # TODO: Update for async
-            # if denial.patient_user is not None:
-            #    subs["[Patient Name]"] = denial.patient_user.get_legal_name()
-            # if denial and denial.primary_professional is not None:
-            #    subs["[Professional Name]"] = (
-            #        denial.primary_professional.get_full_name()
-            #    )
-            # if denial.domain:
-            #    subs["[Professional Address]"] = denial.domain.get_address()
+            if denial.patient_user is not None:
+                subs["[Patient Name]"] = denial.patient_user.get_legal_name()
+            if denial and denial.primary_professional is not None:
+                subs["[Professional Name]"] = (
+                    denial.primary_professional.get_full_name()
+                )
+            if denial.domain:
+                subs["[Professional Address]"] = denial.domain.get_address()
             ret = s.safe_substitute(subs)
             appeal["content"] = ret
-            logger.debug("Updated appeal to {ret}")
+            logger.debug(f"Updated appeal to {ret}")
             return appeal
 
         async def format_response(response: dict[str, str]) -> str:

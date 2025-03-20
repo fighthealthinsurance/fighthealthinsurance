@@ -48,6 +48,8 @@ class AppealGenerator(object):
     async def get_appeal_questions(
         self,
         denial_text: str,
+        procedure: Optional[str],
+        diagnosis: Optional[str],
         patient_context: Optional[str] = None,
         plan_context: Optional[str] = None,
         use_external: bool = False,
@@ -73,6 +75,8 @@ class AppealGenerator(object):
                 try:
                     raw_questions = await model.get_appeal_questions(
                         denial_text=denial_text,
+                        procedure=procedure,
+                        diagnosis=diagnosis,
                         patient_context=patient_context,
                         plan_context=plan_context,
                     )
@@ -90,6 +94,8 @@ class AppealGenerator(object):
             try:
                 raw_questions = await model.get_appeal_questions(
                     denial_text=denial_text,
+                    procedure=procedure,
+                    diagnosis=diagnosis,
                     plan_context=plan_context,
                 )
                 if raw_questions and len(raw_questions) > 0:
