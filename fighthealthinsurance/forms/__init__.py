@@ -85,6 +85,7 @@ class ProDenialForm(BaseDenialForm):
     patient_id = forms.CharField(required=False)
     insurance_company = forms.CharField(required=False)
     patient_visible = forms.BooleanField(required=False)
+    denial_id = forms.IntegerField(required=False)
 
 
 class DenialRefForm(forms.Form):
