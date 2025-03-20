@@ -9,6 +9,8 @@ from django.utils import timezone
 from dateutil.relativedelta import relativedelta
 from django.http import FileResponse
 
+from asgiref.sync import sync_to_async, async_to_sync
+
 from django_encrypted_filefield.crypt import Cryptographer
 
 from rest_framework import status
@@ -54,6 +56,8 @@ from stopit import ThreadingTimeout as Timeout
 from .common_view_logic import AppealAssemblyHelper
 from .utils import is_convertible_to_int
 import json
+
+from loguru import logger
 
 if typing.TYPE_CHECKING:
     from django.contrib.auth.models import User
@@ -109,12 +113,13 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
         elif self.action == "get_candidate_articles":
             return serializers.GetCandidateArticlesSerializer
         elif self.action == "select_articles":
-            return serializers.SelectArticlesSerializer
+            return serializers.SelectContextArticlesSerializer
         else:
             return None
 
     @extend_schema(responses=serializers.DenialResponseInfoSerializer)
     def create(self, request: Request) -> Response:
+        logger.debug("Routing create through parent...")
         return super().create(request)
 
     @extend_schema(responses=serializers.DenialResponseInfoSerializer)
@@ -133,11 +138,13 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
 
     @extend_schema(responses=serializers.DenialResponseInfoSerializer)
     def perform_create(self, request: Request, serializer):
+        logger.debug("Performing the create.....")
         current_user: User = request.user  # type: ignore
         creating_professional = ProfessionalUser.objects.get(user=current_user)
         serializer = self.deserialize(data=request.data)
         serializer.is_valid(raise_exception=True)
         serializer_data = serializer.validated_data
+        logger.debug(f"Using data {serializer_data}")
         if (
             "primary_professional" in serializer_data
             and serializer_data["primary_professional"] is not None
@@ -149,15 +156,17 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
             serializer_data["primary_professional"] = primary_professional
         denial: Optional[Denial] = None
         if "denial_id" in serializer_data:
-            if serializer_data["denial_id"] and is_convertible_to_int(
-                serializer_data["denial_id"]
-            ):
-                denial_id = int(serializer_data.pop("denial_id"))
+            denial_id = serializer_data.pop("denial_id")
+            if denial_id and is_convertible_to_int(denial_id):
+                logger.debug("Looking up existing denial {denial_id}")
+                denial_id = int(denial_id)
                 denial = Denial.filter_to_allowed_denials(current_user).get(
                     denial_id=denial_id
                 )
             else:
-                del serializer_data["denial_id"]
+                logger.debug("Unexpected format of denial id {denial_id}")
+        else:
+            logger.debug("No denial id present, will make new one.")
         if "patient_id" in serializer_data and is_convertible_to_int(
             serializer_data["patient_id"]
         ):
@@ -205,7 +214,7 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
             denial_id=serializer.validated_data["denial_id"],
         )
 
-        articles = pubmed_tools.find_pubmed_articles_for_denial(denial)
+        articles = async_to_sync(pubmed_tools.find_pubmed_articles_for_denial)(denial)
 
         return Response(
             serializers.PubMedMiniArticleSerializer(articles, many=True).data,
@@ -226,7 +235,7 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
         )
 
         pmids = serializer.validated_data["pmids"]
-        denial.pubmed_ids_json = json.dumps(pmids)
+        denial.pubmed_ids_json = pmids
         denial.save()
         return Response(
             serializers.SuccessSerializer(
@@ -326,8 +335,33 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
             return serializers.NotifyPatientRequestSerializer
         elif self.action == "invite_provider":
             return serializers.InviteProviderSerializer
+        elif self.action == "select_articles":
+            return serializers.SelectAppealArticlesSerializer
         else:
             return None
+
+    @extend_schema(responses=serializers.StatusResponseSerializer)
+    @action(detail=False, methods=["post"])
+    def select_articles(self, request: Request) -> Response:
+        """Select PubMed articles to include in the fax."""
+        serializer = self.deserialize(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        current_user: User = request.user  # type: ignore
+        appeal = get_object_or_404(
+            Appeal.filter_to_allowed_appeals(current_user),
+            id=serializer.validated_data["appeal_id"],
+        )
+
+        pmids = serializer.validated_data["pmids"]
+        appeal.pubmed_ids_json = pmids
+        appeal.save()
+        return Response(
+            serializers.SuccessSerializer(
+                {"message": f"Selected {len(pmids)} articles for this appeal"}
+            ).data,
+            status=status.HTTP_200_OK,
+        )
 
     @extend_schema(responses=serializers.AppealSummarySerializer)
     def list(self, request: Request) -> Response:

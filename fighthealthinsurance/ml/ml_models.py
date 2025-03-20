@@ -17,6 +17,8 @@ from fighthealthinsurance.exec import *
 from fighthealthinsurance.utils import all_concrete_subclasses
 from fighthealthinsurance.process_denial import DenialBase
 
+from stopit import TimeoutException
+
 
 class RemoteModelLike(DenialBase):
     def infer(
@@ -71,6 +73,8 @@ class RemoteModelLike(DenialBase):
     async def get_appeal_questions(
         self,
         denial_text: str,
+        procedure: Optional[str],
+        diagnosis: Optional[str],
         patient_context: Optional[str] = None,
         plan_context: Optional[str] = None,
     ) -> List[Tuple[str, str]]:
@@ -244,6 +248,11 @@ class RemoteOpenLike(RemoteModel):
         generic_bad_ideas = [
             "Therefore, the Health Plans denial should be overturned.",
             "llama llama virus",
+            "The independent medical review found that",
+            "The independent review findings for",
+            "the physician reviewer overturned",
+            "91111111111111111111111",
+            "I need the text to be able to help you with your appeal",
         ]
         if result is None:
             return True
@@ -549,8 +558,12 @@ class RemoteOpenLike(RemoteModel):
         **kwargs,
     ) -> Optional[str]:
         if self._timeout is not None:
-            with Timeout(self._timeout) as timeout_ctx:
-                return await self.__infer(*args, **kwargs)
+            try:
+                with Timeout(self._timeout) as timeout_ctx:
+                    return await self.__infer(*args, **kwargs)
+            except TimeoutException as e:
+                logger.debug(f"Timed out querying {self}")
+                return None
         else:
             return await self.__infer(*args, **kwargs)
 
@@ -656,15 +669,29 @@ class RemoteFullOpenLike(RemoteOpenLike):
                 """You must be concise. You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters to identify the requested procedure and, if available, the associated diagnosis. Each word costs an extra dollar. Provide a concise response with the procedure on one line starting with "Procedure" and Diagnsosis on another line starting with Diagnosis. Do not say not specified. Diagnosis can also be reason for treatment even if it's not a disease (like high risk homosexual behaviour for prep or preventitive and the name of the diagnosis). Remember each result on a seperated line."""
             ],
             "questions": [
-                """You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Generate 5-10 specific, detailed questions that would help craft a more effective appeal for a health insurance denial. Focus on questions that would gather information about:
-1. Medical necessity of the procedure/treatment
-2. Prior treatments tried and their outcomes
-3. Supporting medical evidence or studies
-4. Details about the denial reason
-5. Patient's specific situation related to the diagnosis
-6. Impact on the patient's health without this treatment
-7. Relevant insurance policy details
-Keep each question on a separate line and make them directly applicable to the specific denial case."""
+                """You have deep expertise in health insurance and extensive experience working in a medical office. Your task is to generate the best one to four specific, detailed questions that will help craft a stronger appeal for a health insurance denial.
+
+### Key Guidelines:
+- No Independent Medical Review (IMR/IME) has occured yet We are only dealing with the insurance company at this stage, so do not reference independent medical reviews.
+- Patient/Medical Assistant-Friendly: The questions will likely be answered by a patient or a medical assistant, so avoid technical jargon.
+- Focus on Establishing Validity: Do not ask about the insurance company’s stated reason for denial. Instead, ask patient-related questions that help demonstrate why the denial is invalid.
+### Question Format Preferences:
+  - Yes/no questions are ideal.
+  - Short-answer questions (one sentence max) are acceptable.
+  - Avoid long-answer questions, as they may overwhelm the patient.
+### Bad questions (do not ask):
+  - Why was the treatment considered not medically necessary?
+  - What specific criteria were used to determine medical necessity for this treatment?
+  - What is the insurance company’s stated reason for denial?
+  - Can you provide more information on the clinical evidence and guidelines that support the medical necessity of this treatment?
+### Good Examples:
+  - Wegovy denial: "Has the patient participated in a structured weight loss program (e.g., Weight Watchers)?"
+  - PrEP denial: "How many sexual partners (roughly) has the patient had in the past 12 months?"
+  - Mammogram denial: "What is the patient’s age?" "Does the patient have the BRCA1 mutation or a family history of breast cancer?"
+### Context-Aware Answers:
+ -If a question has a likely answer from the provided context, include the answer on the same line after the question mark.
+- Case-Specific: Each question should be directly relevant to the specific denial reason and medical necessity at hand.
+"""
             ],
             "medically_necessary": [
                 """You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters. Each word costs an extra dollar. Please provide a concise response. Do not use the 3rd person when referring to the patient (e.g. don't say "the patient", "patient's", "his", "hers"), instead use the first person (I, my, mine,etc.) when talking about the patient. You are not a review and should not mention any. Write concisely in a professional tone akin to patio11. Do not say this is why the decission should be overturned. Just say why you believe it is medically necessary (e.g. to prevent X or to treat Y)."""
@@ -685,6 +712,8 @@ Keep each question on a separate line and make them directly applicable to the s
     async def get_appeal_questions(
         self,
         denial_text: str,
+        procedure: Optional[str],
+        diagnosis: Optional[str],
         patient_context: Optional[str] = None,
         plan_context: Optional[str] = None,
     ) -> List[Tuple[str, str]]:
@@ -695,12 +724,34 @@ Keep each question on a separate line and make them directly applicable to the s
         Args:
             denial_text: The text of the denial letter
             patient_context: Optional patient health history or context
+            procedure: the procedure
+            diagnosis: primary diagnosis
             plan_context: Optional insurance plan context
 
         Returns:
             A list of tuples (question, answer) where answer may be empty
         """
-        prompt = f"Based on this denial letter, generate specific questions that would help create a more effective appeal:\n\n{denial_text}"
+        procedure_opt = (
+            "The procedure denied was {procedure} so only ask questions relevant to {procedure}"
+            if procedure
+            else ""
+        )
+        patient_context_opt = (
+            "Optional patient context: {patient_context}" if patient_context else ""
+        )
+        diagnosis_opt = "The primary diagnosis was {diagnosis}" if diagnosis else ""
+        # Procedure opt is in their multiple times intentionally. ~computers~
+        prompt = f"""
+        Some context which can help you in your task: {denial_text}
+        {procedure_opt} \n
+        {patient_context_opt} \n
+        {diagnosis_opt} \n
+        {procedure_opt} \n
+        Your task is to write one to three patient friendly questions about the patient history to help appeal this denial. \n
+        Remember to keep the questions concise and patient-friendly and focused on the potential patient history.\n
+        If you ask questions about the denial it's self the patient will be sad and give up so don't do that.
+        {procedure_opt} \n
+        """
 
         system_prompts: list[str] = self.get_system_prompts("questions")
 
@@ -890,7 +941,7 @@ class DeepInfra(RemoteFullOpenLike):
     """Use DeepInfra."""
 
     def __init__(self, model: str):
-        api_base = "https://api.deepinfra.com/v1/openai/chat/completions"
+        api_base = "https://api.deepinfra.com/v1/openai"
         token = os.getenv("DEEPINFRA_API")
         if token is None or len(token) < 1:
             raise Exception("No token found for deepinfra")
@@ -899,6 +950,11 @@ class DeepInfra(RemoteFullOpenLike):
     @classmethod
     def models(cls) -> List[ModelDescription]:
         return [
+            ModelDescription(
+                cost=20,
+                name="google/gemma-3-27b-it",
+                internal_name="google/gemma-3-27b-it",
+            ),
             ModelDescription(
                 cost=179,
                 name="meta-llama/meta-llama-3.1-405B-instruct",
