@@ -433,7 +433,8 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     health_history_anonymized = models.BooleanField(default=True)
     single_case = models.BooleanField(default=False, null=True)
     # pubmed articles to be used to create the input context to the appeal
-    pubmed_ids_json = models.CharField(max_length=600, blank=True)
+    pubmed_ids_json = models.JSONField(null=True, blank=True)
+    generated_questions = models.JSONField(null=True, blank=True)
     manual_deidentified_denial = models.TextField(primary_key=False, null=True, default="")
     manual_deidentified_appeal = models.TextField(primary_key=False, null=True, default="")
     manual_searchterm = models.TextField(primary_key=False, null=True, default="")

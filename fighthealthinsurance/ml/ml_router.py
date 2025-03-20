@@ -87,7 +87,7 @@ class MLRouter(object):
             text_optional = f"--- Full-ish article text: {text[0:1000]} ---"
         for m in models:
             r = await m._infer(
-                system_prompt="You are a helpful assistant summarizing an article for a person or other LLM wriitng an appeal. Be very concise.",
+                system_prompts=["You are a helpful assistant summarizing an article for a person or other LLM wriitng an appeal. Be very concise."],
                 prompt=f"Summarize the following for use in a health insurance appeal: {abstract_optional} {text_optional}. If present in the input include a list of the most relevant articles referenced (with PMID / DOIs or links if present in the input).",
             )
             if r is not None:
