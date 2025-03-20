@@ -315,13 +315,15 @@ class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # t
     date = models.DateTimeField(auto_now=False, auto_now_add=True)
     paid = models.BooleanField()
     email = models.CharField(max_length=300)
-    name = models.CharField(max_length=300, null=True)
+    name = models.CharField(max_length=300, null=True, blank=True)
     appeal_text = models.TextField()
     pmids = models.JSONField(null=True, blank=True)
     health_history = models.TextField(null=True, blank=True)
-    combined_document = models.FileField(null=True, storage=settings.COMBINED_STORAGE)
+    combined_document = models.FileField(
+        null=True, storage=settings.COMBINED_STORAGE, blank=True
+    )
     combined_document_enc = EncryptedFileField(
-        null=True, storage=settings.COMBINED_STORAGE
+        null=True, storage=settings.COMBINED_STORAGE, blank=True
     )
     uuid = models.CharField(max_length=300, default=uuid.uuid4, editable=False)
     sent = models.BooleanField(default=False)
@@ -334,7 +336,9 @@ class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # t
     should_send = models.BooleanField(default=False)
     # Professional we may use different backends.
     professional = models.BooleanField(default=False)
-    for_appeal = models.ForeignKey("Appeal", on_delete=models.SET_NULL, null=True)
+    for_appeal = models.ForeignKey(
+        "Appeal", on_delete=models.SET_NULL, null=True, blank=True
+    )
 
     def get_temporary_document_path(self):
         combined_document = self.combined_document or self.combined_document_enc
