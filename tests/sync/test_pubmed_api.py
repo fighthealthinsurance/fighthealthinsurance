@@ -223,17 +223,13 @@ class PubmedApiTest(APITestCase):
 
         # Verify the denial was updated with selected PMIDs
         updated_denial = Denial.objects.get(denial_id=self.denial.denial_id)
-        saved_pmids = json.loads(updated_denial.pubmed_ids_json)
+        saved_pmids = updated_denial.pubmed_ids_json
         self.assertEqual(saved_pmids, selected_pmids)
 
     def test_assemble_appeal_with_pubmed_articles(self):
         """Test assembling an appeal with selected PubMed articles."""
         # First, set up PubMed articles to use
         selected_pmids = ["12345678", "87654321"]
-
-        # Update the denial with the selected PubMed IDs
-        self.denial.pubmed_ids_json = json.dumps(selected_pmids)
-        self.denial.save()
 
         # Create the URL for assemble_appeal endpoint
         url = reverse("appeals-assemble-appeal")
@@ -266,7 +262,7 @@ class PubmedApiTest(APITestCase):
 
             # Verify the appeal was created with the PubMed IDs
             appeal = Appeal.objects.get(id=appeal_id)
-            self.assertEqual(appeal.pubmed_ids_json, json.dumps(selected_pmids))
+            self.assertEqual(appeal.pubmed_ids_json, selected_pmids)
             self.assertEqual(appeal.for_denial, self.denial)
 
             # Verify that the appeal assembly method was called with the right parameters
@@ -286,30 +282,26 @@ class PubmedApiTest(APITestCase):
             creating_professional=self.professional,
         )
 
-        url = reverse("denials-select-articles")
+        url = reverse("appeals-select-articles")
         selected_pmids = ["12345678"]
 
         response = self.client.post(
             url,
-            json.dumps({"denial_id": self.denial.denial_id, "pmids": selected_pmids}),
+            json.dumps({"appeal_id": appeal.id, "pmids": selected_pmids}),
             content_type="application/json",
         )
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
-        # Update the appeal with the selected articles manually
-        appeal.pubmed_ids_json = json.dumps(selected_pmids)
-        appeal.save()
-
         # Verify the appeal was updated
-        updated_appeal = Appeal.objects.get(id=appeal.id)
-        self.assertEqual(updated_appeal.pubmed_ids_json, json.dumps(selected_pmids))
+        appeal.refresh_from_db()
+        self.assertEqual(appeal.pubmed_ids_json, selected_pmids)
 
-    def test_appeal_assembly_with_pubmed_ids(self):
+    def test_appeal_assembly_with_pubmed_ids_basic(self):
         """Test that AppealAssemblyHelper properly includes PubMed articles when assembling appeals."""
         # Set up test data
         selected_pmids = ["12345678", "87654321"]
-        self.denial.pubmed_ids_json = json.dumps(selected_pmids)
+        self.denial.pubmed_ids_json = selected_pmids
         self.denial.save()
 
         # Create a test mock for Appeal.objects.create to avoid DB operations
@@ -318,7 +310,7 @@ class PubmedApiTest(APITestCase):
         ) as mock_create_appeal:
             # Set up the mock to return a mock Appeal object
             mock_appeal = mock.MagicMock()
-            mock_appeal.pubmed_ids_json = json.dumps(selected_pmids)
+            mock_appeal.pubmed_ids_json = selected_pmids
             mock_create_appeal.return_value = mock_appeal
 
             # Mock _assemble_appeal_pdf to test the correct passing of pubmed_ids_parsed
@@ -345,9 +337,7 @@ class PubmedApiTest(APITestCase):
                 # Verify that the appeal was created with the PubMed IDs
                 mock_create_appeal.assert_called_once()
                 create_kwargs = mock_create_appeal.call_args[1]
-                self.assertEqual(
-                    create_kwargs["pubmed_ids_json"], json.dumps(selected_pmids)
-                )
+                self.assertEqual(create_kwargs["pubmed_ids_json"], selected_pmids)
 
                 # Verify that _assemble_appeal_pdf was called with pubmed_ids_parsed
                 mock_assemble_pdf.assert_called_once()
@@ -442,7 +432,7 @@ class PubMedToolsAsyncTest(TransactionTestCase):
         mock_summarize.side_effect = mock_summarize_impl
 
         # Set up selected PMIDs on denial
-        self.test_denial.pubmed_ids_json = json.dumps(["12345678"])
+        self.test_denial.pubmed_ids_json = ["12345678"]
         self.test_denial.save()
 
         # Run the actual async method

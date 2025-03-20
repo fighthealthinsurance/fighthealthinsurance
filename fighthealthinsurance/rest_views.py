@@ -111,7 +111,7 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
         elif self.action == "get_candidate_articles":
             return serializers.GetCandidateArticlesSerializer
         elif self.action == "select_articles":
-            return serializers.SelectArticlesSerializer
+            return serializers.SelectContextArticlesSerializer
         else:
             return None
 
@@ -328,8 +328,33 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
             return serializers.NotifyPatientRequestSerializer
         elif self.action == "invite_provider":
             return serializers.InviteProviderSerializer
+        elif self.action == "select_articles":
+            return serializers.SelectAppealArticlesSerializer
         else:
             return None
+
+    @extend_schema(responses=serializers.StatusResponseSerializer)
+    @action(detail=False, methods=["post"])
+    def select_articles(self, request: Request) -> Response:
+        """Select PubMed articles to include in the fax."""
+        serializer = self.deserialize(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        current_user: User = request.user  # type: ignore
+        appeal = get_object_or_404(
+            Appeal.filter_to_allowed_appeals(current_user),
+            id=serializer.validated_data["appeal_id"],
+        )
+
+        pmids = serializer.validated_data["pmids"]
+        appeal.pubmed_ids_json = pmids
+        appeal.save()
+        return Response(
+            serializers.SuccessSerializer(
+                {"message": f"Selected {len(pmids)} articles for this appeal"}
+            ).data,
+            status=status.HTTP_200_OK,
+        )
 
     @extend_schema(responses=serializers.AppealSummarySerializer)
     def list(self, request: Request) -> Response:
