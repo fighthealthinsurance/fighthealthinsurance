@@ -24,6 +24,11 @@ from loguru import logger
 import eutils
 from datetime import datetime, timedelta
 
+if sys.version_info >= (3, 11):
+    from asyncio import timeout as async_timeout
+else:
+    from async_timeout import timeout as async_timeout
+
 
 PER_QUERY = 3
 
@@ -51,7 +56,7 @@ class PubMedTools(object):
         pmids: List[str] = []
 
         try:
-            async with asyncio.timeout(timeout):
+            async with async_timeout(timeout):
                 # Check if we already have query results from the last month
                 month_ago = datetime.now() - timedelta(days=30)
                 existing_queries = PubMedQueryData.objects.filter(
@@ -104,7 +109,7 @@ class PubMedTools(object):
         pmids: List[str] = []
         articles: List[PubMedMiniArticle] = []
         try:
-            async with asyncio.timeout(timeout):
+            async with async_timeout(timeout):
                 procedure_opt = denial.procedure if denial.procedure else ""
                 diagnosis_opt = denial.diagnosis if denial.diagnosis else ""
                 query = f"{procedure_opt} {diagnosis_opt}".strip()
@@ -194,7 +199,7 @@ class PubMedTools(object):
         missing_pmids: list[str] = []
 
         try:
-            async with asyncio.timeout(timeout):
+            async with async_timeout(timeout):
                 # Check if the denial has specific pubmed IDs selected already
                 selected_pmids: Optional[list[str]] = None
                 if denial.pubmed_ids_json and len(denial.pubmed_ids_json) > 0:
@@ -412,7 +417,7 @@ class PubMedTools(object):
         """Return the best PDF we can find of the article."""
         # First we try and fetch the article
         try:
-            async with asyncio.timeout(20.0):
+            async with async_timeout(20.0):
                 article_id = article.pmid
                 url = article.article_url
                 if url is not None:
