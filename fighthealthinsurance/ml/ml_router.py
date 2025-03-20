@@ -88,7 +88,7 @@ class MLRouter(object):
         for m in models:
             r = await m._infer(
                 system_prompts=[
-                    "You are a helpful assistant summarizing an article for a person or other LLM wriitng an appeal. Be very concise."
+                    "You are a helpful assistant summarizing article(s) for a person or other LLM wriitng an appeal. Be very concise."
                 ],
                 prompt=f"Summarize the following {title} for use in a health insurance appeal: {abstract_optional}{text_optional}. If present in the input include a list of the most relevant articles referenced (with PMID / DOIs or links if present in the input). If multile studies prefer US studies then generic non-country specific and then other countries. We're focused on helping american patients and providers.",
             )
@@ -97,9 +97,9 @@ class MLRouter(object):
             # Try again with only the abstract
             r = await m._infer(
                 system_prompts=[
-                    "You are a helpful assistant summarizing an article for a person or other LLM wriitng an appeal. Be very concise."
+                    "You are a helpful assistant summarizing article(s) for a person or other LLM wriitng an appeal. Be very concise."
                 ],
-                prompt=f"Summarize the following for use in a health insurance appeal: {abstract_optional}. If present in the input include a list of the most relevant articles referenced (with PMID / DOIs or links if present in the input). If multile studies prefer US studies then generic non-country specific and then other countries. We're focused on helping american patients and providers.",
+                prompt=f"Summarize the following {title} for use in a health insurance appeal: {abstract_optional}. If present in the input include a list of the most relevant articles referenced (with PMID / DOIs or links if present in the input). If multile studies prefer US studies then generic non-country specific and then other countries. We're focused on helping american patients and providers.",
             )
             if r is not None:
                 return r
