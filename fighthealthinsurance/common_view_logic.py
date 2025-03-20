@@ -332,7 +332,7 @@ class AppealAssemblyHelper:
         company_name: str,
         patient_name: str,
         claim_id: Optional[str],
-        include_cover: bool,
+        include_cover: bool = True,
         health_history: Optional[str] = None,
         patient_address: Optional[str] = None,
         patient_fax: Optional[str] = None,
