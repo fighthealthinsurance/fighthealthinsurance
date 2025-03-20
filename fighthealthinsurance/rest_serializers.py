@@ -360,7 +360,8 @@ class AssembleAppealRequestSerializer(serializers.Serializer):
     insurance_company = serializers.CharField(required=False, allow_blank=True)
     fax_phone = serializers.CharField(required=False, allow_blank=True)
     pubmed_articles_to_include = serializers.ListField(
-        child=serializers.CharField(required=False, allow_blank=True), required=False,
+        child=serializers.CharField(required=False, allow_blank=True),
+        required=False,
     )
     include_provided_health_history = serializers.BooleanField(required=False)
 
@@ -394,6 +395,7 @@ class SendToUserSerializer(serializers.Serializer):
 class SendFax(serializers.Serializer):
     appeal_id = serializers.IntegerField(required=True)
     fax_number = serializers.CharField(required=False)
+    include_cover = serializers.BooleanField(required=False, default=True)
 
 
 class InviteProviderSerializer(serializers.Serializer):
