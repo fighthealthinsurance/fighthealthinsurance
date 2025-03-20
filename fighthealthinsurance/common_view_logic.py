@@ -1513,10 +1513,6 @@ class AppealsBackendHelper:
             pubmed_context = asyncio.wait_for(
                 cls.pmt.find_context_for_denial(denial), timeout=60
             )
-        except TimeoutException as t:
-            logger.opt(exception=True).debug(
-                f"Timeout {t} looking up context for {denial}."
-            )
         except Exception as e:
             logger.opt(exception=True).debug(
                 f"Error {e} looking up context for {denial}."
