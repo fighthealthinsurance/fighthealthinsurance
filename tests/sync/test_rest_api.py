@@ -1187,3 +1187,85 @@ class GetFullDetailsTest(APITestCase):
 
         # Should return 404 because this user doesn't have access to this appeal
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+
+from typing import Any, Dict
+
+
+class DenialCreateWithExistingId(APITestCase):
+    """Test creating a denial with an existing denial id."""
+
+    fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
+
+    def setUp(self):
+        self.domain = UserDomain.objects.create(
+            name="testdomain",
+            visible_phone_number="1234567890",
+            internal_phone_number="0987654321",
+            active=True,
+            display_name="Test Domain",
+            business_name="Test Business",
+            country="USA",
+            state="CA",
+            city="Test City",
+            address1="123 Test St",
+            zipcode="12345",
+        )
+        self.user = User.objects.create_user(
+            username=f"testuser{self.domain.id}",
+            password="testpass",
+            email="test@example.com",
+        )
+        self.username = f"testuser{self.domain.id}"
+        self.password = "testpass"
+        self.prouser = ProfessionalUser.objects.create(
+            user=self.user, active=True, npi_number="1234567890"
+        )
+        self.user.is_active = True
+        self.user.save()
+        ExtraUserProperties.objects.create(user=self.user, email_verified=True)
+
+    def test_create_with_existing_denial_id(self):
+        login_result = self.client.login(username=self.username, password=self.password)
+        self.assertTrue(login_result)
+        # Create a denial
+        url = reverse("denials-list")
+        email = "timbit@fighthealthinsurance.com"
+        hashed_email = hashlib.sha512(email.encode("utf-8")).hexdigest()
+        denial_text = "Test denial text"
+        response = self.client.post(
+            url,
+            json.dumps(
+                {
+                    "email": email,
+                    "denial_text": denial_text,
+                    "pii": "true",
+                    "tos": "true",
+                    "privacy": "true",
+                    "store_raw_email": "true",
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertTrue(status.is_success(response.status_code))
+        parsed: Dict[str, Any] = response.json()
+        denial_id = parsed["denial_id"]
+        # Create another denial with the same denial id
+        response = self.client.post(
+            url,
+            json.dumps(
+                {
+                    "email": email,
+                    "denial_text": denial_text,
+                    "pii": "true",
+                    "tos": "true",
+                    "privacy": "true",
+                    "store_raw_email": "true",
+                    "denial_id": denial_id,
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertTrue(status.is_success(response.status_code))
+        parsed = response.json()
+        self.assertEqual(parsed["denial_id"], denial_id)
