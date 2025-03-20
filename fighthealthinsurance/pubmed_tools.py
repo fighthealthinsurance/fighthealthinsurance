@@ -23,6 +23,7 @@ import subprocess
 from loguru import logger
 import eutils
 from datetime import datetime, timedelta
+import sys
 
 if sys.version_info >= (3, 11):
     from asyncio import timeout as async_timeout
