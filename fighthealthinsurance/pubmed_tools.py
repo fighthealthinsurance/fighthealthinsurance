@@ -195,6 +195,9 @@ class PubMedTools(object):
             logger.debug(
                 f"Timeout in find_pubmed_articles_for_denial: {e} so far got {articles}"
             )
+        except Exception as e:
+            logger.opt(exception=True).debug(f"Unexpected error {e}")
+            raise e
         return articles
 
     async def find_context_for_denial(self, denial: Denial, timeout=60.0) -> str:

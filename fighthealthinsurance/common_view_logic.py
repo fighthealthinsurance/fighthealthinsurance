@@ -1509,7 +1509,7 @@ class AppealsBackendHelper:
         pubmed_context = None
         logger.debug("Looking up the pubmed context")
         try:
-            pubmed_context = await cls.pmt.find_context_for_denial(denial)
+            pubmed_context = await cls.pmt.find_context_for_denial(denial, timeout=10.0)
         except Exception as e:
             logger.opt(exception=True).debug(
                 f"Error {e} looking up context for {denial}."
