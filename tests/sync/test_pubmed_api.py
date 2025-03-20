@@ -100,7 +100,10 @@ class PubmedApiTest(APITestCase):
         self.article1 = PubMedMiniArticle.objects.create(
             pmid="12345678",
             title="Effectiveness of physical therapy for rheumatoid arthritis",
-            abstract="This study demonstrates the effectiveness of physical therapy for patients with rheumatoid arthritis...",
+            abstract="""
+            This study demonstrates the effectiveness of physical therapy for patients with rheumatoid arthritis...
+            We need this to be loooong like over 500 chars so it triggers the summary
+            """ + str(list(range(0, 500))),
             article_url="https://pubmed.ncbi.nlm.nih.gov/12345678/",
         )
 
@@ -377,7 +380,7 @@ class PubMedToolsAsyncTest(TransactionTestCase):
         PubMedArticleSummarized.objects.create(
             pmid="12345678",
             title="Effectiveness of physical therapy for rheumatoid arthritis",
-            abstract="This study demonstrates the effectiveness of physical therapy...",
+            abstract="""This study demonstrates the effectiveness of physical therapy...""",
             doi="10.1000/12345678",
             basic_summary="Summary about physical therapy for rheumatoid arthritis",
         )
