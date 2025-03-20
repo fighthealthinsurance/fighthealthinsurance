@@ -503,9 +503,10 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 ],
                 mode="subscription",
                 success_url=user_signup_info["continue_url"],
-                cancel_url= cancel_url, #user_signup_info["continue_url"],
+                cancel_url= cancel_url, # Take user back to submission page if they cancel
                 customer_email=email,
                 allow_promotion_codes=True, # Users can enter a promo code at checkout
+                subscription_data={"trial_period_days": 30},  # 👈 This makes it free for 30 days
                 metadata={
                     "payment_type": "professional_domain_subscription",
                     "professional_id": str(professional_user.id),
