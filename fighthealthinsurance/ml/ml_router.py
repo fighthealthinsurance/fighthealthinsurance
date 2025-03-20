@@ -72,9 +72,9 @@ class MLRouter(object):
         self, text: Optional[str], abstract: Optional[str] = None
     ) -> Optional[str]:
         models: list[RemoteModelLike] = []
-        if "meta-llama/Llama-3.3-70B-Instruct-Turbo" in self.models_by_name:
+        if "google/gemma-3-27b-it" in self.models_by_name:
             models = (
-                self.models_by_name["meta-llama/Llama-3.3-70B-Instruct-Turbo"]
+                self.models_by_name["google/gemma-3-27b-it"]
                 + self.internal_models_by_cost
             )
         else:
@@ -90,7 +90,7 @@ class MLRouter(object):
                 system_prompts=[
                     "You are a helpful assistant summarizing an article for a person or other LLM wriitng an appeal. Be very concise."
                 ],
-                prompt=f"Summarize the following for use in a health insurance appeal: {abstract_optional} {text_optional}. If present in the input include a list of the most relevant articles referenced (with PMID / DOIs or links if present in the input).",
+                prompt=f"Summarize the following for use in a health insurance appeal: {abstract_optional}. If present in the input include a list of the most relevant articles referenced (with PMID / DOIs or links if present in the input). If multile studies prefer US studies then generic non-country specific and then other countries. We're focused on helping american patients and providers.",
             )
             if r is not None:
                 return r
@@ -99,7 +99,7 @@ class MLRouter(object):
                 system_prompts=[
                     "You are a helpful assistant summarizing an article for a person or other LLM wriitng an appeal. Be very concise."
                 ],
-                prompt=f"Summarize the following for use in a health insurance appeal: {abstract_optional}. If present in the input include a list of the most relevant articles referenced (with PMID / DOIs or links if present in the input).",
+                prompt=f"Summarize the following for use in a health insurance appeal: {abstract_optional}. If present in the input include a list of the most relevant articles referenced (with PMID / DOIs or links if present in the input). If multile studies prefer US studies then generic non-country specific and then other countries. We're focused on helping american patients and providers.",
             )
             if r is not None:
                 return r

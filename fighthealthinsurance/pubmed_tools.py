@@ -24,9 +24,12 @@ import eutils
 from datetime import datetime, timedelta
 
 
+PER_QUERY = 3
+
+
 class PubMedTools(object):
     # Rough bias to "recent" articles
-    since_list = ["2025", "2024", None]
+    since_list = ["2024", None]
 
     async def find_pubmed_article_ids_for_query(
         self,
@@ -118,7 +121,7 @@ class PubMedTools(object):
         return pmids
 
     async def find_pubmed_articles_for_denial(
-        self, denial: Denial, timeout=60.0
+        self, denial: Denial, timeout=70.0
     ) -> List[PubMedMiniArticle]:
         pmids: List[str] = []
         articles: List[PubMedMiniArticle] = []
@@ -145,8 +148,7 @@ class PubMedTools(object):
                                 count = count + 1
                                 unique_pmids.add(pmid)
                                 pmids.append(pmid)
-                                # Add 5 unique per query set
-                                if count >= 5:
+                                if count >= PER_QUERY:
                                     break
 
                 # Check if articles already exist in database
@@ -161,8 +163,12 @@ class PubMedTools(object):
                         try:
                             fetched = pubmed_fetcher.article_by_pmid(pmid)
                             if fetched:
-                                src = FindIt(pmid)
-                                url = src.url
+                                url = None
+                                try:
+                                    src = FindIt(pmid)
+                                    url = src.url
+                                except Exception:
+                                    logger.debug("Findit failed.")
                                 mini_article = await PubMedMiniArticle.objects.acreate(
                                     pmid=pmid,
                                     title=(
@@ -179,7 +185,7 @@ class PubMedTools(object):
                                 )
                                 articles.append(mini_article)
                         except Exception as e:
-                            logger.opt(exception=True).error(
+                            logger.opt(exception=True).debug(
                                 f"Error fetching article {pmid}: {e}"
                             )
         except TimeoutException as e:

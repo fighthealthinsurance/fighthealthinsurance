@@ -890,6 +890,8 @@ class DenialCreatorHelper:
         if not denial:
             logger.warning(f"Could not find denial with ID {denial_id}")
             return []
+        # For now this is disabled
+        return []
         try:
             # Check if we already have questions generated
             if denial.generated_questions is not None:
@@ -909,24 +911,32 @@ class DenialCreatorHelper:
             patient_context = denial.health_history
             plan_context = denial.plan_context
 
-            # Use the ML model to generate questions with potential answers
-            raw_questions = await appealGenerator.get_appeal_questions(
-                denial_text=denial_text,
-                patient_context=patient_context,
-                plan_context=plan_context,
-            )
+            if denial.procedure:
 
-            # Ensure we're working with tuples
-            questions: List[Tuple[str, str]] = [
-                (q[0], q[1]) if isinstance(q, (list, tuple)) else (str(q), "")
-                for q in raw_questions
-            ]
+                # Use the ML model to generate questions with potential answers
+                raw_questions = await appealGenerator.get_appeal_questions(
+                    denial_text=denial_text,
+                    diagnosis=denial.diagnosis,
+                    procedure=denial.procedure,
+                    patient_context=patient_context,
+                    plan_context=plan_context,
+                )
 
-            # Store the questions in the generated_questions field
-            denial.generated_questions = questions
-            await denial.asave()
-            logger.debug(f"Generated {len(questions)} questions for denial {denial_id}")
-            return questions
+                # Ensure we're working with tuples
+                questions: List[Tuple[str, str]] = [
+                    (q[0], q[1]) if isinstance(q, (list, tuple)) else (str(q), "")
+                    for q in raw_questions
+                ]
+
+                # Store the questions in the generated_questions field
+                denial.generated_questions = questions
+                await denial.asave()
+                logger.debug(
+                    f"Generated {len(questions)} questions for denial {denial_id}"
+                )
+                return questions
+            else:
+                return []
         except Exception as e:
             logger.opt(exception=True).warning(
                 f"Failed to generate questions for denial {denial_id}: {e}"
@@ -1112,13 +1122,15 @@ class DenialCreatorHelper:
             # Yield each result immediately for streaming
             yield result
 
-        # Now we see what optional tasks we can wrap up in the last 30 seconds.
+        # Now we see what optional tasks we can wrap up in the last 45 seconds.
         try:
-            for task in asyncio.as_completed(optional_tasks, timeout=30):
+            for task in asyncio.as_completed(optional_tasks, timeout=45):
                 result = await task
                 yield result
+        except asyncio.TimeoutError:
+            logger.debug("Ran out of time for optional tasks -- moving on")
         except Exception as e:
-            logger.opt(exception=True).debug(f"Error processing optional tasks: {e}")
+            logger.debug(f"Error processing optional tasks: {e}")
             yield f"Error processing optional tasks: {str(e)}\n"
 
         yield "Extraction completed\n"
@@ -1354,7 +1366,9 @@ class DenialCreatorHelper:
         if Appeal.objects.filter(for_denial=denial).exists():
             appeal_id = Appeal.objects.get(for_denial=denial).id
         else:
-            logger.debug("Could not find appeal for {denial}")
+            logger.debug(
+                f"Could not find appeal for {denial} -- expected for consumer version"
+            )
         r = DenialResponseInfo(
             selected_denial_type=denial.denial_type.all(),
             all_denial_types=cls.all_denial_types(),
