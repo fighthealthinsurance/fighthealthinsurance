@@ -261,9 +261,9 @@ class PubMedTools(object):
 
                 if missing_pmids and len(missing_pmids) > 0:
                     logger.debug(f"Fetching {len(missing_pmids)} missing articles")
-                # Fetch in-order so we can be interrupted
-                for pmid in missing_pmids:
-                    articles.extend(await self.get_articles([pmid]))
+                    # Fetch in-order so we can be interrupted
+                    for pmid in missing_pmids:
+                        articles.extend(await self.get_articles([pmid]))
         except TimeoutException as e:
             logger.debug(
                 f"Timeout in find_context_for_denial: {e} so far got {articles}"
@@ -274,7 +274,9 @@ class PubMedTools(object):
             joined_contexts = "\n".join(
                 self.format_article_short(article) for article in articles
             )
-            r = await ml_router.summarize(joined_contexts)
+            if len(joined_contexts) < 100:
+                return joined_contexts
+            r = await ml_router.summarize(title="Combined contexts", text=joined_contexts)
             if r is None:
                 return joined_contexts
             else:
@@ -371,22 +373,25 @@ class PubMedTools(object):
                 ):
                     article_text = fetched.content.text
 
+
+                title=(fetched.title if hasattr(fetched, "title") else "").strip()
+                abstract = (fetched.abstract if hasattr(fetched, "abstract") else "").strip()
+                article_text = article_text.strip()
+
                 if fetched is not None and (
-                    (hasattr(fetched, "abstract") and fetched.abstract) or article_text
+                    (hasattr(fetched, "abstract") and fetched.abstract and len(fetched.abstract) > 40)
+                    or (article_text and len(article_text) > 40)
                 ):
                     article = await PubMedArticleSummarized.objects.acreate(
                         pmid=article_id,
                         doi=fetched.doi if hasattr(fetched, "doi") else "",
-                        title=fetched.title if hasattr(fetched, "title") else "",
-                        abstract=(
-                            fetched.abstract if hasattr(fetched, "abstract") else ""
-                        ),
+                        title=title,
+                        abstract=abstract,
                         text=article_text,
                         article_url=url,
                         basic_summary=await ml_router.summarize(
-                            abstract=(
-                                fetched.abstract if hasattr(fetched, "abstract") else ""
-                            ),
+                            title=title,
+                            abstract=abstract,
                             text=article_text,
                         ),
                     )

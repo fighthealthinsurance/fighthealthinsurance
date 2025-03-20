@@ -247,8 +247,10 @@ class RemoteOpenLike(RemoteModel):
             "Therefore, the Health Plans denial should be overturned.",
             "llama llama virus",
             "The independent medical review found that",
+            "The independent review findings for",
             "the physician reviewer overturned",
             "91111111111111111111111",
+            "I need the text to be able to help you with your appeal",
         ]
         if result is None:
             return True
@@ -931,7 +933,7 @@ class DeepInfra(RemoteFullOpenLike):
     """Use DeepInfra."""
 
     def __init__(self, model: str):
-        api_base = "https://api.deepinfra.com/v1/openai/chat/completions"
+        api_base = "https://api.deepinfra.com/v1/openai"
         token = os.getenv("DEEPINFRA_API")
         if token is None or len(token) < 1:
             raise Exception("No token found for deepinfra")
