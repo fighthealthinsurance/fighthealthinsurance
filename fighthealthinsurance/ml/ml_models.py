@@ -17,6 +17,8 @@ from fighthealthinsurance.exec import *
 from fighthealthinsurance.utils import all_concrete_subclasses
 from fighthealthinsurance.process_denial import DenialBase
 
+from stopit import TimeoutException
+
 
 class RemoteModelLike(DenialBase):
     def infer(
@@ -556,8 +558,12 @@ class RemoteOpenLike(RemoteModel):
         **kwargs,
     ) -> Optional[str]:
         if self._timeout is not None:
-            with Timeout(self._timeout) as timeout_ctx:
-                return await self.__infer(*args, **kwargs)
+            try:
+                with Timeout(self._timeout) as timeout_ctx:
+                    return await self.__infer(*args, **kwargs)
+            except TimeoutException as e:
+                logger.debug(f"Timed out querying {self}")
+                return None
         else:
             return await self.__infer(*args, **kwargs)
 
