@@ -57,6 +57,8 @@ from .common_view_logic import AppealAssemblyHelper
 from .utils import is_convertible_to_int
 import json
 
+from loguru import logger
+
 if typing.TYPE_CHECKING:
     from django.contrib.auth.models import User
 else:
@@ -117,6 +119,7 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
 
     @extend_schema(responses=serializers.DenialResponseInfoSerializer)
     def create(self, request: Request) -> Response:
+        logger.debug("Routing create through parent...")
         return super().create(request)
 
     @extend_schema(responses=serializers.DenialResponseInfoSerializer)
@@ -135,11 +138,13 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
 
     @extend_schema(responses=serializers.DenialResponseInfoSerializer)
     def perform_create(self, request: Request, serializer):
+        logger.debug("Performing the create.....")
         current_user: User = request.user  # type: ignore
         creating_professional = ProfessionalUser.objects.get(user=current_user)
         serializer = self.deserialize(data=request.data)
         serializer.is_valid(raise_exception=True)
         serializer_data = serializer.validated_data
+        logger.debug(f"Using data {serializer_data}")
         if (
             "primary_professional" in serializer_data
             and serializer_data["primary_professional"] is not None
@@ -151,15 +156,17 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
             serializer_data["primary_professional"] = primary_professional
         denial: Optional[Denial] = None
         if "denial_id" in serializer_data:
-            if serializer_data["denial_id"] and is_convertible_to_int(
-                serializer_data["denial_id"]
-            ):
-                denial_id = int(serializer_data.pop("denial_id"))
+            denial_id = serializer_data.pop("denial_id")
+            if denial_id and is_convertible_to_int(denial_id):
+                logger.debug("Looking up existing denial {denial_id}")
+                denial_id = int(denial_id)
                 denial = Denial.filter_to_allowed_denials(current_user).get(
                     denial_id=denial_id
                 )
             else:
-                del serializer_data["denial_id"]
+                logger.debug("Unexpected format of denial id {denial_id}")
+        else:
+            logger.debug("No denial id present, will make new one.")
         if "patient_id" in serializer_data and is_convertible_to_int(
             serializer_data["patient_id"]
         ):
