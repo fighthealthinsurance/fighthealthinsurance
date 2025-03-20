@@ -285,7 +285,7 @@ class PubMedTools(object):
             joined_contexts = "\n".join(
                 self.format_article_short(article) for article in articles
             )
-            if len(joined_contexts) < 500:
+            if len(joined_contexts) < 100:
                 logger.debug("Not much input, skpping summary step.")
                 return joined_contexts
             r = await ml_router.summarize(
