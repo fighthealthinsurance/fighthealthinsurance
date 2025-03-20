@@ -14,6 +14,7 @@ from .models import Denial
 import json
 import PyPDF2
 import requests
+import aiohttp
 from fighthealthinsurance.ml.ml_router import ml_router
 import tempfile
 from typing import List, Optional, Dict, Tuple, Any, Set
@@ -97,9 +98,9 @@ class PubMedTools(object):
                             logger.debug(
                                 f"No results for {query}, trying with since={year}"
                             )
-                            year_pmids = pubmed_fetcher.pmids_for_query(
-                                query, since=year
-                            )
+                            year_pmids = await sync_to_async(
+                                pubmed_fetcher.pmids_for_query
+                            )(query, since=year)
                             if year_pmids:
                                 # Cache the results
                                 articles_json = json.dumps(year_pmids).replace(
@@ -161,11 +162,13 @@ class PubMedTools(object):
                     else:
                         # Create a new mini article
                         try:
-                            fetched = pubmed_fetcher.article_by_pmid(pmid)
+                            fetched = await sync_to_async(
+                                pubmed_fetcher.article_by_pmid
+                            )(pmid)
                             if fetched:
                                 url = None
                                 try:
-                                    src = FindIt(pmid)
+                                    src = await sync_to_async(FindIt)(pmid)
                                     url = src.url
                                 except Exception:
                                     logger.debug("Findit failed.")
@@ -338,35 +341,38 @@ class PubMedTools(object):
         if article is None:
             try:
                 fetched = pubmed_fetcher.article_by_pmid(article_id)
-                src = FindIt(article_id)
-                url = src.url
                 article_text = ""
+                try:
+                    src = FindIt(article_id)
+                    url = src.url
 
-                if url is not None:
-                    response = requests.get(url)
-                    if (
-                        ".pdf" in url
-                        or response.headers.get("Content-Type") == "application/pdf"
-                    ):
-                        with tempfile.NamedTemporaryFile(
-                            suffix=".pdf", delete=False
-                        ) as my_data:
-                            my_data.write(response.content)
+                    if url is not None:
+                        async with aiohttp.ClientSession() as session:
+                            async with session.get(url) as response:
+                                response.raise_for_status()
+                                if (
+                                    ".pdf" in url
+                                    or response.headers.get("Content-Type")
+                                    == "application/pdf"
+                                ):
+                                    with tempfile.NamedTemporaryFile(
+                                        suffix=".pdf", delete=False
+                                    ) as my_data:
+                                        my_data.write(await response.read())
 
-                            open_pdf_file = open(my_data.name, "rb")
-                            read_pdf = PyPDF2.PdfReader(open_pdf_file)
-                            if read_pdf.is_encrypted:
-                                read_pdf.decrypt("")
-                                for page in read_pdf.pages:
-                                    article_text += page.extract_text()
-                            else:
-                                for page in read_pdf.pages:
-                                    article_text += page.extract_text()
-                    elif (
-                        "Something has gone wrong with our web server"
-                        not in response.text
-                    ):
-                        article_text += response.text
+                                        open_pdf_file = open(my_data.name, "rb")
+                                        read_pdf = PyPDF2.PdfReader(open_pdf_file)
+                                        if read_pdf.is_encrypted:
+                                            read_pdf.decrypt("")
+                                        for page in read_pdf.pages:
+                                            article_text += page.extract_text()
+                                else:
+                                    # Assume maybe text-ish
+                                    text = (await response.text()).strip()
+                                    if " " in text and len(text) > 50:
+                                        article_text = text
+                except Exception as e:
+                    logger.debug("Error trying to get full text")
                 if (
                     (article_text is None or article_text == "")
                     and fetched
