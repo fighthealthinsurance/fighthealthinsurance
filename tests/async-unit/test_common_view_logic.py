@@ -10,8 +10,9 @@ from fighthealthinsurance.common_view_logic import (
     AppealsBackendHelper,
     NextStepInfo,
     DenialCreatorHelper,
+    SendFaxHelper,
 )
-from fighthealthinsurance.models import Denial, DenialTypes
+from fighthealthinsurance.models import Denial, DenialTypes, Appeal, FaxesToSend
 import pytest
 from django.test import TestCase
 
@@ -102,6 +103,46 @@ class TestCommonViewLogic(TestCase):
             string_data = buf.getvalue()
 
         async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.fax_actor_ref")
+    def test_store_fax_number_as_destination(self, mock_fax_actor_ref):
+        """Test that the fax number from a denial is stored as the destination in FaxesToSend."""
+        # Create test data
+        email = "test@example.com"
+        fax_number = "1234567890"
+
+        # Create a denial with a fax number
+        denial = Denial.objects.create(
+            denial_id=1,
+            semi_sekret="sekret",
+            hashed_email=Denial.get_hashed_email(email),
+            appeal_fax_number=fax_number,
+        )
+
+        # Create an appeal
+        appeal = Appeal.objects.create(
+            for_denial=denial,
+            appeal_text="Test appeal text",
+            hashed_email=Denial.get_hashed_email(email),
+        )
+
+        # Set up mock
+        mock_fax_actor_ref.get.do_send_fax.remote.return_value = None
+
+        # Call the method under test
+        result = SendFaxHelper.stage_appeal_as_fax(appeal=appeal, email=email)
+
+        # Verify the fax was created with the correct destination
+        fax = FaxesToSend.objects.get(uuid=result.uuid)
+        self.assertEqual(fax.destination, fax_number)
+        self.assertEqual(fax.denial_id, denial)
+        self.assertEqual(fax.appeal_text, appeal.appeal_text)
+
+        # Verify the fax actor was called to send the fax
+        mock_fax_actor_ref.get.do_send_fax.remote.assert_called_once_with(
+            fax.hashed_email, fax.uuid
+        )
 
     @pytest.mark.skip("Skip for now until we enable this.")
     @pytest.mark.django_db
