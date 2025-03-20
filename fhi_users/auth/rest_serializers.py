@@ -126,7 +126,7 @@ class UserDomainSerializer(serializers.ModelSerializer):
 
     class Meta(object):
         model = UserDomain
-        exclude = ("id", "stripe_subscription_id", "active", "professionals")
+        exclude = ("id", "stripe_subscription_id", "stripe_customer_id", "active", "professionals")
 
 
 class ProfessionalSignupSerializer(serializers.ModelSerializer):
