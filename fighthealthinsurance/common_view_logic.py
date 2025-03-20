@@ -198,7 +198,7 @@ class AppealAssemblyHelper:
         email: str,
         include_provided_health_history: bool,
         name: str,
-        include_cover: bool,
+        include_cover: bool = True,
         insurance_company: Optional[str] = None,
         denial: Optional[Denial] = None,
         denial_id: Optional[str] = None,
