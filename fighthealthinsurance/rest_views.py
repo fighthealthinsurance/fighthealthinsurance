@@ -563,6 +563,7 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
         patient_name: str = "unkown"
         if patient_user is not None:
             patient_name = patient_user.get_combined_name()
+        logger.debug("Making the appeal go vroooom")
         appeal = self.appeal_assembly_helper.create_or_update_appeal(
             appeal=appeal,
             name=patient_name,
@@ -582,6 +583,7 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
             company_phone_number="202-938-3266",
             company_fax_number="415-840-7591",
             patient_user=patient_user,
+            include_cover=True,  # for now -- make this a flag on appeal
         )
         appeal.save()
         return Response(

@@ -155,12 +155,20 @@ class AppealAssemblyHelper:
                         new_input_path = f"{input_path}.u8.txt"
                     except:
                         pass
+                if input_path.endswith(".html"):
+                    html_command = base_convert_command
+                    html_command.extend("-thtml")
+                    try:
+                        await check_call(html_command)
+                        return f"{input_path}.pdf"
+                    except:
+                        pass
                 # Try a different engine
                 for engine in ["lualatex", "xelatex"]:
                     convert_command = base_convert_command
                     convert_command.extend([f"--pdf-engine={engine}"])
                     try:
-                        await check_call(base_convert_command)
+                        await check_call(convert_command)
                         return f"{input_path}.pdf"
                     except:
                         pass
@@ -190,6 +198,7 @@ class AppealAssemblyHelper:
         email: str,
         include_provided_health_history: bool,
         name: str,
+        include_cover: bool,
         insurance_company: Optional[str] = None,
         denial: Optional[Denial] = None,
         denial_id: Optional[str] = None,
@@ -272,6 +281,7 @@ class AppealAssemblyHelper:
                 professional_fax_number=professional_fax_number,
                 professional_name=professional_name,
                 target=t.name,
+                include_cover=include_cover,
             )
             t.flush()
             t.seek(0)
@@ -322,6 +332,7 @@ class AppealAssemblyHelper:
         company_name: str,
         patient_name: str,
         claim_id: Optional[str],
+        include_cover: bool,
         health_history: Optional[str] = None,
         patient_address: Optional[str] = None,
         patient_fax: Optional[str] = None,
@@ -336,46 +347,49 @@ class AppealAssemblyHelper:
     ):
         if len(target) < 2:
             return
-        # Build our cover page
-        cover_context = {
-            "receiver_name": insurance_company or "",
-            "receiver_fax_number": fax_phone,
-            "company_name": company_name,
-            "company_fax_number": company_fax_number,
-            "company_phone_number": company_phone_number,
-            "fax_sent_datetime": str(datetime.datetime.now()),
-            "provider_fax_number": professional_fax_number,
-            "provider_name": professional_name,
-            "professional_fax_number": professional_fax_number,
-            "patient_name": patient_name,
-            "claim_id": claim_id,
-        }
-        cover_content: str = ""
-        # Render the cover content
-        if cover_template_string and len(cover_template_string) > 0:
-            cover_content = Template(cover_template_string).substitute(cover_context)
-            logger.debug(
-                f"Rendering cover letter from string {cover_template_string} and got {cover_content}"
+        if include_cover:
+            # Build our cover page
+            cover_context = {
+                "receiver_name": insurance_company or "",
+                "receiver_fax_number": fax_phone,
+                "company_name": company_name,
+                "company_fax_number": company_fax_number,
+                "company_phone_number": company_phone_number,
+                "fax_sent_datetime": str(datetime.datetime.now()),
+                "provider_fax_number": professional_fax_number,
+                "provider_name": professional_name,
+                "professional_fax_number": professional_fax_number,
+                "patient_name": patient_name,
+                "claim_id": claim_id,
+            }
+            cover_content: str = ""
+            # Render the cover content
+            if cover_template_string and len(cover_template_string) > 1:
+                cover_content = Template(cover_template_string).substitute(
+                    cover_context
+                )
+                logger.debug(
+                    f"Rendering cover letter from string {cover_template_string} and got {cover_content}"
+                )
+            else:
+                cover_content = render_to_string(
+                    cover_template_path,
+                    context=cover_context,
+                )
+                logger.debug(
+                    f"Rendering cover letter from path {cover_template_path} and got {cover_content}"
+                )
+            files_for_fax: list[str] = []
+            cover_letter_file = tempfile.NamedTemporaryFile(
+                suffix=".html", prefix="info_cover", mode="w+t", delete=False
             )
-        else:
-            cover_content = render_to_string(
-                cover_template_path,
-                context=cover_context,
-            )
-            logger.debug(
-                f"Rendering cover letter from path {cover_template_path} and got {cover_content}"
-            )
-        files_for_fax: list[str] = []
-        cover_letter_file = tempfile.NamedTemporaryFile(
-            suffix=".html", prefix="info_cover", mode="w+t", delete=True
-        )
-        cover_letter_file.write(cover_content)
-        cover_letter_file.flush()
-        files_for_fax.append(cover_letter_file.name)
+            cover_letter_file.write(cover_content)
+            cover_letter_file.flush()
+            files_for_fax.append(cover_letter_file.name)
 
         # Appeal text
         appeal_text_file = tempfile.NamedTemporaryFile(
-            suffix=".txt", prefix="appealtxt", mode="w+t", delete=True
+            suffix=".txt", prefix="appealtxt", mode="w+t", delete=False
         )
         appeal_text_file.write(completed_appeal_text)
         appeal_text_file.flush()
@@ -386,7 +400,7 @@ class AppealAssemblyHelper:
         health_history_file = None
         if health_history and len(health_history) > 2:
             health_history_file = tempfile.NamedTemporaryFile(
-                suffix=".txt", prefix="healthhist", mode="w+t", delete=True
+                suffix=".txt", prefix="healthhist", mode="w+t", delete=False
             )
             health_history_file.write("Health History:\n")
             health_history_file.write(health_history)
@@ -403,7 +417,9 @@ class AppealAssemblyHelper:
             logger.debug(f"Retrieved {len(pubmed_docs)} PubMed articles")
             if pubmed_docs:
                 pubmed_docs_paths = [
-                    x for x in map(async_to_sync(pmt.article_as_pdf), pubmed_docs) if x is not None
+                    x
+                    for x in map(async_to_sync(pmt.article_as_pdf), pubmed_docs)
+                    if x is not None
                 ]
                 files_for_fax.extend(pubmed_docs_paths)
                 logger.debug(f"Added {len(pubmed_docs_paths)} PubMed PDFs to fax")

@@ -360,7 +360,7 @@ class AssembleAppealRequestSerializer(serializers.Serializer):
     insurance_company = serializers.CharField(required=False, allow_blank=True)
     fax_phone = serializers.CharField(required=False, allow_blank=True)
     pubmed_articles_to_include = serializers.ListField(
-        child=serializers.CharField(), required=False
+        child=serializers.CharField(required=False, allow_blank=True), required=False,
     )
     include_provided_health_history = serializers.BooleanField(required=False)
 
