@@ -276,7 +276,9 @@ class PubMedTools(object):
             )
             if len(joined_contexts) < 100:
                 return joined_contexts
-            r = await ml_router.summarize(title="Combined contexts", text=joined_contexts)
+            r = await ml_router.summarize(
+                title="Combined contexts", text=joined_contexts
+            )
             if r is None:
                 return joined_contexts
             else:
@@ -373,13 +375,18 @@ class PubMedTools(object):
                 ):
                     article_text = fetched.content.text
 
-
-                title=(fetched.title if hasattr(fetched, "title") else "").strip()
-                abstract = (fetched.abstract if hasattr(fetched, "abstract") else "").strip()
+                title = (fetched.title if hasattr(fetched, "title") else "").strip()
+                abstract = (
+                    fetched.abstract if hasattr(fetched, "abstract") else ""
+                ).strip()
                 article_text = article_text.strip()
 
                 if fetched is not None and (
-                    (hasattr(fetched, "abstract") and fetched.abstract and len(fetched.abstract) > 40)
+                    (
+                        hasattr(fetched, "abstract")
+                        and fetched.abstract
+                        and len(fetched.abstract) > 40
+                    )
                     or (article_text and len(article_text) > 40)
                 ):
                     article = await PubMedArticleSummarized.objects.acreate(
