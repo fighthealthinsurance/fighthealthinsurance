@@ -240,6 +240,7 @@ class PubMedTools(object):
                     )
 
                 denial.pubmed_ids_json = selected_pmids
+                logger.debug(f"Updating denial to have some context selected...")
                 await denial.asave()
                 # Directly fetch the selected articles from the database
                 articles = [
@@ -274,14 +275,17 @@ class PubMedTools(object):
 
         # Format the articles for context
         if articles:
+            logger.debug("Making single context input")
             joined_contexts = "\n".join(
                 self.format_article_short(article) for article in articles
             )
-            if len(joined_contexts) < 100:
+            if len(joined_contexts) < 500:
+                logger.debug("Not much input, skpping summary step.")
                 return joined_contexts
             r = await ml_router.summarize(
                 title="Combined contexts", text=joined_contexts
             )
+            logger.debug("Huzzah!")
             if r is None:
                 return joined_contexts
             else:
