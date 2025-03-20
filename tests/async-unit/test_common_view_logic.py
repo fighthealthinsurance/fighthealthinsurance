@@ -103,8 +103,7 @@ class TestCommonViewLogic(TestCase):
 
         async_to_sync(test)()
 
-    # Skip for now until we enable this.
-    @pytest.skip
+    @pytest.mark.skip("Skip for now until we enable this.")
     @pytest.mark.django_db
     @patch("fighthealthinsurance.common_view_logic.appealGenerator")
     async def test_generate_appeal_questions(self, mock_appeal_generator):
