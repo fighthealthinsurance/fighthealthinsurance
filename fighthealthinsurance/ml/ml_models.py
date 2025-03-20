@@ -325,6 +325,17 @@ class RemoteOpenLike(RemoteModel):
         system_prompt: str,
         temperature: float,
     ):
+        # Extract URLs from the prompt to avoid checking them
+        input_urls = []
+        if prompt:
+            input_urls.extend(CleanerUtils.url_re.findall(prompt))
+        if patient_context:
+            input_urls.extend(CleanerUtils.url_re.findall(patient_context))
+        if plan_context:
+            input_urls.extend(CleanerUtils.url_re.findall(plan_context))
+        if pubmed_context:
+            input_urls.extend(CleanerUtils.url_re.findall(pubmed_context))
+
         result = await self._infer(
             prompt=prompt,
             patient_context=patient_context,
@@ -350,7 +361,9 @@ class RemoteOpenLike(RemoteModel):
             (
                 infer_type,
                 CleanerUtils.note_remover(
-                    CleanerUtils.url_fixer(CleanerUtils.tla_fixer(result))
+                    CleanerUtils.url_fixer(
+                        CleanerUtils.tla_fixer(result), input_urls=input_urls
+                    )
                 ),
             )
         ]
