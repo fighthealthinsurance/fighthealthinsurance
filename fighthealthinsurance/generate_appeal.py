@@ -45,6 +45,159 @@ class AppealGenerator(object):
     def __init__(self):
         self.regex_denial_processor = ProcessDenialRegex()
 
+    async def get_appeal_questions(
+        self,
+        denial_text: str,
+        patient_context: Optional[str] = None,
+        plan_context: Optional[str] = None,
+        use_external: bool = False,
+    ) -> List[Tuple[str, str]]:
+        """
+        Generate a list of questions that could help craft a better appeal.
+        If answers are included in the format "Question? Answer", they will be parsed
+        and returned as tuples (question, answer).
+
+        Args:
+            denial_text: The text of the denial letter
+            patient_context: Optional patient health history or context
+            plan_context: Optional insurance plan context
+            use_external: Whether to use external models
+
+        Returns:
+            A list of tuples (question, answer) where answer may be empty if not provided
+        """
+        models_to_try = ml_router.entity_extract_backends(use_external)
+        for model in models_to_try:
+            # First try with patient context if available
+            if patient_context is not None and len(patient_context.strip()) > 0:
+                try:
+                    raw_questions = await model.get_appeal_questions(
+                        denial_text=denial_text,
+                        patient_context=patient_context,
+                        plan_context=plan_context,
+                    )
+                    if raw_questions and len(raw_questions) > 0:
+                        # Parse questions into (question, answer) tuples if they aren't already
+                        if isinstance(raw_questions[0], str):
+                            return self._parse_questions_with_answers(raw_questions)
+                        return raw_questions
+                except Exception as e:
+                    logger.opt(exception=True).warning(
+                        f"Failed to generate questions with patient context: {e}"
+                    )
+
+            # Then try without patient context
+            try:
+                raw_questions = await model.get_appeal_questions(
+                    denial_text=denial_text,
+                    plan_context=plan_context,
+                )
+                if raw_questions and len(raw_questions) > 0:
+                    # Parse questions into (question, answer) tuples if they aren't already
+                    if isinstance(raw_questions[0], str):
+                        return self._parse_questions_with_answers(raw_questions)
+                    return raw_questions
+            except Exception as e:
+                logger.opt(exception=True).warning(f"Failed to generate questions: {e}")
+        # If we got here, no models worked, return empty list
+        return []
+
+    def _parse_questions_with_answers(
+        self, questions: List[str]
+    ) -> List[Tuple[str, str]]:
+        """
+        Parse a list of string questions, some of which may contain answers,
+        into a list of (question, answer) tuples.
+
+        Args:
+            questions: A list of questions, possibly with answers after "?"
+
+        Returns:
+            A list of (question, answer) tuples
+        """
+        result = []
+
+        # Handle empty input gracefully
+        if not questions:
+            logger.warning("Received empty question list")
+            return []
+
+        # First check if we received a single string with multiple lines
+        if len(questions) == 1 and "\n" in questions[0]:
+            # Split the single string into separate lines
+            questions = [
+                line.strip() for line in questions[0].split("\n") if line.strip()
+            ]
+
+        for question in questions:
+            # Skip empty lines
+            if not question.strip():
+                continue
+
+            # Remove numbering and bullet points at the beginning of the line
+            # This handles formats like "1. ", "1) ", "• ", "- ", "* ", etc.
+            question = re.sub(r"^\s*(?:\d+[.)\-]|\*|\•|\-)\s+", "", question.strip())
+
+            # Handle markdown-style bold formatting like "**Question?** Answer"
+            question = re.sub(r"\*\*([^*]+)\*\*", r"\1", question)
+
+            # Try to find multiple question-answer pairs in a single line
+            # This pattern looks for "Question1? Answer1. Question2? Answer2." etc.
+            multiple_qa_pattern = r"([^.!?]+\?)\s*([^.!?]*(?:\.|$))"
+            multiple_qa_matches = re.findall(multiple_qa_pattern, question)
+
+            if len(multiple_qa_matches) > 1:
+                # We found multiple question-answer pairs in one line
+                for q, a in multiple_qa_matches:
+                    question_text = q.strip()
+                    answer_text = a.strip().rstrip(
+                        "."
+                    )  # Remove trailing period if present
+                    # Handle common prefixes in answers
+                    answer_text = re.sub(r"^[A:][\s:]*", "", answer_text)
+                    result.append((question_text, answer_text))
+            else:
+                # Process as a single question-answer pair
+                question_mark_pos = question.find("?")
+                if question_mark_pos >= 0:
+                    # We found a question mark, now separate question from answer
+                    question_text = question[: question_mark_pos + 1].strip()
+
+                    # Process the answer part (everything after the question mark)
+                    if len(question) > question_mark_pos + 1:
+                        # Handle common prefixes in answers like "A: ", ": ", " - "
+                        answer_text = question[question_mark_pos + 1 :].strip()
+                        answer_text = re.sub(r"^[A:][\s:]*", "", answer_text)
+                        result.append((question_text, answer_text))
+                    else:
+                        # No answer provided
+                        result.append((question_text, ""))
+                else:
+                    # No question mark found, treat the whole string as a question if it looks like one
+                    if re.search(r"^\s*\w.*\w+", question):
+                        # Ensure it ends with a question mark
+                        if not question.endswith("?"):
+                            question += "?"
+                        result.append((question, ""))
+
+        # If we have a LLM output that's just text with no clear questions, try to extract them
+        if not result and questions and len(" ".join(questions)) > 100:
+            try:
+                # Try more aggressive parsing with a broader pattern
+                combined_text = " ".join(questions)
+                potential_questions = re.findall(
+                    r"([^.!?]+\?)\s*([^?]*?)(?=\s*(?:\d+\.|\*|\-|\•)?\s*[A-Z]|\Z)",
+                    combined_text,
+                )
+                for q, a in potential_questions:
+                    result.append((q.strip(), a.strip()))
+            except Exception as e:
+                logger.warning(
+                    f"Error while trying to extract questions with regex: {e}"
+                )
+
+        return result
+
     async def _extract_entity_with_regexes_and_model(
         self,
         denial_text: str,
