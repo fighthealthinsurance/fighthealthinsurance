@@ -8,8 +8,8 @@ from fighthealthinsurance.utils import pubmed_fetcher
 from .utils import markdown_escape
 from concurrent.futures import Future
 from metapub import FindIt
-from stopit import ThreadingTimeout as Timeout
-from stopit import TimeoutException
+# Removing stopit imports
+import asyncio
 from .models import Denial
 import json
 import PyPDF2
@@ -23,7 +23,12 @@ import subprocess
 from loguru import logger
 import eutils
 from datetime import datetime, timedelta
-import asyncio
+import sys
+
+if sys.version_info >= (3, 11):
+    from asyncio import timeout as async_timeout
+else:
+    from async_timeout import timeout as async_timeout
 
 
 PER_QUERY = 3
@@ -52,7 +57,7 @@ class PubMedTools(object):
         pmids: List[str] = []
 
         try:
-            with Timeout(timeout) as _timeout_ctx:
+            async with async_timeout(timeout):
                 # Check if we already have query results from the last month
                 month_ago = datetime.now() - timedelta(days=30)
                 existing_queries = PubMedQueryData.objects.filter(
@@ -78,20 +83,20 @@ class PubMedTools(object):
 
                 # If no cache or cache error, fetch from PubMed API
                 logger.debug(f"Querying pubmed for query {query}")
-                fetched_pmids = await sync_to_async(pubmed_fetcher.pmids_for_query)(
+                pmids = await sync_to_async(pubmed_fetcher.pmids_for_query)(
                     query, since=since
                 )
-                logger.debug(f"Got back initial pmids {fetched_pmids}")
-                if fetched_pmids:
+                logger.debug(f"Got back initial pmids {pmids}")
+                if pmids and len(pmids) > 0:
                     # Sometimes we get nulls...
-                    articles_json = json.dumps(fetched_pmids).replace("\x00", "")
+                    articles_json = json.dumps(pmids).replace("\x00", "")
                     await PubMedQueryData.objects.acreate(
                         query=query,
                         since=since,
                         articles=articles_json,
                     )
-                    return fetched_pmids
-        except Exception as e:
+                    return pmids
+        except asyncio.TimeoutError as e:
             # We might timeout
             logger.opt(exception=True).debug(
                 f"Error or timeout in find_pubmed_article_ids_for_query: {e}"
@@ -105,7 +110,7 @@ class PubMedTools(object):
         pmids: List[str] = []
         articles: List[PubMedMiniArticle] = []
         try:
-            with Timeout(timeout) as _timeout_ctx:
+            async with async_timeout(timeout):
                 procedure_opt = denial.procedure if denial.procedure else ""
                 diagnosis_opt = denial.diagnosis if denial.diagnosis else ""
                 query = f"{procedure_opt} {diagnosis_opt}".strip()
@@ -147,7 +152,7 @@ class PubMedTools(object):
                                 url = None
                                 try:
                                     logger.debug(f"Looking for {pmid} with findit")
-                                    src = asyncio.wait_for(
+                                    src = await asyncio.wait_for(
                                         sync_to_async(FindIt)(pmid),
                                         timeout=timeout / 5.0,
                                     )
@@ -174,7 +179,7 @@ class PubMedTools(object):
                             logger.opt(exception=True).debug(
                                 f"Error fetching article {pmid}: {e}"
                             )
-        except TimeoutException as e:
+        except asyncio.TimeoutError as e:
             logger.debug(
                 f"Timeout in find_pubmed_articles_for_denial: {e} so far got {articles}"
             )
@@ -195,7 +200,7 @@ class PubMedTools(object):
         missing_pmids: list[str] = []
 
         try:
-            with Timeout(timeout) as _timeout_ctx:
+            async with async_timeout(timeout):
                 # Check if the denial has specific pubmed IDs selected already
                 selected_pmids: Optional[list[str]] = None
                 if denial.pubmed_ids_json and len(denial.pubmed_ids_json) > 0:
@@ -217,7 +222,7 @@ class PubMedTools(object):
                     if not query or query.strip() == "":
                         return ""  # Return empty string if no query available
 
-                    possible_articles = asyncio.wait_for(
+                    possible_articles = await asyncio.wait_for(
                         self.find_pubmed_articles_for_denial(
                             denial, timeout=(timeout / 2.5)
                         ),
@@ -255,7 +260,7 @@ class PubMedTools(object):
                     # Fetch in-order so we can be interrupted
                     for pmid in missing_pmids:
                         articles.extend(await self.get_articles([pmid]))
-        except TimeoutException as e:
+        except asyncio.TimeoutError as e:
             logger.debug(
                 f"Timeout in find_context_for_denial: {e} so far got {articles}"
             )
@@ -409,14 +414,15 @@ class PubMedTools(object):
 
         return article
 
-    def article_as_pdf(self, article: PubMedArticleSummarized) -> Optional[str]:
+    async def article_as_pdf(self, article: PubMedArticleSummarized) -> Optional[str]:
         """Return the best PDF we can find of the article."""
         # First we try and fetch the article
         try:
-            with Timeout(20.0) as _timeout_ctx:
+            async with async_timeout(20.0):
                 article_id = article.pmid
                 url = article.article_url
                 if url is not None:
+                    # TODO: Update to AIO http
                     response = requests.get(url)
                     if response.ok and (
                         ".pdf" in url

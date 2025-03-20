@@ -1,4 +1,5 @@
 aiohttp
+async-timeout
 asyncssh
 asyncstdlib
 argon2-cffi
