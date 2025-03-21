@@ -94,6 +94,9 @@ class NextStepsViewSet(viewsets.ViewSet, CreateMixin):
 
     @extend_schema(responses=serializers.NextStepInfoSerizableSerializer)
     def perform_create(self, request: Request, serializer):
+        logger.debug(
+            f"Performing the create..... using data {serializer.validated_data}"
+        )
         next_step_info = common_view_logic.FindNextStepsHelper.find_next_steps(
             **serializer.validated_data
         )

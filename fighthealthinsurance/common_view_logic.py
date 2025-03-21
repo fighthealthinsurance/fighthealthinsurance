@@ -662,7 +662,6 @@ class FindNextStepsHelper:
             denial.plan_source.set(plan_source)
         if patient_health_history:
             denial.health_history = patient_health_history
-        denial.save()
         # Only set employer name if it's not too long
         if employer_name is not None and len(employer_name) < 300:
             denial.employer_name = employer_name
@@ -673,7 +672,11 @@ class FindNextStepsHelper:
             and len(appeal_fax_number) > 5
             and len(appeal_fax_number) < 30
         ):
+            logger.debug(f"Setting appeal fax number to {appeal_fax_number}")
             denial.appeal_fax_number = appeal_fax_number
+        else:
+            logger.debug(f"Invalid appeal fax number {appeal_fax_number}")
+        denial.save()
 
         if include_provided_health_history is not None:
             denial.include_provided_health_history = include_provided_health_history
