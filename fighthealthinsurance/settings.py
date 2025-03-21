@@ -61,9 +61,9 @@ class Base(Configuration):
     }
 
     # Session cookie configs
-    SESSION_COOKIE_SECURE = False  # https only (up to the browser to enforce)
+    SESSION_COOKIE_SECURE = True  # https only (up to the browser to enforce)
     SESSION_COOKIE_HTTPONLY = False  # allow js access
-    SESSION_COOKIE_SAMESITE = "Lax"  # cross site happytimes.
+    SESSION_COOKIE_SAMESITE = "None"  # cross site happytimes.
 
     # Quick-start development settings - unsuitable for production
     # See https://docs.djangoproject.com/en/4.0/howto/deployment/checklist/
