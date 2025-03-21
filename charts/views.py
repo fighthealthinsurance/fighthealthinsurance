@@ -135,6 +135,60 @@ def pro_signups_csv(request):
 
 
 @staff_member_required
+def pro_signups_csv_single_lines(request):
+    interested_professionals_qs = (
+        InterestedProfessional.objects.exclude(
+            Q(email="farts@farts.com") | Q(email="holden@pigscanfly.ca")
+        )
+        .values(
+            "email",
+            "name",
+            "address",
+            "signup_date",
+            "clicked_for_paid",
+            "phone_number",
+        )
+        .order_by("signup_date")
+    )
+    response = HttpResponse(content_type="text/csv")
+    response["Content-Disposition"] = (
+        'attachment; filename="professional_signups_single_line.csv"'
+    )
+
+    writer = csv.writer(response)
+    writer.writerow(
+        ["Email", "Name", "Address", "Signup Date", "Clicked For Paid", "Phone Number"]
+    )
+
+    for pro in interested_professionals_qs:
+        # Replace newlines with spaces in text fields
+        writer.writerow(
+            [
+                pro["email"].replace("\n", ""),
+                (
+                    pro["name"].replace("\n", " ").replace("\r", " ")
+                    if pro["name"]
+                    else ""
+                ),
+                (
+                    pro["address"].replace("\n", " ").replace("\r", " ")
+                    if pro["address"]
+                    else ""
+                ),
+                pro["signup_date"].strftime("%Y-%m-%d"),
+                "Yes" if pro["clicked_for_paid"] else "No",
+                (
+                    pro["phone_number"].replace("\n", " ").replace("\r", " ")
+                    if pro["phone_number"]
+                    else ""
+                ),
+            ]
+        )
+
+    return response
+
+
+@staff_member_required
 def signups_by_day(request):
     # Query to count unique email signups per day, separated by paid status
     try:

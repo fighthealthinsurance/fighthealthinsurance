@@ -55,8 +55,8 @@ class UserDomain(models.Model):
     name = models.CharField(blank=True, null=True, max_length=300, unique=True)
     active = models.BooleanField()
     # Business name can be blank, we'll use display name then.
-    business_name = models.CharField(max_length=300, null=True)
-    display_name = models.CharField(max_length=300, null=False)
+    business_name = models.CharField(max_length=300, null=True, blank=True)
+    display_name = models.CharField(max_length=300, null=True, blank=True)
     professionals = models.ManyToManyField("ProfessionalUser", through="ProfessionalDomainRelation")  # type: ignore
     # The visible phone number should be unique... ish? Maybe?
     # We _could_ allow users to log in with visible phone number IFF
@@ -139,13 +139,13 @@ class GlobalUserRelation(models.Model):
 class UserContactInfo(models.Model):
     id = models.AutoField(primary_key=True)
     user = models.OneToOneField(User, on_delete=models.CASCADE)
-    phone_number = models.CharField(max_length=150, null=True)
+    phone_number = models.CharField(max_length=150, null=True, blank=True)
     country = models.CharField(max_length=150, default="USA")
-    state = models.CharField(max_length=50, null=True)
-    city = models.CharField(max_length=150, null=True)
-    address1 = models.CharField(max_length=200, null=True)
-    address2 = models.CharField(max_length=200, null=True)
-    zipcode = models.CharField(max_length=20, null=True)
+    state = models.CharField(max_length=50, null=True, blank=True)
+    city = models.CharField(max_length=150, null=True, blank=True)
+    address1 = models.CharField(max_length=200, null=True, blank=True)
+    address2 = models.CharField(max_length=200, null=True, blank=True)
+    zipcode = models.CharField(max_length=20, null=True, blank=True)
 
 
 class PatientUser(models.Model):
@@ -185,7 +185,7 @@ class ProfessionalUser(models.Model):
     # Override the professional domain fax number
     fax_number = models.CharField(blank=True, null=True, max_length=40)
     domains = models.ManyToManyField("UserDomain", through="ProfessionalDomainRelation")  # type: ignore
-    display_name = models.CharField(max_length=400, null=True)
+    display_name = models.CharField(max_length=400, null=True, blank=True)
 
     def get_display_name(self) -> str:
         if self.display_name and len(self.display_name) > 0:
