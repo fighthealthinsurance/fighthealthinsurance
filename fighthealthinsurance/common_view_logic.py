@@ -251,7 +251,7 @@ class AppealAssemblyHelper:
             insurance_company = denial.insurance_company
         claim_id = denial.claim_id
         health_history: Optional[str] = None
-        if include_provided_health_history:
+        if include_provided_health_history or denial.include_provided_health_history:
             health_history = denial.health_history
         # Usage based billing goes here
         if appeal and hasattr(appeal, "domain") and appeal.domain:
@@ -631,6 +631,7 @@ class FindNextStepsHelper:
         plan_id,
         claim_id,
         denial_type,
+        include_provided_health_history: Optional[bool] = None,
         denial_date: Optional[datetime.date] = None,
         semi_sekret: str = "",
         your_state: Optional[str] = None,
@@ -673,6 +674,9 @@ class FindNextStepsHelper:
             and len(appeal_fax_number) < 30
         ):
             denial.appeal_fax_number = appeal_fax_number
+
+        if include_provided_health_history is not None:
+            denial.include_provided_health_history = include_provided_health_history
 
         outside_help_details = []
         state = your_state or denial.your_state
