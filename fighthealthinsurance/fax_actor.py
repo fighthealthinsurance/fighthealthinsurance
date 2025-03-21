@@ -1,6 +1,7 @@
-from typing import Tuple
+from typing import Tuple, Union
 import ray
 from fighthealthinsurance.fax_utils import *
+import uuid
 from datetime import timedelta
 import time
 import asyncio
@@ -93,11 +94,14 @@ class FaxActor:
                 f = f + 1
         return (t, f)
 
-    def do_send_fax(self, hashed_email: str, uuid: str) -> bool:
+    def do_send_fax(self, hashed_email: str, uuid_val: Union[str, uuid.UUID]) -> bool:
         # Now that we have an app instance we can import faxes to send
         from fighthealthinsurance.models import FaxesToSend
 
-        fax = FaxesToSend.objects.filter(uuid=uuid, hashed_email=hashed_email).get()
+        # Convert UUID object to string if needed
+        if not isinstance(uuid_val, str):
+            uuid_val = str(uuid_val)
+        fax = FaxesToSend.objects.filter(uuid=uuid_val, hashed_email=hashed_email).get()
         return self.do_send_fax_object(fax)
 
     def _update_fax_for_sending(self, fax):
