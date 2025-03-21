@@ -38,12 +38,6 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 from rest_framework.authentication import SessionAuthentication
 
 
-class CsrfExemptSessionAuthentication(SessionAuthentication):
-
-    def enforce_csrf(self, request):
-        return  # To not perform the csrf check previously happening
-
-
 class Base(Configuration):
     SENTRY_ENDPOINT = os.getenv("SENTRY_ENDPOINT")
     COOKIE_CONSENT_ENABLED = False
@@ -155,6 +149,7 @@ class Base(Configuration):
     )
 
     MIDDLEWARE = [
+        "fighthealthinsurance.middleware.CsrfCookieToHeaderMiddleware",
         "corsheaders.middleware.CorsMiddleware",
         "django_prometheus.middleware.PrometheusBeforeMiddleware",
         "django.contrib.sessions.middleware.SessionMiddleware",
@@ -393,16 +388,6 @@ class Base(Configuration):
 
 
 class Dev(Base):
-    # Relax for http in dev even though we mostly want https
-    # Session cookie configs
-    SESSION_COOKIE_SECURE = False  # sometimes dev http
-    SESSION_COOKIE_HTTPONLY = False  # allow js access
-    SESSION_COOKIE_SAMESITE = "Lax"  # cross site happytimes.
-    # Same for CSRF
-    CSRF_COOKIE_SECURE = False  # sometimes dev http
-    CSRF_COOKIE_HTTPONLY = False
-    CSRF_COOKIE_SAMESITE = "Lax"
-
     CSRF_TRUSTED_ORIGINS = [
         "https://fightpaperwork.com",
         "https://localhost:3000",
