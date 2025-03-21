@@ -403,17 +403,26 @@ class SendFax(serializers.Serializer):
     include_cover = serializers.BooleanField(required=False, default=True)
 
 
-class InviteProviderSerializer(serializers.Serializer):
-    professional_id = serializers.IntegerField(required=False)
-    email = serializers.EmailField(required=False)
-    appeal_id = serializers.IntegerField(required=True)
+class BaseInviteProviderSerializer(serializers.Serializer):
+    """Invite a provider to a domain (implicitly the current domain)."""
+
+    email = serializers.EmailField(required=False, allow_blank=True)
 
     def validate(self, data: dict) -> dict:
-        if not data.get("professional_id") and not data.get("email"):
+        if not data.get("professional_id") and (
+            "email" not in data or not data.get("email")
+        ):
             raise serializers.ValidationError(
                 "Either professional_id or email must be provided."
             )
         return data
+
+
+class InviteProviderSerializer(BaseInviteProviderSerializer):
+    """Invite a provider to a specific appeal (and implicitily the current domain)."""
+
+    professional_id = serializers.IntegerField(required=False)
+    appeal_id = serializers.IntegerField(required=True)
 
 
 class StatisticsSerializer(serializers.Serializer):

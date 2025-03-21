@@ -279,3 +279,23 @@ class ProfessionalUserManagementTests(TestCase):
         self.assertTrue(self.pending_relation.pending)
         self.assertFalse(self.pending_relation.active)
         self.assertFalse(self.pending_relation.rejected)
+
+    def test_invite_to_group(self):
+        """
+        Test inviting a new provider to join the provider group.
+        """
+        # Login as admin user
+        self.client.login(username=self.admin_user.username, password="adminpass")
+        # Set session domain
+        session = self.client.session
+        session["domain_id"] = str(self.domain.id)
+        session.save()
+        # Invite a new provider
+        url = reverse("professional_user-invite-to-group")
+        data = {"email": "newprovider@example.com"}
+        response = self.client.post(url, data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            response.json()["message"],
+            "Provider invited to join the group successfully",
+        )

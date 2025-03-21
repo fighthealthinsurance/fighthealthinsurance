@@ -1,5 +1,6 @@
 from loguru import logger
-from typing import Optional, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING, Any, Dict, Union
+from django.http import HttpRequest
 
 from rest_framework import status
 from rest_framework import viewsets
@@ -516,6 +517,37 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             return serializers.ProfessionalSignupResponseSerializer(
                 {"next_url": "https://www.fightpaperwork.com/?q=testmode"}
             )
+
+    @extend_schema(
+        responses={
+            200: serializers.StatusResponseSerializer,
+            400: common_serializers.ErrorSerializer,
+            404: common_serializers.ErrorSerializer,
+        }
+    )
+    @action(detail=False, methods=["post"])
+    def invite_to_group(self, request: HttpRequest) -> Response:
+        """
+        Invite a new provider to join the provider group.
+        """
+        serializer = common_serializers.BaseInviteProviderSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        email = serializer.validated_data.get("email")
+        current_user: User = request.user  # type: ignore
+        inviting_professional = ProfessionalUser.objects.get(user=current_user)
+        common_view_logic.ProfessionalNotificationHelper.send_signup_invitation(
+            email=email,
+            professional_name=inviting_professional.get_display_name(),
+            practice_number=UserDomain.objects.get(
+                id=request.session["domain_id"]
+            ).visible_phone_number,
+        )
+        return Response(
+            serializers.StatusResponseSerializer(
+                {"message": "Provider invited to join the group successfully"}
+            ).data,
+            status=status.HTTP_200_OK,
+        )
 
 
 class RestLoginView(ViewSet, SerializerMixin):
