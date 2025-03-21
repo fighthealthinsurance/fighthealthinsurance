@@ -697,7 +697,8 @@ class VerifyEmailViewSet(ViewSet, SerializerMixin):
         """
         serializer = self.deserialize(data=request.data)
         serializer.is_valid(raise_exception=True)
-        user = serializer.validated_data["user"]
+        user_id = serializer.validated_data["user_id"]
+        user = User.objects.get(pk=user_id)
         send_verification_email(request, user)
         return Response(
             serializers.StatusResponseSerializer(
