@@ -251,7 +251,10 @@ class AppealAssemblyHelper:
             insurance_company = denial.insurance_company
         claim_id = denial.claim_id
         health_history: Optional[str] = None
-        if include_provided_health_history or denial.include_provided_health_history:
+        if (
+            include_provided_health_history
+            or denial.include_provided_health_history_in_appeal
+        ):
             health_history = denial.health_history
         # Usage based billing goes here
         if appeal and hasattr(appeal, "domain") and appeal.domain:
@@ -679,7 +682,9 @@ class FindNextStepsHelper:
         denial.save()
 
         if include_provided_health_history_in_appeal is not None:
-            denial.include_provided_health_history = include_provided_health_history_in_appeal
+            denial.include_provided_health_history = (
+                include_provided_health_history_in_appeal
+            )
 
         outside_help_details = []
         state = your_state or denial.your_state
@@ -1363,17 +1368,27 @@ class DenialCreatorHelper:
         semi_sekret,
         health_history=None,
         plan_documents=None,
+        include_provided_health_history_in_appeal=None,
     ):
         hashed_email = Denial.get_hashed_email(email)
         denial = Denial.objects.filter(
             hashed_email=hashed_email, denial_id=denial_id, semi_sekret=semi_sekret
         ).get()
         return cls._update_denial(
-            denial, health_history=health_history, plan_documents=plan_documents
+            denial,
+            health_history=health_history,
+            plan_documents=plan_documents,
+            include_provided_health_history_in_appeal=include_provided_health_history_in_appeal,
         )
 
     @classmethod
-    def _update_denial(cls, denial, health_history=None, plan_documents=None):
+    def _update_denial(
+        cls,
+        denial,
+        health_history=None,
+        plan_documents=None,
+        include_provided_health_history_in_appeal=None,
+    ):
         if plan_documents is not None:
             for plan_document in plan_documents:
                 pd = PlanDocuments.objects.create(
@@ -1383,6 +1398,11 @@ class DenialCreatorHelper:
 
         if health_history is not None:
             denial.health_history = health_history
+            denial.save()
+        if include_provided_health_history_in_appeal is not None:
+            denial.include_provided_health_history_in_appeal = (
+                include_provided_health_history_in_appeal
+            )
             denial.save()
         # Return the current the state
         return cls.format_denial_response_info(denial)

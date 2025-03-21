@@ -85,6 +85,25 @@ class DataRemovalViewSet(viewsets.ViewSet, DeleteMixin, DeleteOnlyMixin):
         )
 
 
+class HealthHistoryViewSet(viewsets.ViewSet, CreateMixin):
+    serializer_class = serializers.HealthHistoryFormSerializer
+
+    @extend_schema(responses=serializers.StatusResponseSerializer)
+    def create(self, request: Request) -> Response:
+        return super().create(request)
+
+    @extend_schema(responses=serializers.StatusResponseSerializer)
+    def perform_create(self, request: Request, serializer):
+        logger.debug(f"Updating denial with {serializer.validated_data}")
+        common_view_logic.DenialCreatorHelper.update_denial(
+            **serializer.validated_data,
+        )
+
+        return Response(
+            serializers.SuccessSerializer({"message": "Updated health history"}).data,
+        )
+
+
 class NextStepsViewSet(viewsets.ViewSet, CreateMixin):
     serializer_class = serializers.PostInferedFormSerializer
 
@@ -556,15 +575,16 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
             pubmed_articles_to_include = serializer.validated_data[
                 "pubmed_articles_to_include"
             ]
-        # TODO: Collect this
+        include_cover = True
+        if "include_cover" in serializer.validated_data:
+            include_cover = serializer.validated_data["include_cover"]
+        # Note: we can also set this on the denial when we connect the health history if either
+        # is true its included.
         include_provided_health_history = False
         if "include_provided_health_history" in serializer.validated_data:
             include_provided_health_history = serializer.validated_data[
                 "include_provided_health_history"
             ]
-        include_cover = True
-        if "include_cover" in serializer.validated_data:
-            include_cover = serializer.validated_data["include_cover"]
         patient_user = denial.patient_user
         patient_name: str = "unkown"
         if patient_user is not None:
@@ -579,7 +599,6 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
             pubmed_ids_parsed=pubmed_articles_to_include,
             company_name="Fight Paperwork",
             email=current_user.email,
-            include_provided_health_history=include_provided_health_history,
             denial=denial,
             primary_professional=denial.primary_professional,
             creating_professional=denial.creating_professional,
@@ -589,6 +608,7 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
             company_phone_number="202-938-3266",
             company_fax_number="415-840-7591",
             patient_user=patient_user,
+            include_provided_health_history=include_provided_health_history,
             include_cover=include_cover,  # for now -- make this a flag on appeal
         )
         appeal.save()

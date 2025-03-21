@@ -273,7 +273,7 @@ class DenialEndToEnd(APITestCase):
         ]
         # Verify include_provided_health_history is set on the denial
         denial = await Denial.objects.aget(denial_id=denial_id)
-        assert denial.include_provided_health_history is True
+        assert denial.include_provided_health_history_with_appeal is True
         # Now we need to poke at the appeal creator
         # Now we need to poke entity extraction, this part is async
         a_communicator = WebsocketCommunicator(

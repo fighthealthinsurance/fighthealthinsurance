@@ -71,6 +71,11 @@ class DenialResponseInfoSerializer(serializers.Serializer):
 
 
 # Forms
+class HealthHistoryFormSerializer(FormSerializer):
+    class Meta(object):
+        form = core_forms.HealthHistory
+
+
 class DeleteDataFormSerializer(FormSerializer):
     class Meta(object):
         form = core_forms.DeleteDataForm
@@ -363,8 +368,7 @@ class AssembleAppealRequestSerializer(serializers.Serializer):
         child=serializers.CharField(required=False, allow_blank=True),
         required=False,
     )
-    include_provided_health_history_in_appeal = serializers.BooleanField(required=False)
-
+    include_provided_health_history = serializers.BooleanField(required=False)
 
 
 class AssembleAppealResponseSerializer(serializers.Serializer):
