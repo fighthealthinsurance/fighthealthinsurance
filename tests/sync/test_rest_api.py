@@ -41,6 +41,7 @@ from fhi_users.models import (
 
 if typing.TYPE_CHECKING:
     from django.contrib.auth.models import User
+    from django.http import JsonResponse
 else:
     User = get_user_model()
 
@@ -243,7 +244,7 @@ class DenialEndToEnd(APITestCase):
         await asyncio.sleep(5)  # Give a second for the fire and forget pubmed to run
         # Ok now lets get the additional info
         find_next_steps_url = reverse("nextsteps-list")
-        find_next_steps_response = await sync_to_async(self.client.post)(
+        find_next_steps_response: JsonResponse = await sync_to_async(self.client.post)(
             find_next_steps_url,
             json.dumps(
                 {
@@ -252,6 +253,7 @@ class DenialEndToEnd(APITestCase):
                     "denial_id": denial_id,
                     "denial_type": [1, 2],
                     "diagnosis": "high risk homosexual behaviour",
+                    "include_provided_health_history": True,
                 }
             ),
             content_type="application/json",
@@ -269,6 +271,9 @@ class DenialEndToEnd(APITestCase):
             "initial",
             "type",
         ]
+        # Verify include_provided_health_history is set on the denial
+        denial = await Denial.objects.aget(denial_id=denial_id)
+        assert denial.include_provided_health_history is True
         # Now we need to poke at the appeal creator
         # Now we need to poke entity extraction, this part is async
         a_communicator = WebsocketCommunicator(

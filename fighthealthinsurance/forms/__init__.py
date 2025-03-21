@@ -185,6 +185,7 @@ class ProPostInferedForm(BasePostInferedForm):
     single_case = forms.BooleanField(required=False)
     in_network = forms.BooleanField(required=False)
     appeal_fax_number = forms.CharField(required=False)
+    include_provided_health_history_in_appeal = forms.BooleanField(required=False)
 
 
 class FollowUpTestForm(forms.Form):
