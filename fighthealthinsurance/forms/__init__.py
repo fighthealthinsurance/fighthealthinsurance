@@ -184,6 +184,7 @@ class PostInferedForm(BasePostInferedForm):
 class ProPostInferedForm(BasePostInferedForm):
     single_case = forms.BooleanField(required=False)
     in_network = forms.BooleanField(required=False)
+    appeal_fax_number = forms.CharField(required=False)
 
 
 class FollowUpTestForm(forms.Form):
