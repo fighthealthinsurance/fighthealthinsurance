@@ -251,7 +251,10 @@ class AppealAssemblyHelper:
             insurance_company = denial.insurance_company
         claim_id = denial.claim_id
         health_history: Optional[str] = None
-        if include_provided_health_history or denial.include_provided_health_history:
+        if (
+            include_provided_health_history
+            or denial.include_provided_health_history_in_appeal
+        ):
             health_history = denial.health_history
         # Usage based billing goes here
         if appeal and hasattr(appeal, "domain") and appeal.domain:
@@ -631,7 +634,7 @@ class FindNextStepsHelper:
         plan_id,
         claim_id,
         denial_type,
-        include_provided_health_history: Optional[bool] = None,
+        include_provided_health_history_in_appeal: Optional[bool] = None,
         denial_date: Optional[datetime.date] = None,
         semi_sekret: str = "",
         your_state: Optional[str] = None,
@@ -678,8 +681,10 @@ class FindNextStepsHelper:
             logger.debug(f"Invalid appeal fax number {appeal_fax_number}")
         denial.save()
 
-        if include_provided_health_history is not None:
-            denial.include_provided_health_history = include_provided_health_history
+        if include_provided_health_history_in_appeal is not None:
+            denial.include_provided_health_history = (
+                include_provided_health_history_in_appeal
+            )
 
         outside_help_details = []
         state = your_state or denial.your_state
@@ -1363,17 +1368,30 @@ class DenialCreatorHelper:
         semi_sekret,
         health_history=None,
         plan_documents=None,
+        include_provided_health_history_in_appeal=None,
+        health_history_anonymized=None,
     ):
         hashed_email = Denial.get_hashed_email(email)
         denial = Denial.objects.filter(
             hashed_email=hashed_email, denial_id=denial_id, semi_sekret=semi_sekret
         ).get()
         return cls._update_denial(
-            denial, health_history=health_history, plan_documents=plan_documents
+            denial,
+            health_history=health_history,
+            plan_documents=plan_documents,
+            include_provided_health_history_in_appeal=include_provided_health_history_in_appeal,
+            health_history_anonymized=health_history_anonymized,
         )
 
     @classmethod
-    def _update_denial(cls, denial, health_history=None, plan_documents=None):
+    def _update_denial(
+        cls,
+        denial,
+        health_history=None,
+        plan_documents=None,
+        include_provided_health_history_in_appeal=None,
+        health_history_anonymized=None,
+    ):
         if plan_documents is not None:
             for plan_document in plan_documents:
                 pd = PlanDocuments.objects.create(
@@ -1383,7 +1401,13 @@ class DenialCreatorHelper:
 
         if health_history is not None:
             denial.health_history = health_history
-            denial.save()
+        if include_provided_health_history_in_appeal is not None:
+            denial.include_provided_health_history_in_appeal = (
+                include_provided_health_history_in_appeal
+            )
+        if health_history_anonymized is not None:
+            denial.health_history_anonymized = health_history_anonymized
+        denial.save()
         # Return the current the state
         return cls.format_denial_response_info(denial)
 
