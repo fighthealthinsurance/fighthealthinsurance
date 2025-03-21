@@ -357,7 +357,7 @@ class AppealAssemblyHelper:
                 "company_fax_number": company_fax_number,
                 "company_phone_number": company_phone_number,
                 "fax_sent_datetime": str(datetime.datetime.now()),
-                "provider_fax_number": professional_fax_number,
+                "provider_fax_number": (professional_fax_number or professional_name),
                 "provider_name": professional_name,
                 "professional_fax_number": professional_fax_number,
                 "patient_name": patient_name,
