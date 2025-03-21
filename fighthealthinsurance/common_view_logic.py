@@ -631,7 +631,7 @@ class FindNextStepsHelper:
         plan_id,
         claim_id,
         denial_type,
-        include_provided_health_history: Optional[bool] = None,
+        include_provided_health_history_in_appeal: Optional[bool] = None,
         denial_date: Optional[datetime.date] = None,
         semi_sekret: str = "",
         your_state: Optional[str] = None,
@@ -678,8 +678,8 @@ class FindNextStepsHelper:
             logger.debug(f"Invalid appeal fax number {appeal_fax_number}")
         denial.save()
 
-        if include_provided_health_history is not None:
-            denial.include_provided_health_history = include_provided_health_history
+        if include_provided_health_history_in_appeal is not None:
+            denial.include_provided_health_history = include_provided_health_history_in_appeal
 
         outside_help_details = []
         state = your_state or denial.your_state
