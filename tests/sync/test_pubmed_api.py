@@ -335,6 +335,7 @@ class PubmedApiTest(APITestCase):
                     completed_appeal_text="This is a test appeal text",
                     pubmed_ids_parsed=selected_pmids,
                     company_name="Test Company",
+                    include_provided_health_history=False
                 )
 
                 # Verify that the appeal was created with the PubMed IDs
