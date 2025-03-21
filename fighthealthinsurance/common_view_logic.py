@@ -1369,6 +1369,7 @@ class DenialCreatorHelper:
         health_history=None,
         plan_documents=None,
         include_provided_health_history_in_appeal=None,
+        health_history_anonymized=None,
     ):
         hashed_email = Denial.get_hashed_email(email)
         denial = Denial.objects.filter(
@@ -1379,6 +1380,7 @@ class DenialCreatorHelper:
             health_history=health_history,
             plan_documents=plan_documents,
             include_provided_health_history_in_appeal=include_provided_health_history_in_appeal,
+            health_history_anonymized=health_history_anonymized,
         )
 
     @classmethod
@@ -1388,6 +1390,7 @@ class DenialCreatorHelper:
         health_history=None,
         plan_documents=None,
         include_provided_health_history_in_appeal=None,
+        health_history_anonymized=None,
     ):
         if plan_documents is not None:
             for plan_document in plan_documents:
@@ -1398,12 +1401,13 @@ class DenialCreatorHelper:
 
         if health_history is not None:
             denial.health_history = health_history
-            denial.save()
         if include_provided_health_history_in_appeal is not None:
             denial.include_provided_health_history_in_appeal = (
                 include_provided_health_history_in_appeal
             )
-            denial.save()
+        if health_history_anonymized is not None:
+            denial.health_history_anonymized = health_history_anonymized
+        denial.save()
         # Return the current the state
         return cls.format_denial_response_info(denial)
 

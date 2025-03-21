@@ -96,6 +96,7 @@ class DenialRefForm(forms.Form):
 
 class HealthHistory(DenialRefForm):
     health_history = forms.CharField(required=False)
+    health_history_anonymized = forms.BooleanField(required=False)
     include_provided_health_history_in_appeal = forms.BooleanField(required=False)
 
 
