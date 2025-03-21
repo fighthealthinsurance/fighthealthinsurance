@@ -64,6 +64,10 @@ class Base(Configuration):
     SESSION_COOKIE_SECURE = True  # https only (up to the browser to enforce)
     SESSION_COOKIE_HTTPONLY = False  # allow js access
     SESSION_COOKIE_SAMESITE = "None"  # cross site happytimes.
+    # Same for CSRF
+    CSRF_COOKIE_SECURE = True  # https only (up to the browser to enforce)
+    CSRF_COOKIE_HTTPONLY = False
+    CSRF_COOKIE_SAMESITE = "None"
 
     # Quick-start development settings - unsuitable for production
     # See https://docs.djangoproject.com/en/4.0/howto/deployment/checklist/
@@ -322,6 +326,9 @@ class Base(Configuration):
         "https://fighthealthinsurance.com",
         "https://www.fightpaperwork.com",
         "https://www.fighthealthinsurance.com",
+        "https://api.fighthealthinsurance.com",
+        "https://*.fightpaperwork.com",
+        "https://*.fighthealthinsurance.com",
     ]
 
     PROMETHEUS_METRIC_NAMESPACE = "fhi"
@@ -386,6 +393,16 @@ class Base(Configuration):
 
 
 class Dev(Base):
+    # Relax for http in dev even though we mostly want https
+    # Session cookie configs
+    SESSION_COOKIE_SECURE = False  # sometimes dev http
+    SESSION_COOKIE_HTTPONLY = False  # allow js access
+    SESSION_COOKIE_SAMESITE = "Lax"  # cross site happytimes.
+    # Same for CSRF
+    CSRF_COOKIE_SECURE = False  # sometimes dev http
+    CSRF_COOKIE_HTTPONLY = False
+    CSRF_COOKIE_SAMESITE = "Lax"
+
     CSRF_TRUSTED_ORIGINS = [
         "https://fightpaperwork.com",
         "https://localhost:3000",
@@ -461,6 +478,17 @@ class Dev(Base):
 
 
 class Test(Dev):
+    # Relax for http in test even though we mostly want https
+    # but we use http a bunch in test :)
+    # Session cookie configs
+    SESSION_COOKIE_SECURE = False  # tests sometimes use http
+    SESSION_COOKIE_HTTPONLY = False  # allow js access
+    SESSION_COOKIE_SAMESITE = "Lax"  # cross site happytimes.
+    # Same for CSRF
+    CSRF_COOKIE_SECURE = False  # tests sometime use http
+    CSRF_COOKIE_HTTPONLY = False
+    CSRF_COOKIE_SAMESITE = "Lax"
+
     DEBUG = True
     DEFF_SALT = os.getenv("DEFF_SALT", "test-salt")
     DEFF_PASSWORD = os.getenv("DEFF_PASSWORD", "test-password")

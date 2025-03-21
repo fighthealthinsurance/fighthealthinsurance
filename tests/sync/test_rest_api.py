@@ -142,6 +142,9 @@ class DenialLongEmployerName(APITestCase):
         assert denials_for_user_count == 1
 
 
+from typing import Dict, Any
+from django.http import JsonResponse
+
 class DenialEndToEnd(APITestCase):
     """Test end to end, we need to load the initial fixtures so we have denial types."""
 
@@ -204,7 +207,7 @@ class DenialEndToEnd(APITestCase):
             content_type="application/json",
         )
         self.assertTrue(status.is_success(response.status_code))
-        parsed = response.json()
+        parsed: Dict[str, Any] = response.json()
         denial_id = parsed["denial_id"]
         print(f"Using '{denial_id}'")
         semi_sekret = parsed["semi_sekret"]
@@ -222,7 +225,7 @@ class DenialEndToEnd(APITestCase):
         seb_communicator = WebsocketCommunicator(
             StreamingEntityBackend.as_asgi(), "/testws/"
         )
-        connected, subprotocol = await seb_communicator.connect()
+        connected, _ = await seb_communicator.connect()
         assert connected
         await seb_communicator.send_json_to(
             {
@@ -242,6 +245,20 @@ class DenialEndToEnd(APITestCase):
         finally:
             await seb_communicator.disconnect()
         await asyncio.sleep(5)  # Give a second for the fire and forget pubmed to run
+        # Set health history before next steps
+        health_history_url = reverse("healthhistory-list")
+        health_history_response = await sync_to_async(self.client.post)(
+            health_history_url,
+            json.dumps({
+                "denial_id": denial_id,
+                "email": email,
+                "semi_sekret": semi_sekret,
+                "health_history": "Sample health history",
+                "include_provided_health_history_in_appeal": True
+            }),
+            content_type="application/json",
+        )
+        self.assertTrue(status.is_success(health_history_response.status_code))
         # Ok now lets get the additional info
         find_next_steps_url = reverse("nextsteps-list")
         find_next_steps_response: JsonResponse = await sync_to_async(self.client.post)(
@@ -253,12 +270,11 @@ class DenialEndToEnd(APITestCase):
                     "denial_id": denial_id,
                     "denial_type": [1, 2],
                     "diagnosis": "high risk homosexual behaviour",
-                    "include_provided_health_history": True,
                 }
             ),
             content_type="application/json",
         )
-        find_next_steps_parsed = find_next_steps_response.json()
+        find_next_steps_parsed: Dict[str, Any] = find_next_steps_response.json()
         # Make sure we got back a reasonable set of questions.
         assert len(find_next_steps_parsed["combined_form"]) == 5
         assert list(find_next_steps_parsed["combined_form"][0].keys()) == [
@@ -273,13 +289,13 @@ class DenialEndToEnd(APITestCase):
         ]
         # Verify include_provided_health_history is set on the denial
         denial = await Denial.objects.aget(denial_id=denial_id)
-        assert denial.include_provided_health_history is True
+        assert denial.include_provided_health_history_in_appeal is True
         # Now we need to poke at the appeal creator
         # Now we need to poke entity extraction, this part is async
         a_communicator = WebsocketCommunicator(
             StreamingAppealsBackend.as_asgi(), "/testws/"
         )
-        connected, subprotocol = await a_communicator.connect()
+        connected, _ = await a_communicator.connect()
         assert connected
         await a_communicator.send_json_to(
             {
@@ -293,13 +309,13 @@ class DenialEndToEnd(APITestCase):
         )
         responses = []
         # We should receive at least one frame.
-        response = await a_communicator.receive_from(timeout=300.0)
+        response = await a_communicator.receive_from(timeout=300)
         print(f"Received response {response}")
         responses.append(response)
         # Now consume all of the rest of them until done.
         try:
             while True:
-                response = await a_communicator.receive_from(timeout=125.0)
+                response = await a_communicator.receive_from(timeout=125)
                 print(f"Received response {response}")
                 responses.append(response)
         except Exception as e:

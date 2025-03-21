@@ -71,6 +71,11 @@ class DenialResponseInfoSerializer(serializers.Serializer):
 
 
 # Forms
+class HealthHistoryFormSerializer(FormSerializer):
+    class Meta(object):
+        form = core_forms.HealthHistory
+
+
 class DeleteDataFormSerializer(FormSerializer):
     class Meta(object):
         form = core_forms.DeleteDataForm

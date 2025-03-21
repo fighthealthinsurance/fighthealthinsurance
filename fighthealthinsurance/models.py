@@ -462,7 +462,7 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     verified_procedure = models.TextField(primary_key=False, null=True, default="")
     verified_diagnosis = models.TextField(primary_key=False, null=True, default="")
     flag_for_exclude = models.BooleanField(default=False, null=True)
-    include_provided_health_history = models.BooleanField(default=False)
+    include_provided_health_history_in_appeal = models.BooleanField(default=False)
 
     @classmethod
     def filter_to_allowed_denials(cls, current_user: User):
@@ -595,7 +595,9 @@ class Appeal(ExportModelOperationsMixin("Appeal"), models.Model):  # type: ignor
     mod_date = models.DateField(auto_now=True, null=True)
     creation_date = models.DateField(auto_now_add=True, null=True)
     billed = models.BooleanField(default=False)
-    include_provided_health_history_in_appeal = models.BooleanField(default=False, null=True)
+    include_provided_health_history_in_appeal = models.BooleanField(
+        default=False, null=True
+    )
 
     # Similar to the method on denial -- TODO refactor to a mixin / DRY
     @classmethod
