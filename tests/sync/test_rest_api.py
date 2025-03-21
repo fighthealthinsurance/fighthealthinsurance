@@ -253,7 +253,7 @@ class DenialEndToEnd(APITestCase):
                     "denial_id": denial_id,
                     "denial_type": [1, 2],
                     "diagnosis": "high risk homosexual behaviour",
-                    "include_provided_health_history": True,
+                    "include_provided_health_history_with_appeal": True,
                 }
             ),
             content_type="application/json",
