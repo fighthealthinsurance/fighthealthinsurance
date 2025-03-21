@@ -469,6 +469,11 @@ class Dev(Base):
 
 
 class Test(Dev):
+    # Relax for http in test even though we mostly want https
+    # but we use http a bunch in test :)
+    SESSION_COOKIE_SECURE = False  # https only (up to the browser to enforce)
+    CSRF_COOKIE_SECURE = False  # https only (up to the browser to enforce)
+
     DEBUG = True
     DEFF_SALT = os.getenv("DEFF_SALT", "test-salt")
     DEFF_PASSWORD = os.getenv("DEFF_PASSWORD", "test-password")
