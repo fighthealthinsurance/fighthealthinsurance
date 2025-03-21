@@ -157,7 +157,7 @@ class AppealAssemblyHelper:
                         pass
                 if input_path.endswith(".html"):
                     html_command = base_convert_command
-                    html_command.extend("-thtml")
+                    html_command.extend(["-thtml"])
                     try:
                         await check_call(html_command)
                         return f"{input_path}.pdf"
