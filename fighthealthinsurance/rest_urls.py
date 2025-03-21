@@ -20,6 +20,10 @@ router.register(r"denials", rest_views.DenialViewSet, basename="denials")
 router.register(r"next_steps", rest_views.NextStepsViewSet, basename="nextsteps")
 router.register(r"follow_up", rest_views.FollowUpViewSet, basename="followups")
 router.register(r"qaresponse", rest_views.QAResponseViewSet, basename="qacontext")
+router.register(
+    r"healthhistory", rest_views.HealthHistoryViewSet, basename="healthhistory"
+)
+
 
 router.register(
     r"data_removal",
