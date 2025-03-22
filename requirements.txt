@@ -1,4 +1,5 @@
 aiohttp
+async-timeout
 asyncssh
 asyncstdlib
 argon2-cffi
@@ -44,7 +45,7 @@ geopy
 git+https://github.com/holdenk/static-thumbnails.git
 git+https://github.com/jazzband/django-cookie-consent.git#egg=django-cookie-consent
 git+https://github.com/totallylegitco/django-encrypted-model-fields.git@87dfff140b3ad256404a913019e90f2c245e57f8
-git+https://github.com/totallylegitco/llm-result-utils.git@7e2feb036bb40f6c93214b1b1282684a9b33ccda
+git+https://github.com/totallylegitco/llm-result-utils.git@13c94bcd1ad9651e4000f4e0974ea7061c9cdc90
 icd10-cm
 loguru
 markdown_strings

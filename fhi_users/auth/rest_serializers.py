@@ -72,6 +72,7 @@ class WhoAmiSerializer(serializers.Serializer):
 
     email = serializers.CharField()
     domain_name = serializers.CharField()
+    domain_id = serializers.CharField()
     patient = serializers.BooleanField()
     professional = serializers.BooleanField()
     current_professional_id = serializers.IntegerField(required=False)
@@ -125,7 +126,13 @@ class UserDomainSerializer(serializers.ModelSerializer):
 
     class Meta(object):
         model = UserDomain
-        exclude = ("id", "stripe_subscription_id", "active", "professionals")
+        exclude = (
+            "id",
+            "stripe_subscription_id",
+            "stripe_customer_id",
+            "active",
+            "professionals",
+        )
 
 
 class ProfessionalSignupSerializer(serializers.ModelSerializer):

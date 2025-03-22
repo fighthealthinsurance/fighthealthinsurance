@@ -146,6 +146,12 @@ class PlanSource(models.Model):
 
 
 class Diagnosis(models.Model):
+    """
+    These represent rules for extracting a diagnosis from text.
+    So called 'expert system' which is just a collection of regular
+    expressions. We also use the ML models, but these are cheap to evaluate.
+    """
+
     id = models.AutoField(primary_key=True)
     name = models.CharField(max_length=300, primary_key=False)
     regex = RegexField(max_length=400, re_flags=re.IGNORECASE | re.UNICODE | re.M)
@@ -155,6 +161,10 @@ class Diagnosis(models.Model):
 
 
 class Procedures(models.Model):
+    """
+    Similar to diagnosis, but for procedures.
+    """
+
     id = models.AutoField(primary_key=True)
     name = models.CharField(max_length=300, primary_key=False)
     regex = RegexField(max_length=400, re_flags=re.IGNORECASE | re.UNICODE | re.M)
@@ -276,12 +286,27 @@ class PubMedArticleSummarized(models.Model):
     article_url = models.TextField(blank=True, null=True)
 
 
+class PubMedMiniArticle(models.Model):
+    """PubMedArticles with a summary for the given query."""
+
+    pmid = models.TextField(blank=True)
+    title = models.TextField(blank=True, null=True)
+    abstract = models.TextField(blank=True, null=True)
+    created = models.DateTimeField(db_default=Now(), null=True)
+    article_url = models.TextField(blank=True, null=True)
+
+    def __str__(self):
+        return f"{self.pmid} -- {self.title}"
+
+
 class PubMedQueryData(models.Model):
     internal_id = models.AutoField(primary_key=True)
     query = models.TextField(null=False, max_length=300)
+    since = models.TextField(null=True)  # text date for the since query
     articles = models.TextField(null=True)  # json
     query_date = models.DateTimeField(auto_now_add=True)
     denial_id = models.ForeignKey("Denial", on_delete=models.SET_NULL, null=True)
+    created = models.DateTimeField(db_default=Now(), null=True)
 
 
 class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # type: ignore
@@ -290,13 +315,15 @@ class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # t
     date = models.DateTimeField(auto_now=False, auto_now_add=True)
     paid = models.BooleanField()
     email = models.CharField(max_length=300)
-    name = models.CharField(max_length=300, null=True)
+    name = models.CharField(max_length=300, null=True, blank=True)
     appeal_text = models.TextField()
-    pmids = models.CharField(max_length=600, blank=True)
+    pmids = models.JSONField(null=True, blank=True)
     health_history = models.TextField(null=True, blank=True)
-    combined_document = models.FileField(null=True, storage=settings.COMBINED_STORAGE)
+    combined_document = models.FileField(
+        null=True, storage=settings.COMBINED_STORAGE, blank=True
+    )
     combined_document_enc = EncryptedFileField(
-        null=True, storage=settings.COMBINED_STORAGE
+        null=True, storage=settings.COMBINED_STORAGE, blank=True
     )
     uuid = models.CharField(max_length=300, default=uuid.uuid4, editable=False)
     sent = models.BooleanField(default=False)
@@ -309,7 +336,9 @@ class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # t
     should_send = models.BooleanField(default=False)
     # Professional we may use different backends.
     professional = models.BooleanField(default=False)
-    for_appeal = models.ForeignKey("Appeal", on_delete=models.SET_NULL, null=True)
+    for_appeal = models.ForeignKey(
+        "Appeal", on_delete=models.SET_NULL, null=True, blank=True
+    )
 
     def get_temporary_document_path(self):
         combined_document = self.combined_document or self.combined_document_enc
@@ -363,10 +392,12 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     denial_date = models.DateField(auto_now=False, null=True, blank=True)
     insurance_company = models.CharField(max_length=300, null=True, blank=True)
     claim_id = models.CharField(max_length=300, null=True, blank=True)
-    procedure = models.CharField(max_length=300, null=True)
-    diagnosis = models.CharField(max_length=300, null=True)
+    procedure = models.CharField(max_length=300, null=True, blank=True)
+    diagnosis = models.CharField(max_length=300, null=True, blank=True)
     # Keep track of if the async thread finished extracting procedure and diagnosis
-    extract_procedure_diagnosis_finished = models.BooleanField(default=False, null=True)
+    extract_procedure_diagnosis_finished = models.BooleanField(
+        default=False, null=True, blank=True
+    )
     appeal_text = models.TextField(null=True, blank=True)
     raw_email = models.TextField(max_length=300, null=True, blank=True)
     created = models.DateTimeField(db_default=Now(), null=True)
@@ -375,37 +406,63 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     qa_context = models.TextField(null=True, blank=True)
     plan_context = models.TextField(null=True, blank=True)
     semi_sekret = models.CharField(max_length=100, default=sekret_gen)
-    plan_id = models.CharField(max_length=200, null=True)
+    plan_id = models.CharField(max_length=200, null=True, blank=True)
     state = models.CharField(max_length=4, null=True, blank=True)
-    appeal_result = models.CharField(max_length=200, null=True)
+    appeal_result = models.CharField(max_length=200, null=True, blank=True)
     last_interaction = models.DateTimeField(auto_now=True)
     follow_up_semi_sekret = models.CharField(max_length=100, default=sekret_gen)
     references = models.TextField(null=True, blank=True)
     reference_summary = models.TextField(null=True, blank=True)
     appeal_fax_number = models.CharField(max_length=40, null=True, blank=True)
-    your_state = models.CharField(max_length=40, null=True)
+    your_state = models.CharField(max_length=40, null=True, blank=True)
     creating_professional = models.ForeignKey(
         ProfessionalUser,
         null=True,
         on_delete=models.SET_NULL,
         related_name="denials_created",
+        blank=True,
     )
     primary_professional = models.ForeignKey(
         ProfessionalUser,
         null=True,
         on_delete=models.SET_NULL,
         related_name="denials_primary",
+        blank=True,
     )
-    patient_user = models.ForeignKey(PatientUser, null=True, on_delete=models.SET_NULL)
-    domain = models.ForeignKey(UserDomain, null=True, on_delete=models.SET_NULL)
+    patient_user = models.ForeignKey(
+        PatientUser, null=True, on_delete=models.SET_NULL, blank=True
+    )
+    domain = models.ForeignKey(
+        UserDomain, null=True, on_delete=models.SET_NULL, blank=True
+    )
     patient_visible = models.BooleanField(default=True)
+    # If the professional is the one submitting the appeal
     professional_to_finish = models.BooleanField(default=False)
     # Date of service can be many things which are not a simple date.
-    date_of_service = models.CharField(null=True, max_length=300, default="")
+    date_of_service = models.CharField(
+        null=True, max_length=300, default="", blank=True
+    )
     # Provider in network
     provider_in_network = models.BooleanField(default=False, null=True)
     health_history_anonymized = models.BooleanField(default=True)
     single_case = models.BooleanField(default=False, null=True)
+    # pubmed articles to be used to create the input context to the appeal
+    pubmed_ids_json = models.JSONField(null=True, blank=True)
+    generated_questions = models.JSONField(null=True, blank=True)
+    manual_deidentified_denial = models.TextField(
+        primary_key=False, null=True, default=""
+    )
+    manual_deidentified_ocr_cleaned_denial = models.TextField(
+        primary_key=False, null=True, default=""
+    )
+    manual_deidentified_appeal = models.TextField(
+        primary_key=False, null=True, default=""
+    )
+    manual_searchterm = models.TextField(primary_key=False, null=True, default="")
+    verified_procedure = models.TextField(primary_key=False, null=True, default="")
+    verified_diagnosis = models.TextField(primary_key=False, null=True, default="")
+    flag_for_exclude = models.BooleanField(default=False, null=True)
+    include_provided_health_history_in_appeal = models.BooleanField(default=False)
 
     @classmethod
     def filter_to_allowed_denials(cls, current_user: User):
@@ -473,7 +530,7 @@ class DenialQA(models.Model):
 
 
 class ProposedAppeal(ExportModelOperationsMixin("ProposedAppeal"), models.Model):  # type: ignore
-    appeal_text = models.TextField(max_length=3000000000, null=True)
+    appeal_text = models.TextField(max_length=3000000000, null=True, blank=True)
     for_denial = models.ForeignKey(
         Denial, on_delete=models.CASCADE, null=True, blank=True
     )
@@ -496,7 +553,7 @@ class Appeal(ExportModelOperationsMixin("Appeal"), models.Model):  # type: ignor
         db_index=False,
         max_length=100,
     )
-    appeal_text = models.TextField(max_length=3000000000, null=True)
+    appeal_text = models.TextField(max_length=3000000000, null=True, blank=True)
     for_denial = models.ForeignKey(
         Denial, on_delete=models.CASCADE, null=True, blank=True
     )
@@ -526,7 +583,8 @@ class Appeal(ExportModelOperationsMixin("Appeal"), models.Model):  # type: ignor
     professional_send = models.BooleanField(default=True)
     patient_send = models.BooleanField(default=True)
     patient_visible = models.BooleanField(default=True)
-    pubmed_ids_json = models.CharField(max_length=600, blank=True)
+    # Pubmed IDs for the articles to be included in the appeal
+    pubmed_ids_json = models.JSONField(blank=True, null=True)
     response_document_enc = EncryptedFileField(
         null=True, storage=settings.COMBINED_STORAGE
     )
@@ -536,6 +594,10 @@ class Appeal(ExportModelOperationsMixin("Appeal"), models.Model):  # type: ignor
     success = models.BooleanField(default=False, null=True)
     mod_date = models.DateField(auto_now=True, null=True)
     creation_date = models.DateField(auto_now_add=True, null=True)
+    billed = models.BooleanField(default=False)
+    include_provided_health_history_in_appeal = models.BooleanField(
+        default=False, null=True
+    )
 
     # Similar to the method on denial -- TODO refactor to a mixin / DRY
     @classmethod
@@ -618,6 +680,13 @@ class StripePrice(models.Model):
     stripe_id = models.CharField(max_length=300)
     amount = models.IntegerField()
     currency = models.CharField(max_length=3)
+    active = models.BooleanField(default=True)
+
+
+class StripeMeter(models.Model):
+    id = models.AutoField(primary_key=True)
+    stripe_meter_id = models.CharField(max_length=300)
+    name = models.CharField(max_length=300)
     active = models.BooleanField(default=True)
 
 

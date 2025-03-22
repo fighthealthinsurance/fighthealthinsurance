@@ -97,6 +97,14 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v3
 
+      - name: Restore cached dependencies
+        uses: actions/cache@v3
+        with:
+          path: .cache
+          key: .cache
+          restore-keys: |
+            .cache
+
       - name: Install tox
         run: uv tool install tox --with tox-uv
 
@@ -142,6 +150,14 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@v3
+
+      - name: Restore cached dependencies
+        uses: actions/cache@v3
+        with:
+          path: .cache
+          key: .cache
+          restore-keys: |
+            .cache
 
       - name: Install tox
         run: uv tool install tox --with tox-uv
@@ -261,6 +277,14 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@v3
+
+      - name: Restore cached dependencies
+        uses: actions/cache@v3
+        with:
+          path: .cache
+          key: .cache
+          restore-keys: |
+            .cache
 
       - name: Install tox
         run: uv tool install tox --with tox-uv

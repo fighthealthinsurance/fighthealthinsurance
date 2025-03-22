@@ -17,6 +17,25 @@ elif [ -f ./.venv/bin/activate ]; then
   echo "Using .venv"
 fi
 
+# Check if requirements files have changed since last run
+REQ_CHECKSUM_FILE=".requirements_checksum"
+CURRENT_REQ_CHECKSUM=""
+STORED_REQ_CHECKSUM=""
+
+if [ -f "requirements.txt" ] && [ -f "requirements-dev.txt" ]; then
+  CURRENT_REQ_CHECKSUM=$(md5sum requirements.txt requirements-dev.txt | sort | md5sum | cut -d ' ' -f 1)
+  if [ -f "$REQ_CHECKSUM_FILE" ]; then
+    STORED_REQ_CHECKSUM=$(cat "$REQ_CHECKSUM_FILE")
+  fi
+
+  if [ "$CURRENT_REQ_CHECKSUM" != "$STORED_REQ_CHECKSUM" ]; then
+    echo "Requirements files have changed. Updating dependencies..."
+    pip install -r requirements.txt
+    pip install -r requirements-dev.txt
+    echo "$CURRENT_REQ_CHECKSUM" > "$REQ_CHECKSUM_FILE"
+  fi
+fi
+
 check_python_environment() {
 	python -c 'import configurations'  >/dev/null 2>&1
 	python_dep_check=$?
@@ -53,7 +72,7 @@ python manage.py loaddata plan_source
 python manage.py ensure_adminuser --username admin --password admin
 
 # Make a test user with UserDomain and everything
-python manage.py make_user  --username "test@test.com" --domain testfarts1 --password farts12345678 --email "test@test.com" --visible-phone-number 42 --is-provider true
+python manage.py make_user  --username "test@test.com" --domain testfarts1 --password farts12345678 --email "test@test.com" --visible-phone-number 42 --is-provider true --first-name TestFarts
 python manage.py make_user  --username "test-patient@test.com" --domain testfarts1 --password farts12345678 --email "test-patient@test.com" --visible-phone-number 42 --is-provider false
 
 RECAPTCHA_TESTING=true OAUTHLIB_RELAX_TOKEN_SCOPE=1 uvicorn fighthealthinsurance.asgi:application --reload --reload-dir fighthealthinsurance --reload-include="*.py" --reload-exclude "*.pyc,__pycache__/*,*.pyo,*~,#*#,.#*,node_modules,static" --access-log --log-config conf/uvlog_config.yaml --port 8000 --ssl-keyfile key.pem --ssl-certfile cert.pem $@

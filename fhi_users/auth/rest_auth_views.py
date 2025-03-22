@@ -17,6 +17,8 @@ from django.shortcuts import get_object_or_404
 from django.views.decorators.cache import cache_control
 from django.views.decorators.vary import vary_on_cookie
 from django.utils.decorators import method_decorator
+from django.db import transaction
+
 
 import stripe
 
@@ -123,6 +125,7 @@ class WhoAmIViewSet(viewsets.ViewSet):
                             "professional": professional,
                             "current_professional_id": professional_id,
                             "highest_role": highest_role.value,
+                            "domain_id": user_domain.id,
                             "admin": admin,
                         }
                     ],
@@ -176,7 +179,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
     @method_decorator(vary_on_cookie)  # Vary only on the session cookie
     @extend_schema(
         responses={
-            200: serializers.ProfessionalSummary,
+            200: serializers.ProfessionalSummary(many=True),
         }
     )
     @action(detail=False, methods=["post"])
@@ -204,7 +207,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
     @method_decorator(vary_on_cookie)  # Vary only on the session cookie
     @extend_schema(
         responses={
-            200: serializers.ProfessionalSummary,
+            200: serializers.ProfessionalSummary(many=True),
         }
     )
     @action(detail=False, methods=["post"])
@@ -223,11 +226,11 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         )
         professionals = domain.get_professional_users(pending=True)
         serializer = serializers.ProfessionalSummary(professionals, many=True)
-        return Response({"pending_professionals": serializer.data})
+        return Response(serializer.data)
 
     @extend_schema(
         responses={
-            204: serializers.StatusResponseSerializer,
+            200: serializers.StatusResponseSerializer,
             403: common_serializers.ErrorSerializer,
         }
     )
@@ -262,10 +265,17 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             serializers.StatusResponseSerializer(
                 {"status": "rejected", "message": "Professional user rejected"}
             ).data,
-            status=status.HTTP_204_NO_CONTENT,
+            status=status.HTTP_200_OK,
         )
 
-    @extend_schema(responses=serializers.StatusResponseSerializer)
+    @extend_schema(
+        responses={
+            200: serializers.StatusResponseSerializer,
+            403: common_serializers.ErrorSerializer,
+            404: common_serializers.ErrorSerializer,
+            500: common_serializers.ErrorSerializer,
+        }
+    )
     @action(detail=False, methods=["post"])
     def accept(self, request) -> Response:
         """
@@ -283,10 +293,9 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             if not current_user_admin_in_domain:
                 # Credentials are valid but does not have permissions
                 return Response(
-                    serializers.StatusResponseSerializer(
+                    common_serializers.ErrorSerializer(
                         {
-                            "status": "failure",
-                            "message": "User does not have admin privileges",
+                            "error": "User does not have admin privileges",
                         }
                     ).data,
                     status=status.HTTP_403_FORBIDDEN,
@@ -295,10 +304,8 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             # Unexecpted generic error, fail closed
             logger.opt(exception=e).error("Error in accepting professional user")
             return Response(
-                serializers.StatusResponseSerializer(
-                    {"status": "failure", "message": "Authentication error"}
-                ).data,
-                status=status.HTTP_401_UNAUTHORIZED,
+                common_serializers.ErrorSerializer({"error": f"Error {e}"}).data,
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
         try:
             relation = ProfessionalDomainRelation.objects.get(
@@ -310,23 +317,6 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             relation.pending = False
             relation.save()
 
-            stripe.api_key = settings.STRIPE_API_SECRET_KEY
-            if relation.domain.stripe_subscription_id:
-                subscription = stripe.Subscription.retrieve(
-                    relation.domain.stripe_subscription_id
-                )
-                stripe.Subscription.modify(
-                    subscription.id,
-                    items=[
-                        {
-                            "id": subscription["items"]["data"][0].id,
-                            "quantity": subscription["items"]["data"][0].quantity + 1,
-                        }
-                    ],
-                )
-            else:
-                logger.debug("Skipping no subscription present.")
-
             return Response(
                 serializers.StatusResponseSerializer(
                     {"status": "accepted", "message": "Professional user accepted"}
@@ -335,10 +325,9 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             )
         except ProfessionalDomainRelation.DoesNotExist:
             return Response(
-                serializers.StatusResponseSerializer(
+                common_serializers.ErrorSerializer(
                     {
-                        "status": "failure",
-                        "message": "Relation not found or already accepted",
+                        "error": "Relation not found or already accepted",
                     }
                 ).data,
                 status=status.HTTP_404_NOT_FOUND,
@@ -351,6 +340,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         """
         return super().create(request)
 
+    @transaction.atomic
     def perform_create(
         self, request: Request, serializer: Serializer
     ) -> Response | serializers.ProfessionalSignupResponseSerializer:
@@ -415,7 +405,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                     ).data,
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-            user_domain_info: dict[str, str] = data["user_domain"]  # type: ignore
+            user_domain_info: dict[str, Optional[str]] = data["user_domain"]  # type: ignore
             if domain_name != user_domain_info["name"]:
                 if user_domain_info["name"] is None:
                     user_domain_info["name"] = domain_name
@@ -429,6 +419,9 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                         ).data,
                         status=status.HTTP_400_BAD_REQUEST,
                     )
+            # We want to allow null
+            if user_domain_info["name"] == "":
+                user_domain_info["name"] = None
             if visible_phone_number != user_domain_info["visible_phone_number"]:
                 if user_domain_info["visible_phone_number"] is None:
                     user_domain_info["visible_phone_number"] = visible_phone_number
@@ -477,23 +470,40 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             pending=True,
         )
 
-        if settings.DEBUG and data["skip_stripe"]:
-            product_id, price_id = stripe_utils.get_or_create_price(
-                "Basic Professional Subscription", 2500, recurring=True
+        if not (settings.DEBUG and data["skip_stripe"]):
+            base_product_id, base_price_id = stripe_utils.get_or_create_price(
+                "FP Basic Professional Plan", 2500, recurring=True
             )
-
+            metered_product_id, metered_price_id = stripe_utils.get_or_create_price(
+                "Incremental FP Appeal", 1000, recurring=True, metered=True
+            )
+            cancel_url = request.META.get(
+                "HTTP_REFERER", user_signup_info["continue_url"]
+            )
             checkout_session = stripe.checkout.Session.create(
                 payment_method_types=["card"],
-                line_items=[{"price": price_id, "quantity": 1}],
+                line_items=[
+                    {"price": base_price_id, "quantity": 1},
+                    {"price": metered_price_id},
+                ],
                 mode="subscription",
                 success_url=user_signup_info["continue_url"],
-                cancel_url=user_signup_info["continue_url"],
+                cancel_url=cancel_url,  # user_signup_info["continue_url"],
                 customer_email=email,
+                allow_promotion_codes=True,  # Users can enter a promo code at checkout
                 metadata={
                     "payment_type": "professional_domain_subscription",
                     "professional_id": str(professional_user.id),
                     "domain_id": str(user_domain.id),
                 },
+                subscription_data={
+                    "trial_period_days": 30,
+                    "trial_settings": {
+                        "end_behavior": {"missing_payment_method": "cancel"}
+                    },
+                },
+                # TBD do we want to allow trial without card?
+                # payment_method_collection="if_required",
             )
             extra_user_properties = ExtraUserProperties.objects.create(
                 user=user, email_verified=False
@@ -687,7 +697,8 @@ class VerifyEmailViewSet(ViewSet, SerializerMixin):
         """
         serializer = self.deserialize(data=request.data)
         serializer.is_valid(raise_exception=True)
-        user = serializer.validated_data["user"]
+        user_id = serializer.validated_data["user_id"]
+        user = User.objects.get(pk=user_id)
         send_verification_email(request, user)
         return Response(
             serializers.StatusResponseSerializer(

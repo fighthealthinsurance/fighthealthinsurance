@@ -12,6 +12,7 @@ from fighthealthinsurance.models import (
     ProposedAppeal,
     AppealAttachment,
     Denial,
+    PubMedMiniArticle,
 )
 from rest_framework import serializers
 
@@ -70,6 +71,11 @@ class DenialResponseInfoSerializer(serializers.Serializer):
 
 
 # Forms
+class HealthHistoryFormSerializer(FormSerializer):
+    class Meta(object):
+        form = core_forms.HealthHistory
+
+
 class DeleteDataFormSerializer(FormSerializer):
     class Meta(object):
         form = core_forms.DeleteDataForm
@@ -296,6 +302,7 @@ class NotifyPatientRequestSerializer(serializers.Serializer):
     # We either notify by patient id or appeal id and resolve to the patient
     id = serializers.IntegerField(required=False)
     include_provider = serializers.BooleanField(default=False)
+    professional_to_finish = serializers.BooleanField(default=True)
 
 
 class AppealFullSerializer(serializers.ModelSerializer):
@@ -358,7 +365,8 @@ class AssembleAppealRequestSerializer(serializers.Serializer):
     insurance_company = serializers.CharField(required=False, allow_blank=True)
     fax_phone = serializers.CharField(required=False, allow_blank=True)
     pubmed_articles_to_include = serializers.ListField(
-        child=serializers.CharField(), required=False
+        child=serializers.CharField(required=False, allow_blank=True),
+        required=False,
     )
     include_provided_health_history = serializers.BooleanField(required=False)
 
@@ -392,6 +400,7 @@ class SendToUserSerializer(serializers.Serializer):
 class SendFax(serializers.Serializer):
     appeal_id = serializers.IntegerField(required=True)
     fax_number = serializers.CharField(required=False)
+    include_cover = serializers.BooleanField(required=False, default=True)
 
 
 class InviteProviderSerializer(serializers.Serializer):
@@ -486,3 +495,23 @@ class SuccessSerializer(StatusResponseSerializer):
         if data and "message" not in data:
             data["message"] = "Operation completed successfully."
         super().__init__(data, *args, **kwargs)
+
+
+class PubMedMiniArticleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PubMedMiniArticle
+        fields = ["pmid", "title", "abstract", "article_url", "created"]
+
+
+class GetCandidateArticlesSerializer(serializers.Serializer):
+    denial_id = serializers.IntegerField(required=True)
+
+
+class SelectContextArticlesSerializer(serializers.Serializer):
+    denial_id = serializers.IntegerField(required=True)
+    pmids = serializers.ListField(child=serializers.CharField(), required=True)
+
+
+class SelectAppealArticlesSerializer(serializers.Serializer):
+    appeal_id = serializers.IntegerField(required=True)
+    pmids = serializers.ListField(child=serializers.CharField(), required=True)
