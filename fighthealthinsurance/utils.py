@@ -1,4 +1,4 @@
-from django.core.mail import EmailMultiAlternatives
+from django.core.mail import EmailMultiAlternatives, BadHeaderError
 from django.template.loader import render_to_string
 from django.conf import settings
 
@@ -19,6 +19,8 @@ import requests
 from metapub import PubMedFetcher
 from requests.exceptions import RequestException
 from markdown_strings import esc_format
+from django.core.exceptions import ValidationError, ImproperlyConfigured
+from smtplib import SMTPException
 
 from fighthealthinsurance.env_utils import *
 
@@ -47,31 +49,53 @@ def is_convertible_to_int(s):
 
 
 def send_fallback_email(subject: str, template_name: str, context, to_email: str):
-    if to_email.endswith("-fake@fighthealthinsurance.com"):
-        return
-    # First, render the plain text content if present
-    text_content = render_to_string(
-        f"emails/{template_name}.txt",
-        context=context,
-    )
+    """Send an email with both text and HTML fallback.
 
-    # Secondly, render the HTML content if present
-    html_content = render_to_string(
-        f"emails/{template_name}.html",
-        context=context,
-    )
-    # Then, create a multipart email instance.
-    msg = EmailMultiAlternatives(
-        subject,
-        text_content,
-        settings.DEFAULT_FROM_EMAIL,
-        [to_email],
-    )
+    Note: We expect our SMTP server to accept emails reliably.
+    If email sending fails, we raise an exception instead of suppressing errors.
+    """
+    try:
+        if not to_email:
+            raise ValidationError("Recipient email is required.")
 
-    # Lastly, attach the HTML content to the email instance and send.
-    msg.attach_alternative(html_content, "text/html")
-    msg.send()
+        # Render email templates
+        text_content = render_to_string(f"emails/{template_name}.txt", context=context).strip()
+        html_content = render_to_string(f"emails/{template_name}.html", context=context).strip()
 
+        # Ensure there's at least one valid content type
+        if not text_content and not html_content:
+            raise ValidationError("Both text and HTML templates are empty.")
+
+        # Create email instance
+        msg = EmailMultiAlternatives(
+            subject,
+            text_content or "This email has no text content.",
+            settings.EMAIL_HOST_USER,
+            [to_email],
+        )
+
+        # Attach HTML content if available
+        if html_content:
+            msg.attach_alternative(html_content, "text/html")
+
+        msg.send()
+        logger.info(f"Verification email successfully sent to {to_email}")
+
+    except BadHeaderError as e:
+        logger.error("Invalid email header detected.")
+        raise
+
+    except SMTPException as e:
+        logger.error(f"SMTP error while sending email to {to_email}: {e}")
+        raise
+
+    except ImproperlyConfigured as e:
+        logger.error(f"Email settings misconfigured: {e}")
+        raise
+
+    except Exception as e:
+        logger.error(f"Unexpected error while sending email to {to_email}: {e}", exc_info=True)
+        raise
 
 async def check_call(cmd, max_retries=0, **kwargs):
     logger.debug(f"Running: {cmd}")
