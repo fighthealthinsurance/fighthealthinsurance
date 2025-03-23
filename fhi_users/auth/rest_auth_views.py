@@ -127,6 +127,7 @@ class WhoAmIViewSet(viewsets.ViewSet):
                             "highest_role": highest_role.value,
                             "domain_id": user_domain.id,
                             "admin": admin,
+                            "beta": user_domain.beta,  # Add beta flag
                         }
                     ],
                     many=True,  # This is to match list endpoints returning arrays.

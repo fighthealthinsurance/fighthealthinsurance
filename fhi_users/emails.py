@@ -24,7 +24,9 @@ def send_password_reset_email(user_email: str, token: str) -> None:
     """Send password reset email with secure URL construction."""
     subject = "Reset your password"
     params = urlencode({"token": token})
-    reset_link = f"https://www.fightpaperwork.com/auth/reset-password/new-password?{params}"
+    reset_link = (
+        f"https://www.fightpaperwork.com/auth/reset-password/new-password?{params}"
+    )
     send_fallback_email(
         subject,
         "password_reset",

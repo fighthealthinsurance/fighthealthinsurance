@@ -145,6 +145,7 @@ class DenialLongEmployerName(APITestCase):
 from typing import Dict, Any
 from django.http import JsonResponse
 
+
 class DenialEndToEnd(APITestCase):
     """Test end to end, we need to load the initial fixtures so we have denial types."""
 
@@ -249,13 +250,15 @@ class DenialEndToEnd(APITestCase):
         health_history_url = reverse("healthhistory-list")
         health_history_response = await sync_to_async(self.client.post)(
             health_history_url,
-            json.dumps({
-                "denial_id": denial_id,
-                "email": email,
-                "semi_sekret": semi_sekret,
-                "health_history": "Sample health history",
-                "include_provided_health_history_in_appeal": True
-            }),
+            json.dumps(
+                {
+                    "denial_id": denial_id,
+                    "email": email,
+                    "semi_sekret": semi_sekret,
+                    "health_history": "Sample health history",
+                    "include_provided_health_history_in_appeal": True,
+                }
+            ),
             content_type="application/json",
         )
         self.assertTrue(status.is_success(health_history_response.status_code))
