@@ -41,6 +41,7 @@ from fhi_users.auth.auth_utils import (
     resolve_domain_id,
     get_patient_or_create_pending_patient,
     get_next_fake_username,
+    validate_password,
 )
 from fighthealthinsurance.rest_mixins import CreateMixin, SerializerMixin
 from rest_framework.serializers import Serializer
@@ -334,7 +335,12 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-    @extend_schema(responses=serializers.ProfessionalSignupResponseSerializer)
+    @extend_schema(
+        responses={
+            200: serializers.ProfessionalSignupResponseSerializer,
+            400: common_serializers.ErrorSerializer,
+        }
+    )
     def create(self, request: Request) -> Response:
         """
         Creates a new professional user and optionally a new domain.
@@ -351,6 +357,12 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         visible_phone_number: Optional[str] = user_signup_info["visible_phone_number"]  # type: ignore
         new_domain: bool = bool(data["make_new_domain"])  # type: ignore
         user_domain_opt: Optional[UserDomain] = None
+
+        if not validate_password(user_signup_info["password"]):
+            return Response(
+                common_serializers.ErrorSerializer({"error": "Invalid password"}).data,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         if not new_domain:
             # In practice the serializer may enforce these for us
@@ -718,7 +730,12 @@ class PasswordResetViewSet(ViewSet, SerializerMixin):
             return serializers.FinishPasswordResetFormSerializer
         return serializers.RequestPasswordResetFormSerializer
 
-    @extend_schema(responses=serializers.StatusResponseSerializer)
+    @extend_schema(
+        responses={
+            200: serializers.StatusResponseSerializer,
+            400: common_serializers.ErrorSerializer,
+        }
+    )
     @action(detail=False, methods=["post"])
     def request_reset(self, request: Request) -> Response:
         """Request a password reset."""
@@ -748,17 +765,27 @@ class PasswordResetViewSet(ViewSet, SerializerMixin):
             return Response(
                 serializers.StatusResponseSerializer({"status": "reset_requested"}).data
             )
-
+        
+        except User.DoesNotExist:
+            logger.error(f"User does not exist")
+            return Response(
+                common_serializers.ErrorSerializer({"error": "User does not exist"}).data,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        
         except Exception as e:
             logger.error(f"Password reset request failed: {e}")
             return Response(
-                serializers.StatusResponseSerializer(
-                    {"status": "failure", "message": str(e)}
-                ).data,
+                common_serializers.ErrorSerializer({"error": str(e)}).data,
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-    @extend_schema(responses=serializers.StatusResponseSerializer)
+    @extend_schema(
+        responses={
+            200: serializers.StatusResponseSerializer,
+            400: common_serializers.ErrorSerializer,
+        }
+    )
     @action(detail=False, methods=["post"])
     def finish_reset(self, request: Request) -> Response:
         """Complete a password reset."""
@@ -773,14 +800,21 @@ class PasswordResetViewSet(ViewSet, SerializerMixin):
             if timezone.now() > reset_token.expires_at:
                 reset_token.delete()
                 return Response(
-                    serializers.StatusResponseSerializer(
-                        {"status": "failure", "message": "Reset token has expired"}
+                    common_serializers.ErrorSerializer(
+                        {"error": "Reset token has expired"}
                     ).data,
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
             # Update password
             user = reset_token.user
+            if not validate_password(data["new_password"]):
+                return Response(
+                    common_serializers.ErrorSerializer(
+                        {"error": "Invalid password"}
+                    ).data,
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             user.set_password(data["new_password"])
             user.save()
 
@@ -795,8 +829,8 @@ class PasswordResetViewSet(ViewSet, SerializerMixin):
 
         except ResetToken.DoesNotExist:
             return Response(
-                serializers.StatusResponseSerializer(
-                    {"status": "failure", "message": "Invalid reset token"}
+                common_serializers.ErrorSerializer(
+                    {"error": "Invalid reset token"}
                 ).data,
                 status=status.HTTP_400_BAD_REQUEST,
             )
