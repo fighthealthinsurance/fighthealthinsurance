@@ -80,6 +80,7 @@ class UserDomain(models.Model):
     )
     cover_template_string = models.CharField(max_length=5000, null=True)
     pending = models.BooleanField(default=False)
+    beta = models.BooleanField(default=False)
 
     def save(self, *args, **kwargs):
         # Strip URL prefixes from name if it's set

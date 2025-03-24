@@ -86,6 +86,9 @@ class Command(BaseCommand):
         except Exception as e:
             raise CommandError(f"Error handling domain creation: {str(e)}")
 
+        user_domain.beta = True
+        user_domain.save()
+
         try:
             combined_username = combine_domain_and_username(
                 username_raw, domain_name=user_domain.name
