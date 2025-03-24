@@ -55,6 +55,8 @@ class StageFaxView(generic.FormView):
         form_data["company_name"] = (
             "Fight Health Insurance -- a service of Totally Legit Co"
         )
+        form_data["include_cover"] = True
+        denial.appeal_fax_number = form_data["fax_number"]
         appeal = common_view_logic.AppealAssemblyHelper().create_or_update_appeal(
             **form_data
         )

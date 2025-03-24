@@ -38,12 +38,6 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 from rest_framework.authentication import SessionAuthentication
 
 
-class CsrfExemptSessionAuthentication(SessionAuthentication):
-
-    def enforce_csrf(self, request):
-        return  # To not perform the csrf check previously happening
-
-
 class Base(Configuration):
     SENTRY_ENDPOINT = os.getenv("SENTRY_ENDPOINT")
     COOKIE_CONSENT_ENABLED = False
@@ -61,9 +55,13 @@ class Base(Configuration):
     }
 
     # Session cookie configs
-    SESSION_COOKIE_SECURE = False  # https only (up to the browser to enforce)
+    SESSION_COOKIE_SECURE = True  # https only (up to the browser to enforce)
     SESSION_COOKIE_HTTPONLY = False  # allow js access
-    SESSION_COOKIE_SAMESITE = "Lax"  # cross site happytimes.
+    SESSION_COOKIE_SAMESITE = "None"  # cross site happytimes.
+    # Same for CSRF
+    CSRF_COOKIE_SECURE = True  # https only (up to the browser to enforce)
+    CSRF_COOKIE_HTTPONLY = False
+    CSRF_COOKIE_SAMESITE = "None"
 
     # Quick-start development settings - unsuitable for production
     # See https://docs.djangoproject.com/en/4.0/howto/deployment/checklist/
@@ -151,6 +149,7 @@ class Base(Configuration):
     )
 
     MIDDLEWARE = [
+        "fighthealthinsurance.middleware.CsrfCookieToHeaderMiddleware",
         "corsheaders.middleware.CorsMiddleware",
         "django_prometheus.middleware.PrometheusBeforeMiddleware",
         "django.contrib.sessions.middleware.SessionMiddleware",
@@ -322,6 +321,9 @@ class Base(Configuration):
         "https://fighthealthinsurance.com",
         "https://www.fightpaperwork.com",
         "https://www.fighthealthinsurance.com",
+        "https://api.fighthealthinsurance.com",
+        "https://*.fightpaperwork.com",
+        "https://*.fighthealthinsurance.com",
     ]
 
     PROMETHEUS_METRIC_NAMESPACE = "fhi"
@@ -461,6 +463,17 @@ class Dev(Base):
 
 
 class Test(Dev):
+    # Relax for http in test even though we mostly want https
+    # but we use http a bunch in test :)
+    # Session cookie configs
+    SESSION_COOKIE_SECURE = False  # tests sometimes use http
+    SESSION_COOKIE_HTTPONLY = False  # allow js access
+    SESSION_COOKIE_SAMESITE = "Lax"  # cross site happytimes.
+    # Same for CSRF
+    CSRF_COOKIE_SECURE = False  # tests sometime use http
+    CSRF_COOKIE_HTTPONLY = False
+    CSRF_COOKIE_SAMESITE = "Lax"
+
     DEBUG = True
     DEFF_SALT = os.getenv("DEFF_SALT", "test-salt")
     DEFF_PASSWORD = os.getenv("DEFF_PASSWORD", "test-password")

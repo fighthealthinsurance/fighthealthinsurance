@@ -9,6 +9,8 @@ from django.utils import timezone
 from dateutil.relativedelta import relativedelta
 from django.http import FileResponse
 
+from asgiref.sync import sync_to_async, async_to_sync
+
 from django_encrypted_filefield.crypt import Cryptographer
 
 from rest_framework import status
@@ -55,6 +57,8 @@ from .common_view_logic import AppealAssemblyHelper
 from .utils import is_convertible_to_int
 import json
 
+from loguru import logger
+
 if typing.TYPE_CHECKING:
     from django.contrib.auth.models import User
 else:
@@ -81,6 +85,25 @@ class DataRemovalViewSet(viewsets.ViewSet, DeleteMixin, DeleteOnlyMixin):
         )
 
 
+class HealthHistoryViewSet(viewsets.ViewSet, CreateMixin):
+    serializer_class = serializers.HealthHistoryFormSerializer
+
+    @extend_schema(responses=serializers.StatusResponseSerializer)
+    def create(self, request: Request) -> Response:
+        return super().create(request)
+
+    @extend_schema(responses=serializers.StatusResponseSerializer)
+    def perform_create(self, request: Request, serializer):
+        logger.debug(f"Updating denial with {serializer.validated_data}")
+        common_view_logic.DenialCreatorHelper.update_denial(
+            **serializer.validated_data,
+        )
+
+        return Response(
+            serializers.SuccessSerializer({"message": "Updated health history"}).data,
+        )
+
+
 class NextStepsViewSet(viewsets.ViewSet, CreateMixin):
     serializer_class = serializers.PostInferedFormSerializer
 
@@ -90,6 +113,9 @@ class NextStepsViewSet(viewsets.ViewSet, CreateMixin):
 
     @extend_schema(responses=serializers.NextStepInfoSerizableSerializer)
     def perform_create(self, request: Request, serializer):
+        logger.debug(
+            f"Performing the create..... using data {serializer.validated_data}"
+        )
         next_step_info = common_view_logic.FindNextStepsHelper.find_next_steps(
             **serializer.validated_data
         )
@@ -109,12 +135,13 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
         elif self.action == "get_candidate_articles":
             return serializers.GetCandidateArticlesSerializer
         elif self.action == "select_articles":
-            return serializers.SelectArticlesSerializer
+            return serializers.SelectContextArticlesSerializer
         else:
             return None
 
     @extend_schema(responses=serializers.DenialResponseInfoSerializer)
     def create(self, request: Request) -> Response:
+        logger.debug("Routing create through parent...")
         return super().create(request)
 
     @extend_schema(responses=serializers.DenialResponseInfoSerializer)
@@ -133,11 +160,13 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
 
     @extend_schema(responses=serializers.DenialResponseInfoSerializer)
     def perform_create(self, request: Request, serializer):
+        logger.debug("Performing the create.....")
         current_user: User = request.user  # type: ignore
         creating_professional = ProfessionalUser.objects.get(user=current_user)
         serializer = self.deserialize(data=request.data)
         serializer.is_valid(raise_exception=True)
         serializer_data = serializer.validated_data
+        logger.debug(f"Using data {serializer_data}")
         if (
             "primary_professional" in serializer_data
             and serializer_data["primary_professional"] is not None
@@ -149,15 +178,17 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
             serializer_data["primary_professional"] = primary_professional
         denial: Optional[Denial] = None
         if "denial_id" in serializer_data:
-            if serializer_data["denial_id"] and is_convertible_to_int(
-                serializer_data["denial_id"]
-            ):
-                denial_id = int(serializer_data.pop("denial_id"))
+            denial_id = serializer_data.pop("denial_id")
+            if denial_id and is_convertible_to_int(denial_id):
+                logger.debug("Looking up existing denial {denial_id}")
+                denial_id = int(denial_id)
                 denial = Denial.filter_to_allowed_denials(current_user).get(
                     denial_id=denial_id
                 )
             else:
-                del serializer_data["denial_id"]
+                logger.debug("Unexpected format of denial id {denial_id}")
+        else:
+            logger.debug("No denial id present, will make new one.")
         if "patient_id" in serializer_data and is_convertible_to_int(
             serializer_data["patient_id"]
         ):
@@ -205,7 +236,7 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
             denial_id=serializer.validated_data["denial_id"],
         )
 
-        articles = pubmed_tools.find_pubmed_articles_for_denial(denial)
+        articles = async_to_sync(pubmed_tools.find_pubmed_articles_for_denial)(denial)
 
         return Response(
             serializers.PubMedMiniArticleSerializer(articles, many=True).data,
@@ -226,7 +257,7 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
         )
 
         pmids = serializer.validated_data["pmids"]
-        denial.pubmed_ids_json = json.dumps(pmids)
+        denial.pubmed_ids_json = pmids
         denial.save()
         return Response(
             serializers.SuccessSerializer(
@@ -326,8 +357,33 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
             return serializers.NotifyPatientRequestSerializer
         elif self.action == "invite_provider":
             return serializers.InviteProviderSerializer
+        elif self.action == "select_articles":
+            return serializers.SelectAppealArticlesSerializer
         else:
             return None
+
+    @extend_schema(responses=serializers.StatusResponseSerializer)
+    @action(detail=False, methods=["post"])
+    def select_articles(self, request: Request) -> Response:
+        """Select PubMed articles to include in the fax."""
+        serializer = self.deserialize(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        current_user: User = request.user  # type: ignore
+        appeal = get_object_or_404(
+            Appeal.filter_to_allowed_appeals(current_user),
+            id=serializer.validated_data["appeal_id"],
+        )
+
+        pmids = serializer.validated_data["pmids"]
+        appeal.pubmed_ids_json = pmids
+        appeal.save()
+        return Response(
+            serializers.SuccessSerializer(
+                {"message": f"Selected {len(pmids)} articles for this appeal"}
+            ).data,
+            status=status.HTTP_200_OK,
+        )
 
     @extend_schema(responses=serializers.AppealSummarySerializer)
     def list(self, request: Request) -> Response:
@@ -519,7 +575,11 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
             pubmed_articles_to_include = serializer.validated_data[
                 "pubmed_articles_to_include"
             ]
-        # TODO: Collect this
+        include_cover = True
+        if "include_cover" in serializer.validated_data:
+            include_cover = serializer.validated_data["include_cover"]
+        # Note: we can also set this on the denial when we connect the health history if either
+        # is true its included.
         include_provided_health_history = False
         if "include_provided_health_history" in serializer.validated_data:
             include_provided_health_history = serializer.validated_data[
@@ -529,6 +589,7 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
         patient_name: str = "unkown"
         if patient_user is not None:
             patient_name = patient_user.get_combined_name()
+        logger.debug("Making the appeal go vroooom")
         appeal = self.appeal_assembly_helper.create_or_update_appeal(
             appeal=appeal,
             name=patient_name,
@@ -538,7 +599,6 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
             pubmed_ids_parsed=pubmed_articles_to_include,
             company_name="Fight Paperwork",
             email=current_user.email,
-            include_provided_health_history=include_provided_health_history,
             denial=denial,
             primary_professional=denial.primary_professional,
             creating_professional=denial.creating_professional,
@@ -548,6 +608,8 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
             company_phone_number="202-938-3266",
             company_fax_number="415-840-7591",
             patient_user=patient_user,
+            include_provided_health_history=include_provided_health_history,
+            include_cover=include_cover,  # for now -- make this a flag on appeal
         )
         appeal.save()
         return Response(

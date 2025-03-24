@@ -127,6 +127,7 @@ class WhoAmIViewSet(viewsets.ViewSet):
                             "highest_role": highest_role.value,
                             "domain_id": user_domain.id,
                             "admin": admin,
+                            "beta": user_domain.beta,  # Add beta flag
                         }
                     ],
                     many=True,  # This is to match list endpoints returning arrays.
@@ -317,23 +318,6 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             relation.pending = False
             relation.save()
 
-            stripe.api_key = settings.STRIPE_API_SECRET_KEY
-            if relation.domain.stripe_subscription_id:
-                subscription = stripe.Subscription.retrieve(
-                    relation.domain.stripe_subscription_id
-                )
-                stripe.Subscription.modify(
-                    subscription.id,
-                    items=[
-                        {
-                            "id": subscription["items"]["data"][0].id,
-                            "quantity": subscription["items"]["data"][0].quantity + 1,
-                        }
-                    ],
-                )
-            else:
-                logger.debug("Skipping no subscription present.")
-
             return Response(
                 serializers.StatusResponseSerializer(
                     {"status": "accepted", "message": "Professional user accepted"}
@@ -489,12 +473,14 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
 
         if not (settings.DEBUG and data["skip_stripe"]):
             base_product_id, base_price_id = stripe_utils.get_or_create_price(
-                "Basic Professional Subscription", 2500, recurring=True
+                "FP Basic Professional Plan", 2500, recurring=True
             )
             metered_product_id, metered_price_id = stripe_utils.get_or_create_price(
-                "Incremental Appeal", 1000, recurring=True, metered=True
+                "Incremental FP Appeal", 1000, recurring=True, metered=True
             )
-
+            cancel_url = request.META.get(
+                "HTTP_REFERER", user_signup_info["continue_url"]
+            )
             checkout_session = stripe.checkout.Session.create(
                 payment_method_types=["card"],
                 line_items=[
@@ -503,13 +489,22 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 ],
                 mode="subscription",
                 success_url=user_signup_info["continue_url"],
-                cancel_url=user_signup_info["continue_url"],
+                cancel_url=cancel_url,  # user_signup_info["continue_url"],
                 customer_email=email,
+                allow_promotion_codes=True,  # Users can enter a promo code at checkout
                 metadata={
                     "payment_type": "professional_domain_subscription",
                     "professional_id": str(professional_user.id),
                     "domain_id": str(user_domain.id),
                 },
+                subscription_data={
+                    "trial_period_days": 30,
+                    "trial_settings": {
+                        "end_behavior": {"missing_payment_method": "cancel"}
+                    },
+                },
+                # TBD do we want to allow trial without card?
+                # payment_method_collection="if_required",
             )
             extra_user_properties = ExtraUserProperties.objects.create(
                 user=user, email_verified=False
@@ -703,7 +698,8 @@ class VerifyEmailViewSet(ViewSet, SerializerMixin):
         """
         serializer = self.deserialize(data=request.data)
         serializer.is_valid(raise_exception=True)
-        user = serializer.validated_data["user"]
+        user_id = serializer.validated_data["user_id"]
+        user = User.objects.get(pk=user_id)
         send_verification_email(request, user)
         return Response(
             serializers.StatusResponseSerializer(

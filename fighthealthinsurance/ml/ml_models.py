@@ -1,3 +1,5 @@
+from asgiref.sync import sync_to_async, async_to_sync
+
 from abc import abstractmethod
 import asyncio
 import aiohttp
@@ -16,6 +18,8 @@ from llm_result_utils.cleaner_utils import CleanerUtils
 from fighthealthinsurance.exec import *
 from fighthealthinsurance.utils import all_concrete_subclasses
 from fighthealthinsurance.process_denial import DenialBase
+
+from stopit import TimeoutException
 
 
 class RemoteModelLike(DenialBase):
@@ -39,8 +43,8 @@ class RemoteModelLike(DenialBase):
     @abstractmethod
     async def _infer(
         self,
-        system_prompt,
-        prompt,
+        system_prompts: list[str],
+        prompt: str,
         patient_context=None,
         plan_context=None,
         pubmed_context=None,
@@ -67,6 +71,28 @@ class RemoteModelLike(DenialBase):
     ) -> Tuple[Optional[str], Optional[str]]:
         """Get the procedure and diagnosis from the prompt"""
         return (None, None)
+
+    async def get_appeal_questions(
+        self,
+        denial_text: str,
+        procedure: Optional[str],
+        diagnosis: Optional[str],
+        patient_context: Optional[str] = None,
+        plan_context: Optional[str] = None,
+    ) -> List[Tuple[str, str]]:
+        """
+        Generate a list of questions that could help craft a better appeal for
+        this specific denial.
+
+        Args:
+            denial_text: The text of the denial letter
+            patient_context: Optional patient health history or context
+            plan_context: Optional insurance plan context
+
+        Returns:
+            A list of tuples (question, answer) where answer may be empty
+        """
+        return []
 
     async def get_fax_number(self, prompt) -> Optional[str]:
         """
@@ -156,7 +182,7 @@ class RemoteModel(RemoteModelLike):
         """Return a list of supported models."""
         return []
 
-    def bad_result(self, result: Optional[str]) -> bool:
+    def bad_result(self, result: Optional[str], infer_type: str) -> bool:
         """Checker to see if a result is "reasonable" may be used to retry."""
         if result is None or len(result) < 3:
             return True
@@ -172,14 +198,14 @@ class RemoteOpenLike(RemoteModel):
         api_base,
         token,
         model,
-        system_prompts,
+        system_prompts_map: dict[str, list[str]],
         backup_api_base=None,
         expensive=False,
     ):
         self.api_base = api_base
         self.token = token
         self.model = model
-        self.system_prompts = system_prompts
+        self.system_prompts_map = system_prompts_map
         self.max_len = 4096 * 8
         self._timeout = 90
         self.invalid_diag_procedure_regex = re.compile(
@@ -195,17 +221,48 @@ class RemoteOpenLike(RemoteModel):
         self.backup_api_base = backup_api_base
         self._expensive = expensive
 
-    def bad_result(self, result: Optional[str]) -> bool:
-        bad_ideas = [
+    def get_system_prompts(
+        self, prompt_type: str, for_patient: bool = True
+    ) -> list[str]:
+        """
+        Get the appropriate system prompt based on type and audience.
+
+        Args:
+            prompt_type: The type of prompt to get (e.g., 'full', 'questions', etc.)
+            for_patient: Whether this is for patient (True) or professional (False)
+
+        Returns:
+            The system prompt as a string, or the first prompt if multiple are available
+        """
+        key = prompt_type
+        if not for_patient and f"{prompt_type}_not_patient" in self.system_prompts_map:
+            key = f"{prompt_type}_not_patient"
+
+        return self.system_prompts_map.get(
+            key,
+            [
+                "Your are a helpful assistant with extensive medical knowledge who loves helping patients."
+            ],
+        )
+
+    def bad_result(self, result: Optional[str], infer_type: str) -> bool:
+        # TODO: Unify this with the LLM synth data utils in llm-result-utils
+        generic_bad_ideas = [
             "Therefore, the Health Plans denial should be overturned.",
-            "I am writing on behalf of",
+            "llama llama virus",
+            "The independent medical review found that",
+            "The independent review findings for",
+            "the physician reviewer overturned",
+            "91111111111111111111111",
+            "I need the text to be able to help you with your appeal",
         ]
         if result is None:
             return True
-        for bad in bad_ideas:
-            if bad in result:
+        result_lower = result.lower()
+        for bad in generic_bad_ideas:
+            if bad.lower() in result_lower:
                 return True
-        if len(result.strip(" ")) < 5:
+        if len(result.strip(" ")) < 3:
             return True
         return False
 
@@ -223,9 +280,7 @@ class RemoteOpenLike(RemoteModel):
         if infer_type == "full" and not self._expensive:
             # Special case for the full one where we really want to explore the problem space
             temperatures = [0.6, 0.1]
-        system_prompts = self.system_prompts[infer_type]
-        if not for_patient and f"{infer_type}_not_patient" in self.system_prompts:
-            system_prompts = self.system_prompts[f"{infer_type}_not_patient"]
+        system_prompts = self.get_system_prompts(infer_type, for_patient)
         calls = itertools.chain.from_iterable(
             map(
                 lambda temperature: map(
@@ -259,60 +314,57 @@ class RemoteOpenLike(RemoteModel):
         system_prompt: str,
         temperature: float,
     ):
-        return asyncio.run(
-            self._checked_infer(
-                prompt,
-                patient_context,
-                plan_context,
-                infer_type,
-                pubmed_context,
-                system_prompt,
-                temperature,
-            )
+        return async_to_sync(self._checked_infer)(
+            prompt,
+            patient_context,
+            plan_context,
+            infer_type,
+            pubmed_context,
+            system_prompt,
+            temperature,
         )
 
     async def _checked_infer(
         self,
         prompt: str,
-        patient_context,
-        plan_context,
-        infer_type,
-        pubmed_context,
+        patient_context: Optional[str],
+        plan_context: Optional[str],
+        infer_type: str,
+        pubmed_context: Optional[str],
         system_prompt: str,
         temperature: float,
     ):
         # Extract URLs from the prompt to avoid checking them
         input_urls = []
-        if prompt:
+        if prompt and isinstance(prompt, str):
             input_urls.extend(CleanerUtils.url_re.findall(prompt))
-        if patient_context:
+        if patient_context and isinstance(patient_context, str):
             input_urls.extend(CleanerUtils.url_re.findall(patient_context))
-        if plan_context:
+        if plan_context and isinstance(patient_context, str):
             input_urls.extend(CleanerUtils.url_re.findall(plan_context))
-        if pubmed_context:
+        if pubmed_context and isinstance(patient_context, str):
             input_urls.extend(CleanerUtils.url_re.findall(pubmed_context))
 
         result = await self._infer(
             prompt=prompt,
             patient_context=patient_context,
             plan_context=plan_context,
-            system_prompt=system_prompt,
+            system_prompts=[system_prompt],
             pubmed_context=pubmed_context,
             temperature=temperature,
         )
         logger.debug(f"Got result {result} from {prompt} on {self}")
         # One retry
-        if self.bad_result(result):
+        if self.bad_result(result, infer_type):
             result = await self._infer(
                 prompt=prompt,
                 patient_context=patient_context,
                 plan_context=plan_context,
-                system_prompt=system_prompt,
+                system_prompts=[system_prompt],
                 pubmed_context=pubmed_context,
                 temperature=temperature,
             )
-
-        if self.bad_result(result):
+        if self.bad_result(result, infer_type):
             return []
         return [
             (
@@ -335,7 +387,7 @@ class RemoteOpenLike(RemoteModel):
 
     async def get_fax_number(self, denial: str) -> Optional[str]:
         return await self._infer(
-            system_prompt="You are a helpful assistant.",
+            system_prompts=["You are a helpful assistant."],
             prompt=f"When possible output in the same format as is found in the denial. Tell me the appeal fax number is within the provided denial. If the fax number is unknown write UNKNOWN. If known just output the fax number without any pre-amble and as a snipper from the original doc. DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN. The denial follows: {denial}. Remember DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN.",
         )
 
@@ -350,7 +402,7 @@ class RemoteOpenLike(RemoteModel):
             Extracted insurance company name or None
         """
         result = await self._infer(
-            system_prompt="You are a helpful assistant.",
+            system_prompts=["You are a helpful assistant."],
             prompt=f"When possible output in the same format as is found in the denial. Tell me which insurance company is within the provided denial. If it is not present or otherwise unknown write UNKNOWN. If known just output the answer without any pre-amble and as a snipper from the original doc. Remember: DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN. The denial follows: {denial}. Remember DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN.",
         )
         if result and "The insurance company is" in result:
@@ -368,7 +420,7 @@ class RemoteOpenLike(RemoteModel):
             Extracted plan ID or None
         """
         result = await self._infer(
-            system_prompt="You are a helpful assistant.",
+            system_prompts=["You are a helpful assistant."],
             prompt=f"When possible output in the same format as is found in the denial. Tell me the what plan ID is present is within the provided denial. If it is not present or unknown write UNKNOWN. If known just output the answer without any pre-amble and as a snipper from the original doc. DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN. The denial follows: {denial}. Remember DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN.",
         )
         if result and "The plan ID is" in result:
@@ -386,7 +438,7 @@ class RemoteOpenLike(RemoteModel):
             Extracted claim ID or None
         """
         result = await self._infer(
-            system_prompt="You are a helpful assistant.",
+            system_prompts=["You are a helpful assistant."],
             prompt=f"When possible output in the same format as is found in the denial. Tell me the what claim ID was denied within the provided denial (it could be multiple but it's normally just one). If it is not present or otherwise unknown write UNKNOWN. If known just output the answer without any pre-amble and as a snipper from the original doc. DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN.. The denial follows: {denial}. REMEMBER DO NOT GUESS.",
         )
         if result and "Claim ID is" in result:
@@ -404,7 +456,7 @@ class RemoteOpenLike(RemoteModel):
             Extracted date of service or None
         """
         result = await self._infer(
-            system_prompt="You are a helpful assistant.",
+            system_prompts=["You are a helpful assistant."],
             prompt=f"When possible output in the same format as is found in the denial. Tell me the what the date of service was within the provided denial (it could be multiple or a date range, but it can also just be one day). If it is not present or otherwise unknown write UNKNOWN. If known just output the asnwer without any pre-amble and as a snipper from the original doc. The denial follows: {denial}",
         )
         if result and "Date of service is" in result:
@@ -415,7 +467,7 @@ class RemoteOpenLike(RemoteModel):
         self, prompt: str, patient_context: str, plan_context
     ) -> List[str]:
         result = await self._infer(
-            system_prompt=self.system_prompts["questions"],
+            system_prompts=self.get_system_prompts("question"),
             prompt=prompt,
             patient_context=patient_context,
             plan_context=plan_context,
@@ -429,16 +481,13 @@ class RemoteOpenLike(RemoteModel):
         self, prompt: str
     ) -> tuple[Optional[str], Optional[str]]:
         logger.debug(f"Getting procedure and diagnosis for {self} w/ {prompt}")
-        if self.system_prompts["procedure"] is None:
-            logger.debug(f"No procedure message for {self.model} skipping")
-            return (None, None)
         model_response = await self._infer(
-            system_prompt=self.system_prompts["procedure"], prompt=prompt
+            system_prompts=self.get_system_prompts("procedure"), prompt=prompt
         )
         if model_response is None or "Diagnosis" not in model_response:
             logger.debug("Retrying query.")
             model_response = await self._infer(
-                system_prompt=self.system_prompts["procedure"], prompt=prompt
+                system_prompts=self.get_system_prompts("procedure"), prompt=prompt
             )
         if model_response is not None:
             responses: list[str] = model_response.split("\n")
@@ -470,33 +519,37 @@ class RemoteOpenLike(RemoteModel):
 
     async def _infer(
         self,
-        system_prompt,
+        system_prompts: list[str],
         prompt,
         patient_context=None,
         plan_context=None,
         pubmed_context=None,
         temperature=0.7,
     ) -> Optional[str]:
-        r = await self.__timeout_infer(
-            system_prompt=system_prompt,
-            prompt=prompt,
-            patient_context=patient_context,
-            plan_context=plan_context,
-            pubmed_context=pubmed_context,
-            temperature=temperature,
-            model=self.model,
-        )
-        if r is None and self.backup_api_base is not None:
+        r: Optional[str] = None
+        for system_prompt in system_prompts:
             r = await self.__timeout_infer(
                 system_prompt=system_prompt,
                 prompt=prompt,
                 patient_context=patient_context,
                 plan_context=plan_context,
-                temperature=temperature,
                 pubmed_context=pubmed_context,
+                temperature=temperature,
                 model=self.model,
-                api_base=self.backup_api_base,
             )
+            if r is None and self.backup_api_base is not None:
+                r = await self.__timeout_infer(
+                    system_prompt=system_prompt,
+                    prompt=prompt,
+                    patient_context=patient_context,
+                    plan_context=plan_context,
+                    temperature=temperature,
+                    pubmed_context=pubmed_context,
+                    model=self.model,
+                    api_base=self.backup_api_base,
+                )
+            if r is not None:
+                return r
         return r
 
     async def __timeout_infer(
@@ -505,8 +558,12 @@ class RemoteOpenLike(RemoteModel):
         **kwargs,
     ) -> Optional[str]:
         if self._timeout is not None:
-            with Timeout(self._timeout) as timeout_ctx:
-                return await self.__infer(*args, **kwargs)
+            try:
+                with Timeout(self._timeout) as timeout_ctx:
+                    return await self.__infer(*args, **kwargs)
+            except TimeoutException as e:
+                logger.debug(f"Timed out querying {self}")
+                return None
         else:
             return await self.__infer(*args, **kwargs)
 
@@ -600,12 +657,10 @@ class RemoteFullOpenLike(RemoteOpenLike):
     ):
         systems = {
             "full_patient": [
-                #                """You possess extensive medical expertise and enjoy crafting appeals for health insurance denials as a personal interest. As a patient, not a doctor, you advocate for yourself. Don't assume you have any letter from a physician. Your writing style is direct, akin to patio11 or a bureaucrat, and maintains a professional tone without expressing frustration towards insurance companies. You may consider emphasizing the unique and potentially essential nature of the medical intervention, using "YourNameMagic" as your name, "SCSID" for the subscriber ID, and "GPID" as the group ID. Make sure to write in the form of a letter. Ideally use the communication the style of patio11 / a being a Dangerous Professional means communicating in what might be a slightly adversarial context in a way which suggests that a bureaucracy take one's concerns seriously and escalate them to someone empowered to resolve them swiftly. You can be verbose. Start your response with Dear [Insurance Company];""",
-                """You possess extensive medical expertise and enjoy crafting appeals for health insurance denials as a personal interest. As a patient, not a doctor, you advocate for yourself. Don't assume you have any letter from a physician unless absolutely necessary. Your writing style is direct, akin to patio11 or a bureaucrat, and maintains a professional tone without expressing frustration towards insurance companies. You may consider emphasizing the unique and potentially essential nature of the medical intervention, using "YourNameMagic" as your name, "SCSID" for the subscriber ID, and "GPID" as the group ID. Make sure to write in the form of a letter. Do not use the 3rd person when refering to the patient, instead use the first persion (I, my, etc.). You are not a review and should not mention any. Only provide references you are certain exist (e.g. provided as input or found as agent).""",
+                """You possess extensive medical expertise and enjoy crafting appeals for health insurance denials as a personal interest. As a patient, not a doctor, you advocate for yourself. Don't assume you have any letter from a physician unless absolutely necessary. Your writing style is direct, akin to patio11 or a bureaucrat, and maintains a professional tone without expressing frustration towards insurance companies. You may consider emphasizing the unique and potentially essential nature of the medical intervention, using "YourNameMagic" as your name, "SCSID" for the subscriber ID, and "GPID" as the group ID. Make sure to write in the form of a letter. Do not use the 3rd person when referring to the patient, instead use the first person (I, my, etc.). You are not a review and should not mention any. Only provide references you are certain exist (e.g. provided as input or found as agent).""",
             ],
             "full": [
-                #                """You possess extensive medical expertise and enjoy crafting appeals for health insurance denials as a personal interest. As a patient, not a doctor, you advocate for yourself. Don't assume you have any letter from a physician. Your writing style is direct, akin to patio11 or a bureaucrat, and maintains a professional tone without expressing frustration towards insurance companies. You may consider emphasizing the unique and potentially essential nature of the medical intervention, using "YourNameMagic" as your name, "SCSID" for the subscriber ID, and "GPID" as the group ID. Make sure to write in the form of a letter. Ideally use the communication the style of patio11 / a being a Dangerous Professional means communicating in what might be a slightly adversarial context in a way which suggests that a bureaucracy take one's concerns seriously and escalate them to someone empowered to resolve them swiftly. You can be verbose. Start your response with Dear [Insurance Company];""",
-                """You possess extensive medical expertise and enjoy crafting appeals for health insurance denials as a personal interest. As a patient, not a doctor, you advocate for yourself. Don't assume you have any letter from a physician unless absolutely necessary. Your writing style is direct, akin to patio11 or a bureaucrat, and maintains a professional tone without expressing frustration towards insurance companies. You may consider emphasizing the unique and potentially essential nature of the medical intervention, using "YourNameMagic" as your name, "SCSID" for the subscriber ID, and "GPID" as the group ID. Make sure to write in the form of a letter. Do not use the 3rd person when refering to the patient, instead use the first persion (I, my, etc.). You are not a review and should not mention any. Only provide references you are certain exist (e.g. provided as input or found as agent).""",
+                """You possess extensive medical expertise and enjoy crafting appeals for health insurance denials as a personal interest. As a patient, not a doctor, you advocate for yourself. Don't assume you have any letter from a physician unless absolutely necessary. Your writing style is direct, akin to patio11 or a bureaucrat, and maintains a professional tone without expressing frustration towards insurance companies. You may consider emphasizing the unique and potentially essential nature of the medical intervention, using "YourNameMagic" as your name, "SCSID" for the subscriber ID, and "GPID" as the group ID. Make sure to write in the form of a letter. Do not use the 3rd person when referring to the patient, instead use the first person (I, my, etc.). You are not a review and should not mention any. Only provide references you are certain exist (e.g. provided as input or found as agent).""",
             ],
             "full_not_patient": [
                 """You possess extensive medical expertise and enjoy crafting appeals for health insurance denials as a personal interest. You are working in a healthcare professionals office. Your writing style is direct, akin to patio11 or a bureaucrat, and maintains a professional tone without expressing frustration towards insurance companies. You may consider emphasizing the unique and potentially essential nature of the medical intervention, using "YourNameMagic" as your name, "SCSID" for the subscriber ID, and "GPID" as the group ID. Make sure to write in the form of a letter. You are not a reviewer and should not mention any. Only provide references you are certain exist (e.g. provided as input or found as agent).""",
@@ -614,10 +669,32 @@ class RemoteFullOpenLike(RemoteOpenLike):
                 """You must be concise. You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters to identify the requested procedure and, if available, the associated diagnosis. Each word costs an extra dollar. Provide a concise response with the procedure on one line starting with "Procedure" and Diagnsosis on another line starting with Diagnosis. Do not say not specified. Diagnosis can also be reason for treatment even if it's not a disease (like high risk homosexual behaviour for prep or preventitive and the name of the diagnosis). Remember each result on a seperated line."""
             ],
             "questions": [
-                """Given the appeal and the context what questions should we ask the user to provide context to help generate their appeal? Put each question on a new line."""
+                """You have deep expertise in health insurance and extensive experience working in a medical office. Your task is to generate the best one to four specific, detailed questions that will help craft a stronger appeal for a health insurance denial.
+
+### Key Guidelines:
+- No Independent Medical Review (IMR/IME) has occured yet We are only dealing with the insurance company at this stage, so do not reference independent medical reviews.
+- Patient/Medical Assistant-Friendly: The questions will likely be answered by a patient or a medical assistant, so avoid technical jargon.
+- Focus on Establishing Validity: Do not ask about the insurance company’s stated reason for denial. Instead, ask patient-related questions that help demonstrate why the denial is invalid.
+### Question Format Preferences:
+  - Yes/no questions are ideal.
+  - Short-answer questions (one sentence max) are acceptable.
+  - Avoid long-answer questions, as they may overwhelm the patient.
+### Bad questions (do not ask):
+  - Why was the treatment considered not medically necessary?
+  - What specific criteria were used to determine medical necessity for this treatment?
+  - What is the insurance company’s stated reason for denial?
+  - Can you provide more information on the clinical evidence and guidelines that support the medical necessity of this treatment?
+### Good Examples:
+  - Wegovy denial: "Has the patient participated in a structured weight loss program (e.g., Weight Watchers)?"
+  - PrEP denial: "How many sexual partners (roughly) has the patient had in the past 12 months?"
+  - Mammogram denial: "What is the patient’s age?" "Does the patient have the BRCA1 mutation or a family history of breast cancer?"
+### Context-Aware Answers:
+ -If a question has a likely answer from the provided context, include the answer on the same line after the question mark.
+- Case-Specific: Each question should be directly relevant to the specific denial reason and medical necessity at hand.
+"""
             ],
             "medically_necessary": [
-                """You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters. Each word costs an extra dollar. Please provide a concise response. Do not use the 3rd person when refering to the patient (e.g. don't say "the patient", "patient's", "his", "hers"), instead use the first persion (I, my, mine,etc.) when talking about the patient. You are not a review and should not mention any. Write concisely in a professional tone akin to patio11. Do not say this is why the decission should be overturned. Just say why you believe it is medically necessary (e.g. to prevent X or to treat Y)."""
+                """You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters. Each word costs an extra dollar. Please provide a concise response. Do not use the 3rd person when referring to the patient (e.g. don't say "the patient", "patient's", "his", "hers"), instead use the first person (I, my, mine,etc.) when talking about the patient. You are not a review and should not mention any. Write concisely in a professional tone akin to patio11. Do not say this is why the decission should be overturned. Just say why you believe it is medically necessary (e.g. to prevent X or to treat Y)."""
             ],
             "generic": [
                 """You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters. Help a patient answer the provided question for their insurance appeal."""
@@ -631,6 +708,123 @@ class RemoteFullOpenLike(RemoteOpenLike):
             expensive=expensive,
             backup_api_base=backup_api_base,
         )
+
+    async def get_appeal_questions(
+        self,
+        denial_text: str,
+        procedure: Optional[str],
+        diagnosis: Optional[str],
+        patient_context: Optional[str] = None,
+        plan_context: Optional[str] = None,
+    ) -> List[Tuple[str, str]]:
+        """
+        Generate a list of questions that could help craft a better appeal for
+        this specific denial.
+
+        Args:
+            denial_text: The text of the denial letter
+            patient_context: Optional patient health history or context
+            procedure: the procedure
+            diagnosis: primary diagnosis
+            plan_context: Optional insurance plan context
+
+        Returns:
+            A list of tuples (question, answer) where answer may be empty
+        """
+        procedure_opt = (
+            "The procedure denied was {procedure} so only ask questions relevant to {procedure}"
+            if procedure
+            else ""
+        )
+        patient_context_opt = (
+            "Optional patient context: {patient_context}" if patient_context else ""
+        )
+        diagnosis_opt = "The primary diagnosis was {diagnosis}" if diagnosis else ""
+        # Procedure opt is in their multiple times intentionally. ~computers~
+        prompt = f"""
+        Some context which can help you in your task: {denial_text}
+        {procedure_opt} \n
+        {patient_context_opt} \n
+        {diagnosis_opt} \n
+        {procedure_opt} \n
+        Your task is to write one to three patient friendly questions about the patient history to help appeal this denial. \n
+        Remember to keep the questions concise and patient-friendly and focused on the potential patient history.\n
+        If you ask questions about the denial it's self the patient will be sad and give up so don't do that.
+        {procedure_opt} \n
+        """
+
+        system_prompts: list[str] = self.get_system_prompts("questions")
+
+        result = await self._infer(
+            system_prompts=system_prompts,
+            prompt=prompt,
+            patient_context=patient_context,
+            plan_context=plan_context,
+            temperature=0.7,
+        )
+
+        if result is None:
+            logger.warning("Failed to generate appeal questions")
+            return []
+
+        # Process the result into a list of questions with potential answers
+        questions_with_answers: List[Tuple[str, str]] = []
+
+        # Handle the case where the model returns a single block of text
+        if "\n" not in result and len(result) > 100:
+            # Try to extract questions with regex patterns
+            # Look for patterns like "1. Question? Answer" or numbering + question + question mark
+            potential_questions = re.findall(
+                r"(?:\d+\.|\*|\-|\•)?\s*(?:\*\*)?([^.!?]+\?)(?:\*\*)?\s*([^.!?\d][^.!?\d]*?)(?=(?:\d+\.|\*|\-|\•)?\s*(?:\*\*)?[A-Z]|\Z)",
+                result,
+            )
+            for q, a in potential_questions:
+                questions_with_answers.append((q.strip(), a.strip()))
+            if questions_with_answers:
+                return questions_with_answers
+
+        # Process line by line if we have multiple lines or the above extraction didn't work
+        for line in result.split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+
+            # Remove numbering and bullet points at the beginning of the line
+            # This handles formats like "1. ", "1) ", "• ", "- ", "* ", etc.
+            line = re.sub(r"^\s*(?:\d+[.)\-]|\*|\•|\-)\s+", "", line)
+
+            # Handle markdown-style bold formatting like "**Question?** Answer"
+            bold_match = re.search(r"\*\*([^*]+?)\*\*\s*(.*)", line)
+            if bold_match:
+                question = bold_match.group(1).strip()
+                answer = bold_match.group(2).strip()
+
+                # Make sure question ends with question mark
+                if not question.endswith("?"):
+                    question += "?"
+
+                questions_with_answers.append((question, answer))
+                continue
+
+            # Skip header lines
+            if line.lower().startswith(("here are", "questions", "additional")):
+                continue
+
+            # Parse potential answer if present (format: "Question? Answer")
+            question_parts = line.split("?", 1)
+            if len(question_parts) > 1:
+                question_text = question_parts[0].strip() + "?"
+                # Handle potential formatting in answers like "A: ", ": ", etc.
+                answer_text = question_parts[1].strip()
+                answer_text = re.sub(r"^[A:][\s:]*", "", answer_text)
+                questions_with_answers.append((question_text, answer_text))
+            else:
+                # Ensure line ends with a question mark if it doesn't have one
+                if not line.endswith("?"):
+                    line += "?"
+                questions_with_answers.append((line, ""))
+
+        return questions_with_answers
 
 
 class RemoteHealthInsurance(RemoteFullOpenLike):
@@ -747,7 +941,7 @@ class DeepInfra(RemoteFullOpenLike):
     """Use DeepInfra."""
 
     def __init__(self, model: str):
-        api_base = "https://api.deepinfra.com/v1/openai/chat/completions"
+        api_base = "https://api.deepinfra.com/v1/openai"
         token = os.getenv("DEEPINFRA_API")
         if token is None or len(token) < 1:
             raise Exception("No token found for deepinfra")
@@ -756,6 +950,11 @@ class DeepInfra(RemoteFullOpenLike):
     @classmethod
     def models(cls) -> List[ModelDescription]:
         return [
+            ModelDescription(
+                cost=20,
+                name="google/gemma-3-27b-it",
+                internal_name="google/gemma-3-27b-it",
+            ),
             ModelDescription(
                 cost=179,
                 name="meta-llama/meta-llama-3.1-405B-instruct",

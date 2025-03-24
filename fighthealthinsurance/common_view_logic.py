@@ -13,6 +13,7 @@ import tempfile
 import os
 import uuid
 import re
+from stopit.utils import TimeoutException
 
 from django.core.files import File
 from django.core.validators import validate_email
@@ -154,12 +155,20 @@ class AppealAssemblyHelper:
                         new_input_path = f"{input_path}.u8.txt"
                     except:
                         pass
+                if input_path.endswith(".html"):
+                    html_command = base_convert_command
+                    html_command.extend(["-thtml"])
+                    try:
+                        await check_call(html_command)
+                        return f"{input_path}.pdf"
+                    except:
+                        pass
                 # Try a different engine
                 for engine in ["lualatex", "xelatex"]:
                     convert_command = base_convert_command
                     convert_command.extend([f"--pdf-engine={engine}"])
                     try:
-                        await check_call(base_convert_command)
+                        await check_call(convert_command)
                         return f"{input_path}.pdf"
                     except:
                         pass
@@ -189,6 +198,7 @@ class AppealAssemblyHelper:
         email: str,
         include_provided_health_history: bool,
         name: str,
+        include_cover: bool = True,
         insurance_company: Optional[str] = None,
         denial: Optional[Denial] = None,
         denial_id: Optional[str] = None,
@@ -241,7 +251,10 @@ class AppealAssemblyHelper:
             insurance_company = denial.insurance_company
         claim_id = denial.claim_id
         health_history: Optional[str] = None
-        if include_provided_health_history:
+        if (
+            include_provided_health_history
+            or denial.include_provided_health_history_in_appeal
+        ):
             health_history = denial.health_history
         # Usage based billing goes here
         if appeal and hasattr(appeal, "domain") and appeal.domain:
@@ -271,15 +284,11 @@ class AppealAssemblyHelper:
                 professional_fax_number=professional_fax_number,
                 professional_name=professional_name,
                 target=t.name,
+                include_cover=include_cover,
             )
             t.flush()
             t.seek(0)
             doc_fname = os.path.basename(t.name)
-
-            # Create JSON representation of pubmed_ids if provided
-            pubmed_ids_json = None
-            if pubmed_ids_parsed:
-                pubmed_ids_json = json.dumps(pubmed_ids_parsed)
 
             if appeal is None:
                 appeal = Appeal.objects.create(
@@ -291,7 +300,7 @@ class AppealAssemblyHelper:
                     creating_professional=creating_professional,
                     patient_user=patient_user,
                     domain=domain,
-                    pubmed_ids_json=pubmed_ids_json,
+                    pubmed_ids_json=pubmed_ids_parsed,
                 )
             else:
                 # Instead of using update(), set values individually preserving existing ones if not provided
@@ -310,8 +319,8 @@ class AppealAssemblyHelper:
                     appeal.patient_user = patient_user
                 if domain:
                     appeal.domain = domain
-                if pubmed_ids_json:
-                    appeal.pubmed_ids_json = pubmed_ids_json
+                if pubmed_ids_parsed:
+                    appeal.pubmed_ids_json = pubmed_ids_parsed
             if pending is not None:
                 appeal.pending = pending
             appeal.save()
@@ -326,6 +335,7 @@ class AppealAssemblyHelper:
         company_name: str,
         patient_name: str,
         claim_id: Optional[str],
+        include_cover: bool = True,
         health_history: Optional[str] = None,
         patient_address: Optional[str] = None,
         patient_fax: Optional[str] = None,
@@ -340,46 +350,51 @@ class AppealAssemblyHelper:
     ):
         if len(target) < 2:
             return
-        # Build our cover page
-        cover_context = {
-            "receiver_name": insurance_company or "",
-            "receiver_fax_number": fax_phone,
-            "company_name": company_name,
-            "company_fax_number": company_fax_number,
-            "company_phone_number": company_phone_number,
-            "fax_sent_datetime": str(datetime.datetime.now()),
-            "provider_fax_number": professional_fax_number,
-            "provider_name": professional_name,
-            "professional_fax_number": professional_fax_number,
-            "patient_name": patient_name,
-            "claim_id": claim_id,
-        }
-        cover_content: str = ""
-        # Render the cover content
-        if cover_template_string and len(cover_template_string) > 0:
-            cover_content = Template(cover_template_string).substitute(cover_context)
-            logger.debug(
-                f"Rendering cover letter from string {cover_template_string} and got {cover_content}"
+        if include_cover:
+            # Build our cover page
+            onbehalf_of_name = f"{professional_name} and {patient_name}"
+            cover_context = {
+                "receiver_name": insurance_company or "",
+                "receiver_fax_number": fax_phone,
+                "company_name": company_name,
+                "company_fax_number": company_fax_number,
+                "company_phone_number": company_phone_number,
+                "fax_sent_datetime": str(datetime.datetime.now()),
+                "provider_fax_number": (professional_fax_number or professional_name),
+                "provider_name": professional_name,
+                "professional_fax_number": professional_fax_number,
+                "patient_name": patient_name,
+                "onbehalf_of_name": onbehalf_of_name,
+                "claim_id": claim_id,
+            }
+            cover_content: str = ""
+            # Render the cover content
+            if cover_template_string and len(cover_template_string) > 1:
+                cover_content = Template(cover_template_string).substitute(
+                    cover_context
+                )
+                logger.debug(
+                    f"Rendering cover letter from string {cover_template_string} and got {cover_content}"
+                )
+            else:
+                cover_content = render_to_string(
+                    cover_template_path,
+                    context=cover_context,
+                )
+                logger.debug(
+                    f"Rendering cover letter from path {cover_template_path} and got {cover_content}"
+                )
+            files_for_fax: list[str] = []
+            cover_letter_file = tempfile.NamedTemporaryFile(
+                suffix=".html", prefix="info_cover", mode="w+t", delete=False
             )
-        else:
-            cover_content = render_to_string(
-                cover_template_path,
-                context=cover_context,
-            )
-            logger.debug(
-                f"Rendering cover letter from path {cover_template_path} and got {cover_content}"
-            )
-        files_for_fax: list[str] = []
-        cover_letter_file = tempfile.NamedTemporaryFile(
-            suffix=".html", prefix="info_cover", mode="w+t", delete=True
-        )
-        cover_letter_file.write(cover_content)
-        cover_letter_file.flush()
-        files_for_fax.append(cover_letter_file.name)
+            cover_letter_file.write(cover_content)
+            cover_letter_file.flush()
+            files_for_fax.append(cover_letter_file.name)
 
         # Appeal text
         appeal_text_file = tempfile.NamedTemporaryFile(
-            suffix=".txt", prefix="appealtxt", mode="w+t", delete=True
+            suffix=".txt", prefix="appealtxt", mode="w+t", delete=False
         )
         appeal_text_file.write(completed_appeal_text)
         appeal_text_file.flush()
@@ -390,7 +405,7 @@ class AppealAssemblyHelper:
         health_history_file = None
         if health_history and len(health_history) > 2:
             health_history_file = tempfile.NamedTemporaryFile(
-                suffix=".txt", prefix="healthhist", mode="w+t", delete=True
+                suffix=".txt", prefix="healthhist", mode="w+t", delete=False
             )
             health_history_file.write("Health History:\n")
             health_history_file.write(health_history)
@@ -401,13 +416,15 @@ class AppealAssemblyHelper:
         if pubmed_ids_parsed is not None and len(pubmed_ids_parsed) > 0:
             logger.debug(f"Processing PubMed articles: {pubmed_ids_parsed}")
             pmt = PubMedTools()
-            pubmed_docs: list[PubMedArticleSummarized] = pmt.get_articles(
-                pubmed_ids_parsed
-            )
+            pubmed_docs: list[PubMedArticleSummarized] = async_to_sync(
+                pmt.get_articles
+            )(pubmed_ids_parsed)
             logger.debug(f"Retrieved {len(pubmed_docs)} PubMed articles")
             if pubmed_docs:
                 pubmed_docs_paths = [
-                    x for x in map(pmt.article_as_pdf, pubmed_docs) if x is not None
+                    x
+                    for x in map(async_to_sync(pmt.article_as_pdf), pubmed_docs)
+                    if x is not None
                 ]
                 files_for_fax.extend(pubmed_docs_paths)
                 logger.debug(f"Added {len(pubmed_docs_paths)} PubMed PDFs to fax")
@@ -461,7 +478,8 @@ class SendFaxHelper:
         )
         appeal.fax = fts
         appeal.save()
-        fax_actor_ref.get.do_send_fax.remote(fts.hashed_email, fts.uuid)
+        # We call str on fts.uuid since it's a UUID object but when persisted it's a string
+        fax_actor_ref.get.do_send_fax.remote(fts.hashed_email, str(fts.uuid))
         return FaxHelperResults(uuid=fts.uuid, hashed_email=hashed_email)
 
     @classmethod
@@ -616,6 +634,7 @@ class FindNextStepsHelper:
         plan_id,
         claim_id,
         denial_type,
+        include_provided_health_history_in_appeal: Optional[bool] = None,
         denial_date: Optional[datetime.date] = None,
         semi_sekret: str = "",
         your_state: Optional[str] = None,
@@ -646,7 +665,6 @@ class FindNextStepsHelper:
             denial.plan_source.set(plan_source)
         if patient_health_history:
             denial.health_history = patient_health_history
-        denial.save()
         # Only set employer name if it's not too long
         if employer_name is not None and len(employer_name) < 300:
             denial.employer_name = employer_name
@@ -657,7 +675,16 @@ class FindNextStepsHelper:
             and len(appeal_fax_number) > 5
             and len(appeal_fax_number) < 30
         ):
+            logger.debug(f"Setting appeal fax number to {appeal_fax_number}")
             denial.appeal_fax_number = appeal_fax_number
+        else:
+            logger.debug(f"Invalid appeal fax number {appeal_fax_number}")
+        denial.save()
+
+        if include_provided_health_history_in_appeal is not None:
+            denial.include_provided_health_history = (
+                include_provided_health_history_in_appeal
+            )
 
         outside_help_details = []
         state = your_state or denial.your_state
@@ -726,7 +753,53 @@ class FindNextStepsHelper:
             if new_form is not None:
                 new_form = new_form(initial={"medical_reason": dt.appeal_text})
                 question_forms.append(new_form)
+
+        # Generate questions for better appeal creation
+        try:
+            # If questions don't exist yet, generate them
+            if denial.generated_questions is None:
+                # Call the generate_appeal_questions method to get and store questions
+                # Using sync_to_async since we're in a synchronous method
+                async_to_sync(DenialCreatorHelper.generate_appeal_questions)(
+                    denial_id=denial.denial_id
+                )
+                # Refresh the denial object to get the updated questions
+                denial.refresh_from_db()
+
+            # Create a form with the questions as fields if we have generated questions
+            if denial.generated_questions:
+                from django import forms
+
+                # The generated_questions field now contains tuples of (question, answer)
+                generated_questions: list[tuple[str, str]] = denial.generated_questions
+
+                # Create an AppealQuestionsForm to add to our question forms
+                class AppealQuestionsForm(forms.Form):
+                    def __init__(self, *args, **kwargs):
+                        super().__init__(*args, **kwargs)
+                        # Add fields for each question
+                        for i, (question, initial_answer) in enumerate(
+                            generated_questions, 1
+                        ):
+                            field_name = f"appeal_generated_question_{i}"
+                            self.fields[field_name] = forms.CharField(
+                                label=question,
+                                help_text=question,
+                                required=False,
+                                initial=initial_answer,  # Use the answer from the tuple
+                            )
+
+                appeal_questions_form = AppealQuestionsForm()
+                # Add this form to our question forms list
+                question_forms.append(appeal_questions_form)
+        except Exception as e:
+            logger.opt(exception=True).warning(
+                f"Failed to process appeal questions for denial {denial_id}: {e}"
+            )
+
+        # Combine all forms
         combined_form = magic_combined_form(question_forms, existing_answers)
+
         return NextStepInfo(
             outside_help_details=outside_help_details,
             combined_form=combined_form,
@@ -831,6 +904,76 @@ class DenialCreatorHelper:
         if cls._all_denial_types is None:
             cls._all_denial_types = DenialTypes.objects.all()
         return cls._all_denial_types
+
+    @classmethod
+    async def generate_appeal_questions(cls, denial_id: int) -> List[Tuple[str, str]]:
+        """
+        Generate a list of questions that could help craft a better appeal for
+        this specific denial. The questions will be stored in the denial object's
+        generated_questions field as tuples of (question, answer).
+
+        Args:
+            denial_id: The ID of the denial to generate questions for
+
+        Returns:
+            A list of (question, answer) tuples to help with appeal creation
+        """
+        denial = await Denial.objects.filter(denial_id=denial_id).aget()
+        if not denial:
+            logger.warning(f"Could not find denial with ID {denial_id}")
+            return []
+        # For now this is disabled
+        return []
+        try:
+            # Check if we already have questions generated
+            if denial.generated_questions is not None:
+                # Convert stored lists to tuples for consistency with return type
+                result_questions: List[Tuple[str, str]] = [
+                    (
+                        (q[0], q[1])
+                        if isinstance(q, list)
+                        else (q[0], q[1]) if isinstance(q, tuple) else (str(q), "")
+                    )
+                    for q in denial.generated_questions
+                ]
+                return result_questions
+
+            # Get required context for the questions
+            denial_text = denial.denial_text
+            patient_context = denial.health_history
+            plan_context = denial.plan_context
+
+            if denial.procedure:
+
+                # Use the ML model to generate questions with potential answers
+                raw_questions = await appealGenerator.get_appeal_questions(
+                    denial_text=denial_text,
+                    diagnosis=denial.diagnosis,
+                    procedure=denial.procedure,
+                    patient_context=patient_context,
+                    plan_context=plan_context,
+                )
+
+                # Ensure we're working with tuples
+                questions: List[Tuple[str, str]] = [
+                    (q[0], q[1]) if isinstance(q, (list, tuple)) else (str(q), "")
+                    for q in raw_questions
+                ]
+
+                # Store the questions in the generated_questions field
+                denial.generated_questions = questions
+                await denial.asave()
+                logger.debug(
+                    f"Generated {len(questions)} questions for denial {denial_id}"
+                )
+                return questions
+            else:
+                return []
+        except Exception as e:
+            logger.opt(exception=True).warning(
+                f"Failed to generate questions for denial {denial_id}: {e}"
+            )
+            return []
 
     @classmethod
     def create_or_update_denial(
@@ -1011,13 +1154,15 @@ class DenialCreatorHelper:
             # Yield each result immediately for streaming
             yield result
 
-        # Now we see what optional tasks we can wrap up in the last 30 seconds.
+        # Now we see what optional tasks we can wrap up in the last 45 seconds.
         try:
-            for task in asyncio.as_completed(optional_tasks, timeout=30):
+            for task in asyncio.as_completed(optional_tasks, timeout=45):
                 result = await task
                 yield result
+        except asyncio.TimeoutError:
+            logger.debug("Ran out of time for optional tasks -- moving on")
         except Exception as e:
-            logger.opt(exception=True).debug(f"Error processing optional tasks: {e}")
+            logger.debug(f"Error processing optional tasks: {e}")
             yield f"Error processing optional tasks: {str(e)}\n"
 
         yield "Extraction completed\n"
@@ -1048,7 +1193,7 @@ class DenialCreatorHelper:
                     try:
                         pubmed_tool = PubMedTools()
                         # Find related articles based on diagnosis and procedure
-                        pubmed_tool.find_pubmed_articles_for_denial(
+                        await pubmed_tool.find_pubmed_articles_for_denial(
                             denial, timeout=60.0
                         )
                     except Exception as e:
@@ -1223,17 +1368,30 @@ class DenialCreatorHelper:
         semi_sekret,
         health_history=None,
         plan_documents=None,
+        include_provided_health_history_in_appeal=None,
+        health_history_anonymized=None,
     ):
         hashed_email = Denial.get_hashed_email(email)
         denial = Denial.objects.filter(
             hashed_email=hashed_email, denial_id=denial_id, semi_sekret=semi_sekret
         ).get()
         return cls._update_denial(
-            denial, health_history=health_history, plan_documents=plan_documents
+            denial,
+            health_history=health_history,
+            plan_documents=plan_documents,
+            include_provided_health_history_in_appeal=include_provided_health_history_in_appeal,
+            health_history_anonymized=health_history_anonymized,
         )
 
     @classmethod
-    def _update_denial(cls, denial, health_history=None, plan_documents=None):
+    def _update_denial(
+        cls,
+        denial,
+        health_history=None,
+        plan_documents=None,
+        include_provided_health_history_in_appeal=None,
+        health_history_anonymized=None,
+    ):
         if plan_documents is not None:
             for plan_document in plan_documents:
                 pd = PlanDocuments.objects.create(
@@ -1243,7 +1401,13 @@ class DenialCreatorHelper:
 
         if health_history is not None:
             denial.health_history = health_history
-            denial.save()
+        if include_provided_health_history_in_appeal is not None:
+            denial.include_provided_health_history_in_appeal = (
+                include_provided_health_history_in_appeal
+            )
+        if health_history_anonymized is not None:
+            denial.health_history_anonymized = health_history_anonymized
+        denial.save()
         # Return the current the state
         return cls.format_denial_response_info(denial)
 
@@ -1253,7 +1417,9 @@ class DenialCreatorHelper:
         if Appeal.objects.filter(for_denial=denial).exists():
             appeal_id = Appeal.objects.get(for_denial=denial).id
         else:
-            logger.debug("Could not find appeal for {denial}")
+            logger.debug(
+                f"Could not find appeal for {denial} -- expected for consumer version"
+            )
         r = DenialResponseInfo(
             selected_denial_type=denial.denial_type.all(),
             all_denial_types=cls.all_denial_types(),
@@ -1295,9 +1461,19 @@ class AppealsBackendHelper:
 
         # Get the current info
         await asyncio.sleep(0)
-        denial = await Denial.objects.filter(
-            denial_id=denial_id, semi_sekret=semi_sekret, hashed_email=hashed_email
-        ).aget()
+        denial = (
+            await Denial.objects.filter(
+                denial_id=denial_id, semi_sekret=semi_sekret, hashed_email=hashed_email
+            )
+            .select_related(
+                "patient_user",
+                "patient_user__user",
+                "domain",
+                "primary_professional",
+                "primary_professional__user",
+            )
+            .aget()
+        )
 
         non_ai_appeals: List[str] = list(
             map(
@@ -1384,24 +1560,14 @@ class AppealsBackendHelper:
         pubmed_context = None
         logger.debug("Looking up the pubmed context")
         try:
-            pubmed_context = await sync_to_async(cls.pmt.find_context_for_denial)(
-                denial
+            pubmed_context = await asyncio.wait_for(
+                cls.pmt.find_context_for_denial(denial), timeout=60
             )
         except Exception as e:
-            logger.debug(f"Error {e} looking up context for {denial}.")
+            logger.opt(exception=True).debug(
+                f"Error {e} looking up context for {denial}."
+            )
         logger.debug("Pubmed context done.")
-
-        try:
-            appeals: Iterator[str] = await sync_to_async(appealGenerator.make_appeals)(
-                denial,
-                AppealTemplateGenerator(prefaces, main, footer),
-                medical_reasons=medical_reasons,
-                non_ai_appeals=non_ai_appeals,
-                pubmed_context=pubmed_context,
-            )
-        except Exception as e:
-            logger.opt(exception=True).warning("Error generating appeals")
-        logger.debug("Done!")
 
         async def save_appeal(appeal_text: str) -> dict[str, str]:
             # Save all of the proposed appeals, so we can use RL later.
@@ -1440,23 +1606,29 @@ class AppealsBackendHelper:
                 "{diagnosis}": denial.diagnosis or "{diagnosis}",
                 "{procedure}": denial.procedure or "{procedure}",
             }
-            # TODO: Update for async
-            # if denial.patient_user is not None:
-            #    subs["[Patient Name]"] = denial.patient_user.get_legal_name()
-            # if denial and denial.primary_professional is not None:
-            #    subs["[Professional Name]"] = (
-            #        denial.primary_professional.get_full_name()
-            #    )
-            # if denial.domain:
-            #    subs["[Professional Address]"] = denial.domain.get_address()
+            if denial.patient_user is not None:
+                subs["[Patient Name]"] = denial.patient_user.get_legal_name()
+            if denial and denial.primary_professional is not None:
+                subs["[Professional Name]"] = (
+                    denial.primary_professional.get_full_name()
+                )
+            if denial.domain:
+                subs["[Professional Address]"] = denial.domain.get_address()
             ret = s.safe_substitute(subs)
             appeal["content"] = ret
-            logger.debug("Updated appeal to {ret}")
+            logger.debug(f"Updated appeal to {ret}")
             return appeal
 
         async def format_response(response: dict[str, str]) -> str:
             return json.dumps(response) + "\n"
 
+        appeals: Iterator[str] = await sync_to_async(appealGenerator.make_appeals)(
+            denial,
+            AppealTemplateGenerator(prefaces, main, footer),
+            medical_reasons=medical_reasons,
+            non_ai_appeals=non_ai_appeals,
+            pubmed_context=pubmed_context,
+        )
         filtered_appeals: Iterator[str] = filter(lambda x: x != None, appeals)
 
         # We convert to async here.

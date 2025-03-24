@@ -85,6 +85,7 @@ class ProDenialForm(BaseDenialForm):
     patient_id = forms.CharField(required=False)
     insurance_company = forms.CharField(required=False)
     patient_visible = forms.BooleanField(required=False)
+    denial_id = forms.IntegerField(required=False)
 
 
 class DenialRefForm(forms.Form):
@@ -95,6 +96,8 @@ class DenialRefForm(forms.Form):
 
 class HealthHistory(DenialRefForm):
     health_history = forms.CharField(required=False)
+    health_history_anonymized = forms.BooleanField(required=False)
+    include_provided_health_history_in_appeal = forms.BooleanField(required=False)
 
 
 class PlanDocumentsForm(DenialRefForm):
@@ -183,6 +186,8 @@ class PostInferedForm(BasePostInferedForm):
 class ProPostInferedForm(BasePostInferedForm):
     single_case = forms.BooleanField(required=False)
     in_network = forms.BooleanField(required=False)
+    appeal_fax_number = forms.CharField(required=False)
+    include_provided_health_history_in_appeal = forms.BooleanField(required=False)
 
 
 class FollowUpTestForm(forms.Form):

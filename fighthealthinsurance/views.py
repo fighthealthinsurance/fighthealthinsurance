@@ -148,6 +148,7 @@ class ProVersionView(generic.FormView):
             ),
             cancel_url=self.request.build_absolute_uri(reverse("pro_version_thankyou")),
             customer_email=form.cleaned_data["email"],
+            allow_promotion_codes=True,
             metadata={
                 "payment_type": "interested_professional_signup",
                 "interested_professional_id": interested_professional.id,
@@ -650,7 +651,7 @@ class StripeWebhookView(View):
                 costumer_id = session.get("customer")
                 if subscription_id:
                     models.UserDomain.objects.filter(
-                        id=session.metadata.get("id")
+                        id=session.metadata.get("domain_id")
                     ).update(
                         stripe_subscription_id=subscription_id,
                         stripe_customer_id=costumer_id,

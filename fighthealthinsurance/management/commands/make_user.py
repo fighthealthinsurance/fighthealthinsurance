@@ -28,6 +28,9 @@ class Command(BaseCommand):
             "--email", required=True, help="User's valid email address."
         )
         parser.add_argument(
+            "--first-name", required=False, help="User's first name", default="unknown"
+        )
+        parser.add_argument(
             "--password", required=True, help="User's password (minimum 8 characters)."
         )
         parser.add_argument(
@@ -55,6 +58,7 @@ class Command(BaseCommand):
         email = options["email"].strip()
         password = options["password"]
         domain_input = options["domain"]
+        first_name = options.get("first_name", "test_first_name")
         visible_phone_number = options.get("visible_phone_number", "0")
         is_provider = options.get("is_provider", True)
 
@@ -82,6 +86,9 @@ class Command(BaseCommand):
         except Exception as e:
             raise CommandError(f"Error handling domain creation: {str(e)}")
 
+        user_domain.beta = True
+        user_domain.save()
+
         try:
             combined_username = combine_domain_and_username(
                 username_raw, domain_name=user_domain.name
@@ -99,6 +106,7 @@ class Command(BaseCommand):
                     username=combined_username,
                     email=email,
                     password=password,
+                    first_name=first_name,
                 )
                 if hasattr(user, "is_provider"):
                     user.is_provider = is_provider

@@ -41,6 +41,7 @@ from fhi_users.models import (
 
 if typing.TYPE_CHECKING:
     from django.contrib.auth.models import User
+    from django.http import JsonResponse
 else:
     User = get_user_model()
 
@@ -141,6 +142,10 @@ class DenialLongEmployerName(APITestCase):
         assert denials_for_user_count == 1
 
 
+from typing import Dict, Any
+from django.http import JsonResponse
+
+
 class DenialEndToEnd(APITestCase):
     """Test end to end, we need to load the initial fixtures so we have denial types."""
 
@@ -203,7 +208,7 @@ class DenialEndToEnd(APITestCase):
             content_type="application/json",
         )
         self.assertTrue(status.is_success(response.status_code))
-        parsed = response.json()
+        parsed: Dict[str, Any] = response.json()
         denial_id = parsed["denial_id"]
         print(f"Using '{denial_id}'")
         semi_sekret = parsed["semi_sekret"]
@@ -221,7 +226,7 @@ class DenialEndToEnd(APITestCase):
         seb_communicator = WebsocketCommunicator(
             StreamingEntityBackend.as_asgi(), "/testws/"
         )
-        connected, subprotocol = await seb_communicator.connect()
+        connected, _ = await seb_communicator.connect()
         assert connected
         await seb_communicator.send_json_to(
             {
@@ -240,10 +245,26 @@ class DenialEndToEnd(APITestCase):
             pass
         finally:
             await seb_communicator.disconnect()
-        await asyncio.sleep(5) # Give a second for the fire and forget pubmed to run
+        await asyncio.sleep(5)  # Give a second for the fire and forget pubmed to run
+        # Set health history before next steps
+        health_history_url = reverse("healthhistory-list")
+        health_history_response = await sync_to_async(self.client.post)(
+            health_history_url,
+            json.dumps(
+                {
+                    "denial_id": denial_id,
+                    "email": email,
+                    "semi_sekret": semi_sekret,
+                    "health_history": "Sample health history",
+                    "include_provided_health_history_in_appeal": True,
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertTrue(status.is_success(health_history_response.status_code))
         # Ok now lets get the additional info
         find_next_steps_url = reverse("nextsteps-list")
-        find_next_steps_response = await sync_to_async(self.client.post)(
+        find_next_steps_response: JsonResponse = await sync_to_async(self.client.post)(
             find_next_steps_url,
             json.dumps(
                 {
@@ -256,7 +277,7 @@ class DenialEndToEnd(APITestCase):
             ),
             content_type="application/json",
         )
-        find_next_steps_parsed = find_next_steps_response.json()
+        find_next_steps_parsed: Dict[str, Any] = find_next_steps_response.json()
         # Make sure we got back a reasonable set of questions.
         assert len(find_next_steps_parsed["combined_form"]) == 5
         assert list(find_next_steps_parsed["combined_form"][0].keys()) == [
@@ -269,12 +290,15 @@ class DenialEndToEnd(APITestCase):
             "initial",
             "type",
         ]
+        # Verify include_provided_health_history is set on the denial
+        denial = await Denial.objects.aget(denial_id=denial_id)
+        assert denial.include_provided_health_history_in_appeal is True
         # Now we need to poke at the appeal creator
         # Now we need to poke entity extraction, this part is async
         a_communicator = WebsocketCommunicator(
             StreamingAppealsBackend.as_asgi(), "/testws/"
         )
-        connected, subprotocol = await a_communicator.connect()
+        connected, _ = await a_communicator.connect()
         assert connected
         await a_communicator.send_json_to(
             {
@@ -288,13 +312,13 @@ class DenialEndToEnd(APITestCase):
         )
         responses = []
         # We should receive at least one frame.
-        response = await a_communicator.receive_from(timeout=300.0)
+        response = await a_communicator.receive_from(timeout=300)
         print(f"Received response {response}")
         responses.append(response)
         # Now consume all of the rest of them until done.
         try:
             while True:
-                response = await a_communicator.receive_from(timeout=125.0)
+                response = await a_communicator.receive_from(timeout=125)
                 print(f"Received response {response}")
                 responses.append(response)
         except Exception as e:
@@ -1187,3 +1211,85 @@ class GetFullDetailsTest(APITestCase):
 
         # Should return 404 because this user doesn't have access to this appeal
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+
+from typing import Any, Dict
+
+
+class DenialCreateWithExistingId(APITestCase):
+    """Test creating a denial with an existing denial id."""
+
+    fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
+
+    def setUp(self):
+        self.domain = UserDomain.objects.create(
+            name="testdomain",
+            visible_phone_number="1234567890",
+            internal_phone_number="0987654321",
+            active=True,
+            display_name="Test Domain",
+            business_name="Test Business",
+            country="USA",
+            state="CA",
+            city="Test City",
+            address1="123 Test St",
+            zipcode="12345",
+        )
+        self.user = User.objects.create_user(
+            username=f"testuser{self.domain.id}",
+            password="testpass",
+            email="test@example.com",
+        )
+        self.username = f"testuser{self.domain.id}"
+        self.password = "testpass"
+        self.prouser = ProfessionalUser.objects.create(
+            user=self.user, active=True, npi_number="1234567890"
+        )
+        self.user.is_active = True
+        self.user.save()
+        ExtraUserProperties.objects.create(user=self.user, email_verified=True)
+
+    def test_create_with_existing_denial_id(self):
+        login_result = self.client.login(username=self.username, password=self.password)
+        self.assertTrue(login_result)
+        # Create a denial
+        url = reverse("denials-list")
+        email = "timbit@fighthealthinsurance.com"
+        hashed_email = hashlib.sha512(email.encode("utf-8")).hexdigest()
+        denial_text = "Test denial text"
+        response = self.client.post(
+            url,
+            json.dumps(
+                {
+                    "email": email,
+                    "denial_text": denial_text,
+                    "pii": "true",
+                    "tos": "true",
+                    "privacy": "true",
+                    "store_raw_email": "true",
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertTrue(status.is_success(response.status_code))
+        parsed: Dict[str, Any] = response.json()
+        denial_id = parsed["denial_id"]
+        # Create another denial with the same denial id
+        response = self.client.post(
+            url,
+            json.dumps(
+                {
+                    "email": email,
+                    "denial_text": denial_text,
+                    "pii": "true",
+                    "tos": "true",
+                    "privacy": "true",
+                    "store_raw_email": "true",
+                    "denial_id": denial_id,
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertTrue(status.is_success(response.status_code))
+        parsed = response.json()
+        self.assertEqual(parsed["denial_id"], denial_id)
