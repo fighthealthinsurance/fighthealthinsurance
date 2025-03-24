@@ -20,6 +20,10 @@ else:
     User = get_user_model()
 
 
+def validate_password(password: str) -> bool:
+    return len(password) >= 8 and not password.isdigit()
+
+
 def get_next_fake_username() -> str:
     return f"{str(uuid.uuid4())}-fake@fighthealthinsurance.com"
 
@@ -157,6 +161,8 @@ def create_user(
     username = combine_domain_and_username(
         raw_username, domain_name=domain_name, phone_number=phone_number
     )
+    if not validate_password(password):
+        raise Exception("Password is not valid: must be at least 8 characters and cannot be entirely numeric")
     try:
         user = User.objects.get(
             username=username,

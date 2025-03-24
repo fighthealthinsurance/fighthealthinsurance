@@ -75,7 +75,11 @@ class Command(BaseCommand):
         try:
             user_domain, created = UserDomain.objects.get_or_create(
                 name=domain_clean,
-                defaults={"active": True, "visible_phone_number": visible_phone_number},
+                defaults={
+                    "active": True,
+                    "pending": False,
+                    "visible_phone_number": visible_phone_number,
+                },
             )
             if created:
                 self.stdout.write(
