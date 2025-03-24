@@ -765,7 +765,14 @@ class PasswordResetViewSet(ViewSet, SerializerMixin):
             return Response(
                 serializers.StatusResponseSerializer({"status": "reset_requested"}).data
             )
-
+        
+        except User.DoesNotExist:
+            logger.error(f"User does not exist")
+            return Response(
+                common_serializers.ErrorSerializer({"error": "User does not exist"}).data,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        
         except Exception as e:
             logger.error(f"Password reset request failed: {e}")
             return Response(
