@@ -503,6 +503,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                         "end_behavior": {"missing_payment_method": "cancel"}
                     },
                 },
+                expires_at=int(time.time() + (3600 * 1)),  # Configured to expire after an hour
                 # TBD do we want to allow trial without card?
                 # payment_method_collection="if_required",
             )
@@ -539,10 +540,9 @@ class RestLoginView(ViewSet, SerializerMixin):
             )
         except Exception as e:
             return Response(
-                serializers.StatusResponseSerializer(
+                common_serializers.ErrorSerializer(
                     {
-                        "status": "failure",
-                        "message": f"Domain or phone number not found -- {e}",
+                        "error": f"Domain or phone number not found -- {e}",
                     }
                 ).data,
                 status=status.HTTP_400_BAD_REQUEST,
@@ -567,6 +567,12 @@ class RestLoginView(ViewSet, SerializerMixin):
                             "message": "User is inactive -- please verify your e-mail",
                         }
                     ).data,
+                    status=status.HTTP_401_UNAUTHORIZED,
+                )
+            user_domain = UserDomain.objects.get(id=domain_id)
+            if not user_domain.active and not user_domain.stripe_subscription_id and not user_domain.stripe_customer_id:
+                return Response(
+                    common_serializers.NotPaidErrorSerializer().data,
                     status=status.HTTP_401_UNAUTHORIZED,
                 )
         except User.DoesNotExist:
