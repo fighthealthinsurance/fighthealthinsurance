@@ -25,6 +25,9 @@ from fighthealthinsurance import forms as core_forms
 from fighthealthinsurance import models
 from fighthealthinsurance import followup_emails
 from fighthealthinsurance.stripe_utils import get_or_create_price
+
+from fhi_users import emails as fhi_emails
+
 from django.template import loader
 from django.http import HttpResponseForbidden
 
@@ -622,6 +625,13 @@ class AppealFileView(View):
 
 class StripeWebhookView(View):
     def post(self, request):
+        try:
+            return self.do_post(request)
+        except Exception as e:
+            logger.opt(exception=True).error("Error processing Stripe webhook")
+            return HttpResponse(status=500)
+
+    def do_post(self, request):
         payload = request.body
         sig_header = request.META.get("HTTP_STRIPE_SIGNATURE")
 
@@ -631,10 +641,10 @@ class StripeWebhookView(View):
             )
         except ValueError as e:
             logger.error(f"Invalid payload: {e}")
-            return HttpResponse(status=400)
+            return HttpResponse(status=401)
         except stripe_error.SignatureVerificationError as e:  # type: ignore
             logger.error(f"Invalid signature: {e}")
-            return HttpResponse(status=400)
+            return HttpResponse(status=403)
 
         if event.type == "checkout.session.completed":
             session = event.data.object
@@ -670,5 +680,31 @@ class StripeWebhookView(View):
                 ).update(paid=True, should_send=True)
             else:
                 logger.error(f"Unknown payment type: {payment_type}")
+        elif event.type == "checkout.session.expired":
+            session = event.data.object
+            logger.debug(f"Checkout session expired: {session}")
+            payment_type = session.metadata.get("payment_type")
+            item = "Fight Health Insurance / Fight paperwork"
+            if payment_type == "fax":
+                item = "Fight Health Insurance Fax"
+            elif payment_type == "professional_domain_subscription":
+                item = "Fight Paperwork Professional Domain Subscription"
+            email=session.customer_details.email
+            lost_session = models.LostStripeSession.objects.create(
+                payment_type=payment_type,
+                email=email,
+                metadata=session.metadata,
+            )
+            finish_link="ope"
+            try:
+                finish_link = reverse("finish_signup", args=[lost_session.id])
+            except Exception:
+                finish_link = "farts"
+            fhi_emails.send_checkout_session_expired(
+                request,
+                email=email,
+                item=item,
+                link=finish_link,
+            )
 
         return HttpResponse(status=200)

@@ -1,6 +1,6 @@
 from django.contrib.auth.tokens import default_token_generator
 from django.contrib.sites.shortcuts import get_current_site
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 from fhi_users.models import VerificationToken
 from fighthealthinsurance.utils import send_fallback_email
 from django.utils.html import strip_tags
@@ -77,4 +77,17 @@ def send_verification_email(request, user: "User") -> None:
             "activation_link": activation_link,
         },
         user.email,
+    )
+
+def send_checkout_session_expired(request, email:str, link: str, item: Optional[str]) -> None:
+    """Send checkout session expired email."""
+    default_item = "Fight Health Insurance / Fight Paperwork"
+    item = item if item else default_item
+    send_fallback_email(
+        f"{item} Checkout Session Expired",
+        "checkout_session_expired",
+        {
+            "link": link,
+        },
+        email,
     )
