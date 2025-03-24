@@ -41,6 +41,7 @@ from fhi_users.auth.auth_utils import (
     resolve_domain_id,
     get_patient_or_create_pending_patient,
     get_next_fake_username,
+    validate_password,
 )
 from fighthealthinsurance.rest_mixins import CreateMixin, SerializerMixin
 from rest_framework.serializers import Serializer
@@ -357,7 +358,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         new_domain: bool = bool(data["make_new_domain"])  # type: ignore
         user_domain_opt: Optional[UserDomain] = None
 
-        if not auth_utils.validate_password(user_signup_info["password"]):
+        if not validate_password(user_signup_info["password"]):
             return Response(
                 common_serializers.ErrorSerializer({"error": "Invalid password"}).data,
                 status=status.HTTP_400_BAD_REQUEST,
@@ -800,7 +801,7 @@ class PasswordResetViewSet(ViewSet, SerializerMixin):
 
             # Update password
             user = reset_token.user
-            if not auth_utils.validate_password(data["new_password"]):
+            if not validate_password(data["new_password"]):
                 return Response(
                     common_serializers.ErrorSerializer(
                         {"error": "Invalid password"}

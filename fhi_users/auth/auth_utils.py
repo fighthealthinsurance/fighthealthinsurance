@@ -21,9 +21,7 @@ else:
 
 
 def validate_password(password: str) -> bool:
-    if len(password) >= 8 and not password.isdigit():
-        return True
-    return False
+    return len(password) >= 8 and not password.isdigit()
 
 
 def get_next_fake_username() -> str:
@@ -164,7 +162,7 @@ def create_user(
         raw_username, domain_name=domain_name, phone_number=phone_number
     )
     if not validate_password(password):
-        raise Exception("Password is not valid")
+        raise Exception("Password is not valid: must be at least 8 characters and cannot be entirely numeric")
     try:
         user = User.objects.get(
             username=username,
