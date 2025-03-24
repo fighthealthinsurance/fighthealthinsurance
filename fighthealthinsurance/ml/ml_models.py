@@ -6,11 +6,18 @@ import aiohttp
 import itertools
 import os
 import re
+import sys
 import traceback
 from concurrent.futures import Future
 from dataclasses import dataclass
 from typing import Callable, List, Optional, Tuple, Iterable, Union
 from loguru import logger
+
+# Import the appropriate async_timeout based on Python version
+if sys.version_info >= (3, 11):
+    from asyncio import timeout as async_timeout
+else:
+    from async_timeout import timeout as async_timeout
 
 from llm_result_utils.cleaner_utils import CleanerUtils
 
@@ -559,9 +566,9 @@ class RemoteOpenLike(RemoteModel):
     ) -> Optional[str]:
         if self._timeout is not None:
             try:
-                return await asyncio.wait_for(
-                    self.__infer(*args, **kwargs), timeout=self._timeout
-                )
+                # Use async_timeout instead of asyncio.wait_for
+                async with async_timeout(self._timeout):
+                    return await self.__infer(*args, **kwargs)
             except asyncio.TimeoutError:
                 logger.debug(f"Timed out querying {self}")
                 return None
