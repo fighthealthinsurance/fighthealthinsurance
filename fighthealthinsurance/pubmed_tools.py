@@ -385,7 +385,8 @@ class PubMedTools(object):
                 abstract = (
                     fetched.abstract if hasattr(fetched, "abstract") else ""
                 ).strip()
-                article_text = article_text.strip()
+                if article_text:
+                    article_text = article_text.strip()
 
                 if fetched is not None and (
                     (
