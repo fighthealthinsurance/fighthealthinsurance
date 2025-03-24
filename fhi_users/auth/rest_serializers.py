@@ -70,17 +70,22 @@ class WhoAmiSerializer(serializers.Serializer):
     Return the current user.
     """
 
-    email = serializers.CharField()
+    email = serializers.EmailField()
     domain_name = serializers.CharField()
     domain_id = serializers.CharField()
     patient = serializers.BooleanField()
     professional = serializers.BooleanField()
-    current_professional_id = serializers.IntegerField(required=False)
+    current_professional_id = serializers.IntegerField(required=False, allow_null=True)
     highest_role = serializers.ChoiceField(
         choices=[(role.value, role.name) for role in UserRole],
         help_text="The highest permission level role of the user: none, patient, professional, or admin",
     )
-    admin = serializers.BooleanField()
+    admin = serializers.BooleanField(
+        help_text="Whether the user is an admin of the current domain."
+    )
+    beta = serializers.BooleanField(
+        help_text="Whether the userdomain is in the beta program."
+    )
 
 
 class UserSignupSerializer(serializers.Serializer):
