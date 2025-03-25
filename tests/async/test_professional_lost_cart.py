@@ -68,7 +68,7 @@ class PaymentViewsTests(TestCase):
         url = reverse("professional_user-finish-payment")
         data = {
             "domain_id": self.domain.id,
-            "professional_user_id": self.user.id,
+            "professional_user_id": self.pro_user.id,
             "continue_url": "http://example.com/continue",
         }
         self.client.force_authenticate(user=self.user)
