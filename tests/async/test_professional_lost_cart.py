@@ -16,7 +16,7 @@ from fhi_users.models import (
     PatientUser,
     VerificationToken,
     ResetToken,
-    ProfessionalUser
+    ProfessionalUser,
 )
 
 

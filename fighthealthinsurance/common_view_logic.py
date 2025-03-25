@@ -1705,7 +1705,11 @@ class StripeWebhookHelper:
         try:
             # TODO: More complete handling
             logger.debug(f"Checkout session expired: {session}")
-            payment_type = session.metadata.get("payment_type")
+            try:
+                metadata = session.metadata
+            except:
+                metadata = session["metadata"]
+            payment_type = metadata.get("payment_type")
             item = "Fight Health Insurance / Fight paperwork"
             finish_link = None
             if payment_type == "fax":
@@ -1718,12 +1722,15 @@ class StripeWebhookHelper:
                 )
                 params = urlencode(
                     {
-                        "domain_id": session.metadata.get("domain_id"),
-                        "professional_id": session.metadata.get("professional_id"),
+                        "domain_id": metadata.get("domain_id"),
+                        "professional_id": metadata.get("professional_id"),
                     }
                 )
                 finish_link = f"{finish_base_link}?{params}"
-            email = session.customer_details.email
+            try:
+                email = session.customer_details.email
+            except:
+                email = session["customer_details"]["email"]
             session_id = None
             if hasattr(session, "id"):
                 session_id = session.id
@@ -1731,7 +1738,7 @@ class StripeWebhookHelper:
                 payment_type=payment_type,
                 email=email,
                 session_id=session_id,
-                metadata=session.metadata,
+                metadata=metadata,
             )
             if finish_link is None:
                 try:
