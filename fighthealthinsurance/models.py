@@ -713,7 +713,7 @@ class StripeRecoveryInfo(models.Model):
 
 
 class LostStripeSession(models.Model):
-    id = models.AutoField(primary_key=True, blank=True)
+    id = models.AutoField(primary_key=True)
     session_id = models.CharField(max_length=255, null=True, blank=True)
     payment_type = models.CharField(max_length=255, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True, blank=True)
