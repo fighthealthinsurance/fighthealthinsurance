@@ -343,6 +343,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
     @extend_schema(
         responses={
             200: serializers.ProfessionalSignupResponseSerializer,
+            201: serializers.ProfessionalSignupResponseSerializer,
             400: common_serializers.ErrorSerializer,
         }
     )
