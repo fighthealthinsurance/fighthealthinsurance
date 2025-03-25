@@ -379,7 +379,7 @@ class EmptySerializer(serializers.Serializer):
 
 class FinishPaymentSerializer(serializers.Serializer):
     # We either need the domain_id & professional user id (what we get from stripe)
-    domain_id = serializers.IntegerField(required=False)
+    domain_id = serializers.CharField(required=False)
     professional_user_id = serializers.IntegerField(required=False)
     # Or the domain name or phone number + user_email (what we get from a failed login)
     domain_name = serializers.CharField(required=False)
