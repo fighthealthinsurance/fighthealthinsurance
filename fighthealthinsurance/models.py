@@ -713,12 +713,11 @@ class StripeRecoveryInfo(models.Model):
 
 
 class LostStripeSession(models.Model):
-    id = models.AutoField(primary_key=True)
-    session_id = models.CharField(max_length=255)
-    payment_type = models.CharField(max_length=255)
-    created_at = models.DateTimeField(auto_now_add=True)
-    cancel_url = models.CharField(max_length=255)
-    success_url = models.CharField(max_length=255)
-    email = models.CharField(max_length=255)
-    item = models.CharField(max_length=255)
+    id = models.AutoField(primary_key=True, blank=True)
+    session_id = models.CharField(max_length=255, null=True, blank=True)
+    payment_type = models.CharField(max_length=255, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, blank=True)
+    cancel_url = models.CharField(max_length=255, null=True, blank=True)
+    success_url = models.CharField(max_length=255, null=True, blank=True)
+    email = models.CharField(max_length=255, null=True, blank=True)
     metadata = models.JSONField(null=True, blank=True)

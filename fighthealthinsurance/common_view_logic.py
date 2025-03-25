@@ -1724,9 +1724,13 @@ class StripeWebhookHelper:
                 )
                 finish_link = f"{finish_base_link}?{params}"
             email = session.customer_details.email
+            session_id = None
+            if hasattr(session, "id"):
+                session_id = session.id
             lost_session = LostStripeSession.objects.create(
                 payment_type=payment_type,
                 email=email,
+                session_id=session_id,
                 metadata=session.metadata,
             )
             if finish_link is None:
