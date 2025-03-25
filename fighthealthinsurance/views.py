@@ -6,6 +6,7 @@ from stripe import error as stripe_error
 import typing
 from loguru import logger
 from PIL import Image
+import json
 
 
 from django import forms
@@ -25,8 +26,21 @@ from fighthealthinsurance import forms as core_forms
 from fighthealthinsurance import models
 from fighthealthinsurance import followup_emails
 from fighthealthinsurance.stripe_utils import get_or_create_price
+
+from fhi_users import emails as fhi_emails
+from fhi_users.models import UserDomain, ProfessionalUser
+from fhi_users.auth.auth_utils import resolve_domain_id
+from fighthealthinsurance.models import StripeRecoveryInfo
+
 from django.template import loader
 from django.http import HttpResponseForbidden
+
+from django.contrib.auth import get_user_model
+
+if typing.TYPE_CHECKING:
+    from django.contrib.auth.models import User
+else:
+    User = get_user_model()
 
 
 def render_ocr_error(request: HttpRequest, text: str) -> HttpResponseBase:
@@ -135,13 +149,14 @@ class ProVersionView(generic.FormView):
             "Professional Pre-Signup", 1000, recurring=False
         )
 
+        line_items = [
+            {
+                "price": price_id,
+                "quantity": 1,
+            }
+        ]
         checkout = stripe.checkout.Session.create(
-            line_items=[
-                {
-                    "price": price_id,
-                    "quantity": 1,
-                }
-            ],
+            line_items=line_items,  # type: ignore
             mode="payment",
             success_url=self.request.build_absolute_uri(
                 reverse("pro_version_thankyou")
@@ -152,6 +167,7 @@ class ProVersionView(generic.FormView):
             metadata={
                 "payment_type": "interested_professional_signup",
                 "interested_professional_id": interested_professional.id,
+                "items": json.dumps(line_items),
             },
         )
 
@@ -622,6 +638,13 @@ class AppealFileView(View):
 
 class StripeWebhookView(View):
     def post(self, request):
+        try:
+            return self.do_post(request)
+        except Exception as e:
+            logger.opt(exception=True).error("Error processing Stripe webhook")
+            return HttpResponse(status=500)
+
+    def do_post(self, request):
         payload = request.body
         sig_header = request.META.get("HTTP_STRIPE_SIGNATURE")
 
@@ -631,44 +654,75 @@ class StripeWebhookView(View):
             )
         except ValueError as e:
             logger.error(f"Invalid payload: {e}")
-            return HttpResponse(status=400)
+            return HttpResponse(status=401)
         except stripe_error.SignatureVerificationError as e:  # type: ignore
             logger.error(f"Invalid signature: {e}")
-            return HttpResponse(status=400)
+            return HttpResponse(status=403)
 
-        if event.type == "checkout.session.completed":
-            session = event.data.object
-            payment_type = session.metadata.get("payment_type")
-
-            if payment_type == "interested_professional_signup":
-                models.InterestedProfessional.objects.filter(
-                    id=session.metadata.get("interested_professional_id")
-                ).update(paid=True)
-
-            elif payment_type == "professional_domain_subscription":
-                logger.debug(f"Processing professional domain subscription {session}")
-                subscription_id = session.get("subscription")
-                costumer_id = session.get("customer")
-                if subscription_id:
-                    models.UserDomain.objects.filter(
-                        id=session.metadata.get("domain_id")
-                    ).update(
-                        stripe_subscription_id=subscription_id,
-                        stripe_customer_id=costumer_id,
-                        active=True,
-                        pending=False,
-                    )
-                    models.ProfessionalUser.objects.filter(
-                        id=session.metadata.get("professional_id")
-                    ).update(active=True)
-                else:
-                    logger.error("No subscription ID in completed checkout session")
-
-            elif payment_type == "fax":
-                models.FaxesToSend.objects.filter(
-                    uuid=session.metadata.get("uuid")
-                ).update(paid=True, should_send=True)
-            else:
-                logger.error(f"Unknown payment type: {payment_type}")
-
+        common_view_logic.StripeWebhookHelper.handle_stripe_webhook(request, event)
         return HttpResponse(status=200)
+
+
+class CompletePaymentView(View):
+    def post(self, request):
+        try:
+            return self.do_post(request)
+        except Exception as e:
+            logger.opt(exception=True).error("Error processing payment completion")
+            return HttpResponse(status=500)
+
+    def do_post(self, request):
+        data = json.loads(request.body)
+        session_id = data.get("session_id")
+        continue_url = data.get("continue_url")
+        cancel_url = data.get(
+            "cancel_url", "https://www.fighthealthinsurance.com/?q=ohno"
+        )
+
+        if not session_id:
+            return HttpResponse(
+                json.dumps({"error": "Missing session_id"}),
+                status=400,
+                content_type="application/json",
+            )
+
+        try:
+            lost_session = models.LostStripeSession.objects.get(session_id=session_id)
+            payment_type = lost_session.payment_type
+            metadata: dict[str, str] = lost_session.metadata  # type: ignore
+            recovery_info_id = metadata.get("recovery_info_id")
+            line_items = []
+            if not recovery_info_id:
+                line_items_json = metadata.get("line_items")
+                if not line_items_json:
+                    raise Exception(f"No recover info found in metadata {metadata}")
+                line_items = json.loads(line_items_json)
+            else:
+                line_items = StripeRecoveryInfo.objects.get(id=recovery_info_id).items
+            checkout_session = stripe.checkout.Session.create(
+                payment_method_types=["card"],
+                line_items=line_items,  # type: ignore
+                mode="payment",
+                success_url=continue_url,
+                cancel_url=cancel_url,
+                metadata=metadata,
+            )
+
+            return HttpResponse(
+                json.dumps({"next_url": checkout_session.url}),
+                status=200,
+                content_type="application/json",
+            )
+        except models.LostStripeSession.DoesNotExist:
+            return HttpResponse(
+                json.dumps({"error": "Session not found"}),
+                status=400,
+                content_type="application/json",
+            )
+        except Exception as e:
+            logger.opt(exception=e).error("Error in finishing payment")
+            return HttpResponse(
+                json.dumps({"error": f"Error {e}"}),
+                status=500,
+                content_type="application/json",
+            )

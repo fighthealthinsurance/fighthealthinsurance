@@ -230,7 +230,7 @@ class RestAuthViewsTests(TestCase):
         data = {"token": "invalidtoken", "user_id": self.user.pk}
         response = self.client.post(url, data, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertEqual(response.json()["status"], "failure")
+        self.assertEqual(response.json()["status"], "error")
         self.assertEqual(response.json()["message"], "Invalid activation link")
 
     def test_email_confirmation_with_expired_token(self) -> None:
@@ -243,7 +243,7 @@ class RestAuthViewsTests(TestCase):
         data = {"token": token.token, "user_id": self.user.pk}
         response = self.client.post(url, data, format="json")
         self.assertEqual(response.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
-        self.assertEqual(response.json()["status"], "failure")
+        self.assertEqual(response.json()["status"], "error")
         self.assertEqual(response.json()["message"], "Activation link has expired")
 
     def test_create_professional_user_with_new_domain(self) -> None:
@@ -401,7 +401,8 @@ class RestAuthViewsTests(TestCase):
         }
         response = self.client.post(url, data, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertEqual(response.json()["error"], "Invalid reset token")
+        self.assertEqual(response.json()["status"], "error")
+        self.assertEqual(response.json()["message"], "Invalid reset token")
 
     def test_finish_password_reset_with_expired_token(self) -> None:
         reset_token = ResetToken.objects.create(
@@ -416,6 +417,8 @@ class RestAuthViewsTests(TestCase):
         }
         response = self.client.post(url, data, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.json()["status"], "error")
+        self.assertEqual(response.json()["message"], "Reset token has expired")
         self.assertEqual(response.json()["error"], "Reset token has expired")
 
     def test_rest_login_view_with_nonexistent_domain(self) -> None:
@@ -428,7 +431,7 @@ class RestAuthViewsTests(TestCase):
         }
         response = self.client.post(url, data, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertEqual(response.json()["status"], "failure")
+        self.assertEqual(response.json()["status"], "error")
 
     def test_rest_login_view_with_invalid_phone(self) -> None:
         url = reverse("rest_login-login")
@@ -440,7 +443,7 @@ class RestAuthViewsTests(TestCase):
         }
         response = self.client.post(url, data, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertEqual(response.json()["status"], "failure")
+        self.assertEqual(response.json()["status"], "error")
 
     def test_rest_login_view_with_inactive_user(self) -> None:
         self.user.is_active = False
@@ -463,7 +466,7 @@ class RestAuthViewsTests(TestCase):
         }
         response = self.client.post(url, data, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertEqual(response.json()["status"], "failure")
+        self.assertEqual(response.json()["status"], "error")
 
     def test_verify_email_without_token(self) -> None:
         url = reverse("rest_verify_email-verify")
@@ -524,6 +527,7 @@ class RestAuthViewsTests(TestCase):
         }
         response = self.client.post(url, data, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.json()["status"], "error")
         self.assertEqual(response.json()["error"], "User does not exist")
 
     def test_whoami_view_authed(self):
@@ -603,10 +607,36 @@ class TestE2EProfessionalUserSignupFlow(TestCase):
                 "zipcode": "99999",
             },
         }
+        old_outbox = len(mail.outbox)
         response = self.client.post(signup_url, data, format="json")
         self.assertEqual(response.status_code, 201)
-        self.assertGreaterEqual(len(mail.outbox), 1)
+        # We don't send the message right away -- we wait for stripe callback.
+        self.assertEqual(len(mail.outbox), old_outbox)
+
+        # Simulate Stripe webhook call to trigger the email
         new_user = User.objects.get(email="testpro@example.com")
+        from fighthealthinsurance.common_view_logic import StripeWebhookHelper
+
+        stripe_event = {
+            "type": "checkout.session.completed",
+            "data": {
+                "object": {
+                    "subscription": "sub_12345",
+                    "customer": "cus_12345",
+                    "metadata": {
+                        "payment_type": "professional_domain_subscription",
+                        "professional_id": new_user.professionaluser.id,
+                        "domain_id": UserDomain.objects.get(name=domain_name).id,
+                    },
+                }
+            },
+        }
+        StripeWebhookHelper.handle_checkout_session_completed(
+            None, stripe_event["data"]["object"]
+        )
+
+        # Now we expect it
+        self.assertEqual(len(mail.outbox), old_outbox + 1)
         # User can not log in pre-verification
         self.assertFalse(
             self.client.login(username=new_user.username, password="temp12345")

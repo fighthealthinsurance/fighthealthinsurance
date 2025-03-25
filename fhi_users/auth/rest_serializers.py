@@ -96,6 +96,9 @@ class UserSignupSerializer(serializers.Serializer):
     domain_name = serializers.CharField(required=False, allow_blank=True)
     visible_phone_number = serializers.CharField(required=True)
     continue_url = serializers.CharField()  # URL to send user to post signup / payment
+    cancel_url = serializers.URLField(
+        required=False, default="https://www.fightpaperwork.com/?q=ohno"
+    )
     username = serializers.CharField(required=True)
     first_name = serializers.CharField(required=True)
     last_name = serializers.CharField(required=True)
@@ -372,3 +375,21 @@ class StatusResponseSerializer(serializers.Serializer):
 
 class EmptySerializer(serializers.Serializer):
     pass
+
+
+class FinishPaymentSerializer(serializers.Serializer):
+    # We either need the domain_id & professional user id (what we get from stripe)
+    domain_id = serializers.CharField(required=False)
+    professional_user_id = serializers.IntegerField(required=False)
+    # Or the domain name or phone number + user_email (what we get from a failed login)
+    domain_name = serializers.CharField(required=False)
+    domain_phone = serializers.CharField(required=False)
+    user_email = serializers.EmailField(required=False)
+    continue_url = serializers.URLField()
+    cancel_url = serializers.URLField(
+        required=False, default="https://www.fightpaperwork.com/?q=ohno"
+    )
+
+
+class FinishPaymentResponseSerializer(serializers.Serializer):
+    next_url = serializers.URLField()

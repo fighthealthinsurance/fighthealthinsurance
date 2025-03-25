@@ -162,7 +162,9 @@ def create_user(
         raw_username, domain_name=domain_name, phone_number=phone_number
     )
     if not validate_password(password):
-        raise Exception("Password is not valid: must be at least 8 characters and cannot be entirely numeric")
+        raise Exception(
+            "Password is not valid: must be at least 8 characters and cannot be entirely numeric"
+        )
     try:
         user = User.objects.get(
             username=username,
