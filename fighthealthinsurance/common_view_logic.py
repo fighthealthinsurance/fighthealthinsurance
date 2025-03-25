@@ -1730,7 +1730,7 @@ class StripeWebhookHelper:
             email: Optional[str] = None
             try:
                 try:
-                   email = session.costumer_email
+                    email = session.costumer_email
                 except:
                     email = session["customer_email"]
             except:
@@ -1758,7 +1758,8 @@ class StripeWebhookHelper:
                 metadata=metadata,
             )
             if finish_link is None:
-                finish_link = reverse("finish_stripe", args=[lost_session.id])
+                finish_link_base = reverse("complete_payment")
+                finish_link = f"{finish_link_base}?session_id={lost_session.id}"
             if finish_link:
                 fhi_emails.send_checkout_session_expired(
                     request,
