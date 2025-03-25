@@ -392,7 +392,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
 
     @extend_schema(
         responses={
-            200: serializers.StatusResponseSerializer,
+            200: serializers.FinishPaymentResponseSerializer,
             400: common_serializers.ErrorSerializer,
             403: common_serializers.ErrorSerializer,
         }
@@ -447,7 +447,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 email, professional_user.id, user_domain, continue_url, cancel_url
             )
             return Response(
-                serializers.StatusResponseSerializer(
+                serializers.FinishPaymentResponseSerializer(
                     {"next_url": checkout_session.url}
                 ).data,
                 status=status.HTTP_200_OK,

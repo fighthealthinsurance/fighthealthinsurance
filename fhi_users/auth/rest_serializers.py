@@ -389,3 +389,7 @@ class FinishPaymentSerializer(serializers.Serializer):
     cancel_url = serializers.URLField(
         required=False, default="https://www.fightpaperwork.com/?q=ohno"
     )
+
+
+class FinishPaymentResponseSerializer(serializers.Serializer):
+    next_url = serializers.URLField()
