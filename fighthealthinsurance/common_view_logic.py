@@ -1665,13 +1665,13 @@ class StripeWebhookHelper:
             elif payment_type == "professional_domain_subscription":
                 logger.debug(f"Processing professional domain subscription {session}")
                 subscription_id = session.get("subscription")
-                costumer_id = session.get("customer")
+                customer_id = session.get("customer")
                 if subscription_id:
                     UserDomain.objects.filter(
                         id=session.metadata.get("domain_id")
                     ).update(
                         stripe_subscription_id=subscription_id,
-                        stripe_customer_id=costumer_id,
+                        stripe_customer_id=customer_id,
                         active=True,
                         pending=False,
                     )
