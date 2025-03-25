@@ -691,13 +691,17 @@ class CompletePaymentView(View):
             payment_type = lost_session.payment_type
             metadata: dict[str, str] = lost_session.metadata  # type: ignore
             recovery_info_id = metadata.get("recovery_info_id")
-            if recovery_info_id is None:
-                raise Exception(f"No recover info found in metadata {metadata}")
-
-            line_items = StripeRecoveryInfo.objects.get(id=recovery_info_id).items
+            line_items = []
+            if not recover_info_id:
+                line_items_json = metadata.get("line_items")
+                if not line_items_json:
+                    raise Exception(f"No recover info found in metadata {metadata}")
+                line_items = json.loads(line_items_json)
+            else:
+                line_items = StripeRecoveryInfo.objects.get(id=recovery_info_id).items
             checkout_session = stripe.checkout.Session.create(
                 payment_method_types=["card"],
-                line_items=line_items,
+                line_items=line_items, # type: ignore
                 mode="payment",
                 success_url=continue_url,
                 cancel_url=cancel_url,
