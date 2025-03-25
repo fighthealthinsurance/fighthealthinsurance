@@ -704,3 +704,20 @@ class AppealAttachment(models.Model):
         """Filter attachments to only those the user has permission to access"""
         allowed_appeals = Appeal.filter_to_allowed_appeals(user)
         return cls.objects.filter(appeal__in=allowed_appeals)
+
+
+class StripeRecoveryInfo(models.Model):
+    id = models.AutoField(primary_key=True)
+    items = models.JSONField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class LostStripeSession(models.Model):
+    id = models.AutoField(primary_key=True)
+    session_id = models.CharField(max_length=255, null=True, blank=True)
+    payment_type = models.CharField(max_length=255, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, blank=True)
+    cancel_url = models.CharField(max_length=255, null=True, blank=True)
+    success_url = models.CharField(max_length=255, null=True, blank=True)
+    email = models.CharField(max_length=255, null=True, blank=True)
+    metadata = models.JSONField(null=True, blank=True)

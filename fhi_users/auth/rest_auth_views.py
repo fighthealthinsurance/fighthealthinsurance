@@ -1,5 +1,7 @@
 from loguru import logger
 from typing import Optional, TYPE_CHECKING
+import time
+import json
 
 from rest_framework import status
 from rest_framework import viewsets
@@ -32,6 +34,7 @@ from fhi_users.models import (
     ResetToken,
     UserRole,
 )
+from fighthealthinsurance.models import StripeRecoveryInfo
 from fhi_users.auth import rest_serializers as serializers
 from fighthealthinsurance import rest_serializers as common_serializers
 from fhi_users.auth.auth_utils import (
@@ -159,6 +162,8 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             or self.action == "list_pending_in_domain"
         ):
             return serializers.EmptySerializer
+        elif self.action == "finish_payment":
+            return serializers.FinishPaymentSerializer
         else:
             return serializers.EmptySerializer
 
@@ -338,6 +343,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
     @extend_schema(
         responses={
             200: serializers.ProfessionalSignupResponseSerializer,
+            201: serializers.ProfessionalSignupResponseSerializer,
             400: common_serializers.ErrorSerializer,
         }
     )
@@ -346,6 +352,125 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         Creates a new professional user and optionally a new domain.
         """
         return super().create(request)
+
+    def create_stripe_checkout_session(
+        self, email, professional_user_id, user_domain, continue_url, cancel_url
+    ):
+        base_product_id, base_price_id = stripe_utils.get_or_create_price(
+            "FP Basic Professional Plan", 2500, recurring=True
+        )
+        metered_product_id, metered_price_id = stripe_utils.get_or_create_price(
+            "Incremental FP Appeal", 1000, recurring=True, metered=True
+        )
+        line_items = [
+            {"price": base_price_id, "quantity": 1},
+            {"price": metered_price_id},
+        ]
+        stripe_recovery_info = StripeRecoveryInfo.objects.create(items=line_items)
+        checkout_session = stripe.checkout.Session.create(
+            payment_method_types=["card"],
+            line_items=line_items,  # type: ignore
+            mode="subscription",
+            success_url=continue_url,
+            cancel_url=cancel_url,
+            customer_email=email,
+            allow_promotion_codes=True,
+            metadata={
+                "payment_type": "professional_domain_subscription",
+                "professional_id": str(professional_user_id),
+                "domain_id": str(user_domain.id),
+                "recovery_info_id": str(stripe_recovery_info.id),
+            },
+            subscription_data={
+                "trial_period_days": 30,
+                "trial_settings": {
+                    "end_behavior": {"missing_payment_method": "cancel"}
+                },
+            },
+            expires_at=int(time.time() + (3600 * 1)),
+        )
+        return checkout_session
+
+    @extend_schema(
+        responses={
+            200: serializers.FinishPaymentResponseSerializer,
+            400: common_serializers.ErrorSerializer,
+            403: common_serializers.ErrorSerializer,
+        }
+    )
+    @action(detail=False, methods=["get", "post"])
+    def finish_payment(self, request: Request) -> Response:
+        domain_id = request.data.get("domain_id") or request.query_params.get(
+            "domain_id"
+        )
+        professional_user_id = request.data.get(
+            "professional_user_id"
+        ) or request.query_params.get("professional_user_id")
+        domain_name = request.data.get("domain_name") or request.query_params.get(
+            "domain_name"
+        )
+        domain_phone = request.data.get("domain_phone") or request.query_params.get(
+            "domain_phone"
+        )
+        user_email = request.data.get("user_email") or request.query_params.get(
+            "user_email"
+        )
+        continue_url = request.data.get("continue_url") or request.query_params.get(
+            "continue_url"
+        )
+        cancel_url = request.data.get("cancel_url") or request.query_params.get(
+            "cancel_url", "https://www.fightpaper.com/?q=ohno"
+        )
+
+        try:
+            if domain_id and professional_user_id:
+                user_domain = UserDomain.objects.get(id=domain_id)
+                professional_user = ProfessionalUser.objects.get(
+                    id=professional_user_id
+                )
+                email = professional_user.user.email
+            elif (domain_name or domain_phone) and user_email:
+                domain_id = resolve_domain_id(
+                    domain_name=domain_name, phone_number=domain_phone
+                )
+                user_domain = UserDomain.objects.get(id=domain_id)
+                professional_user = User.objects.get(email=user_email).professionaluser
+                email = user_email
+            else:
+                return Response(
+                    common_serializers.ErrorSerializer(
+                        {"error": "Missing required parameters"}
+                    ).data,
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            checkout_session = self.create_stripe_checkout_session(
+                email, professional_user.id, user_domain, continue_url, cancel_url
+            )
+            return Response(
+                serializers.FinishPaymentResponseSerializer(
+                    {"next_url": checkout_session.url}
+                ).data,
+                status=status.HTTP_200_OK,
+            )
+        except UserDomain.DoesNotExist:
+            return Response(
+                common_serializers.ErrorSerializer({"error": "Domain not found"}).data,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except ProfessionalUser.DoesNotExist:
+            return Response(
+                common_serializers.ErrorSerializer(
+                    {"error": "Professional user not found"}
+                ).data,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except Exception as e:
+            logger.opt(exception=e).error("Error in finishing payment")
+            return Response(
+                common_serializers.ErrorSerializer({"error": f"Error {e}"}).data,
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
     @transaction.atomic
     def perform_create(
@@ -380,16 +505,16 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                         f"Error finding domain {domain_name} / {visible_phone_number}"
                     )
                     return Response(
-                        serializers.StatusResponseSerializer(
-                            {"status": "failure", "message": "Domain does not exist"}
+                        common_serializers.ErrorSerializer(
+                            {"error": "Domain does not exist"}
                         ).data,
                         status=status.HTTP_400_BAD_REQUEST,
                     )
         else:
             if UserDomain.find_by_name(name=domain_name).count() != 0:
                 return Response(
-                    serializers.StatusResponseSerializer(
-                        {"status": "failure", "message": "Domain already exists"}
+                    common_serializers.ErrorSerializer(
+                        {"error": "Domain already exists"}
                     ).data,
                     status=status.HTTP_400_BAD_REQUEST,
                 )
@@ -400,20 +525,18 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 != 0
             ):
                 return Response(
-                    serializers.StatusResponseSerializer(
+                    common_serializers.ErrorSerializer(
                         {
-                            "status": "failure",
-                            "message": "Visible phone number already exists",
+                            "error": "Visible phone number already exists",
                         }
                     ).data,
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             if "user_domain" not in data:
                 return Response(
-                    serializers.StatusResponseSerializer(
+                    common_serializers.ErrorSerializer(
                         {
-                            "status": "failure",
-                            "message": "Need domain info when making a new domain or solo provider",
+                            "error": "Need domain info when making a new domain or solo provider",
                         }
                     ).data,
                     status=status.HTTP_400_BAD_REQUEST,
@@ -424,10 +547,9 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                     user_domain_info["name"] = domain_name
                 else:
                     return Response(
-                        serializers.StatusResponseSerializer(
+                        common_serializers.ErrorSerializer(
                             {
-                                "status": "failure",
-                                "message": "Domain name and user domain name must match",
+                                "error": "Domain name and user domain name must match",
                             }
                         ).data,
                         status=status.HTTP_400_BAD_REQUEST,
@@ -440,10 +562,9 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                     user_domain_info["visible_phone_number"] = visible_phone_number
                 else:
                     return Response(
-                        serializers.StatusResponseSerializer(
+                        common_serializers.ErrorSerializer(
                             {
-                                "status": "failure",
-                                "message": "Visible phone number and user domain visible phone number must match",
+                                "error": "Visible phone number and user domain visible phone number must match",
                             }
                         ).data,
                         status=status.HTTP_400_BAD_REQUEST,
@@ -470,7 +591,6 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             first_name=first_name,
             last_name=last_name,
         )
-        send_verification_email(request, user)
         professional_user = ProfessionalUser.objects.create(
             user=user,
             active=False,
@@ -484,39 +604,14 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         )
 
         if not (settings.DEBUG and data["skip_stripe"]):
-            base_product_id, base_price_id = stripe_utils.get_or_create_price(
-                "FP Basic Professional Plan", 2500, recurring=True
-            )
-            metered_product_id, metered_price_id = stripe_utils.get_or_create_price(
-                "Incremental FP Appeal", 1000, recurring=True, metered=True
-            )
-            cancel_url = request.META.get(
-                "HTTP_REFERER", user_signup_info["continue_url"]
-            )
-            checkout_session = stripe.checkout.Session.create(
-                payment_method_types=["card"],
-                line_items=[
-                    {"price": base_price_id, "quantity": 1},
-                    {"price": metered_price_id},
-                ],
-                mode="subscription",
-                success_url=user_signup_info["continue_url"],
-                cancel_url=cancel_url,  # user_signup_info["continue_url"],
-                customer_email=email,
-                allow_promotion_codes=True,  # Users can enter a promo code at checkout
-                metadata={
-                    "payment_type": "professional_domain_subscription",
-                    "professional_id": str(professional_user.id),
-                    "domain_id": str(user_domain.id),
-                },
-                subscription_data={
-                    "trial_period_days": 30,
-                    "trial_settings": {
-                        "end_behavior": {"missing_payment_method": "cancel"}
-                    },
-                },
-                # TBD do we want to allow trial without card?
-                # payment_method_collection="if_required",
+            checkout_session = self.create_stripe_checkout_session(
+                email,
+                professional_user.id,
+                user_domain,
+                user_signup_info["continue_url"],
+                user_signup_info.get(
+                    "cancel_url", "https://www.fightpaperwork.com/?q=ohno"
+                ),
             )
             extra_user_properties = ExtraUserProperties.objects.create(
                 user=user, email_verified=False
@@ -546,15 +641,24 @@ class RestLoginView(ViewSet, SerializerMixin):
         phone: str = data.get("phone")
         try:
             domain_id = resolve_domain_id(domain_name=domain, phone_number=phone)
+            user_domain = UserDomain.objects.get(id=domain_id)
+            if (
+                not user_domain.active
+                and not user_domain.stripe_subscription_id
+                and not user_domain.stripe_customer_id
+            ):
+                return Response(
+                    common_serializers.NotPaidErrorSerializer().data,
+                    status=status.HTTP_401_UNAUTHORIZED,
+                )
             username = combine_domain_and_username(
                 raw_username, phone_number=phone, domain_id=domain_id
             )
         except Exception as e:
             return Response(
-                serializers.StatusResponseSerializer(
+                common_serializers.ErrorSerializer(
                     {
-                        "status": "failure",
-                        "message": f"Domain or phone number not found -- {e}",
+                        "error": f"Domain or phone number not found -- {e}",
                     }
                 ).data,
                 status=status.HTTP_400_BAD_REQUEST,
@@ -573,10 +677,9 @@ class RestLoginView(ViewSet, SerializerMixin):
             user = User.objects.get(username=username)
             if not user.is_active:
                 return Response(
-                    serializers.StatusResponseSerializer(
+                    common_serializers.ErrorSerializer(
                         {
-                            "status": "failure",
-                            "message": "User is inactive -- please verify your e-mail",
+                            "error": "User is inactive -- please verify your e-mail",
                         }
                     ).data,
                     status=status.HTTP_401_UNAUTHORIZED,
@@ -584,9 +687,7 @@ class RestLoginView(ViewSet, SerializerMixin):
         except User.DoesNotExist:
             pass
         return Response(
-            serializers.StatusResponseSerializer(
-                {"status": "failure", "message": f"Invalid credentials"}
-            ).data,
+            common_serializers.ErrorSerializer({"error": f"Invalid credentials"}).data,
             status=status.HTTP_401_UNAUTHORIZED,
         )
 
@@ -656,10 +757,9 @@ class VerifyEmailViewSet(ViewSet, SerializerMixin):
             user = User.objects.get(pk=uid)
         except (TypeError, ValueError, OverflowError, User.DoesNotExist) as e:
             return Response(
-                serializers.StatusResponseSerializer(
+                common_serializers.ErrorSerializer(
                     {
-                        "status": "failure",
-                        "message": "Invalid activation link [user not found]",
+                        "error": "Invalid activation link [user not found]",
                     }
                 ).data,
                 status=status.HTTP_400_BAD_REQUEST,
@@ -669,8 +769,8 @@ class VerifyEmailViewSet(ViewSet, SerializerMixin):
             verification_token = VerificationToken.objects.get(user=user, token=token)
             if timezone.now() > verification_token.expires_at:
                 return Response(
-                    serializers.StatusResponseSerializer(
-                        {"status": "failure", "message": "Activation link has expired"}
+                    common_serializers.ErrorSerializer(
+                        {"error": "Activation link has expired"}
                     ).data,
                     status=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 )
@@ -696,8 +796,8 @@ class VerifyEmailViewSet(ViewSet, SerializerMixin):
             )
         except VerificationToken.DoesNotExist as e:
             return Response(
-                serializers.StatusResponseSerializer(
-                    {"status": "failure", "message": "Invalid activation link"}
+                common_serializers.ErrorSerializer(
+                    {"error": "Invalid activation link"}
                 ).data,
                 status=status.HTTP_400_BAD_REQUEST,
             )
@@ -765,14 +865,16 @@ class PasswordResetViewSet(ViewSet, SerializerMixin):
             return Response(
                 serializers.StatusResponseSerializer({"status": "reset_requested"}).data
             )
-        
+
         except User.DoesNotExist:
             logger.error(f"User does not exist")
             return Response(
-                common_serializers.ErrorSerializer({"error": "User does not exist"}).data,
+                common_serializers.ErrorSerializer(
+                    {"error": "User does not exist"}
+                ).data,
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        
+
         except Exception as e:
             logger.error(f"Password reset request failed: {e}")
             return Response(

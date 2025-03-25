@@ -485,6 +485,14 @@ class ErrorSerializer(StatusResponseSerializer):
         super().__init__(data, *args, **kwargs)
 
 
+class NotPaidErrorSerializer(ErrorSerializer):
+    def __init__(self, data=None, *args, **kwargs):
+        if data is None:
+            data = {}
+        data["error"] = "User has not yet paid"
+        super().__init__(data, *args, **kwargs)
+
+
 class SuccessSerializer(StatusResponseSerializer):
     success = serializers.BooleanField(default=True)
 
