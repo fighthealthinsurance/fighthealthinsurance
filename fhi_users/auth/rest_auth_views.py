@@ -512,7 +512,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 != 0
             ):
                 return Response(
-                        common_serializers.ErrorSerializer(
+                    common_serializers.ErrorSerializer(
                         {
                             "error": "Visible phone number already exists",
                         }
@@ -674,9 +674,7 @@ class RestLoginView(ViewSet, SerializerMixin):
         except User.DoesNotExist:
             pass
         return Response(
-            common_serializers.ErrorSerializer(
-                {"error": f"Invalid credentials"}
-            ).data,
+            common_serializers.ErrorSerializer({"error": f"Invalid credentials"}).data,
             status=status.HTTP_401_UNAUTHORIZED,
         )
 
@@ -853,9 +851,7 @@ class PasswordResetViewSet(ViewSet, SerializerMixin):
         except Exception as e:
             logger.error(f"Password reset request failed: {e}")
             return Response(
-                common_serializers.ErrorSerializer(
-                    {"error": str(e)}
-                ).data,
+                common_serializers.ErrorSerializer({"error": str(e)}).data,
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
