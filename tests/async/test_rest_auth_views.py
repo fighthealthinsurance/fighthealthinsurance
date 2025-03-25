@@ -605,11 +605,36 @@ class TestE2EProfessionalUserSignupFlow(TestCase):
                 "zipcode": "99999",
             },
         }
+        old_outbox = len(mail.outbox)
         response = self.client.post(signup_url, data, format="json")
         self.assertEqual(response.status_code, 201)
         # We don't send the message right away -- we wait for stripe callback.
-        self.assertEqual(len(mail.outbox), 0)
+        self.assertEqual(len(mail.outbox), old_outbox)
+
+        # Simulate Stripe webhook call to trigger the email
         new_user = User.objects.get(email="testpro@example.com")
+        from fighthealthinsurance.common_view_logic import StripeWebhookHelper
+
+        stripe_event = {
+            "type": "checkout.session.completed",
+            "data": {
+                "object": {
+                    "subscription": "sub_12345",
+                    "customer": "cus_12345",
+                    "metadata": {
+                        "payment_type": "professional_domain_subscription",
+                        "professional_id": new_user.professionaluser.id,
+                        "domain_id": UserDomain.objects.get(name=domain_name).id,
+                    },
+                }
+            },
+        }
+        StripeWebhookHelper.handle_checkout_session_completed(
+            None, stripe_event["data"]["object"]
+        )
+
+        # Now we expect it
+        self.assertEqual(len(mail.outbox), old_outbox + 1)
         # User can not log in pre-verification
         self.assertFalse(
             self.client.login(username=new_user.username, password="temp12345")

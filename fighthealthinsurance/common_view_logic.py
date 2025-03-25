@@ -1657,11 +1657,16 @@ class StripeWebhookHelper:
     @staticmethod
     def handle_checkout_session_completed(request, session):
         try:
-            payment_type = session.metadata.get("payment_type")
+            try:
+                metadata = session.metadata
+            except:
+                metadata = session["metadata"]
+
+            payment_type = metadata.get("payment_type")
 
             if payment_type == "interested_professional_signup":
                 InterestedProfessional.objects.filter(
-                    id=session.metadata.get("interested_professional_id")
+                    id=metadata.get("interested_professional_id")
                 ).update(paid=True)
 
             elif payment_type == "professional_domain_subscription":
@@ -1670,7 +1675,7 @@ class StripeWebhookHelper:
                 customer_id = session.get("customer")
                 if subscription_id:
                     UserDomain.objects.filter(
-                        id=session.metadata.get("domain_id")
+                        id=metadata.get("domain_id")
                     ).update(
                         stripe_subscription_id=subscription_id,
                         stripe_customer_id=customer_id,
@@ -1678,10 +1683,10 @@ class StripeWebhookHelper:
                         pending=False,
                     )
                     ProfessionalUser.objects.filter(
-                        id=session.metadata.get("professional_id")
+                        id=metadata.get("professional_id")
                     ).update(active=True)
                     user = ProfessionalUser.objects.get(
-                        id=session.metadata.get("professional_id")
+                        id=metadata.get("professional_id")
                     ).user
                     fhi_emails.send_verification_email(request, user)
                 else:
