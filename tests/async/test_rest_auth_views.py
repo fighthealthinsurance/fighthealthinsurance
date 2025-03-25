@@ -572,6 +572,17 @@ class RestAuthViewsTests(TestCase):
         self.assertEqual(data["domain_name"], self.domain.name)
         self.assertTrue(data["beta"])  # Check beta flag
 
+    def test_finish_payment_view_get(self) -> None:
+        url = reverse("professional_user-finish_payment")
+        params = {
+            "domain_id": self.domain.id,
+            "professional_user_id": self.user.id,
+            "continue_url": "http://example.com/continue",
+        }
+        response = self.client.get(url, params, format="json")
+        self.assertIn(response.status_code, range(200, 300))
+        self.assertIn("next_url", response.json())
+
     def test_complete_payment_view_post(self) -> None:
         url = reverse("complete_payment")
         data = {
