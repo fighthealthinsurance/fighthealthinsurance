@@ -487,13 +487,9 @@ class ErrorSerializer(StatusResponseSerializer):
 
 class NotPaidErrorSerializer(ErrorSerializer):
     def __init__(self, data=None, *args, **kwargs):
-        # Set status to "error" if not explicitly provided
+        if data is None:
+            data = {}
         data["error"] = "User has not yet paid"
-        if data and "status" not in data:
-            data["status"] = "error"
-        # Set message to error value if not explicitly provided
-        if data and "error" in data and "message" not in data:
-            data["message"] = data["error"]
         super().__init__(data, *args, **kwargs)
 
 
