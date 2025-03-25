@@ -419,6 +419,7 @@ class RestAuthViewsTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(response.json()["status"], "error")
         self.assertEqual(response.json()["message"], "Reset token has expired")
+        self.assertEqual(response.json()["error"], "Reset token has expired")
 
     def test_rest_login_view_with_nonexistent_domain(self) -> None:
         url = reverse("rest_login-login")
@@ -527,6 +528,7 @@ class RestAuthViewsTests(TestCase):
         response = self.client.post(url, data, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(response.json()["status"], "error")
+        self.assertEqual(response.json()["error"], "User does not exist")
 
     def test_whoami_view_authed(self):
         # Log in
