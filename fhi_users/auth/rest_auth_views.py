@@ -354,7 +354,12 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         return super().create(request)
 
     def create_stripe_checkout_session(
-        self, email, professional_user_id, user_domain, continue_url, cancel_url,
+        self,
+        email,
+        professional_user_id,
+        user_domain,
+        continue_url,
+        cancel_url,
         card_required=False,
     ):
         payment_method_collection = "always"
@@ -391,7 +396,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                     "end_behavior": {"missing_payment_method": "cancel"}
                 },
             },
-            payment_method_collection=payment_method_collection,
+            payment_method_collection=payment_method_collection,  # type: ignore
             expires_at=int(time.time() + (3600 * 1)),
         )
         return checkout_session
