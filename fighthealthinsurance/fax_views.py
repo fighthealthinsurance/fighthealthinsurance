@@ -1,6 +1,7 @@
 import stripe
 from loguru import logger
 from typing import *
+import json
 
 from django.conf import settings
 from django.shortcuts import redirect, render
@@ -81,6 +82,7 @@ class StageFaxView(generic.FormView):
         metadata = {
             "payment_type": "fax",
             "fax_request_uuid": staged.uuid,
+            "items": json.dumps(items),
         }
         checkout = stripe.checkout.Session.create(
             line_items=items,  # type: ignore

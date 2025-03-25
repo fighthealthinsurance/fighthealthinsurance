@@ -372,3 +372,17 @@ class StatusResponseSerializer(serializers.Serializer):
 
 class EmptySerializer(serializers.Serializer):
     pass
+
+
+class FinishPaymentSerializer(serializers.Serializer):
+    # We either need the domain_id & professional user id (what we get from stripe)
+    domain_id = serializers.IntegerField(required=False)
+    professional_user_id = serializers.IntegerField(required=False)
+    # Or the domain name or phone number + user_email (what we get from a failed login)
+    domain_name = serializers.CharField(required=False)
+    domain_phone = serializers.CharField(required=False)
+    user_email = serializers.EmailField(required=False)
+    continue_url = serializers.URLField()
+    cancel_url = serializers.URLField(
+        required=False, default="https://www.fightpaper.com/?q=ohno"
+    )

@@ -705,6 +705,7 @@ class AppealAttachment(models.Model):
         allowed_appeals = Appeal.filter_to_allowed_appeals(user)
         return cls.objects.filter(appeal__in=allowed_appeals)
 
+
 class LostStripeSession(models.Model):
     id = models.AutoField(primary_key=True)
     session_id = models.CharField(max_length=255)

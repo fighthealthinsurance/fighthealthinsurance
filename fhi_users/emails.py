@@ -79,7 +79,10 @@ def send_verification_email(request, user: "User") -> None:
         user.email,
     )
 
-def send_checkout_session_expired(request, email:str, link: str, item: Optional[str]) -> None:
+
+def send_checkout_session_expired(
+    request, email: str, link: str, item: Optional[str]
+) -> None:
     """Send checkout session expired email."""
     default_item = "Fight Health Insurance / Fight Paperwork"
     item = item if item else default_item

@@ -1,3 +1,4 @@
+from urllib.parse import urlencode
 import asyncstdlib as a
 from asgiref.sync import sync_to_async, async_to_sync
 import asyncio
@@ -20,6 +21,7 @@ from django.core.validators import validate_email
 from django.forms import Form
 from django.template.loader import render_to_string
 from django.db.models import QuerySet
+from django.urls import reverse
 
 
 import uszipcode
@@ -30,6 +32,7 @@ from fighthealthinsurance.models import *
 from fighthealthinsurance.utils import interleave_iterator_for_keep_alive
 from fighthealthinsurance import stripe_utils
 from fhi_users.models import ProfessionalUser, UserDomain
+from fhi_users import emails as fhi_emails
 from .pubmed_tools import PubMedTools
 from .utils import check_call, send_fallback_email
 
@@ -1646,3 +1649,105 @@ class AppealsBackendHelper:
         async for i in interleaved:
             logger.debug(f"Yielding {i}")
             yield i
+
+
+class StripeWebhookHelper:
+    @staticmethod
+    def handle_checkout_session_completed(request, session):
+        try:
+            payment_type = session.metadata.get("payment_type")
+
+            if payment_type == "interested_professional_signup":
+                InterestedProfessional.objects.filter(
+                    id=session.metadata.get("interested_professional_id")
+                ).update(paid=True)
+
+            elif payment_type == "professional_domain_subscription":
+                logger.debug(f"Processing professional domain subscription {session}")
+                subscription_id = session.get("subscription")
+                costumer_id = session.get("customer")
+                if subscription_id:
+                    UserDomain.objects.filter(
+                        id=session.metadata.get("domain_id")
+                    ).update(
+                        stripe_subscription_id=subscription_id,
+                        stripe_customer_id=costumer_id,
+                        active=True,
+                        pending=False,
+                    )
+                    ProfessionalUser.objects.filter(
+                        id=session.metadata.get("professional_id")
+                    ).update(active=True)
+                else:
+                    logger.error("No subscription ID in completed checkout session")
+
+            elif payment_type == "fax":
+                FaxesToSend.objects.filter(uuid=session.metadata.get("uuid")).update(
+                    paid=True, should_send=True
+                )
+            else:
+                logger.error(f"Unknown payment type: {payment_type}")
+        except Exception as e:
+            logger.opt(exception=True).error("Error processing checkout session")
+            raise e
+
+    @staticmethod
+    def handle_checkout_session_expired(request, session):
+        try:
+            # TODO: More complete handling
+            logger.debug(f"Checkout session expired: {session}")
+            payment_type = session.metadata.get("payment_type")
+            item = "Fight Health Insurance / Fight paperwork"
+            finish_link = None
+            if payment_type == "fax":
+                item = "Fight Health Insurance Fax"
+            elif payment_type == "professional_domain_subscription":
+                item = "Fight Paperwork Professional Domain Subscription"
+                finish_base_link = reverse(
+                    "professional_user-finish-payment",
+                )
+                params = urlencode(
+                    {
+                        "domain_id": session.metadata.get("domain_id"),
+                        "professional_id": session.metadata.get("professional_id"),
+                    }
+                )
+                finish_link = f"{finish_base_link}?{params}"
+            email = session.customer_details.email
+            lost_session = LostStripeSession.objects.create(
+                payment_type=payment_type,
+                email=email,
+                metadata=session.metadata,
+            )
+            if finish_link is None:
+                try:
+                    finish_link = reverse("finish_stripe", args=[lost_session.id])
+                except Exception:
+                    pass
+            if finish_link:
+                fhi_emails.send_checkout_session_expired(
+                    request,
+                    email=email,
+                    item=item,
+                    link=finish_link,
+                )
+            else:
+                logger.debug(f"Could not create finish link for {payment_type}")
+        except:
+            logger.opt(exception=True).error(
+                "Error processing expired checkout session"
+            )
+            raise
+
+    @staticmethod
+    def handle_stripe_webhook(request, event):
+        if event.type == "checkout.session.completed":
+            StripeWebhookHelper.handle_checkout_session_completed(
+                request, event.data.object
+            )
+        elif event.type == "checkout.session.expired":
+            StripeWebhookHelper.handle_checkout_session_expired(
+                request, event.data.object
+            )
+        else:
+            logger.debug(f"Unhandled stripe event type {event.type}")

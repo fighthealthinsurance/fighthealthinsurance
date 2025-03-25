@@ -572,6 +572,61 @@ class RestAuthViewsTests(TestCase):
         self.assertEqual(data["domain_name"], self.domain.name)
         self.assertTrue(data["beta"])  # Check beta flag
 
+    def test_finish_payment_view_post(self) -> None:
+        url = reverse("professional_user-finish_payment")
+        data = {
+            "domain_id": self.domain.id,
+            "professional_user_id": self.user.id,
+            "continue_url": "http://example.com/continue",
+        }
+        self.client.force_authenticate(user=self.user)
+        response = self.client.post(url, data, format="json")
+        self.assertIn(response.status_code, range(200, 300))
+        self.assertIn("next_url", response.json())
+
+    def test_finish_payment_view_get(self) -> None:
+        url = reverse("professional_user-finish_payment")
+        params = {
+            "domain_id": self.domain.id,
+            "professional_user_id": self.user.id,
+            "continue_url": "http://example.com/continue",
+        }
+        self.client.force_authenticate(user=self.user)
+        response = self.client.get(url, params, format="json")
+        self.assertIn(response.status_code, range(200, 300))
+        self.assertIn("next_url", response.json())
+
+    def test_finish_payment_view_missing_parameters(self) -> None:
+        url = reverse("professional_user-finish_payment")
+        data = {
+            "domain_id": self.domain.id,
+        }
+        self.client.force_authenticate(user=self.user)
+        response = self.client.post(url, data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_finish_payment_view_invalid_domain(self) -> None:
+        url = reverse("professional_user-finish_payment")
+        data = {
+            "domain_id": 99999,
+            "professional_user_id": self.user.id,
+            "continue_url": "http://example.com/continue",
+        }
+        self.client.force_authenticate(user=self.user)
+        response = self.client.post(url, data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_finish_payment_view_invalid_professional_user(self) -> None:
+        url = reverse("professional_user-finish_payment")
+        data = {
+            "domain_id": self.domain.id,
+            "professional_user_id": 99999,
+            "continue_url": "http://example.com/continue",
+        }
+        self.client.force_authenticate(user=self.user)
+        response = self.client.post(url, data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
 
 class TestE2EProfessionalUserSignupFlow(TestCase):
     def setUp(self):

@@ -6,6 +6,7 @@ from stripe import error as stripe_error
 import typing
 from loguru import logger
 from PIL import Image
+import json
 
 
 from django import forms
@@ -138,13 +139,14 @@ class ProVersionView(generic.FormView):
             "Professional Pre-Signup", 1000, recurring=False
         )
 
+        line_items = [
+            {
+                "price": price_id,
+                "quantity": 1,
+            }
+        ]
         checkout = stripe.checkout.Session.create(
-            line_items=[
-                {
-                    "price": price_id,
-                    "quantity": 1,
-                }
-            ],
+            line_items=line_items,  # type: ignore
             mode="payment",
             success_url=self.request.build_absolute_uri(
                 reverse("pro_version_thankyou")
@@ -155,6 +157,7 @@ class ProVersionView(generic.FormView):
             metadata={
                 "payment_type": "interested_professional_signup",
                 "interested_professional_id": interested_professional.id,
+                "items": json.dumps(line_items),
             },
         )
 
@@ -645,66 +648,5 @@ class StripeWebhookView(View):
         except stripe_error.SignatureVerificationError as e:  # type: ignore
             logger.error(f"Invalid signature: {e}")
             return HttpResponse(status=403)
-
-        if event.type == "checkout.session.completed":
-            session = event.data.object
-            payment_type = session.metadata.get("payment_type")
-
-            if payment_type == "interested_professional_signup":
-                models.InterestedProfessional.objects.filter(
-                    id=session.metadata.get("interested_professional_id")
-                ).update(paid=True)
-
-            elif payment_type == "professional_domain_subscription":
-                logger.debug(f"Processing professional domain subscription {session}")
-                subscription_id = session.get("subscription")
-                costumer_id = session.get("customer")
-                if subscription_id:
-                    models.UserDomain.objects.filter(
-                        id=session.metadata.get("domain_id")
-                    ).update(
-                        stripe_subscription_id=subscription_id,
-                        stripe_customer_id=costumer_id,
-                        active=True,
-                        pending=False,
-                    )
-                    models.ProfessionalUser.objects.filter(
-                        id=session.metadata.get("professional_id")
-                    ).update(active=True)
-                else:
-                    logger.error("No subscription ID in completed checkout session")
-
-            elif payment_type == "fax":
-                models.FaxesToSend.objects.filter(
-                    uuid=session.metadata.get("uuid")
-                ).update(paid=True, should_send=True)
-            else:
-                logger.error(f"Unknown payment type: {payment_type}")
-        elif event.type == "checkout.session.expired":
-            session = event.data.object
-            logger.debug(f"Checkout session expired: {session}")
-            payment_type = session.metadata.get("payment_type")
-            item = "Fight Health Insurance / Fight paperwork"
-            if payment_type == "fax":
-                item = "Fight Health Insurance Fax"
-            elif payment_type == "professional_domain_subscription":
-                item = "Fight Paperwork Professional Domain Subscription"
-            email=session.customer_details.email
-            lost_session = models.LostStripeSession.objects.create(
-                payment_type=payment_type,
-                email=email,
-                metadata=session.metadata,
-            )
-            finish_link="ope"
-            try:
-                finish_link = reverse("finish_signup", args=[lost_session.id])
-            except Exception:
-                finish_link = "farts"
-            fhi_emails.send_checkout_session_expired(
-                request,
-                email=email,
-                item=item,
-                link=finish_link,
-            )
-
+        common_view_logic.StripeWebhookHelper.handle_stripe_webhook(request, event)
         return HttpResponse(status=200)

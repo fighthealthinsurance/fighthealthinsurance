@@ -1,5 +1,7 @@
 from loguru import logger
 from typing import Optional, TYPE_CHECKING
+import time
+import json
 
 from rest_framework import status
 from rest_framework import viewsets
@@ -148,6 +150,10 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
     Handles professional user sign-up and domain acceptance or rejection.
     """
 
+    # This is hard codeded for now, but we should eventually have the rest client
+    # tell us where to send the user back to on failure as well (same as success)
+    cancel = "https://www.fightpaperwork.com"
+
     def get_serializer_class(self):
         if self.action == "accept" or self.action == "reject":
             return serializers.AcceptProfessionalUserSerializer
@@ -158,6 +164,8 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             or self.action == "list_pending_in_domain"
         ):
             return serializers.EmptySerializer
+        elif self.action == "finish_payment":
+            return serializers.FinishPaymentSerializer
         else:
             return serializers.EmptySerializer
 
@@ -341,6 +349,124 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         """
         return super().create(request)
 
+    def create_stripe_checkout_session(
+        self, email, professional_user_id, user_domain, continue_url, cancel_url
+    ):
+        base_product_id, base_price_id = stripe_utils.get_or_create_price(
+            "FP Basic Professional Plan", 2500, recurring=True
+        )
+        metered_product_id, metered_price_id = stripe_utils.get_or_create_price(
+            "Incremental FP Appeal", 1000, recurring=True, metered=True
+        )
+        line_items = [
+            {"price": base_price_id, "quantity": 1},
+            {"price": metered_price_id},
+        ]
+        checkout_session = stripe.checkout.Session.create(
+            payment_method_types=["card"],
+            line_items=line_items,  # type: ignore
+            mode="subscription",
+            success_url=continue_url,
+            cancel_url=cancel_url,
+            customer_email=email,
+            allow_promotion_codes=True,
+            metadata={
+                "payment_type": "professional_domain_subscription",
+                "professional_id": str(professional_user_id),
+                "domain_id": str(user_domain.id),
+                "items": json.dumps(line_items),
+            },
+            subscription_data={
+                "trial_period_days": 30,
+                "trial_settings": {
+                    "end_behavior": {"missing_payment_method": "cancel"}
+                },
+            },
+            expires_at=int(time.time() + (3600 * 1)),
+        )
+        return checkout_session
+
+    @extend_schema(
+        responses={
+            200: serializers.StatusResponseSerializer,
+            400: common_serializers.ErrorSerializer,
+            403: common_serializers.ErrorSerializer,
+        }
+    )
+    @action(detail=False, methods=["get", "post"])
+    def finish_payment(self, request: Request) -> Response:
+        domain_id = request.data.get("domain_id") or request.query_params.get(
+            "domain_id"
+        )
+        professional_user_id = request.data.get(
+            "professional_user_id"
+        ) or request.query_params.get("professional_user_id")
+        domain_name = request.data.get("domain_name") or request.query_params.get(
+            "domain_name"
+        )
+        domain_phone = request.data.get("domain_phone") or request.query_params.get(
+            "domain_phone"
+        )
+        user_email = request.data.get("user_email") or request.query_params.get(
+            "user_email"
+        )
+        continue_url = request.data.get("continue_url") or request.query_params.get(
+            "continue_url"
+        )
+        cancel_url = request.data.get("cancel_url") or request.query_params.get(
+            "cancel_url", "https://www.fightpaper.com/?q=ohno"
+        )
+
+        try:
+            if domain_id and professional_user_id:
+                user_domain = UserDomain.objects.get(id=domain_id)
+                professional_user = ProfessionalUser.objects.get(
+                    id=professional_user_id
+                )
+                email = professional_user.user.email
+            elif (domain_name or domain_phone) and user_email:
+                domain_id = resolve_domain_id(
+                    domain_name=domain_name, phone_number=domain_phone
+                )
+                user_domain = UserDomain.objects.get(id=domain_id)
+                professional_user = User.objects.get(email=user_email).professionaluser
+                email = user_email
+            else:
+                return Response(
+                    common_serializers.ErrorSerializer(
+                        {"error": "Missing required parameters"}
+                    ).data,
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            checkout_session = self.create_stripe_checkout_session(
+                email, professional_user.id, user_domain, continue_url, cancel_url
+            )
+            return Response(
+                serializers.StatusResponseSerializer(
+                    {"next_url": checkout_session.url}
+                ).data,
+                status=status.HTTP_200_OK,
+            )
+        except UserDomain.DoesNotExist:
+            return Response(
+                common_serializers.ErrorSerializer({"error": "Domain not found"}).data,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except ProfessionalUser.DoesNotExist:
+            return Response(
+                common_serializers.ErrorSerializer(
+                    {"error": "Professional user not found"}
+                ).data,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except Exception as e:
+            logger.opt(exception=e).error("Error in finishing payment")
+            return Response(
+                common_serializers.ErrorSerializer({"error": f"Error {e}"}).data,
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
     @transaction.atomic
     def perform_create(
         self, request: Request, serializer: Serializer
@@ -472,40 +598,14 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         )
 
         if not (settings.DEBUG and data["skip_stripe"]):
-            base_product_id, base_price_id = stripe_utils.get_or_create_price(
-                "FP Basic Professional Plan", 2500, recurring=True
-            )
-            metered_product_id, metered_price_id = stripe_utils.get_or_create_price(
-                "Incremental FP Appeal", 1000, recurring=True, metered=True
-            )
-            cancel_url = request.META.get(
-                "HTTP_REFERER", user_signup_info["continue_url"]
-            )
-            checkout_session = stripe.checkout.Session.create(
-                payment_method_types=["card"],
-                line_items=[
-                    {"price": base_price_id, "quantity": 1},
-                    {"price": metered_price_id},
-                ],
-                mode="subscription",
-                success_url=user_signup_info["continue_url"],
-                cancel_url=cancel_url,  # user_signup_info["continue_url"],
-                customer_email=email,
-                allow_promotion_codes=True,  # Users can enter a promo code at checkout
-                metadata={
-                    "payment_type": "professional_domain_subscription",
-                    "professional_id": str(professional_user.id),
-                    "domain_id": str(user_domain.id),
-                },
-                subscription_data={
-                    "trial_period_days": 30,
-                    "trial_settings": {
-                        "end_behavior": {"missing_payment_method": "cancel"}
-                    },
-                },
-                expires_at=int(time.time() + (3600 * 1)),  # Configured to expire after an hour
-                # TBD do we want to allow trial without card?
-                # payment_method_collection="if_required",
+            checkout_session = self.create_stripe_checkout_session(
+                email,
+                professional_user.id,
+                user_domain,
+                user_signup_info["continue_url"],
+                user_signup_info.get(
+                    "cancel_url", "https://www.fightpaper.com/?q=ohno"
+                ),
             )
             extra_user_properties = ExtraUserProperties.objects.create(
                 user=user, email_verified=False
@@ -570,7 +670,11 @@ class RestLoginView(ViewSet, SerializerMixin):
                     status=status.HTTP_401_UNAUTHORIZED,
                 )
             user_domain = UserDomain.objects.get(id=domain_id)
-            if not user_domain.active and not user_domain.stripe_subscription_id and not user_domain.stripe_customer_id:
+            if (
+                not user_domain.active
+                and not user_domain.stripe_subscription_id
+                and not user_domain.stripe_customer_id
+            ):
                 return Response(
                     common_serializers.NotPaidErrorSerializer().data,
                     status=status.HTTP_401_UNAUTHORIZED,
