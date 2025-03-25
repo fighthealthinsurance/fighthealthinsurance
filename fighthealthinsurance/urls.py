@@ -51,7 +51,7 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
     path(
         "webhook/stripe",
         csrf_exempt(views.StripeWebhookView.as_view()),
-        name="stripe-webhook",
+        name="stripe-webhook-no-slash",
     ),
     path(
         "stripe/finish",
