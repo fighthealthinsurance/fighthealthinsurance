@@ -53,6 +53,11 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         csrf_exempt(views.StripeWebhookView.as_view()),
         name="stripe-webhook",
     ),
+    path(
+        "stripe/finish",
+        csrf_exempt(views.CompletePaymentView.as_view()),
+        name="complete_payment",
+    ),
     re_path("timbit/sentry-debug/(?P<path>.+)", trigger_error, name="fake_fetch_url"),
     path("timbit/charts/", include(("charts.urls", "charts"), namespace="charts")),
     path("timbit/admin/", admin.site.urls),
