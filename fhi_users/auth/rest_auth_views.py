@@ -391,6 +391,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                     "end_behavior": {"missing_payment_method": "cancel"}
                 },
             },
+            payment_method_collection=payment_method_collection,
             expires_at=int(time.time() + (3600 * 1)),
         )
         return checkout_session
