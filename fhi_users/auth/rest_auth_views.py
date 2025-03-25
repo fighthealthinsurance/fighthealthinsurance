@@ -492,16 +492,16 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                         f"Error finding domain {domain_name} / {visible_phone_number}"
                     )
                     return Response(
-                        serializers.StatusResponseSerializer(
-                            {"status": "failure", "message": "Domain does not exist"}
+                        common_serializers.ErrorSerializer(
+                            {"error": "Domain does not exist"}
                         ).data,
                         status=status.HTTP_400_BAD_REQUEST,
                     )
         else:
             if UserDomain.find_by_name(name=domain_name).count() != 0:
                 return Response(
-                    serializers.StatusResponseSerializer(
-                        {"status": "failure", "message": "Domain already exists"}
+                    common_serializers.ErrorSerializer(
+                        {"error": "Domain already exists"}
                     ).data,
                     status=status.HTTP_400_BAD_REQUEST,
                 )
@@ -512,20 +512,18 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 != 0
             ):
                 return Response(
-                    serializers.StatusResponseSerializer(
+                        common_serializers.ErrorSerializer(
                         {
-                            "status": "failure",
-                            "message": "Visible phone number already exists",
+                            "error": "Visible phone number already exists",
                         }
                     ).data,
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             if "user_domain" not in data:
                 return Response(
-                    serializers.StatusResponseSerializer(
+                    common_serializers.ErrorSerializer(
                         {
-                            "status": "failure",
-                            "message": "Need domain info when making a new domain or solo provider",
+                            "error": "Need domain info when making a new domain or solo provider",
                         }
                     ).data,
                     status=status.HTTP_400_BAD_REQUEST,
@@ -536,10 +534,9 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                     user_domain_info["name"] = domain_name
                 else:
                     return Response(
-                        serializers.StatusResponseSerializer(
+                        common_serializers.ErrorSerializer(
                             {
-                                "status": "failure",
-                                "message": "Domain name and user domain name must match",
+                                "error": "Domain name and user domain name must match",
                             }
                         ).data,
                         status=status.HTTP_400_BAD_REQUEST,
@@ -552,10 +549,9 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                     user_domain_info["visible_phone_number"] = visible_phone_number
                 else:
                     return Response(
-                        serializers.StatusResponseSerializer(
+                        common_serializers.ErrorSerializer(
                             {
-                                "status": "failure",
-                                "message": "Visible phone number and user domain visible phone number must match",
+                                "error": "Visible phone number and user domain visible phone number must match",
                             }
                         ).data,
                         status=status.HTTP_400_BAD_REQUEST,
@@ -658,10 +654,9 @@ class RestLoginView(ViewSet, SerializerMixin):
             user = User.objects.get(username=username)
             if not user.is_active:
                 return Response(
-                    serializers.StatusResponseSerializer(
+                    common_serializers.ErrorSerializer(
                         {
-                            "status": "failure",
-                            "message": "User is inactive -- please verify your e-mail",
+                            "error": "User is inactive -- please verify your e-mail",
                         }
                     ).data,
                     status=status.HTTP_401_UNAUTHORIZED,
@@ -679,8 +674,8 @@ class RestLoginView(ViewSet, SerializerMixin):
         except User.DoesNotExist:
             pass
         return Response(
-            serializers.StatusResponseSerializer(
-                {"status": "failure", "message": f"Invalid credentials"}
+            common_serializers.ErrorSerializer(
+                {"error": f"Invalid credentials"}
             ).data,
             status=status.HTTP_401_UNAUTHORIZED,
         )
@@ -751,10 +746,9 @@ class VerifyEmailViewSet(ViewSet, SerializerMixin):
             user = User.objects.get(pk=uid)
         except (TypeError, ValueError, OverflowError, User.DoesNotExist) as e:
             return Response(
-                serializers.StatusResponseSerializer(
+                common_serializers.ErrorSerializer(
                     {
-                        "status": "failure",
-                        "message": "Invalid activation link [user not found]",
+                        "error": "Invalid activation link [user not found]",
                     }
                 ).data,
                 status=status.HTTP_400_BAD_REQUEST,
@@ -764,8 +758,8 @@ class VerifyEmailViewSet(ViewSet, SerializerMixin):
             verification_token = VerificationToken.objects.get(user=user, token=token)
             if timezone.now() > verification_token.expires_at:
                 return Response(
-                    serializers.StatusResponseSerializer(
-                        {"status": "failure", "message": "Activation link has expired"}
+                    common_serializers.ErrorSerializer(
+                        {"error": "Activation link has expired"}
                     ).data,
                     status=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 )
@@ -791,8 +785,8 @@ class VerifyEmailViewSet(ViewSet, SerializerMixin):
             )
         except VerificationToken.DoesNotExist as e:
             return Response(
-                serializers.StatusResponseSerializer(
-                    {"status": "failure", "message": "Invalid activation link"}
+                common_serializers.ErrorSerializer(
+                    {"error": "Invalid activation link"}
                 ).data,
                 status=status.HTTP_400_BAD_REQUEST,
             )
@@ -859,8 +853,8 @@ class PasswordResetViewSet(ViewSet, SerializerMixin):
         except Exception as e:
             logger.error(f"Password reset request failed: {e}")
             return Response(
-                serializers.StatusResponseSerializer(
-                    {"status": "failure", "message": str(e)}
+                common_serializers.ErrorSerializer(
+                    {"error": str(e)}
                 ).data,
                 status=status.HTTP_400_BAD_REQUEST,
             )
@@ -880,8 +874,8 @@ class PasswordResetViewSet(ViewSet, SerializerMixin):
             if timezone.now() > reset_token.expires_at:
                 reset_token.delete()
                 return Response(
-                    serializers.StatusResponseSerializer(
-                        {"status": "failure", "message": "Reset token has expired"}
+                    common_serializers.ErrorSerializer(
+                        {"error": "Reset token has expired"}
                     ).data,
                     status=status.HTTP_400_BAD_REQUEST,
                 )
@@ -902,8 +896,8 @@ class PasswordResetViewSet(ViewSet, SerializerMixin):
 
         except ResetToken.DoesNotExist:
             return Response(
-                serializers.StatusResponseSerializer(
-                    {"status": "failure", "message": "Invalid reset token"}
+                common_serializers.ErrorSerializer(
+                    {"error": "Invalid reset token"}
                 ).data,
                 status=status.HTTP_400_BAD_REQUEST,
             )
