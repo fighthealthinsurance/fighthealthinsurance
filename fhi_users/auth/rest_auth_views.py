@@ -628,6 +628,16 @@ class RestLoginView(ViewSet, SerializerMixin):
         phone: str = data.get("phone")
         try:
             domain_id = resolve_domain_id(domain_name=domain, phone_number=phone)
+            user_domain = UserDomain.objects.get(id=domain_id)
+            if (
+                not user_domain.active
+                and not user_domain.stripe_subscription_id
+                and not user_domain.stripe_customer_id
+            ):
+                return Response(
+                    common_serializers.NotPaidErrorSerializer().data,
+                    status=status.HTTP_401_UNAUTHORIZED,
+                )
             username = combine_domain_and_username(
                 raw_username, phone_number=phone, domain_id=domain_id
             )
@@ -659,16 +669,6 @@ class RestLoginView(ViewSet, SerializerMixin):
                             "error": "User is inactive -- please verify your e-mail",
                         }
                     ).data,
-                    status=status.HTTP_401_UNAUTHORIZED,
-                )
-            user_domain = UserDomain.objects.get(id=domain_id)
-            if (
-                not user_domain.active
-                and not user_domain.stripe_subscription_id
-                and not user_domain.stripe_customer_id
-            ):
-                return Response(
-                    common_serializers.NotPaidErrorSerializer().data,
                     status=status.HTTP_401_UNAUTHORIZED,
                 )
         except User.DoesNotExist:
