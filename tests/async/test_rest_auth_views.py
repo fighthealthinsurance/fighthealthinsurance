@@ -230,7 +230,7 @@ class RestAuthViewsTests(TestCase):
         data = {"token": "invalidtoken", "user_id": self.user.pk}
         response = self.client.post(url, data, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertEqual(response.json()["status"], "failure")
+        self.assertEqual(response.json()["status"], "error")
         self.assertEqual(response.json()["message"], "Invalid activation link")
 
     def test_email_confirmation_with_expired_token(self) -> None:
@@ -243,7 +243,7 @@ class RestAuthViewsTests(TestCase):
         data = {"token": token.token, "user_id": self.user.pk}
         response = self.client.post(url, data, format="json")
         self.assertEqual(response.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
-        self.assertEqual(response.json()["status"], "failure")
+        self.assertEqual(response.json()["status"], "error")
         self.assertEqual(response.json()["message"], "Activation link has expired")
 
     def test_create_professional_user_with_new_domain(self) -> None:
@@ -401,7 +401,7 @@ class RestAuthViewsTests(TestCase):
         }
         response = self.client.post(url, data, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertEqual(response.json()["status"], "failure")
+        self.assertEqual(response.json()["status"], "error")
         self.assertEqual(response.json()["message"], "Invalid reset token")
 
     def test_finish_password_reset_with_expired_token(self) -> None:
@@ -417,7 +417,7 @@ class RestAuthViewsTests(TestCase):
         }
         response = self.client.post(url, data, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertEqual(response.json()["status"], "failure")
+        self.assertEqual(response.json()["status"], "error")
         self.assertEqual(response.json()["message"], "Reset token has expired")
 
     def test_rest_login_view_with_nonexistent_domain(self) -> None:
@@ -430,7 +430,7 @@ class RestAuthViewsTests(TestCase):
         }
         response = self.client.post(url, data, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertEqual(response.json()["status"], "failure")
+        self.assertEqual(response.json()["status"], "error")
 
     def test_rest_login_view_with_invalid_phone(self) -> None:
         url = reverse("rest_login-login")
@@ -442,7 +442,7 @@ class RestAuthViewsTests(TestCase):
         }
         response = self.client.post(url, data, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertEqual(response.json()["status"], "failure")
+        self.assertEqual(response.json()["status"], "error")
 
     def test_rest_login_view_with_inactive_user(self) -> None:
         self.user.is_active = False
@@ -465,7 +465,7 @@ class RestAuthViewsTests(TestCase):
         }
         response = self.client.post(url, data, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertEqual(response.json()["status"], "failure")
+        self.assertEqual(response.json()["status"], "error")
 
     def test_verify_email_without_token(self) -> None:
         url = reverse("rest_verify_email-verify")
@@ -526,7 +526,7 @@ class RestAuthViewsTests(TestCase):
         }
         response = self.client.post(url, data, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertEqual(response.json()["status"], "failure")
+        self.assertEqual(response.json()["status"], "error")
 
     def test_whoami_view_authed(self):
         # Log in
