@@ -96,6 +96,9 @@ class UserSignupSerializer(serializers.Serializer):
     domain_name = serializers.CharField(required=False, allow_blank=True)
     visible_phone_number = serializers.CharField(required=True)
     continue_url = serializers.CharField()  # URL to send user to post signup / payment
+    cancel_url = serializers.URLField(
+        required=False, default="https://www.fightpaperwork.com/?q=ohno"
+    )
     username = serializers.CharField(required=True)
     first_name = serializers.CharField(required=True)
     last_name = serializers.CharField(required=True)
