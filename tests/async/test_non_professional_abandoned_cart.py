@@ -1,5 +1,6 @@
 import json
 import pytest
+from urllib.parse import urlencode
 from unittest.mock import patch
 from django.urls import reverse
 from django.test import Client
@@ -23,7 +24,7 @@ def test_non_professional_abandoned_cart():
         metadata=metadata,
     )
 
-    # Mock the Stripe API call
+    # Test POST method
     with patch("stripe.checkout.Session.create") as mock_create:
         mock_create.return_value.url = "https://checkout.stripe.com/test"
 
@@ -39,6 +40,22 @@ def test_non_professional_abandoned_cart():
             ),
             content_type="application/json",
         )
+
+        assert response.status_code == 200
+        assert "next_url" in response.json()
+        assert response.json()["next_url"] == "https://checkout.stripe.com/test"
+
+    # Test GET method
+    with patch("stripe.checkout.Session.create") as mock_create:
+        mock_create.return_value.url = "https://checkout.stripe.com/test"
+
+        # Call the CompletePaymentView with GET parameters
+        query_params = urlencode({
+            "session_id": session_id,
+            "continue_url": "https://example.com/success",
+            "cancel_url": "https://example.com/cancel",
+        })
+        response = client.get(f"{reverse('complete_payment')}?{query_params}")
 
         assert response.status_code == 200
         assert "next_url" in response.json()
