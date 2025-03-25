@@ -1727,10 +1727,21 @@ class StripeWebhookHelper:
                     }
                 )
                 finish_link = f"{finish_base_link}?{params}"
+            email: Optional[str] = None
             try:
-                email = session.customer_details.email
+                email = session.costumer_email
             except:
-                email = session["customer_details"]["email"]
+                email = session["customer_email"]
+            if email is None:
+                try:
+                    email = session.customer_details.email
+                except:
+                    email = session["customer_details"]["email"]
+            if email is None:
+                logger.error(
+                    "No email found in expired checkout session can't send e-mail"
+                )
+                return
             session_id = None
             if hasattr(session, "id"):
                 session_id = session.id
@@ -1741,10 +1752,7 @@ class StripeWebhookHelper:
                 metadata=metadata,
             )
             if finish_link is None:
-                try:
-                    finish_link = reverse("finish_stripe", args=[lost_session.id])
-                except Exception:
-                    pass
+                finish_link = reverse("finish_stripe", args=[lost_session.id])
             if finish_link:
                 fhi_emails.send_checkout_session_expired(
                     request,

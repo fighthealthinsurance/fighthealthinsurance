@@ -695,7 +695,12 @@ class CompletePaymentView(View):
             if not recovery_info_id:
                 line_items_json = metadata.get("line_items")
                 if not line_items_json:
-                    raise Exception(f"No recover info found in metadata {metadata}")
+                    logger.error(f"No recover info found in metadata {metadata}")
+                    return HttpResponse(
+                        json.dumps({"error": "No recover info found in metadata"}),
+                        status=400,
+                        content_type="application/json",
+                    )
                 line_items = json.loads(line_items_json)
             else:
                 line_items = StripeRecoveryInfo.objects.get(id=recovery_info_id).items
