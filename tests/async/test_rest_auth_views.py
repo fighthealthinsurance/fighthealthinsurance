@@ -607,7 +607,8 @@ class TestE2EProfessionalUserSignupFlow(TestCase):
         }
         response = self.client.post(signup_url, data, format="json")
         self.assertEqual(response.status_code, 201)
-        self.assertGreaterEqual(len(mail.outbox), 1)
+        # We don't send the message right away -- we wait for stripe callback.
+        self.assertEqual(len(mail.outbox), 0)
         new_user = User.objects.get(email="testpro@example.com")
         # User can not log in pre-verification
         self.assertFalse(
