@@ -664,6 +664,27 @@ class StripeWebhookView(View):
 
 
 class CompletePaymentView(View):
+    def get(self, request):
+        try:
+            # Extract parameters from URL query string
+            session_id = request.GET.get("session_id")
+            cancel_url = request.GET.get(
+                "cancel_url", "https://www.fighthealthinsurance.com/?q=ohno"
+            )
+
+            # Create data dictionary similar to what we'd get from POST
+            data = {
+                "session_id": session_id,
+                "cancel_url": cancel_url,
+            }
+
+            return self.process_payment(data)
+        except Exception as e:
+            logger.opt(exception=True).error(
+                "Error processing payment completion from GET"
+            )
+            return HttpResponse(status=500)
+
     def post(self, request):
         try:
             return self.do_post(request)
@@ -673,11 +694,10 @@ class CompletePaymentView(View):
 
     def do_post(self, request):
         data = json.loads(request.body)
+        return self.process_payment(data)
+
+    def process_payment(self, data):
         session_id = data.get("session_id")
-        continue_url = data.get("continue_url")
-        cancel_url = data.get(
-            "cancel_url", "https://www.fighthealthinsurance.com/?q=ohno"
-        )
 
         if not session_id:
             return HttpResponse(
@@ -688,6 +708,8 @@ class CompletePaymentView(View):
 
         try:
             lost_session = models.LostStripeSession.objects.get(session_id=session_id)
+            continue_url = lost_session.success_url
+            cancel_url = lost_session.cancel_url
             payment_type = lost_session.payment_type
             metadata: dict[str, str] = lost_session.metadata  # type: ignore
             recovery_info_id = metadata.get("recovery_info_id")
