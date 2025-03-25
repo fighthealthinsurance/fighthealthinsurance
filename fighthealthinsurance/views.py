@@ -730,8 +730,8 @@ class CompletePaymentView(View):
                 payment_method_types=["card"],
                 line_items=line_items,  # type: ignore
                 mode="payment",
-                success_url=continue_url,
-                cancel_url=cancel_url,
+                success_url=continue_url or "https://www.fighthealthinsurance.com",
+                cancel_url=cancel_url or "https://www.fighthealthinsurance.com",
                 metadata=metadata,
             )
 
