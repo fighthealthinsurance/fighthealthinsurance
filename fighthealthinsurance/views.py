@@ -674,7 +674,9 @@ class CompletePaymentView(View):
         data = json.loads(request.body)
         session_id = data.get("session_id")
         continue_url = data.get("continue_url")
-        cancel_url = data.get("cancel_url", "https://www.fighthealthinsurance.com/?q=ohno")
+        cancel_url = data.get(
+            "cancel_url", "https://www.fighthealthinsurance.com/?q=ohno"
+        )
 
         if not session_id:
             return HttpResponse(
@@ -684,31 +686,27 @@ class CompletePaymentView(View):
             )
 
         try:
-            lost_session = LostStripeSession.objects.get(session_id=session_id)
+            lost_session = models.LostStripeSession.objects.get(session_id=session_id)
             payment_type = lost_session.payment_type
-            metadata = lost_session.metadata
+            metadata: dict[str, str] = lost_session.metadata  # type: ignore
+            metadata["metadata"] = json.dumps(metadata)
 
-            if payment_type == "professional_domain_subscription":
-                checkout_session = create_stripe_checkout_session(
-                    lost_session.email, metadata, continue_url, cancel_url
-                )
-            else:
-                line_items = metadata.get("line_items", [])
-                checkout_session = stripe.checkout.Session.create(
-                    payment_method_types=["card"],
-                    line_items=line_items,
-                    mode="payment",
-                    success_url=continue_url,
-                    cancel_url=cancel_url,
-                    metadata=metadata,
-                )
+            line_items = json.loads(metadata.get("line_items", "[]"))
+            checkout_session = stripe.checkout.Session.create(
+                payment_method_types=["card"],
+                line_items=line_items,
+                mode="payment",
+                success_url=continue_url,
+                cancel_url=cancel_url,
+                metadata=metadata,
+            )
 
             return HttpResponse(
                 json.dumps({"next_url": checkout_session.url}),
                 status=200,
                 content_type="application/json",
             )
-        except LostStripeSession.DoesNotExist:
+        except models.LostStripeSession.DoesNotExist:
             return HttpResponse(
                 json.dumps({"error": "Session not found"}),
                 status=400,

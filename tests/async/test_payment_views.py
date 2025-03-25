@@ -4,6 +4,7 @@ from django.urls import reverse
 from django.test import Client
 from fighthealthinsurance.models import LostStripeSession
 
+
 @pytest.mark.django_db
 def test_complete_payment_view_for_non_professional(client: Client):
     session_id = "test_session_id"
@@ -15,11 +16,13 @@ def test_complete_payment_view_for_non_professional(client: Client):
     )
     response = client.post(
         reverse("complete_payment"),
-        data=json.dumps({
-            "session_id": session_id,
-            "continue_url": "https://example.com/success",
-            "cancel_url": "https://example.com/cancel",
-        }),
+        data=json.dumps(
+            {
+                "session_id": session_id,
+                "continue_url": "https://example.com/success",
+                "cancel_url": "https://example.com/cancel",
+            }
+        ),
         content_type="application/json",
     )
     assert response.status_code == 200
