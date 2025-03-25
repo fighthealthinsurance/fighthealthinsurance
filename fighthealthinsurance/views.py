@@ -28,9 +28,18 @@ from fighthealthinsurance import followup_emails
 from fighthealthinsurance.stripe_utils import get_or_create_price
 
 from fhi_users import emails as fhi_emails
+from fhi_users.models import UserDomain, ProfessionalUser
+from fhi_users.auth_utils import resolve_domain_id
 
 from django.template import loader
 from django.http import HttpResponseForbidden
+
+from django.contrib.auth import get_user_model
+
+if typing.TYPE_CHECKING:
+    from django.contrib.auth.models import User
+else:
+    User = get_user_model()
 
 
 def render_ocr_error(request: HttpRequest, text: str) -> HttpResponseBase:
@@ -663,55 +672,45 @@ class CompletePaymentView(View):
 
     def do_post(self, request):
         data = json.loads(request.body)
-        domain_id = data.get("domain_id")
-        professional_user_id = data.get("professional_user_id")
-        domain_name = data.get("domain_name")
-        domain_phone = data.get("domain_phone")
-        user_email = data.get("user_email")
+        session_id = data.get("session_id")
         continue_url = data.get("continue_url")
-        cancel_url = data.get("cancel_url", "https://www.fightpaperwork.com/?q=ohno")
+        cancel_url = data.get("cancel_url", "https://www.fighthealthinsurance.com/?q=ohno")
 
-        if not (domain_id and professional_user_id) and not (
-            (domain_name or domain_phone) and user_email
-        ):
+        if not session_id:
             return HttpResponse(
-                json.dumps({"error": "Missing required parameters"}),
+                json.dumps({"error": "Missing session_id"}),
                 status=400,
                 content_type="application/json",
             )
 
         try:
-            if domain_id and professional_user_id:
-                user_domain = UserDomain.objects.get(id=domain_id)
-                professional_user = ProfessionalUser.objects.get(
-                    id=professional_user_id
-                )
-                email = professional_user.user.email
-            else:
-                domain_id = resolve_domain_id(
-                    domain_name=domain_name, phone_number=domain_phone
-                )
-                user_domain = UserDomain.objects.get(id=domain_id)
-                professional_user = User.objects.get(email=user_email).professionaluser
-                email = user_email
+            lost_session = LostStripeSession.objects.get(session_id=session_id)
+            payment_type = lost_session.payment_type
+            metadata = lost_session.metadata
 
-            checkout_session = create_stripe_checkout_session(
-                email, professional_user.id, user_domain, continue_url, cancel_url
-            )
+            if payment_type == "professional_domain_subscription":
+                checkout_session = create_stripe_checkout_session(
+                    lost_session.email, metadata, continue_url, cancel_url
+                )
+            else:
+                line_items = metadata.get("line_items", [])
+                checkout_session = stripe.checkout.Session.create(
+                    payment_method_types=["card"],
+                    line_items=line_items,
+                    mode="payment",
+                    success_url=continue_url,
+                    cancel_url=cancel_url,
+                    metadata=metadata,
+                )
+
             return HttpResponse(
                 json.dumps({"next_url": checkout_session.url}),
                 status=200,
                 content_type="application/json",
             )
-        except UserDomain.DoesNotExist:
+        except LostStripeSession.DoesNotExist:
             return HttpResponse(
-                json.dumps({"error": "Domain not found"}),
-                status=400,
-                content_type="application/json",
-            )
-        except ProfessionalUser.DoesNotExist:
-            return HttpResponse(
-                json.dumps({"error": "Professional user not found"}),
+                json.dumps({"error": "Session not found"}),
                 status=400,
                 content_type="application/json",
             )

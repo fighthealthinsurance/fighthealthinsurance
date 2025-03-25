@@ -6,6 +6,7 @@ import datetime
 import json
 from dataclasses import dataclass
 from string import Template
+import typing
 from typing import AsyncIterator, Awaitable, Any, Optional, Tuple, Iterable, List
 from loguru import logger
 from PyPDF2 import PdfMerger
@@ -35,6 +36,7 @@ from fhi_users.models import ProfessionalUser, UserDomain
 from fhi_users import emails as fhi_emails
 from .pubmed_tools import PubMedTools
 from .utils import check_call, send_fallback_email
+
 
 appealGenerator = AppealGenerator()
 
