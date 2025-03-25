@@ -584,7 +584,6 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             first_name=first_name,
             last_name=last_name,
         )
-        send_verification_email(request, user)
         professional_user = ProfessionalUser.objects.create(
             user=user,
             active=False,
@@ -604,7 +603,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 user_domain,
                 user_signup_info["continue_url"],
                 user_signup_info.get(
-                    "cancel_url", "https://www.fightpaper.com/?q=ohno"
+                    "cancel_url", "https://www.fightpaperwork.com/?q=ohno"
                 ),
             )
             extra_user_properties = ExtraUserProperties.objects.create(

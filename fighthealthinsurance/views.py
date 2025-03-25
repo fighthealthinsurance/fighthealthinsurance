@@ -648,5 +648,77 @@ class StripeWebhookView(View):
         except stripe_error.SignatureVerificationError as e:  # type: ignore
             logger.error(f"Invalid signature: {e}")
             return HttpResponse(status=403)
+
         common_view_logic.StripeWebhookHelper.handle_stripe_webhook(request, event)
         return HttpResponse(status=200)
+
+
+class CompletePaymentView(View):
+    def post(self, request):
+        try:
+            return self.do_post(request)
+        except Exception as e:
+            logger.opt(exception=True).error("Error processing payment completion")
+            return HttpResponse(status=500)
+
+    def do_post(self, request):
+        data = json.loads(request.body)
+        domain_id = data.get("domain_id")
+        professional_user_id = data.get("professional_user_id")
+        domain_name = data.get("domain_name")
+        domain_phone = data.get("domain_phone")
+        user_email = data.get("user_email")
+        continue_url = data.get("continue_url")
+        cancel_url = data.get("cancel_url", "https://www.fightpaperwork.com/?q=ohno")
+
+        if not (domain_id and professional_user_id) and not (
+            (domain_name or domain_phone) and user_email
+        ):
+            return HttpResponse(
+                json.dumps({"error": "Missing required parameters"}),
+                status=400,
+                content_type="application/json",
+            )
+
+        try:
+            if domain_id and professional_user_id:
+                user_domain = UserDomain.objects.get(id=domain_id)
+                professional_user = ProfessionalUser.objects.get(
+                    id=professional_user_id
+                )
+                email = professional_user.user.email
+            else:
+                domain_id = resolve_domain_id(
+                    domain_name=domain_name, phone_number=domain_phone
+                )
+                user_domain = UserDomain.objects.get(id=domain_id)
+                professional_user = User.objects.get(email=user_email).professionaluser
+                email = user_email
+
+            checkout_session = create_stripe_checkout_session(
+                email, professional_user.id, user_domain, continue_url, cancel_url
+            )
+            return HttpResponse(
+                json.dumps({"next_url": checkout_session.url}),
+                status=200,
+                content_type="application/json",
+            )
+        except UserDomain.DoesNotExist:
+            return HttpResponse(
+                json.dumps({"error": "Domain not found"}),
+                status=400,
+                content_type="application/json",
+            )
+        except ProfessionalUser.DoesNotExist:
+            return HttpResponse(
+                json.dumps({"error": "Professional user not found"}),
+                status=400,
+                content_type="application/json",
+            )
+        except Exception as e:
+            logger.opt(exception=e).error("Error in finishing payment")
+            return HttpResponse(
+                json.dumps({"error": f"Error {e}"}),
+                status=500,
+                content_type="application/json",
+            )

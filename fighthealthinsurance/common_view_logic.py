@@ -1678,6 +1678,10 @@ class StripeWebhookHelper:
                     ProfessionalUser.objects.filter(
                         id=session.metadata.get("professional_id")
                     ).update(active=True)
+                    user = ProfessionalUser.objects.get(
+                        id=session.metadata.get("professional_id")
+                    ).user
+                    fhi_emails.send_verification_email(request, user)
                 else:
                     logger.error("No subscription ID in completed checkout session")
 
