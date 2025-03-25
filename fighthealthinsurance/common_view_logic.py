@@ -1708,7 +1708,9 @@ class StripeWebhookHelper:
             elif payment_type == "professional_domain_subscription":
                 item = "Fight Paperwork Professional Domain Subscription"
                 # Temporary until the FPW UI is ready
-                finish_base_link = "https://www.fightpaperwork.com/stripe/finish-checkout"
+                finish_base_link = (
+                    "https://www.fightpaperwork.com/stripe/finish-checkout"
+                )
                 params = urlencode(
                     {
                         "domain_id": session.metadata.get("domain_id"),
