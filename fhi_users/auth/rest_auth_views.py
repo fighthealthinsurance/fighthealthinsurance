@@ -34,6 +34,7 @@ from fhi_users.models import (
     ResetToken,
     UserRole,
 )
+from fighthealthinsurance.models import StripeRecoveryInfo
 from fhi_users.auth import rest_serializers as serializers
 from fighthealthinsurance import rest_serializers as common_serializers
 from fhi_users.auth.auth_utils import (
@@ -371,7 +372,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 "payment_type": "professional_domain_subscription",
                 "professional_id": str(professional_user_id),
                 "domain_id": str(user_domain.id),
-                "recovery_info_id": stripe_recovery_info.id,
+                "recovery_info_id": str(stripe_recovery_info.id),
             },
             subscription_data={
                 "trial_period_days": 30,

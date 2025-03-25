@@ -30,6 +30,7 @@ from fighthealthinsurance.stripe_utils import get_or_create_price
 from fhi_users import emails as fhi_emails
 from fhi_users.models import UserDomain, ProfessionalUser
 from fhi_users.auth.auth_utils import resolve_domain_id
+from fighthealthinsurance.models import StripeRecoveryInfo
 
 from django.template import loader
 from django.http import HttpResponseForbidden
@@ -690,6 +691,8 @@ class CompletePaymentView(View):
             payment_type = lost_session.payment_type
             metadata: dict[str, str] = lost_session.metadata  # type: ignore
             recovery_info_id = metadata.get("recovery_info_id")
+            if recovery_info_id is None:
+                raise Exception(f"No recover info found in metadata {metadata}")
 
             line_items = StripeRecoveryInfo.objects.get(id=recovery_info_id).items
             checkout_session = stripe.checkout.Session.create(
