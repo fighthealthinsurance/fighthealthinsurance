@@ -1729,14 +1729,20 @@ class StripeWebhookHelper:
                 finish_link = f"{finish_base_link}?{params}"
             email: Optional[str] = None
             try:
-                email = session.costumer_email
+                try:
+                   email = session.costumer_email
+                except:
+                    email = session["customer_email"]
             except:
-                email = session["customer_email"]
+                pass
             if email is None:
                 try:
-                    email = session.customer_details.email
+                    try:
+                        email = session.customer_details.email
+                    except:
+                        email = session["customer_details"]["email"]
                 except:
-                    email = session["customer_details"]["email"]
+                    pass
             if email is None:
                 logger.error(
                     "No email found in expired checkout session can't send e-mail"
