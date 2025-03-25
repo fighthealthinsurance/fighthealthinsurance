@@ -358,6 +358,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             {"price": base_price_id, "quantity": 1},
             {"price": metered_price_id},
         ]
+        stripe_recovery_info = StripeRecoveryInfo.objects.create(items=line_items)
         checkout_session = stripe.checkout.Session.create(
             payment_method_types=["card"],
             line_items=line_items,  # type: ignore
@@ -370,7 +371,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 "payment_type": "professional_domain_subscription",
                 "professional_id": str(professional_user_id),
                 "domain_id": str(user_domain.id),
-                "items": json.dumps(line_items),
+                "recovery_info_id": stripe_recovery_info.id,
             },
             subscription_data={
                 "trial_period_days": 30,

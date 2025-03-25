@@ -706,6 +706,12 @@ class AppealAttachment(models.Model):
         return cls.objects.filter(appeal__in=allowed_appeals)
 
 
+class StripeRecoveryInfo(models.Model):
+    id = models.AutoField(primary_key=True)
+    items = models.JSONField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
 class LostStripeSession(models.Model):
     id = models.AutoField(primary_key=True)
     session_id = models.CharField(max_length=255)

@@ -29,7 +29,7 @@ from fighthealthinsurance.stripe_utils import get_or_create_price
 
 from fhi_users import emails as fhi_emails
 from fhi_users.models import UserDomain, ProfessionalUser
-from fhi_users.auth_utils import resolve_domain_id
+from fhi_users.auth.auth_utils import resolve_domain_id
 
 from django.template import loader
 from django.http import HttpResponseForbidden
@@ -689,9 +689,9 @@ class CompletePaymentView(View):
             lost_session = models.LostStripeSession.objects.get(session_id=session_id)
             payment_type = lost_session.payment_type
             metadata: dict[str, str] = lost_session.metadata  # type: ignore
-            metadata["metadata"] = json.dumps(metadata)
+            recovery_info_id = metadata.get("recovery_info_id")
 
-            line_items = json.loads(metadata.get("line_items", "[]"))
+            line_items = StripeRecoveryInfo.objects.get(id=recovery_info_id).items
             checkout_session = stripe.checkout.Session.create(
                 payment_method_types=["card"],
                 line_items=line_items,
