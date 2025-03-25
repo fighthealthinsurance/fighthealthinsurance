@@ -354,8 +354,12 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         return super().create(request)
 
     def create_stripe_checkout_session(
-        self, email, professional_user_id, user_domain, continue_url, cancel_url
+        self, email, professional_user_id, user_domain, continue_url, cancel_url,
+        card_required=False,
     ):
+        payment_method_collection = "always"
+        if not card_required:
+            payment_method_collection = "if_required"
         base_product_id, base_price_id = stripe_utils.get_or_create_price(
             "FP Basic Professional Plan", 2500, recurring=True
         )
@@ -612,6 +616,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 user_signup_info.get(
                     "cancel_url", "https://www.fightpaperwork.com/?q=ohno"
                 ),
+                card_required=data["card_required"],
             )
             extra_user_properties = ExtraUserProperties.objects.create(
                 user=user, email_verified=False

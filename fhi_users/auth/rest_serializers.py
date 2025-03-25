@@ -154,6 +154,9 @@ class ProfessionalSignupSerializer(serializers.ModelSerializer):
     # If they're joining an existing domain user_domain *MUST NOT BE POPULATED*
     user_domain = UserDomainSerializer(required=False)
     npi_number = serializers.CharField(required=False, allow_blank=True)
+    card_requried = serializers.BooleanField(
+        required=False, default=False, help_text="Whether a card is required."
+    )
 
     class Meta(object):
         model = ProfessionalUser
