@@ -384,5 +384,5 @@ class FinishPaymentSerializer(serializers.Serializer):
     user_email = serializers.EmailField(required=False)
     continue_url = serializers.URLField()
     cancel_url = serializers.URLField(
-        required=False, default="https://www.fightpaper.com/?q=ohno"
+        required=False, default="https://www.fightpaperwork.com/?q=ohno"
     )

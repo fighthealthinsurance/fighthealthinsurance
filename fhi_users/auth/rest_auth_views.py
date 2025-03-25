@@ -150,10 +150,6 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
     Handles professional user sign-up and domain acceptance or rejection.
     """
 
-    # This is hard codeded for now, but we should eventually have the rest client
-    # tell us where to send the user back to on failure as well (same as success)
-    cancel = "https://www.fightpaperwork.com"
-
     def get_serializer_class(self):
         if self.action == "accept" or self.action == "reject":
             return serializers.AcceptProfessionalUserSerializer
