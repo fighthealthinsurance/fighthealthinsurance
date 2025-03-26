@@ -354,10 +354,20 @@ class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # t
                     f"Error reading encrypted document, sometimes this mean it was not encrypted falling back"
                 )
                 self.combined_document_enc.read()
+        else:
+            raise Exception("No file found (encrypted or unencrypted)")
+
+    def _get_filename(self) -> str:
+        if self.combined_document:
+            return self.combined_document.name # type: ignore
+        elif self.combined_document_enc:
+            return self.combined_document_enc.name # type: ignore
+        else:
+            raise Exception("No file found (encrypted or unencrypted)")
 
     def get_temporary_document_path(self):
         with tempfile.NamedTemporaryFile(
-            suffix=combined_document.name, mode="w+b", delete=False
+            suffix=self._get_filename(), mode="w+b", delete=False
         ) as f:
             f.write(self._get_contents())
             f.flush()

@@ -20,9 +20,6 @@ from metapub import PubMedFetcher
 from requests.exceptions import RequestException
 from markdown_strings import esc_format
 
-from loguru import logger
-
-
 from fighthealthinsurance.env_utils import *
 
 pubmed_fetcher = PubMedFetcher()
