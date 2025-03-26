@@ -68,6 +68,7 @@ def send_fallback_email(subject: str, template_name: str, context, to_email: str
         to=[to_email],
         bcc=settings.BCC_EMAILS,
     )
+    logger.debug(f"Sending email to {to_email} with subject {subject}")
 
     # Lastly, attach the HTML content to the email instance and send.
     msg.attach_alternative(html_content, "text/html")
