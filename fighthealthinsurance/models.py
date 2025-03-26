@@ -351,7 +351,8 @@ class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # t
                 return cryptographer.decrypt(self.combined_document_enc.read())
             except:
                 logger.opt(exception=True).debug(
-                    f"Error reading encrypted document, sometimes this mean it was not encrypted falling back")
+                    f"Error reading encrypted document, sometimes this mean it was not encrypted falling back"
+                )
                 self.combined_document_enc.read()
 
     def get_temporary_document_path(self):
