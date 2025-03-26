@@ -20,6 +20,9 @@ from metapub import PubMedFetcher
 from requests.exceptions import RequestException
 from markdown_strings import esc_format
 
+from loguru import logger
+
+
 from fighthealthinsurance.env_utils import *
 
 pubmed_fetcher = PubMedFetcher()
@@ -68,6 +71,7 @@ def send_fallback_email(subject: str, template_name: str, context, to_email: str
         to=[to_email],
         bcc=settings.BCC_EMAILS,
     )
+    logger.debug(f"Sending email to {to_email} with subject {subject}")
 
     # Lastly, attach the HTML content to the email instance and send.
     msg.attach_alternative(html_content, "text/html")

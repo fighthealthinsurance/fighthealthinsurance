@@ -13,6 +13,8 @@ from django.db.models.functions import Now
 from django_prometheus.models import ExportModelOperationsMixin
 from django_encrypted_filefield.fields import EncryptedFileField
 from django.contrib.auth import get_user_model
+from django_encrypted_filefield.crypt import Cryptographer
+
 
 from fighthealthinsurance.utils import sekret_gen
 from fhi_users.models import *
@@ -339,6 +341,18 @@ class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # t
     for_appeal = models.ForeignKey(
         "Appeal", on_delete=models.SET_NULL, null=True, blank=True
     )
+
+    def _get_contents(self):
+        if self.combined_document:
+            return self.combined_document.read()
+        elif self.combined_document_enc:
+            cryptographer = Cryptographer(settings.COMBINED_STORAGE)
+            try:
+                return cryptographer.decrypt(self.combined_document_enc.read())
+            except:
+                logger.opt(exception=True).debug(
+                    f"Error reading encrypted document, sometimes this mean it was not encrypted falling back")
+                self.combined_document_enc.read()
 
     def get_temporary_document_path(self):
         combined_document = self.combined_document or self.combined_document_enc
