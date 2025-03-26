@@ -2,18 +2,33 @@
 {% block content %}
 <img src="https://www.fighthealthinsurance.com/static/images/fpw.jpg" class="center"><br/>
 <p>
-{{ professional_name }} has <a href="https://www.fightpaperwork.com">invited you to join them on Fight Paperwork to collaborate on appealing an insurance denial.</a>
+{% if professional_name %}Hello {{ professional_name }},{% else %}Hello,{% endif %}
 </p>
 <p>
-    To make sure your in the same group when you signup make sure to use the practice phone number {{ practice_number }}.
+You have been invited by {{ inviter_name }} to join {{ practice_name }} on Fight Health Insurance / Fight Paperwork.
 </p>
 <p>
-    If you’ve got any questions, please feel free to reach out to us at <a href="mailto:support42@fighthealthinsurance.com">support42@fighthealthinsurance.com</a> :) We are also planning on conducting some user studies the end of this month if your willing to share feedback with us on the new workflow before we release it drop us an e-mail at <a href="mailto:support42@fighthealthinsurance.com">support42@fighthealthinsurance.com</a> :)
+Our platform helps healthcare providers successfully appeal insurance denials and reduce administrative burden. Studies show that when providers appeal denials, they have a high success rate of overturning the initial decision.
 </p>
 <p>
-  A huge thank you,
+To join {{ practice_name }}, please follow these steps:
+</p>
+<ol>
+    <li>Visit <a href="https://www.fighthealthinsurance.com/signup">www.fighthealthinsurance.com/signup</a></li>
+    <li>Create your account</li>
+    <li>When asked, select "Joining Existing Group"</li>
+    <li>Enter the practice phone number: <strong>{{ practice_number }}</strong></li>
+</ol>
+<p>
+This will ensure you're connected to the right practice group.
 </p>
 <p>
-The Fight Paperwork team, our dogs, and our cats.
+If you have any questions, please feel free to reach out to us at <a href="mailto:support42@fighthealthinsurance.com">support42@fighthealthinsurance.com</a>.
+</p>
+<p>
+Thank you,
+</p>
+<p>
+The Fight Paperwork team
 </p>
 {% endblock %}

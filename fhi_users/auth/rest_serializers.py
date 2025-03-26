@@ -111,6 +111,20 @@ class UserSignupSerializer(serializers.Serializer):
             raise serializers.ValidationError("Password must be at least 8 characters.")
         return value
 
+    def validate_visible_phone_number(self, value):
+        # Remove all hyphens from the phone number
+        cleaned_number = value.replace("-", "")
+
+        # Check that the remaining string only contains digits and 'X' or 'x'
+        if not all(
+            char.isdigit() or char == "X" or char == "x" for char in cleaned_number
+        ):
+            raise serializers.ValidationError(
+                "Phone number can only contain digits, 'X', and hyphens."
+            )
+
+        return cleaned_number
+
     def save(self, **kwargs: Any):
         raise Exception(
             "This serializer should not be used directly -- use Patient or Professional version"
@@ -141,6 +155,33 @@ class UserDomainSerializer(serializers.ModelSerializer):
             "active",
             "professionals",
         )
+
+
+class InviteProfessionalSerializer(serializers.Serializer):
+    """
+    Invite a new professional to join your domain.
+    """
+
+    user_email = serializers.EmailField()
+    name = serializers.CharField(required=False, allow_blank=True)
+
+
+class CreateProfessionalInCurrentDomainSerializer(serializers.Serializer):
+    """
+    Create a new professional in the admin's domain.
+    """
+
+    email = serializers.EmailField()
+    first_name = serializers.CharField()
+    last_name = serializers.CharField()
+    npi_number = serializers.CharField(required=False, allow_blank=True)
+    provider_type = serializers.CharField(required=False, allow_blank=True)
+
+    def validate_npi_number(self, value):
+        # Only validate if a value is provided
+        if value and not re.match(r"^\d{10}$", str(value)):
+            raise serializers.ValidationError("Invalid NPI number format.")
+        return value
 
 
 class ProfessionalSignupSerializer(serializers.ModelSerializer):

@@ -16,6 +16,8 @@ from fhi_users.models import (
     PatientUser,
     VerificationToken,
     ResetToken,
+    ProfessionalUser,
+    ProfessionalDomainRelation,
 )
 
 
@@ -693,3 +695,339 @@ class TestE2EProfessionalUserSignupFlow(TestCase):
         denial_id = denial_response["denial_id"]
 
         # Now we need to call the websocket...
+
+
+class ProfessionalInvitationTests(TestCase):
+    def setUp(self) -> None:
+        self.client = APIClient()
+        self.domain = UserDomain.objects.create(
+            name="testdomain",
+            visible_phone_number="1234567890",
+            internal_phone_number="0987654321",
+            active=True,
+            display_name="Test Domain",
+            country="USA",
+            state="CA",
+            city="Test City",
+            address1="123 Test St",
+            zipcode="12345",
+            beta=True,  # Set beta flag to True
+        )
+        self.admin_password = "adminpass123"
+        self.admin_user = User.objects.create_user(
+            username=f"adminuser🐼{self.domain.id}",
+            password=self.admin_password,
+            email="admin@example.com",
+            first_name="Admin",
+            last_name="User",
+        )
+        self.admin_user.is_active = True
+        self.admin_user.save()
+
+        # Create professional user for admin
+        self.admin_professional = ProfessionalUser.objects.create(
+            user=self.admin_user,
+            active=True,
+        )
+
+        # Create admin relationship with domain
+        ProfessionalDomainRelation.objects.create(
+            professional=self.admin_professional,
+            domain=self.domain,
+            active=True,
+            admin=True,
+            pending=False,
+        )
+
+        # Create non-admin user
+        self.regular_password = "regularpass123"
+        self.regular_user = User.objects.create_user(
+            username=f"regularuser🐼{self.domain.id}",
+            password=self.regular_password,
+            email="regular@example.com",
+            first_name="Regular",
+            last_name="User",
+        )
+        self.regular_user.is_active = True
+        self.regular_user.save()
+
+        self.regular_professional = ProfessionalUser.objects.create(
+            user=self.regular_user,
+            active=True,
+        )
+
+        # Create non-admin relationship with domain
+        ProfessionalDomainRelation.objects.create(
+            professional=self.regular_professional,
+            domain=self.domain,
+            active=True,
+            admin=False,
+            pending=False,
+        )
+
+        ExtraUserProperties.objects.create(user=self.admin_user, email_verified=True)
+        ExtraUserProperties.objects.create(user=self.regular_user, email_verified=True)
+
+    def test_invite_professional_as_admin(self):
+        # Login as admin user
+        url = reverse("rest_login-login")
+        data = {
+            "username": "adminuser",
+            "password": self.admin_password,
+            "domain": "testdomain",
+            "phone": "",
+        }
+        response = self.client.post(url, data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.json()["status"], "success")
+
+        # Send invitation
+        invite_url = reverse("professional_user-invite")
+        invite_data = {
+            "user_email": "newinvite@example.com",
+            "name": "New Professional",
+        }
+
+        # Check email count before invitation
+        mail_count_before = len(mail.outbox)
+
+        response = self.client.post(invite_url, invite_data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.json()["status"], "invitation_sent")
+
+        # Verify email was sent
+        self.assertEqual(len(mail.outbox), mail_count_before + 1)
+        self.assertEqual(mail.outbox[-1].subject, "Invitation to Join Practice")
+        self.assertIn("newinvite@example.com", mail.outbox[-1].to)
+
+        # Check email content
+        email_content = mail.outbox[-1].body
+        self.assertIn("testdomain", email_content)
+        self.assertIn("1234567890", email_content)  # Practice phone number
+        self.assertIn("Admin User", email_content)  # Inviter name
+
+    def test_invite_professional_as_non_admin(self):
+        # Login as regular user
+        url = reverse("rest_login-login")
+        data = {
+            "username": "regularuser",
+            "password": self.regular_password,
+            "domain": "testdomain",
+            "phone": "",
+        }
+        response = self.client.post(url, data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        # Try to send invitation
+        invite_url = reverse("professional_user-invite")
+        invite_data = {
+            "user_email": "newinvite@example.com",
+            "name": "New Professional",
+        }
+
+        response = self.client.post(invite_url, invite_data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(
+            response.json()["error"], "User does not have admin privileges"
+        )
+
+    def test_invite_professional_without_authentication(self):
+        # Try to send invitation without logging in
+        invite_url = reverse("professional_user-invite")
+        invite_data = {
+            "user_email": "newinvite@example.com",
+            "name": "New Professional",
+        }
+
+        response = self.client.post(invite_url, invite_data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+
+class CreateProfessionalInDomainTests(TestCase):
+    def setUp(self) -> None:
+        self.client = APIClient()
+        self.domain = UserDomain.objects.create(
+            name="testdomain",
+            visible_phone_number="1234567890",
+            internal_phone_number="0987654321",
+            active=True,
+            display_name="Test Domain",
+            country="USA",
+            state="CA",
+            city="Test City",
+            address1="123 Test St",
+            zipcode="12345",
+            beta=True,
+        )
+        self.admin_password = "adminpass123"
+        self.admin_user = User.objects.create_user(
+            username=f"adminuser🐼{self.domain.id}",
+            password=self.admin_password,
+            email="admin@example.com",
+            first_name="Admin",
+            last_name="User",
+        )
+        self.admin_user.is_active = True
+        self.admin_user.save()
+
+        # Create professional user for admin
+        self.admin_professional = ProfessionalUser.objects.create(
+            user=self.admin_user,
+            active=True,
+        )
+
+        # Create admin relationship with domain
+        ProfessionalDomainRelation.objects.create(
+            professional=self.admin_professional,
+            domain=self.domain,
+            active=True,
+            admin=True,
+            pending=False,
+        )
+
+        # Create non-admin user
+        self.regular_password = "regularpass123"
+        self.regular_user = User.objects.create_user(
+            username=f"regularuser🐼{self.domain.id}",
+            password=self.regular_password,
+            email="regular@example.com",
+            first_name="Regular",
+            last_name="User",
+        )
+        self.regular_user.is_active = True
+        self.regular_user.save()
+
+        self.regular_professional = ProfessionalUser.objects.create(
+            user=self.regular_user,
+            active=True,
+        )
+
+        # Create non-admin relationship with domain
+        ProfessionalDomainRelation.objects.create(
+            professional=self.regular_professional,
+            domain=self.domain,
+            active=True,
+            admin=False,
+            pending=False,
+        )
+
+        ExtraUserProperties.objects.create(user=self.admin_user, email_verified=True)
+        ExtraUserProperties.objects.create(user=self.regular_user, email_verified=True)
+
+    def test_create_pro_as_admin(self):
+        # Login as admin user
+        url = reverse("rest_login-login")
+        data = {
+            "username": "adminuser",
+            "password": self.admin_password,
+            "domain": "testdomain",
+            "phone": "",
+        }
+        response = self.client.post(url, data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.json()["status"], "success")
+
+        # Create provider
+        create_url = reverse("professional_user-create-professional-in-current-domain")
+        provider_data = {
+            "email": "newprovider@example.com",
+            "first_name": "New",
+            "last_name": "Provider",
+            "npi_number": "1234567890",
+            "provider_type": "Physician",
+        }
+
+        # Check email count before creation
+        mail_count_before = len(mail.outbox)
+
+        response = self.client.post(create_url, provider_data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.json()["status"], "provider_created")
+
+        # Check that user was created
+        new_user = User.objects.get(email="newprovider@example.com")
+        self.assertEqual(new_user.first_name, "New")
+        self.assertEqual(new_user.last_name, "Provider")
+        self.assertTrue(new_user.is_active)
+
+        # Check that professional user was created
+        professional = ProfessionalUser.objects.get(user=new_user)
+        self.assertEqual(professional.npi_number, "1234567890")
+        self.assertEqual(professional.provider_type, "Physician")
+        self.assertTrue(professional.active)
+
+        # Check that relationship was created
+        relation = ProfessionalDomainRelation.objects.get(
+            professional=professional, domain=self.domain
+        )
+        self.assertTrue(relation.active)
+        self.assertFalse(relation.pending)
+        self.assertFalse(relation.admin)
+
+        # Verify email was sent
+        self.assertEqual(len(mail.outbox), mail_count_before + 1)
+        self.assertEqual(
+            mail.outbox[-1].subject, "Your Provider Account Has Been Created"
+        )
+        self.assertIn("newprovider@example.com", mail.outbox[-1].to)
+
+        # Check email content
+        email_content = mail.outbox[-1].body
+        self.assertIn("testdomain", email_content)
+        self.assertIn("Admin User", email_content)  # Inviter name
+        self.assertIn("New Provider", email_content)  # Provider name
+        self.assertIn("reset-password", email_content)  # Link to reset password
+        # No reset token directly in the email
+        self.assertNotIn("token=", email_content)
+
+    def test_create_pro_as_non_admin(self):
+        # Login as regular user
+        url = reverse("rest_login-login")
+        data = {
+            "username": "regularuser",
+            "password": self.regular_password,
+            "domain": "testdomain",
+            "phone": "",
+        }
+        response = self.client.post(url, data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        # Try to create provider
+        create_url = reverse("professional_user-create-professional-in-current-domain")
+        provider_data = {
+            "email": "newprovider@example.com",
+            "first_name": "New",
+            "last_name": "Provider",
+        }
+
+        response = self.client.post(create_url, provider_data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(
+            response.json()["error"], "User does not have admin privileges"
+        )
+
+    def test_create_pro_with_existing_email(self):
+        # Login as admin user
+        url = reverse("rest_login-login")
+        data = {
+            "username": "adminuser",
+            "password": self.admin_password,
+            "domain": "testdomain",
+            "phone": "",
+        }
+        response = self.client.post(url, data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        # Try to create professional with existing email
+        create_url = reverse("professional_user-create-professional-in-current-domain")
+        provider_data = {
+            "email": "regular@example.com",  # This email already exists
+            "first_name": "New",
+            "last_name": "Provider",
+        }
+
+        response = self.client.post(create_url, provider_data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(
+            response.json()["error"], "A user with this email already exists"
+        )
