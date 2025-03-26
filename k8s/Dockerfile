@@ -11,6 +11,7 @@ RUN apt-get update && \
     apt-get upgrade -y && \
     apt-get install nginx vim emacs libmariadb-dev-compat default-libmysqlclient-dev libssl-dev nodejs npm python3-opencv libgl1 tesseract-ocr nano nfs-common sudo iputils-ping hylafax-client pandoc texlive texlive-luatex texlive-latex-extra texlive-xetex postgresql ca-certificates curl libpq-dev wkhtmltopdf -y && \
     sudo apt-get remove -y ruby2.7 ruby2.7-dev xserver-xorg-core && \
+    sudo sudo npm install -g json-schema && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 COPY /conf/nginx.default /etc/nginx/sites-available/default
