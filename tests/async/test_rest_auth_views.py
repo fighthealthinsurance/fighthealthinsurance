@@ -942,18 +942,20 @@ class CreateProfessionalInDomainTests(TestCase):
 
         response = self.client.post(create_url, provider_data, format="json")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.json()["status"], "provider_created")
+        self.assertEqual(response.json()["status"], "professional_created")
 
         # Check that user was created
         new_user = User.objects.get(email="newprovider@example.com")
         self.assertEqual(new_user.first_name, "New")
         self.assertEqual(new_user.last_name, "Provider")
-        self.assertTrue(new_user.is_active)
+        # User object should not be active so they can not log in yet
+        self.assertFalse(new_user.is_active)
 
         # Check that professional user was created
         professional = ProfessionalUser.objects.get(user=new_user)
         self.assertEqual(professional.npi_number, "1234567890")
         self.assertEqual(professional.provider_type, "Physician")
+        # Professional user should be active
         self.assertTrue(professional.active)
 
         # Check that relationship was created
@@ -967,7 +969,7 @@ class CreateProfessionalInDomainTests(TestCase):
         # Verify email was sent
         self.assertEqual(len(mail.outbox), mail_count_before + 1)
         self.assertEqual(
-            mail.outbox[-1].subject, "Your Provider Account Has Been Created"
+            mail.outbox[-1].subject, "Your Professional Account Has Been Created"
         )
         self.assertIn("newprovider@example.com", mail.outbox[-1].to)
 
@@ -975,7 +977,7 @@ class CreateProfessionalInDomainTests(TestCase):
         email_content = mail.outbox[-1].body
         self.assertIn("testdomain", email_content)
         self.assertIn("Admin User", email_content)  # Inviter name
-        self.assertIn("New Provider", email_content)  # Provider name
+        self.assertIn("manage", email_content)  # Provider name
         self.assertIn("reset-password", email_content)  # Link to reset password
         # No reset token directly in the email
         self.assertNotIn("token=", email_content)

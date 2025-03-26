@@ -106,11 +106,11 @@ def send_professional_invitation_email(professional_email, context):
     )
 
 
-def send_provider_created_email(professional_email, context):
+def send_professional_created_email(professional_email, context):
     """Send email to a professional that was created by an admin."""
     send_fallback_email(
         "Your Professional Account Has Been Created",
-        "provider_created",
+        "professional_created",
         context,
         professional_email,
     )

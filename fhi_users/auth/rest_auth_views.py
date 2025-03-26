@@ -53,7 +53,7 @@ from fighthealthinsurance import stripe_utils
 from fhi_users.emails import (
     send_verification_email,
     send_password_reset_email,
-    send_provider_created_email,
+    send_professional_created_email,
 )
 
 from drf_spectacular.utils import extend_schema
@@ -294,7 +294,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                     "email": email,
                 }
 
-                send_provider_created_email(email, context)
+                send_professional_created_email(email, context)
 
                 return Response(
                     serializers.StatusResponseSerializer(
