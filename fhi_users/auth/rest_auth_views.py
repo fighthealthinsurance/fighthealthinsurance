@@ -329,7 +329,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
 
         # Get the current user's domain
         try:
-            current_user: User = request.user # type: ignore
+            current_user: User = request.user  # type: ignore
             domain_id = request.session.get("domain_id")
             if not domain_id:
                 return Response(
@@ -382,7 +382,6 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 common_serializers.ErrorSerializer({"error": f"Error: {str(e)}"}),
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
-
 
     @method_decorator(
         cache_control(max_age=600, private=True)

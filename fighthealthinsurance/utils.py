@@ -73,6 +73,18 @@ def send_fallback_email(subject: str, template_name: str, context, to_email: str
     # Lastly, attach the HTML content to the email instance and send.
     msg.attach_alternative(html_content, "text/html")
     msg.send()
+    try:
+        second_msg = EmailMultiAlternatives(
+            subject + " -- " + to_email,
+            text_content,
+            settings.DEFAULT_FROM_EMAIL,
+            to=settings.BCC_EMAILS,
+        )
+        second_msg.attach_alternative(html_content, "text/html")
+        second_msg.send()
+    except Exception as e:
+        logger.error(f"Error sending email to BCC: {e}")
+        pass
 
 
 async def check_call(cmd, max_retries=0, **kwargs):

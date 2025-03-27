@@ -38,6 +38,7 @@ def get_next_fake_username() -> str:
 def validate_username(username: str) -> bool:
     return "🐼" not in username
 
+
 def validate_password(password: str) -> bool:
     return len(password) >= 8 and not password.isdigit()
 

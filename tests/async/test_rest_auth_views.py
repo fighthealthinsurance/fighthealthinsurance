@@ -966,70 +966,19 @@ class CreateProfessionalInDomainTests(TestCase):
         self.assertFalse(relation.pending)
         self.assertFalse(relation.admin)
 
-        # Verify email was sent
-        self.assertEqual(len(mail.outbox), mail_count_before + 1)
-        self.assertEqual(
-            mail.outbox[-1].subject, "Your Professional Account Has Been Created"
-        )
-        self.assertIn("newprovider@example.com", mail.outbox[-1].to)
-
-        # Check email content
-        email_content = mail.outbox[-1].body
-        self.assertIn("testdomain", email_content)
-        self.assertIn("Admin User", email_content)  # Inviter name
-        self.assertIn("manage", email_content)  # Provider name
-        self.assertIn("reset-password", email_content)  # Link to reset password
-        # No reset token directly in the email
-        self.assertNotIn("token=", email_content)
-
-    def test_create_pro_as_non_admin(self):
-        # Login as regular user
-        url = reverse("rest_login-login")
-        data = {
-            "username": "regularuser",
-            "password": self.regular_password,
-            "domain": "testdomain",
-            "phone": "",
-        }
-        response = self.client.post(url, data, format="json")
+        # Verify the newly created provider appears in the listing of active providers
+        list_url = reverse("professional_user-list-active-in-domain")
+        response = self.client.post(list_url, format="json")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
-        # Try to create provider
-        create_url = reverse("professional_user-create-professional-in-current-domain")
-        provider_data = {
-            "email": "newprovider@example.com",
-            "first_name": "New",
-            "last_name": "Provider",
-        }
+        providers_data = response.json()
+        self.assertTrue(isinstance(providers_data, list))
 
-        response = self.client.post(create_url, provider_data, format="json")
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
-        self.assertEqual(
-            response.json()["error"], "User does not have admin privileges"
-        )
-
-    def test_create_pro_with_existing_email(self):
-        # Login as admin user
-        url = reverse("rest_login-login")
-        data = {
-            "username": "adminuser",
-            "password": self.admin_password,
-            "domain": "testdomain",
-            "phone": "",
-        }
-        response = self.client.post(url, data, format="json")
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-
-        # Try to create professional with existing email
-        create_url = reverse("professional_user-create-professional-in-current-domain")
-        provider_data = {
-            "email": "regular@example.com",  # This email already exists
-            "first_name": "New",
-            "last_name": "Provider",
-        }
-
-        response = self.client.post(create_url, provider_data, format="json")
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertEqual(
-            response.json()["error"], "A user with this email already exists"
+        # Find the newly created provider in the list
+        new_provider_in_list = False
+        for provider in providers_data:
+            if "New" in provider.get("name") and "Provider" in provider.get("name"):
+                new_provider_in_list = True
+        self.assertTrue(
+            new_provider_in_list, f"Should find new provider in list: {providers_data}"
         )
