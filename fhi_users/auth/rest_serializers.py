@@ -108,7 +108,9 @@ class UserSignupSerializer(serializers.Serializer):
 
     def validate_password(self, value):
         if not validate_password(value):
-            raise serializers.ValidationError("Password must be at least 8 characters and not all digits")
+            raise serializers.ValidationError(
+                "Password must be at least 8 characters, contain at least one digit, and not all digits"
+            )
         return value
 
     def validate_visible_phone_number(self, value):

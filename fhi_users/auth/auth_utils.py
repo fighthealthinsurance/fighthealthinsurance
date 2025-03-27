@@ -40,7 +40,16 @@ def validate_username(username: str) -> bool:
 
 
 def validate_password(password: str) -> bool:
-    return len(password) >= 8 and not password.isdigit()
+    # Check if password is at least 8 characters long
+    if len(password) < 8:
+        return False
+    # Check if password contains at least one digit
+    if not any(char.isdigit() for char in password):
+        return False
+    # Check if password is not entirely composed of digits
+    if password.isdigit():
+        return False
+    return True
 
 
 def is_valid_domain(domain_name: str) -> bool:
