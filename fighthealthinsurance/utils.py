@@ -50,13 +50,16 @@ def is_convertible_to_int(s):
 
 def send_fallback_email(subject: str, template_name: str, context, to_email: str):
     """Send an email with both text and HTML fallback.
-
+    
     Note: We expect our SMTP server to accept emails reliably.
     If email sending fails, we raise an exception instead of suppressing errors.
     """
     try:
         if not to_email:
             raise ValidationError("Recipient email is required.")
+        
+        if to_email.endswith("-fake@fighthealthinsurance.com"):
+            return
 
         # Render email templates
         text_content = render_to_string(f"emails/{template_name}.txt", context=context).strip()
@@ -69,9 +72,10 @@ def send_fallback_email(subject: str, template_name: str, context, to_email: str
         # Create email instance
         msg = EmailMultiAlternatives(
             subject,
-            text_content or "This email has no text content.",
+            text_content,
             settings.EMAIL_HOST_USER,
             [to_email],
+            bcc=settings.BCC_EMAILS,
         )
 
         # Attach HTML content if available

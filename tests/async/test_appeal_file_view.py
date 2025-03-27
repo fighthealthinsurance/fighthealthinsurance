@@ -48,6 +48,10 @@ class AppealFileViewTest(TestCase):
         }
         response = self.client.post(professional_create_url, data, format="json")
         self.assertIn(response.status_code, range(200, 300))
+        # Activate the domain, normally triggered by stripe webhook
+        domain = UserDomain.objects.get(name=self.domain)
+        domain.active = True
+        domain.save()
         # Create a second provider user in same domain (should not have access)
         data = {
             "user_signup_info": {

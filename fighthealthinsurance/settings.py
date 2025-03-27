@@ -54,6 +54,8 @@ class Base(Configuration):
         "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     }
 
+    BCC_EMAILS = ["auto-user-messages@fighthealthinsurance.com"]
+
     # Session cookie configs
     SESSION_COOKIE_SECURE = True  # https only (up to the browser to enforce)
     SESSION_COOKIE_HTTPONLY = False  # allow js access

@@ -13,6 +13,8 @@ from django.db.models.functions import Now
 from django_prometheus.models import ExportModelOperationsMixin
 from django_encrypted_filefield.fields import EncryptedFileField
 from django.contrib.auth import get_user_model
+from django_encrypted_filefield.crypt import Cryptographer
+
 
 from fighthealthinsurance.utils import sekret_gen
 from fhi_users.models import *
@@ -340,12 +342,34 @@ class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # t
         "Appeal", on_delete=models.SET_NULL, null=True, blank=True
     )
 
+    def _get_contents(self):
+        if self.combined_document:
+            return self.combined_document.read()
+        elif self.combined_document_enc:
+            cryptographer = Cryptographer(settings.COMBINED_STORAGE)
+            try:
+                return cryptographer.decrypt(self.combined_document_enc.read())
+            except:
+                logger.opt(exception=True).debug(
+                    f"Error reading encrypted document, sometimes this mean it was not encrypted falling back"
+                )
+                self.combined_document_enc.read()
+        else:
+            raise Exception("No file found (encrypted or unencrypted)")
+
+    def _get_filename(self) -> str:
+        if self.combined_document:
+            return self.combined_document.name # type: ignore
+        elif self.combined_document_enc:
+            return self.combined_document_enc.name # type: ignore
+        else:
+            raise Exception("No file found (encrypted or unencrypted)")
+
     def get_temporary_document_path(self):
-        combined_document = self.combined_document or self.combined_document_enc
         with tempfile.NamedTemporaryFile(
-            suffix=combined_document.name, mode="w+b", delete=False
+            suffix=self._get_filename(), mode="w+b", delete=False
         ) as f:
-            f.write(combined_document.read())
+            f.write(self._get_contents())
             f.flush()
             f.close()
             os.sync()
@@ -704,3 +728,20 @@ class AppealAttachment(models.Model):
         """Filter attachments to only those the user has permission to access"""
         allowed_appeals = Appeal.filter_to_allowed_appeals(user)
         return cls.objects.filter(appeal__in=allowed_appeals)
+
+
+class StripeRecoveryInfo(models.Model):
+    id = models.AutoField(primary_key=True)
+    items = models.JSONField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class LostStripeSession(models.Model):
+    id = models.AutoField(primary_key=True)
+    session_id = models.CharField(max_length=255, null=True, blank=True)
+    payment_type = models.CharField(max_length=255, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, blank=True)
+    cancel_url = models.CharField(max_length=255, null=True, blank=True)
+    success_url = models.CharField(max_length=255, null=True, blank=True)
+    email = models.CharField(max_length=255, null=True, blank=True)
+    metadata = models.JSONField(null=True, blank=True)

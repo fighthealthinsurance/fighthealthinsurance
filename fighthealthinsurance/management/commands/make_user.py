@@ -75,7 +75,11 @@ class Command(BaseCommand):
         try:
             user_domain, created = UserDomain.objects.get_or_create(
                 name=domain_clean,
-                defaults={"active": True, "visible_phone_number": visible_phone_number},
+                defaults={
+                    "active": True,
+                    "pending": False,
+                    "visible_phone_number": visible_phone_number,
+                },
             )
             if created:
                 self.stdout.write(
@@ -85,6 +89,9 @@ class Command(BaseCommand):
                 self.stdout.write(f"Domain '{domain_clean}' already exists.")
         except Exception as e:
             raise CommandError(f"Error handling domain creation: {str(e)}")
+
+        user_domain.beta = True
+        user_domain.save()
 
         try:
             combined_username = combine_domain_and_username(

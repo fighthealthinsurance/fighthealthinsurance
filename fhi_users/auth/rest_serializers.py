@@ -70,17 +70,22 @@ class WhoAmiSerializer(serializers.Serializer):
     Return the current user.
     """
 
-    email = serializers.CharField()
+    email = serializers.EmailField()
     domain_name = serializers.CharField()
     domain_id = serializers.CharField()
     patient = serializers.BooleanField()
     professional = serializers.BooleanField()
-    current_professional_id = serializers.IntegerField(required=False)
+    current_professional_id = serializers.IntegerField(required=False, allow_null=True)
     highest_role = serializers.ChoiceField(
         choices=[(role.value, role.name) for role in UserRole],
         help_text="The highest permission level role of the user: none, patient, professional, or admin",
     )
-    admin = serializers.BooleanField()
+    admin = serializers.BooleanField(
+        help_text="Whether the user is an admin of the current domain."
+    )
+    beta = serializers.BooleanField(
+        help_text="Whether the userdomain is in the beta program."
+    )
 
 
 class UserSignupSerializer(serializers.Serializer):
@@ -91,6 +96,9 @@ class UserSignupSerializer(serializers.Serializer):
     domain_name = serializers.CharField(required=False, allow_blank=True)
     visible_phone_number = serializers.CharField(required=True)
     continue_url = serializers.CharField()  # URL to send user to post signup / payment
+    cancel_url = serializers.URLField(
+        required=False, default="https://www.fightpaperwork.com/?q=ohno"
+    )
     username = serializers.CharField(required=True)
     first_name = serializers.CharField(required=True)
     last_name = serializers.CharField(required=True)
@@ -146,6 +154,9 @@ class ProfessionalSignupSerializer(serializers.ModelSerializer):
     # If they're joining an existing domain user_domain *MUST NOT BE POPULATED*
     user_domain = UserDomainSerializer(required=False)
     npi_number = serializers.CharField(required=False, allow_blank=True)
+    card_required = serializers.BooleanField(
+        required=False, default=False, help_text="Whether a card is required."
+    )
 
     class Meta(object):
         model = ProfessionalUser
@@ -156,6 +167,7 @@ class ProfessionalSignupSerializer(serializers.ModelSerializer):
             "user_domain",
             "skip_stripe",
             "provider_type",
+            "card_required",
         ]
 
     def validate_npi_number(self, value):
@@ -367,3 +379,21 @@ class StatusResponseSerializer(serializers.Serializer):
 
 class EmptySerializer(serializers.Serializer):
     pass
+
+
+class FinishPaymentSerializer(serializers.Serializer):
+    # We either need the domain_id & professional user id (what we get from stripe)
+    domain_id = serializers.CharField(required=False)
+    professional_user_id = serializers.IntegerField(required=False)
+    # Or the domain name or phone number + user_email (what we get from a failed login)
+    domain_name = serializers.CharField(required=False)
+    domain_phone = serializers.CharField(required=False)
+    user_email = serializers.EmailField(required=False)
+    continue_url = serializers.URLField()
+    cancel_url = serializers.URLField(
+        required=False, default="https://www.fightpaperwork.com/?q=ohno"
+    )
+
+
+class FinishPaymentResponseSerializer(serializers.Serializer):
+    next_url = serializers.URLField()

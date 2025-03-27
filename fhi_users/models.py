@@ -48,8 +48,8 @@ class UserDomain(models.Model):
         unique=True,
     )
     # Money
-    stripe_subscription_id = models.CharField(max_length=300, null=True)
-    stripe_customer_id = models.CharField(max_length=300, null=True)
+    stripe_subscription_id = models.CharField(max_length=300, null=True, blank=True)
+    stripe_customer_id = models.CharField(max_length=300, null=True, blank=True)
     # Info
     # https://docs.djangoproject.com/en/5.1/ref/models/fields/#django.db.models.Field.null
     name = models.CharField(blank=True, null=True, max_length=300, unique=True)
@@ -69,17 +69,18 @@ class UserDomain(models.Model):
     )
     office_fax = models.CharField(max_length=150, null=True, blank=True)
     country = models.CharField(max_length=150, default="USA")
-    state = models.CharField(max_length=50, null=False)
-    city = models.CharField(max_length=150, null=False)
-    address1 = models.CharField(max_length=200, null=False)
+    state = models.CharField(max_length=50, null=True, blank=True)
+    city = models.CharField(max_length=150, null=True, blank=True)
+    address1 = models.CharField(max_length=200, null=True, blank=True)
     address2 = models.CharField(max_length=200, null=True, blank=True)
     zipcode = models.CharField(max_length=20, null=False)
     # Customize the defaults
     default_procedure = models.CharField(
-        blank=False, null=True, max_length=300, unique=False
+        blank=True, null=True, max_length=300, unique=False
     )
-    cover_template_string = models.CharField(max_length=5000, null=True)
+    cover_template_string = models.CharField(max_length=5000, null=True, blank=True)
     pending = models.BooleanField(default=False)
+    beta = models.BooleanField(default=False)
 
     def save(self, *args, **kwargs):
         # Strip URL prefixes from name if it's set

@@ -8,9 +8,9 @@ BUILDX_CMD=${BUILDX_CMD:-push}
 source "${SCRIPT_DIR}/setup_templates.sh"
 
 # BUILDKIT_NO_CLIENT_TOKEN=true
-FHI_VERSION=v0.11.8d
+FHI_VERSION=v0.11.10e
 
-MYORG=${MYORG:-holdenk}
+MYORG=${MYORG:-totallylegitco}
 RAY_BASE=${RAY_BASE:-${MYORG}/fhi-ray}
 FHI_BASE=${FHI_BASE:-${MYORG}/fhi-base}
 FHI_DOCKER_USERNAME=${FHI_DOCKER_USERNAME:-holdenk}
