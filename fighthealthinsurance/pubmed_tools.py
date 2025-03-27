@@ -9,7 +9,6 @@ from .utils import markdown_escape
 from concurrent.futures import Future
 from metapub import FindIt
 
-# Removing stopit imports
 import asyncio
 from .models import Denial
 import json

@@ -6,20 +6,24 @@ import aiohttp
 import itertools
 import os
 import re
+import sys
 import traceback
 from concurrent.futures import Future
 from dataclasses import dataclass
 from typing import Callable, List, Optional, Tuple, Iterable, Union
-from stopit import ThreadingTimeout as Timeout
 from loguru import logger
+
+# Import the appropriate async_timeout based on Python version
+if sys.version_info >= (3, 11):
+    from asyncio import timeout as async_timeout
+else:
+    from async_timeout import timeout as async_timeout
 
 from llm_result_utils.cleaner_utils import CleanerUtils
 
 from fighthealthinsurance.exec import *
 from fighthealthinsurance.utils import all_concrete_subclasses
 from fighthealthinsurance.process_denial import DenialBase
-
-from stopit import TimeoutException
 
 
 class RemoteModelLike(DenialBase):
@@ -527,29 +531,32 @@ class RemoteOpenLike(RemoteModel):
         temperature=0.7,
     ) -> Optional[str]:
         r: Optional[str] = None
-        for system_prompt in system_prompts:
-            r = await self.__timeout_infer(
-                system_prompt=system_prompt,
-                prompt=prompt,
-                patient_context=patient_context,
-                plan_context=plan_context,
-                pubmed_context=pubmed_context,
-                temperature=temperature,
-                model=self.model,
-            )
-            if r is None and self.backup_api_base is not None:
+        try:
+            for system_prompt in system_prompts:
                 r = await self.__timeout_infer(
                     system_prompt=system_prompt,
                     prompt=prompt,
                     patient_context=patient_context,
                     plan_context=plan_context,
-                    temperature=temperature,
                     pubmed_context=pubmed_context,
+                    temperature=temperature,
                     model=self.model,
-                    api_base=self.backup_api_base,
                 )
+                if r is None and self.backup_api_base is not None:
+                    r = await self.__timeout_infer(
+                        system_prompt=system_prompt,
+                        prompt=prompt,
+                        patient_context=patient_context,
+                        plan_context=plan_context,
+                        pubmed_context=pubmed_context,
+                        temperature=temperature,
+                        model=self.model,
+                        api_base=self.backup_api_base,
+                    )
             if r is not None:
                 return r
+        except Exception as e:
+            logger.opt(exception=True).error(f"Error {e} calling {self.api_base}")
         return r
 
     async def __timeout_infer(
@@ -559,9 +566,10 @@ class RemoteOpenLike(RemoteModel):
     ) -> Optional[str]:
         if self._timeout is not None:
             try:
-                with Timeout(self._timeout) as timeout_ctx:
+                # Use async_timeout instead of asyncio.wait_for
+                async with async_timeout(self._timeout):
                     return await self.__infer(*args, **kwargs)
-            except TimeoutException as e:
+            except asyncio.TimeoutError:
                 logger.debug(f"Timed out querying {self}")
                 return None
         else:
