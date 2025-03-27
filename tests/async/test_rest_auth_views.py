@@ -196,8 +196,8 @@ class RestAuthViewsTests(TestCase):
         new_user = User.objects.get(email="newuser1289@example.com")
         token = VerificationToken.objects.get(user=new_user)
         self.assertIsNotNone(token)
-        # Check that one message has been sent.
-        self.assertEqual(len(mail.outbox), 1)
+        # Check that two messages have been sent (one to BCC)
+        self.assertEqual(len(mail.outbox), 2)
         # Verify that the subject of the first message is correct.
         self.assertEqual(mail.outbox[0].subject, "Activate your account.")
 
@@ -667,8 +667,8 @@ class TestE2EProfessionalUserSignupFlow(TestCase):
             None, stripe_event["data"]["object"]
         )
 
-        # Now we expect it
-        self.assertEqual(len(mail.outbox), old_outbox + 1)
+        # Now we expect it + BCC
+        self.assertEqual(len(mail.outbox), old_outbox + 2)
         # User can not log in pre-verification
         self.assertFalse(
             self.client.login(username=new_user.username, password="temp12345")
@@ -825,13 +825,13 @@ class ProfessionalInvitationTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.json()["status"], "invitation_sent")
 
-        # Verify email was sent
-        self.assertEqual(len(mail.outbox), mail_count_before + 1)
-        self.assertEqual(mail.outbox[-1].subject, "Invitation to Join Practice")
-        self.assertIn("newinvite@example.com", mail.outbox[-1].to)
+        # Verify email was sent + BCC
+        self.assertEqual(len(mail.outbox), mail_count_before + 2)
+        self.assertEqual(mail.outbox[-2].subject, "Invitation to Join Practice")
+        self.assertIn("newinvite@example.com", mail.outbox[-2].to)
 
         # Check email content
-        email_content = mail.outbox[-1].body
+        email_content = mail.outbox[-2].body
         self.assertIn("testdomain", email_content)
         self.assertIn("1234567890", email_content)  # Practice phone number
         self.assertIn("Admin User", email_content)  # Inviter name
