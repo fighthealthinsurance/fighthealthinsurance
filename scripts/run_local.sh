@@ -9,12 +9,14 @@ if [ ! -f "cert.pem" ]; then
 fi
 
 # Activate the venv if present.
-if [ -f ./build_venv/bin/activate ]; then
-  source ./build_venv/bin/activate
-  echo "Using build_venv"
-elif [ -f ./.venv/bin/activate ]; then
-  source ./.venv/bin/activate
-  echo "Using .venv"
+if [[ -z $VIRTUAL_ENV ]]; then
+  if [ -f ./build_venv/bin/activate ]; then
+    source ./build_venv/bin/activate
+    echo "Using build_venv"
+  elif [ -f ./.venv/bin/activate ]; then
+    source ./.venv/bin/activate
+    echo "Using .venv"
+  fi
 fi
 
 # Check if requirements files have changed since last run
