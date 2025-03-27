@@ -322,6 +322,13 @@ class CreatePatientUserSerializer(serializers.ModelSerializer):
     provider_phone_number = serializers.CharField(required=False, allow_blank=True)
     patient_phone_number = serializers.CharField(required=False, allow_blank=True)
 
+    def validate_password(self, value):
+        if not validate_password(value):
+            raise serializers.ValidationError(
+                "Password must be at least 8 characters, contain at least one digit, and not all digits"
+            )
+        return value
+
     class Meta:
         model = User
         fields = [
