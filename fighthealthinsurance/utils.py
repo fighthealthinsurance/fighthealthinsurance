@@ -49,11 +49,7 @@ def is_convertible_to_int(s):
 
 
 def send_fallback_email(subject: str, template_name: str, context, to_email: str):
-    """Send an email with both text and HTML fallback.
-    
-    Note: We expect our SMTP server to accept emails reliably.
-    If email sending fails, we raise an exception instead of suppressing errors.
-    """
+    """Send an email with both text and HTML fallback."""
     try:
         if not to_email:
             raise ValidationError("Recipient email is required.")
@@ -61,28 +57,29 @@ def send_fallback_email(subject: str, template_name: str, context, to_email: str
         if to_email.endswith("-fake@fighthealthinsurance.com"):
             return
 
-        # Render email templates
+        # First, render the plain text content if present
         text_content = render_to_string(f"emails/{template_name}.txt", context=context).strip()
+        # Secondly, render the HTML content if present
         html_content = render_to_string(f"emails/{template_name}.html", context=context).strip()
 
         # Ensure there's at least one valid content type
         if not text_content and not html_content:
             raise ValidationError("Both text and HTML templates are empty.")
 
-        # Create email instance
+        # Then, create a multipart email instance.
         msg = EmailMultiAlternatives(
             subject,
             text_content,
-            settings.EMAIL_HOST_USER,
-            [to_email],
+            settings.DEFAULT_FROM_EMAIL,
+            to=[to_email],
             bcc=settings.BCC_EMAILS,
         )
+        logger.debug(f"Sending email to {to_email} with subject {subject}")
 
-        # Attach HTML content if available
-        if html_content:
-            msg.attach_alternative(html_content, "text/html")
-
+        # Lastly, attach the HTML content to the email instance and send.
+        msg.attach_alternative(html_content, "text/html")
         msg.send()
+        
         logger.info(f"Verification email successfully sent to {to_email}")
 
     except BadHeaderError as e:
