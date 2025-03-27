@@ -576,6 +576,36 @@ class RestAuthViewsTests(TestCase):
         self.assertEqual(data["domain_name"], self.domain.name)
         self.assertTrue(data["beta"])  # Check beta flag
 
+    def test_create_professional_user_with_short_password(self) -> None:
+        url = reverse("professional_user-list")
+        data = {
+            "user_signup_info": {
+                "username": "shortpass",
+                "password": "short",  # Too short password
+                "email": "shortpass@example.com",
+                "first_name": "Short",
+                "last_name": "Pass",
+                "domain_name": "newshortpass",
+                "visible_phone_number": "1234567893",
+                "continue_url": "http://example.com/continue",
+            },
+            "make_new_domain": True,
+            "user_domain": {
+                "name": "newshortpass",
+                "visible_phone_number": "1234567893",
+                "internal_phone_number": "0987654325",
+                "display_name": "Short Pass Domain",
+                "country": "USA",
+                "state": "CA",
+                "city": "Test City",
+                "address1": "123 Test St",
+                "zipcode": "12345",
+            },
+        }
+        response = self.client.post(url, data, format="json")
+        self.assertNotIn(response.status_code, range(200, 300))
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
 
 class TestE2EProfessionalUserSignupFlow(TestCase):
     def setUp(self):

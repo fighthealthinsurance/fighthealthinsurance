@@ -10,7 +10,7 @@ from .auth_forms import (
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from fhi_users.models import *
-from fhi_users.auth.auth_utils import create_user
+from fhi_users.auth.auth_utils import create_user, validate_password
 from typing import Any, Optional
 import re
 
@@ -107,8 +107,8 @@ class UserSignupSerializer(serializers.Serializer):
     email = serializers.EmailField(required=False, allow_blank=True)
 
     def validate_password(self, value):
-        if len(value) < 8:
-            raise serializers.ValidationError("Password must be at least 8 characters.")
+        if not validate_password(value):
+            raise serializers.ValidationError("Password must be at least 8 characters and not all digits")
         return value
 
     def validate_visible_phone_number(self, value):
