@@ -4,6 +4,8 @@
 
 import uuid
 
+import re
+
 from fhi_users.models import UserDomain
 from django.contrib.auth import get_user_model
 
@@ -20,8 +22,13 @@ else:
     User = get_user_model()
 
 
-def validate_password(password: str) -> bool:
-    return len(password) >= 8 and not password.isdigit()
+def normalize_phone_number(phone_number: Optional[str]) -> Optional[str]:
+    """Normalize a phone number to a standard format."""
+    # Remove all non-digit characters
+    if phone_number is None:
+        return None
+    lowered = phone_number.lower()
+    return re.sub(r"[^0-9x]", "", lowered)
 
 
 def get_next_fake_username() -> str:
@@ -30,6 +37,19 @@ def get_next_fake_username() -> str:
 
 def validate_username(username: str) -> bool:
     return "🐼" not in username
+
+
+def validate_password(password: str) -> bool:
+    # Check if password is at least 8 characters long
+    if len(password) < 8:
+        return False
+    # Check if password contains at least one digit
+    if not any(char.isdigit() for char in password):
+        return False
+    # Check if password is not entirely composed of digits
+    if password.isdigit():
+        return False
+    return True
 
 
 def is_valid_domain(domain_name: str) -> bool:
@@ -66,6 +86,7 @@ def resolve_domain_id(
     domain_name: Optional[str] = None,
     phone_number: Optional[str] = None,
 ) -> str:
+    phone_number = normalize_phone_number(phone_number)
     if domain:
         return domain.id
     if domain_id:

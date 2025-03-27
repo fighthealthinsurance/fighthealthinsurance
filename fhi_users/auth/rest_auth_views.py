@@ -2,6 +2,7 @@ from loguru import logger
 from typing import Optional, TYPE_CHECKING
 import time
 import json
+import uuid
 
 from rest_framework import status
 from rest_framework import viewsets
@@ -49,7 +50,11 @@ from fhi_users.auth.auth_utils import (
 from fighthealthinsurance.rest_mixins import CreateMixin, SerializerMixin
 from rest_framework.serializers import Serializer
 from fighthealthinsurance import stripe_utils
-from fhi_users.emails import send_verification_email, send_password_reset_email
+from fhi_users.emails import (
+    send_verification_email,
+    send_password_reset_email,
+    send_professional_created_email,
+)
 
 from drf_spectacular.utils import extend_schema
 
@@ -164,6 +169,10 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             return serializers.EmptySerializer
         elif self.action == "finish_payment":
             return serializers.FinishPaymentSerializer
+        elif self.action == "invite":
+            return serializers.InviteProfessionalSerializer
+        elif self.action == "create_professional_in_current_domain":
+            return serializers.CreateProfessionalInCurrentDomainSerializer
         else:
             return serializers.EmptySerializer
 
@@ -174,11 +183,205 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         permission_classes = []  # type: ignore
         if self.action == "list":
             permission_classes = []
-        elif self.action == "accept" or self.action == "reject":
+        elif self.action in [
+            "accept",
+            "reject",
+            "invite",
+            "create_professional_in_current_domain",
+        ]:
             permission_classes = [IsAuthenticated]
         else:
             permission_classes = []
         return [permission() for permission in permission_classes]
+
+    @extend_schema(
+        responses={
+            200: serializers.StatusResponseSerializer,
+            400: common_serializers.ErrorSerializer,
+            403: common_serializers.ErrorSerializer,
+        }
+    )
+    @action(detail=False, methods=["post"])
+    def create_professional_in_current_domain(self, request: Request) -> Response:
+        """
+        Create a new professional account in the admin's domain and send them an email.
+        """
+        serializer = self.deserialize(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        # Get the current user's domain
+        try:
+            current_user: User = request.user  # type: ignore
+            domain_id = request.session.get("domain_id")
+            if not domain_id:
+                return Response(
+                    common_serializers.ErrorSerializer(
+                        {"error": "Domain ID not found in session"}
+                    ).data,
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            # Ensure current user is an admin in the domain
+            user_domain = UserDomain.objects.get(id=domain_id)
+            if not user_is_admin_in_domain(current_user, domain_id):
+                return Response(
+                    common_serializers.ErrorSerializer(
+                        {"error": "User does not have admin privileges"}
+                    ).data,
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+            # Extract data from serializer
+            email = serializer.validated_data["email"]
+            first_name = serializer.validated_data["first_name"]
+            last_name = serializer.validated_data["last_name"]
+            npi_number = serializer.validated_data.get("npi_number", "")
+            provider_type = serializer.validated_data.get("provider_type", "")
+
+            # Check if user with this email already exists
+            if User.objects.filter(email=email).exists():
+                return Response(
+                    common_serializers.ErrorSerializer(
+                        {"error": "A user with this email already exists"}
+                    ).data,
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            # Generate a random password (user will reset it)
+            temp_password = uuid.uuid4().hex
+
+            with transaction.atomic():
+                # Create the user
+                user = create_user(
+                    raw_username=email,
+                    domain_name=user_domain.name,
+                    phone_number=user_domain.visible_phone_number,
+                    email=email,
+                    password=temp_password,
+                    first_name=first_name,
+                    last_name=last_name,
+                )
+
+                # Create professional user record
+                professional_user = ProfessionalUser.objects.create(
+                    user=user,
+                    active=True,
+                    npi_number=npi_number,
+                    provider_type=provider_type,
+                )
+
+                # Create relationship with domain (active, not pending)
+                ProfessionalDomainRelation.objects.create(
+                    professional=professional_user,
+                    domain=user_domain,
+                    active=True,
+                    admin=False,  # New professionals are not admins by default
+                    pending=False,
+                )
+
+                # Create extra user properties
+                ExtraUserProperties.objects.create(
+                    user=user,
+                    email_verified=True,  # Auto-verify since admin is creating
+                )
+
+                # Send email notification to the professional
+                context = {
+                    "practice_name": user_domain.name or "our practice",
+                    "inviter_name": f"{current_user.first_name} {current_user.last_name}",
+                    "professional_name": f"{first_name} {last_name}",
+                    "practice_phone": user_domain.visible_phone_number,
+                    "email": email,
+                }
+
+                send_professional_created_email(email, context)
+
+                return Response(
+                    serializers.StatusResponseSerializer(
+                        {
+                            "status": "professional_created",
+                            "message": f"Professional account created for {email}",
+                        }
+                    ).data,
+                    status=status.HTTP_200_OK,
+                )
+
+        except Exception as e:
+            logger.opt(exception=e).error("Error creating professional")
+            return Response(
+                common_serializers.ErrorSerializer({"error": f"Error: {str(e)}"}).data,
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+    @extend_schema(
+        responses={
+            200: serializers.StatusResponseSerializer,
+            400: common_serializers.ErrorSerializer,
+        }
+    )
+    @action(detail=False, methods=["post"])
+    def invite(self, request: Request) -> Response:
+        """
+        Invite a professional to join the practice by sending them an email.
+        """
+        serializer = self.deserialize(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        # Get the current user's domain
+        try:
+            current_user: User = request.user  # type: ignore
+            domain_id = request.session.get("domain_id")
+            if not domain_id:
+                return Response(
+                    common_serializers.ErrorSerializer(
+                        {"error": "Domain ID not found in session"}
+                    ).data,
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            # Ensure current user is an admin in the domain
+            user_domain = UserDomain.objects.get(id=domain_id)
+            if not user_is_admin_in_domain(current_user, domain_id):
+                return Response(
+                    common_serializers.ErrorSerializer(
+                        {"error": "User does not have admin privileges"}
+                    ).data,
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+            # Extract data from serializer
+            professional_email = serializer.validated_data["user_email"]
+            professional_name = serializer.validated_data.get("name", "")
+
+            # Create context for email template
+            context = {
+                "practice_name": user_domain.name or "our practice",
+                "practice_number": user_domain.visible_phone_number,
+                "inviter_name": f"{current_user.first_name} {current_user.last_name}",
+                "professional_name": professional_name,
+            }
+
+            # Send invitation email
+            from fhi_users.emails import send_professional_invitation_email
+
+            send_professional_invitation_email(professional_email, context)
+
+            return Response(
+                serializers.StatusResponseSerializer(
+                    {
+                        "status": "invitation_sent",
+                        "message": f"Invitation sent to {professional_email}",
+                    }
+                ).data,
+                status=status.HTTP_200_OK,
+            )
+
+        except Exception as e:
+            logger.opt(exception=e).error("Error inviting professional")
+            return Response(
+                common_serializers.ErrorSerializer({"error": f"Error: {str(e)}"}),
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
     @method_decorator(
         cache_control(max_age=600, private=True)

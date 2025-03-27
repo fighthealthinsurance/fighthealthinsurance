@@ -10,7 +10,11 @@ from .auth_forms import (
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from fhi_users.models import *
-from fhi_users.auth.auth_utils import create_user
+from fhi_users.auth.auth_utils import (
+    create_user,
+    validate_password,
+    normalize_phone_number,
+)
 from typing import Any, Optional
 import re
 
@@ -107,9 +111,28 @@ class UserSignupSerializer(serializers.Serializer):
     email = serializers.EmailField(required=False, allow_blank=True)
 
     def validate_password(self, value):
-        if len(value) < 8:
-            raise serializers.ValidationError("Password must be at least 8 characters.")
+        if not validate_password(value):
+            raise serializers.ValidationError(
+                "Password must be at least 8 characters, contain at least one digit, and not all digits"
+            )
         return value
+
+    def validate_visible_phone_number(self, value):
+        # Remove all hyphens from the phone number
+        cleaned_number = value.replace("-", "")
+
+        # Check that the remaining string only contains digits and 'X' or 'x'
+        if (
+            not all(
+                char.isdigit() or char == "X" or char == "x" for char in cleaned_number
+            )
+            or len(cleaned_number) < 7
+        ):
+            raise serializers.ValidationError(
+                "Phone number can only contain digits, 'X', and hyphens, and must be at least 7 characters long."
+            )
+
+        return cleaned_number
 
     def save(self, **kwargs: Any):
         raise Exception(
@@ -141,6 +164,33 @@ class UserDomainSerializer(serializers.ModelSerializer):
             "active",
             "professionals",
         )
+
+
+class InviteProfessionalSerializer(serializers.Serializer):
+    """
+    Invite a new professional to join your domain.
+    """
+
+    user_email = serializers.EmailField()
+    name = serializers.CharField(required=False, allow_blank=True)
+
+
+class CreateProfessionalInCurrentDomainSerializer(serializers.Serializer):
+    """
+    Create a new professional in the admin's domain.
+    """
+
+    email = serializers.EmailField()
+    first_name = serializers.CharField()
+    last_name = serializers.CharField()
+    npi_number = serializers.CharField(required=False, allow_blank=True)
+    provider_type = serializers.CharField(required=False, allow_blank=True)
+
+    def validate_npi_number(self, value):
+        # Only validate if a value is provided
+        if value and not re.match(r"^\d{10}$", str(value)):
+            raise serializers.ValidationError("Invalid NPI number format.")
+        return value
 
 
 class ProfessionalSignupSerializer(serializers.ModelSerializer):
