@@ -382,7 +382,7 @@ class RestAuthViewsTests(TestCase):
         self.assertEqual(response.json()["status"], "reset_requested")
         self.assertTrue(ResetToken.objects.filter(user=self.user).exists())
 
-    def test_finish_password_reset(self) -> None:
+    def test_finish_password_reset_invalid(self) -> None:
         reset_token = ResetToken.objects.create(user=self.user, token=uuid.uuid4().hex)
         url = reverse("password_reset-finish-reset")
         data = {
@@ -390,10 +390,20 @@ class RestAuthViewsTests(TestCase):
             "new_password": "newtestpass",
         }
         response = self.client.post(url, data, format="json")
+        self.assertNotIn(response.status_code, range(200, 300))
+
+    def test_finish_password_reset_valid(self) -> None:
+        reset_token = ResetToken.objects.create(user=self.user, token=uuid.uuid4().hex)
+        url = reverse("password_reset-finish-reset")
+        data = {
+            "token": reset_token.token,
+            "new_password": "newtestpass111",
+        }
+        response = self.client.post(url, data, format="json")
         self.assertIn(response.status_code, range(200, 300))
         self.assertEqual(response.json()["status"], "password_reset_complete")
         self.user.refresh_from_db()
-        self.assertTrue(self.user.check_password("newtestpass"))
+        self.assertTrue(self.user.check_password("newtestpass111"))
 
     def test_finish_password_reset_with_invalid_token(self) -> None:
         url = reverse("password_reset-finish-reset")

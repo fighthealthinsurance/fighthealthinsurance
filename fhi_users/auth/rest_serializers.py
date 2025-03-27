@@ -10,7 +10,11 @@ from .auth_forms import (
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from fhi_users.models import *
-from fhi_users.auth.auth_utils import create_user, validate_password
+from fhi_users.auth.auth_utils import (
+    create_user,
+    validate_password,
+    normalize_phone_number,
+)
 from typing import Any, Optional
 import re
 
@@ -118,11 +122,14 @@ class UserSignupSerializer(serializers.Serializer):
         cleaned_number = value.replace("-", "")
 
         # Check that the remaining string only contains digits and 'X' or 'x'
-        if not all(
-            char.isdigit() or char == "X" or char == "x" for char in cleaned_number
+        if (
+            not all(
+                char.isdigit() or char == "X" or char == "x" for char in cleaned_number
+            )
+            or len(cleaned_number) < 7
         ):
             raise serializers.ValidationError(
-                "Phone number can only contain digits, 'X', and hyphens."
+                "Phone number can only contain digits, 'X', and hyphens, and must be at least 7 characters long."
             )
 
         return cleaned_number
