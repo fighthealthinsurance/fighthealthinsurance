@@ -94,3 +94,23 @@ def send_checkout_session_expired(
         },
         email,
     )
+
+
+def send_professional_invitation_email(professional_email, context):
+    """Send invitation email to a professional to join a practice."""
+    send_fallback_email(
+        "Invitation to Join Practice",
+        "invite_professional",
+        context,
+        professional_email,
+    )
+
+
+def send_professional_created_email(professional_email, context):
+    """Send email to a professional that was created by an admin."""
+    send_fallback_email(
+        "Your Professional Account Has Been Created",
+        "professional_created",
+        context,
+        professional_email,
+    )

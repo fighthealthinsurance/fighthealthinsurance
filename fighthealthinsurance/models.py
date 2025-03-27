@@ -359,9 +359,9 @@ class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # t
 
     def _get_filename(self) -> str:
         if self.combined_document:
-            return self.combined_document.name # type: ignore
+            return self.combined_document.name  # type: ignore
         elif self.combined_document_enc:
-            return self.combined_document_enc.name # type: ignore
+            return self.combined_document_enc.name  # type: ignore
         else:
             raise Exception("No file found (encrypted or unencrypted)")
 
