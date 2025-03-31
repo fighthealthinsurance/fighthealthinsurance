@@ -1662,7 +1662,12 @@ class StripeWebhookHelper:
             except:
                 metadata = session["metadata"]
 
-            payment_type = metadata.get("payment_type")
+
+            payment_type: Optional[str] = None
+            if "payment_type" in metadata:
+                payment_type = metadata.get("payment_type")
+            else:
+                logger.debug(f"No payment type field found in {session}")
 
             if payment_type == "interested_professional_signup":
                 InterestedProfessional.objects.filter(
