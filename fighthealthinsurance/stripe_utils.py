@@ -137,7 +137,7 @@ def increment_meter(
         )
         logger.debug(f"Incremented meter {meter_name} by {quantity}")
     except Exception as e:
-        logger.opt(exception=True).error(f"Error incremeneting meter")
+        logger.opt(exception=True).error(f"Error incrementing meter")
         try:
             LostStripeMeters.objects.create(payload=payload, error=str(e))
         except Exception as e:
