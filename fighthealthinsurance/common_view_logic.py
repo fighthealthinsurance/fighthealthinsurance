@@ -269,6 +269,7 @@ class AppealAssemblyHelper:
                     user_id=stripe_customer_id,
                     meter_name="Incremental Appeal",
                     quantity=1,
+                    identifier=appeal.uuid,
                 )
         with tempfile.NamedTemporaryFile(
             suffix=".pdf", prefix="alltogether", mode="w+b", delete=False
@@ -1661,7 +1662,6 @@ class StripeWebhookHelper:
                 metadata = session.metadata
             except:
                 metadata = session["metadata"]
-
 
             payment_type: Optional[str] = None
             if "payment_type" in metadata:

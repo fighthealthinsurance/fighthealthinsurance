@@ -745,3 +745,11 @@ class LostStripeSession(models.Model):
     success_url = models.CharField(max_length=255, null=True, blank=True)
     email = models.CharField(max_length=255, null=True, blank=True)
     metadata = models.JSONField(null=True, blank=True)
+
+
+class LostStripeMeters(models.Model):
+    id = models.AutoField(primary_key=True)
+    created_at = models.DateTimeField(auto_now_add=True, blank=True)
+    payload = models.JSONField(null=True, blank=True)
+    resubmitted = models.BooleanField(default=False)
+    error = models.CharField(max_length=300)
