@@ -1,7 +1,7 @@
 import stripe
 from django.conf import settings
-from typing import Tuple, Dict, Any
-from fighthealthinsurance.models import StripeProduct, StripePrice, StripeMeter
+from typing import Tuple, Dict, Any, Optional
+from fighthealthinsurance.models import StripeProduct, StripePrice, StripeMeter, LostStripeMeters
 from loguru import logger
 
 
@@ -115,17 +115,30 @@ def get_or_create_price(
             raise
 
 
-def increment_meter(user_id: str, meter_name: str, quantity: int) -> None:
+def increment_meter(
+    user_id: str, meter_name: str, quantity: int, identifier: Optional[str]
+) -> None:
+    stripe.api_key = settings.STRIPE_API_SECRET_KEY
     meter = StripeMeter.objects.filter(name=meter_name, active=True).first()
+    payload = {
+        "value": str(quantity),
+        "stripe_customer_id": user_id,
+    }
+    if identifier:
+        payload["identifier"] = identifier
     if meter is None:
         logger.error(
             "WARNING: we did not find a a meter to log usage for meter: " + meter_name
         )
-    stripe.billing.MeterEvent.create(
-        event_name=meter_name,
-        payload={
-            "value": str(quantity),
-            "stripe_customer_id": user_id,
-        },
-    )
-    logger.debug(f"Incremented meter {meter_name} by {quantity}")
+    try:
+        stripe.billing.MeterEvent.create(
+            event_name=meter_name,
+            payload=payload,
+        )
+        logger.debug(f"Incremented meter {meter_name} by {quantity}")
+    except Exception as e:
+        logger.opt(exception=True).error(f"Error incrementing meter")
+        try:
+            LostStripeMeters.objects.create(payload=payload, error=str(e))
+        except Exception as e:
+            logger.opt(exception=True).error("Error recording lost meter")
