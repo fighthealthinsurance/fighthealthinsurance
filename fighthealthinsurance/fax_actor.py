@@ -79,7 +79,9 @@ class FaxActor:
         print(f"Sending faxes older than target: {target_time}")
 
         delayed_faxes = FaxesToSend.objects.filter(
-            should_send=True, sent=False, date__lt=target_time,
+            should_send=True,
+            sent=False,
+            date__lt=target_time,
             destination__isnull=False,
         )
         t = 0
