@@ -39,7 +39,6 @@ def trigger_error(request: HttpRequest) -> HttpResponseBase:
 
 
 urlpatterns: List[Union[URLPattern, URLResolver]] = [
-    path("__reload__/", include("django_browser_reload.urls")),
     # Internal-ish-views
     path("ziggy/rest/", include("fighthealthinsurance.rest_urls")),
     path("timbit/sentry-debug/", trigger_error),
