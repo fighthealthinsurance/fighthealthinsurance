@@ -172,7 +172,6 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         csrf_exempt(views.ProVersionThankYouView.as_view()),
         name="pro_version_thankyou",
     ),
-    path("privacy_policy", views.PrivacyPolicyView.as_view(), name="privacy_policy"),
     path("share_denial", views.ShareDenialView.as_view(), name="share_denial"),
     path("share_appeal", views.ShareAppealView.as_view(), name="share_appeal"),
     path("remove_data", views.RemoveDataView.as_view(), name="remove_data"),
@@ -182,6 +181,20 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
             cache_page(60 * 60 * 2)(views.TermsOfServiceView.as_view())
         ),
         name="tos",
+    ),
+    path(
+        "privacy_policy", 
+        cache_control(public=True)(
+            cache_page(60 * 60 * 2)(views.PrivacyPolicyView.as_view())
+        ), 
+        name="privacy_policy"
+    ),
+    path(
+        "mhmda", 
+        cache_control(public=True)(
+            cache_page(60 * 60 * 2)(views.MHMDAView.as_view())
+        ),
+        name="mhmda"
     ),
     path(
         "find_next_steps",
