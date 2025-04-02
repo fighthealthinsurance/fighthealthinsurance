@@ -1749,7 +1749,7 @@ class StripeWebhookHelper:
                 except:
                     pass
             if email is None:
-                logger.error(
+                logger.debug(
                     "No email found in expired checkout session can't send e-mail"
                 )
                 return

@@ -34,6 +34,7 @@ from fhi_users.models import (
     ExtraUserProperties,
     ResetToken,
     UserRole,
+    UserContactInfo,
 )
 from fighthealthinsurance.models import StripeRecoveryInfo
 from fhi_users.auth import rest_serializers as serializers
@@ -926,7 +927,62 @@ class PatientUserViewSet(ViewSet, CreateMixin):
     @extend_schema(responses=serializers.StatusResponseSerializer)
     def perform_create(self, request: Request, serializer) -> Response:
         serializer.is_valid(raise_exception=True)
-        user = serializer.save()
+        domain_name: Optional[str] = None
+        provider_phone_number: Optional[str] = None
+        patient_phone_number: Optional[str] = None
+        validated_data = serializer.validated_data
+        if "domain_name" in validated_data:
+            domain_name = validated_data.pop("domain_name")
+        if "provider_phone_number" in validated_data:
+            provider_phone_number = validated_data.pop("provider_phone_number")
+        if "patient_phone_number" in validated_data:
+            patient_phone_number = validated_data.pop("patient_phone_number")
+        domain_id = request.session.get("domain_id")
+        user = create_user(
+            email=validated_data["email"],
+            raw_username=validated_data["username"],
+            first_name=validated_data.get("firstname", ""),
+            last_name=validated_data.get("lastname", ""),
+            domain_name=domain_name,
+            phone_number=provider_phone_number,
+            password=validated_data["password"],
+            domain_id=domain_id,
+        )
+        country = "USA"
+        if "country" in validated_data:
+            country = validated_data["country"]
+        state = None
+        if "state" in validated_data:
+            state = validated_data["state"]
+        city = None
+        if "city" in validated_data:
+            city = validated_data["city"]
+        address1 = None
+        if "address1" in validated_data:
+            address1 = validated_data["address1"]
+        address2 = None
+        if "address2" in validated_data:
+            address2 = validated_data["address2"]
+        zipcode = None
+        if "zipcode" in validated_data:
+            zipcode = validated_data["zipcode"]
+
+        UserContactInfo.objects.create(
+            user=user,
+            phone_number=patient_phone_number,
+            country=country,
+            state=state,
+            city=city,
+            address1=address1,
+            address2=address2,
+            zipcode=zipcode,
+        )
+
+        PatientUser.objects.create(user=user, active=False)
+
+        extra_user_properties = ExtraUserProperties.objects.create(
+            user=user, email_verified=False
+        )
         send_verification_email(request, user)
         return Response(
             serializers.StatusResponseSerializer({"status": "pending"}).data
