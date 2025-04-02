@@ -166,6 +166,7 @@ def create_user(
     password: str,
     first_name: str,
     last_name: str,
+    domain_id: Optional[str] = None,
 ) -> User:
     """Create a new user with the given email and password.
 
@@ -180,7 +181,10 @@ def create_user(
     """
 
     username = combine_domain_and_username(
-        raw_username, domain_name=domain_name, phone_number=phone_number
+        raw_username,
+        domain_name=domain_name,
+        phone_number=phone_number,
+        domain_id=domain_id,
     )
     if not validate_password(password):
         raise Exception(

@@ -1691,7 +1691,7 @@ class StripeWebhookHelper:
                     user = ProfessionalUser.objects.get(
                         id=metadata.get("professional_id")
                     ).user
-                    fhi_emails.send_verification_email(request, user)
+                    fhi_emails.send_verification_email(request, user, first_only=True)
                 else:
                     logger.error("No subscription ID in completed checkout session")
 
@@ -1700,7 +1700,7 @@ class StripeWebhookHelper:
                     paid=True, should_send=True
                 )
             else:
-                logger.error(f"Unknown payment type: {payment_type}")
+                logger.warning(f"Unknown payment type: {payment_type}")
         except Exception as e:
             logger.opt(exception=True).error("Error processing checkout session")
             raise e
@@ -1749,7 +1749,7 @@ class StripeWebhookHelper:
                 except:
                     pass
             if email is None:
-                logger.error(
+                logger.debug(
                     "No email found in expired checkout session can't send e-mail"
                 )
                 return
