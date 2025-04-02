@@ -1141,7 +1141,7 @@ class PasswordResetViewSet(ViewSet, SerializerMixin):
             )
 
         except User.DoesNotExist:
-            logger.error(f"User does not exist")
+            logger.debug(f"User does not exist")
             return Response(
                 common_serializers.ErrorSerializer(
                     {"error": "User does not exist"}
@@ -1149,8 +1149,21 @@ class PasswordResetViewSet(ViewSet, SerializerMixin):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        except UserDomain.DoesNotExist:
+            logger.debug(f"User domain does not exist")
+            return Response(
+                common_serializers.ErrorSerializer(
+                    {
+                        "error": "User domain does not exist -- check provider phone number"
+                    }
+                ).data,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         except Exception as e:
-            logger.error(f"Password reset request failed: {e}")
+            logger.opt(exception=e).error(
+                f"Password reset request failed with unexpected error"
+            )
             return Response(
                 common_serializers.ErrorSerializer({"error": str(e)}).data,
                 status=status.HTTP_400_BAD_REQUEST,
