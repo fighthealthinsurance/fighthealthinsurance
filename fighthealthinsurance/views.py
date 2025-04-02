@@ -156,11 +156,13 @@ class PrivacyPolicyView(generic.TemplateView):
     def get_context_data(self, **kwargs):
         return {"title": "Privacy Policy"}
 
+
 class MHMDAView(generic.TemplateView):
     template_name = "mhmda.html"
 
     def get_context_data(self, **kwargs):
         return {"title": "Consumer Health Data Privacy Notice"}
+
 
 class TermsOfServiceView(generic.TemplateView):
     template_name = "tos.html"

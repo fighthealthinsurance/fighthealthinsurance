@@ -1,7 +1,12 @@
 import stripe
 from django.conf import settings
 from typing import Tuple, Dict, Any, Optional
-from fighthealthinsurance.models import StripeProduct, StripePrice, StripeMeter, LostStripeMeters
+from fighthealthinsurance.models import (
+    StripeProduct,
+    StripePrice,
+    StripeMeter,
+    LostStripeMeters,
+)
 from loguru import logger
 
 

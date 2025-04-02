@@ -349,45 +349,6 @@ class CreatePatientUserSerializer(serializers.ModelSerializer):
         ]
         extra_kwargs = {"password": {"write_only": True}}
 
-    def create(self, validated_data):
-        domain_name: Optional[str] = None
-        provider_phone_number: Optional[str] = None
-        patient_phone_number: Optional[str] = None
-        if "domain_name" in validated_data:
-            domain_name = validated_data.pop("domain_name")
-        if "provider_phone_number" in validated_data:
-            provider_phone_number = validated_data.pop("provider_phone_number")
-        if "patient_phone_number" in validated_data:
-            patient_phone_number = validated_data.pop("patient_phone_number")
-        user = create_user(
-            email=validated_data["email"],
-            raw_username=validated_data["username"],
-            first_name=validated_data.get("firstname", ""),
-            last_name=validated_data.get("lastname", ""),
-            domain_name=domain_name,
-            phone_number=provider_phone_number,
-            password=validated_data["password"],
-        )
-
-        UserContactInfo.objects.create(
-            user=user,
-            phone_number=patient_phone_number,
-            country=validated_data["country"],
-            state=validated_data["state"],
-            city=validated_data["city"],
-            address1=validated_data["address1"],
-            address2=validated_data.get("address2", ""),
-            zipcode=validated_data["zipcode"],
-        )
-
-        PatientUser.objects.create(user=user, active=False)
-
-        extra_user_properties = ExtraUserProperties.objects.create(
-            user=user, email_verified=False
-        )
-
-        return user
-
 
 # Define UserContactInfoSerializer before PatientUserSerializer
 class UserContactInfoSerializer(serializers.ModelSerializer):
