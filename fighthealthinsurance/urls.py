@@ -183,18 +183,16 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         name="tos",
     ),
     path(
-        "privacy_policy", 
+        "privacy_policy",
         cache_control(public=True)(
             cache_page(60 * 60 * 2)(views.PrivacyPolicyView.as_view())
-        ), 
-        name="privacy_policy"
+        ),
+        name="privacy_policy",
     ),
     path(
-        "mhmda", 
-        cache_control(public=True)(
-            cache_page(60 * 60 * 2)(views.MHMDAView.as_view())
-        ),
-        name="mhmda"
+        "mhmda",
+        cache_control(public=True)(cache_page(60 * 60 * 2)(views.MHMDAView.as_view())),
+        name="mhmda",
     ),
     path(
         "find_next_steps",

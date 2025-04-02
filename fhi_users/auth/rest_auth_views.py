@@ -863,8 +863,8 @@ class RestLoginView(ViewSet, SerializerMixin):
             user = authenticate(username=username, password=password)
             # If we have a valid user check if the domain is active.
             if (
-                user and
-                not user_domain.active
+                user
+                and not user_domain.active
                 and not user_domain.stripe_subscription_id
                 and not user_domain.stripe_customer_id
             ):
