@@ -1700,7 +1700,7 @@ class StripeWebhookHelper:
                     paid=True, should_send=True
                 )
             else:
-                logger.error(f"Unknown payment type: {payment_type}")
+                logger.warning(f"Unknown payment type: {payment_type}")
         except Exception as e:
             logger.opt(exception=True).error("Error processing checkout session")
             raise e
