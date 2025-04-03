@@ -21,6 +21,8 @@ from django.views.decorators.cache import cache_control
 from django.views.decorators.vary import vary_on_cookie
 from django.utils.decorators import method_decorator
 from django.db import transaction
+from django.db import utils as django_db_utils
+from django.db.utils import IntegrityError
 
 
 import stripe
@@ -1030,7 +1032,42 @@ class PatientUserViewSet(ViewSet, CreateMixin):
         }
     )
     def create(self, request: Request) -> Response:
-        return super().create(request)
+        try:
+            return super().create(request)
+        except IntegrityError as e:
+            # Check for uniqueness constraint errors (typically email or username conflicts)
+            if (
+                "unique constraint" in str(e).lower()
+                or "duplicate key" in str(e).lower()
+            ):
+                logger.opt(exception=True).error(
+                    f"Uniqueness constraint error when creating patient user: {str(e)}"
+                )
+                return Response(
+                    common_serializers.ErrorSerializer(
+                        {"error": "A user with this email already exists"}
+                    ).data,
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            # Log but pass through other integrity errors
+            logger.opt(exception=True).error(
+                f"Database integrity error when creating patient user: {str(e)}"
+            )
+            return Response(
+                common_serializers.ErrorSerializer(
+                    {"error": f"Database error: {str(e)}"}
+                ),
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except Exception as e:
+            # Catch all other exceptions to provide friendlier responses
+            logger.opt(exception=True).error(
+                f"Unexpected error when creating patient user: {str(e)}"
+            )
+            return Response(
+                common_serializers.ErrorSerializer({"error": str(e)}),
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
     @extend_schema(responses=serializers.StatusResponseSerializer)
     def perform_create(self, request: Request, serializer) -> Response:
@@ -1099,7 +1136,6 @@ class PatientUserViewSet(ViewSet, CreateMixin):
     @extend_schema(responses=serializers.PatientReferenceSerializer)
     @action(detail=False, methods=["post", "options"])
     def get_or_create_pending(self, request: Request) -> Response:
-        print(f"Called...")
         serializer = self.deserialize(data=request.data)
         serializer.is_valid(raise_exception=True)
         email = None
