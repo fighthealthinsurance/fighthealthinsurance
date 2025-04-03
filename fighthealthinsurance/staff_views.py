@@ -2,6 +2,7 @@ import datetime
 
 from django.http import HttpResponse
 from django.views import View, generic
+from django.db import transaction
 from loguru import logger
 
 from fighthealthinsurance import common_view_logic
@@ -127,8 +128,9 @@ class EnableBetaForDomainView(generic.FormView):
         try:
             phonenumber = form.cleaned_data.get("phonenumber")
             domain = UserDomain.objects.get(visible_phone_number=phonenumber)
-            domain.beta = True
-            domain.save()
+            with transaction.atomic():
+                domain.beta = True
+                domain.save()
             return HttpResponse(
                 f"Beta features enabled for domain {domain.name} ({phonenumber})"
             )
