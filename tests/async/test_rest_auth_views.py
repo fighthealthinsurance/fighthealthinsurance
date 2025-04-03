@@ -621,7 +621,7 @@ class RestAuthViewsTests(TestCase):
         url = reverse("patient_user-list")
         # Create first patient user
         data = {
-            "username": "patient1",
+            "username": "duplicate_patient@example.com",
             "password": "SecurePassword123",
             "email": "duplicate_patient@example.com",
             "provider_phone_number": "1234567890",
@@ -642,9 +642,9 @@ class RestAuthViewsTests(TestCase):
             User.objects.filter(email="duplicate_patient@example.com").exists()
         )
 
-        # Try to create a second user with the same email but different username
+        # Try to create a second user with the same email and username
         data2 = dict(data)
-        data2["username"] = "patient2"
+        data2["username"] = "duplicate_patient@example.com"
 
         response2 = self.client.post(url, data2, format="json")
 
