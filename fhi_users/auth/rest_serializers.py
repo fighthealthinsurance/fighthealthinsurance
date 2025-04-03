@@ -415,3 +415,20 @@ class FinishPaymentSerializer(serializers.Serializer):
 
 class FinishPaymentResponseSerializer(serializers.Serializer):
     next_url = serializers.URLField()
+
+
+class DomainExistsSerializer(serializers.Serializer):
+    """
+    Serializer for checking if a domain exists by name or phone number.
+    """
+
+    domain_name = serializers.CharField(required=False, allow_blank=True)
+    phone_number = serializers.CharField(required=False, allow_blank=True)
+
+
+class DomainExistsResponseSerializer(serializers.Serializer):
+    """
+    Response serializer for domain exists check.
+    """
+
+    exists = serializers.BooleanField()

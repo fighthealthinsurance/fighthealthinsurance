@@ -180,35 +180,50 @@ def create_user(
         The newly created User object -- the user is set to active false until they verify their email.
     """
 
-    username = combine_domain_and_username(
-        raw_username,
-        domain_name=domain_name,
-        phone_number=phone_number,
-        domain_id=domain_id,
-    )
-    if not validate_password(password):
-        raise Exception(
-            "Password is not valid: must be at least 8 characters and cannot be entirely numeric"
-        )
     try:
-        user = User.objects.get(
-            username=username,
-            email=email,
-            password=None,
-            is_active=False,
+        username = combine_domain_and_username(
+            raw_username,
+            domain_name=domain_name,
+            phone_number=phone_number,
+            domain_id=domain_id,
         )
-        user.password = password
-        user.first_name = first_name
-        user.last_name = last_name
-        user.save()
+
+        if not validate_password(password):
+            logger.opt(exception=True).error(
+                f"Invalid password format during user creation for email: {email}"
+            )
+            raise Exception(
+                "Password is not valid: must be at least 8 characters and cannot be entirely numeric"
+            )
+
+        try:
+            user = User.objects.get(
+                username=username,
+                email=email,
+                password=None,
+                is_active=False,
+            )
+            user.password = password
+            user.first_name = first_name
+            user.last_name = last_name
+            user.save()
+            logger.info(
+                f"Updated existing pending user with username: {username}, email: {email}"
+            )
+            return user
+        except User.DoesNotExist:
+            user = User.objects.create_user(
+                username=username,
+                email=email,
+                password=password,
+                first_name=first_name,
+                last_name=last_name,
+                is_active=False,
+            )
+            logger.info(f"Created new user with username: {username}, email: {email}")
         return user
-    except User.DoesNotExist:
-        user = User.objects.create_user(
-            username=username,
-            email=email,
-            password=password,
-            first_name=first_name,
-            last_name=last_name,
-            is_active=False,
+    except Exception as e:
+        logger.opt(exception=True).error(
+            f"Failed to create user {email} in domain {domain_name}: {str(e)}"
         )
-    return user
+        raise

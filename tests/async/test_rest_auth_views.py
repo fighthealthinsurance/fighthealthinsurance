@@ -616,6 +616,46 @@ class RestAuthViewsTests(TestCase):
         self.assertNotIn(response.status_code, range(200, 300))
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
+    def test_create_duplicate_patient_user_view(self) -> None:
+        """Test that creating a patient user with an email that already exists fails correctly."""
+        url = reverse("patient_user-list")
+        # Create first patient user
+        data = {
+            "username": "duplicate_patient@example.com",
+            "password": "SecurePassword123",
+            "email": "duplicate_patient@example.com",
+            "provider_phone_number": "1234567890",
+            "country": "USA",
+            "state": "CA",
+            "city": "Test City",
+            "address1": "123 Test St",
+            "address2": "",
+            "zipcode": "12345",
+            "domain_name": "testdomain",
+        }
+        response = self.client.post(url, data, format="json")
+        self.assertIn(response.status_code, range(200, 300))
+        self.assertEqual(response.json()["status"], "pending")
+
+        # Verify user was created
+        self.assertTrue(
+            User.objects.filter(email="duplicate_patient@example.com").exists()
+        )
+
+        # Try to create a second user with the same email and username
+        data2 = dict(data)
+        data2["username"] = "duplicate_patient@example.com"
+
+        response2 = self.client.post(url, data2, format="json")
+
+        # Verify it fails with a 400 status code
+        self.assertEqual(response2.status_code, status.HTTP_400_BAD_REQUEST)
+
+        # Verify the error message is appropriate
+        error_data = response2.json()
+        self.assertIn("error", error_data)
+        self.assertEqual(error_data["error"], "A user with this email already exists")
+
 
 class TestE2EProfessionalUserSignupFlow(TestCase):
     def setUp(self):
@@ -1022,3 +1062,62 @@ class CreateProfessionalInDomainTests(TestCase):
         self.assertTrue(
             new_provider_in_list, f"Should find new provider in list: {providers_data}"
         )
+
+
+class UserDomainExistsTests(TestCase):
+    def setUp(self) -> None:
+        self.client = APIClient()
+        self.domain = UserDomain.objects.create(
+            name="testdomain",
+            visible_phone_number="1234567890",
+            internal_phone_number="0987654321",
+            active=True,
+            display_name="Test Domain",
+            country="USA",
+            state="CA",
+            city="Test City",
+            address1="123 Test St",
+            zipcode="12345",
+        )
+
+    def test_domain_exists_by_name(self) -> None:
+        url = reverse("domain_exists-check")
+        data = {
+            "domain_name": "testdomain",
+        }
+        response = self.client.post(url, data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.json()["exists"])
+
+    def test_domain_exists_by_phone(self) -> None:
+        url = reverse("domain_exists-check")
+        data = {
+            "phone_number": "1234567890",
+        }
+        response = self.client.post(url, data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.json()["exists"])
+
+    def test_domain_does_not_exist(self) -> None:
+        url = reverse("domain_exists-check")
+        data = {
+            "domain_name": "nonexistentdomain",
+        }
+        response = self.client.post(url, data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(response.json()["exists"])
+
+    def test_domain_does_not_exist_by_phone(self) -> None:
+        url = reverse("domain_exists-check")
+        data = {
+            "phone_number": "9999999999",
+        }
+        response = self.client.post(url, data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(response.json()["exists"])
+
+    def test_missing_both_parameters(self) -> None:
+        url = reverse("domain_exists-check")
+        data = {}
+        response = self.client.post(url, data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)

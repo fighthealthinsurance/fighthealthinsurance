@@ -29,6 +29,9 @@ router.register(r"api/patient_user", PatientUserViewSet, basename="patient_user"
 router.register(r"rest_verify_email", VerifyEmailViewSet, basename="rest_verify_email")
 router.register(r"password_reset", PasswordResetViewSet, basename="password_reset")
 router.register(r"whoami", rest_auth_views.WhoAmIViewSet, basename="whoami")
+router.register(
+    r"domain_exists", rest_auth_views.UserDomainExistsViewSet, basename="domain_exists"
+)
 
 urlpatterns = [
     # Rest APIs served under here

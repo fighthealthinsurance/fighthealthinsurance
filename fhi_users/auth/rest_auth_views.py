@@ -21,6 +21,8 @@ from django.views.decorators.cache import cache_control
 from django.views.decorators.vary import vary_on_cookie
 from django.utils.decorators import method_decorator
 from django.db import transaction
+from django.db import utils as django_db_utils
+from django.db.utils import IntegrityError
 
 
 import stripe
@@ -63,6 +65,55 @@ if TYPE_CHECKING:
     from django.contrib.auth.models import User
 else:
     User = get_user_model()
+
+
+class UserDomainExistsViewSet(viewsets.ViewSet, SerializerMixin):
+    """
+    Check if a UserDomain exists by name or phone number.
+    """
+
+    def get_serializer_class(self):
+        return serializers.DomainExistsSerializer
+
+    @extend_schema(
+        responses={
+            200: serializers.DomainExistsResponseSerializer,
+            400: common_serializers.ErrorSerializer,
+        }
+    )
+    @action(detail=False, methods=["post"])
+    def check(self, request: Request) -> Response:
+        """
+        Check if a domain exists by name or phone number.
+        """
+        serializer = self.deserialize(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        domain_name = serializer.validated_data.get("domain_name")
+        phone_number = serializer.validated_data.get("phone_number")
+
+        if not domain_name and not phone_number:
+            return Response(
+                common_serializers.ErrorSerializer(
+                    {"error": "Either domain_name or phone_number must be provided"}
+                ).data,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Check if domain exists
+        exists = False
+        if domain_name:
+            exists = UserDomain.objects.filter(name=domain_name).exists()
+
+        if not exists and phone_number:
+            exists = UserDomain.objects.filter(
+                visible_phone_number=phone_number
+            ).exists()
+
+        return Response(
+            serializers.DomainExistsResponseSerializer({"exists": exists}).data,
+            status=status.HTTP_200_OK,
+        )
 
 
 class WhoAmIViewSet(viewsets.ViewSet):
@@ -215,6 +266,9 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             current_user: User = request.user  # type: ignore
             domain_id = request.session.get("domain_id")
             if not domain_id:
+                logger.opt(exception=True).error(
+                    f"Domain ID not found in session for user: {current_user.username}"
+                )
                 return Response(
                     common_serializers.ErrorSerializer(
                         {"error": "Domain ID not found in session"}
@@ -225,6 +279,9 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             # Ensure current user is an admin in the domain
             user_domain = UserDomain.objects.get(id=domain_id)
             if not user_is_admin_in_domain(current_user, domain_id):
+                logger.opt(exception=True).error(
+                    f"User {current_user.username} attempted to create professional without admin privileges in domain {domain_id}"
+                )
                 return Response(
                     common_serializers.ErrorSerializer(
                         {"error": "User does not have admin privileges"}
@@ -241,6 +298,9 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
 
             # Check if user with this email already exists
             if User.objects.filter(email=email).exists():
+                logger.opt(exception=True).error(
+                    f"Cannot create professional - email already exists: {email}"
+                )
                 return Response(
                     common_serializers.ErrorSerializer(
                         {"error": "A user with this email already exists"}
@@ -250,41 +310,68 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
 
             # Generate a random password (user will reset it)
             temp_password = uuid.uuid4().hex
+            logger.info(
+                f"Creating professional {email} in domain {user_domain.name} (ID: {domain_id})"
+            )
 
             with transaction.atomic():
                 # Create the user
-                user = create_user(
-                    raw_username=email,
-                    domain_name=user_domain.name,
-                    phone_number=user_domain.visible_phone_number,
-                    email=email,
-                    password=temp_password,
-                    first_name=first_name,
-                    last_name=last_name,
-                )
+                try:
+                    user = create_user(
+                        raw_username=email,
+                        domain_name=user_domain.name,
+                        phone_number=user_domain.visible_phone_number,
+                        email=email,
+                        password=temp_password,
+                        first_name=first_name,
+                        last_name=last_name,
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"Failed to create user for professional: {email} in domain {user_domain.name}: {str(e)}"
+                    )
+                    raise
 
                 # Create professional user record
-                professional_user = ProfessionalUser.objects.create(
-                    user=user,
-                    active=True,
-                    npi_number=npi_number,
-                    provider_type=provider_type,
-                )
+                try:
+                    professional_user = ProfessionalUser.objects.create(
+                        user=user,
+                        active=True,
+                        npi_number=npi_number,
+                        provider_type=provider_type,
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"Failed to create professional user record for {email}: {str(e)}"
+                    )
+                    raise
 
                 # Create relationship with domain (active, not pending)
-                ProfessionalDomainRelation.objects.create(
-                    professional=professional_user,
-                    domain=user_domain,
-                    active=True,
-                    admin=False,  # New professionals are not admins by default
-                    pending=False,
-                )
+                try:
+                    ProfessionalDomainRelation.objects.create(
+                        professional=professional_user,
+                        domain=user_domain,
+                        active=True,
+                        admin=False,  # New professionals are not admins by default
+                        pending=False,
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"Failed to create domain relation for professional {email} with domain {user_domain.name}: {str(e)}"
+                    )
+                    raise
 
                 # Create extra user properties
-                ExtraUserProperties.objects.create(
-                    user=user,
-                    email_verified=True,  # Auto-verify since admin is creating
-                )
+                try:
+                    ExtraUserProperties.objects.create(
+                        user=user,
+                        email_verified=True,  # Auto-verify since admin is creating
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"Failed to create extra user properties for professional {email}: {str(e)}"
+                    )
+                    raise
 
                 # Send email notification to the professional
                 context = {
@@ -295,8 +382,20 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                     "email": email,
                 }
 
-                send_professional_created_email(email, context)
+                try:
+                    send_professional_created_email(email, context)
+                    logger.info(
+                        f"Successfully sent welcome email to professional {email}"
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"Failed to send welcome email to professional {email}: {str(e)}"
+                    )
+                    # Don't raise here, still return success even if email fails
 
+                logger.info(
+                    f"Successfully created professional user {email} in domain {user_domain.name}"
+                )
                 return Response(
                     serializers.StatusResponseSerializer(
                         {
@@ -308,7 +407,9 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 )
 
         except Exception as e:
-            logger.opt(exception=e).error("Error creating professional")
+            logger.opt(exception=True).error(
+                f"Unexpected error creating professional: {str(e)}"
+            )
             return Response(
                 common_serializers.ErrorSerializer({"error": f"Error: {str(e)}"}).data,
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -380,7 +481,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         except Exception as e:
             logger.opt(exception=e).error("Error inviting professional")
             return Response(
-                common_serializers.ErrorSerializer({"error": f"Error: {str(e)}"}),
+                common_serializers.ErrorSerializer({"error": f"Error {e}"}).data,
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
@@ -720,7 +821,9 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                     )
                     return Response(
                         common_serializers.ErrorSerializer(
-                            {"error": "Domain does not exist"}
+                            {
+                                "error": f"Can not join missing domain {domain_name} / {visible_phone_number} it does not exist"
+                            }
                         ).data,
                         status=status.HTTP_400_BAD_REQUEST,
                     )
@@ -920,9 +1023,64 @@ class PatientUserViewSet(ViewSet, CreateMixin):
         else:
             return serializers.GetOrCreatePendingPatientSerializer
 
-    @extend_schema(responses=serializers.StatusResponseSerializer)
+    @extend_schema(
+        responses={
+            200: serializers.StatusResponseSerializer,
+            201: serializers.StatusResponseSerializer,
+            400: common_serializers.ErrorSerializer,
+            403: common_serializers.ErrorSerializer,
+        }
+    )
     def create(self, request: Request) -> Response:
-        return super().create(request)
+        try:
+            return super().create(request)
+        except UserDomain.DoesNotExist as e:
+            # Handle domain not found errors with a user-friendly message
+            logger.opt(exception=True).error(
+                f"Domain not found error when creating patient user: {str(e)}"
+            )
+            return Response(
+                common_serializers.ErrorSerializer(
+                    {
+                        "error": "The specified healthcare provider was not found, ask them to sign up for Fight Paperwork."
+                    }
+                ).data,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except django_db_utils.IntegrityError as e:
+            # Check for uniqueness constraint errors (typically email or username conflicts)
+            if (
+                "unique constraint" in str(e).lower()
+                or "duplicate key" in str(e).lower()
+            ):
+                logger.opt(exception=True).error(
+                    f"Uniqueness constraint error when creating patient user: {str(e)}"
+                )
+                return Response(
+                    common_serializers.ErrorSerializer(
+                        {"error": "A user with this email already exists"}
+                    ).data,
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            # Log but pass through other integrity errors
+            logger.opt(exception=True).error(
+                f"Database integrity error when creating patient user: {str(e)}"
+            )
+            return Response(
+                common_serializers.ErrorSerializer(
+                    {"error": f"Database error: {str(e)}"}
+                ).data,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except Exception as e:
+            # Catch all other exceptions to provide friendlier responses
+            logger.opt(exception=True).error(
+                f"Unexpected error when creating patient user: {str(e)}"
+            )
+            return Response(
+                common_serializers.ErrorSerializer({"error": str(e)}).data,
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
     @extend_schema(responses=serializers.StatusResponseSerializer)
     def perform_create(self, request: Request, serializer) -> Response:
@@ -991,7 +1149,6 @@ class PatientUserViewSet(ViewSet, CreateMixin):
     @extend_schema(responses=serializers.PatientReferenceSerializer)
     @action(detail=False, methods=["post", "options"])
     def get_or_create_pending(self, request: Request) -> Response:
-        print(f"Called...")
         serializer = self.deserialize(data=request.data)
         serializer.is_valid(raise_exception=True)
         email = None

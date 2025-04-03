@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>{{ title|default:"Domain Task" }}</title>
+</head>
+<body>
+  <h1>{{ heading|default:"Manage Domain" }}</h1>
+  <p>{{ description|default:"Enter the phone number of the domain to perform an action." }}</p>
+  <form method="post">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button type="submit">{{ button_text|default:"Submit" }}</button>
+  </form>
+</body>
+</html>

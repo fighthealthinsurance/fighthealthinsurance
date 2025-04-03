@@ -1693,7 +1693,9 @@ class StripeWebhookHelper:
                     ).user
                     fhi_emails.send_verification_email(request, user, first_only=True)
                 else:
-                    logger.error("No subscription ID in completed checkout session")
+                    logger.opt(exception=True).error(
+                        "No subscription ID in completed checkout session"
+                    )
 
             elif payment_type == "fax":
                 FaxesToSend.objects.filter(uuid=session.metadata.get("uuid")).update(
@@ -1735,7 +1737,7 @@ class StripeWebhookHelper:
             email: Optional[str] = None
             try:
                 try:
-                    email = session.costumer_email
+                    email = session.customer_email
                 except:
                     email = session["customer_email"]
             except:
@@ -1753,9 +1755,30 @@ class StripeWebhookHelper:
                     "No email found in expired checkout session can't send e-mail"
                 )
                 return
+
             session_id = None
             if hasattr(session, "id"):
                 session_id = session.id
+
+            # Check if we already have a record for this session or similar data
+            # to avoid sending duplicate emails
+            existing_session = None
+            if session_id:
+                existing_session = LostStripeSession.objects.filter(
+                    session_id=session_id
+                ).first()
+
+            if not existing_session and email and payment_type:
+                existing_session = LostStripeSession.objects.filter(
+                    email=email, payment_type=payment_type
+                ).first()
+
+            if existing_session:
+                logger.debug(
+                    f"Skipping duplicate lost stripe session notification for {email}"
+                )
+                return
+
             lost_session = LostStripeSession.objects.create(
                 payment_type=payment_type,
                 email=email,
@@ -1774,7 +1797,7 @@ class StripeWebhookHelper:
                 )
             else:
                 logger.debug(f"Could not create finish link for {payment_type}")
-        except:
+        except Exception as e:
             logger.opt(exception=True).error(
                 "Error processing expired checkout session"
             )
@@ -1782,13 +1805,40 @@ class StripeWebhookHelper:
 
     @staticmethod
     def handle_stripe_webhook(request, event):
-        if event.type == "checkout.session.completed":
-            StripeWebhookHelper.handle_checkout_session_completed(
-                request, event.data.object
+        # First check if we've already received this event
+        event_id = event.id
+
+        # Check if this event has already been processed
+        if StripeWebhookEvents.objects.filter(event_stripe_id=event_id).exists():
+            logger.debug(f"Skipping duplicate stripe event {event_id}")
+            return
+
+        # Create a record of receiving this event
+        webhook_event = StripeWebhookEvents.objects.create(
+            event_stripe_id=event_id,
+            success=False,  # Will be updated to True if handling succeeds
+        )
+
+        try:
+            if event.type == "checkout.session.completed":
+                StripeWebhookHelper.handle_checkout_session_completed(
+                    request, event.data.object
+                )
+            elif event.type == "checkout.session.expired":
+                StripeWebhookHelper.handle_checkout_session_expired(
+                    request, event.data.object
+                )
+            else:
+                logger.debug(f"Unhandled stripe event type {event.type}")
+
+            # Update the webhook event record on success
+            webhook_event.success = True
+            webhook_event.save()
+        except Exception as e:
+            # Record the error
+            webhook_event.error = str(e)[:255]  # Limit to field size
+            webhook_event.save()
+            logger.opt(exception=True).error(
+                f"Error processing stripe webhook {event_id}"
             )
-        elif event.type == "checkout.session.expired":
-            StripeWebhookHelper.handle_checkout_session_expired(
-                request, event.data.object
-            )
-        else:
-            logger.debug(f"Unhandled stripe event type {event.type}")
+            raise
