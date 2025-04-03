@@ -1041,7 +1041,9 @@ class PatientUserViewSet(ViewSet, CreateMixin):
             )
             return Response(
                 common_serializers.ErrorSerializer(
-                    {"error": "The specified healthcare provider was not found, ask them to sign up for Fight Paperwork."}
+                    {
+                        "error": "The specified healthcare provider was not found, ask them to sign up for Fight Paperwork."
+                    }
                 ).data,
                 status=status.HTTP_400_BAD_REQUEST,
             )
