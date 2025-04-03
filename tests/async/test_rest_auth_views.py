@@ -1022,3 +1022,62 @@ class CreateProfessionalInDomainTests(TestCase):
         self.assertTrue(
             new_provider_in_list, f"Should find new provider in list: {providers_data}"
         )
+
+
+class UserDomainExistsTests(TestCase):
+    def setUp(self) -> None:
+        self.client = APIClient()
+        self.domain = UserDomain.objects.create(
+            name="testdomain",
+            visible_phone_number="1234567890",
+            internal_phone_number="0987654321",
+            active=True,
+            display_name="Test Domain",
+            country="USA",
+            state="CA",
+            city="Test City",
+            address1="123 Test St",
+            zipcode="12345",
+        )
+
+    def test_domain_exists_by_name(self) -> None:
+        url = reverse("domain_exists-check")
+        data = {
+            "domain_name": "testdomain",
+        }
+        response = self.client.post(url, data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.json()["exists"])
+
+    def test_domain_exists_by_phone(self) -> None:
+        url = reverse("domain_exists-check")
+        data = {
+            "phone_number": "1234567890",
+        }
+        response = self.client.post(url, data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.json()["exists"])
+
+    def test_domain_does_not_exist(self) -> None:
+        url = reverse("domain_exists-check")
+        data = {
+            "domain_name": "nonexistentdomain",
+        }
+        response = self.client.post(url, data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(response.json()["exists"])
+
+    def test_domain_does_not_exist_by_phone(self) -> None:
+        url = reverse("domain_exists-check")
+        data = {
+            "phone_number": "9999999999",
+        }
+        response = self.client.post(url, data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(response.json()["exists"])
+
+    def test_missing_both_parameters(self) -> None:
+        url = reverse("domain_exists-check")
+        data = {}
+        response = self.client.post(url, data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)

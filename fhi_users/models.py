@@ -7,6 +7,8 @@ from django.contrib.auth import get_user_model
 from django.db.models.signals import pre_save
 from django.dispatch import receiver
 from enum import Enum
+from loguru import logger
+
 
 if typing.TYPE_CHECKING:
     from django.contrib.auth.models import User
@@ -115,7 +117,9 @@ class UserDomain(models.Model):
             )
             return [relation.professional for relation in relations]
         except Exception as e:
-            logger.opt(exception=true).error(f"Error finding professional on {self} with filters {relation_filters}")
+            logger.opt(exception=True).error(
+                f"Error finding professional on {self} with filters {relation_filters}"
+            )
             raise e
 
     def get_address(self) -> str:

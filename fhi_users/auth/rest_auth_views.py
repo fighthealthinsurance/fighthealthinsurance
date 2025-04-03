@@ -65,6 +65,55 @@ else:
     User = get_user_model()
 
 
+class UserDomainExistsViewSet(viewsets.ViewSet, SerializerMixin):
+    """
+    Check if a UserDomain exists by name or phone number.
+    """
+
+    def get_serializer_class(self):
+        return serializers.DomainExistsSerializer
+
+    @extend_schema(
+        responses={
+            200: serializers.DomainExistsResponseSerializer,
+            400: common_serializers.ErrorSerializer,
+        }
+    )
+    @action(detail=False, methods=["post"])
+    def check(self, request: Request) -> Response:
+        """
+        Check if a domain exists by name or phone number.
+        """
+        serializer = self.deserialize(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        domain_name = serializer.validated_data.get("domain_name")
+        phone_number = serializer.validated_data.get("phone_number")
+
+        if not domain_name and not phone_number:
+            return Response(
+                common_serializers.ErrorSerializer(
+                    {"error": "Either domain_name or phone_number must be provided"}
+                ).data,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Check if domain exists
+        exists = False
+        if domain_name:
+            exists = UserDomain.objects.filter(name=domain_name).exists()
+
+        if not exists and phone_number:
+            exists = UserDomain.objects.filter(
+                visible_phone_number=phone_number
+            ).exists()
+
+        return Response(
+            serializers.DomainExistsResponseSerializer({"exists": exists}).data,
+            status=status.HTTP_200_OK,
+        )
+
+
 class WhoAmIViewSet(viewsets.ViewSet):
     """
     Returns the current user's information, including their roles and domain.
@@ -380,7 +429,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         except Exception as e:
             logger.opt(exception=e).error("Error inviting professional")
             return Response(
-                common_serializers.ErrorSerializer({"error": f"Error: {str(e)}"}),
+                common_serializers.ErrorSerializer({"error": f"Error {e}"}).data,
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
