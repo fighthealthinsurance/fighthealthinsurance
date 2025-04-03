@@ -1034,7 +1034,18 @@ class PatientUserViewSet(ViewSet, CreateMixin):
     def create(self, request: Request) -> Response:
         try:
             return super().create(request)
-        except IntegrityError as e:
+        except UserDomain.DoesNotExist as e:
+            # Handle domain not found errors with a user-friendly message
+            logger.opt(exception=True).error(
+                f"Domain not found error when creating patient user: {str(e)}"
+            )
+            return Response(
+                common_serializers.ErrorSerializer(
+                    {"error": "The specified healthcare provider was not found, ask them to sign up for Fight Paperwork."}
+                ).data,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except django_db_utils.IntegrityError as e:
             # Check for uniqueness constraint errors (typically email or username conflicts)
             if (
                 "unique constraint" in str(e).lower()
@@ -1056,7 +1067,7 @@ class PatientUserViewSet(ViewSet, CreateMixin):
             return Response(
                 common_serializers.ErrorSerializer(
                     {"error": f"Database error: {str(e)}"}
-                ),
+                ).data,
                 status=status.HTTP_400_BAD_REQUEST,
             )
         except Exception as e:
@@ -1065,7 +1076,7 @@ class PatientUserViewSet(ViewSet, CreateMixin):
                 f"Unexpected error when creating patient user: {str(e)}"
             )
             return Response(
-                common_serializers.ErrorSerializer({"error": str(e)}),
+                common_serializers.ErrorSerializer({"error": str(e)}).data,
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
