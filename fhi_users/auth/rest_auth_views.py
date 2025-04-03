@@ -819,7 +819,9 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                     )
                     return Response(
                         common_serializers.ErrorSerializer(
-                            {"error": "Domain does not exist"}
+                            {
+                                "error": f"Can not join missing domain {domain_name} / {visible_phone_number} it does not exist"
+                            }
                         ).data,
                         status=status.HTTP_400_BAD_REQUEST,
                     )
@@ -1019,7 +1021,14 @@ class PatientUserViewSet(ViewSet, CreateMixin):
         else:
             return serializers.GetOrCreatePendingPatientSerializer
 
-    @extend_schema(responses=serializers.StatusResponseSerializer)
+    @extend_schema(
+        responses={
+            200: serializers.StatusResponseSerializer,
+            201: serializers.StatusResponseSerializer,
+            400: common_serializers.ErrorSerializer,
+            403: common_serializers.ErrorSerializer,
+        }
+    )
     def create(self, request: Request) -> Response:
         return super().create(request)
 

@@ -2,6 +2,7 @@ import datetime
 
 from django.http import HttpResponse
 from django.views import View, generic
+from loguru import logger
 
 from fighthealthinsurance import common_view_logic
 from fighthealthinsurance import forms as core_forms
@@ -136,8 +137,6 @@ class EnableBetaForDomainView(generic.FormView):
                 f"No domain found with phone number {phonenumber}", status=404
             )
         except Exception as e:
-            from loguru import logger
-
             logger.opt(exception=True).error(
                 f"Error enabling beta for domain with phone {phonenumber}: {str(e)}"
             )
