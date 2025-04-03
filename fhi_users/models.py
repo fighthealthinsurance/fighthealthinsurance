@@ -109,10 +109,14 @@ class UserDomain(models.Model):
             ProfessionalDomainRelation,
         )  # local import to avoid circular dependencies
 
-        relations = ProfessionalDomainRelation.objects.filter(
-            domain=self, **relation_filters
-        )
-        return [relation.professional for relation in relations]
+        try:
+            relations = ProfessionalDomainRelation.objects.filter(
+                domain=self, **relation_filters
+            )
+            return [relation.professional for relation in relations]
+        except Exception as e:
+            logger.opt(exception=true).error(f"Error finding professional on {self} with filters {relation_filters}")
+            raise e
 
     def get_address(self) -> str:
         mailing_name = self.business_name if self.business_name else self.display_name
