@@ -1693,7 +1693,9 @@ class StripeWebhookHelper:
                     ).user
                     fhi_emails.send_verification_email(request, user, first_only=True)
                 else:
-                    logger.opt(exception=True).error("No subscription ID in completed checkout session")
+                    logger.opt(exception=True).error(
+                        "No subscription ID in completed checkout session"
+                    )
 
             elif payment_type == "fax":
                 FaxesToSend.objects.filter(uuid=session.metadata.get("uuid")).update(
