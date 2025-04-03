@@ -118,7 +118,7 @@ class UserDomain(models.Model):
             return [relation.professional for relation in relations]
         except Exception as e:
             logger.opt(exception=True).error(
-                f"Error finding professional on {self} with filters {relation_filters}"
+                f"Error finding professional on {self} with filters {relation_filters}: {str(e)}"
             )
             raise e
 

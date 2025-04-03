@@ -264,6 +264,9 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             current_user: User = request.user  # type: ignore
             domain_id = request.session.get("domain_id")
             if not domain_id:
+                logger.opt(exception=True).error(
+                    f"Domain ID not found in session for user: {current_user.username}"
+                )
                 return Response(
                     common_serializers.ErrorSerializer(
                         {"error": "Domain ID not found in session"}
@@ -274,6 +277,9 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             # Ensure current user is an admin in the domain
             user_domain = UserDomain.objects.get(id=domain_id)
             if not user_is_admin_in_domain(current_user, domain_id):
+                logger.opt(exception=True).error(
+                    f"User {current_user.username} attempted to create professional without admin privileges in domain {domain_id}"
+                )
                 return Response(
                     common_serializers.ErrorSerializer(
                         {"error": "User does not have admin privileges"}
@@ -290,6 +296,9 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
 
             # Check if user with this email already exists
             if User.objects.filter(email=email).exists():
+                logger.opt(exception=True).error(
+                    f"Cannot create professional - email already exists: {email}"
+                )
                 return Response(
                     common_serializers.ErrorSerializer(
                         {"error": "A user with this email already exists"}
@@ -299,41 +308,68 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
 
             # Generate a random password (user will reset it)
             temp_password = uuid.uuid4().hex
+            logger.info(
+                f"Creating professional {email} in domain {user_domain.name} (ID: {domain_id})"
+            )
 
             with transaction.atomic():
                 # Create the user
-                user = create_user(
-                    raw_username=email,
-                    domain_name=user_domain.name,
-                    phone_number=user_domain.visible_phone_number,
-                    email=email,
-                    password=temp_password,
-                    first_name=first_name,
-                    last_name=last_name,
-                )
+                try:
+                    user = create_user(
+                        raw_username=email,
+                        domain_name=user_domain.name,
+                        phone_number=user_domain.visible_phone_number,
+                        email=email,
+                        password=temp_password,
+                        first_name=first_name,
+                        last_name=last_name,
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"Failed to create user for professional: {email} in domain {user_domain.name}: {str(e)}"
+                    )
+                    raise
 
                 # Create professional user record
-                professional_user = ProfessionalUser.objects.create(
-                    user=user,
-                    active=True,
-                    npi_number=npi_number,
-                    provider_type=provider_type,
-                )
+                try:
+                    professional_user = ProfessionalUser.objects.create(
+                        user=user,
+                        active=True,
+                        npi_number=npi_number,
+                        provider_type=provider_type,
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"Failed to create professional user record for {email}: {str(e)}"
+                    )
+                    raise
 
                 # Create relationship with domain (active, not pending)
-                ProfessionalDomainRelation.objects.create(
-                    professional=professional_user,
-                    domain=user_domain,
-                    active=True,
-                    admin=False,  # New professionals are not admins by default
-                    pending=False,
-                )
+                try:
+                    ProfessionalDomainRelation.objects.create(
+                        professional=professional_user,
+                        domain=user_domain,
+                        active=True,
+                        admin=False,  # New professionals are not admins by default
+                        pending=False,
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"Failed to create domain relation for professional {email} with domain {user_domain.name}: {str(e)}"
+                    )
+                    raise
 
                 # Create extra user properties
-                ExtraUserProperties.objects.create(
-                    user=user,
-                    email_verified=True,  # Auto-verify since admin is creating
-                )
+                try:
+                    ExtraUserProperties.objects.create(
+                        user=user,
+                        email_verified=True,  # Auto-verify since admin is creating
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"Failed to create extra user properties for professional {email}: {str(e)}"
+                    )
+                    raise
 
                 # Send email notification to the professional
                 context = {
@@ -344,8 +380,20 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                     "email": email,
                 }
 
-                send_professional_created_email(email, context)
+                try:
+                    send_professional_created_email(email, context)
+                    logger.info(
+                        f"Successfully sent welcome email to professional {email}"
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"Failed to send welcome email to professional {email}: {str(e)}"
+                    )
+                    # Don't raise here, still return success even if email fails
 
+                logger.info(
+                    f"Successfully created professional user {email} in domain {user_domain.name}"
+                )
                 return Response(
                     serializers.StatusResponseSerializer(
                         {
@@ -357,7 +405,9 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 )
 
         except Exception as e:
-            logger.opt(exception=e).error("Error creating professional")
+            logger.opt(exception=True).error(
+                f"Unexpected error creating professional: {str(e)}"
+            )
             return Response(
                 common_serializers.ErrorSerializer({"error": f"Error: {str(e)}"}).data,
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
