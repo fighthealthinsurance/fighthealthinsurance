@@ -7,6 +7,8 @@ from django.contrib.auth import get_user_model
 from django.db.models.signals import pre_save
 from django.dispatch import receiver
 from enum import Enum
+from loguru import logger
+
 
 if typing.TYPE_CHECKING:
     from django.contrib.auth.models import User
@@ -109,10 +111,16 @@ class UserDomain(models.Model):
             ProfessionalDomainRelation,
         )  # local import to avoid circular dependencies
 
-        relations = ProfessionalDomainRelation.objects.filter(
-            domain=self, **relation_filters
-        )
-        return [relation.professional for relation in relations]
+        try:
+            relations = ProfessionalDomainRelation.objects.filter(
+                domain=self, **relation_filters
+            )
+            return [relation.professional for relation in relations]
+        except Exception as e:
+            logger.opt(exception=True).error(
+                f"Error finding professional on {self} with filters {relation_filters}: {str(e)}"
+            )
+            raise e
 
     def get_address(self) -> str:
         mailing_name = self.business_name if self.business_name else self.display_name

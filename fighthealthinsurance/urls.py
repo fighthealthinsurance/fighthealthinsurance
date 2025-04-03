@@ -83,6 +83,11 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         staff_member_required(staff_views.ActivateProUserView.as_view()),
         name="activate_pro",
     ),
+    path(
+        "timbit/help/enable_beta",
+        staff_member_required(staff_views.EnableBetaForDomainView.as_view()),
+        name="enable_beta",
+    ),
     # Authentication
     path("v0/auth/", include("fhi_users.urls")),
     # stripe integration (TODO webhooks go here)
