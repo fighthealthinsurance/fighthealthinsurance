@@ -487,6 +487,14 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     verified_diagnosis = models.TextField(primary_key=False, null=True, default="")
     flag_for_exclude = models.BooleanField(default=False, null=True)
     include_provided_health_history_in_appeal = models.BooleanField(default=False)
+    # Used to mark claims related to dental services
+    dental_claim = models.BooleanField(default=False)
+    # Used to mark claims not related to human patients (e.g., pet insurance)
+    not_human_claim = models.BooleanField(default=False)
+    # Marks this denial as a unique claim example for training or reference
+    unique_claim = models.BooleanField(default=False)
+    # Marks this denial as a good example for training or reference
+    good_appeal_example = models.BooleanField(default=False)
 
     @classmethod
     def filter_to_allowed_denials(cls, current_user: User):
