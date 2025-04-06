@@ -938,11 +938,11 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             subscription_id = checkout_session.subscription
             return Response(serializers.ProfessionalSignupResponseSerializer(
                 {"next_url": checkout_session.url}
-            ).data)
+            ).data, status=status.HTTP_201_CREATED)
         else:
             return Response(serializers.ProfessionalSignupResponseSerializer(
                 {"next_url": "https://www.fightpaperwork.com/?q=testmode"}
-            ).data)
+            ).data, status=status.HTTP_201_CREATED)
 
 
 class RestLoginView(ViewSet, SerializerMixin):
