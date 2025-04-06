@@ -19,20 +19,14 @@ class SerializerMixin:
 
 
 class CreateMixin(SerializerMixin):
-    def perform_create(self, request, serializer: Serializer) -> Response | Serializer:
+    def perform_create(self, request, serializer: Serializer) -> Response:
         raise NotImplementedError("Subclasses must implement perform_create()")
 
     def create(self, request) -> Response:
         request_serializer = self.deserialize(data=request.data)
         request_serializer.is_valid(raise_exception=True)
-        response_serializer = self.perform_create(request, request_serializer)
+        result = self.perform_create(request, request_serializer)
 
-        if response_serializer:
-            result = response_serializer.data
-        else:
-            result = None
-        if isinstance(result, Response):
-            return result
         return Response(result, status=status.HTTP_201_CREATED)
 
 
