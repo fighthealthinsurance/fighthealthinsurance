@@ -25,9 +25,7 @@ class CreateMixin(SerializerMixin):
     def create(self, request) -> Response:
         request_serializer = self.deserialize(data=request.data)
         request_serializer.is_valid(raise_exception=True)
-        result = self.perform_create(request, request_serializer)
-
-        return Response(result, status=status.HTTP_201_CREATED)
+        return self.perform_create(request, request_serializer)
 
 
 class DeleteMixin(SerializerMixin):
