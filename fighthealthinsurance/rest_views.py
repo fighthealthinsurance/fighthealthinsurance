@@ -123,7 +123,7 @@ class NextStepsViewSet(viewsets.ViewSet, CreateMixin):
         return Response(
             serializers.NextStepInfoSerizableSerializer(
                 next_step_info.convert_to_serializable(),
-            ),
+            ).data,
             status=status.HTTP_201_CREATED,
         )
 
