@@ -937,15 +937,21 @@ class AppealAttachmentViewSet(viewsets.ViewSet):
     def list(self, request: Request) -> Response:
         """List attachments for a given appeal"""
         appeal_id = request.query_params.get("appeal_id")
+        appeal_id_number = int(appeal_id) if appeal_id.isdigit() else None
         if not appeal_id:
             return Response(
                 serializers.ErrorSerializer({"error": "appeal_id required"}).data,
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        elif not appeal_id_number:
+            return Response(
+                serializers.ErrorSerializer({"error": "Invalid appeal_id"}).data,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         current_user: User = request.user  # type: ignore
         appeal = get_object_or_404(
-            Appeal.filter_to_allowed_appeals(current_user), id=appeal_id
+            Appeal.filter_to_allowed_appeals(current_user), id=appeal_id_number
         )
         attachments = AppealAttachment.objects.filter(appeal=appeal)
         serializer = serializers.AppealAttachmentSerializer(attachments, many=True)
