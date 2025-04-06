@@ -789,9 +789,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             )
 
     @transaction.atomic
-    def perform_create(
-        self, request: Request, serializer: Serializer
-    ) -> Response:
+    def perform_create(self, request: Request, serializer: Serializer) -> Response:
         data: dict[str, bool | str | dict[str, str]] = serializer.validated_data  # type: ignore
         user_signup_info: dict[str, str] = data["user_signup_info"]  # type: ignore
         domain_name: Optional[str] = user_signup_info["domain_name"]  # type: ignore
@@ -936,13 +934,19 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 user=user, email_verified=False
             )
             subscription_id = checkout_session.subscription
-            return Response(serializers.ProfessionalSignupResponseSerializer(
-                {"next_url": checkout_session.url}
-            ).data, status=status.HTTP_201_CREATED)
+            return Response(
+                serializers.ProfessionalSignupResponseSerializer(
+                    {"next_url": checkout_session.url}
+                ).data,
+                status=status.HTTP_201_CREATED,
+            )
         else:
-            return Response(serializers.ProfessionalSignupResponseSerializer(
-                {"next_url": "https://www.fightpaperwork.com/?q=testmode"}
-            ).data, status=status.HTTP_201_CREATED)
+            return Response(
+                serializers.ProfessionalSignupResponseSerializer(
+                    {"next_url": "https://www.fightpaperwork.com/?q=testmode"}
+                ).data,
+                status=status.HTTP_201_CREATED,
+            )
 
 
 class RestLoginView(ViewSet, SerializerMixin):

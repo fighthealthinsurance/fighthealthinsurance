@@ -95,7 +95,7 @@ class HealthHistoryViewSet(viewsets.ViewSet, CreateMixin):
         return super().create(request)
 
     @extend_schema(responses=serializers.StatusResponseSerializer)
-    def perform_create(self, request: Request, serializer):
+    def perform_create(self, request: Request, serializer) -> Response:
         logger.debug(f"Updating denial with {serializer.validated_data}")
         common_view_logic.DenialCreatorHelper.update_denial(
             **serializer.validated_data,
@@ -103,6 +103,7 @@ class HealthHistoryViewSet(viewsets.ViewSet, CreateMixin):
 
         return Response(
             serializers.SuccessSerializer({"message": "Updated health history"}).data,
+            status=status.HTTP_201_CREATED,
         )
 
 
@@ -115,15 +116,15 @@ class NextStepsViewSet(viewsets.ViewSet, CreateMixin):
 
     @extend_schema(responses=serializers.NextStepInfoSerizableSerializer)
     def perform_create(self, request: Request, serializer):
-        logger.debug(
-            f"Performing the create..... using data {serializer.validated_data}"
-        )
         next_step_info = common_view_logic.FindNextStepsHelper.find_next_steps(
             **serializer.validated_data
         )
 
-        return serializers.NextStepInfoSerizableSerializer(
-            next_step_info.convert_to_serializable(),
+        return Response(
+            serializers.NextStepInfoSerizableSerializer(
+                next_step_info.convert_to_serializable(),
+            ),
+            status=status.HTTP_201_CREATED,
         )
 
 
@@ -161,8 +162,7 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
         return Response(response_serializer.data)
 
     @extend_schema(responses=serializers.DenialResponseInfoSerializer)
-    def perform_create(self, request: Request, serializer):
-        logger.debug("Performing the create.....")
+    def perform_create(self, request: Request, serializer) -> Response:
         current_user: User = request.user  # type: ignore
         creating_professional = ProfessionalUser.objects.get(user=current_user)
         serializer = self.deserialize(data=request.data)
@@ -223,7 +223,12 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
                 pending=True,
             )
             denial_response_info.appeal_id = appeal.id
-        return serializers.DenialResponseInfoSerializer(instance=denial_response_info)
+        return Response(
+            serializers.DenialResponseInfoSerializer(
+                instance=denial_response_info
+            ).data,
+            status=status.HTTP_201_CREATED,
+        )
 
     @extend_schema(responses=serializers.PubMedMiniArticleSerializer(many=True))
     @action(detail=False, methods=["post"])
@@ -277,7 +282,7 @@ class QAResponseViewSet(viewsets.ViewSet, CreateMixin):
         return super().create(request)
 
     @extend_schema(responses=serializers.StatusResponseSerializer)
-    def perform_create(self, request: Request, serializer):
+    def perform_create(self, request: Request, serializer) -> Response:
         user: User = request.user  # type: ignore
         denial = Denial.filter_to_allowed_denials(user).get(
             denial_id=serializer.validated_data["denial_id"]
@@ -313,7 +318,7 @@ class FollowUpViewSet(viewsets.ViewSet, CreateMixin):
         return super().create(request)
 
     @extend_schema(responses=serializers.StatusResponseSerializer)
-    def perform_create(self, request: Request, serializer):
+    def perform_create(self, request: Request, serializer) -> Response:
         common_view_logic.FollowUpHelper.store_follow_up_result(
             **serializer.validated_data
         )
@@ -895,7 +900,7 @@ class MailingListSubscriberViewSet(viewsets.ViewSet, CreateMixin, DeleteMixin):
         return super().create(request)
 
     @extend_schema(responses=serializers.StatusResponseSerializer)
-    def perform_create(self, request: Request, serializer):
+    def perform_create(self, request: Request, serializer) -> Response:
         serializer.save()
         return Response(
             serializers.StatusResponseSerializer({"status": "subscribed"}).data,
@@ -943,7 +948,9 @@ class AppealAttachmentViewSet(viewsets.ViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        appeal_id_number: Optional[int] = int(appeal_id) if appeal_id.isdigit() else None
+        appeal_id_number: Optional[int] = (
+            int(appeal_id) if appeal_id.isdigit() else None
+        )
         if not appeal_id_number:
             return Response(
                 serializers.ErrorSerializer({"error": "Invalid appeal_id"}).data,
