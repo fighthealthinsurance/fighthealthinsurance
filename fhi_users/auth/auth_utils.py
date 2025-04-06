@@ -37,6 +37,7 @@ def get_domain_id_from_request(request):
         domain_id = current_user.username.split("🐼")[-1]
         request.session["domain_id"] = domain_id
         return domain_id
+    raise Exception("Could not find domain id in request session or user")
 
 
 def normalize_phone_number(phone_number: Optional[str]) -> Optional[str]:
