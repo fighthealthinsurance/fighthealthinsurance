@@ -1293,3 +1293,76 @@ class DenialCreateWithExistingId(APITestCase):
         self.assertTrue(status.is_success(response.status_code))
         parsed = response.json()
         self.assertEqual(parsed["denial_id"], denial_id)
+
+
+class DuplicateUserDomainTest(APITestCase):
+    """Test that a duplicate UserDomain request returns a non-200 response."""
+
+    fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
+
+    def setUp(self):
+        # Create initial test domain
+        self.domain_name = "testdomain"
+        self.domain = UserDomain.objects.create(
+            name=self.domain_name,
+            visible_phone_number="1234567890",
+            internal_phone_number="0987654321",
+            active=True,
+            display_name="Test Domain",
+            business_name="Test Business",
+            country="USA",
+            state="CA",
+            city="Test City",
+            address1="123 Test St",
+            zipcode="12345",
+        )
+
+    def test_duplicate_domain_creation(self):
+        """Test that creating a domain with an existing name returns a non-200 response."""
+        url = reverse("professional_user-list")
+
+        # Data for creating a new professional with the same domain name
+        data = {
+            "user_signup_info": {
+                "username": "newprouser",
+                "password": "newLongerPasswordMagicCheetoCheeto123",
+                "email": "newpro@example.com",
+                "first_name": "New",
+                "last_name": "User",
+                "domain_name": self.domain_name,  # Same domain name as existing
+                "visible_phone_number": "9876543210",  # Different phone number
+                "continue_url": "http://example.com/continue",
+            },
+            "make_new_domain": True,
+            "user_domain": {
+                "name": self.domain_name,  # Same domain name as existing
+                "visible_phone_number": "9876543210",
+                "internal_phone_number": "0123456789",
+                "display_name": "Duplicate Domain Test",
+                "country": "USA",
+                "state": "NY",
+                "city": "New City",
+                "address1": "456 Other St",
+                "zipcode": "54321",
+            },
+        }
+
+        response = self.client.post(
+            url,
+            json.dumps(data),
+            content_type="application/json",
+        )
+
+        # Verify response is not a 200 OK
+        self.assertNotEqual(response.status_code, status.HTTP_200_OK)
+        self.assertNotEqual(response.status_code, status.HTTP_201_CREATED)
+
+        # Check error message in response
+        response_data = response.json()
+        self.assertIn("error", response_data)
+
+        # Verify no new domain was created with the same name
+        domains_with_same_name = UserDomain.objects.filter(
+            name=self.domain_name
+        ).count()
+        self.assertEqual(domains_with_same_name, 1)
