@@ -52,6 +52,8 @@ from fhi_users.models import (
     ProfessionalUser,
 )
 
+from fhi_users.auth import auth_utils
+
 from stopit import ThreadingTimeout as Timeout
 from .common_view_logic import AppealAssemblyHelper
 from .utils import is_convertible_to_int
@@ -451,7 +453,7 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
                 email=user.email,
                 professional_name=professional_name,
                 practice_number=UserDomain.objects.get(
-                    id=request.session["domain_id"]
+                    id=auth_utils.get_domain_id_from_request(request)
                 ).visible_phone_number,
             )
         else:
@@ -460,7 +462,7 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
                 email=user.email,
                 professional_name=professional_name,
                 practice_number=UserDomain.objects.get(
-                    id=request.session["domain_id"]
+                    id=auth_utils.get_domain_id_from_request(request)
                 ).visible_phone_number,
             )
         return Response(
@@ -562,7 +564,9 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
         patient_user = denial.patient_user
         if patient_user is None:
             raise Exception("Patient user not found on denial")
-        user_domain = UserDomain.objects.get(id=request.session["domain_id"])
+        user_domain = UserDomain.objects.get(
+            id=auth_utils.get_domain_id_from_request(request)
+        )
         completed_appeal_text = serializer.validated_data["completed_appeal_text"]
         insurance_company = serializer.validated_data["insurance_company"] or ""
         fax_phone = ""
@@ -647,7 +651,7 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
                     email=email,
                     professional_name=inviting_professional.get_display_name(),
                     practice_number=UserDomain.objects.get(
-                        id=request.session["domain_id"]
+                        id=auth_utils.get_domain_id_from_request(request)
                     ).visible_phone_number,
                 )
 
@@ -684,7 +688,7 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
         previous_period_end = current_period_start - relativedelta(microseconds=1)
 
         # Get user domain to calculate patients
-        domain_id = request.session.get("domain_id")
+        domain_id = auth_utils.get_domain_id_from_request(request)
         user_domain = None
         if domain_id:
             try:
@@ -771,7 +775,7 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
         user: User = request.user  # type: ignore
 
         # Get user domain to calculate patients
-        domain_id = request.session.get("domain_id")
+        domain_id = auth_utils.get_domain_id_from_request(request)
         user_domain = None
         if domain_id:
             try:
