@@ -1604,8 +1604,8 @@ class AppealsBackendHelper:
         await denial.asave()
 
         # Get pubmed and ml citations context
-        pubmed_context = None
-        ml_citations_context = None
+        pubmed_context: Optional[str] = None
+        ml_citations_context: Optional[Any] = None
 
         # Get PubMed context
         logger.debug("Looking up the pubmed context")
@@ -1625,25 +1625,14 @@ class AppealsBackendHelper:
             results = await asyncio.gather(
                 pubmed_context_awaitable, ml_citations_context_awaitable
             )
+            pubmed_context = results[0]
+            ml_citations_context = results[1]
         except Exception as e:
             logger.debug(f"Error gathering contexts: {e}")
-
-        # Get each result seperately incase only one worked
-        try:
-            pubmed_context = await pubmed_context_awaitable
-        except Exception as e:
-            logger.opt(exception=True).debug(
-                f"Failed to get pubmed context for denial {denial.denial_id}: {e}"
-            )
-            pubmed_context = None
-
-        try:
-            ml_citations_context = await ml_citations_context_awaitable
-        except Exception as e:
-            logger.opt(exception=True).debug(
-                f"Failed to get ML citations context for denial {denial.denial_id}: {e}"
-            )
-            ml_citations_context = None
+            # We still might have saved a context.
+            denial.refresh_from_db()
+            pubmed_context = debial.pubmed_context
+            ml_citations_context = denial.ml_citations_context
 
         async def save_appeal(appeal_text: str) -> dict[str, str]:
             # Save all of the proposed appeals, so we can use RL later.
