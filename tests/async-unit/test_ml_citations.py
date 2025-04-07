@@ -168,7 +168,6 @@ class TestMLCitationFunctionality(unittest.TestCase):
         # Setup mocks
         mock_perplexity_model = MagicMock(spec=RemotePerplexity)
 
-
         # Create router instance
         router = MLRouter()
         router.models_by_name = {
