@@ -572,8 +572,8 @@ class Prod(Base):
     EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
     EMAIL_HOST = os.getenv("EMAIL_HOST", "pigscanfly.ca")
     EMAIL_USE_TLS = True
-    EMAIL_PORT = 25
-    EMAIL_USE_SSL = False
+    EMAIL_PORT = os.getenv("EMAIL_HOST_PORT", "25")  # Default TLS port for SMTP
+    EMAIL_USE_SSL = EMAIL_PORT == "465"
     EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "support")
     EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
     DEFAULT_FROM_EMAIL = "support42@fighthealthinsurance.com"
