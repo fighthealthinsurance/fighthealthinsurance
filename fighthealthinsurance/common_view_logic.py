@@ -1631,7 +1631,7 @@ class AppealsBackendHelper:
             logger.debug(f"Error gathering contexts: {e}")
             # We still might have saved a context.
             denial.refresh_from_db()
-            pubmed_context = debial.pubmed_context
+            pubmed_context = denial.pubmed_context
             ml_citations_context = denial.ml_citations_context
 
         async def save_appeal(appeal_text: str) -> dict[str, str]:
