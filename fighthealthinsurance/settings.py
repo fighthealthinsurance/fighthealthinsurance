@@ -571,7 +571,9 @@ class Prod(Base):
     EXTERNAL_STORAGE_LOCATION = "/external_data"
     EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
     EMAIL_HOST = os.getenv("EMAIL_HOST", "pigscanfly.ca")
-    EMAIL_PORT = os.getenv("EMAIL_HOST_PORT", "25")  # Default port for SMTP, if we want SSL set to 465
+    EMAIL_PORT = os.getenv(
+        "EMAIL_HOST_PORT", "25"
+    )  # Default port for SMTP, if we want SSL set to 465
     EMAIL_USE_SSL = EMAIL_PORT == "465"
     EMAIL_USE_TLS = EMAIL_PORT != "465"
     EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "support")
