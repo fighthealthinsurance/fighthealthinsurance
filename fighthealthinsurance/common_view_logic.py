@@ -1630,7 +1630,7 @@ class AppealsBackendHelper:
         except Exception as e:
             logger.debug(f"Error gathering contexts: {e}")
             # We still might have saved a context.
-            denial.refresh_from_db()
+            await denial.arefresh_from_db()
             pubmed_context = denial.pubmed_context
             ml_citations_context = denial.ml_citations_context
 
