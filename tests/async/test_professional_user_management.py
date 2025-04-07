@@ -59,7 +59,7 @@ class ProfessionalUserManagementTests(TestCase):
             professional=self.admin_professional,
             domain=self.domain,
             pending_domain_relation=False,
-            active=True,
+            active_domain_relation=True,
             admin=True,
         )
 
@@ -83,7 +83,7 @@ class ProfessionalUserManagementTests(TestCase):
             professional=self.regular_professional,
             domain=self.domain,
             pending_domain_relation=False,
-            active=True,
+            active_domain_relation=True,
             admin=False,
         )
 
@@ -107,7 +107,7 @@ class ProfessionalUserManagementTests(TestCase):
             professional=self.pending_professional,
             domain=self.domain,
             pending_domain_relation=True,
-            active=False,
+            active_domain_relation=False,
             admin=False,
         )
 
@@ -186,7 +186,7 @@ class ProfessionalUserManagementTests(TestCase):
         # Verify relationship status has been updated
         self.pending_relation.refresh_from_db()
         self.assertFalse(self.pending_relation.pending_domain_relation)
-        self.assertTrue(self.pending_relation.active)
+        self.assertTrue(self.pending_relation.active_domain_relation)
 
         # Verify professional user is now active
         self.pending_professional.refresh_from_db()
@@ -229,7 +229,7 @@ class ProfessionalUserManagementTests(TestCase):
         # Verify relationship status has been updated
         self.pending_relation.refresh_from_db()
         self.assertFalse(self.pending_relation.pending_domain_relation)
-        self.assertFalse(self.pending_relation.active)
+        self.assertFalse(self.pending_relation.active_domain_relation)
         self.assertTrue(self.pending_relation.rejected)
 
         # Check that listing pending users no longer includes this professional
@@ -277,7 +277,7 @@ class ProfessionalUserManagementTests(TestCase):
         # Make sure the relationship wasn't changed
         self.pending_relation.refresh_from_db()
         self.assertTrue(self.pending_relation.pending_domain_relation)
-        self.assertFalse(self.pending_relation.active)
+        self.assertFalse(self.pending_relation.active_domain_relation)
         self.assertFalse(self.pending_relation.rejected)
 
     def test_signup_user_with_new_domain_is_admin(self):
@@ -332,20 +332,12 @@ class ProfessionalUserManagementTests(TestCase):
             relation.admin, "User should be set as admin for the domain they created"
         )
 
-        # Initially the relation might not be active
-        self.assertFalse(relation.active)
-        self.assertTrue(relation.pending_domain_relation)
-
         # Simulate email verification and Stripe payment completion
         # by activating the user and their domain relation
         new_user.is_active = True
         new_user.save()
         professional_user.active = True
         professional_user.save()
-
-        relation.active = True
-        relation.pending_domain_relation = False
-        relation.save()
 
         # Now verify the user can perform admin actions
         # by logging them in
@@ -381,7 +373,7 @@ class ProfessionalUserManagementTests(TestCase):
             professional=staff_professional, domain=domain
         )
         self.assertFalse(staff_relation.admin)
-        self.assertTrue(staff_relation.active)
+        self.assertTrue(staff_relation.active_domain_relation)
         self.assertFalse(staff_relation.pending_domain_relation)
 
     def test_make_admin_functionality(self):

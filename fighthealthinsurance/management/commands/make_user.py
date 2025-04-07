@@ -135,8 +135,8 @@ class Command(BaseCommand):
                 ProfessionalDomainRelation.objects.create(
                     professional=pro_user,
                     domain=user_domain,
-                    active=True,
-                    pending=False,
+                    active_domain_relation=True,
+                    pending_domain_relation=False,
                     admin=True,
                 )
         elif is_provider:
@@ -144,8 +144,8 @@ class Command(BaseCommand):
             ProfessionalDomainRelation.objects.create(
                 professional=pro_user,
                 domain=user_domain,
-                active=True,
-                pending=False,
+                active_domain_relation=True,
+                pending_domain_relation=False,
                 admin=True,
             )
         elif PatientUser.objects.filter(user=user).exists():

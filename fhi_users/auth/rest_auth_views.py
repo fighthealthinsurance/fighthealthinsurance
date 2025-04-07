@@ -907,9 +907,9 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         ProfessionalDomainRelation.objects.create(
             professional=professional_user,
             domain=user_domain,
-            active_domain_relation=False,
+            active_domain_relation=new_domain,
             admin=new_domain,
-            pending_domain_relation=False if new_domain else True,
+            pending_domain_relation=not new_domain,
         )
 
         if not (settings.DEBUG and data["skip_stripe"]):

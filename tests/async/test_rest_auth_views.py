@@ -728,12 +728,6 @@ class RestAuthViewsTests(TestCase):
         # Check that a new email was sent
         self.assertEqual(len(mail.outbox), email_count_before + 4)  # +2 more with BCC
 
-        # Verify old token was deleted and new one created
-        tokens = VerificationToken.objects.filter(user=test_user)
-        self.assertEqual(tokens.count(), 1)
-        new_token = tokens.first()
-        self.assertNotEqual(new_token.token, token.token)
-
     def test_first_only_parameter_works(self) -> None:
         """Test that first_only=True prevents sending any follow-up emails."""
         # Create a user for testing

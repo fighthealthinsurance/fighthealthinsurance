@@ -223,7 +223,7 @@ class ProfessionalDomainRelation(models.Model):
     active_domain_relation = models.BooleanField(default=False)
     admin = models.BooleanField(default=False)
     read_only = models.BooleanField(default=False)
-    professional_type = models.CharField(max_length=400, null=True)
+    professional_type = models.CharField(max_length=400, null=True, blank=True)
     pending_domain_relation = models.BooleanField(default=True)
     suspended = models.BooleanField(default=False)
     rejected = models.BooleanField(default=False)
