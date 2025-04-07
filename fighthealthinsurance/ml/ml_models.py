@@ -922,7 +922,7 @@ class RemoteFullOpenLike(RemoteOpenLike):
             patient_context=patient_context,
             plan_context=plan_context,
             pubmed_context=pubmed_context,
-            temperature=0.7,
+            temperature=0.25,  # Lower temperature to reduce creativity in citations
         )
 
         if result is None:

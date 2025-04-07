@@ -563,6 +563,7 @@ class AppealGenerator(object):
         medical_reasons=None,
         non_ai_appeals=None,
         pubmed_context=None,
+        ml_citations_context=None,
     ) -> Iterator[str]:
         logger.debug("Starting to make appeals...")
         if medical_reasons is None:
@@ -594,6 +595,7 @@ class AppealGenerator(object):
             plan_context: Optional[str],
             infer_type: str,
             pubmed_context: Optional[str] = None,
+            ml_citations_context: Optional[List[str]] = None,
         ) -> List[Future[Tuple[str, Optional[str]]]]:
             logger.debug(f"Looking up on {model_name}")
             if model_name not in ml_router.models_by_name:
@@ -613,6 +615,7 @@ class AppealGenerator(object):
                         plan_context=plan_context,
                         infer_type=infer_type,
                         pubmed_context=pubmed_context,
+                        ml_citations_context=ml_citations_context,
                         for_patient=for_patient,
                     )
                     logger.debug("Got back {result} for {model_name} on {model}")
@@ -629,6 +632,7 @@ class AppealGenerator(object):
             plan_context: Optional[str],
             infer_type: str,
             pubmed_context: Optional[str],
+            ml_citations_context: Optional[List[str]],
             for_patient: bool,
         ) -> List[Future[Tuple[str, Optional[str]]]]:
             # If the model has parallelism use it
@@ -641,6 +645,7 @@ class AppealGenerator(object):
                         patient_context=patient_context,
                         plan_context=plan_context,
                         pubmed_context=pubmed_context,
+                        ml_citations_context=ml_citations_context,
                         infer_type=infer_type,
                         for_patient=for_patient,
                     )
@@ -654,6 +659,7 @@ class AppealGenerator(object):
                             plan_context=plan_context,
                             infer_type=infer_type,
                             pubmed_context=pubmed_context,
+                            ml_citations_context=ml_citations_context,
                             for_patient=for_patient,
                         )
                     ]
@@ -669,6 +675,7 @@ class AppealGenerator(object):
                         plan_context=plan_context,
                         infer_type=infer_type,
                         pubmed_context=pubmed_context,
+                        ml_citations_context=ml_citations_context,
                         for_patient=for_patient,
                     )
                 ]
@@ -698,6 +705,7 @@ class AppealGenerator(object):
                 "plan_context": plan_context,
                 "infer_type": "full",
                 "pubmed_context": pubmed_context,
+                "ml_citations_context": ml_citations_context,
             },
         ]
 
@@ -711,6 +719,7 @@ class AppealGenerator(object):
                         "infer_type": "full",
                         "plan_context": plan_context,
                         "pubmed_context": pubmed_context,
+                        "ml_citations_context": ml_citations_context,
                     }
                 ]
             )
@@ -723,6 +732,7 @@ class AppealGenerator(object):
                         "infer_type": "full",
                         "plan_context": plan_context,
                         "pubmed_context": pubmed_context,
+                        "ml_citations_context": ml_citations_context,
                     }
                 ]
             )
@@ -735,6 +745,7 @@ class AppealGenerator(object):
                         "infer_type": "full",
                         "plan_context": plan_context,
                         "pubmed_context": pubmed_context,
+                        "ml_citations_context": ml_citations_context,
                     }
                 ]
             )
@@ -752,6 +763,7 @@ class AppealGenerator(object):
                         "infer_type": "medically_necessary",
                         "plan_context": plan_context,
                         "pubmed_context": pubmed_context,
+                        "ml_citations_context": ml_citations_context,
                     },
                 ]
             )
@@ -765,6 +777,7 @@ class AppealGenerator(object):
                             "infer_type": "medically_necessary",
                             "plan_context": plan_context,
                             "pubmed_context": pubmed_context,
+                            "ml_citations_context": ml_citations_context,
                         },
                     ]
                 )

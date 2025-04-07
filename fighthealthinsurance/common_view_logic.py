@@ -917,6 +917,7 @@ class DenialCreatorHelper:
         Generate a list of questions that could help craft a better appeal for
         this specific denial. The questions will be stored in the denial object's
         generated_questions field as tuples of (question, answer).
+        Also generates citations in a non-blocking manner.
 
         Args:
             denial_id: The ID of the denial to generate questions for
@@ -947,7 +948,22 @@ class DenialCreatorHelper:
             patient_context = denial.health_history
             plan_context = denial.plan_context
 
+            # Create a new task for generating citations without blocking
+            async def start_citation_generation():
+                from fighthealthinsurance.ml.ml_citations_helper import (
+                    MLCitationsHelper,
+                )
+
+                try:
+                    await MLCitationsHelper.generate_citations_for_denial(denial)
+                except Exception as e:
+                    logger.opt(exception=True).warning(
+                        f"Failed to generate citations for denial {denial_id}: {e}"
+                    )
+
             if denial.procedure:
+                # Start the citation generation task without waiting for it
+                asyncio.create_task(start_citation_generation())
 
                 # Use the ML model to generate questions with potential answers
                 raw_questions = await appealGenerator.get_appeal_questions(
@@ -1560,8 +1576,19 @@ class AppealsBackendHelper:
         if plan_context is not None:
             denial.plan_context = " ".join(set(plan_context))
         await denial.asave()
-        logger.debug("Calling make appeals")
+
+        # Get pubmed and ml citations context
         pubmed_context = None
+        ml_citations_context = None
+
+        # Get previously generated ML citations if available
+        if denial.citation_context is not None and len(denial.citation_context) > 0:
+            ml_citations_context = denial.citation_context
+            logger.debug(
+                f"Using {len(ml_citations_context)} existing ML citations for appeal"
+            )
+
+        # Get PubMed context
         logger.debug("Looking up the pubmed context")
         try:
             pubmed_context = await asyncio.wait_for(
@@ -1569,9 +1596,29 @@ class AppealsBackendHelper:
             )
         except Exception as e:
             logger.opt(exception=True).debug(
-                f"Error {e} looking up context for {denial}."
+                f"Error {e} looking up pubmed context for {denial}."
             )
         logger.debug("Pubmed context done.")
+
+        # If we still don't have ML citations, try to generate them now
+        # (this is a fallback in case they weren't generated during question generation)
+        if ml_citations_context is None:
+            try:
+                from fighthealthinsurance.ml.ml_citations_helper import (
+                    MLCitationsHelper,
+                )
+
+                ml_citations_context = await asyncio.wait_for(
+                    MLCitationsHelper.generate_citations_for_denial(denial), timeout=60
+                )
+                logger.debug(
+                    f"Generated {len(ml_citations_context) if ml_citations_context else 0} ML citations for appeal"
+                )
+            except Exception as e:
+                logger.opt(exception=True).debug(
+                    f"Error {e} generating ML citations for {denial}."
+                )
+                ml_citations_context = None
 
         async def save_appeal(appeal_text: str) -> dict[str, str]:
             # Save all of the proposed appeals, so we can use RL later.
@@ -1579,14 +1626,14 @@ class AppealsBackendHelper:
             logger.debug(f"{t}: Saving {appeal_text}")
             await asyncio.sleep(0)
             # YOLO on saving appeals, sqllite gets sad.
-            id = "unkown"
+            id = "unknown"
             try:
                 pa = ProposedAppeal(appeal_text=appeal_text, for_denial=denial)
                 await pa.asave()
                 id = str(pa.id)
             except Exception as e:
                 logger.opt(exception=True).warning(
-                    "Failed to save proposed appeal: {e}"
+                    f"Failed to save proposed appeal: {e}"
                 )
                 pass
             passed = time.time() - t
@@ -1632,6 +1679,7 @@ class AppealsBackendHelper:
             medical_reasons=medical_reasons,
             non_ai_appeals=non_ai_appeals,
             pubmed_context=pubmed_context,
+            ml_citations_context=ml_citations_context,
         )
         filtered_appeals: Iterator[str] = filter(lambda x: x != None, appeals)
 
