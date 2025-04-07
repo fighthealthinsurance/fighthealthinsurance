@@ -980,9 +980,10 @@ class DenialCreatorHelper:
                     for q in raw_questions
                 ]
 
-                # Store the questions in the generated_questions field
-                denial.generated_questions = questions
-                await denial.asave()
+                # Store the questions directly with aupdate instead of loading and saving
+                await Denial.objects.filter(denial_id=denial_id).aupdate(
+                    generated_questions=questions
+                )
                 logger.debug(
                     f"Generated {len(questions)} questions for denial {denial_id}"
                 )
@@ -1190,24 +1191,29 @@ class DenialCreatorHelper:
     @classmethod
     async def extract_set_denial_and_diagnosis(cls, denial_id: int):
         denial = await Denial.objects.filter(denial_id=denial_id).aget()
+        procedure = None
+        diagnosis = None
+
         try:
             (procedure, diagnosis) = await appealGenerator.get_procedure_and_diagnosis(
                 denial_text=denial.denial_text
             )
+
+            # Prepare update fields
+            update_fields = {"extract_procedure_diagnosis_finished": True}
+
             if procedure is not None and len(procedure) < 200:
-                denial.procedure = procedure
+                update_fields["procedure"] = procedure
+
             if diagnosis is not None and len(diagnosis) < 200:
-                denial.diagnosis = diagnosis
-        except Exception as e:
-            logger.opt(exception=True).warning(
-                f"Failed to extract procedure and diagnosis for denial {denial_id}: {e}"
-            )
-        finally:
-            denial.extract_procedure_diagnosis_finished = True
-            await denial.asave()
+                update_fields["diagnosis"] = diagnosis
+
+            # Update all fields in a single atomic database operation
+            await Denial.objects.filter(denial_id=denial_id).aupdate(**update_fields)
+
             # Launch a "fire and forget" task to find related PubMed articles
             # now that we have diagnosis and procedure information
-            if denial.procedure or denial.diagnosis:
+            if denial.procedure or denial.diagnosis or procedure or diagnosis:
 
                 async def find_pubmed_articles():
                     try:
@@ -1223,6 +1229,15 @@ class DenialCreatorHelper:
 
                 # Create the task but don't await it - fire and forget
                 asyncio.create_task(find_pubmed_articles())
+
+        except Exception as e:
+            logger.opt(exception=True).warning(
+                f"Failed to extract procedure and diagnosis for denial {denial_id}: {e}"
+            )
+            # Even on failure, mark extraction as finished
+            await Denial.objects.filter(denial_id=denial_id).aupdate(
+                extract_procedure_diagnosis_finished=True
+            )
 
     @classmethod
     async def extract_set_insurance_company(cls, denial_id):
@@ -1240,8 +1255,10 @@ class DenialCreatorHelper:
                 if (insurance_company in denial.denial_text) or len(
                     insurance_company
                 ) < 50:
-                    denial.insurance_company = insurance_company
-                    await denial.asave()
+                    # Use aupdate() directly instead of loading and saving the object
+                    await Denial.objects.filter(denial_id=denial_id).aupdate(
+                        insurance_company=insurance_company
+                    )
                     logger.debug(
                         f"Successfully extracted insurance company: {insurance_company}"
                     )
@@ -1267,8 +1284,10 @@ class DenialCreatorHelper:
 
             # Simple validation to avoid hallucinations
             if plan_id is not None and len(plan_id) < 30:
-                denial.plan_id = plan_id
-                await denial.asave()
+                # Use aupdate to directly update the field at the database level
+                await Denial.objects.filter(denial_id=denial_id).aupdate(
+                    plan_id=plan_id
+                )
                 logger.debug(f"Successfully extracted plan ID: {plan_id}")
                 return plan_id
             else:
@@ -1291,8 +1310,10 @@ class DenialCreatorHelper:
 
             # Simple validation to avoid hallucinations
             if claim_id is not None and len(claim_id) < 30:
-                denial.claim_id = claim_id
-                await denial.asave()
+                # Use aupdate to directly update the field at the database level
+                await Denial.objects.filter(denial_id=denial_id).aupdate(
+                    claim_id=claim_id
+                )
                 logger.debug(f"Successfully extracted claim ID: {claim_id}")
                 return claim_id
             else:
@@ -1315,9 +1336,10 @@ class DenialCreatorHelper:
 
             # Validate date of service
             if date_of_service is not None:
-                # Store as string since model may expect string format
-                denial.date_of_service = date_of_service
-                await denial.asave()
+                # Use aupdate to directly update at the database level
+                await Denial.objects.filter(denial_id=denial_id).aupdate(
+                    date_of_service=date_of_service
+                )
                 logger.debug(
                     f"Successfully extracted date of service: {date_of_service}"
                 )
@@ -1354,8 +1376,10 @@ class DenialCreatorHelper:
                 appeal_fax_number = None
 
         if appeal_fax_number is not None:
-            denial.fax_number = appeal_fax_number
-            await denial.asave()
+            # Use aupdate instead of fetching and saving
+            await Denial.objects.filter(denial_id=denial_id).aupdate(
+                fax_number=appeal_fax_number
+            )
             logger.debug(f"Successfully extracted fax number: {appeal_fax_number}")
             return appeal_fax_number
         return None
