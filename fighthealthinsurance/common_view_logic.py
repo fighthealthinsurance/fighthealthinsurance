@@ -1607,44 +1607,43 @@ class AppealsBackendHelper:
         pubmed_context = None
         ml_citations_context = None
 
-        # Get previously generated ML citations if available
-        if denial.citation_context is not None and len(denial.citation_context) > 0:
-            ml_citations_context = denial.citation_context
-            logger.debug(
-                f"Using {len(ml_citations_context)} existing ML citations for appeal"
-            )
-
         # Get PubMed context
         logger.debug("Looking up the pubmed context")
+        pubmed_context_awaitable = asyncio.wait_for(
+            cls.pmt.find_context_for_denial(denial), timeout=75
+        )
+
+        from fighthealthinsurance.ml.ml_citations_helper import (
+            MLCitationsHelper,
+        )
+
+        ml_citations_context_awaitable = asyncio.wait_for(
+            MLCitationsHelper.generate_citations_for_denial(denial), timeout=75
+        )
+        # Await both contexts so we can use co-operative multitasking
         try:
-            pubmed_context = await asyncio.wait_for(
-                cls.pmt.find_context_for_denial(denial), timeout=60
+            results = await asyncio.gather(
+                pubmed_context_awaitable, ml_citations_context_awaitable
             )
         except Exception as e:
+            logger.debug(f"Error gathering contexts: {e}")
+
+        # Get each result seperately incase only one worked
+        try:
+            pubmed_context = await pubmed_context_awaitable
+        except Exception as e:
             logger.opt(exception=True).debug(
-                f"Error {e} looking up pubmed context for {denial}."
+                f"Failed to get pubmed context for denial {denial.denial_id}: {e}"
             )
-        logger.debug("Pubmed context done.")
+            pubmed_context = None
 
-        # If we still don't have ML citations, try to generate them now
-        # (this is a fallback in case they weren't generated during question generation)
-        if ml_citations_context is None:
-            try:
-                from fighthealthinsurance.ml.ml_citations_helper import (
-                    MLCitationsHelper,
-                )
-
-                ml_citations_context = await asyncio.wait_for(
-                    MLCitationsHelper.generate_citations_for_denial(denial), timeout=60
-                )
-                logger.debug(
-                    f"Generated {len(ml_citations_context) if ml_citations_context else 0} ML citations for appeal"
-                )
-            except Exception as e:
-                logger.opt(exception=True).debug(
-                    f"Error {e} generating ML citations for {denial}."
-                )
-                ml_citations_context = None
+        try:
+            ml_citations_context = await ml_citations_context_awaitable
+        except Exception as e:
+            logger.opt(exception=True).debug(
+                f"Failed to get ML citations context for denial {denial.denial_id}: {e}"
+            )
+            ml_citations_context = None
 
         async def save_appeal(appeal_text: str) -> dict[str, str]:
             # Save all of the proposed appeals, so we can use RL later.
