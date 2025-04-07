@@ -66,7 +66,6 @@ def send_fallback_email(subject: str, template_name: str, context, to_email: str
         text_content,
         settings.DEFAULT_FROM_EMAIL,
         to=[to_email],
-        bcc=settings.BCC_EMAILS,
     )
     logger.debug(f"Sending email to {to_email} with subject {subject}")
 
