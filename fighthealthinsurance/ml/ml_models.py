@@ -800,16 +800,16 @@ class RemoteFullOpenLike(RemoteOpenLike):
             A list of tuples (question, answer) where answer may be empty
         """
         procedure_opt = (
-            "The procedure denied was {procedure} so only ask questions relevant to {procedure}"
+            f"The procedure denied was {procedure} so only ask questions relevant to {procedure}"
             if procedure
             else ""
         )
         patient_context_opt = (
-            "Optional patient context: {patient_context}" if patient_context else ""
+            f"Optional patient context: {patient_context}" if patient_context else ""
         )
-        diagnosis_opt = "The primary diagnosis was {diagnosis}" if diagnosis else ""
+        diagnosis_opt = f"The primary diagnosis was {diagnosis}" if diagnosis else ""
         denial_text_opt = (
-            "The denial text is: {denial_text}"
+            f"The denial text is: {denial_text}"
             if denial_text
             else "No denial text provided, use other context clues."
         )
