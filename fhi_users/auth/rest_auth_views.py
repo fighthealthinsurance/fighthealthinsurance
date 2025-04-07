@@ -159,16 +159,7 @@ class WhoAmIViewSet(viewsets.ViewSet):
                 _professional = ProfessionalUser.objects.get(user=user, active=True)
                 professional = True
                 professional_id = _professional.id
-                try:
-                    ProfessionalDomainRelation.objects.get(
-                        professional=_professional,
-                        domain=user_domain,
-                        active=True,
-                        admin=True,
-                    )
-                    admin = True
-                except ProfessionalDomainRelation.DoesNotExist:
-                    pass
+                admin = user_is_admin_in_domain(user, domain_id=user_domain.id)
             except ProfessionalUser.DoesNotExist:
                 pass
 
