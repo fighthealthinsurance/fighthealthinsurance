@@ -176,6 +176,7 @@ class TestMLCitationFunctionality(unittest.TestCase):
             "sonar": [mock_perplexity_model],
             "deepseek": [mock_perplexity_model],
         }
+
         # Test partial backends (should always return models)
         backends = router.partial_find_citation_backends()
         self.assertGreater(len(backends), 0)
