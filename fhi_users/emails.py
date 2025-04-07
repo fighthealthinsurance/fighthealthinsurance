@@ -73,7 +73,7 @@ def send_verification_email(request, user: "User", first_only: bool = False) -> 
             return
         else:
             current_token = VerificationToken.objects.filter(user=user).first()
-            if current_token.created_at > timezone.now() - timedelta(minutes=10):
+            if current_token and current_token.created_at > timezone.now() - timedelta(minutes=10):
                 logger.debug(
                     f"Skipping verification e-mail to {user} as already sent within 10 minutes"
                 )
