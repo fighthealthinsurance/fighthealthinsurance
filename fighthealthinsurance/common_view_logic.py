@@ -928,8 +928,6 @@ class DenialCreatorHelper:
         if not denial:
             logger.warning(f"Could not find denial with ID {denial_id}")
             return []
-        # For now this is disabled
-        return []
         try:
             # Check if we already have questions generated
             if denial.generated_questions is not None:
