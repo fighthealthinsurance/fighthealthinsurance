@@ -825,6 +825,8 @@ class RemoteFullOpenLike(RemoteOpenLike):
         Remember to keep the questions concise and patient-friendly and focused on the potential patient history.\n
         If you ask questions about the denial it's self the patient will be sad and give up so don't do that.
         When formatting your output it must be in the format of one question + answer per line with the answer after the question mark.\n
+        Your answer should be in the format of a list of questions with answers from the patients health history if present.
+        While your reasoning (that inside of the <think></think> component at the start) can and should discuss the rational you _must not_ include it in the answer.
         For example:
         1. What is the patient's age? 45
         2. Has the patient had any previous surgeries? Unknown
@@ -837,7 +839,7 @@ class RemoteFullOpenLike(RemoteOpenLike):
             prompt=prompt,
             patient_context=patient_context,
             plan_context=plan_context,
-            temperature=0.7,
+            temperature=0.6,
         )
 
         if result is None:
@@ -846,6 +848,12 @@ class RemoteFullOpenLike(RemoteOpenLike):
 
         # Process the result into a list of questions with potential answers
         questions_with_answers: List[Tuple[str, str]] = []
+
+        if "Rationale for questions" in result:
+            logger.debug(
+                f"Received poorly formatted response from {self.model} when asking for questions. {result}"
+            )
+            return []
 
         # Handle the case where the model returns a single block of text
         if "\n" not in result and len(result) > 100:
