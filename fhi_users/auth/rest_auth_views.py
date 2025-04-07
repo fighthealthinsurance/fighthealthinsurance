@@ -41,6 +41,7 @@ from fhi_users.models import (
 from fighthealthinsurance.models import StripeRecoveryInfo
 from fhi_users.auth import rest_serializers as serializers
 from fighthealthinsurance import rest_serializers as common_serializers
+from fhi_users.auth import auth_utils
 from fhi_users.auth.auth_utils import (
     create_user,
     combine_domain_and_username,
@@ -136,7 +137,7 @@ class WhoAmIViewSet(viewsets.ViewSet):
         user: User = request.user  # type: ignore
         if user.is_authenticated:
             # Get the user domain from the session
-            domain_id = request.session.get("domain_id")
+            domain_id = auth_utils.get_domain_id_from_request(request)
             if not domain_id:
                 return Response(
                     common_serializers.ErrorSerializer(
@@ -264,7 +265,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         # Get the current user's domain
         try:
             current_user: User = request.user  # type: ignore
-            domain_id = request.session.get("domain_id")
+            domain_id = auth_utils.get_domain_id_from_request(request)
             if not domain_id:
                 logger.opt(exception=True).error(
                     f"Domain ID not found in session for user: {current_user.username}"
@@ -432,7 +433,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         # Get the current user's domain
         try:
             current_user: User = request.user  # type: ignore
-            domain_id = request.session.get("domain_id")
+            domain_id = auth_utils.get_domain_id_from_request(request)
             if not domain_id:
                 return Response(
                     common_serializers.ErrorSerializer(
@@ -497,7 +498,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
     @action(detail=False, methods=["post"])
     def list_active_in_domain(self, request) -> Response:
         """List the active users in a given domain"""
-        domain_id = request.session["domain_id"]
+        domain_id = auth_utils.get_domain_id_from_request(request)
         domain = UserDomain.objects.get(id=domain_id)
         # Ensure current user is an active professional in domain
         current_user: User = request.user
@@ -525,7 +526,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
     @action(detail=False, methods=["post"])
     def list_pending_in_domain(self, request) -> Response:
         """List the pending user in a given domain"""
-        domain_id = request.session["domain_id"]
+        domain_id = auth_utils.get_domain_id_from_request(request)
         domain = UserDomain.objects.get(id=domain_id)
         # Ensure current user is active in domain
         current_user: User = request.user
@@ -788,9 +789,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             )
 
     @transaction.atomic
-    def perform_create(
-        self, request: Request, serializer: Serializer
-    ) -> Response | serializers.ProfessionalSignupResponseSerializer:
+    def perform_create(self, request: Request, serializer: Serializer) -> Response:
         data: dict[str, bool | str | dict[str, str]] = serializer.validated_data  # type: ignore
         user_signup_info: dict[str, str] = data["user_signup_info"]  # type: ignore
         domain_name: Optional[str] = user_signup_info["domain_name"]  # type: ignore
@@ -935,12 +934,18 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 user=user, email_verified=False
             )
             subscription_id = checkout_session.subscription
-            return serializers.ProfessionalSignupResponseSerializer(
-                {"next_url": checkout_session.url}
+            return Response(
+                serializers.ProfessionalSignupResponseSerializer(
+                    {"next_url": checkout_session.url}
+                ).data,
+                status=status.HTTP_201_CREATED,
             )
         else:
-            return serializers.ProfessionalSignupResponseSerializer(
-                {"next_url": "https://www.fightpaperwork.com/?q=testmode"}
+            return Response(
+                serializers.ProfessionalSignupResponseSerializer(
+                    {"next_url": "https://www.fightpaperwork.com/?q=testmode"}
+                ).data,
+                status=status.HTTP_201_CREATED,
             )
 
 
@@ -1095,7 +1100,7 @@ class PatientUserViewSet(ViewSet, CreateMixin):
             provider_phone_number = validated_data.pop("provider_phone_number")
         if "patient_phone_number" in validated_data:
             patient_phone_number = validated_data.pop("patient_phone_number")
-        domain_id = request.session.get("domain_id")
+        domain_id = auth_utils.get_domain_id_from_request(request)
         user = create_user(
             email=validated_data["email"],
             raw_username=validated_data["username"],
@@ -1157,7 +1162,9 @@ class PatientUserViewSet(ViewSet, CreateMixin):
             email = serializer.validated_data["username"]
         if not email or len(email) == 0:
             email = get_next_fake_username()
-        domain = UserDomain.objects.get(id=request.session["domain_id"])
+        domain = UserDomain.objects.get(
+            id=auth_utils.get_domain_id_from_request(request)
+        )
         user = get_patient_or_create_pending_patient(
             email=email,
             raw_username=email,

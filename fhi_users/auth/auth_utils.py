@@ -22,6 +22,24 @@ else:
     User = get_user_model()
 
 
+def get_domain_id_from_request(request):
+    """
+    Helper function to get the domain id from the session.
+    """
+    session = request.session
+    if hasattr(session, "get"):
+        try:
+            return session.get("domain_id")
+        except Exception:
+            pass
+    if hasattr(session, "user"):
+        current_user: User = request.user  # type: ignore
+        domain_id = current_user.username.split("🐼")[-1]
+        request.session["domain_id"] = domain_id
+        return domain_id
+    raise Exception("Could not find domain id in request session or user")
+
+
 def normalize_phone_number(phone_number: Optional[str]) -> Optional[str]:
     """Normalize a phone number to a standard format."""
     # Remove all non-digit characters
@@ -197,11 +215,11 @@ def create_user(
             )
 
         try:
+            # Was the user created by a domain admin but without a password?
             user = User.objects.get(
                 username=username,
                 email=email,
                 password=None,
-                is_active=False,
             )
             user.password = password
             user.first_name = first_name
