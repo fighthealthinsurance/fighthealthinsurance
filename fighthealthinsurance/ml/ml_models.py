@@ -677,7 +677,7 @@ class RemoteFullOpenLike(RemoteOpenLike):
                 """You must be concise. You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters to identify the requested procedure and, if available, the associated diagnosis. Each word costs an extra dollar. Provide a concise response with the procedure on one line starting with "Procedure" and Diagnsosis on another line starting with Diagnosis. Do not say not specified. Diagnosis can also be reason for treatment even if it's not a disease (like high risk homosexual behaviour for prep or preventitive and the name of the diagnosis). Remember each result on a seperated line."""
             ],
             "questions": [
-                """You have deep expertise in health insurance and extensive experience working in a medical office. Your task is to generate the best one to four specific, detailed questions that will help craft a stronger appeal for a health insurance denial.
+                """You have deep expertise in health insurance and extensive experience working in a medical office. Your task is to generate the best one to three specific, detailed questions that will help craft a stronger appeal for a health insurance denial.
 
 ### Key Guidelines:
 - No Independent Medical Review (IMR/IME) has occured yet We are only dealing with the insurance company at this stage, so do not reference independent medical reviews.
@@ -701,8 +701,15 @@ class RemoteFullOpenLike(RemoteOpenLike):
 - Case-Specific: Each question should be directly relevant to the specific denial reason and medical necessity at hand.
 """
             ],
+            "citations": [
+                """You have an in-depth understanding of health insurance and extensive experience working in a medical office.
+                Your expertise lies justifying care to insurance companies and regulators.
+                When providing citations, ensure they are relevant to the specific denial and directly support the medical necessity of the treatment. Only provide references you are certain exist (e.g. provided as input or found as agent). Format citations as follows: [1] Author et al., Title, Journal, Year, url; [2] etc.
+                Be careful that all citations are real and the links work.
+                Do not provide generic citations unless specifically asked for."""
+            ],
             "medically_necessary": [
-                """You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters. Each word costs an extra dollar. Please provide a concise response. Do not use the 3rd person when referring to the patient (e.g. don't say "the patient", "patient's", "his", "hers"), instead use the first person (I, my, mine,etc.) when talking about the patient. You are not a review and should not mention any. Write concisely in a professional tone akin to patio11. Do not say this is why the decission should be overturned. Just say why you believe it is medically necessary (e.g. to prevent X or to treat Y)."""
+                """You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters. Each word costs an extra dollar. Please provide a concise response. You are not an independent medical reviewer and should not mention any. Write concisely in a professional tone akin to patio11. Do not say this is why the decission should be overturned. Just say why you believe it is medically necessary (e.g. to prevent X or to treat Y)."""
             ],
             "generic": [
                 """You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters. Help a patient answer the provided question for their insurance appeal."""
@@ -873,42 +880,6 @@ class RemoteHealthInsurance(RemoteFullOpenLike):
         ]
 
 
-class RemoteTogetherAI(RemoteFullOpenLike):
-    """Use RemotePerplexity for denial magic calls a service"""
-
-    def __init__(self, model: str):
-        api_base = "https://api.together.xyz"
-        token = os.getenv("TOGETHER_KEY")
-        if token is None or len(token) < 1:
-            raise Exception("No token found for together")
-        super().__init__(api_base, token, model=model)
-
-    @classmethod
-    def models(cls) -> List[ModelDescription]:
-        return [
-            ModelDescription(
-                cost=350,
-                name="meta-llama/llama-3.2-405B-instruct",
-                internal_name="meta-llama/Meta-Llama-3.2-405B-Instruct-Turbo",
-            ),
-            ModelDescription(
-                cost=350,
-                name="meta-llama/llama-3.1-405B-instruct",
-                internal_name="meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo",
-            ),
-            ModelDescription(
-                cost=88,
-                name="meta-llama/llama-3.2-70B-instruct",
-                internal_name="meta-llama/Meta-Llama-3.2-70B-Instruct-Turbo",
-            ),
-            ModelDescription(
-                cost=88,
-                name="meta-llama/llama-3.1-70b-instruct",
-                internal_name="meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
-            ),
-        ]
-
-
 class RemotePerplexity(RemoteFullOpenLike):
     """Use RemotePerplexity for denial magic calls a service"""
 
@@ -923,27 +894,16 @@ class RemotePerplexity(RemoteFullOpenLike):
     def models(cls) -> List[ModelDescription]:
         return [
             ModelDescription(
-                cost=500,
-                name="perplexity",
-                internal_name="llama-3.1-sonar-huge-128k-online",
+                cost=350,
+                name="sonar-reasoning",
+                internal_name="sonar-reasoning",
             ),
             ModelDescription(
-                cost=400,
-                name="perplexity",
-                internal_name="llama-3.1-sonar-large-128k-online",
-            ),
-            ModelDescription(
-                cost=100,
-                name="meta-llama/llama-3.1-70b-instruct",
-                internal_name="llama-3.1-70b-instruct",
-            ),
-            ModelDescription(
-                cost=20,
-                name="meta-llama/llama-3.1-8b-instruct",
-                internal_name="llama-3.1-8b-instruct",
+                cost=300,
+                name="deepseek",
+                internal_name="r1-1776",
             ),
         ]
-
 
 class DeepInfra(RemoteFullOpenLike):
     """Use DeepInfra."""
@@ -958,6 +918,16 @@ class DeepInfra(RemoteFullOpenLike):
     @classmethod
     def models(cls) -> List[ModelDescription]:
         return [
+            ModelDescription(
+                cost=80,
+                name="meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8",
+                internal_name="meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8",
+            ),
+            ModelDescription(
+                cost=40,
+                name="meta-llama/Llama-4-Scout-17B-16E-Instruct",
+                internal_name="meta-llama/Llama-4-Scout-17B-16E-Instruct",
+            )
             ModelDescription(
                 cost=20,
                 name="google/gemma-3-27b-it",
