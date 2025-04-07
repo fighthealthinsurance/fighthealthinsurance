@@ -159,6 +159,31 @@ class RemoteModelLike(DenialBase):
         """
         return None
 
+    async def get_citations(
+        self,
+        denial_text: Optional[str],
+        procedure: Optional[str],
+        diagnosis: Optional[str],
+        patient_context: Optional[str] = None,
+        plan_context: Optional[str] = None,
+        pubmed_context: Optional[str] = None,
+    ) -> List[str]:
+        """
+        Generate a list of potentially relevant citations for this denial.
+
+        Args:
+            denial_text: Optional text of the denial letter
+            procedure: Optional procedure information
+            diagnosis: Optional diagnosis information
+            patient_context: Optional patient health history or context
+            plan_context: Optional insurance plan context
+            pubmed_context: Optional pubmed search context
+
+        Returns:
+            A list of citation strings
+        """
+        return []
+
     @property
     def external(self):
         """Whether this is an external model"""
@@ -658,7 +683,9 @@ class RemoteOpenLike(RemoteModel):
 
             # If this is a reasoning model, extract the answer portion
             if r and LLMResponseUtils.is_well_formatted_for_reasoning(r):
-                _, r = LLMResponseUtils.extract_reasoning_and_answer(r)
+                _, extracted_result = LLMResponseUtils.extract_reasoning_and_answer(r)
+                if extracted_result:
+                    r = extracted_result.strip()
 
             return r
         except Exception as e:
