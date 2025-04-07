@@ -1003,6 +1003,7 @@ class RestLoginView(ViewSet, SerializerMixin):
         try:
             user = User.objects.get(username=username)
             if not user.is_active:
+                send_verification_email(request, user)
                 return Response(
                     common_serializers.ErrorSerializer(
                         {

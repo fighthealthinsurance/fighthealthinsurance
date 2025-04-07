@@ -470,6 +470,36 @@ class RestAuthViewsTests(TestCase):
         response = self.client.post(url, data, format="json")
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
+    def test_login_sends_verification_email_for_inactive_user(self) -> None:
+        """Test that attempting to login with an inactive user sends a verification email."""
+        # Set user to inactive
+        self.user.is_active = False
+        self.user.save()
+
+        # Get the current email outbox count
+        email_count_before = len(mail.outbox)
+
+        # Attempt to login with inactive user
+        url = reverse("rest_login-login")
+        data = {
+            "username": "testuser",
+            "password": self.user_password,
+            "domain": "testdomain",
+            "phone": "",
+        }
+        response = self.client.post(url, data, format="json")
+
+        # Verify response is unauthorized
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+        self.assertIn("User is inactive", response.json()["error"])
+
+        # Check that a verification email was sent (plus one for BCC)
+        self.assertEqual(len(mail.outbox), email_count_before + 2)
+
+        # Verify the email subject
+        self.assertEqual(mail.outbox[-2].subject, "Activate your account.")
+        self.assertIn(self.user.email, mail.outbox[-2].to)
+
     def test_verify_email_with_nonexistent_user(self) -> None:
         url = reverse("rest_verify_email-verify")
         data = {
