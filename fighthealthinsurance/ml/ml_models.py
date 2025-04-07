@@ -34,6 +34,7 @@ class RemoteModelLike(DenialBase):
         patient_context,
         plan_context,
         pubmed_context,
+        ml_citations_context,
         infer_type,
         for_patient: bool,
     ):
@@ -53,6 +54,7 @@ class RemoteModelLike(DenialBase):
         patient_context=None,
         plan_context=None,
         pubmed_context=None,
+        ml_citations_context=None,
         temperature=0.7,
     ) -> Optional[str]:
         """Do inference on a remote model."""
@@ -303,6 +305,7 @@ class RemoteOpenLike(RemoteModel):
         plan_context: Optional[str],
         pubmed_context: Optional[str],
         infer_type: str,
+        ml_citations_context: Optional[List[str]] = None,
         for_patient: bool = True,
     ) -> List[Future[Tuple[str, Optional[str]]]]:
         logger.debug(f"Running inference on {self} of type {infer_type}")
@@ -324,13 +327,14 @@ class RemoteOpenLike(RemoteModel):
                             "system_prompt": system_prompt,
                             "temperature": temperature,
                             "pubmed_context": pubmed_context,
+                            "ml_citations_context": ml_citations_context,
                         },
                     ),
                     system_prompts,
                 ),
                 temperatures,
             )
-        )  # type: Iterable[Tuple[Callable[..., Tuple[str, Optional[str]]], dict[str, Union[Optional[str], float]]]]
+        )  # type: Iterable[Tuple[Callable[..., Tuple[str, Optional[str]]], dict[str, Union[Optional[str], float, Optional[List[str]]]]]]
         futures = list(map(lambda x: executor.submit(x[0], **x[1]), calls))
         return futures
 
@@ -343,6 +347,7 @@ class RemoteOpenLike(RemoteModel):
         pubmed_context,
         system_prompt: str,
         temperature: float,
+        ml_citations_context=None,
     ):
         return async_to_sync(self._checked_infer)(
             prompt,
@@ -352,6 +357,7 @@ class RemoteOpenLike(RemoteModel):
             pubmed_context,
             system_prompt,
             temperature,
+            ml_citations_context,
         )
 
     async def _checked_infer(
@@ -363,6 +369,7 @@ class RemoteOpenLike(RemoteModel):
         pubmed_context: Optional[str],
         system_prompt: str,
         temperature: float,
+        ml_citations_context: Optional[List[str]] = None,
     ):
         # Extract URLs from the prompt to avoid checking them
         input_urls = []
@@ -554,6 +561,7 @@ class RemoteOpenLike(RemoteModel):
         patient_context=None,
         plan_context=None,
         pubmed_context=None,
+        ml_citations_context=None,
         temperature=0.7,
     ) -> Optional[str]:
         r: Optional[str] = None
@@ -565,6 +573,7 @@ class RemoteOpenLike(RemoteModel):
                     patient_context=patient_context,
                     plan_context=plan_context,
                     pubmed_context=pubmed_context,
+                    ml_citations_context=ml_citations_context,
                     temperature=temperature,
                     model=self.model,
                 )
@@ -610,6 +619,7 @@ class RemoteOpenLike(RemoteModel):
         temperature,
         model,
         pubmed_context=None,
+        ml_citations_context=None,
         api_base=None,
     ) -> Optional[str]:
         if api_base is None:
@@ -640,6 +650,8 @@ class RemoteOpenLike(RemoteModel):
                     context_extra += f"You can also use this context from pubmed: {pubmed_context} and you can include the DOI number in the appeal."
                 if plan_context is not None and len(plan_context) > 3:
                     context_extra += f"For answering the question you can use this context about the plan {plan_context}"
+                if ml_citations_context is not None:
+                    context_extra += f"You can also use this context from citations: {ml_citations_context}."
                 combined_content = f"<<SYS>>{system_prompt}<</SYS>>{context_extra}{prompt[0 : self.max_len]}"
                 logger.debug(f"Using {combined_content}")
                 async with s.post(

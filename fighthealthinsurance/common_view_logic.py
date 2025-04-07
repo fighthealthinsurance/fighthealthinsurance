@@ -1200,12 +1200,14 @@ class DenialCreatorHelper:
             )
 
             # Prepare update fields
-            update_fields = {"extract_procedure_diagnosis_finished": True}
+            update_fields: dict[str, Any] = {
+                "extract_procedure_diagnosis_finished": True
+            }
 
-            if procedure is not None and len(procedure) < 200:
+            if procedure is not None and len(procedure) < 300:
                 update_fields["procedure"] = procedure
 
-            if diagnosis is not None and len(diagnosis) < 200:
+            if diagnosis is not None and len(diagnosis) < 300:
                 update_fields["diagnosis"] = diagnosis
 
             # Update all fields in a single atomic database operation
