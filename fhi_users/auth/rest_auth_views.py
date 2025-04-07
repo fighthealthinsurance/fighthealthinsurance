@@ -226,6 +226,8 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             return serializers.InviteProfessionalSerializer
         elif self.action == "create_professional_in_current_domain":
             return serializers.CreateProfessionalInCurrentDomainSerializer
+        elif self.action == "make_admin":
+            return serializers.MakeAdminSerializer
         else:
             return serializers.EmptySerializer
 
@@ -946,6 +948,96 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                     {"next_url": "https://www.fightpaperwork.com/?q=testmode"}
                 ).data,
                 status=status.HTTP_201_CREATED,
+            )
+
+    @extend_schema(
+        responses={
+            200: serializers.StatusResponseSerializer,
+            403: common_serializers.ErrorSerializer,
+            404: common_serializers.ErrorSerializer,
+            500: common_serializers.ErrorSerializer,
+        }
+    )
+    @action(detail=False, methods=["post"])
+    def make_admin(self, request) -> Response:
+        """
+        Makes a professional user an admin in a domain.
+        Only existing admins can make other users admins.
+        """
+        serializer = self.deserialize(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        professional_user_id: int = serializer.validated_data["professional_user_id"]
+        domain_id = serializer.validated_data["domain_id"]
+
+        try:
+            current_user: User = request.user  # type: ignore
+
+            # Check if current user is an admin in the domain
+            current_user_admin_in_domain = user_is_admin_in_domain(
+                current_user, domain_id
+            )
+            if not current_user_admin_in_domain:
+                # Credentials are valid but does not have permissions
+                logger.opt(exception=True).error(
+                    f"User {current_user.username} attempted to make another user admin without admin privileges in domain {domain_id}"
+                )
+                return Response(
+                    common_serializers.ErrorSerializer(
+                        {"error": "User does not have admin privileges"}
+                    ).data,
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+            # Get the professional user to make admin
+            try:
+                professional_user = ProfessionalUser.objects.get(
+                    id=professional_user_id
+                )
+            except ProfessionalUser.DoesNotExist:
+                return Response(
+                    common_serializers.ErrorSerializer(
+                        {"error": "Professional user not found"}
+                    ).data,
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            # Get the relation between the professional and domain
+            try:
+                relation = ProfessionalDomainRelation.objects.get(
+                    professional=professional_user,
+                    domain_id=domain_id,
+                    active=True,
+                )
+            except ProfessionalDomainRelation.DoesNotExist:
+                return Response(
+                    common_serializers.ErrorSerializer(
+                        {
+                            "error": "No active relationship found between user and domain"
+                        }
+                    ).data,
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            # Make the user an admin
+            relation.admin = True
+            relation.save()
+
+            return Response(
+                serializers.StatusResponseSerializer(
+                    {
+                        "status": "success",
+                        "message": f"User {professional_user.user.first_name} {professional_user.user.last_name} is now an admin",
+                    }
+                ).data,
+                status=status.HTTP_200_OK,
+            )
+
+        except Exception as e:
+            # Unexpected generic error, fail closed
+            logger.opt(exception=e).error("Error in making professional user an admin")
+            return Response(
+                common_serializers.ErrorSerializer({"error": f"Error: {str(e)}"}).data,
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
 

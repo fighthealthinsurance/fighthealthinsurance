@@ -432,3 +432,12 @@ class DomainExistsResponseSerializer(serializers.Serializer):
     """
 
     exists = serializers.BooleanField()
+
+
+class MakeAdminSerializer(serializers.Serializer):
+    """
+    Serializer for making a professional user an admin in a domain.
+    """
+
+    professional_user_id = serializers.IntegerField()
+    domain_id = serializers.CharField()

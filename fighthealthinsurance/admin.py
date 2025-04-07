@@ -31,7 +31,12 @@ from fighthealthinsurance.models import (
     StripePrice,
     AppealAttachment,
 )
-from fhi_users.models import ProfessionalUser, PatientUser, UserDomain
+from fhi_users.models import (
+    ProfessionalUser,
+    PatientUser,
+    UserDomain,
+    ProfessionalDomainRelation,
+)
 from django.contrib.auth.admin import UserAdmin
 
 
@@ -47,6 +52,20 @@ class ProfessionalUserAdmin(admin.ModelAdmin):
     """User domains"""
 
     list_display = ("id", "user", "user__first_name", "user__email")
+
+
+@admin.register(ProfessionalDomainRelation)
+class ProfessionalDomainRelationAdmin(admin.ModelAdmin):
+    """ProfessionalDomainRelation domains"""
+
+    list_display = (
+        "professional",
+        "admin",
+        "domain",
+        "professional__user",
+        "professional__user__first_name",
+        "professional__user__email",
+    )
 
 
 @admin.register(PatientUser)
