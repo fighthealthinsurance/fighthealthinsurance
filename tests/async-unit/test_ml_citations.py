@@ -142,19 +142,18 @@ class TestMLCitationFunctionality(unittest.TestCase):
         for citation in citations:
             self.assertNotIn("Here are relevant citations", citation)
 
-    @patch("fighthealthinsurance.ml.ml_router.MLRouter.models_by_name")
-    def test_full_find_citation_backends(self, mock_models_by_name):
+    def test_full_find_citation_backends(self):
         """Test the full_find_citation_backends router method."""
         # Setup mocks
         mock_perplexity_model = MagicMock(spec=RemotePerplexity)
-        mock_models_by_name.get.return_value = {
-            "sonar-reasoning": [mock_perplexity_model],
-            "deepseek": [mock_perplexity_model],
-        }
 
         # Create router instance
         router = MLRouter()
-        router.models_by_name = mock_models_by_name
+        router.models_by_name = {
+            "sonar-reasoning": [mock_perplexity_model],
+            "sonar": [mock_perplexity_model],
+            "deepseek": [mock_perplexity_model],
+        }
 
         # Test with external=False
         backends = router.full_find_citation_backends(use_external=False)
@@ -164,20 +163,19 @@ class TestMLCitationFunctionality(unittest.TestCase):
         backends = router.full_find_citation_backends(use_external=True)
         self.assertGreater(len(backends), 0)
 
-    @patch("fighthealthinsurance.ml.ml_router.MLRouter.models_by_name")
-    def test_partial_find_citation_backends(self, mock_models_by_name):
+    def test_partial_find_citation_backends(self):
         """Test the partial_find_citation_backends router method."""
         # Setup mocks
         mock_perplexity_model = MagicMock(spec=RemotePerplexity)
-        mock_models_by_name.get.return_value = {
-            "sonar-reasoning": [mock_perplexity_model],
-            "deepseek": [mock_perplexity_model],
-        }
+
 
         # Create router instance
         router = MLRouter()
-        router.models_by_name = mock_models_by_name
-
+        router.models_by_name = {
+            "sonar-reasoning": [mock_perplexity_model],
+            "sonar": [mock_perplexity_model],
+            "deepseek": [mock_perplexity_model],
+        }
         # Test partial backends (should always return models)
         backends = router.partial_find_citation_backends()
         self.assertGreater(len(backends), 0)

@@ -136,8 +136,6 @@ class MLRouter(object):
         # Only use Perplexity models for citations
         if "sonar-reasoning" in self.models_by_name:
             citation_models.extend(self.models_by_name["sonar-reasoning"])
-        if "deepseek" in self.models_by_name:
-            citation_models.extend(self.models_by_name["deepseek"])
 
         return citation_models
 
@@ -154,8 +152,8 @@ class MLRouter(object):
         # Only use Perplexity models for citations
         if "sonar-reasoning" in self.models_by_name:
             citation_models.extend(self.models_by_name["sonar-reasoning"])
-        if "deepseek" in self.models_by_name:
-            citation_models.extend(self.models_by_name["deepseek"])
+        if "sonar" in self.models_by_name:
+            citation_models.extend(self.models_by_name["sonar"])
 
         return citation_models
 
