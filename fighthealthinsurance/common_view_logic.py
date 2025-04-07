@@ -917,6 +917,7 @@ class DenialCreatorHelper:
         Generate a list of questions that could help craft a better appeal for
         this specific denial. The questions will be stored in the denial object's
         generated_questions field as tuples of (question, answer).
+        Also generates citations in a non-blocking manner.
 
         Args:
             denial_id: The ID of the denial to generate questions for
@@ -928,8 +929,6 @@ class DenialCreatorHelper:
         if not denial:
             logger.warning(f"Could not find denial with ID {denial_id}")
             return []
-        # For now this is disabled
-        return []
         try:
             # Check if we already have questions generated
             if denial.generated_questions is not None:
@@ -949,7 +948,22 @@ class DenialCreatorHelper:
             patient_context = denial.health_history
             plan_context = denial.plan_context
 
+            # Create a new task for generating citations without blocking
+            async def start_citation_generation():
+                from fighthealthinsurance.ml.ml_citations_helper import (
+                    MLCitationsHelper,
+                )
+
+                try:
+                    await MLCitationsHelper.generate_citations_for_denial(denial)
+                except Exception as e:
+                    logger.opt(exception=True).warning(
+                        f"Failed to generate citations for denial {denial_id}: {e}"
+                    )
+
             if denial.procedure:
+                # Start the citation generation task without waiting for it
+                asyncio.create_task(start_citation_generation())
 
                 # Use the ML model to generate questions with potential answers
                 raw_questions = await appealGenerator.get_appeal_questions(
@@ -966,9 +980,10 @@ class DenialCreatorHelper:
                     for q in raw_questions
                 ]
 
-                # Store the questions in the generated_questions field
-                denial.generated_questions = questions
-                await denial.asave()
+                # Store the questions directly with aupdate instead of loading and saving
+                await Denial.objects.filter(denial_id=denial_id).aupdate(
+                    generated_questions=questions
+                )
                 logger.debug(
                     f"Generated {len(questions)} questions for denial {denial_id}"
                 )
@@ -1176,24 +1191,31 @@ class DenialCreatorHelper:
     @classmethod
     async def extract_set_denial_and_diagnosis(cls, denial_id: int):
         denial = await Denial.objects.filter(denial_id=denial_id).aget()
+        procedure = None
+        diagnosis = None
+
         try:
             (procedure, diagnosis) = await appealGenerator.get_procedure_and_diagnosis(
                 denial_text=denial.denial_text
             )
-            if procedure is not None and len(procedure) < 200:
-                denial.procedure = procedure
-            if diagnosis is not None and len(diagnosis) < 200:
-                denial.diagnosis = diagnosis
-        except Exception as e:
-            logger.opt(exception=True).warning(
-                f"Failed to extract procedure and diagnosis for denial {denial_id}: {e}"
-            )
-        finally:
-            denial.extract_procedure_diagnosis_finished = True
-            await denial.asave()
+
+            # Prepare update fields
+            update_fields: dict[str, Any] = {
+                "extract_procedure_diagnosis_finished": True
+            }
+
+            if procedure is not None and len(procedure) < 300:
+                update_fields["procedure"] = procedure
+
+            if diagnosis is not None and len(diagnosis) < 300:
+                update_fields["diagnosis"] = diagnosis
+
+            # Update all fields in a single atomic database operation
+            await Denial.objects.filter(denial_id=denial_id).aupdate(**update_fields)
+
             # Launch a "fire and forget" task to find related PubMed articles
             # now that we have diagnosis and procedure information
-            if denial.procedure or denial.diagnosis:
+            if denial.procedure or denial.diagnosis or procedure or diagnosis:
 
                 async def find_pubmed_articles():
                     try:
@@ -1209,6 +1231,15 @@ class DenialCreatorHelper:
 
                 # Create the task but don't await it - fire and forget
                 asyncio.create_task(find_pubmed_articles())
+
+        except Exception as e:
+            logger.opt(exception=True).warning(
+                f"Failed to extract procedure and diagnosis for denial {denial_id}: {e}"
+            )
+            # Even on failure, mark extraction as finished
+            await Denial.objects.filter(denial_id=denial_id).aupdate(
+                extract_procedure_diagnosis_finished=True
+            )
 
     @classmethod
     async def extract_set_insurance_company(cls, denial_id):
@@ -1226,8 +1257,10 @@ class DenialCreatorHelper:
                 if (insurance_company in denial.denial_text) or len(
                     insurance_company
                 ) < 50:
-                    denial.insurance_company = insurance_company
-                    await denial.asave()
+                    # Use aupdate() directly instead of loading and saving the object
+                    await Denial.objects.filter(denial_id=denial_id).aupdate(
+                        insurance_company=insurance_company
+                    )
                     logger.debug(
                         f"Successfully extracted insurance company: {insurance_company}"
                     )
@@ -1253,8 +1286,10 @@ class DenialCreatorHelper:
 
             # Simple validation to avoid hallucinations
             if plan_id is not None and len(plan_id) < 30:
-                denial.plan_id = plan_id
-                await denial.asave()
+                # Use aupdate to directly update the field at the database level
+                await Denial.objects.filter(denial_id=denial_id).aupdate(
+                    plan_id=plan_id
+                )
                 logger.debug(f"Successfully extracted plan ID: {plan_id}")
                 return plan_id
             else:
@@ -1277,8 +1312,10 @@ class DenialCreatorHelper:
 
             # Simple validation to avoid hallucinations
             if claim_id is not None and len(claim_id) < 30:
-                denial.claim_id = claim_id
-                await denial.asave()
+                # Use aupdate to directly update the field at the database level
+                await Denial.objects.filter(denial_id=denial_id).aupdate(
+                    claim_id=claim_id
+                )
                 logger.debug(f"Successfully extracted claim ID: {claim_id}")
                 return claim_id
             else:
@@ -1301,9 +1338,10 @@ class DenialCreatorHelper:
 
             # Validate date of service
             if date_of_service is not None:
-                # Store as string since model may expect string format
-                denial.date_of_service = date_of_service
-                await denial.asave()
+                # Use aupdate to directly update at the database level
+                await Denial.objects.filter(denial_id=denial_id).aupdate(
+                    date_of_service=date_of_service
+                )
                 logger.debug(
                     f"Successfully extracted date of service: {date_of_service}"
                 )
@@ -1340,8 +1378,10 @@ class DenialCreatorHelper:
                 appeal_fax_number = None
 
         if appeal_fax_number is not None:
-            denial.fax_number = appeal_fax_number
-            await denial.asave()
+            # Use aupdate instead of fetching and saving
+            await Denial.objects.filter(denial_id=denial_id).aupdate(
+                fax_number=appeal_fax_number
+            )
             logger.debug(f"Successfully extracted fax number: {appeal_fax_number}")
             return appeal_fax_number
         return None
@@ -1562,18 +1602,37 @@ class AppealsBackendHelper:
         if plan_context is not None:
             denial.plan_context = " ".join(set(plan_context))
         await denial.asave()
-        logger.debug("Calling make appeals")
-        pubmed_context = None
+
+        # Get pubmed and ml citations context
+        pubmed_context: Optional[str] = None
+        ml_citations_context: Optional[Any] = None
+
+        # Get PubMed context
         logger.debug("Looking up the pubmed context")
+        pubmed_context_awaitable = asyncio.wait_for(
+            cls.pmt.find_context_for_denial(denial), timeout=75
+        )
+
+        from fighthealthinsurance.ml.ml_citations_helper import (
+            MLCitationsHelper,
+        )
+
+        ml_citations_context_awaitable = asyncio.wait_for(
+            MLCitationsHelper.generate_citations_for_denial(denial), timeout=75
+        )
+        # Await both contexts so we can use co-operative multitasking
         try:
-            pubmed_context = await asyncio.wait_for(
-                cls.pmt.find_context_for_denial(denial), timeout=60
+            results = await asyncio.gather(
+                pubmed_context_awaitable, ml_citations_context_awaitable
             )
+            pubmed_context = results[0]
+            ml_citations_context = results[1]
         except Exception as e:
-            logger.opt(exception=True).debug(
-                f"Error {e} looking up context for {denial}."
-            )
-        logger.debug("Pubmed context done.")
+            logger.debug(f"Error gathering contexts: {e}")
+            # We still might have saved a context.
+            denial.refresh_from_db()
+            pubmed_context = denial.pubmed_context
+            ml_citations_context = denial.ml_citations_context
 
         async def save_appeal(appeal_text: str) -> dict[str, str]:
             # Save all of the proposed appeals, so we can use RL later.
@@ -1581,14 +1640,14 @@ class AppealsBackendHelper:
             logger.debug(f"{t}: Saving {appeal_text}")
             await asyncio.sleep(0)
             # YOLO on saving appeals, sqllite gets sad.
-            id = "unkown"
+            id = "unknown"
             try:
                 pa = ProposedAppeal(appeal_text=appeal_text, for_denial=denial)
                 await pa.asave()
                 id = str(pa.id)
             except Exception as e:
                 logger.opt(exception=True).warning(
-                    "Failed to save proposed appeal: {e}"
+                    f"Failed to save proposed appeal: {e}"
                 )
                 pass
             passed = time.time() - t
@@ -1634,6 +1693,7 @@ class AppealsBackendHelper:
             medical_reasons=medical_reasons,
             non_ai_appeals=non_ai_appeals,
             pubmed_context=pubmed_context,
+            ml_citations_context=ml_citations_context,
         )
         filtered_appeals: Iterator[str] = filter(lambda x: x != None, appeals)
 

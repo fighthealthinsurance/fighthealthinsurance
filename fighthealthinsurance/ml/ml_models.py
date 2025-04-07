@@ -20,6 +20,7 @@ else:
     from async_timeout import timeout as async_timeout
 
 from llm_result_utils.cleaner_utils import CleanerUtils
+from llm_result_utils.llm_utils import LLMResponseUtils
 
 from fighthealthinsurance.exec import *
 from fighthealthinsurance.utils import all_concrete_subclasses
@@ -33,6 +34,7 @@ class RemoteModelLike(DenialBase):
         patient_context,
         plan_context,
         pubmed_context,
+        ml_citations_context,
         infer_type,
         for_patient: bool,
     ):
@@ -52,6 +54,7 @@ class RemoteModelLike(DenialBase):
         patient_context=None,
         plan_context=None,
         pubmed_context=None,
+        ml_citations_context=None,
         temperature=0.7,
     ) -> Optional[str]:
         """Do inference on a remote model."""
@@ -78,7 +81,7 @@ class RemoteModelLike(DenialBase):
 
     async def get_appeal_questions(
         self,
-        denial_text: str,
+        denial_text: Optional[str],
         procedure: Optional[str],
         diagnosis: Optional[str],
         patient_context: Optional[str] = None,
@@ -157,6 +160,31 @@ class RemoteModelLike(DenialBase):
             Extracted date of service or None
         """
         return None
+
+    async def get_citations(
+        self,
+        denial_text: Optional[str],
+        procedure: Optional[str],
+        diagnosis: Optional[str],
+        patient_context: Optional[str] = None,
+        plan_context: Optional[str] = None,
+        pubmed_context: Optional[str] = None,
+    ) -> List[str]:
+        """
+        Generate a list of potentially relevant citations for this denial.
+
+        Args:
+            denial_text: Optional text of the denial letter
+            procedure: Optional procedure information
+            diagnosis: Optional diagnosis information
+            patient_context: Optional patient health history or context
+            plan_context: Optional insurance plan context
+            pubmed_context: Optional pubmed search context
+
+        Returns:
+            A list of citation strings
+        """
+        return []
 
     @property
     def external(self):
@@ -277,6 +305,7 @@ class RemoteOpenLike(RemoteModel):
         plan_context: Optional[str],
         pubmed_context: Optional[str],
         infer_type: str,
+        ml_citations_context: Optional[List[str]] = None,
         for_patient: bool = True,
     ) -> List[Future[Tuple[str, Optional[str]]]]:
         logger.debug(f"Running inference on {self} of type {infer_type}")
@@ -298,13 +327,14 @@ class RemoteOpenLike(RemoteModel):
                             "system_prompt": system_prompt,
                             "temperature": temperature,
                             "pubmed_context": pubmed_context,
+                            "ml_citations_context": ml_citations_context,
                         },
                     ),
                     system_prompts,
                 ),
                 temperatures,
             )
-        )  # type: Iterable[Tuple[Callable[..., Tuple[str, Optional[str]]], dict[str, Union[Optional[str], float]]]]
+        )  # type: Iterable[Tuple[Callable[..., Tuple[str, Optional[str]]], dict[str, Union[Optional[str], float, Optional[List[str]]]]]]
         futures = list(map(lambda x: executor.submit(x[0], **x[1]), calls))
         return futures
 
@@ -317,6 +347,7 @@ class RemoteOpenLike(RemoteModel):
         pubmed_context,
         system_prompt: str,
         temperature: float,
+        ml_citations_context=None,
     ):
         return async_to_sync(self._checked_infer)(
             prompt,
@@ -326,6 +357,7 @@ class RemoteOpenLike(RemoteModel):
             pubmed_context,
             system_prompt,
             temperature,
+            ml_citations_context,
         )
 
     async def _checked_infer(
@@ -337,6 +369,7 @@ class RemoteOpenLike(RemoteModel):
         pubmed_context: Optional[str],
         system_prompt: str,
         temperature: float,
+        ml_citations_context: Optional[List[str]] = None,
     ):
         # Extract URLs from the prompt to avoid checking them
         input_urls = []
@@ -528,6 +561,7 @@ class RemoteOpenLike(RemoteModel):
         patient_context=None,
         plan_context=None,
         pubmed_context=None,
+        ml_citations_context=None,
         temperature=0.7,
     ) -> Optional[str]:
         r: Optional[str] = None
@@ -539,6 +573,7 @@ class RemoteOpenLike(RemoteModel):
                     patient_context=patient_context,
                     plan_context=plan_context,
                     pubmed_context=pubmed_context,
+                    ml_citations_context=ml_citations_context,
                     temperature=temperature,
                     model=self.model,
                 )
@@ -584,6 +619,7 @@ class RemoteOpenLike(RemoteModel):
         temperature,
         model,
         pubmed_context=None,
+        ml_citations_context=None,
         api_base=None,
     ) -> Optional[str]:
         if api_base is None:
@@ -614,6 +650,8 @@ class RemoteOpenLike(RemoteModel):
                     context_extra += f"You can also use this context from pubmed: {pubmed_context} and you can include the DOI number in the appeal."
                 if plan_context is not None and len(plan_context) > 3:
                     context_extra += f"For answering the question you can use this context about the plan {plan_context}"
+                if ml_citations_context is not None:
+                    context_extra += f"You can also use this context from citations: {ml_citations_context}."
                 combined_content = f"<<SYS>>{system_prompt}<</SYS>>{context_extra}{prompt[0 : self.max_len]}"
                 logger.debug(f"Using {combined_content}")
                 async with s.post(
@@ -644,8 +682,23 @@ class RemoteOpenLike(RemoteModel):
             if "choices" not in json_result:
                 logger.debug(f"Response {json_result} missing key result.")
                 return None
+
             r: str = json_result["choices"][0]["message"]["content"]
+
+            # Check if the response is valid text using LLMResponseUtils
+            if not LLMResponseUtils.is_valid_text(r):
+                error_msg = f"Received non-text response from {model}"
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+
             logger.debug(f"Got {r} from {model} w/ {api_base} {self}")
+
+            # If this is a reasoning model, extract the answer portion
+            if r and LLMResponseUtils.is_well_formatted_for_reasoning(r):
+                _, extracted_result = LLMResponseUtils.extract_reasoning_and_answer(r)
+                if extracted_result:
+                    r = extracted_result.strip()
+
             return r
         except Exception as e:
             logger.opt(exception=True).error(
@@ -677,7 +730,7 @@ class RemoteFullOpenLike(RemoteOpenLike):
                 """You must be concise. You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters to identify the requested procedure and, if available, the associated diagnosis. Each word costs an extra dollar. Provide a concise response with the procedure on one line starting with "Procedure" and Diagnsosis on another line starting with Diagnosis. Do not say not specified. Diagnosis can also be reason for treatment even if it's not a disease (like high risk homosexual behaviour for prep or preventitive and the name of the diagnosis). Remember each result on a seperated line."""
             ],
             "questions": [
-                """You have deep expertise in health insurance and extensive experience working in a medical office. Your task is to generate the best one to four specific, detailed questions that will help craft a stronger appeal for a health insurance denial.
+                """You have deep expertise in health insurance and extensive experience working in a medical office. Your task is to generate the best one to three specific, detailed questions that will help craft a stronger appeal for a health insurance denial.
 
 ### Key Guidelines:
 - No Independent Medical Review (IMR/IME) has occured yet We are only dealing with the insurance company at this stage, so do not reference independent medical reviews.
@@ -701,8 +754,15 @@ class RemoteFullOpenLike(RemoteOpenLike):
 - Case-Specific: Each question should be directly relevant to the specific denial reason and medical necessity at hand.
 """
             ],
+            "citations": [
+                """You have an in-depth understanding of health insurance and extensive experience working in a medical office.
+                Your expertise lies justifying care to insurance companies and regulators.
+                When providing citations, ensure they are relevant to the specific denial and directly support the medical necessity of the treatment. Only provide references you are certain exist (e.g. provided as input or found as agent). Format citations as follows: [1] Author et al., Title, Journal, Year, url; [2] etc.
+                Be careful that all citations are real and the links work.
+                Do not provide generic citations unless specifically asked for."""
+            ],
             "medically_necessary": [
-                """You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters. Each word costs an extra dollar. Please provide a concise response. Do not use the 3rd person when referring to the patient (e.g. don't say "the patient", "patient's", "his", "hers"), instead use the first person (I, my, mine,etc.) when talking about the patient. You are not a review and should not mention any. Write concisely in a professional tone akin to patio11. Do not say this is why the decission should be overturned. Just say why you believe it is medically necessary (e.g. to prevent X or to treat Y)."""
+                """You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters. Each word costs an extra dollar. Please provide a concise response. You are not an independent medical reviewer and should not mention any. Write concisely in a professional tone akin to patio11. Do not say this is why the decission should be overturned. Just say why you believe it is medically necessary (e.g. to prevent X or to treat Y)."""
             ],
             "generic": [
                 """You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters. Help a patient answer the provided question for their insurance appeal."""
@@ -719,7 +779,7 @@ class RemoteFullOpenLike(RemoteOpenLike):
 
     async def get_appeal_questions(
         self,
-        denial_text: str,
+        denial_text: Optional[str],
         procedure: Optional[str],
         diagnosis: Optional[str],
         patient_context: Optional[str] = None,
@@ -740,17 +800,23 @@ class RemoteFullOpenLike(RemoteOpenLike):
             A list of tuples (question, answer) where answer may be empty
         """
         procedure_opt = (
-            "The procedure denied was {procedure} so only ask questions relevant to {procedure}"
+            f"The procedure denied was {procedure} so only ask questions relevant to {procedure}"
             if procedure
             else ""
         )
         patient_context_opt = (
-            "Optional patient context: {patient_context}" if patient_context else ""
+            f"Optional patient context: {patient_context}" if patient_context else ""
         )
-        diagnosis_opt = "The primary diagnosis was {diagnosis}" if diagnosis else ""
+        diagnosis_opt = f"The primary diagnosis was {diagnosis}" if diagnosis else ""
+        denial_text_opt = (
+            f"The denial text is: {denial_text}"
+            if denial_text
+            else "No denial text provided, use other context clues."
+        )
         # Procedure opt is in their multiple times intentionally. ~computers~
         prompt = f"""
-        Some context which can help you in your task: {denial_text}
+        Some context which can help you in your task:
+        {denial_text_opt} \n
         {procedure_opt} \n
         {patient_context_opt} \n
         {diagnosis_opt} \n
@@ -758,7 +824,12 @@ class RemoteFullOpenLike(RemoteOpenLike):
         Your task is to write one to three patient friendly questions about the patient history to help appeal this denial. \n
         Remember to keep the questions concise and patient-friendly and focused on the potential patient history.\n
         If you ask questions about the denial it's self the patient will be sad and give up so don't do that.
-        {procedure_opt} \n
+        When formatting your output it must be in the format of one question + answer per line with the answer after the question mark.\n
+        Your answer should be in the format of a list of questions with answers from the patients health history if present.
+        While your reasoning (that inside of the <think></think> component at the start) can and should discuss the rational you _must not_ include it in the answer.
+        For example:
+        1. What is the patient's age? 45
+        2. Has the patient had any previous surgeries? Unknown
         """
 
         system_prompts: list[str] = self.get_system_prompts("questions")
@@ -768,7 +839,7 @@ class RemoteFullOpenLike(RemoteOpenLike):
             prompt=prompt,
             patient_context=patient_context,
             plan_context=plan_context,
-            temperature=0.7,
+            temperature=0.6,
         )
 
         if result is None:
@@ -777,6 +848,12 @@ class RemoteFullOpenLike(RemoteOpenLike):
 
         # Process the result into a list of questions with potential answers
         questions_with_answers: List[Tuple[str, str]] = []
+
+        if "Rationale for questions" in result:
+            logger.debug(
+                f"Received poorly formatted response from {self.model} when asking for questions. {result}"
+            )
+            return []
 
         # Handle the case where the model returns a single block of text
         if "\n" not in result and len(result) > 100:
@@ -834,6 +911,94 @@ class RemoteFullOpenLike(RemoteOpenLike):
 
         return questions_with_answers
 
+    async def get_citations(
+        self,
+        denial_text: Optional[str],
+        procedure: Optional[str],
+        diagnosis: Optional[str],
+        patient_context: Optional[str] = None,
+        plan_context: Optional[str] = None,
+        pubmed_context: Optional[str] = None,
+    ) -> List[str]:
+        """
+        Generate a list of potentially relevant citations for this denial.
+
+        Args:
+            denial_text: Optional text of the denial letter
+            procedure: Optional procedure information
+            diagnosis: Optional diagnosis information
+            patient_context: Optional patient health history or context
+            plan_context: Optional insurance plan context
+            pubmed_context: Optional pubmed search context
+
+        Returns:
+            A list of citation strings
+        """
+        procedure_opt = f"The procedure denied was {procedure}" if procedure else ""
+        diagnosis_opt = f"The primary diagnosis was {diagnosis}" if diagnosis else ""
+        patient_context_opt = (
+            f"Patient history: {patient_context}" if patient_context else ""
+        )
+        pubmed_context_opt = (
+            f"Available research: {pubmed_context}" if pubmed_context else ""
+        )
+        denial_text_opt = (
+            f"Denial text: {denial_text}"
+            if denial_text
+            else "No denial text provided, use other context clues."
+        )
+
+        prompt = f"""
+        Based on the following context, provide a list of relevant citations that would be helpful for an insurance appeal.
+
+        CONTEXT:
+        {denial_text_opt}
+        {procedure_opt}
+        {diagnosis_opt}
+        {patient_context_opt}
+        {pubmed_context_opt}
+
+        Please provide a list of specific citations (with DOIs, PMIDs, or URLs when available) that directly support the medical necessity of the procedure/treatment.
+        Format each citation on a new line.
+        Only include citations that are real and verifiable - do not fabricate any references.
+        Prioritize high-quality, peer-reviewed research, clinical guidelines, and standard of care documentation.
+        """
+
+        system_prompts: list[str] = self.get_system_prompts("citations")
+
+        result = await self._infer(
+            system_prompts=system_prompts,
+            prompt=prompt,
+            patient_context=patient_context,
+            plan_context=plan_context,
+            pubmed_context=pubmed_context,
+            temperature=0.25,  # Lower temperature to reduce creativity in citations
+        )
+
+        if result is None:
+            logger.warning("Failed to generate citations")
+            return []
+
+        # Process the result into a list of citations
+        citations: List[str] = []
+
+        # Split by newlines and process each line
+        for line in result.split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+
+            # Remove numbering and bullet points at the beginning of the line
+            line = re.sub(r"^\s*(?:\d+[.)\-]|\*|\•|\-)\s+", "", line)
+
+            # Skip header lines
+            if line.lower().startswith(("here are", "citations", "references")):
+                continue
+
+            citations.append(line)
+
+        return citations
+
 
 class RemoteHealthInsurance(RemoteFullOpenLike):
     def __init__(self, model: str):
@@ -873,42 +1038,6 @@ class RemoteHealthInsurance(RemoteFullOpenLike):
         ]
 
 
-class RemoteTogetherAI(RemoteFullOpenLike):
-    """Use RemotePerplexity for denial magic calls a service"""
-
-    def __init__(self, model: str):
-        api_base = "https://api.together.xyz"
-        token = os.getenv("TOGETHER_KEY")
-        if token is None or len(token) < 1:
-            raise Exception("No token found for together")
-        super().__init__(api_base, token, model=model)
-
-    @classmethod
-    def models(cls) -> List[ModelDescription]:
-        return [
-            ModelDescription(
-                cost=350,
-                name="meta-llama/llama-3.2-405B-instruct",
-                internal_name="meta-llama/Meta-Llama-3.2-405B-Instruct-Turbo",
-            ),
-            ModelDescription(
-                cost=350,
-                name="meta-llama/llama-3.1-405B-instruct",
-                internal_name="meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo",
-            ),
-            ModelDescription(
-                cost=88,
-                name="meta-llama/llama-3.2-70B-instruct",
-                internal_name="meta-llama/Meta-Llama-3.2-70B-Instruct-Turbo",
-            ),
-            ModelDescription(
-                cost=88,
-                name="meta-llama/llama-3.1-70b-instruct",
-                internal_name="meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
-            ),
-        ]
-
-
 class RemotePerplexity(RemoteFullOpenLike):
     """Use RemotePerplexity for denial magic calls a service"""
 
@@ -923,24 +1052,14 @@ class RemotePerplexity(RemoteFullOpenLike):
     def models(cls) -> List[ModelDescription]:
         return [
             ModelDescription(
-                cost=500,
-                name="perplexity",
-                internal_name="llama-3.1-sonar-huge-128k-online",
+                cost=350,
+                name="sonar-reasoning",
+                internal_name="sonar-reasoning",
             ),
             ModelDescription(
-                cost=400,
-                name="perplexity",
-                internal_name="llama-3.1-sonar-large-128k-online",
-            ),
-            ModelDescription(
-                cost=100,
-                name="meta-llama/llama-3.1-70b-instruct",
-                internal_name="llama-3.1-70b-instruct",
-            ),
-            ModelDescription(
-                cost=20,
-                name="meta-llama/llama-3.1-8b-instruct",
-                internal_name="llama-3.1-8b-instruct",
+                cost=300,
+                name="deepseek",
+                internal_name="r1-1776",
             ),
         ]
 
@@ -958,6 +1077,16 @@ class DeepInfra(RemoteFullOpenLike):
     @classmethod
     def models(cls) -> List[ModelDescription]:
         return [
+            ModelDescription(
+                cost=80,
+                name="meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8",
+                internal_name="meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8",
+            ),
+            ModelDescription(
+                cost=40,
+                name="meta-llama/Llama-4-Scout-17B-16E-Instruct",
+                internal_name="meta-llama/Llama-4-Scout-17B-16E-Instruct",
+            ),
             ModelDescription(
                 cost=20,
                 name="google/gemma-3-27b-it",
@@ -982,6 +1111,11 @@ class DeepInfra(RemoteFullOpenLike):
                 cost=30,
                 name="meta-llama/Llama-3.3-70B-Instruct-Turbo",
                 internal_name="meta-llama/Llama-3.3-70B-Instruct-Turbo",
+            ),
+            ModelDescription(
+                cost=400,
+                name="deepseek",
+                internal_name="deepseek-ai/DeepSeek-R1-Turbo",
             ),
         ]
 
