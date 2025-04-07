@@ -824,7 +824,10 @@ class RemoteFullOpenLike(RemoteOpenLike):
         Your task is to write one to three patient friendly questions about the patient history to help appeal this denial. \n
         Remember to keep the questions concise and patient-friendly and focused on the potential patient history.\n
         If you ask questions about the denial it's self the patient will be sad and give up so don't do that.
-        {procedure_opt} \n
+        When formatting your output it must be in the format of one question + answer per line with the answer after the question mark.\n
+        For example:
+        1. What is the patient's age? 45
+        2. Has the patient had any previous surgeries? Unknown
         """
 
         system_prompts: list[str] = self.get_system_prompts("questions")
