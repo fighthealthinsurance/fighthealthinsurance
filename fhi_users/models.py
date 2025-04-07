@@ -209,7 +209,7 @@ class ProfessionalUser(models.Model):
         return UserDomain.objects.filter(
             professionaldomainrelation__professional=self,
             professionaldomainrelation__admin=True,
-            professionaldomainrelation__active=True,
+            professionaldomainrelation__active_domain_relation=True,
         )
 
     def get_full_name(self):
@@ -220,11 +220,11 @@ class ProfessionalDomainRelation(models.Model):
     professional = models.ForeignKey("ProfessionalUser", on_delete=models.CASCADE)
     domain = models.ForeignKey(UserDomain, on_delete=models.CASCADE)
     # Is the relation "active" (note: we should move this to a function)
-    active = models.BooleanField(default=False)
+    active_domain_relation = models.BooleanField(default=False)
     admin = models.BooleanField(default=False)
     read_only = models.BooleanField(default=False)
     professional_type = models.CharField(max_length=400, null=True)
-    pending = models.BooleanField(default=True)
+    pending_domain_relation = models.BooleanField(default=True)
     suspended = models.BooleanField(default=False)
     rejected = models.BooleanField(default=False)
 
@@ -233,9 +233,9 @@ class ProfessionalDomainRelation(models.Model):
 def professional_domain_relation_presave(
     sender: type, instance: ProfessionalDomainRelation, **kwargs: dict
 ) -> None:
-    """Dynamically set the active field based on pending/suspended/rejected."""
-    instance.active = (
-        not instance.pending and not instance.suspended and not instance.rejected
+    """Dynamically set the active_domain_relation field based on pending_domain_relation/suspended/rejected."""
+    instance.active_domain_relation = (
+        not instance.pending_domain_relation and not instance.suspended and not instance.rejected
     )
 
 

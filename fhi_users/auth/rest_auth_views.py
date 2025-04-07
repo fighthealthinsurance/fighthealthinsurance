@@ -345,9 +345,9 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                     ProfessionalDomainRelation.objects.create(
                         professional=professional_user,
                         domain=user_domain,
-                        active=True,
+                        active_domain_relation=True,
                         admin=False,  # New professionals are not admins by default
-                        pending=False,
+                        pending_domain_relation=False,
                     )
                 except Exception as e:
                     logger.error(
@@ -500,10 +500,10 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             ProfessionalDomainRelation.objects.filter(
                 professional=ProfessionalUser.objects.get(user=current_user),
                 domain=domain,
-                active=True,
+                active_domain_relation=True,
             )
         )
-        professionals = domain.get_professional_users(active=True)
+        professionals = domain.get_professional_users(active_domain_relation=True)
         serializer = serializers.ProfessionalSummary(professionals, many=True)
         return Response(serializer.data)
 
@@ -527,10 +527,10 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             ProfessionalDomainRelation.objects.filter(
                 professional=ProfessionalUser.objects.get(user=current_user),
                 domain=domain,
-                active=True,
+                active_domain_relation=True,
             )
         )
-        professionals = domain.get_professional_users(pending=True)
+        professionals = domain.get_professional_users(pending_domain_relation=True)
         serializer = serializers.ProfessionalSummary(professionals, many=True)
         return Response(serializer.data)
 
@@ -560,12 +560,12 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 status=status.HTTP_403_FORBIDDEN,
             )
         relation = ProfessionalDomainRelation.objects.get(
-            professional_id=professional_user_id, pending=True, domain_id=domain_id
+            professional_id=professional_user_id, pending_domain_relation=True, domain_id=domain_id
         )
-        relation.pending = False
+        relation.pending_domain_relation = False
         # TODO: Add to model
         relation.rejected = True
-        relation.active = False
+        relation.active_domain_relation = False
         relation.save()
         return Response(
             serializers.StatusResponseSerializer(
@@ -615,12 +615,12 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             )
         try:
             relation = ProfessionalDomainRelation.objects.get(
-                professional_id=professional_user_id, pending=True, domain_id=domain_id
+                professional_id=professional_user_id, pending_domain_relation=True, domain_id=domain_id
             )
             professional_user = ProfessionalUser.objects.get(id=professional_user_id)
             professional_user.active = True
             professional_user.save()
-            relation.pending = False
+            relation.pending_domain_relation = False
             relation.save()
 
             return Response(
@@ -907,9 +907,9 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         ProfessionalDomainRelation.objects.create(
             professional=professional_user,
             domain=user_domain,
-            active=False,
+            active_domain_relation=False,
             admin=new_domain,
-            pending=True,
+            pending_domain_relation=False if new_domain else True,
         )
 
         if not (settings.DEBUG and data["skip_stripe"]):
@@ -997,7 +997,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 relation = ProfessionalDomainRelation.objects.get(
                     professional=professional_user,
                     domain_id=domain_id,
-                    active=True,
+                    active_domain_relation=True,
                 )
             except ProfessionalDomainRelation.DoesNotExist:
                 return Response(
