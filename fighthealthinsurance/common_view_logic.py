@@ -937,71 +937,32 @@ class DenialCreatorHelper:
         Returns:
             A list of (question, answer) tuples to help with appeal creation
         """
+        from fighthealthinsurance.ml.ml_helpers import (
+            MLAppealQuestionsHelper,
+            MLCitationsHelper,
+        )
+
         denial = await Denial.objects.filter(denial_id=denial_id).aget()
         if not denial:
             logger.warning(f"Could not find denial with ID {denial_id}")
             return []
+
         try:
-            # Check if we already have questions generated
-            if denial.generated_questions is not None:
-                # Convert stored lists to tuples for consistency with return type
-                result_questions: List[Tuple[str, str]] = [
-                    (
-                        (q[0], q[1])
-                        if isinstance(q, list)
-                        else (q[0], q[1]) if isinstance(q, tuple) else (str(q), "")
-                    )
-                    for q in denial.generated_questions
-                ]
-                return result_questions
+            # Generate appeal questions using the helper class
+            questions = await MLAppealQuestionsHelper.generate_questions_for_denial(
+                denial
+            )
 
-            # Get required context for the questions
-            denial_text = denial.denial_text
-            patient_context = denial.health_history
-            plan_context = denial.plan_context
+            # Start citation generation as a non-blocking task
+            asyncio.create_task(MLCitationsHelper.generate_citations_for_denial(denial))
 
-            # Create a new task for generating citations without blocking
-            async def start_citation_generation():
-                from fighthealthinsurance.ml.ml_citations_helper import (
-                    MLCitationsHelper,
-                )
+            # Store the generated questions in the denial object
+            await Denial.objects.filter(denial_id=denial_id).aupdate(
+                generated_questions=questions
+            )
 
-                try:
-                    await MLCitationsHelper.generate_citations_for_denial(denial)
-                except Exception as e:
-                    logger.opt(exception=True).warning(
-                        f"Failed to generate citations for denial {denial_id}: {e}"
-                    )
-
-            if denial.procedure:
-                # Start the citation generation task without waiting for it
-                asyncio.create_task(start_citation_generation())
-
-                # Use the ML model to generate questions with potential answers
-                raw_questions = await appealGenerator.get_appeal_questions(
-                    denial_text=denial_text,
-                    diagnosis=denial.diagnosis,
-                    procedure=denial.procedure,
-                    patient_context=patient_context,
-                    plan_context=plan_context,
-                )
-
-                # Ensure we're working with tuples
-                questions: List[Tuple[str, str]] = [
-                    (q[0], q[1]) if isinstance(q, (list, tuple)) else (str(q), "")
-                    for q in raw_questions
-                ]
-
-                # Store the questions directly with aupdate instead of loading and saving
-                await Denial.objects.filter(denial_id=denial_id).aupdate(
-                    generated_questions=questions
-                )
-                logger.debug(
-                    f"Generated {len(questions)} questions for denial {denial_id}"
-                )
-                return questions
-            else:
-                return []
+            logger.debug(f"Generated {len(questions)} questions for denial {denial_id}")
+            return questions
         except Exception as e:
             logger.opt(exception=True).warning(
                 f"Failed to generate questions for denial {denial_id}: {e}"

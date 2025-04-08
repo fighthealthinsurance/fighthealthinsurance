@@ -498,6 +498,10 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     unique_claim = models.BooleanField(default=False)
     # Marks this denial as a good example for training or reference
     good_appeal_example = models.BooleanField(default=False)
+    candidate_procedure = models.CharField(max_length=300, null=True, blank=True)
+    candidate_diagnosis = models.CharField(max_length=300, null=True, blank=True)
+    candidate_generated_questions = models.JSONField(null=True, blank=True)
+    candidate_ml_citation_context = models.JSONField(null=True, blank=True)
 
     @classmethod
     def filter_to_allowed_denials(cls, current_user: User):
