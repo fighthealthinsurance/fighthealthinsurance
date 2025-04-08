@@ -1175,7 +1175,7 @@ class DenialCreatorHelper:
             if task in required_tasks:
                 required_tasks_finished += 1
             if required_tasks_finished >= len(required_tasks):
-                console.log("All done with required tasks")
+                logger.debug("All done with required tasks")
                 break
             result: str = await task
             # Yield each result immediately for streaming
@@ -1375,7 +1375,7 @@ class DenialCreatorHelper:
         if appeal_fax_number is not None:
             # Use aupdate instead of fetching and saving
             await Denial.objects.filter(denial_id=denial_id).aupdate(
-                fax_number=appeal_fax_number
+                appeal_fax_number=appeal_fax_number
             )
             logger.debug(f"Successfully extracted fax number: {appeal_fax_number}")
             return appeal_fax_number
