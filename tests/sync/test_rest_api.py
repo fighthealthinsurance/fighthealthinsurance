@@ -813,9 +813,9 @@ class StatisticsTest(APITestCase):
         ProfessionalDomainRelation.objects.create(
             professional=self.professional,
             domain=self.domain,
-            active=True,
+            active_domain_relation=True,
             admin=True,
-            pending=False,
+            pending_domain_relation=False,
         )
 
         # Create patient users
@@ -1084,9 +1084,9 @@ class GetFullDetailsTest(APITestCase):
         ProfessionalDomainRelation.objects.create(
             professional=self.professional,
             domain=self.domain,
-            active=True,
+            active_domain_relation=True,
             admin=True,
-            pending=False,
+            pending_domain_relation=False,
         )
 
         # Create patient user
@@ -1191,9 +1191,9 @@ class GetFullDetailsTest(APITestCase):
         ProfessionalDomainRelation.objects.create(
             professional=other_professional,
             domain=other_domain,
-            active=True,
+            active_domain_relation=True,
             admin=False,
-            pending=False,
+            pending_domain_relation=False,
         )
 
         # Login as the other professional

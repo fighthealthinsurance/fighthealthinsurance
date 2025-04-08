@@ -159,16 +159,7 @@ class WhoAmIViewSet(viewsets.ViewSet):
                 _professional = ProfessionalUser.objects.get(user=user, active=True)
                 professional = True
                 professional_id = _professional.id
-                try:
-                    ProfessionalDomainRelation.objects.get(
-                        professional=_professional,
-                        domain=user_domain,
-                        active=True,
-                        admin=True,
-                    )
-                    admin = True
-                except ProfessionalDomainRelation.DoesNotExist:
-                    pass
+                admin = user_is_admin_in_domain(user, domain_id=user_domain.id)
             except ProfessionalUser.DoesNotExist:
                 pass
 
@@ -226,6 +217,8 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             return serializers.InviteProfessionalSerializer
         elif self.action == "create_professional_in_current_domain":
             return serializers.CreateProfessionalInCurrentDomainSerializer
+        elif self.action == "make_admin":
+            return serializers.MakeAdminSerializer
         else:
             return serializers.EmptySerializer
 
@@ -352,9 +345,9 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                     ProfessionalDomainRelation.objects.create(
                         professional=professional_user,
                         domain=user_domain,
-                        active=True,
+                        active_domain_relation=True,
                         admin=False,  # New professionals are not admins by default
-                        pending=False,
+                        pending_domain_relation=False,
                     )
                 except Exception as e:
                     logger.error(
@@ -507,10 +500,10 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             ProfessionalDomainRelation.objects.filter(
                 professional=ProfessionalUser.objects.get(user=current_user),
                 domain=domain,
-                active=True,
+                active_domain_relation=True,
             )
         )
-        professionals = domain.get_professional_users(active=True)
+        professionals = domain.get_professional_users(active_domain_relation=True)
         serializer = serializers.ProfessionalSummary(professionals, many=True)
         return Response(serializer.data)
 
@@ -534,10 +527,10 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             ProfessionalDomainRelation.objects.filter(
                 professional=ProfessionalUser.objects.get(user=current_user),
                 domain=domain,
-                active=True,
+                active_domain_relation=True,
             )
         )
-        professionals = domain.get_professional_users(pending=True)
+        professionals = domain.get_professional_users(pending_domain_relation=True)
         serializer = serializers.ProfessionalSummary(professionals, many=True)
         return Response(serializer.data)
 
@@ -567,12 +560,12 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 status=status.HTTP_403_FORBIDDEN,
             )
         relation = ProfessionalDomainRelation.objects.get(
-            professional_id=professional_user_id, pending=True, domain_id=domain_id
+            professional_id=professional_user_id, pending_domain_relation=True, domain_id=domain_id
         )
-        relation.pending = False
+        relation.pending_domain_relation = False
         # TODO: Add to model
         relation.rejected = True
-        relation.active = False
+        relation.active_domain_relation = False
         relation.save()
         return Response(
             serializers.StatusResponseSerializer(
@@ -622,12 +615,12 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             )
         try:
             relation = ProfessionalDomainRelation.objects.get(
-                professional_id=professional_user_id, pending=True, domain_id=domain_id
+                professional_id=professional_user_id, pending_domain_relation=True, domain_id=domain_id
             )
             professional_user = ProfessionalUser.objects.get(id=professional_user_id)
             professional_user.active = True
             professional_user.save()
-            relation.pending = False
+            relation.pending_domain_relation = False
             relation.save()
 
             return Response(
@@ -914,9 +907,9 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         ProfessionalDomainRelation.objects.create(
             professional=professional_user,
             domain=user_domain,
-            active=False,
+            active_domain_relation=new_domain,
             admin=new_domain,
-            pending=True,
+            pending_domain_relation=not new_domain,
         )
 
         if not (settings.DEBUG and data["skip_stripe"]):
@@ -946,6 +939,96 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                     {"next_url": "https://www.fightpaperwork.com/?q=testmode"}
                 ).data,
                 status=status.HTTP_201_CREATED,
+            )
+
+    @extend_schema(
+        responses={
+            200: serializers.StatusResponseSerializer,
+            403: common_serializers.ErrorSerializer,
+            404: common_serializers.ErrorSerializer,
+            500: common_serializers.ErrorSerializer,
+        }
+    )
+    @action(detail=False, methods=["post"])
+    def make_admin(self, request) -> Response:
+        """
+        Makes a professional user an admin in a domain.
+        Only existing admins can make other users admins.
+        """
+        serializer = self.deserialize(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        professional_user_id: int = serializer.validated_data["professional_user_id"]
+        domain_id = serializer.validated_data["domain_id"]
+
+        try:
+            current_user: User = request.user  # type: ignore
+
+            # Check if current user is an admin in the domain
+            current_user_admin_in_domain = user_is_admin_in_domain(
+                current_user, domain_id
+            )
+            if not current_user_admin_in_domain:
+                # Credentials are valid but does not have permissions
+                logger.opt(exception=True).error(
+                    f"User {current_user.username} attempted to make another user admin without admin privileges in domain {domain_id}"
+                )
+                return Response(
+                    common_serializers.ErrorSerializer(
+                        {"error": "User does not have admin privileges"}
+                    ).data,
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+            # Get the professional user to make admin
+            try:
+                professional_user = ProfessionalUser.objects.get(
+                    id=professional_user_id
+                )
+            except ProfessionalUser.DoesNotExist:
+                return Response(
+                    common_serializers.ErrorSerializer(
+                        {"error": "Professional user not found"}
+                    ).data,
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            # Get the relation between the professional and domain
+            try:
+                relation = ProfessionalDomainRelation.objects.get(
+                    professional=professional_user,
+                    domain_id=domain_id,
+                    active_domain_relation=True,
+                )
+            except ProfessionalDomainRelation.DoesNotExist:
+                return Response(
+                    common_serializers.ErrorSerializer(
+                        {
+                            "error": "No active relationship found between user and domain"
+                        }
+                    ).data,
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            # Make the user an admin
+            relation.admin = True
+            relation.save()
+
+            return Response(
+                serializers.StatusResponseSerializer(
+                    {
+                        "status": "success",
+                        "message": f"User {professional_user.user.first_name} {professional_user.user.last_name} is now an admin",
+                    }
+                ).data,
+                status=status.HTTP_200_OK,
+            )
+
+        except Exception as e:
+            # Unexpected generic error, fail closed
+            logger.opt(exception=e).error("Error in making professional user an admin")
+            return Response(
+                common_serializers.ErrorSerializer({"error": f"Error: {str(e)}"}).data,
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
 

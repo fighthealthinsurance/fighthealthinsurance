@@ -4,6 +4,8 @@ from typing import TYPE_CHECKING, Optional
 from fhi_users.models import VerificationToken
 from fighthealthinsurance.utils import send_fallback_email
 from django.utils.html import strip_tags
+from django.utils import timezone
+from datetime import timedelta
 from urllib.parse import urlencode
 from loguru import logger
 
@@ -70,6 +72,12 @@ def send_verification_email(request, user: "User", first_only: bool = False) -> 
             logger.debug(f"Skipping verification e-mail to {user} as already sent")
             return
         else:
+            current_token = VerificationToken.objects.filter(user=user).first()
+            if current_token and current_token.created_at > timezone.now() - timedelta(minutes=10):
+                logger.debug(
+                    f"Skipping verification e-mail to {user} as already sent within 10 minutes"
+                )
+                return
             VerificationToken.objects.filter(user=user).delete()
     mail_subject = "Activate your account."
     verification_token = default_token_generator.make_token(user)

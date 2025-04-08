@@ -102,8 +102,8 @@ class ActivateProUserView(generic.FormView):
             user.is_active = True
             user.save()
         for r in ProfessionalDomainRelation.objects.filter(domain=domain):
-            r.active = True
-            r.pending = False
+            r.active_domain_relation = True
+            r.pending_domain_relation = False
             r.save()
         return HttpResponse("Pro user activated")
 
