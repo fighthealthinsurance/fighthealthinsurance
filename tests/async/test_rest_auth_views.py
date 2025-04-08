@@ -945,9 +945,9 @@ class ProfessionalInvitationTests(TestCase):
         ProfessionalDomainRelation.objects.create(
             professional=self.regular_professional,
             domain=self.domain,
-            active=True,
+            active_domain_relation=True,
             admin=False,
-            pending=False,
+            pending_domain_relation=False,
         )
 
         ExtraUserProperties.objects.create(user=self.admin_user, email_verified=True)
@@ -1065,9 +1065,9 @@ class CreateProfessionalInDomainTests(TestCase):
         ProfessionalDomainRelation.objects.create(
             professional=self.admin_professional,
             domain=self.domain,
-            active=True,
+            active_domain_relation=True,
             admin=True,
-            pending=False,
+            pending_domain_relation=False,
         )
 
         # Create non-admin user
@@ -1091,9 +1091,9 @@ class CreateProfessionalInDomainTests(TestCase):
         ProfessionalDomainRelation.objects.create(
             professional=self.regular_professional,
             domain=self.domain,
-            active=True,
+            active_domain_relation=True,
             admin=False,
-            pending=False,
+            pending_domain_relation=False,
         )
 
         ExtraUserProperties.objects.create(user=self.admin_user, email_verified=True)
