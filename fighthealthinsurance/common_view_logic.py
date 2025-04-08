@@ -799,7 +799,7 @@ class FindNextStepsHelper:
                 # Add this form to our question forms list
                 question_forms.append(appeal_questions_form)
         except Exception as e:
-            logger.opt(exception=True).warning(
+            logger.opt(exception=True).error(
                 f"Failed to process appeal questions for denial {denial_id}: {e}"
             )
 
