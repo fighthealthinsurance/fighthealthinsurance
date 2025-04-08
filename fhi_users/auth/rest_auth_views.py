@@ -202,7 +202,11 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
     """
 
     def get_serializer_class(self):
-        if self.action == "accept" or self.action == "reject" or self.action == "delete":
+        if (
+            self.action == "accept"
+            or self.action == "reject"
+            or self.action == "delete"
+        ):
             return serializers.AcceptProfessionalUserSerializer
         elif self.action == "create":
             return serializers.ProfessionalSignupSerializer
@@ -570,11 +574,13 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         relation.save()
         return Response(
             serializers.StatusResponseSerializer(
-                {"status": "rejected", "message": "Professional user partially deleted (moved to rejected)"}
+                {
+                    "status": "rejected",
+                    "message": "Professional user partially deleted (moved to rejected)",
+                }
             ).data,
             status=status.HTTP_200_OK,
         )
-
 
     @extend_schema(
         responses={
