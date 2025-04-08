@@ -1522,6 +1522,8 @@ class AppealsBackendHelper:
         email = parameters["email"]
         semi_sekret = parameters["semi_sekret"]
         hashed_email = Denial.get_hashed_email(email)
+        prof_to_submit = parameters["prof_to_submit"]
+        logger.debug(f"Received prof_to_submit: {prof_to_submit}")
 
         # Initial yield of newline.
         yield "\n"
