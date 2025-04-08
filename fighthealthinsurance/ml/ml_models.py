@@ -71,7 +71,7 @@ class RemoteModelLike(DenialBase):
         ml_citations_context=None,
         temperature=0.7,
     ) -> Optional[str]:
-        result = await self._infer_no_context(
+        result = await self._infer(
             system_prompts=system_prompts,
             prompt=prompt,
             patient_context=patient_context,
@@ -80,6 +80,8 @@ class RemoteModelLike(DenialBase):
             ml_citations_context=ml_citations_context,
             temperature=temperature,
         )
+        if result:
+            return result[0]
         return result
 
     async def get_denialtype(self, denial_text, procedure, diagnosis) -> Optional[str]:
