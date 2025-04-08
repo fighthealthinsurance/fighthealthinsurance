@@ -933,8 +933,7 @@ class DenialCreatorHelper:
         this specific denial. The questions will be stored in the denial object's
         generated_questions field as tuples of (question, answer).
         Also generates citations in a non-blocking manner.
-        This is NOT SPECUALTIVE.
-
+        This is NOT SPECULATIVE.
         Args:
             denial_id: The ID of the denial to generate questions for
 
