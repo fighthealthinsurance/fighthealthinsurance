@@ -41,6 +41,7 @@ from .utils import check_call, send_fallback_email
 
 
 appealGenerator = AppealGenerator()
+background_tasks = set()
 
 
 class RemoveDataHelper:
@@ -932,6 +933,7 @@ class DenialCreatorHelper:
         this specific denial. The questions will be stored in the denial object's
         generated_questions field as tuples of (question, answer).
         Also generates citations in a non-blocking manner.
+        This is NOT SPECUALTIVE.
 
         Args:
             denial_id: The ID of the denial to generate questions for
@@ -947,11 +949,18 @@ class DenialCreatorHelper:
         try:
             # Generate appeal questions using the helper class
             questions = await MLAppealQuestionsHelper.generate_questions_for_denial(
-                denial
+                denial, speculative=False
             )
 
             # Start citation generation as a non-blocking task
-            asyncio.create_task(MLCitationsHelper.generate_citations_for_denial(denial))
+            citation_task = asyncio.create_task(
+                MLCitationsHelper.generate_citations_for_denial(
+                    denial, speculative=False
+                )
+            )
+            # See https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
+            background_tasks.add(citation_task)
+            citation_task.add_done_callback(background_tasks.discard)
 
             # Store the generated questions in the denial object
             await Denial.objects.filter(denial_id=denial_id).aupdate(
@@ -1134,9 +1143,7 @@ class DenialCreatorHelper:
 
         # Create Task objects for all optional operations
         optional_tasks = [
-            asyncio.wait_for(
-                asyncio.shield(asyncio.create_task(just_the_name(task))), timeout=45
-            )
+            asyncio.wait_for(asyncio.create_task(just_the_name(task)), timeout=45)
             for task in optional_awaitables
         ]
         # We create both sets of tasks at the same time since they're mostly independent and having
@@ -1154,7 +1161,24 @@ class DenialCreatorHelper:
             # Yield each result immediately for streaming
             yield result
 
+        build_context_task = asyncio.create_task(
+            cls.build_speculative_context(denial_id=denial_id)
+        )
+        background_tasks.add(build_context_task)
+        build_context_task.add_done_callback(background_tasks.discard)
         yield "Extraction completed\n"
+
+    @classmethod
+    async def build_speculative_context(cls, denial_id: int):
+        """Build context based on the idea we extracted the correct info"""
+        denial = await Denial.objects.filter(denial_id=denial_id).aget()
+        citations_awaitable = MLCitationsHelper.generate_citations_for_denial(
+            denial, speculative=True
+        )
+        questions_awaitable = MLAppealQuestionsHelper.generate_questions_for_denial(
+            denial=denial, speculative=True
+        )
+        await asyncio.gather(citations_awaitable, questions_awaitable)
 
     @classmethod
     async def extract_set_denial_and_diagnosis(cls, denial_id: int):
@@ -1582,7 +1606,11 @@ class AppealsBackendHelper:
         )
 
         ml_citation_context_awaitable = asyncio.wait_for(
-            asyncio.shield(MLCitationsHelper.generate_citations_for_denial(denial)),
+            asyncio.shield(
+                MLCitationsHelper.generate_citations_for_denial(
+                    denial, speculative=False
+                )
+            ),
             timeout=45,
         )
 
