@@ -763,7 +763,7 @@ class FindNextStepsHelper:
         # Generate questions for better appeal creation
         try:
             # If questions don't exist yet, generate them
-            if denial.generated_questions is None:
+            if not denial.generated_questions or len(denial.generated_questions) < 2:
                 # Call the generate_appeal_questions method to get and store questions
                 # Using sync_to_async since we're in a synchronous method
                 async_to_sync(DenialCreatorHelper.generate_appeal_questions)(
@@ -804,13 +804,23 @@ class FindNextStepsHelper:
             )
 
         # Combine all forms
-        combined_form = magic_combined_form(question_forms, existing_answers)
-
-        return NextStepInfo(
-            outside_help_details=outside_help_details,
-            combined_form=combined_form,
-            semi_sekret=semi_sekret,
-        )
+        try:
+            combined_form = magic_combined_form(question_forms, existing_answers)
+            return NextStepInfo(
+                outside_help_details=outside_help_details,
+                combined_form=combined_form,
+                semi_sekret=semi_sekret,
+            )
+        except Exception as e:
+            logger.opt(exception=True).error(
+                f"Unexpected error building query {denial_id}: {e}"
+            )
+            combined_form = magic_combined_form(question_forms, {})
+            return NextStepInfo(
+                outside_help_details=outside_help_details,
+                combined_form=combined_form,
+                semi_sekret=semi_sekret,
+            )
 
 
 @dataclass
