@@ -45,7 +45,7 @@ geopy
 git+https://github.com/holdenk/static-thumbnails.git
 git+https://github.com/jazzband/django-cookie-consent.git#egg=django-cookie-consent
 git+https://github.com/totallylegitco/django-encrypted-model-fields.git@87dfff140b3ad256404a913019e90f2c245e57f8
-git+https://github.com/totallylegitco/llm-result-utils.git@214c12af890597e791ae549c1d012930b24896e4
+git+https://github.com/totallylegitco/llm-result-utils.git@c36b552eb93c5305a0262b52d0a13fab820eb7f7
 icd10-cm
 loguru
 markdown_strings
