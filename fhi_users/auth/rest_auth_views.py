@@ -202,7 +202,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
     """
 
     def get_serializer_class(self):
-        if self.action == "accept" or self.action == "reject":
+        if self.action == "accept" or self.action == "reject" or self.action == "delete":
             return serializers.AcceptProfessionalUserSerializer
         elif self.action == "create":
             return serializers.ProfessionalSignupSerializer
@@ -234,6 +234,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             "reject",
             "invite",
             "create_professional_in_current_domain",
+            "delete",
         ]:
             permission_classes = [IsAuthenticated]
         else:
@@ -533,6 +534,47 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         professionals = domain.get_professional_users(pending_domain_relation=True)
         serializer = serializers.ProfessionalSummary(professionals, many=True)
         return Response(serializer.data)
+
+    @extend_schema(
+        responses={
+            200: serializers.StatusResponseSerializer,
+            403: common_serializers.ErrorSerializer,
+        }
+    )
+    @action(detail=False, methods=["post"])
+    def delete(self, request, *args, **kwargs) -> Response:
+        serializer = self.deserialize(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer = self.deserialize(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        professional_user_id: int = serializer.validated_data["professional_user_id"]
+        domain_id = serializer.validated_data["domain_id"]
+        current_user: User = request.user
+        current_user_admin_in_domain = user_is_admin_in_domain(current_user, domain_id)
+        if not current_user_admin_in_domain:
+            # Credentials are valid but does not have permissions
+            return Response(
+                common_serializers.ErrorSerializer(
+                    {"error": "User does not have admin privileges"}
+                ).data,
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        relation = ProfessionalDomainRelation.objects.get(
+            professional_id=professional_user_id,
+            pending_domain_relation=True,
+            domain_id=domain_id,
+        )
+        relation.pending_domain_relation = False
+        relation.rejected = True
+        relation.active_domain_relation = False
+        relation.save()
+        return Response(
+            serializers.StatusResponseSerializer(
+                {"status": "rejected", "message": "Professional user partially deleted (moved to rejected)"}
+            ).data,
+            status=status.HTTP_200_OK,
+        )
+
 
     @extend_schema(
         responses={

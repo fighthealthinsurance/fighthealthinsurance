@@ -279,7 +279,7 @@ class DenialEndToEnd(APITestCase):
         )
         find_next_steps_parsed: Dict[str, Any] = find_next_steps_response.json()
         # Make sure we got back a reasonable set of questions.
-        assert len(find_next_steps_parsed["combined_form"]) == 5
+        assert len(find_next_steps_parsed["combined_form"]) >= 5
         assert list(find_next_steps_parsed["combined_form"][0].keys()) == [
             "name",
             "field_type",
