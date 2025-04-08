@@ -682,10 +682,11 @@ class FindNextStepsHelper:
             and len(appeal_fax_number) < 30
         ):
             logger.debug(f"Setting appeal fax number to {appeal_fax_number}")
-            denial.appeal_fax_number = appeal_fax_number
+            Denial.objects.filter(denial_id=denial_id).update(
+                appeal_fax_number=appeal_fax_number
+            )
         else:
             logger.debug(f"Invalid appeal fax number {appeal_fax_number}")
-        denial.save()
 
         if include_provided_health_history_in_appeal is not None:
             denial.include_provided_health_history = (
@@ -763,9 +764,10 @@ class FindNextStepsHelper:
         # Generate questions for better appeal creation
         try:
             # If questions don't exist yet, generate them
-            if not denial.generated_questions or len(denial.generated_questions) < 2:
+            if not denial.generated_questions or len(denial.generated_questions) == 0:
                 # Call the generate_appeal_questions method to get and store questions
                 # Using sync_to_async since we're in a synchronous method
+                logger.debug("Generating appeal questions")
                 async_to_sync(DenialCreatorHelper.generate_appeal_questions)(
                     denial_id=denial.denial_id
                 )
