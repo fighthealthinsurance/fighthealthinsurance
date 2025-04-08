@@ -31,6 +31,8 @@ from fighthealthinsurance.form_utils import *
 from fighthealthinsurance.generate_appeal import *
 from fighthealthinsurance.models import *
 from fighthealthinsurance.utils import interleave_iterator_for_keep_alive
+from fighthealthinsurance.ml.ml_citations_helper import MLCitationsHelper
+from fighthealthinsurance.ml.ml_appeal_questions_helper import MLAppealQuestionsHelper
 from fighthealthinsurance import stripe_utils
 from fhi_users.models import ProfessionalUser, UserDomain
 from fhi_users import emails as fhi_emails
@@ -937,11 +939,6 @@ class DenialCreatorHelper:
         Returns:
             A list of (question, answer) tuples to help with appeal creation
         """
-        from fighthealthinsurance.ml.ml_helpers import (
-            MLAppealQuestionsHelper,
-            MLCitationsHelper,
-        )
-
         denial = await Denial.objects.filter(denial_id=denial_id).aget()
         if not denial:
             logger.warning(f"Could not find denial with ID {denial_id}")
@@ -1582,10 +1579,6 @@ class AppealsBackendHelper:
         logger.debug("Looking up the pubmed context")
         pubmed_context_awaitable = asyncio.wait_for(
             asyncio.shield(cls.pmt.find_context_for_denial(denial)), timeout=45
-        )
-
-        from fighthealthinsurance.ml.ml_citations_helper import (
-            MLCitationsHelper,
         )
 
         ml_citation_context_awaitable = asyncio.wait_for(
