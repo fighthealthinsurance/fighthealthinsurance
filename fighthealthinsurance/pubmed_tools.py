@@ -190,6 +190,14 @@ class PubMedTools(object):
         return articles
 
     async def find_context_for_denial(self, denial: Denial, timeout=60.0) -> str:
+        result = await self._find_context_for_denial(denial, timeout)
+        if result is not None and len(result) > 1:
+            await Denial.objects.filter(denial_id=denial.denial_id).aupdate(
+                pubmed_context=result
+            )
+        return result
+
+    async def _find_context_for_denial(self, denial: Denial, timeout=60.0) -> str:
         """
         Kind of hacky RAG routine that uses PubMed.
         """

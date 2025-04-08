@@ -92,9 +92,9 @@ class MLCitationsHelper:
             List of generated citation strings
         """
         # Check if we already have citations for this denial
-        if denial.citation_context is not None and len(denial.citation_context) > 0:
+        if denial.ml_citation_context is not None and len(denial.ml_citation_context) > 0:
             logger.debug(f"Citations already exist for denial {denial.denial_id}")
-            return denial.citation_context
+            return denial.ml_citation_context
 
         # Get denial context
         denial_text = denial.denial_text
@@ -115,7 +115,7 @@ class MLCitationsHelper:
         if citations:
             # Atomically update the citation_context field
             await Denial.objects.filter(denial_id=denial.denial_id).aupdate(
-                citation_context=citations
+                ml_citation_context=citations
             )
             logger.debug(
                 f"Stored {len(citations)} citations for denial {denial.denial_id}"

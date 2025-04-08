@@ -6,7 +6,7 @@ Our platform helps healthcare providers successfully appeal insurance denials an
 
 To join {{ practice_name }}, please follow these steps:
 
-1. Visit www.fighthealthinsurance.com/signup
+1. Visit https://www.fightpaperwork.com/auth/provider-signup
 2. Create your account
 3. When asked, select "Joining Existing Group"
 4. Enter the practice phone number: {{ practice_number }}

@@ -686,6 +686,81 @@ class RestAuthViewsTests(TestCase):
         self.assertIn("error", error_data)
         self.assertEqual(error_data["error"], "A user with this email already exists")
 
+    def test_verification_email_throttling(self) -> None:
+        """Test that verification emails are not sent more than once within 10 minutes."""
+        # Create a user for testing
+        test_user = User.objects.create_user(
+            username=f"throttleuser🐼{self.domain.id}",
+            password="testpass123",
+            email="throttle@example.com",
+        )
+        test_user.is_active = False
+        test_user.save()
+
+        # Count emails before sending
+        email_count_before = len(mail.outbox)
+
+        # Send first verification email
+        from fhi_users.emails import send_verification_email
+
+        send_verification_email(self.client.request(), test_user)
+
+        # Check that email was sent
+        self.assertEqual(len(mail.outbox), email_count_before + 2)  # +2 for BCC
+
+        # Try to send another verification email immediately
+        send_verification_email(self.client.request(), test_user)
+
+        # Check that no additional email was sent (still just the first one)
+        self.assertEqual(len(mail.outbox), email_count_before + 2)
+
+        # Verify the token exists
+        token = VerificationToken.objects.get(user=test_user)
+        self.assertIsNotNone(token)
+
+        # Manually modify the token creation time to be 11 minutes ago
+        token.created_at = timezone.now() - timezone.timedelta(minutes=11)
+        token.save()
+
+        # Now try sending again
+        send_verification_email(self.client.request(), test_user)
+
+        # Check that a new email was sent
+        self.assertEqual(len(mail.outbox), email_count_before + 4)  # +2 more with BCC
+
+    def test_first_only_parameter_works(self) -> None:
+        """Test that first_only=True prevents sending any follow-up emails."""
+        # Create a user for testing
+        test_user = User.objects.create_user(
+            username=f"firstonlyuser🐼{self.domain.id}",
+            password="testpass123",
+            email="firstonly@example.com",
+        )
+        test_user.is_active = False
+        test_user.save()
+
+        # Count emails before sending
+        email_count_before = len(mail.outbox)
+
+        # Send first verification email with first_only=True
+        from fhi_users.emails import send_verification_email
+
+        send_verification_email(self.client.request(), test_user, first_only=True)
+
+        # Check that email was sent
+        self.assertEqual(len(mail.outbox), email_count_before + 2)  # +2 for BCC
+
+        # Manually modify the token creation time to be 11 minutes ago
+        token = VerificationToken.objects.get(user=test_user)
+        token.created_at = timezone.now() - timezone.timedelta(minutes=11)
+        token.save()
+
+        # Try to send another email with first_only=True
+        send_verification_email(self.client.request(), test_user, first_only=True)
+
+        # Check that no additional email was sent (still just the first one)
+        self.assertEqual(len(mail.outbox), email_count_before + 2)
+
 
 class TestE2EProfessionalUserSignupFlow(TestCase):
     def setUp(self):
@@ -844,9 +919,9 @@ class ProfessionalInvitationTests(TestCase):
         ProfessionalDomainRelation.objects.create(
             professional=self.admin_professional,
             domain=self.domain,
-            active=True,
+            active_domain_relation=True,
             admin=True,
-            pending=False,
+            pending_domain_relation=False,
         )
 
         # Create non-admin user
@@ -870,9 +945,9 @@ class ProfessionalInvitationTests(TestCase):
         ProfessionalDomainRelation.objects.create(
             professional=self.regular_professional,
             domain=self.domain,
-            active=True,
+            active_domain_relation=True,
             admin=False,
-            pending=False,
+            pending_domain_relation=False,
         )
 
         ExtraUserProperties.objects.create(user=self.admin_user, email_verified=True)
@@ -990,9 +1065,9 @@ class CreateProfessionalInDomainTests(TestCase):
         ProfessionalDomainRelation.objects.create(
             professional=self.admin_professional,
             domain=self.domain,
-            active=True,
+            active_domain_relation=True,
             admin=True,
-            pending=False,
+            pending_domain_relation=False,
         )
 
         # Create non-admin user
@@ -1016,9 +1091,9 @@ class CreateProfessionalInDomainTests(TestCase):
         ProfessionalDomainRelation.objects.create(
             professional=self.regular_professional,
             domain=self.domain,
-            active=True,
+            active_domain_relation=True,
             admin=False,
-            pending=False,
+            pending_domain_relation=False,
         )
 
         ExtraUserProperties.objects.create(user=self.admin_user, email_verified=True)
@@ -1072,8 +1147,8 @@ class CreateProfessionalInDomainTests(TestCase):
         relation = ProfessionalDomainRelation.objects.get(
             professional=professional, domain=self.domain
         )
-        self.assertTrue(relation.active)
-        self.assertFalse(relation.pending)
+        self.assertTrue(relation.active_domain_relation)
+        self.assertFalse(relation.pending_domain_relation)
         self.assertFalse(relation.admin)
 
         # Verify the newly created provider appears in the listing of active providers

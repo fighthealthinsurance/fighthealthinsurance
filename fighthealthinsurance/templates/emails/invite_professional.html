@@ -1,6 +1,5 @@
 {% extends './base_email.html' %}
 {% block content %}
-<img src="https://www.fighthealthinsurance.com/static/images/fpw.jpg" class="center"><br/>
 <p>
 {% if professional_name %}Hello {{ professional_name }},{% else %}Hello,{% endif %}
 </p>
@@ -14,9 +13,8 @@ Our platform helps healthcare providers successfully appeal insurance denials an
 To join {{ practice_name }}, please follow these steps:
 </p>
 <ol>
-    <li>Visit <a href="https://www.fighthealthinsurance.com/signup">www.fighthealthinsurance.com/signup</a></li>
+    <li>Visit <a href="https://www.fightpaperwork.com/auth/provider-signup">the provider signup page, https://www.fightpaperwork.com/auth/provider-signup</a></li>
     <li>Create your account</li>
-    <li>When asked, select "Joining Existing Group"</li>
     <li>Enter the practice phone number: <strong>{{ practice_number }}</strong></li>
 </ol>
 <p>

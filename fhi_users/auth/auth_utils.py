@@ -91,8 +91,8 @@ def user_is_admin_in_domain(
             professional__user=user,
             domain_id=domain_id,
             admin=True,
-            pending=False,
-            active=True,
+            pending_domain_relation=False,
+            active_domain_relation=True,
         ).count()
         > 0
     )
