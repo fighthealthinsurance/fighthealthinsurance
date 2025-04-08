@@ -1147,8 +1147,8 @@ class CreateProfessionalInDomainTests(TestCase):
         relation = ProfessionalDomainRelation.objects.get(
             professional=professional, domain=self.domain
         )
-        self.assertTrue(relation.domain_relation_active)
-        self.assertFalse(relation.domain_relation_pending)
+        self.assertTrue(relation.active_domain_relation)
+        self.assertFalse(relation.pending_domain_relation)
         self.assertFalse(relation.admin)
 
         # Verify the newly created provider appears in the listing of active providers
