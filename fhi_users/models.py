@@ -235,7 +235,9 @@ def professional_domain_relation_presave(
 ) -> None:
     """Dynamically set the active_domain_relation field based on pending_domain_relation/suspended/rejected."""
     instance.active_domain_relation = (
-        not instance.pending_domain_relation and not instance.suspended and not instance.rejected
+        not instance.pending_domain_relation
+        and not instance.suspended
+        and not instance.rejected
     )
 
 
