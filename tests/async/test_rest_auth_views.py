@@ -919,9 +919,9 @@ class ProfessionalInvitationTests(TestCase):
         ProfessionalDomainRelation.objects.create(
             professional=self.admin_professional,
             domain=self.domain,
-            active=True,
+            active_domain_relation=True,
             admin=True,
-            pending=False,
+            pending_domain_relation=False,
         )
 
         # Create non-admin user
