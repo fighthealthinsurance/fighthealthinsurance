@@ -1159,7 +1159,7 @@ class DenialCreatorHelper:
 
         # First create task objects for the required tasks.
         required_tasks = [
-            asyncio.create_task(just_the_name(task)) for task in required_awaitables
+                asyncio.create_task(just_the_name(task)) for task in required_awaitables
         ]
 
         # Create Task objects for all optional operations
@@ -1168,23 +1168,18 @@ class DenialCreatorHelper:
         ]
         # We create both sets of tasks at the same time since they're mostly independent and having
         # the optional ones running at the same time gives us a chance to get more done.
-
+        tasks = required_tasks + optional_tasks
+        required_tasks_finished = 0
         # First, execute required tasks (no timeout)
-        for task in asyncio.as_completed(required_tasks):
+        for task in asyncio.as_completed(tasks):
+            if task in required_tasks:
+                required_tasks_finished += 1
+            if required_tasks_finished >= len(required_tasks):
+                console.log("All done with required tasks")
+                break
             result: str = await task
             # Yield each result immediately for streaming
             yield result
-
-        # Now we see what optional tasks we can wrap up in the last 45 seconds.
-        try:
-            for task in asyncio.as_completed(optional_tasks, timeout=45):
-                result = await task
-                yield result
-        except asyncio.TimeoutError:
-            logger.debug("Ran out of time for optional tasks -- moving on")
-        except Exception as e:
-            logger.debug(f"Error processing optional tasks: {e}")
-            yield f"Error processing optional tasks: {str(e)}\n"
 
         yield "Extraction completed\n"
 
