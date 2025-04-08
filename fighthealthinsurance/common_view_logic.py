@@ -1174,7 +1174,10 @@ class DenialCreatorHelper:
 
         # Create Task objects for all optional operations
         optional_tasks = [
-            asyncio.create_task(just_the_name(task)) for task in optional_awaitables
+            asyncio.wait_for(
+                asyncio.shield(asyncio.create_task(just_the_name(task))), timeout=45
+            )
+            for task in optional_awaitables
         ]
         # We create both sets of tasks at the same time since they're mostly independent and having
         # the optional ones running at the same time gives us a chance to get more done.
@@ -1615,7 +1618,7 @@ class AppealsBackendHelper:
         # Get PubMed context
         logger.debug("Looking up the pubmed context")
         pubmed_context_awaitable = asyncio.wait_for(
-            cls.pmt.find_context_for_denial(denial), timeout=75
+            asyncio.shield(cls.pmt.find_context_for_denial(denial)), timeout=45
         )
 
         from fighthealthinsurance.ml.ml_citations_helper import (
@@ -1623,8 +1626,10 @@ class AppealsBackendHelper:
         )
 
         ml_citation_context_awaitable = asyncio.wait_for(
-            MLCitationsHelper.generate_citations_for_denial(denial), timeout=75
+            asyncio.shield(MLCitationsHelper.generate_citations_for_denial(denial)),
+            timeout=45,
         )
+
         # Await both contexts so we can use co-operative multitasking
         try:
             results = await asyncio.gather(
