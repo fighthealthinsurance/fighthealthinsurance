@@ -560,7 +560,9 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 status=status.HTTP_403_FORBIDDEN,
             )
         relation = ProfessionalDomainRelation.objects.get(
-            professional_id=professional_user_id, pending_domain_relation=True, domain_id=domain_id
+            professional_id=professional_user_id,
+            pending_domain_relation=True,
+            domain_id=domain_id,
         )
         relation.pending_domain_relation = False
         # TODO: Add to model
@@ -615,7 +617,9 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             )
         try:
             relation = ProfessionalDomainRelation.objects.get(
-                professional_id=professional_user_id, pending_domain_relation=True, domain_id=domain_id
+                professional_id=professional_user_id,
+                pending_domain_relation=True,
+                domain_id=domain_id,
             )
             professional_user = ProfessionalUser.objects.get(id=professional_user_id)
             professional_user.active = True

@@ -92,7 +92,10 @@ class MLCitationsHelper:
             List of generated citation strings
         """
         # Check if we already have citations for this denial
-        if denial.ml_citation_context is not None and len(denial.ml_citation_context) > 0:
+        if (
+            denial.ml_citation_context is not None
+            and len(denial.ml_citation_context) > 0
+        ):
             logger.debug(f"Citations already exist for denial {denial.denial_id}")
             return denial.ml_citation_context
 

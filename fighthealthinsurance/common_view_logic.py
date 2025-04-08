@@ -1159,7 +1159,7 @@ class DenialCreatorHelper:
 
         # First create task objects for the required tasks.
         required_tasks = [
-                asyncio.create_task(just_the_name(task)) for task in required_awaitables
+            asyncio.create_task(just_the_name(task)) for task in required_awaitables
         ]
 
         # Create Task objects for all optional operations
