@@ -15,6 +15,7 @@ class MLAppealQuestionsHelper:
 
         Args:
             denial: The denial object for which to generate questions.
+            speculative: Whether this is a speculative generation (candidate) or final.
 
         Returns:
             A list of (question, answer) tuples.
@@ -49,6 +50,19 @@ class MLAppealQuestionsHelper:
                     (q[0], q[1]) if isinstance(q, (list, tuple)) else (str(q), "")
                     for q in raw_questions
                 ]
+
+                # Filter out any lines containing "Note:" as they are typically context lines
+                questions = [
+                    (q, a)
+                    for q, a in questions
+                    if "Note:" not in q and "Note:" not in a
+                ]
+
+                # If the last line contains a note, remove it
+                if questions and len(questions) > 0:
+                    last_q, last_a = questions[-1]
+                    if "note" in last_q.lower() or "note" in last_a.lower():
+                        questions.pop()
             except asyncio.TimeoutError:
                 logger.warning(
                     f"Timeout while generating questions for denial {denial.denial_id}"

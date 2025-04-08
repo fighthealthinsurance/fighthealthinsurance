@@ -175,7 +175,7 @@ class MLRouter(object):
         if text is not None:
             text_optional = f"--- Full-ish article text: {text[0:1000]} ---"
         for m in models:
-            r = await m._infer(
+            r = await m._infer_no_context(
                 system_prompts=[
                     "You are a helpful assistant summarizing article(s) for a person or other LLM wriitng an appeal. Be very concise."
                 ],
@@ -184,7 +184,7 @@ class MLRouter(object):
             if r is not None:
                 return r
             # Try again with only the abstract
-            r = await m._infer(
+            r = await m._infer_no_context(
                 system_prompts=[
                     "You are a helpful assistant summarizing article(s) for a person or other LLM wriitng an appeal. Be very concise."
                 ],

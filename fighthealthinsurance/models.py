@@ -402,6 +402,7 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     uuid = models.CharField(max_length=300, default=uuid.uuid4, editable=False)
     hashed_email = models.CharField(max_length=300, primary_key=False)
     denial_text = models.TextField(primary_key=False)
+    date_of_service_text = models.TextField(primary_key=False, null=True, blank=True)
     denial_type_text = models.TextField(max_length=200, null=True, blank=True)
     date = models.DateField(auto_now=False, auto_now_add=True)
     denial_type = models.ManyToManyField(DenialTypes, through=DenialTypesRelation)

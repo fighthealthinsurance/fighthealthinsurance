@@ -56,10 +56,31 @@ class RemoteModelLike(DenialBase):
         pubmed_context=None,
         ml_citations_context=None,
         temperature=0.7,
-    ) -> Optional[str]:
+    ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
         """Do inference on a remote model."""
         await asyncio.sleep(0)  # yield
         return None
+
+    async def _infer_no_context(
+        self,
+        system_prompts: list[str],
+        prompt,
+        patient_context=None,
+        plan_context=None,
+        pubmed_context=None,
+        ml_citations_context=None,
+        temperature=0.7,
+    ) -> Optional[str]:
+        result = await self._infer_no_context(
+            system_prompts=system_prompts,
+            prompt=prompt,
+            patient_context=patient_context,
+            plan_context=plan_context,
+            pubmed_context=pubmed_context,
+            ml_citations_context=ml_citations_context,
+            temperature=temperature,
+        )
+        return result
 
     async def get_denialtype(self, denial_text, procedure, diagnosis) -> Optional[str]:
         """Get the denial type from the text and procedure/diagnosis"""
@@ -370,7 +391,7 @@ class RemoteOpenLike(RemoteModel):
         system_prompt: str,
         temperature: float,
         ml_citations_context: Optional[List[str]] = None,
-    ):
+    ) -> List[Tuple[str, Optional[str]]]:
         # Extract URLs from the prompt to avoid checking them
         input_urls = []
         if prompt and isinstance(prompt, str):
@@ -382,25 +403,28 @@ class RemoteOpenLike(RemoteModel):
         if pubmed_context and isinstance(patient_context, str):
             input_urls.extend(CleanerUtils.url_re.findall(pubmed_context))
 
-        result = await self._infer(
+        result = await self._infer_no_context(
             prompt=prompt,
             patient_context=patient_context,
             plan_context=plan_context,
             system_prompts=[system_prompt],
             pubmed_context=pubmed_context,
             temperature=temperature,
+            ml_citations_context=ml_citations_context,
         )
         logger.debug(f"Got result {result} from {prompt} on {self}")
         # One retry
         if self.bad_result(result, infer_type):
-            result = await self._infer(
+            result = await self._infer_no_context(
                 prompt=prompt,
                 patient_context=patient_context,
                 plan_context=plan_context,
                 system_prompts=[system_prompt],
                 pubmed_context=pubmed_context,
                 temperature=temperature,
+                ml_citations_context=ml_citations_context,
             )
+        # Ok just an empty list, we failed
         if self.bad_result(result, infer_type):
             return []
         return [
@@ -423,10 +447,11 @@ class RemoteOpenLike(RemoteModel):
         return self.diagnosis_response_regex.sub("", response)
 
     async def get_fax_number(self, denial: str) -> Optional[str]:
-        return await self._infer(
+        result = await self._infer_no_context(
             system_prompts=["You are a helpful assistant."],
             prompt=f"When possible output in the same format as is found in the denial. Tell me the appeal fax number is within the provided denial. If the fax number is unknown write UNKNOWN. If known just output the fax number without any pre-amble and as a snipper from the original doc. DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN. The denial follows: {denial}. Remember DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN.",
         )
+        return result
 
     async def get_insurance_company(self, denial: str) -> Optional[str]:
         """
@@ -438,7 +463,7 @@ class RemoteOpenLike(RemoteModel):
         Returns:
             Extracted insurance company name or None
         """
-        result = await self._infer(
+        result = await self._infer_no_context(
             system_prompts=["You are a helpful assistant."],
             prompt=f"When possible output in the same format as is found in the denial. Tell me which insurance company is within the provided denial. If it is not present or otherwise unknown write UNKNOWN. If known just output the answer without any pre-amble and as a snipper from the original doc. Remember: DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN. The denial follows: {denial}. Remember DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN.",
         )
@@ -456,7 +481,7 @@ class RemoteOpenLike(RemoteModel):
         Returns:
             Extracted plan ID or None
         """
-        result = await self._infer(
+        result = await self._infer_no_context(
             system_prompts=["You are a helpful assistant."],
             prompt=f"When possible output in the same format as is found in the denial. Tell me the what plan ID is present is within the provided denial. If it is not present or unknown write UNKNOWN. If known just output the answer without any pre-amble and as a snipper from the original doc. DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN. The denial follows: {denial}. Remember DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN.",
         )
@@ -474,7 +499,7 @@ class RemoteOpenLike(RemoteModel):
         Returns:
             Extracted claim ID or None
         """
-        result = await self._infer(
+        result = await self._infer_no_context(
             system_prompts=["You are a helpful assistant."],
             prompt=f"When possible output in the same format as is found in the denial. Tell me the what claim ID was denied within the provided denial (it could be multiple but it's normally just one). If it is not present or otherwise unknown write UNKNOWN. If known just output the answer without any pre-amble and as a snipper from the original doc. DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN.. The denial follows: {denial}. REMEMBER DO NOT GUESS.",
         )
@@ -492,7 +517,7 @@ class RemoteOpenLike(RemoteModel):
         Returns:
             Extracted date of service or None
         """
-        result = await self._infer(
+        result = await self._infer_no_context(
             system_prompts=["You are a helpful assistant."],
             prompt=f"When possible output in the same format as is found in the denial. Tell me the what the date of service was within the provided denial (it could be multiple or a date range, but it can also just be one day). If it is not present or otherwise unknown write UNKNOWN. If known just output the asnwer without any pre-amble and as a snipper from the original doc. The denial follows: {denial}",
         )
@@ -503,27 +528,26 @@ class RemoteOpenLike(RemoteModel):
     async def questions(
         self, prompt: str, patient_context: str, plan_context
     ) -> List[str]:
-        result = await self._infer(
+        result = await self._infer_no_context(
             system_prompts=self.get_system_prompts("question"),
             prompt=prompt,
             patient_context=patient_context,
             plan_context=plan_context,
         )
-        if result is None:
-            return []
-        else:
+        if result:
             return result.split("\n")
+        return []
 
     async def get_procedure_and_diagnosis(
         self, prompt: str
     ) -> tuple[Optional[str], Optional[str]]:
         logger.debug(f"Getting procedure and diagnosis for {self} w/ {prompt}")
-        model_response = await self._infer(
+        model_response = await self._infer_no_context(
             system_prompts=self.get_system_prompts("procedure"), prompt=prompt
         )
         if model_response is None or "Diagnosis" not in model_response:
             logger.debug("Retrying query.")
-            model_response = await self._infer(
+            model_response = await self._infer_no_context(
                 system_prompts=self.get_system_prompts("procedure"), prompt=prompt
             )
         if model_response is not None:
@@ -563,11 +587,14 @@ class RemoteOpenLike(RemoteModel):
         pubmed_context=None,
         ml_citations_context=None,
         temperature=0.7,
-    ) -> Optional[str]:
-        r: Optional[str] = None
+    ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
+        """
+        Try and infer on a given model falling back to fallback in primary fails.
+        """
         try:
             for system_prompt in system_prompts:
-                r = await self.__timeout_infer(
+                # Call the actual inference method
+                raw_response = await self.__timeout_infer(
                     system_prompt=system_prompt,
                     prompt=prompt,
                     patient_context=patient_context,
@@ -577,8 +604,12 @@ class RemoteOpenLike(RemoteModel):
                     temperature=temperature,
                     model=self.model,
                 )
-                if r is None and self.backup_api_base is not None:
-                    r = await self.__timeout_infer(
+                if raw_response and raw_response[0]:
+                    return raw_response
+
+                # Try backup API if primary failed
+                if self.backup_api_base:
+                    backup_response = await self.__timeout_infer(
                         system_prompt=system_prompt,
                         prompt=prompt,
                         patient_context=patient_context,
@@ -588,17 +619,86 @@ class RemoteOpenLike(RemoteModel):
                         model=self.model,
                         api_base=self.backup_api_base,
                     )
-            if r is not None:
-                return r
+                    return backup_response
+
         except Exception as e:
             logger.opt(exception=True).error(f"Error {e} calling {self.api_base}")
-        return r
+
+        return None
+
+    def _extract_and_append_citations(self, text: str) -> str:
+        """
+        Extract citations from Perplexity-style annotations and append them to the end of the result.
+
+        Perplexity often adds citations in special formats like:
+        "...text...[↗](https://example.com)...more text..."
+        or as footnotes at the end.
+
+        Args:
+            text: The text to process
+
+        Returns:
+            Text with citations properly extracted and appended
+        """
+        if not text:
+            return text
+
+        # Extract citations and text together
+        text, citations = self._extract_and_separate_citations(text)
+
+        # Append citations to the text
+        if citations:
+            clean_text = text.strip()
+            clean_text += "\n\nReferences:\n" + "\n".join(citations)
+            return clean_text
+
+        return text
+
+    def _extract_and_separate_citations(self, text: str) -> Tuple[str, List[str]]:
+        """
+        Extract citations from Perplexity-style annotations and return them separately.
+
+        Args:
+            text: The text to process
+
+        Returns:
+            Tuple containing (clean_text, list_of_citations)
+        """
+        if not text:
+            return text, []
+
+        # Pattern for Perplexity annotations like [↗](https://example.com)
+        perplexity_citations = re.findall(r"\[\↗\]\((https?://[^\)]+)\)", text)
+
+        # Pattern for numbered citations like [1]: https://example.com
+        numbered_citations = re.findall(r"\[(\d+)\]:\s*(https?://[^\s]+)", text)
+
+        # Remove the citation syntax from the main text while keeping the reference numbers
+        clean_text = re.sub(r"\[\↗\]\(https?://[^\)]+\)", "", text)
+
+        # Build a list of citations to return
+        citation_list = []
+
+        # Add Perplexity-style citations
+        for i, url in enumerate(perplexity_citations):
+            citation_list.append(f"[{i+1}]: {url}")
+
+        # Add any numbered citations that weren't already included
+        for num, url in numbered_citations:
+            # Check if this URL is already in our list
+            if not any(url in citation for citation in citation_list):
+                citation_list.append(f"[{num}]: {url}")
+
+        return clean_text, citation_list
 
     async def __timeout_infer(
         self,
         *args,
         **kwargs,
-    ) -> Optional[str]:
+    ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
+        """
+        Do an inference with timeout.
+        """
         if self._timeout is not None:
             try:
                 # Use async_timeout instead of asyncio.wait_for
@@ -621,7 +721,7 @@ class RemoteOpenLike(RemoteModel):
         pubmed_context=None,
         ml_citations_context=None,
         api_base=None,
-    ) -> Optional[str]:
+    ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
         if api_base is None:
             api_base = self.api_base
         logger.debug(f"Looking up model {model} using {api_base} and {prompt}")
@@ -683,7 +783,37 @@ class RemoteOpenLike(RemoteModel):
                 logger.debug(f"Response {json_result} missing key result.")
                 return None
 
-            r: str = json_result["choices"][0]["message"]["content"]
+            # Extract message content
+            response_message = json_result["choices"][0]["message"]
+            r: Optional[str] = None
+            citations: List[str] = []
+
+            # Check if response contains structured content with citations
+            if isinstance(response_message, dict):
+                # Handle text content
+                if "content" in response_message:
+                    r = response_message["content"]
+
+                # Handle possible citation formats depending on the model API
+                if "citations" in response_message:
+                    citations = self._process_citation_objects(
+                        response_message["citations"]
+                    )
+                elif "sources" in response_message:
+                    citations = self._process_citation_objects(
+                        response_message["sources"]
+                    )
+
+                # Handle Perplexity pasted links format in text content
+                if r and citations == [] and "[↗]" in r:
+                    clean_text, extracted_citations = (
+                        self._extract_and_separate_citations(r)
+                    )
+                    r = clean_text
+                    citations = extracted_citations
+            else:
+                # Simple string response
+                r = str(response_message)
 
             # Check if the response is valid text using LLMResponseUtils
             if not LLMResponseUtils.is_valid_text(r):
@@ -699,12 +829,44 @@ class RemoteOpenLike(RemoteModel):
                 if extracted_result:
                     r = extracted_result.strip()
 
-            return r
+            return (r, citations)
+
         except Exception as e:
             logger.opt(exception=True).error(
                 f"Error {e} {traceback.format_exc()} processing {json_result} from {api_base} w/ url {url} --  {self} ON -- {combined_content}"
             )
             return None
+
+    def _process_citation_objects(self, citations_data) -> List[str]:
+        """
+        Process citation data that might be in various formats
+
+        Args:
+            citations_data: Citation data in various formats (list of objects, strings, etc)
+
+        Returns:
+            List of formatted citation strings
+        """
+        formatted_citations: list[str] = []
+
+        for citation in citations_data:
+            if isinstance(citation, dict):
+                # Handle citation objects with url/title/etc
+                if "url" in citation:
+                    if "title" in citation:
+                        formatted_citations.append(
+                            f"[{citation.get('title', '')}]({citation['url']})"
+                        )
+                    else:
+                        formatted_citations.append(citation["url"])
+                elif "text" in citation:
+                    formatted_citations.append(citation["text"])
+                elif "content" in citation:
+                    formatted_citations.append(citation["content"])
+            elif isinstance(citation, str):
+                formatted_citations.append(citation)
+
+        return formatted_citations
 
 
 class RemoteFullOpenLike(RemoteOpenLike):
@@ -735,7 +897,7 @@ class RemoteFullOpenLike(RemoteOpenLike):
 ### Key Guidelines:
 - No Independent Medical Review (IMR/IME) has occured yet We are only dealing with the insurance company at this stage, so do not reference independent medical reviews.
 - Patient/Medical Assistant-Friendly: The questions will likely be answered by a patient or a medical assistant, so avoid technical jargon.
-- Focus on Establishing Validity: Do not ask about the insurance company’s stated reason for denial. Instead, ask patient-related questions that help demonstrate why the denial is invalid.
+- Focus on Establishing Validity: Do not ask about the insurance company's stated reason for denial. Instead, ask patient-related questions that help demonstrate why the denial is invalid.
 ### Question Format Preferences:
   - Yes/no questions are ideal.
   - Short-answer questions (one sentence max) are acceptable.
@@ -743,12 +905,12 @@ class RemoteFullOpenLike(RemoteOpenLike):
 ### Bad questions (do not ask):
   - Why was the treatment considered not medically necessary?
   - What specific criteria were used to determine medical necessity for this treatment?
-  - What is the insurance company’s stated reason for denial?
+  - What is the insurance company's stated reason for denial?
   - Can you provide more information on the clinical evidence and guidelines that support the medical necessity of this treatment?
 ### Good Examples:
   - Wegovy denial: "Has the patient participated in a structured weight loss program (e.g., Weight Watchers)?"
   - PrEP denial: "How many sexual partners (roughly) has the patient had in the past 12 months?"
-  - Mammogram denial: "What is the patient’s age?" "Does the patient have the BRCA1 mutation or a family history of breast cancer?"
+  - Mammogram denial: "What is the patient's age?" "Does the patient have the BRCA1 mutation or a family history of breast cancer?"
 ### Context-Aware Answers:
  -If a question has a likely answer from the provided context, include the answer on the same line after the question mark.
 - Case-Specific: Each question should be directly relevant to the specific denial reason and medical necessity at hand.
@@ -834,7 +996,7 @@ class RemoteFullOpenLike(RemoteOpenLike):
 
         system_prompts: list[str] = self.get_system_prompts("questions")
 
-        result = await self._infer(
+        result = await self._infer_no_context(
             system_prompts=system_prompts,
             prompt=prompt,
             patient_context=patient_context,
@@ -979,13 +1141,26 @@ class RemoteFullOpenLike(RemoteOpenLike):
             logger.warning("Failed to generate citations")
             return []
 
+        text_result, citations_list = result
+
+        # If we got extracted citations, use those + include current text
+        if citations_list and len(citations_list) > 0:
+            return [text_result or ""] + citations_list
+
+        # Fall back to processing text result if citations aren't in the right format
+
+        if text_result is None:
+            return []
+
         # Process the result into a list of citations
         citations: List[str] = []
 
         # Split by newlines and process each line
-        for line in result.split("\n"):
-            line = line.strip()
+        for line in text_result.split("\n"):
             if not line:
+                continue
+            line = line.strip()
+            if not line or line == "":
                 continue
 
             # Remove numbering and bullet points at the beginning of the line
