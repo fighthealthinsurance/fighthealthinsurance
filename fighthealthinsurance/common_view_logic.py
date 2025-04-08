@@ -947,12 +947,9 @@ class DenialCreatorHelper:
             return []
 
         try:
-            # Generate appeal questions using the helper class
-            questions = await MLAppealQuestionsHelper.generate_questions_for_denial(
-                denial, speculative=False
-            )
-
-            # Start citation generation as a non-blocking task
+            # Start citation generation as a non-blocking task this is non-speculative
+            # because at this point the things we use to generate citations are "fixed"
+            # but we don't want to block the user while we do it.
             citation_task = asyncio.create_task(
                 MLCitationsHelper.generate_citations_for_denial(
                     denial, speculative=False
@@ -961,6 +958,16 @@ class DenialCreatorHelper:
             # See https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
             background_tasks.add(citation_task)
             citation_task.add_done_callback(background_tasks.discard)
+        except:
+            logger.opt(exception=True).warning(
+                f"Failed to start async generate citations for denial {denial_id}"
+            )
+
+        try:
+            # Generate appeal questions using the helper class
+            questions = await MLAppealQuestionsHelper.generate_questions_for_denial(
+                denial, speculative=False
+            )
 
             # Store the generated questions in the denial object
             await Denial.objects.filter(denial_id=denial_id).aupdate(
