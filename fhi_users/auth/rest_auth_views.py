@@ -565,7 +565,6 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             )
         relation = ProfessionalDomainRelation.objects.get(
             professional_id=professional_user_id,
-            pending_domain_relation=True,
             domain_id=domain_id,
         )
         relation.pending_domain_relation = False
@@ -575,7 +574,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         return Response(
             serializers.StatusResponseSerializer(
                 {
-                    "status": "rejected",
+                    "status": "deleted",
                     "message": "Professional user partially deleted (moved to rejected)",
                 }
             ).data,
