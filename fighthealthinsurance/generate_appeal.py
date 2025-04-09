@@ -627,7 +627,7 @@ class AppealGenerator(object):
             diagnosis=denial.diagnosis,
         )
 
-        logger.debug(f"FOR_PATIENT **********Denial details - primary_professional**********: {denial.primary_professional}, professional_to_finish: {denial.professional_to_finish}")
+        logger.debug(f"MAKE APPEALS professional_to_finish: {denial.professional_to_finish}")
         prof_pov = denial.professional_to_finish
 
         # TODO: use the streaming and cancellable APIs (maybe some fancy JS on the client side?)
@@ -641,6 +641,7 @@ class AppealGenerator(object):
             infer_type: str,
             pubmed_context: Optional[str] = None,
             ml_citations_context: Optional[List[str]] = None,
+            prof_pov: Optional[bool] = False,
         ) -> List[Future[Tuple[str, Optional[str]]]]:
             logger.debug(f"Looking up on {model_name}")
             if model_name not in ml_router.models_by_name:
@@ -678,7 +679,7 @@ class AppealGenerator(object):
             infer_type: str,
             pubmed_context: Optional[str],
             ml_citations_context: Optional[List[str]],
-            prof_pov: bool,
+            prof_pov: Optional[bool],
         ) -> List[Future[Tuple[str, Optional[str]]]]:
             # If the model has parallelism use it
             results = None
@@ -810,6 +811,7 @@ class AppealGenerator(object):
                         "plan_context": plan_context,
                         "pubmed_context": pubmed_context,
                         "ml_citations_context": ml_citations_context,
+                        "prof_pov": prof_pov,
                     },
                 ]
             )
