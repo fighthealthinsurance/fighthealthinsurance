@@ -123,8 +123,12 @@ class MLCitationsHelper:
             return denial.ml_citation_context  # type: ignore
         elif (
             denial.candidate_ml_citation_context
-            and denial.candidate_procedure == denial.procedure
-            and denial.candidate_diagnosis == denial.diagnosis
+            and (
+                not denial.procedure or (denial.candidate_procedure == denial.procedure)
+            )
+            and (
+                not denial.diagnosis or (denial.candidate_diagnosis == denial.diagnosis)
+            )
         ):
             logger.debug(f"Using candidate citations for denial {denial.denial_id}")
             citations = denial.candidate_ml_citation_context  # type: ignore
