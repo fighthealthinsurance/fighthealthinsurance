@@ -688,11 +688,11 @@ class AppealGenerator(object):
                     results = model.parallel_infer(
                         prompt=prompt,
                         infer_type=infer_type,
-                        prof_pov=prof_pov,
                         patient_context=patient_context,
                         plan_context=plan_context,
                         pubmed_context=pubmed_context,
                         ml_citations_context=ml_citations_context,
+                        prof_pov=prof_pov,
                     )
                 else:
                     logger.debug(f"Using system level parallel inference for {model}")
@@ -751,6 +751,7 @@ class AppealGenerator(object):
                 "infer_type": "full",
                 "pubmed_context": pubmed_context,
                 "ml_citations_context": ml_citations_context,
+                "prof_pov": prof_pov,
             },
         ]
 
