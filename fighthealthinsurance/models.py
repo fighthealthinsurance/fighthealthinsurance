@@ -26,6 +26,50 @@ else:
     User = get_user_model()
 
 
+class GenericQuestionGeneration(ExportModelOperationsMixin("GenericQuestionGeneration"), models.Model):  # type: ignore
+    """
+    Stores cached question generations for specific procedure and diagnosis combinations
+    that don't contain patient-specific information.
+    """
+
+    id = models.AutoField(primary_key=True)
+    procedure = models.CharField(max_length=300)
+    diagnosis = models.CharField(max_length=300)
+    # Store the questions as a JSONField
+    generated_questions = models.JSONField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["procedure", "diagnosis"]),
+        ]
+
+    def __str__(self):
+        return f"Generic Questions: {self.procedure} / {self.diagnosis}"
+
+
+class GenericContextGeneration(ExportModelOperationsMixin("GenericContextGeneration"), models.Model):  # type: ignore
+    """
+    Stores cached citation/context generations for specific procedure and diagnosis combinations
+    that don't contain patient-specific information.
+    """
+
+    id = models.AutoField(primary_key=True)
+    procedure = models.CharField(max_length=300)
+    diagnosis = models.CharField(max_length=300)
+    # Store the citations as a JSONField
+    generated_context = models.JSONField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["procedure", "diagnosis"]),
+        ]
+
+    def __str__(self):
+        return f"Generic Context: {self.procedure} / {self.diagnosis}"
+
+
 # Money related :p
 class InterestedProfessional(ExportModelOperationsMixin("InterestedProfessional"), models.Model):  # type: ignore
     id = models.AutoField(primary_key=True)
