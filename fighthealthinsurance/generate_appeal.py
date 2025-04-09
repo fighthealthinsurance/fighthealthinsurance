@@ -638,7 +638,7 @@ class AppealGenerator(object):
             infer_type: str,
             pubmed_context: Optional[str] = None,
             ml_citations_context: Optional[List[str]] = None,
-            prof_pov: Optional[bool] = False,
+            prof_pov: bool = False,
         ) -> List[Future[Tuple[str, Optional[str]]]]:
             logger.debug(f"Looking up on {model_name}")
             if model_name not in ml_router.models_by_name:
@@ -676,7 +676,7 @@ class AppealGenerator(object):
             infer_type: str,
             pubmed_context: Optional[str],
             ml_citations_context: Optional[List[str]],
-            prof_pov: Optional[bool] = False,
+            prof_pov: bool = False,
         ) -> List[Future[Tuple[str, Optional[str]]]]:
             # If the model has parallelism use it
             results = None
