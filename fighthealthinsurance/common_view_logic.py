@@ -1356,24 +1356,44 @@ class DenialCreatorHelper:
     async def extract_set_fax_number(cls, denial_id):
         # Try and extract the appeal fax number
         denial = await Denial.objects.filter(denial_id=denial_id).aget()
-        appeal_fax_number = None
-        try:
-            appeal_fax_number = await appealGenerator.get_fax_number(
-                denial_text=denial.denial_text
-            )
-        except Exception as e:
-            logger.opt(exception=True).warning(
-                f"Failed to extract fax number for denial {denial_id}: {e}"
-            )
+        appeal_fax_number = denial.appeal_fax_number
+        if not appeal_fax_number:
+            try:
+                appeal_fax_number = await appealGenerator.get_fax_number(
+                    denial_text=denial.denial_text
+                )
+            except Exception as e:
+                logger.opt(exception=True).warning(
+                    f"Failed to extract fax number for denial {denial_id}: {e}"
+                )
 
-        # Slight guard against hallucinations
+        # More flexible validation against hallucinations
         if appeal_fax_number is not None:
-            # TODO: More flexible regex matching
-            if (
-                appeal_fax_number not in denial.denial_text
-                and "Fax" not in denial.denial_text
-            ) or len(appeal_fax_number) > 30:
+            # Extract just the digits for comparison
+            fax_digits = re.sub(r"\D", "", appeal_fax_number)
+
+            if len(fax_digits) < 10 or len(fax_digits) > 15:
+                # Invalid length for a phone number
+                logger.debug(
+                    f"Rejected fax number {appeal_fax_number} - invalid length"
+                )
                 appeal_fax_number = None
+            elif len(appeal_fax_number) > 30:
+                # String is too long to be a reasonable fax number
+                logger.debug(f"Rejected fax number {appeal_fax_number} - too long")
+                appeal_fax_number = None
+            else:
+                # Check if any subsequence of digits appears in the denial text
+                # This is more flexible than exact matching
+                denial_text_digits = re.sub(r"\D", "", denial.denial_text)
+                if fax_digits[-10:] not in denial_text_digits:
+                    # Not found in text - might be hallucinated
+                    logger.debug(
+                        f"Rejected fax number {appeal_fax_number} - digits not found in text"
+                    )
+                    appeal_fax_number = None
+                else:
+                    logger.debug(f"Validated fax number {appeal_fax_number}")
 
         if appeal_fax_number is not None:
             # Use aupdate instead of fetching and saving
