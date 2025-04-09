@@ -5,7 +5,7 @@ import re
 import time
 import traceback
 from concurrent.futures import Future
-from typing import Any, Iterator, List, Optional, Tuple
+from typing import Any, Coroutine, Iterator, List, Optional, Tuple
 from loguru import logger
 
 from fighthealthinsurance.denial_base import DenialBase
@@ -13,7 +13,7 @@ from fighthealthinsurance.exec import *
 from fighthealthinsurance.ml.ml_models import RemoteFullOpenLike, RemoteModelLike
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.process_denial import *
-from fighthealthinsurance.utils import as_available_nested
+from fighthealthinsurance.utils import as_available_nested, best_within_timelimit
 from typing_extensions import reveal_type
 from .pubmed_tools import PubMedTools
 
@@ -45,11 +45,13 @@ class AppealGenerator(object):
     def __init__(self):
         self.regex_denial_processor = ProcessDenialRegex()
 
+    # TODO: Move to the helper class
     async def get_appeal_questions(
         self,
         denial_text: Optional[str],
         procedure: Optional[str],
         diagnosis: Optional[str],
+        timeout: int,
         patient_context: Optional[str] = None,
         plan_context: Optional[str] = None,
         use_external: bool = False,
@@ -68,60 +70,84 @@ class AppealGenerator(object):
         Returns:
             A list of tuples (question, answer) where answer may be empty if not provided
         """
-        models_to_try = ml_router.full_qa_backends(use_external)
-        for model in models_to_try:
+        # We track full models and give them a preference in scoring
+        full_models_to_try = ml_router.full_qa_backends(use_external)
+        full_awaitables: List[Coroutine[Any, Any, List[Tuple[str, str]]]] = []
+        partial_awaitables: List[Coroutine[Any, Any, List[Tuple[str, str]]]] = []
+
+        for model in full_models_to_try:
             # First try with patient context if available
             if patient_context is not None and len(patient_context.strip()) > 0:
-                try:
-                    raw_questions = await model.get_appeal_questions(
+                full_awaitables.append(
+                    model.get_appeal_questions(
                         denial_text=denial_text,
                         procedure=procedure,
                         diagnosis=diagnosis,
                         patient_context=patient_context,
                         plan_context=plan_context,
                     )
-                    if raw_questions and len(raw_questions) > 0:
-                        # Parse questions into (question, answer) tuples if they aren't already
-                        if isinstance(raw_questions[0], str):
-                            return self._parse_questions_with_answers(raw_questions)
-                        return raw_questions
-                except Exception as e:
-                    logger.opt(exception=True).warning(
-                        f"Failed to generate questions with patient context: {e}"
-                    )
-
-            # Then try without patient context
-            try:
-                raw_questions = await model.get_appeal_questions(
-                    denial_text=denial_text,
+                )
+        # Then try full models without patient context
+        for model in full_models_to_try:
+            partial_awaitables.append(
+                model.get_appeal_questions(
+                    denial_text=None,
                     procedure=procedure,
                     diagnosis=diagnosis,
                     plan_context=plan_context,
                 )
-                if raw_questions and len(raw_questions) > 0:
-                    # Parse questions into (question, answer) tuples if they aren't already
-                    if isinstance(raw_questions[0], str):
-                        return self._parse_questions_with_answers(raw_questions)
-                    return raw_questions
-            except Exception as e:
-                logger.opt(exception=True).warning(f"Failed to generate questions: {e}")
+            )
         # If none of the full models worked let's try with "just" diagnosis and procedure
         models_to_try = ml_router.partial_qa_backends()
         for model in models_to_try:
-            try:
-                raw_questions = await model.get_appeal_questions(
+            partial_awaitables.append(
+                model.get_appeal_questions(
                     denial_text=None,
                     procedure=procedure,
                     diagnosis=diagnosis,
                     plan_context=None,
                 )
-                if raw_questions and len(raw_questions) > 0:
+            )
 
-                    if isinstance(raw_questions[0], str):
-                        return self._parse_questions_with_answers(raw_questions)
-                    return raw_questions
+        def score_fn(result: Optional[List[Tuple[str, str]]], awaitable):
+            # Score the result based on a mixture of source and length
+            if result is None:
+                return 0
+            try:
+                questions_to_score = []
+                if result and len(result) > 0:
+                    # Parse questions into (question, answer) tuples if they aren't already
+                    if isinstance(result[0], str):
+                        questions_to_score = self._parse_questions_with_answers(result)
+                    questions_to_score = result
+                # Now we look at the model and the number of questions
+                if len(questions_to_score) == 0:
+                    return 0
+                question_score = len(questions_to_score)
+                # More than 4 is bad news
+                if question_score > 4:
+                    question_score = 1
+                # Bias towards the models with more context
+                if awaitable in full_awaitables:
+                    question_score = question_score * 2
+                return question_score
             except Exception as e:
-                logger.opt(exception=True).warning(f"Failed to generate questions: {e}")
+                logger.debug("Failed to parse {answer}")
+                return 0
+
+        # Get the best result within the timeout
+        try:
+            result = await best_within_timelimit(
+                full_awaitables + partial_awaitables,
+                score_fn=score_fn,
+                timeout=timeout,
+            )
+            if result:
+                return result
+            else:
+                return []
+        except:
+            logger.opt(exception=True).debug("Failed to get best within timelimit")
         # If we got here, no models worked, return empty list
         return []
 

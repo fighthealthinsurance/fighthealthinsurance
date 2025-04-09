@@ -1,8 +1,10 @@
 from typing import List, Tuple, Optional
 from loguru import logger
 import asyncio
+import time
 from fighthealthinsurance.models import Denial
 from fighthealthinsurance.generate_appeal import AppealGenerator
+from fighthealthinsurance.utils import best_within_timelimit
 
 
 class MLAppealQuestionsHelper:
@@ -34,6 +36,7 @@ class MLAppealQuestionsHelper:
         else:
             try:
                 appeal_generator = AppealGenerator()
+
                 raw_questions = await asyncio.wait_for(
                     appeal_generator.get_appeal_questions(
                         denial_text=denial.denial_text,
@@ -41,28 +44,36 @@ class MLAppealQuestionsHelper:
                         diagnosis=denial.diagnosis,
                         patient_context=denial.health_history,
                         plan_context=denial.plan_context,
+                        timeout=30,
                     ),
-                    timeout=90,
-                )
+                    timeout=45,
+                )  # Add a safety timeout
 
-                # Ensure questions are in the form of tuples
-                questions = [
-                    (q[0], q[1]) if isinstance(q, (list, tuple)) else (str(q), "")
-                    for q in raw_questions
-                ]
+                # If we got results, process them
+                if raw_questions:
+                    # Ensure questions are in the form of tuples
+                    questions = [
+                        (q[0], q[1]) if isinstance(q, (list, tuple)) else (str(q), "")
+                        for q in raw_questions
+                    ]
 
-                # Filter out any lines containing "Note:" as they are typically context lines
-                questions = [
-                    (q, a)
-                    for q, a in questions
-                    if "Note:" not in q and "Note:" not in a
-                ]
+                    # Filter out any lines containing "Note:" as they are typically context lines
+                    questions = [
+                        (q, a)
+                        for q, a in questions
+                        if "Note:" not in q and "Note:" not in a
+                    ]
 
-                # If the last line contains a note, remove it
-                if questions and len(questions) > 0:
-                    last_q, last_a = questions[-1]
-                    if "note" in last_q.lower() or "note" in last_a.lower():
-                        questions.pop()
+                    # If the last line contains a note, remove it
+                    if questions and len(questions) > 0:
+                        last_q, last_a = questions[-1]
+                        if "note" in last_q.lower() or "note" in last_a.lower():
+                            questions.pop()
+                else:
+                    logger.warning(
+                        f"No questions generated for denial {denial.denial_id}"
+                    )
+
             except asyncio.TimeoutError:
                 logger.warning(
                     f"Timeout while generating questions for denial {denial.denial_id}"

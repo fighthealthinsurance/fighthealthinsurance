@@ -1,9 +1,12 @@
 import asyncio
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from loguru import logger
 
 from fighthealthinsurance.models import Denial
 from fighthealthinsurance.ml.ml_router import MLRouter
+from fighthealthinsurance.utils import (
+    best_within_timelimit,
+)
 
 
 class MLCitationsHelper:
@@ -17,6 +20,7 @@ class MLCitationsHelper:
         denial_text: Optional[str],
         procedure: Optional[str],
         diagnosis: Optional[str],
+        timeout: int,
         patient_context: Optional[str] = None,
         plan_context: Optional[str] = None,
         use_external: bool = False,
@@ -46,55 +50,58 @@ class MLCitationsHelper:
                 )
 
             # Only proceed if we have backends to use
-            if partial_citation_backends or full_citation_backends:
-                # Combine the backends, prioritizing full backends if available
-
-                # Use the first available full backend to get citations
-                for backend in full_citation_backends:
-                    try:
-                        logger.debug(f"Fetching citations using {backend}")
-                        backend_citations = await backend.get_citations(
-                            denial_text=denial_text,
-                            procedure=procedure,
-                            diagnosis=diagnosis,
-                            patient_context=patient_context,
-                            plan_context=plan_context,
-                        )
-
-                        if backend_citations:
-                            logger.debug(
-                                f"Generated {len(backend_citations)} citations"
-                            )
-                            return backend_citations
-                    except Exception as e:
-                        logger.opt(exception=True).warning(
-                            f"Error fetching citations with backend {backend}: {e}"
-                        )
-                # If no full backends were successful, try partial backends
-                for backend in partial_citation_backends:
-                    try:
-                        logger.debug(f"Fetching partial citations using {backend}")
-                        backend_citations = await backend.get_citations(
-                            denial_text=None,
-                            procedure=procedure,
-                            diagnosis=diagnosis,
-                            patient_context=None,
-                            plan_context=None,
-                        )
-
-                        if backend_citations:
-                            logger.debug(
-                                f"Generated {len(backend_citations)} citations"
-                            )
-                            return backend_citations
-                    except Exception as e:
-                        logger.opt(exception=True).warning(
-                            f"Error fetching citations with backend {backend}: {e}"
-                        )
-            else:
+            if not partial_citation_backends and not full_citation_backends:
                 logger.debug("No citation backends available")
+                return []
+            # Create tasks for full backends with higher priority
+            full_awaitables = []
+            for backend in full_citation_backends:
+                full_awaitables.append(
+                    backend.get_citations(
+                        denial_text=denial_text,
+                        procedure=procedure,
+                        diagnosis=diagnosis,
+                        patient_context=patient_context,
+                        plan_context=plan_context,
+                    )
+                )
 
-            return []
+            # Create tasks for partial backends as optional tasks
+            partial_awaitables = []
+            for backend in partial_citation_backends:
+                partial_awaitables.append(
+                    backend.get_citations(
+                        denial_text=None,
+                        procedure=procedure,
+                        diagnosis=diagnosis,
+                        patient_context=None,
+                        plan_context=None,
+                    )
+                )
+
+            # Now see what we can find in our time budget.
+            def score_fn(result, awaitable):
+                # Score the result based on a mixture of source and length
+                if not result:
+                    return -1
+                return len(result) * (1 if awaitable in full_awaitables else 0.5)
+
+            # Get the best result within the timeout
+            try:
+                result = (
+                    await best_within_timelimit(
+                        full_awaitables + partial_awaitables,
+                        score_fn=score_fn,
+                        timeout=timeout,
+                    )
+                    or []
+                )
+                return result
+            except:
+                logger.opt(exception=True).debug(
+                    "Failed to get best citations within timelimit"
+                )
+                return []
         except Exception as e:
             logger.opt(exception=True).warning(f"Failed to generate citations: {e}")
             return []
@@ -146,6 +153,7 @@ class MLCitationsHelper:
                 patient_context=patient_context,
                 plan_context=plan_context,
                 use_external=denial.use_external,
+                timeout=45 if speculative else 30,
             )
 
         # Store citations in the denial object directly using aupdate

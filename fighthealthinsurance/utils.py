@@ -27,6 +27,7 @@ from typing import (
     Sequence,
     Union,
     cast,
+    AsyncGenerator,
 )
 from uuid import UUID
 from subprocess import CalledProcessError
@@ -43,6 +44,8 @@ pubmed_fetcher = PubMedFetcher()
 
 U = TypeVar("U")
 T = TypeVar("T")
+
+background_tasks: set[asyncio.Task[Any]] = set()
 
 flat_map = lambda f, xs: reduce(lambda a, b: a + b, map(f, xs))
 
@@ -210,7 +213,7 @@ async def _interleave_iterator_for_keep_alive(
             break
 
 
-async def fire_and_forget_in_new_threadpool(task: Awaitable[None]) -> None:
+async def fire_and_forget_in_new_threadpool(task: Coroutine) -> None:
     """
     Runs an async task in a new threadpool executor.
     Fire-and-forget style with no return value.
@@ -218,6 +221,7 @@ async def fire_and_forget_in_new_threadpool(task: Awaitable[None]) -> None:
     Args:
         task: The async task to run
     """
+    logger.debug("Starting fire and forget task {task}")
 
     def run_async_task() -> None:
         loop = asyncio.new_event_loop()
@@ -230,11 +234,14 @@ async def fire_and_forget_in_new_threadpool(task: Awaitable[None]) -> None:
             )
         finally:
             loop.close()
+            logger.debug("Task {task} finished")
 
     # Create and start a thread that will run the task in its own loop
     thread = threading.Thread(target=run_async_task)
     thread.daemon = True  # Thread will exit when main thread exits
     thread.start()
+    logger.debug("Task started good bye :p")
+    return
 
 
 async def best_within_timelimit(
@@ -327,45 +334,53 @@ async def best_within_timelimit_static(
     return await best_within_timelimit(tasks, static_score_fn, timeout)
 
 
+# Possible future TODO: Add a grace period after required to finish some optional tasks
 async def execute_critical_optional_fireandforget(
-    critical: List[Awaitable[Any]],
-    optional: List[Awaitable[Any]],
-    fire_and_forget: List[Awaitable[None]],
-) -> List[Any]:
+    required: Sequence[Coroutine[Any, Any, T]],
+    optional: Sequence[Coroutine[Any, Any, T]],
+    fire_and_forget: Sequence[Coroutine] = [],
+    done_record: Optional[T] = None,
+) -> AsyncIterator[T]:
     """
     Kicks off all tasks at once.
-    Waits only for critical tasks to finish; cancels optional after those finish.
+    Waits only for required tasks to finish; cancels optional after those finish.
     fire_and_forget tasks run in the background without blocking.
 
     Args:
-        critical: List of critical awaitable tasks that must complete
-        optional: List of optional awaitable tasks that may be canceled
-        fire_and_forget: List of awaitable tasks that should run in the background
+        critical: Sequence of critical awaitable tasks that must complete
+        optional: Sequence of optional awaitable tasks that may be canceled
+        fire_and_forget: Sequence of awaitable tasks that should run in the background in another thread
 
     Returns:
-        List of results from the critical tasks
+        Async iterator of the values as finished
     """
     # Start fire and forget tasks
-    for task in fire_and_forget:
-        # Cast the awaitable to a coroutine to satisfy mypy
-        coroutine: Coroutine[Any, Any, None] = cast(Coroutine[Any, Any, None], task)
-        asyncio.create_task(coroutine)
+    for fftask in fire_and_forget:
+        await fire_and_forget_in_new_threadpool(fftask)
 
-    # Create task objects for critical and optional
-    critical_tasks: List[asyncio.Task[Any]] = [
-        asyncio.create_task(cast(Coroutine[Any, Any, Any], task)) for task in critical
-    ]
-    optional_tasks: List[asyncio.Task[Any]] = [
-        asyncio.create_task(cast(Coroutine[Any, Any, Any], task)) for task in optional
-    ]
+    # We create both sets of tasks at the same time since they're mostly independent and having
+    # the optional ones running at the same time gives us a chance to get more done.
+    required_tasks: List[asyncio.Task[T]] = [asyncio.create_task(t) for t in required]
+    optional_tasks: List[asyncio.Task[T]] = [asyncio.create_task(t) for t in optional]
+    all_tasks: List[asyncio.Task[T]] = required_tasks + optional_tasks
 
-    # Wait for all critical tasks to complete
-    critical_results = await asyncio.gather(*critical_tasks, return_exceptions=True)
-
-    # Cancel all optional tasks
-    for task in optional_tasks:
-        if not task.done():
-            task.cancel()
-
-    # Return only the results from critical tasks
-    return critical_results
+    required_set = set(required_tasks)
+    required_tasks_finished = 0
+    # First, execute required tasks (no timeout)
+    try:
+        for task in asyncio.as_completed(all_tasks):
+            if task in required_set:
+                required_tasks_finished += 1
+            result: T = await task
+            # Yield each result immediately for streaming
+            yield result
+            if required_tasks_finished >= len(required):
+                logger.debug("All done with required tasks")
+                break
+    finally:
+        for t in optional_tasks:
+            if not t.done():
+                t.cancel()
+        await asyncio.gather(*optional_tasks, return_exceptions=True)
+    if done_record:
+        yield done_record
