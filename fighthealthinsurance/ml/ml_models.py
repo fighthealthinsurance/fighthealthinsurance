@@ -36,7 +36,7 @@ class RemoteModelLike(DenialBase):
         pubmed_context,
         ml_citations_context,
         infer_type,
-        for_patient: bool,
+        prof_pov: bool,
     ):
         """
         Abstract method for inference
@@ -277,20 +277,22 @@ class RemoteOpenLike(RemoteModel):
         self._expensive = expensive
 
     def get_system_prompts(
-        self, prompt_type: str, for_patient: bool = True
+        self, prompt_type: str, prof_pov=False
     ) -> list[str]:
         """
         Get the appropriate system prompt based on type and audience.
 
         Args:
             prompt_type: The type of prompt to get (e.g., 'full', 'questions', etc.)
-            for_patient: Whether this is for patient (True) or professional (False)
+            prof_pov: Generating the appeal from the patient (False) or professional (True) point of view 
 
         Returns:
             The system prompt as a string, or the first prompt if multiple are available
         """
+        # TODO Remove
+        logger.debug(f"Checking PROF POV>>>>>>>>>>>> {prof_pov}")
         key = prompt_type
-        if not for_patient and f"{prompt_type}_not_patient" in self.system_prompts_map:
+        if prof_pov and f"{prompt_type}_not_patient" in self.system_prompts_map:
             key = f"{prompt_type}_not_patient"
 
         return self.system_prompts_map.get(
@@ -324,19 +326,19 @@ class RemoteOpenLike(RemoteModel):
     def parallel_infer(
         self,
         prompt: str,
+        infer_type: str,
+        prof_pov: bool,
         patient_context: Optional[str],
         plan_context: Optional[str],
         pubmed_context: Optional[str],
-        infer_type: str,
         ml_citations_context: Optional[List[str]] = None,
-        for_patient: bool = True,
     ) -> List[Future[Tuple[str, Optional[str]]]]:
         logger.debug(f"Running inference on {self} of type {infer_type}")
         temperatures = [0.5]
         if infer_type == "full" and not self._expensive:
             # Special case for the full one where we really want to explore the problem space
             temperatures = [0.6, 0.1]
-        system_prompts = self.get_system_prompts(infer_type, for_patient)
+        system_prompts = self.get_system_prompts(infer_type, prof_pov)
         calls = itertools.chain.from_iterable(
             map(
                 lambda temperature: map(
@@ -528,7 +530,7 @@ class RemoteOpenLike(RemoteModel):
         return result
 
     async def questions(
-        self, prompt: str, patient_context: str, plan_context
+        self, prompt: str, patient_context: str, plan_context, prof_pov: bool
     ) -> List[str]:
         result = await self._infer_no_context(
             system_prompts=self.get_system_prompts("question"),
@@ -996,7 +998,7 @@ class RemoteFullOpenLike(RemoteOpenLike):
         2. Has the patient had any previous surgeries? Unknown
         """
 
-        system_prompts: list[str] = self.get_system_prompts("questions")
+        system_prompts: list[str] = self.get_system_prompts("questions", prof_pov)
 
         result = await self._infer_no_context(
             system_prompts=system_prompts,
@@ -1128,7 +1130,7 @@ class RemoteFullOpenLike(RemoteOpenLike):
         Prioritize high-quality, peer-reviewed research, clinical guidelines, and standard of care documentation.
         """
 
-        system_prompts: list[str] = self.get_system_prompts("citations")
+        system_prompts: list[str] = self.get_system_prompts("citations", prof_pov)
 
         result = await self._infer(
             system_prompts=system_prompts,
