@@ -31,6 +31,8 @@ from fighthealthinsurance.form_utils import *
 from fighthealthinsurance.generate_appeal import *
 from fighthealthinsurance.models import *
 from fighthealthinsurance.utils import interleave_iterator_for_keep_alive
+from fighthealthinsurance.ml.ml_citations_helper import MLCitationsHelper
+from fighthealthinsurance.ml.ml_appeal_questions_helper import MLAppealQuestionsHelper
 from fighthealthinsurance import stripe_utils
 from fhi_users.models import ProfessionalUser, UserDomain
 from fhi_users import emails as fhi_emails
@@ -39,6 +41,7 @@ from .utils import check_call, send_fallback_email
 
 
 appealGenerator = AppealGenerator()
+background_tasks = set()
 
 
 class RemoveDataHelper:
@@ -682,10 +685,11 @@ class FindNextStepsHelper:
             and len(appeal_fax_number) < 30
         ):
             logger.debug(f"Setting appeal fax number to {appeal_fax_number}")
-            denial.appeal_fax_number = appeal_fax_number
+            Denial.objects.filter(denial_id=denial_id).update(
+                appeal_fax_number=appeal_fax_number
+            )
         else:
             logger.debug(f"Invalid appeal fax number {appeal_fax_number}")
-        denial.save()
 
         if include_provided_health_history_in_appeal is not None:
             denial.include_provided_health_history = (
@@ -763,9 +767,10 @@ class FindNextStepsHelper:
         # Generate questions for better appeal creation
         try:
             # If questions don't exist yet, generate them
-            if not denial.generated_questions or len(denial.generated_questions) < 2:
+            if not denial.generated_questions or len(denial.generated_questions) == 0:
                 # Call the generate_appeal_questions method to get and store questions
                 # Using sync_to_async since we're in a synchronous method
+                logger.debug("Generating appeal questions")
                 async_to_sync(DenialCreatorHelper.generate_appeal_questions)(
                     denial_id=denial.denial_id
                 )
@@ -928,7 +933,7 @@ class DenialCreatorHelper:
         this specific denial. The questions will be stored in the denial object's
         generated_questions field as tuples of (question, answer).
         Also generates citations in a non-blocking manner.
-
+        This is NOT SPECULATIVE.
         Args:
             denial_id: The ID of the denial to generate questions for
 
@@ -939,67 +944,37 @@ class DenialCreatorHelper:
         if not denial:
             logger.warning(f"Could not find denial with ID {denial_id}")
             return []
+
         try:
-            # Check if we already have questions generated
-            if denial.generated_questions is not None:
-                # Convert stored lists to tuples for consistency with return type
-                result_questions: List[Tuple[str, str]] = [
-                    (
-                        (q[0], q[1])
-                        if isinstance(q, list)
-                        else (q[0], q[1]) if isinstance(q, tuple) else (str(q), "")
-                    )
-                    for q in denial.generated_questions
-                ]
-                return result_questions
-
-            # Get required context for the questions
-            denial_text = denial.denial_text
-            patient_context = denial.health_history
-            plan_context = denial.plan_context
-
-            # Create a new task for generating citations without blocking
-            async def start_citation_generation():
-                from fighthealthinsurance.ml.ml_citations_helper import (
-                    MLCitationsHelper,
+            # Start citation generation as a non-blocking task this is non-speculative
+            # because at this point the things we use to generate citations are "fixed"
+            # but we don't want to block the user while we do it.
+            citation_task = asyncio.create_task(
+                MLCitationsHelper.generate_citations_for_denial(
+                    denial, speculative=False
                 )
+            )
+            # See https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
+            background_tasks.add(citation_task)
+            citation_task.add_done_callback(background_tasks.discard)
+        except:
+            logger.opt(exception=True).warning(
+                f"Failed to start async generate citations for denial {denial_id}"
+            )
 
-                try:
-                    await MLCitationsHelper.generate_citations_for_denial(denial)
-                except Exception as e:
-                    logger.opt(exception=True).warning(
-                        f"Failed to generate citations for denial {denial_id}: {e}"
-                    )
+        try:
+            # Generate appeal questions using the helper class
+            questions = await MLAppealQuestionsHelper.generate_questions_for_denial(
+                denial, speculative=False
+            )
 
-            if denial.procedure:
-                # Start the citation generation task without waiting for it
-                asyncio.create_task(start_citation_generation())
+            # Store the generated questions in the denial object
+            await Denial.objects.filter(denial_id=denial_id).aupdate(
+                generated_questions=questions
+            )
 
-                # Use the ML model to generate questions with potential answers
-                raw_questions = await appealGenerator.get_appeal_questions(
-                    denial_text=denial_text,
-                    diagnosis=denial.diagnosis,
-                    procedure=denial.procedure,
-                    patient_context=patient_context,
-                    plan_context=plan_context,
-                )
-
-                # Ensure we're working with tuples
-                questions: List[Tuple[str, str]] = [
-                    (q[0], q[1]) if isinstance(q, (list, tuple)) else (str(q), "")
-                    for q in raw_questions
-                ]
-
-                # Store the questions directly with aupdate instead of loading and saving
-                await Denial.objects.filter(denial_id=denial_id).aupdate(
-                    generated_questions=questions
-                )
-                logger.debug(
-                    f"Generated {len(questions)} questions for denial {denial_id}"
-                )
-                return questions
-            else:
-                return []
+            logger.debug(f"Generated {len(questions)} questions for denial {denial_id}")
+            return questions
         except Exception as e:
             logger.opt(exception=True).warning(
                 f"Failed to generate questions for denial {denial_id}: {e}"
@@ -1174,9 +1149,7 @@ class DenialCreatorHelper:
 
         # Create Task objects for all optional operations
         optional_tasks = [
-            asyncio.wait_for(
-                asyncio.shield(asyncio.create_task(just_the_name(task))), timeout=45
-            )
+            asyncio.wait_for(asyncio.create_task(just_the_name(task)), timeout=45)
             for task in optional_awaitables
         ]
         # We create both sets of tasks at the same time since they're mostly independent and having
@@ -1194,7 +1167,24 @@ class DenialCreatorHelper:
             # Yield each result immediately for streaming
             yield result
 
+        build_context_task = asyncio.create_task(
+            cls.build_speculative_context(denial_id=denial_id)
+        )
+        background_tasks.add(build_context_task)
+        build_context_task.add_done_callback(background_tasks.discard)
         yield "Extraction completed\n"
+
+    @classmethod
+    async def build_speculative_context(cls, denial_id: int):
+        """Build context based on the idea we extracted the correct info"""
+        denial = await Denial.objects.filter(denial_id=denial_id).aget()
+        citations_awaitable = MLCitationsHelper.generate_citations_for_denial(
+            denial, speculative=True
+        )
+        questions_awaitable = MLAppealQuestionsHelper.generate_questions_for_denial(
+            denial=denial, speculative=True
+        )
+        await asyncio.gather(citations_awaitable, questions_awaitable)
 
     @classmethod
     async def extract_set_denial_and_diagnosis(cls, denial_id: int):
@@ -1621,12 +1611,12 @@ class AppealsBackendHelper:
             asyncio.shield(cls.pmt.find_context_for_denial(denial)), timeout=45
         )
 
-        from fighthealthinsurance.ml.ml_citations_helper import (
-            MLCitationsHelper,
-        )
-
         ml_citation_context_awaitable = asyncio.wait_for(
-            asyncio.shield(MLCitationsHelper.generate_citations_for_denial(denial)),
+            asyncio.shield(
+                MLCitationsHelper.generate_citations_for_denial(
+                    denial, speculative=False
+                )
+            ),
             timeout=45,
         )
 

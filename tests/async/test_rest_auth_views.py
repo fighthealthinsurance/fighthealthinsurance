@@ -942,7 +942,7 @@ class ProfessionalInvitationTests(TestCase):
         )
 
         # Create non-admin relationship with domain
-        ProfessionalDomainRelation.objects.create(
+        self.regular_relation = ProfessionalDomainRelation.objects.create(
             professional=self.regular_professional,
             domain=self.domain,
             active_domain_relation=True,
@@ -1025,6 +1025,86 @@ class ProfessionalInvitationTests(TestCase):
         }
 
         response = self.client.post(invite_url, invite_data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_delete_professional_as_admin(self):
+        """Test that an admin can delete (mark as rejected) a professional in the domain"""
+        # Login as admin user
+        url = reverse("rest_login-login")
+        data = {
+            "username": "adminuser",
+            "password": self.admin_password,
+            "domain": "testdomain",
+            "phone": "",
+        }
+        response = self.client.post(url, data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.json()["status"], "success")
+
+        # Delete the regular professional
+        delete_url = reverse("professional_user-delete")
+        delete_data = {
+            "professional_user_id": self.regular_professional.id,
+            "domain_id": str(self.domain.id),
+        }
+        response = self.client.post(delete_url, delete_data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.json()["status"], "deleted")
+
+        # Verify relationship status has been updated
+        self.regular_relation.refresh_from_db()
+        self.assertFalse(self.regular_relation.pending_domain_relation)
+        self.assertFalse(self.regular_relation.active_domain_relation)
+        self.assertTrue(self.regular_relation.rejected)
+
+        # Check that listing active users no longer includes this professional
+        url = reverse("professional_user-list-active-in-domain")
+        response = self.client.post(url, format="json")
+        active_data = response.json()
+        professional_ids = [p["professional_user_id"] for p in active_data]
+        self.assertNotIn(self.regular_professional.id, professional_ids)
+
+    def test_delete_professional_as_non_admin(self):
+        """Test that a non-admin cannot delete a professional in the domain"""
+        # Login as regular user
+        url = reverse("rest_login-login")
+        data = {
+            "username": "regularuser",
+            "password": self.regular_password,
+            "domain": "testdomain",
+            "phone": "",
+        }
+        response = self.client.post(url, data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        # Try to delete another professional
+        delete_url = reverse("professional_user-delete")
+        delete_data = {
+            "professional_user_id": self.admin_professional.id,
+            "domain_id": str(self.domain.id),
+        }
+        response = self.client.post(delete_url, delete_data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(
+            response.json()["error"], "User does not have admin privileges"
+        )
+
+        # Verify admin's relationship status has NOT been updated
+        admin_relation = ProfessionalDomainRelation.objects.get(
+            professional=self.admin_professional, domain=self.domain
+        )
+        self.assertTrue(admin_relation.active_domain_relation)
+        self.assertFalse(admin_relation.rejected)
+
+    def test_delete_professional_without_authentication(self):
+        """Test that unauthenticated user cannot delete a professional in the domain"""
+        # Try to delete without logging in
+        delete_url = reverse("professional_user-delete")
+        delete_data = {
+            "professional_user_id": self.admin_professional.id,
+            "domain_id": str(self.domain.id),
+        }
+        response = self.client.post(delete_url, delete_data, format="json")
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
 
