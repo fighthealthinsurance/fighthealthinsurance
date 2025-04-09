@@ -110,12 +110,17 @@ class HealthHistoryViewSet(viewsets.ViewSet, CreateMixin):
 class NextStepsViewSet(viewsets.ViewSet, CreateMixin):
     serializer_class = serializers.PostInferedFormSerializer
 
-    @extend_schema(responses=serializers.NextStepInfoSerizableSerializer)
+    @extend_schema(
+        responses={
+            200: serializers.NextStepInfoSerizableSerializer,
+            201: serializers.NextStepInfoSerizableSerializer,
+            400: serializers.ErrorSerializer,
+        }
+    )
     def create(self, request: Request) -> Response:
         return super().create(request)
 
-    @extend_schema(responses=serializers.NextStepInfoSerizableSerializer)
-    def perform_create(self, request: Request, serializer):
+    def perform_create(self, request: Request, serializer) -> Response:
         next_step_info = common_view_logic.FindNextStepsHelper.find_next_steps(
             **serializer.validated_data
         )

@@ -299,6 +299,11 @@ class AppealGenerator(object):
         if denial_text is None:
             return None
 
+        # Short-circuit if there's no mention of fax or facsimile in the text
+        if "fax" not in denial_text.lower() and "facsimile" not in denial_text.lower():
+            logger.debug("No mention of fax or facsimile in text, skipping extraction")
+            return None
+
         # Common fax number regex patterns
         fax_patterns = [
             r"[Ff]ax(?:\s*(?:number|#|:))?\s*[:=]?\s*(\d{3}[-.\s]?\d{3}[-.\s]?\d{4})",
@@ -311,6 +316,8 @@ class AppealGenerator(object):
             r"[Ff]ax\s*(?:number|#)?\s*(?:is|:|=)?\s*[\(\[\{]?(\d{3})[\)\]\}]?[-.\s]?(\d{3})[-.\s]?(\d{4})",
             r"(?:by|via)\s+[Ff]ax\s+(?:at|to)?\s*(?:number|#)?\s*[:]?\s*(\d{3}[-.\s]?\d{3}[-.\s]?\d{4})",
             r"[Ff]ax\s*[\(\[\{]?(\d{3})[\)\]\}]?[-.\s]?(\d{3})[-.\s]?(\d{4})",
+            r"[Ff]acsimile(?:\s*(?:number|#|:))?\s*[:=]?\s*(\d{3}[-.\s]?\d{3}[-.\s]?\d{4})",
+            r"[Ff]acsimile(?:\s*(?:to|at))?\s*[:=]?\s*(\d{3}[-.\s]?\d{3}[-.\s]?\d{4})",
         ]
 
         # First try with exact regex matches

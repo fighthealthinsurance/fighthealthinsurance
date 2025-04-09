@@ -949,6 +949,9 @@ class DenialCreatorHelper:
             # Start citation generation as a non-blocking task this is non-speculative
             # because at this point the things we use to generate citations are "fixed"
             # but we don't want to block the user while we do it.
+            raise Exception(
+                "Skipped for now, we should figure out a better fire and forget."
+            )
             citation_task = asyncio.create_task(
                 MLCitationsHelper.generate_citations_for_denial(
                     denial, speculative=False
@@ -964,8 +967,11 @@ class DenialCreatorHelper:
 
         try:
             # Generate appeal questions using the helper class
-            questions = await MLAppealQuestionsHelper.generate_questions_for_denial(
-                denial, speculative=False
+            questions = await asyncio.wait_for(
+                MLAppealQuestionsHelper.generate_questions_for_denial(
+                    denial, speculative=False
+                ),
+                timeout=30,
             )
 
             # Store the generated questions in the denial object
@@ -1204,9 +1210,11 @@ class DenialCreatorHelper:
 
             if procedure is not None and len(procedure) < 300:
                 update_fields["procedure"] = procedure
+                update_fields["candidate_procedure"] = procedure
 
             if diagnosis is not None and len(diagnosis) < 300:
                 update_fields["diagnosis"] = diagnosis
+                update_fields["candidate_diagnosis"] = diagnosis
 
             # Update all fields in a single atomic database operation
             await Denial.objects.filter(denial_id=denial_id).aupdate(**update_fields)
