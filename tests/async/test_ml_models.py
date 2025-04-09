@@ -362,19 +362,20 @@ class TestRemoteFullOpenLike(TestCase):
         model.system_prompts_map = system_prompts_map
 
         # Test for patient audience
-        patient_prompts = model.get_system_prompts("full", for_patient=True)
+        patient_prompts = model.get_system_prompts("full", prof_pov=False)
         self.assertEqual(
             patient_prompts, ["You are a helpful assistant for a patient."]
         )
 
         # Test for professional audience
-        professional_prompts = model.get_system_prompts("full", for_patient=False)
+        professional_prompts = model.get_system_prompts("full", prof_pov=True)
+        print(f"Professional prompts*****************: {professional_prompts}")
         self.assertEqual(
             professional_prompts, ["You are a helpful assistant for a provider."]
         )
 
         # Test for prompt type with no audience-specific version
-        generic_prompts = model.get_system_prompts("generic", for_patient=False)
+        generic_prompts = model.get_system_prompts("generic", prof_pov=False)
         # Should return the default if specific one doesn't exist
         self.assertTrue(
             len(generic_prompts) > 0,

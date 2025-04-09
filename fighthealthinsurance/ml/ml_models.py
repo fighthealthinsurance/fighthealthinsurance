@@ -291,7 +291,7 @@ class RemoteOpenLike(RemoteModel):
         """
         key = prompt_type
         prompt = "Your are a helpful assistant with extensive medical knowledge who loves helping patients." 
-        if prof_pov or f"{prompt_type}_not_patient" in self.system_prompts_map:
+        if prof_pov or (prof_pov and f"{prompt_type}_not_patient" in self.system_prompts_map):
             key = f"{prompt_type}_not_patient"
             prompt = "You are a medical expert writing on behalf of a patient. Write as the healthcare professional in first person (“I”)—advocating clearly, clinically, and persuasively for the patient’s medical needs. Emphasize medical necessity, clinical evidence, and patient benefit. Maintain a professional, authoritative tone and keep the focus on the appeal." 
         logger.debug(f"GET SYS PROMPTS > {prompt}")
