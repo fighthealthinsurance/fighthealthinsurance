@@ -581,9 +581,8 @@ class AppealGenerator(object):
             diagnosis=denial.diagnosis,
         )
 
-        for_patient = (
-            denial.primary_professional is None or not denial.professional_to_finish
-        )
+        logger.debug(f"FOR_PATIENT **********Denial details - primary_professional**********: {denial.primary_professional}, professional_to_finish: {denial.professional_to_finish}")
+        prof_pov = denial.professional_to_finish
 
         # TODO: use the streaming and cancellable APIs (maybe some fancy JS on the client side?)
 
@@ -616,7 +615,7 @@ class AppealGenerator(object):
                         infer_type=infer_type,
                         pubmed_context=pubmed_context,
                         ml_citations_context=ml_citations_context,
-                        for_patient=for_patient,
+                        prof_pov=prof_pov,
                     )
                     logger.debug("Got back {result} for {model_name} on {model}")
                     return result
@@ -633,7 +632,7 @@ class AppealGenerator(object):
             infer_type: str,
             pubmed_context: Optional[str],
             ml_citations_context: Optional[List[str]],
-            for_patient: bool,
+            prof_pov: bool,
         ) -> List[Future[Tuple[str, Optional[str]]]]:
             # If the model has parallelism use it
             results = None
@@ -642,12 +641,12 @@ class AppealGenerator(object):
                     logger.debug(f"Using {model}'s parallel inference")
                     results = model.parallel_infer(
                         prompt=prompt,
+                        infer_type=infer_type,
+                        prof_pov=prof_pov,
                         patient_context=patient_context,
                         plan_context=plan_context,
                         pubmed_context=pubmed_context,
                         ml_citations_context=ml_citations_context,
-                        infer_type=infer_type,
-                        for_patient=for_patient,
                     )
                 else:
                     logger.debug(f"Using system level parallel inference for {model}")
@@ -660,7 +659,7 @@ class AppealGenerator(object):
                             infer_type=infer_type,
                             pubmed_context=pubmed_context,
                             ml_citations_context=ml_citations_context,
-                            for_patient=for_patient,
+                            prof_pov=prof_pov,
                         )
                     ]
             except Exception as e:
@@ -676,7 +675,7 @@ class AppealGenerator(object):
                         infer_type=infer_type,
                         pubmed_context=pubmed_context,
                         ml_citations_context=ml_citations_context,
-                        for_patient=for_patient,
+                        prof_pov=prof_pov,
                     )
                 ]
             logger.debug(

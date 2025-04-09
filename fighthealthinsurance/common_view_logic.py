@@ -1500,12 +1500,16 @@ class AppealsBackendHelper:
 
     @classmethod
     async def generate_appeals(cls, parameters) -> AsyncIterator[str]:
+        logger.debug(f"Raw parameters received: {parameters}")
+
+        # Extract specific parameters needed early
         denial_id = parameters["denial_id"]
         email = parameters["email"]
         semi_sekret = parameters["semi_sekret"]
         hashed_email = Denial.get_hashed_email(email)
-        prof_to_submit = parameters["prof_to_submit"]
-        logger.debug(f"Received prof_to_submit: {prof_to_submit}")
+        # Extract the professional_to_finish parameter from the input, default to False
+        professional_to_finish = parameters.get("professional_to_finish", False)
+        logger.debug(f"Received professional_to_finish: {professional_to_finish}")
 
         # Initial yield of newline.
         yield "\n"
@@ -1530,6 +1534,18 @@ class AppealsBackendHelper:
             )
             .aget()
         )
+        logger.debug(f"Denial parameters before update: {denial.__dict__}")
+        logger.debug(f"Denial details - primary_professional: {denial.primary_professional}, professional_to_finish: {denial.professional_to_finish}, ") 
+
+        #TODO Collapse asave to the one after all the ml and pubsub work OR remove if get info update from final form
+        # Update the denial object with the received parameter if it differs
+        if denial.professional_to_finish != professional_to_finish:
+            logger.info(f"Updating denial {denial.denial_id} professional_to_finish from {denial.professional_to_finish} to {professional_to_finish}")
+            denial.professional_to_finish = professional_to_finish
+            await denial.asave(update_fields=['professional_to_finish']) 
+        else:
+            logger.debug(f"Denial {denial.denial_id} professional_to_finish already matches parameter ({professional_to_finish}), no update needed.")
+
 
         non_ai_appeals: List[str] = list(
             map(
