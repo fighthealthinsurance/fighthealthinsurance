@@ -1640,12 +1640,10 @@ class AppealsBackendHelper:
         )
 
         ml_citation_context_awaitable = asyncio.wait_for(
-            asyncio.shield(
                 MLCitationsHelper.generate_citations_for_denial(
                     denial, speculative=False
-                )
-            ),
-            timeout=45,
+                ),
+            timeout=45
         )
 
         # Await both contexts so we can use co-operative multitasking
