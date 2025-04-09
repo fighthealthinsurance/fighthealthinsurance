@@ -1636,29 +1636,32 @@ class AppealsBackendHelper:
         # Get PubMed context
         logger.debug("Looking up the pubmed context")
         pubmed_context_awaitable = asyncio.wait_for(
-            asyncio.shield(cls.pmt.find_context_for_denial(denial)), timeout=45
+            asyncio.shield(cls.pmt.find_context_for_denial(denial)), timeout=30
         )
 
         ml_citation_context_awaitable = asyncio.wait_for(
                 MLCitationsHelper.generate_citations_for_denial(
                     denial, speculative=False
                 ),
-            timeout=45
+            timeout=30
         )
 
         # Await both contexts so we can use co-operative multitasking
         try:
+            logger.debug("Gathering contexts")
             results = await asyncio.gather(
                 pubmed_context_awaitable, ml_citation_context_awaitable
             )
             pubmed_context = results[0]
             ml_citation_context = results[1]
+            logger.debug("Success")
         except Exception as e:
             logger.debug(f"Error gathering contexts: {e}")
             # We still might have saved a context.
             await denial.arefresh_from_db()
             pubmed_context = denial.pubmed_context
             ml_citation_context = denial.ml_citation_context
+            logger.debug("Used saved contexts")
 
         async def save_appeal(appeal_text: str) -> dict[str, str]:
             # Save all of the proposed appeals, so we can use RL later.
