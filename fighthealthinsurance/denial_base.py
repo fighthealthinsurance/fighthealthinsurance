@@ -17,6 +17,6 @@ class DenialBase(ABC):
 
     @abstractmethod
     async def get_procedure_and_diagnosis(
-        self, denial_text, prof_pov
+        self, denial_text
     ) -> Tuple[Optional[str], Optional[str]]:
         pass

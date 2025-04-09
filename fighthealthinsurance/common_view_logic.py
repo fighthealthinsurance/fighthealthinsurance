@@ -957,6 +957,7 @@ class DenialCreatorHelper:
             denial_text = denial.denial_text
             patient_context = denial.health_history
             plan_context = denial.plan_context
+            prof_pov = denial.professional_to_finish
 
             # Create a new task for generating citations without blocking
             async def start_citation_generation():

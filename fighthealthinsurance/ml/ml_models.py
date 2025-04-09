@@ -36,7 +36,6 @@ class RemoteModelLike(DenialBase):
         pubmed_context,
         ml_citations_context,
         infer_type,
-        prof_pov: bool,
     ):
         """
         Abstract method for inference
@@ -266,16 +265,18 @@ class RemoteOpenLike(RemoteModel):
         Returns:
             The system prompt as a string, or the first prompt if multiple are available
         """
-        # TODO Remove
+        # TODO Remove logger
         logger.debug(f"Checking PROF POV>>>>>>>>>>>> {prof_pov}")
         key = prompt_type
-        if prof_pov and f"{prompt_type}_not_patient" in self.system_prompts_map:
+        prompt = "Your are a helpful assistant with extensive medical knowledge who loves helping patients." 
+        if prof_pov or f"{prompt_type}_not_patient" in self.system_prompts_map:
             key = f"{prompt_type}_not_patient"
+            prompt = "Your are a helpful assistant with extensive medical knowledge who loves helping  healthcare providers who are helping patients with healthcare needs. Write from my professional perspective, but focus on advocating strongly for the patient's need. Emphasize medical necessity, clinical evidence, and patient benefit in a clear, persuasive, and professional tone." 
 
         return self.system_prompts_map.get(
             key,
             [
-                "Your are a helpful assistant with extensive medical knowledge who loves helping patients."
+                prompt
             ],
         )
 
@@ -503,10 +504,10 @@ class RemoteOpenLike(RemoteModel):
         return result
 
     async def questions(
-        self, prompt: str, patient_context: str, plan_context, prof_pov: bool
+        self, prompt: str, patient_context: str, plan_context
     ) -> List[str]:
         result = await self._infer(
-            system_prompts=self.get_system_prompts("question", prof_pov),
+            system_prompts=self.get_system_prompts("question"),
             prompt=prompt,
             patient_context=patient_context,
             plan_context=plan_context,
@@ -834,7 +835,7 @@ class RemoteFullOpenLike(RemoteOpenLike):
         2. Has the patient had any previous surgeries? Unknown
         """
 
-        system_prompts: list[str] = self.get_system_prompts("questions", prof_pov)
+        system_prompts: list[str] = self.get_system_prompts("questions")
 
         result = await self._infer(
             system_prompts=system_prompts,
@@ -966,7 +967,7 @@ class RemoteFullOpenLike(RemoteOpenLike):
         Prioritize high-quality, peer-reviewed research, clinical guidelines, and standard of care documentation.
         """
 
-        system_prompts: list[str] = self.get_system_prompts("citations", prof_pov)
+        system_prompts: list[str] = self.get_system_prompts("citations")
 
         result = await self._infer(
             system_prompts=system_prompts,
