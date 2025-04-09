@@ -1527,7 +1527,6 @@ class AppealsBackendHelper:
         hashed_email = Denial.get_hashed_email(email)
         # Extract the professional_to_finish parameter from the input, default to False
         professional_to_finish = parameters.get("professional_to_finish", False)
-        logger.debug(f"Received professional_to_finish: {professional_to_finish}")
 
         # Initial yield of newline.
         yield "\n"
@@ -1552,8 +1551,6 @@ class AppealsBackendHelper:
             )
             .aget()
         )
-        logger.debug(f"Denial parameters before update: {denial.__dict__}")
-        logger.debug(f"Denial details - primary_professional: {denial.primary_professional}, professional_to_finish: {denial.professional_to_finish}, ") 
 
         #TODO Collapse asave to the one after all the ml and pubsub work OR remove if get info update from final form
         # Update the denial object with the received parameter if it differs

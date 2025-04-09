@@ -627,9 +627,6 @@ class AppealGenerator(object):
             diagnosis=denial.diagnosis,
         )
 
-        logger.debug(f"MAKE APPEALS professional_to_finish: {denial.professional_to_finish}")
-        prof_pov = denial.professional_to_finish
-
         # TODO: use the streaming and cancellable APIs (maybe some fancy JS on the client side?)
 
         # For any model that we have a prompt for try to call it and return futures
@@ -664,7 +661,7 @@ class AppealGenerator(object):
                         ml_citations_context=ml_citations_context,
                         prof_pov=prof_pov,
                     )
-                    logger.debug("Got back {result} for {model_name} on {model}")
+                    logger.debug(f"Got back {result} for {model_name} on {model}")
                     return result
                 except Exception as e:
                     logger.debug(f"Backend {model} failed {e}")
@@ -679,7 +676,7 @@ class AppealGenerator(object):
             infer_type: str,
             pubmed_context: Optional[str],
             ml_citations_context: Optional[List[str]],
-            prof_pov: Optional[bool],
+            prof_pov: Optional[bool] = False,
         ) -> List[Future[Tuple[str, Optional[str]]]]:
             # If the model has parallelism use it
             results = None
@@ -741,6 +738,7 @@ class AppealGenerator(object):
                 medical_context += denial.qa_context
         if denial.health_history is not None:
             medical_context += denial.health_history
+        prof_pov = denial.professional_to_finish
         plan_context = denial.plan_context
         backup_calls: List[Any] = []
         calls = [
@@ -767,6 +765,7 @@ class AppealGenerator(object):
                         "plan_context": plan_context,
                         "pubmed_context": pubmed_context,
                         "ml_citations_context": ml_citations_context,
+                        "prof_pov": prof_pov,
                     }
                 ]
             )
@@ -780,6 +779,7 @@ class AppealGenerator(object):
                         "plan_context": plan_context,
                         "pubmed_context": pubmed_context,
                         "ml_citations_context": ml_citations_context,
+                        "prof_pov": prof_pov,
                     }
                 ]
             )
@@ -793,6 +793,7 @@ class AppealGenerator(object):
                         "plan_context": plan_context,
                         "pubmed_context": pubmed_context,
                         "ml_citations_context": ml_citations_context,
+                        "prof_pov": prof_pov,
                     }
                 ]
             )
@@ -826,6 +827,7 @@ class AppealGenerator(object):
                             "plan_context": plan_context,
                             "pubmed_context": pubmed_context,
                             "ml_citations_context": ml_citations_context,
+                            "prof_pov": prof_pov,
                         },
                     ]
                 )

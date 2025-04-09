@@ -55,7 +55,6 @@ class RemoteModelLike(DenialBase):
         plan_context=None,
         pubmed_context=None,
         ml_citations_context=None,
-        prof_pov=False,
         temperature=0.7,
     ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
         """Do inference on a remote model."""
@@ -290,14 +289,12 @@ class RemoteOpenLike(RemoteModel):
         Returns:
             The system prompt as a string, or the first prompt if multiple are available
         """
-        # TODO Remove logger
-        logger.debug(f"Checking PROF POV>>>>>>>>>>>> {prof_pov}")
         key = prompt_type
-        prompt = "Your are a helpful assistant with extensive medical knowledge who loves helping patients." 
+        prompt = "You are a knowledgeable patient writing a formal appeal to your health insurance provider. Write in the first person (“I”), maintain a professional and respectful tone, and focus on clear, factual descriptions of your medical needs and treatment history. Emphasize the impact on your health and daily life." 
         if prof_pov or f"{prompt_type}_not_patient" in self.system_prompts_map:
             key = f"{prompt_type}_not_patient"
-            prompt = "Your are a helpful assistant with extensive medical knowledge who loves helping  healthcare providers who are helping patients with healthcare needs. Write from my professional perspective, but focus on advocating strongly for the patient's need. Emphasize medical necessity, clinical evidence, and patient benefit in a clear, persuasive, and professional tone." 
-        logger.debug(f"GET PROMPTS SYSTEM PROMPT> {prompt}")
+            prompt = "You are a medical expert writing on behalf of a patient. Write as the healthcare professional—first person (“I”)—advocating clearly, clinically, and persuasively for the patient’s medical needs. Emphasize medical necessity, clinical evidence, and patient benefit. Maintain a professional, authoritative tone." 
+        logger.debug(f"GET SYS PROMPTS > {prompt}")
         return self.system_prompts_map.get(
             key,
             [
@@ -887,13 +884,14 @@ class RemoteFullOpenLike(RemoteOpenLike):
     ):
         systems = {
             "full_patient": [
-                """You possess extensive medical expertise and enjoy crafting appeals for health insurance denials as a personal interest. As a patient, not a doctor, you advocate for yourself. Don't assume you have any letter from a physician unless absolutely necessary. Your writing style is direct, akin to patio11 or a bureaucrat, and maintains a professional tone without expressing frustration towards insurance companies. You may consider emphasizing the unique and potentially essential nature of the medical intervention, using "YourNameMagic" as your name, "SCSID" for the subscriber ID, and "GPID" as the group ID. Make sure to write in the form of a letter. Do not use the 3rd person when referring to the patient, instead use the first person (I, my, etc.). You are not a review and should not mention any. Only provide references you are certain exist (e.g. provided as input or found as agent).""",
+                """You possess extensive medical expertise and enjoy crafting appeals for health insurance denials as a personal interest. As a patient, not a doctor, you advocate for yourself. Don't assume you have any letter from a physician unless absolutely necessary. Your writing style is direct, akin to patio11 or a bureaucrat, and maintains a professional tone without expressing frustration towards insurance companies. You may consider emphasizing the unique and potentially essential nature of the medical intervention, using "YourNameMagic" as your name, "SCSID" for the subscriber ID, and "GPID" as the group ID. Make sure to write in the form of a letter. Do not use the 3rd person in the letter when referring to the yourself the patient, instead use the first person (I, my, etc.). You are not a reviewer and should not mention any. Only provide references you are certain exist (e.g. provided as input or found as agent).""",
             ],
             "full": [
-                """You possess extensive medical expertise and enjoy crafting appeals for health insurance denials as a personal interest. As a patient, not a doctor, you advocate for yourself. Don't assume you have any letter from a physician unless absolutely necessary. Your writing style is direct, akin to patio11 or a bureaucrat, and maintains a professional tone without expressing frustration towards insurance companies. You may consider emphasizing the unique and potentially essential nature of the medical intervention, using "YourNameMagic" as your name, "SCSID" for the subscriber ID, and "GPID" as the group ID. Make sure to write in the form of a letter. Do not use the 3rd person when referring to the patient, instead use the first person (I, my, etc.). You are not a review and should not mention any. Only provide references you are certain exist (e.g. provided as input or found as agent).""",
+                """You possess extensive medical expertise and enjoy crafting appeals for health insurance denials as a personal interest. As a patient, not a doctor, you advocate for yourself. Don't assume you have any letter from a physician unless absolutely necessary. Your writing style is direct, akin to patio11 or a bureaucrat, and maintains a professional tone without expressing frustration towards insurance companies. You may consider emphasizing the unique and potentially essential nature of the medical intervention, using "YourNameMagic" as your name, "SCSID" for the subscriber ID, and "GPID" as the group ID. Make sure to write in the form of a letter. Do not use the 3rd person in the letter when referring to the yourself the patient, instead use the first person (I, my, etc.). You are not a reviewer and should not mention any. Only provide references you are certain exist (e.g. provided as input or found as agent).""",
             ],
             "full_not_patient": [
-                """You are a healthcare professional with extensive medical expertise, specializing in crafting appeals for health insurance denials. Your role is to advocate for patients by emphasizing the medical necessity, clinical evidence, and patient benefits of the intervention. Your writing style is professional, direct, and persuasive, similar to that of a skilled bureaucrat or advocate, while maintaining a respectful tone towards insurance companies. Use 'YourNameMagic' as your name, 'SCSID' for the subscriber ID, and 'GPID' as the group ID. Write the appeal in the form of a formal letter, focusing on the patient's needs and avoiding any mention of being a reviewer. Only include references that are verifiable and provided as input or found through reliable sources.""",
+                """You possess extensive medical expertise, specializing in crafting appeals for health insurance denials. As a healthcare professional, not the patient, write a formal appeal letter to a health insurance company on behalf of a patient whose claim has been denied. The letter should come your perspective as a healthcare professional. Refer to the patient the appeal letter is for in the third person (e.g., "the patient," "they"). The goal is to advocate clearly and persuasively for why the denied service is medically necessary for the patient, using clinical evidence, professional judgment, and the patient’s documented needs. The tone should be professional, respectful, and authoritative—like a skilled medical advocate addressing an insurance reviewer. Use 'YourNameMagic' as your name, 'SCSID' for the subscriber ID, and 'GPID' for the group ID. Write the letter as if it was written by the healthcare professional. Do not frame the letter as if it were written by the patient. Only include references that are verifiable and provided in the input or from reliable sources.
+                """,
             ],
             "procedure": [
                 """You must be concise. You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters to identify the requested procedure and, if available, the associated diagnosis. Each word costs an extra dollar. Provide a concise response with the procedure on one line starting with "Procedure" and Diagnsosis on another line starting with Diagnosis. Do not say not specified. Diagnosis can also be reason for treatment even if it's not a disease (like high risk homosexual behaviour for prep or preventitive and the name of the diagnosis). Remember each result on a seperated line."""
@@ -934,7 +932,7 @@ class RemoteFullOpenLike(RemoteOpenLike):
                 """You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters. Each word costs an extra dollar. Please provide a concise response. You are not an independent medical reviewer and should not mention any. Write concisely in a professional tone akin to patio11. Do not say this is why the decission should be overturned. Just say why you believe it is medically necessary (e.g. to prevent X or to treat Y)."""
             ],
             "generic": [
-                """You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters. Help a patient answer the provided question for their insurance appeal."""
+                """You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters. Use your expertise to help answer the provided question for the insurance appeal on behalf of the patient."""
             ],
         }
         return super().__init__(
@@ -990,10 +988,8 @@ class RemoteFullOpenLike(RemoteOpenLike):
         {patient_context_opt} \n
         {diagnosis_opt} \n
         {procedure_opt} \n
-        Your task is to write one to three patient friendly questions about the patient history to help appeal this denial. \n
-        Remember to keep the questions concise and patient-friendly and focused on the potential patient history.\n
-        If you ask questions about the denial it's self the patient will be sad and give up so don't do that.
-        When formatting your output it must be in the format of one question + answer per line with the answer after the question mark.\n
+        Your task is to write 1–3 concise, patient-friendly questions related to the patient's medical history that can help support an appeal. Focus only on relevant history—do not ask about the denial itself, as that may discourage the person working on the appeal.
+        When formatting your output it must be in the format of one question + answer per line with the answer after the question mark. The questions should be in the 3rd person regarding the patient.\n
         Your answer should be in the format of a list of questions with answers from the patients health history if present.
         While your reasoning (that inside of the <think></think> component at the start) can and should discuss the rational you _must not_ include it in the answer.
         For example:
