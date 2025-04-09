@@ -299,14 +299,42 @@ class AppealGenerator(object):
         if denial_text is None:
             return None
 
+        # Short-circuit if there's no mention of fax or facsimile in the text
+        if "fax" not in denial_text.lower() and "facsimile" not in denial_text.lower():
+            logger.debug("No mention of fax or facsimile in text, skipping extraction")
+            return None
+
         # Common fax number regex patterns
         fax_patterns = [
             r"[Ff]ax(?:\s*(?:number|#|:))?\s*[:=]?\s*(\d{3}[-.\s]?\d{3}[-.\s]?\d{4})",
             r"[Ff]ax(?:\s*(?:to|at))?\s*[:=]?\s*(\d{3}[-.\s]?\d{3}[-.\s]?\d{4})",
             r"[Aa]ppeal.*?[Ff]ax.*?(\d{3}[-.\s]?\d{3}[-.\s]?\d{4})",
             r"[Ff]ax.*?[Aa]ppeal.*?(\d{3}[-.\s]?\d{3}[-.\s]?\d{4})",
+            r"[Tt]o\s+[Ff]ax\s+(?:at|to)?\s*(\d{3}[-.\s]?\d{3}[-.\s]?\d{4})",
+            r"[Ss]end\s+(?:an?\s+)?(?:appeal|request).*?(?:to|at)?\s*(?:[Ff]ax|#)?\s*[:]?\s*(\d{3}[-.\s]?\d{3}[-.\s]?\d{4})",
+            r"[Ff]ax.*?(?:to|at)?\s*(?:number|#)?\s*[:]?\s*[\(\[\{]?(\d{3})[\)\]\}]?[-.\s]?(\d{3})[-.\s]?(\d{4})",
+            r"[Ff]ax\s*(?:number|#)?\s*(?:is|:|=)?\s*[\(\[\{]?(\d{3})[\)\]\}]?[-.\s]?(\d{3})[-.\s]?(\d{4})",
+            r"(?:by|via)\s+[Ff]ax\s+(?:at|to)?\s*(?:number|#)?\s*[:]?\s*(\d{3}[-.\s]?\d{3}[-.\s]?\d{4})",
+            r"[Ff]ax\s*[\(\[\{]?(\d{3})[\)\]\}]?[-.\s]?(\d{3})[-.\s]?(\d{4})",
+            r"[Ff]acsimile(?:\s*(?:number|#|:))?\s*[:=]?\s*(\d{3}[-.\s]?\d{3}[-.\s]?\d{4})",
+            r"[Ff]acsimile(?:\s*(?:to|at))?\s*[:=]?\s*(\d{3}[-.\s]?\d{3}[-.\s]?\d{4})",
         ]
 
+        # First try with exact regex matches
+        for pattern in fax_patterns:
+            match = re.search(pattern, denial_text, re.IGNORECASE | re.DOTALL)
+            if match:
+                groups = match.groups()
+                if len(groups) == 1:
+                    # Standard pattern with one capture group
+                    return self._normalize_fax_number(groups[0])
+                elif len(groups) == 3:
+                    # Pattern with separate area code, prefix, line number groups
+                    return self._normalize_fax_number(
+                        f"{groups[0]}{groups[1]}{groups[2]}"
+                    )
+
+        # More flexible matching approach
         return await self._extract_entity_with_regexes_and_model(
             denial_text=denial_text,
             patterns=fax_patterns,
@@ -315,6 +343,24 @@ class AppealGenerator(object):
             model_method_name="get_fax_number",
             find_in_denial=False,  # Since we might have -s or other formatting
         )
+
+    def _normalize_fax_number(self, fax_number: str) -> str:
+        """
+        Normalize a fax number by removing non-digit characters and formatting consistently.
+
+        Args:
+            fax_number: Raw fax number string
+
+        Returns:
+            Normalized fax number in format: XXX-XXX-XXXX
+        """
+        # Extract all digits from the string
+        digits = re.sub(r"\D", "", fax_number)
+
+        # If we have at least 10 digits, format as XXX-XXX-XXXX
+        if len(digits) >= 10:
+            return f"{digits[-10:-7]}-{digits[-7:-4]}-{digits[-4:]}"
+        return fax_number
 
     async def get_insurance_company(
         self, denial_text=None, use_external=False
