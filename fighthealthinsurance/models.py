@@ -630,6 +630,8 @@ class Appeal(ExportModelOperationsMixin("Appeal"), models.Model):  # type: ignor
     )
     response_text = models.TextField(max_length=3000000000, null=True)
     response_date = models.DateField(auto_now=False, null=True)
+    # Notes for the professional
+    notes = models.TextField(max_length=3000000000, null=True, blank=True)
     # Track whether an appeal was successful (not just if it got a response)
     success = models.BooleanField(default=False, null=True)
     mod_date = models.DateField(auto_now=True, null=True)
