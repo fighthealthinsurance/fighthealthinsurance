@@ -1,13 +1,195 @@
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, cast
 from loguru import logger
 import asyncio
 import time
-from fighthealthinsurance.models import Denial
+from fighthealthinsurance.models import Denial, GenericQuestionGeneration
 from fighthealthinsurance.generate_appeal import AppealGenerator
 from fighthealthinsurance.utils import best_within_timelimit
+from fighthealthinsurance.ml.ml_router import ml_router
+import re
 
 
 class MLAppealQuestionsHelper:
+
+    @staticmethod
+    async def generate_generic_questions(
+        procedure: Optional[str], diagnosis: Optional[str], timeout: int = 90
+    ) -> List[Tuple[str, str]]:
+        """
+        Generate generic appeal questions based only on procedure and diagnosis.
+        These are cached for reuse across multiple patients with the same procedure/diagnosis.
+
+        Args:
+            procedure: The medical procedure
+            diagnosis: The medical diagnosis
+            timeout: Timeout for the ML model call in seconds
+
+        Returns:
+            A list of (question, answer) tuples.
+        """
+        models_to_try = set(
+            ml_router.full_qa_backends(True) + ml_router.partial_qa_backends()
+        )
+
+        # Normalize inputs - trim whitespace and convert to lowercase
+        procedure = procedure.strip().lower() if procedure else ""
+        diagnosis = diagnosis.strip().lower() if diagnosis else ""
+
+        # Skip if we don't have enough information
+        if not procedure or not diagnosis:
+            logger.debug(f"Missing procedure or diagnosis for generic questions")
+            return []
+
+        # Check for existing cached questions first
+        try:
+            cached = await GenericQuestionGeneration.objects.filter(
+                procedure=procedure, diagnosis=diagnosis
+            ).afirst()
+
+            if cached:
+                logger.debug(
+                    f"Found cached generic questions for {procedure}/{diagnosis}"
+                )
+                return cast(List[Tuple[str, str]], cached.generated_questions)
+        except Exception as e:
+            logger.opt(exception=True).warning(
+                f"Error fetching cached generic questions: {e}"
+            )
+
+        # If no cached questions exist, generate them
+        questions: List[Tuple[str, str]] = []
+        model_timeout = max(1, timeout - 5)  # Subtract 5 seconds for processing
+
+        raw_questions_awaitables = []
+
+        for model in models_to_try:
+            raw_questions_awaitables.append(
+                model.get_appeal_questions(
+                    denial_text=None,
+                    procedure=procedure,
+                    diagnosis=diagnosis,
+                    plan_context=None,
+                )
+            )
+
+        questions = await best_within_timelimit(
+            raw_questions_awaitables,
+            score_fn=MLAppealQuestionsHelper.make_score_fn(lambda x: 1),
+            timeout=model_timeout,
+        )
+
+        # Process the questions using shared logic
+
+        # If we have questions, cache them for future use
+        if questions:
+            try:
+                await GenericQuestionGeneration.objects.acreate(
+                    procedure=procedure,
+                    diagnosis=diagnosis,
+                    generated_questions=questions,
+                )
+                logger.debug(f"Cached generic questions for {procedure}/{diagnosis}")
+            except Exception as e:
+                logger.opt(exception=True).warning(
+                    f"Error caching generic questions: {e}"
+                )
+        return questions
+
+    @staticmethod
+    def make_score_fn(factor: Callable[Coroutine, int]):
+        def score_fn(result: Optional[List[Tuple[str, str]]], awaitable):
+            my_factor = factor(awaitable)
+            # Score the result based on a mixture of source and length
+            if result is None:
+                return 0
+            try:
+                questions_to_score = []
+                if result and len(result) > 0:
+                    # Parse questions into (question, answer) tuples if they aren't already
+                    if isinstance(result[0], str):
+                        questions_to_score = self._parse_questions_with_answers(result)
+                    questions_to_score = result
+                # Now we look at the model and the number of questions
+                if len(questions_to_score) == 0:
+                    return 0
+                question_score = len(questions_to_score)
+                # More than 4 is bad news
+                if question_score > 4:
+                    question_score = 1
+                return my_factor * question_score
+            except Exception as e:
+                logger.debug("Failed to parse {answer}")
+                return 0
+
+        return score_fn
+
+    @staticmethod
+    async def generate_specific_questions(
+        denial_text: Optional[str],
+        patient_context: Optional[str],
+        procedure: Optional[str],
+        diagnosis: Optional[str],
+        timeout: int = 90,
+        use_external: bool = False,
+    ) -> List[Tuple[str, str]]:
+        """
+        Generate specific appeal questions based on denial text, patient info, procedure, and diagnosis.
+        These are cached for reuse across multiple patients with the same procedure/diagnosis.
+
+        Args:
+            denial_text: The text of the denial
+            patient_info: Information about the patient
+            procedure: The medical procedure
+            diagnosis: The medical diagnosis
+            timeout: Timeout for the ML model call in seconds
+
+        Returns:
+            A list of (question, answer) tuples.
+        """
+        models_to_try = set(ml_router.full_qa_backends(use_external))
+
+        # Normalize inputs - trim whitespace and convert to lowercase
+        procedure = procedure.strip().lower() if procedure else ""
+        diagnosis = diagnosis.strip().lower() if diagnosis else ""
+
+        # If no cached questions exist, generate them
+        questions: List[Tuple[str, str]] = []
+        model_timeout = max(1, timeout - 5)  # Subtract 5 seconds for processing
+
+        raw_questions_awaitables = []
+
+        for model in models_to_try:
+            raw_questions_awaitables.append(
+                model.get_appeal_questions(
+                    denial_text=denial_text,
+                    patient_context=patient_context,
+                    procedure=procedure,
+                    diagnosis=diagnosis,
+                    plan_context=plan_context,
+                )
+            )
+
+        questions = await best_within_timelimit(
+            raw_questions_awaitables,
+            score_fn=MLAppealQuestionsHelper.make_score_fn(lambda x: 1),
+            timeout=model_timeout,
+        )
+
+        # If we have questions, cache them for future use
+        if questions:
+            try:
+                await GenericQuestionGeneration.objects.acreate(
+                    procedure=procedure,
+                    diagnosis=diagnosis,
+                    generated_questions=questions,
+                )
+                logger.debug(f"Cached generic questions for {procedure}/{diagnosis}")
+            except Exception as e:
+                logger.opt(exception=True).warning(
+                    f"Error caching generic questions: {e}"
+                )
+        return questions
+
     @staticmethod
     async def generate_questions_for_denial(
         denial: Denial, speculative: bool
@@ -23,6 +205,7 @@ class MLAppealQuestionsHelper:
             A list of (question, answer) tuples.
         """
         questions: List[Tuple[str, str]] = []
+
         # Check if candidate questions exist and the diagnosis/procedure has not changed
         if (
             denial.candidate_procedure == denial.procedure
@@ -31,57 +214,51 @@ class MLAppealQuestionsHelper:
             and len(denial.candidate_generated_questions) > 0
         ):
             logger.debug(f"Using candidate questions for denial {denial.denial_id}")
-            questions = denial.candidate_generated_questions
-        # Generate questions using the AppealGenerator
+            questions = cast(
+                List[Tuple[str, str]], denial.candidate_generated_questions
+            )
+        elif denial.generated_questions and len(denial.generated_questions) > 0:
+            logger.debug(f"Using cached questions for denial {denial.denial_id}")
+            questions = cast(List[Tuple[str, str]], denial.generated_questions)
         else:
-            try:
-                appeal_generator = AppealGenerator()
+            # Setup timeout based on whether this is speculative or not
+            timeout = 60 if speculative else 45
 
-                raw_questions = await asyncio.wait_for(
-                    appeal_generator.get_appeal_questions(
-                        denial_text=denial.denial_text,
+            # First try to generate patient-specific questions (preferred approach)
+            if (denial.denial_text or denial.health_history) and (
+                denial.procedure or denial.diagnosis
+            ):
+                appeal_generator = AppealGenerator()
+                # Subtract 5 seconds to ensure proper processing time
+                model_timeout = max(1, timeout - 5)
+                no_context_awaitable = (
+                    MLAppealQuestionsHelper.generate_generic_questions(
                         procedure=denial.procedure,
                         diagnosis=denial.diagnosis,
-                        patient_context=denial.health_history,
-                        plan_context=denial.plan_context,
-                        timeout=30,
-                    ),
-                    timeout=45,
-                )  # Add a safety timeout
-
-                # If we got results, process them
-                if raw_questions:
-                    # Ensure questions are in the form of tuples
-                    questions = [
-                        (q[0], q[1]) if isinstance(q, (list, tuple)) else (str(q), "")
-                        for q in raw_questions
-                    ]
-
-                    # Filter out any lines containing "Note:" as they are typically context lines
-                    questions = [
-                        (q, a)
-                        for q, a in questions
-                        if "Note:" not in q and "Note:" not in a
-                    ]
-
-                    # If the last line contains a note, remove it
-                    if questions and len(questions) > 0:
-                        last_q, last_a = questions[-1]
-                        if "note" in last_q.lower() or "note" in last_a.lower():
-                            questions.pop()
-                else:
-                    logger.warning(
-                        f"No questions generated for denial {denial.denial_id}"
+                        timeout=model_timeout,
                     )
+                )
+                context_awaitable = MLAppealQuestionsHelper.generate_specific_questions(
+                    denial_text=denial.denial_text,
+                    health_history=denial.health_history,
+                    procedure=denial.procedure,
+                    diagnosis=denial.diagnosis,
+                    timeout=model_timeout,
+                    use_external=denial.use_external,
+                )
 
-            except asyncio.TimeoutError:
-                logger.warning(
-                    f"Timeout while generating questions for denial {denial.denial_id}"
+                # Bias for context
+                def is_with_context(x):
+                    if x == context_awaitable:
+                        return 2
+                    return 1
+
+                raw_questions = await best_within_timelimit(
+                    [no_context_awaitable, context_awaitable],
+                    score_fn=MLAppealQuestionsHelper.make_score_fn(is_with_context),
+                    timeout=model_timeout,
                 )
-            except Exception as e:
-                logger.opt(exception=True).warning(
-                    f"Failed to generate questions for denial {denial.denial_id}: {e}"
-                )
+
         # Update the denial with the result
         if questions and len(questions) > 0:
             logger.debug(
