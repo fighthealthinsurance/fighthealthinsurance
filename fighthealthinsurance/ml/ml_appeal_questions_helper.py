@@ -103,23 +103,14 @@ class MLAppealQuestionsHelper:
             if result is None:
                 return 0
             try:
-                questions_to_score = []
-                if result and len(result) > 0:
-                    # Parse questions into (question, answer) tuples if they aren't already
-                    if isinstance(result[0], str):
-                        appeal_generator = AppealGenerator()
-                        questions_to_score = (
-                            appeal_generator._parse_questions_with_answers(result)
-                        )
-                    questions_to_score = result
-                # Now we look at the model and the number of questions
-                if len(questions_to_score) == 0:
-                    return 0
-                question_score = len(questions_to_score)
-                # More than 4 is bad news
-                if question_score > 4:
-                    question_score = 1
-                return my_factor * question_score
+                if result:
+                    # The result should already be in the correct format for question-answer tuples
+                    question_score = len(result)
+                    # More than 4 is bad news
+                    if question_score > 4:
+                        question_score = 1
+                    return my_factor * question_score
+                return 0
             except Exception as e:
                 logger.debug(f"Failed to parse: {e}")
                 return 0
