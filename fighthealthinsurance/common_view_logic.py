@@ -1552,16 +1552,6 @@ class AppealsBackendHelper:
             .aget()
         )
 
-        #TODO Collapse asave to the one after all the ml and pubsub work OR remove if get info update from final form
-        # Update the denial object with the received parameter if it differs
-        if denial.professional_to_finish != professional_to_finish:
-            logger.info(f"Updating denial {denial.denial_id} professional_to_finish from {denial.professional_to_finish} to {professional_to_finish}")
-            denial.professional_to_finish = professional_to_finish
-            await denial.asave(update_fields=['professional_to_finish']) 
-        else:
-            logger.debug(f"Denial {denial.denial_id} professional_to_finish already matches parameter ({professional_to_finish}), no update needed.")
-
-
         non_ai_appeals: List[str] = list(
             map(
                 lambda t: t.appeal_text,
@@ -1642,6 +1632,10 @@ class AppealsBackendHelper:
             denial.qa_context = json.dumps(qa_context)
         if plan_context is not None:
             denial.plan_context = " ".join(set(plan_context))
+        # Update the denial object with the received parameter if it differs
+        if denial.professional_to_finish != professional_to_finish:
+            logger.info(f"Updating denial {denial.denial_id} professional_to_finish from {denial.professional_to_finish} to {professional_to_finish}")
+            denial.professional_to_finish = professional_to_finish
         await denial.asave()
 
         # Get pubmed and ml citations context
