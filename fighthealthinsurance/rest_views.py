@@ -52,6 +52,8 @@ from fhi_users.models import (
     ProfessionalUser,
 )
 
+from fhi_users.auth import auth_utils
+
 from stopit import ThreadingTimeout as Timeout
 from .common_view_logic import AppealAssemblyHelper
 from .utils import is_convertible_to_int
@@ -93,7 +95,7 @@ class HealthHistoryViewSet(viewsets.ViewSet, CreateMixin):
         return super().create(request)
 
     @extend_schema(responses=serializers.StatusResponseSerializer)
-    def perform_create(self, request: Request, serializer):
+    def perform_create(self, request: Request, serializer) -> Response:
         logger.debug(f"Updating denial with {serializer.validated_data}")
         common_view_logic.DenialCreatorHelper.update_denial(
             **serializer.validated_data,
@@ -101,27 +103,33 @@ class HealthHistoryViewSet(viewsets.ViewSet, CreateMixin):
 
         return Response(
             serializers.SuccessSerializer({"message": "Updated health history"}).data,
+            status=status.HTTP_201_CREATED,
         )
 
 
 class NextStepsViewSet(viewsets.ViewSet, CreateMixin):
     serializer_class = serializers.PostInferedFormSerializer
 
-    @extend_schema(responses=serializers.NextStepInfoSerizableSerializer)
+    @extend_schema(
+        responses={
+            200: serializers.NextStepInfoSerizableSerializer,
+            201: serializers.NextStepInfoSerizableSerializer,
+            400: serializers.ErrorSerializer,
+        }
+    )
     def create(self, request: Request) -> Response:
         return super().create(request)
 
-    @extend_schema(responses=serializers.NextStepInfoSerizableSerializer)
-    def perform_create(self, request: Request, serializer):
-        logger.debug(
-            f"Performing the create..... using data {serializer.validated_data}"
-        )
+    def perform_create(self, request: Request, serializer) -> Response:
         next_step_info = common_view_logic.FindNextStepsHelper.find_next_steps(
             **serializer.validated_data
         )
 
-        return serializers.NextStepInfoSerizableSerializer(
-            next_step_info.convert_to_serializable(),
+        return Response(
+            serializers.NextStepInfoSerizableSerializer(
+                next_step_info.convert_to_serializable(),
+            ).data,
+            status=status.HTTP_201_CREATED,
         )
 
 
@@ -159,8 +167,7 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
         return Response(response_serializer.data)
 
     @extend_schema(responses=serializers.DenialResponseInfoSerializer)
-    def perform_create(self, request: Request, serializer):
-        logger.debug("Performing the create.....")
+    def perform_create(self, request: Request, serializer) -> Response:
         current_user: User = request.user  # type: ignore
         creating_professional = ProfessionalUser.objects.get(user=current_user)
         serializer = self.deserialize(data=request.data)
@@ -221,7 +228,12 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
                 pending=True,
             )
             denial_response_info.appeal_id = appeal.id
-        return serializers.DenialResponseInfoSerializer(instance=denial_response_info)
+        return Response(
+            serializers.DenialResponseInfoSerializer(
+                instance=denial_response_info
+            ).data,
+            status=status.HTTP_201_CREATED,
+        )
 
     @extend_schema(responses=serializers.PubMedMiniArticleSerializer(many=True))
     @action(detail=False, methods=["post"])
@@ -275,7 +287,7 @@ class QAResponseViewSet(viewsets.ViewSet, CreateMixin):
         return super().create(request)
 
     @extend_schema(responses=serializers.StatusResponseSerializer)
-    def perform_create(self, request: Request, serializer):
+    def perform_create(self, request: Request, serializer) -> Response:
         user: User = request.user  # type: ignore
         denial = Denial.filter_to_allowed_denials(user).get(
             denial_id=serializer.validated_data["denial_id"]
@@ -311,7 +323,7 @@ class FollowUpViewSet(viewsets.ViewSet, CreateMixin):
         return super().create(request)
 
     @extend_schema(responses=serializers.StatusResponseSerializer)
-    def perform_create(self, request: Request, serializer):
+    def perform_create(self, request: Request, serializer) -> Response:
         common_view_logic.FollowUpHelper.store_follow_up_result(
             **serializer.validated_data
         )
@@ -451,7 +463,7 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
                 email=user.email,
                 professional_name=professional_name,
                 practice_number=UserDomain.objects.get(
-                    id=request.session["domain_id"]
+                    id=auth_utils.get_domain_id_from_request(request)
                 ).visible_phone_number,
             )
         else:
@@ -460,7 +472,7 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
                 email=user.email,
                 professional_name=professional_name,
                 practice_number=UserDomain.objects.get(
-                    id=request.session["domain_id"]
+                    id=auth_utils.get_domain_id_from_request(request)
                 ).visible_phone_number,
             )
         return Response(
@@ -562,7 +574,9 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
         patient_user = denial.patient_user
         if patient_user is None:
             raise Exception("Patient user not found on denial")
-        user_domain = UserDomain.objects.get(id=request.session["domain_id"])
+        user_domain = UserDomain.objects.get(
+            id=auth_utils.get_domain_id_from_request(request)
+        )
         completed_appeal_text = serializer.validated_data["completed_appeal_text"]
         insurance_company = serializer.validated_data["insurance_company"] or ""
         fax_phone = ""
@@ -647,7 +661,7 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
                     email=email,
                     professional_name=inviting_professional.get_display_name(),
                     practice_number=UserDomain.objects.get(
-                        id=request.session["domain_id"]
+                        id=auth_utils.get_domain_id_from_request(request)
                     ).visible_phone_number,
                 )
 
@@ -684,7 +698,7 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
         previous_period_end = current_period_start - relativedelta(microseconds=1)
 
         # Get user domain to calculate patients
-        domain_id = request.session.get("domain_id")
+        domain_id = auth_utils.get_domain_id_from_request(request)
         user_domain = None
         if domain_id:
             try:
@@ -771,7 +785,7 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
         user: User = request.user  # type: ignore
 
         # Get user domain to calculate patients
-        domain_id = request.session.get("domain_id")
+        domain_id = auth_utils.get_domain_id_from_request(request)
         user_domain = None
         if domain_id:
             try:
@@ -891,7 +905,7 @@ class MailingListSubscriberViewSet(viewsets.ViewSet, CreateMixin, DeleteMixin):
         return super().create(request)
 
     @extend_schema(responses=serializers.StatusResponseSerializer)
-    def perform_create(self, request: Request, serializer):
+    def perform_create(self, request: Request, serializer) -> Response:
         serializer.save()
         return Response(
             serializers.StatusResponseSerializer({"status": "subscribed"}).data,
@@ -939,9 +953,18 @@ class AppealAttachmentViewSet(viewsets.ViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        appeal_id_number: Optional[int] = (
+            int(appeal_id) if appeal_id.isdigit() else None
+        )
+        if not appeal_id_number:
+            return Response(
+                serializers.ErrorSerializer({"error": "Invalid appeal_id"}).data,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         current_user: User = request.user  # type: ignore
         appeal = get_object_or_404(
-            Appeal.filter_to_allowed_appeals(current_user), id=appeal_id
+            Appeal.filter_to_allowed_appeals(current_user), id=appeal_id_number
         )
         attachments = AppealAttachment.objects.filter(appeal=appeal)
         serializer = serializers.AppealAttachmentSerializer(attachments, many=True)

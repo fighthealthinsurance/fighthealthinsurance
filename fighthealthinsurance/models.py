@@ -13,6 +13,8 @@ from django.db.models.functions import Now
 from django_prometheus.models import ExportModelOperationsMixin
 from django_encrypted_filefield.fields import EncryptedFileField
 from django.contrib.auth import get_user_model
+from django_encrypted_filefield.crypt import Cryptographer
+
 
 from fighthealthinsurance.utils import sekret_gen
 from fhi_users.models import *
@@ -340,12 +342,34 @@ class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # t
         "Appeal", on_delete=models.SET_NULL, null=True, blank=True
     )
 
+    def _get_contents(self):
+        if self.combined_document:
+            return self.combined_document.read()
+        elif self.combined_document_enc:
+            cryptographer = Cryptographer(settings.COMBINED_STORAGE)
+            try:
+                return cryptographer.decrypt(self.combined_document_enc.read())
+            except:
+                logger.opt(exception=True).debug(
+                    f"Error reading encrypted document, sometimes this mean it was not encrypted falling back"
+                )
+                self.combined_document_enc.read()
+        else:
+            raise Exception("No file found (encrypted or unencrypted)")
+
+    def _get_filename(self) -> str:
+        if self.combined_document:
+            return self.combined_document.name  # type: ignore
+        elif self.combined_document_enc:
+            return self.combined_document_enc.name  # type: ignore
+        else:
+            raise Exception("No file found (encrypted or unencrypted)")
+
     def get_temporary_document_path(self):
-        combined_document = self.combined_document or self.combined_document_enc
         with tempfile.NamedTemporaryFile(
-            suffix=combined_document.name, mode="w+b", delete=False
+            suffix=self._get_filename(), mode="w+b", delete=False
         ) as f:
-            f.write(combined_document.read())
+            f.write(self._get_contents())
             f.flush()
             f.close()
             os.sync()
@@ -378,6 +402,7 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     uuid = models.CharField(max_length=300, default=uuid.uuid4, editable=False)
     hashed_email = models.CharField(max_length=300, primary_key=False)
     denial_text = models.TextField(primary_key=False)
+    date_of_service_text = models.TextField(primary_key=False, null=True, blank=True)
     denial_type_text = models.TextField(max_length=200, null=True, blank=True)
     date = models.DateField(auto_now=False, auto_now_add=True)
     denial_type = models.ManyToManyField(DenialTypes, through=DenialTypesRelation)
@@ -448,7 +473,10 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     single_case = models.BooleanField(default=False, null=True)
     # pubmed articles to be used to create the input context to the appeal
     pubmed_ids_json = models.JSONField(null=True, blank=True)
+    pubmed_context = models.TextField(null=True, blank=True)
     generated_questions = models.JSONField(null=True, blank=True)
+    # ML-generated citations for the appeal
+    ml_citation_context = models.JSONField(null=True, blank=True)
     manual_deidentified_denial = models.TextField(
         primary_key=False, null=True, default=""
     )
@@ -463,6 +491,18 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     verified_diagnosis = models.TextField(primary_key=False, null=True, default="")
     flag_for_exclude = models.BooleanField(default=False, null=True)
     include_provided_health_history_in_appeal = models.BooleanField(default=False)
+    # Used to mark claims related to dental services
+    dental_claim = models.BooleanField(default=False)
+    # Used to mark claims not related to human patients (e.g., pet insurance)
+    not_human_claim = models.BooleanField(default=False)
+    # Marks this denial as a unique claim example for training or reference
+    unique_claim = models.BooleanField(default=False)
+    # Marks this denial as a good example for training or reference
+    good_appeal_example = models.BooleanField(default=False)
+    candidate_procedure = models.CharField(max_length=300, null=True, blank=True)
+    candidate_diagnosis = models.CharField(max_length=300, null=True, blank=True)
+    candidate_generated_questions = models.JSONField(null=True, blank=True)
+    candidate_ml_citation_context = models.JSONField(null=True, blank=True)
 
     @classmethod
     def filter_to_allowed_denials(cls, current_user: User):
@@ -704,3 +744,36 @@ class AppealAttachment(models.Model):
         """Filter attachments to only those the user has permission to access"""
         allowed_appeals = Appeal.filter_to_allowed_appeals(user)
         return cls.objects.filter(appeal__in=allowed_appeals)
+
+
+class StripeRecoveryInfo(models.Model):
+    id = models.AutoField(primary_key=True)
+    items = models.JSONField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class LostStripeSession(models.Model):
+    id = models.AutoField(primary_key=True)
+    session_id = models.CharField(max_length=255, null=True, blank=True)
+    payment_type = models.CharField(max_length=255, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, blank=True)
+    cancel_url = models.CharField(max_length=255, null=True, blank=True)
+    success_url = models.CharField(max_length=255, null=True, blank=True)
+    email = models.CharField(max_length=255, null=True, blank=True)
+    metadata = models.JSONField(null=True, blank=True)
+
+
+class LostStripeMeters(models.Model):
+    id = models.AutoField(primary_key=True)
+    created_at = models.DateTimeField(auto_now_add=True, blank=True)
+    payload = models.JSONField(null=True, blank=True)
+    resubmitted = models.BooleanField(default=False)
+    error = models.CharField(max_length=300)
+
+
+class StripeWebhookEvents(models.Model):
+    internal_id = models.AutoField(primary_key=True)
+    event_stripe_id = models.CharField(max_length=255, null=False)
+    created_at = models.DateTimeField(auto_now_add=True, blank=True)
+    success = models.BooleanField(default=False)
+    error = models.CharField(max_length=255, null=True, blank=True)

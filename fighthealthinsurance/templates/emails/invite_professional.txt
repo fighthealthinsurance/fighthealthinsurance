@@ -1,11 +1,20 @@
+{% if professional_name %}Hello {{ professional_name }},{% else %}Hello,{% endif %}
 
-{{ professional_name }} has invited you to join them on Fight Paperwork to collaborate on appealing an insurance denial.
+You have been invited by {{ inviter_name }} to join {{ practice_name }} on Fight Health Insurance / Fight Paperwork.
 
-To make sure you're in the same group when you sign up, make sure to use the practice phone number {{ practice_number }} when
-signing up on https://www.fightpaperwork.com
+Our platform helps healthcare providers successfully appeal insurance denials and reduce administrative burden. Studies show that when providers appeal denials, they have a high success rate of overturning the initial decision.
 
-If you’ve got any questions, please feel free to reach out to us at support42@fighthealthinsurance.com
+To join {{ practice_name }}, please follow these steps:
 
-A huge thank you,
+1. Visit https://www.fightpaperwork.com/auth/provider-signup
+2. Create your account
+3. When asked, select "Joining Existing Group"
+4. Enter the practice phone number: {{ practice_number }}
 
-The Fight Paperwork team, our dogs, and our cats.
+This will ensure you're connected to the right practice group.
+
+If you have any questions, please feel free to reach out to us at support42@fighthealthinsurance.com.
+
+Thank you,
+
+The Fight Paperwork team

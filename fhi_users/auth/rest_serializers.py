@@ -10,7 +10,11 @@ from .auth_forms import (
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from fhi_users.models import *
-from fhi_users.auth.auth_utils import create_user
+from fhi_users.auth.auth_utils import (
+    create_user,
+    validate_password,
+    normalize_phone_number,
+)
 from typing import Any, Optional
 import re
 
@@ -96,6 +100,9 @@ class UserSignupSerializer(serializers.Serializer):
     domain_name = serializers.CharField(required=False, allow_blank=True)
     visible_phone_number = serializers.CharField(required=True)
     continue_url = serializers.CharField()  # URL to send user to post signup / payment
+    cancel_url = serializers.URLField(
+        required=False, default="https://www.fightpaperwork.com/?q=ohno"
+    )
     username = serializers.CharField(required=True)
     first_name = serializers.CharField(required=True)
     last_name = serializers.CharField(required=True)
@@ -104,9 +111,28 @@ class UserSignupSerializer(serializers.Serializer):
     email = serializers.EmailField(required=False, allow_blank=True)
 
     def validate_password(self, value):
-        if len(value) < 8:
-            raise serializers.ValidationError("Password must be at least 8 characters.")
+        if not validate_password(value):
+            raise serializers.ValidationError(
+                "Password must be at least 8 characters, contain at least one digit, and not all digits"
+            )
         return value
+
+    def validate_visible_phone_number(self, value):
+        # Remove all hyphens from the phone number
+        cleaned_number = value.replace("-", "")
+
+        # Check that the remaining string only contains digits and 'X' or 'x'
+        if (
+            not all(
+                char.isdigit() or char == "X" or char == "x" for char in cleaned_number
+            )
+            or len(cleaned_number) < 7
+        ):
+            raise serializers.ValidationError(
+                "Phone number can only contain digits, 'X', and hyphens, and must be at least 7 characters long."
+            )
+
+        return cleaned_number
 
     def save(self, **kwargs: Any):
         raise Exception(
@@ -140,6 +166,33 @@ class UserDomainSerializer(serializers.ModelSerializer):
         )
 
 
+class InviteProfessionalSerializer(serializers.Serializer):
+    """
+    Invite a new professional to join your domain.
+    """
+
+    user_email = serializers.EmailField()
+    name = serializers.CharField(required=False, allow_blank=True)
+
+
+class CreateProfessionalInCurrentDomainSerializer(serializers.Serializer):
+    """
+    Create a new professional in the admin's domain.
+    """
+
+    email = serializers.EmailField()
+    first_name = serializers.CharField()
+    last_name = serializers.CharField()
+    npi_number = serializers.CharField(required=False, allow_blank=True)
+    provider_type = serializers.CharField(required=False, allow_blank=True)
+
+    def validate_npi_number(self, value):
+        # Only validate if a value is provided
+        if value and not re.match(r"^\d{10}$", str(value)):
+            raise serializers.ValidationError("Invalid NPI number format.")
+        return value
+
+
 class ProfessionalSignupSerializer(serializers.ModelSerializer):
     """
     Collects professional user and optional domain creation data on sign-up.
@@ -151,6 +204,9 @@ class ProfessionalSignupSerializer(serializers.ModelSerializer):
     # If they're joining an existing domain user_domain *MUST NOT BE POPULATED*
     user_domain = UserDomainSerializer(required=False)
     npi_number = serializers.CharField(required=False, allow_blank=True)
+    card_required = serializers.BooleanField(
+        required=False, default=False, help_text="Whether a card is required."
+    )
 
     class Meta(object):
         model = ProfessionalUser
@@ -161,6 +217,7 @@ class ProfessionalSignupSerializer(serializers.ModelSerializer):
             "user_domain",
             "skip_stripe",
             "provider_type",
+            "card_required",
         ]
 
     def validate_npi_number(self, value):
@@ -265,6 +322,13 @@ class CreatePatientUserSerializer(serializers.ModelSerializer):
     provider_phone_number = serializers.CharField(required=False, allow_blank=True)
     patient_phone_number = serializers.CharField(required=False, allow_blank=True)
 
+    def validate_password(self, value):
+        if not validate_password(value):
+            raise serializers.ValidationError(
+                "Password must be at least 8 characters, contain at least one digit, and not all digits"
+            )
+        return value
+
     class Meta:
         model = User
         fields = [
@@ -284,45 +348,6 @@ class CreatePatientUserSerializer(serializers.ModelSerializer):
             "domain_name",
         ]
         extra_kwargs = {"password": {"write_only": True}}
-
-    def create(self, validated_data):
-        domain_name: Optional[str] = None
-        provider_phone_number: Optional[str] = None
-        patient_phone_number: Optional[str] = None
-        if "domain_name" in validated_data:
-            domain_name = validated_data.pop("domain_name")
-        if "provider_phone_number" in validated_data:
-            provider_phone_number = validated_data.pop("provider_phone_number")
-        if "patient_phone_number" in validated_data:
-            patient_phone_number = validated_data.pop("patient_phone_number")
-        user = create_user(
-            email=validated_data["email"],
-            raw_username=validated_data["username"],
-            first_name=validated_data.get("firstname", ""),
-            last_name=validated_data.get("lastname", ""),
-            domain_name=domain_name,
-            phone_number=provider_phone_number,
-            password=validated_data["password"],
-        )
-
-        UserContactInfo.objects.create(
-            user=user,
-            phone_number=patient_phone_number,
-            country=validated_data["country"],
-            state=validated_data["state"],
-            city=validated_data["city"],
-            address1=validated_data["address1"],
-            address2=validated_data.get("address2", ""),
-            zipcode=validated_data["zipcode"],
-        )
-
-        PatientUser.objects.create(user=user, active=False)
-
-        extra_user_properties = ExtraUserProperties.objects.create(
-            user=user, email_verified=False
-        )
-
-        return user
 
 
 # Define UserContactInfoSerializer before PatientUserSerializer
@@ -372,3 +397,47 @@ class StatusResponseSerializer(serializers.Serializer):
 
 class EmptySerializer(serializers.Serializer):
     pass
+
+
+class FinishPaymentSerializer(serializers.Serializer):
+    # We either need the domain_id & professional user id (what we get from stripe)
+    domain_id = serializers.CharField(required=False)
+    professional_user_id = serializers.IntegerField(required=False)
+    # Or the domain name or phone number + user_email (what we get from a failed login)
+    domain_name = serializers.CharField(required=False)
+    domain_phone = serializers.CharField(required=False)
+    user_email = serializers.EmailField(required=False)
+    continue_url = serializers.URLField()
+    cancel_url = serializers.URLField(
+        required=False, default="https://www.fightpaperwork.com/?q=ohno"
+    )
+
+
+class FinishPaymentResponseSerializer(serializers.Serializer):
+    next_url = serializers.URLField()
+
+
+class DomainExistsSerializer(serializers.Serializer):
+    """
+    Serializer for checking if a domain exists by name or phone number.
+    """
+
+    domain_name = serializers.CharField(required=False, allow_blank=True)
+    phone_number = serializers.CharField(required=False, allow_blank=True)
+
+
+class DomainExistsResponseSerializer(serializers.Serializer):
+    """
+    Response serializer for domain exists check.
+    """
+
+    exists = serializers.BooleanField()
+
+
+class MakeAdminSerializer(serializers.Serializer):
+    """
+    Serializer for making a professional user an admin in a domain.
+    """
+
+    professional_user_id = serializers.IntegerField()
+    domain_id = serializers.CharField()

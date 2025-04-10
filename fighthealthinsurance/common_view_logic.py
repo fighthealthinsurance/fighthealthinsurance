@@ -1,3 +1,4 @@
+from urllib.parse import urlencode
 import asyncstdlib as a
 from asgiref.sync import sync_to_async, async_to_sync
 import asyncio
@@ -5,6 +6,7 @@ import datetime
 import json
 from dataclasses import dataclass
 from string import Template
+import typing
 from typing import AsyncIterator, Awaitable, Any, Optional, Tuple, Iterable, List
 from loguru import logger
 from PyPDF2 import PdfMerger
@@ -20,6 +22,7 @@ from django.core.validators import validate_email
 from django.forms import Form
 from django.template.loader import render_to_string
 from django.db.models import QuerySet
+from django.urls import reverse
 
 
 import uszipcode
@@ -28,12 +31,17 @@ from fighthealthinsurance.form_utils import *
 from fighthealthinsurance.generate_appeal import *
 from fighthealthinsurance.models import *
 from fighthealthinsurance.utils import interleave_iterator_for_keep_alive
+from fighthealthinsurance.ml.ml_citations_helper import MLCitationsHelper
+from fighthealthinsurance.ml.ml_appeal_questions_helper import MLAppealQuestionsHelper
 from fighthealthinsurance import stripe_utils
 from fhi_users.models import ProfessionalUser, UserDomain
+from fhi_users import emails as fhi_emails
 from .pubmed_tools import PubMedTools
 from .utils import check_call, send_fallback_email
 
+
 appealGenerator = AppealGenerator()
+background_tasks = set()
 
 
 class RemoveDataHelper:
@@ -264,6 +272,7 @@ class AppealAssemblyHelper:
                     user_id=stripe_customer_id,
                     meter_name="Incremental Appeal",
                     quantity=1,
+                    identifier=appeal.uuid,
                 )
         with tempfile.NamedTemporaryFile(
             suffix=".pdf", prefix="alltogether", mode="w+b", delete=False
@@ -676,10 +685,11 @@ class FindNextStepsHelper:
             and len(appeal_fax_number) < 30
         ):
             logger.debug(f"Setting appeal fax number to {appeal_fax_number}")
-            denial.appeal_fax_number = appeal_fax_number
+            Denial.objects.filter(denial_id=denial_id).update(
+                appeal_fax_number=appeal_fax_number
+            )
         else:
             logger.debug(f"Invalid appeal fax number {appeal_fax_number}")
-        denial.save()
 
         if include_provided_health_history_in_appeal is not None:
             denial.include_provided_health_history = (
@@ -757,9 +767,10 @@ class FindNextStepsHelper:
         # Generate questions for better appeal creation
         try:
             # If questions don't exist yet, generate them
-            if denial.generated_questions is None:
+            if not denial.generated_questions or len(denial.generated_questions) == 0:
                 # Call the generate_appeal_questions method to get and store questions
                 # Using sync_to_async since we're in a synchronous method
+                logger.debug("Generating appeal questions")
                 async_to_sync(DenialCreatorHelper.generate_appeal_questions)(
                     denial_id=denial.denial_id
                 )
@@ -793,18 +804,28 @@ class FindNextStepsHelper:
                 # Add this form to our question forms list
                 question_forms.append(appeal_questions_form)
         except Exception as e:
-            logger.opt(exception=True).warning(
+            logger.opt(exception=True).error(
                 f"Failed to process appeal questions for denial {denial_id}: {e}"
             )
 
         # Combine all forms
-        combined_form = magic_combined_form(question_forms, existing_answers)
-
-        return NextStepInfo(
-            outside_help_details=outside_help_details,
-            combined_form=combined_form,
-            semi_sekret=semi_sekret,
-        )
+        try:
+            combined_form = magic_combined_form(question_forms, existing_answers)
+            return NextStepInfo(
+                outside_help_details=outside_help_details,
+                combined_form=combined_form,
+                semi_sekret=semi_sekret,
+            )
+        except Exception as e:
+            logger.opt(exception=True).error(
+                f"Unexpected error building query {denial_id}: {e}"
+            )
+            combined_form = magic_combined_form(question_forms, {})
+            return NextStepInfo(
+                outside_help_details=outside_help_details,
+                combined_form=combined_form,
+                semi_sekret=semi_sekret,
+            )
 
 
 @dataclass
@@ -911,7 +932,8 @@ class DenialCreatorHelper:
         Generate a list of questions that could help craft a better appeal for
         this specific denial. The questions will be stored in the denial object's
         generated_questions field as tuples of (question, answer).
-
+        Also generates citations in a non-blocking manner.
+        This is NOT SPECULATIVE.
         Args:
             denial_id: The ID of the denial to generate questions for
 
@@ -922,53 +944,43 @@ class DenialCreatorHelper:
         if not denial:
             logger.warning(f"Could not find denial with ID {denial_id}")
             return []
-        # For now this is disabled
-        return []
+
         try:
-            # Check if we already have questions generated
-            if denial.generated_questions is not None:
-                # Convert stored lists to tuples for consistency with return type
-                result_questions: List[Tuple[str, str]] = [
-                    (
-                        (q[0], q[1])
-                        if isinstance(q, list)
-                        else (q[0], q[1]) if isinstance(q, tuple) else (str(q), "")
-                    )
-                    for q in denial.generated_questions
-                ]
-                return result_questions
-
-            # Get required context for the questions
-            denial_text = denial.denial_text
-            patient_context = denial.health_history
-            plan_context = denial.plan_context
-
-            if denial.procedure:
-
-                # Use the ML model to generate questions with potential answers
-                raw_questions = await appealGenerator.get_appeal_questions(
-                    denial_text=denial_text,
-                    diagnosis=denial.diagnosis,
-                    procedure=denial.procedure,
-                    patient_context=patient_context,
-                    plan_context=plan_context,
+            # Start citation generation as a non-blocking task this is non-speculative
+            # because at this point the things we use to generate citations are "fixed"
+            # but we don't want to block the user while we do it.
+            raise Exception(
+                "Skipped for now, we should figure out a better fire and forget."
+            )
+            citation_task = asyncio.create_task(
+                MLCitationsHelper.generate_citations_for_denial(
+                    denial, speculative=False
                 )
+            )
+            # See https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
+            background_tasks.add(citation_task)
+            citation_task.add_done_callback(background_tasks.discard)
+        except:
+            logger.opt(exception=True).warning(
+                f"Failed to start async generate citations for denial {denial_id}"
+            )
 
-                # Ensure we're working with tuples
-                questions: List[Tuple[str, str]] = [
-                    (q[0], q[1]) if isinstance(q, (list, tuple)) else (str(q), "")
-                    for q in raw_questions
-                ]
+        try:
+            # Generate appeal questions using the helper class
+            questions = await asyncio.wait_for(
+                MLAppealQuestionsHelper.generate_questions_for_denial(
+                    denial, speculative=False
+                ),
+                timeout=30,
+            )
 
-                # Store the questions in the generated_questions field
-                denial.generated_questions = questions
-                await denial.asave()
-                logger.debug(
-                    f"Generated {len(questions)} questions for denial {denial_id}"
-                )
-                return questions
-            else:
-                return []
+            # Store the generated questions in the denial object
+            await Denial.objects.filter(denial_id=denial_id).aupdate(
+                generated_questions=questions
+            )
+
+            logger.debug(f"Generated {len(questions)} questions for denial {denial_id}")
+            return questions
         except Exception as e:
             logger.opt(exception=True).warning(
                 f"Failed to generate questions for denial {denial_id}: {e}"
@@ -1143,51 +1155,73 @@ class DenialCreatorHelper:
 
         # Create Task objects for all optional operations
         optional_tasks = [
-            asyncio.create_task(just_the_name(task)) for task in optional_awaitables
+            asyncio.wait_for(asyncio.create_task(just_the_name(task)), timeout=45)
+            for task in optional_awaitables
         ]
         # We create both sets of tasks at the same time since they're mostly independent and having
         # the optional ones running at the same time gives us a chance to get more done.
-
+        tasks = required_tasks + optional_tasks
+        required_tasks_finished = 0
         # First, execute required tasks (no timeout)
-        for task in asyncio.as_completed(required_tasks):
+        for task in asyncio.as_completed(tasks):
+            if task in required_tasks:
+                required_tasks_finished += 1
+            if required_tasks_finished >= len(required_tasks):
+                logger.debug("All done with required tasks")
+                break
             result: str = await task
             # Yield each result immediately for streaming
             yield result
 
-        # Now we see what optional tasks we can wrap up in the last 45 seconds.
-        try:
-            for task in asyncio.as_completed(optional_tasks, timeout=45):
-                result = await task
-                yield result
-        except asyncio.TimeoutError:
-            logger.debug("Ran out of time for optional tasks -- moving on")
-        except Exception as e:
-            logger.debug(f"Error processing optional tasks: {e}")
-            yield f"Error processing optional tasks: {str(e)}\n"
-
+        build_context_task = asyncio.create_task(
+            cls.build_speculative_context(denial_id=denial_id)
+        )
+        background_tasks.add(build_context_task)
+        build_context_task.add_done_callback(background_tasks.discard)
         yield "Extraction completed\n"
+
+    @classmethod
+    async def build_speculative_context(cls, denial_id: int):
+        """Build context based on the idea we extracted the correct info"""
+        denial = await Denial.objects.filter(denial_id=denial_id).aget()
+        citations_awaitable = MLCitationsHelper.generate_citations_for_denial(
+            denial, speculative=True
+        )
+        questions_awaitable = MLAppealQuestionsHelper.generate_questions_for_denial(
+            denial=denial, speculative=True
+        )
+        await asyncio.gather(citations_awaitable, questions_awaitable)
 
     @classmethod
     async def extract_set_denial_and_diagnosis(cls, denial_id: int):
         denial = await Denial.objects.filter(denial_id=denial_id).aget()
+        procedure = None
+        diagnosis = None
+
         try:
             (procedure, diagnosis) = await appealGenerator.get_procedure_and_diagnosis(
                 denial_text=denial.denial_text
             )
-            if procedure is not None and len(procedure) < 200:
-                denial.procedure = procedure
-            if diagnosis is not None and len(diagnosis) < 200:
-                denial.diagnosis = diagnosis
-        except Exception as e:
-            logger.opt(exception=True).warning(
-                f"Failed to extract procedure and diagnosis for denial {denial_id}: {e}"
-            )
-        finally:
-            denial.extract_procedure_diagnosis_finished = True
-            await denial.asave()
+
+            # Prepare update fields
+            update_fields: dict[str, Any] = {
+                "extract_procedure_diagnosis_finished": True
+            }
+
+            if procedure is not None and len(procedure) < 300:
+                update_fields["procedure"] = procedure
+                update_fields["candidate_procedure"] = procedure
+
+            if diagnosis is not None and len(diagnosis) < 300:
+                update_fields["diagnosis"] = diagnosis
+                update_fields["candidate_diagnosis"] = diagnosis
+
+            # Update all fields in a single atomic database operation
+            await Denial.objects.filter(denial_id=denial_id).aupdate(**update_fields)
+
             # Launch a "fire and forget" task to find related PubMed articles
             # now that we have diagnosis and procedure information
-            if denial.procedure or denial.diagnosis:
+            if denial.procedure or denial.diagnosis or procedure or diagnosis:
 
                 async def find_pubmed_articles():
                     try:
@@ -1203,6 +1237,15 @@ class DenialCreatorHelper:
 
                 # Create the task but don't await it - fire and forget
                 asyncio.create_task(find_pubmed_articles())
+
+        except Exception as e:
+            logger.opt(exception=True).warning(
+                f"Failed to extract procedure and diagnosis for denial {denial_id}: {e}"
+            )
+            # Even on failure, mark extraction as finished
+            await Denial.objects.filter(denial_id=denial_id).aupdate(
+                extract_procedure_diagnosis_finished=True
+            )
 
     @classmethod
     async def extract_set_insurance_company(cls, denial_id):
@@ -1220,8 +1263,10 @@ class DenialCreatorHelper:
                 if (insurance_company in denial.denial_text) or len(
                     insurance_company
                 ) < 50:
-                    denial.insurance_company = insurance_company
-                    await denial.asave()
+                    # Use aupdate() directly instead of loading and saving the object
+                    await Denial.objects.filter(denial_id=denial_id).aupdate(
+                        insurance_company=insurance_company
+                    )
                     logger.debug(
                         f"Successfully extracted insurance company: {insurance_company}"
                     )
@@ -1247,8 +1292,10 @@ class DenialCreatorHelper:
 
             # Simple validation to avoid hallucinations
             if plan_id is not None and len(plan_id) < 30:
-                denial.plan_id = plan_id
-                await denial.asave()
+                # Use aupdate to directly update the field at the database level
+                await Denial.objects.filter(denial_id=denial_id).aupdate(
+                    plan_id=plan_id
+                )
                 logger.debug(f"Successfully extracted plan ID: {plan_id}")
                 return plan_id
             else:
@@ -1271,8 +1318,10 @@ class DenialCreatorHelper:
 
             # Simple validation to avoid hallucinations
             if claim_id is not None and len(claim_id) < 30:
-                denial.claim_id = claim_id
-                await denial.asave()
+                # Use aupdate to directly update the field at the database level
+                await Denial.objects.filter(denial_id=denial_id).aupdate(
+                    claim_id=claim_id
+                )
                 logger.debug(f"Successfully extracted claim ID: {claim_id}")
                 return claim_id
             else:
@@ -1295,9 +1344,10 @@ class DenialCreatorHelper:
 
             # Validate date of service
             if date_of_service is not None:
-                # Store as string since model may expect string format
-                denial.date_of_service = date_of_service
-                await denial.asave()
+                # Use aupdate to directly update at the database level
+                await Denial.objects.filter(denial_id=denial_id).aupdate(
+                    date_of_service=date_of_service
+                )
                 logger.debug(
                     f"Successfully extracted date of service: {date_of_service}"
                 )
@@ -1314,28 +1364,50 @@ class DenialCreatorHelper:
     async def extract_set_fax_number(cls, denial_id):
         # Try and extract the appeal fax number
         denial = await Denial.objects.filter(denial_id=denial_id).aget()
-        appeal_fax_number = None
-        try:
-            appeal_fax_number = await appealGenerator.get_fax_number(
-                denial_text=denial.denial_text
-            )
-        except Exception as e:
-            logger.opt(exception=True).warning(
-                f"Failed to extract fax number for denial {denial_id}: {e}"
-            )
+        appeal_fax_number = denial.appeal_fax_number
+        if not appeal_fax_number:
+            try:
+                appeal_fax_number = await appealGenerator.get_fax_number(
+                    denial_text=denial.denial_text
+                )
+            except Exception as e:
+                logger.opt(exception=True).warning(
+                    f"Failed to extract fax number for denial {denial_id}: {e}"
+                )
 
-        # Slight guard against hallucinations
+        # More flexible validation against hallucinations
         if appeal_fax_number is not None:
-            # TODO: More flexible regex matching
-            if (
-                appeal_fax_number not in denial.denial_text
-                and "Fax" not in denial.denial_text
-            ) or len(appeal_fax_number) > 30:
+            # Extract just the digits for comparison
+            fax_digits = re.sub(r"\D", "", appeal_fax_number)
+
+            if len(fax_digits) < 10 or len(fax_digits) > 15:
+                # Invalid length for a phone number
+                logger.debug(
+                    f"Rejected fax number {appeal_fax_number} - invalid length"
+                )
                 appeal_fax_number = None
+            elif len(appeal_fax_number) > 30:
+                # String is too long to be a reasonable fax number
+                logger.debug(f"Rejected fax number {appeal_fax_number} - too long")
+                appeal_fax_number = None
+            else:
+                # Check if any subsequence of digits appears in the denial text
+                # This is more flexible than exact matching
+                denial_text_digits = re.sub(r"\D", "", denial.denial_text)
+                if fax_digits[-10:] not in denial_text_digits:
+                    # Not found in text - might be hallucinated
+                    logger.debug(
+                        f"Rejected fax number {appeal_fax_number} - digits not found in text"
+                    )
+                    appeal_fax_number = None
+                else:
+                    logger.debug(f"Validated fax number {appeal_fax_number}")
 
         if appeal_fax_number is not None:
-            denial.fax_number = appeal_fax_number
-            await denial.asave()
+            # Use aupdate instead of fetching and saving
+            await Denial.objects.filter(denial_id=denial_id).aupdate(
+                appeal_fax_number=appeal_fax_number
+            )
             logger.debug(f"Successfully extracted fax number: {appeal_fax_number}")
             return appeal_fax_number
         return None
@@ -1446,10 +1518,15 @@ class AppealsBackendHelper:
 
     @classmethod
     async def generate_appeals(cls, parameters) -> AsyncIterator[str]:
+        logger.debug(f"Raw parameters received: {parameters}")
+
+        # Extract specific parameters needed early
         denial_id = parameters["denial_id"]
         email = parameters["email"]
         semi_sekret = parameters["semi_sekret"]
         hashed_email = Denial.get_hashed_email(email)
+        # Extract the professional_to_finish parameter from the input, default to False
+        professional_to_finish = parameters.get("professional_to_finish", False)
 
         # Initial yield of newline.
         yield "\n"
@@ -1555,19 +1632,42 @@ class AppealsBackendHelper:
             denial.qa_context = json.dumps(qa_context)
         if plan_context is not None:
             denial.plan_context = " ".join(set(plan_context))
+        # Update the denial object with the received parameter if it differs
+        if denial.professional_to_finish != professional_to_finish:
+            logger.info(f"Updating denial {denial.denial_id} professional_to_finish from {denial.professional_to_finish} to {professional_to_finish}")
+            denial.professional_to_finish = professional_to_finish
         await denial.asave()
-        logger.debug("Calling make appeals")
-        pubmed_context = None
+
+        # Get pubmed and ml citations context
+        pubmed_context: Optional[str] = None
+        ml_citation_context: Optional[Any] = None
+
+        # Get PubMed context
         logger.debug("Looking up the pubmed context")
+        pubmed_context_awaitable = asyncio.wait_for(
+            asyncio.shield(cls.pmt.find_context_for_denial(denial)), timeout=45
+        )
+
+        ml_citation_context_awaitable = asyncio.wait_for(
+                MLCitationsHelper.generate_citations_for_denial(
+                    denial, speculative=False
+                ),
+            timeout=45
+        )
+
+        # Await both contexts so we can use co-operative multitasking
         try:
-            pubmed_context = await asyncio.wait_for(
-                cls.pmt.find_context_for_denial(denial), timeout=60
+            results = await asyncio.gather(
+                pubmed_context_awaitable, ml_citation_context_awaitable
             )
+            pubmed_context = results[0]
+            ml_citation_context = results[1]
         except Exception as e:
-            logger.opt(exception=True).debug(
-                f"Error {e} looking up context for {denial}."
-            )
-        logger.debug("Pubmed context done.")
+            logger.debug(f"Error gathering contexts: {e}")
+            # We still might have saved a context.
+            await denial.arefresh_from_db()
+            pubmed_context = denial.pubmed_context
+            ml_citation_context = denial.ml_citation_context
 
         async def save_appeal(appeal_text: str) -> dict[str, str]:
             # Save all of the proposed appeals, so we can use RL later.
@@ -1575,14 +1675,14 @@ class AppealsBackendHelper:
             logger.debug(f"{t}: Saving {appeal_text}")
             await asyncio.sleep(0)
             # YOLO on saving appeals, sqllite gets sad.
-            id = "unkown"
+            id = "unknown"
             try:
                 pa = ProposedAppeal(appeal_text=appeal_text, for_denial=denial)
                 await pa.asave()
                 id = str(pa.id)
             except Exception as e:
                 logger.opt(exception=True).warning(
-                    "Failed to save proposed appeal: {e}"
+                    f"Failed to save proposed appeal: {e}"
                 )
                 pass
             passed = time.time() - t
@@ -1628,6 +1728,7 @@ class AppealsBackendHelper:
             medical_reasons=medical_reasons,
             non_ai_appeals=non_ai_appeals,
             pubmed_context=pubmed_context,
+            ml_citations_context=ml_citation_context,
         )
         filtered_appeals: Iterator[str] = filter(lambda x: x != None, appeals)
 
@@ -1646,3 +1747,193 @@ class AppealsBackendHelper:
         async for i in interleaved:
             logger.debug(f"Yielding {i}")
             yield i
+
+
+class StripeWebhookHelper:
+    @staticmethod
+    def handle_checkout_session_completed(request, session):
+        try:
+            try:
+                metadata = session.metadata
+            except:
+                metadata = session["metadata"]
+
+            payment_type: Optional[str] = None
+            if "payment_type" in metadata:
+                payment_type = metadata.get("payment_type")
+            else:
+                logger.debug(f"No payment type field found in {session}")
+
+            if payment_type == "interested_professional_signup":
+                InterestedProfessional.objects.filter(
+                    id=metadata.get("interested_professional_id")
+                ).update(paid=True)
+
+            elif payment_type == "professional_domain_subscription":
+                logger.debug(f"Processing professional domain subscription {session}")
+                subscription_id = session.get("subscription")
+                customer_id = session.get("customer")
+                if subscription_id:
+                    UserDomain.objects.filter(id=metadata.get("domain_id")).update(
+                        stripe_subscription_id=subscription_id,
+                        stripe_customer_id=customer_id,
+                        active=True,
+                        pending=False,
+                    )
+                    ProfessionalUser.objects.filter(
+                        id=metadata.get("professional_id")
+                    ).update(active=True)
+                    user = ProfessionalUser.objects.get(
+                        id=metadata.get("professional_id")
+                    ).user
+                    fhi_emails.send_verification_email(request, user, first_only=True)
+                else:
+                    logger.opt(exception=True).error(
+                        "No subscription ID in completed checkout session"
+                    )
+
+            elif payment_type == "fax":
+                FaxesToSend.objects.filter(uuid=session.metadata.get("uuid")).update(
+                    paid=True, should_send=True
+                )
+            else:
+                logger.warning(f"Unknown payment type: {payment_type}")
+        except Exception as e:
+            logger.opt(exception=True).error("Error processing checkout session")
+            raise e
+
+    @staticmethod
+    def handle_checkout_session_expired(request, session):
+        try:
+            # TODO: More complete handling
+            logger.debug(f"Checkout session expired: {session}")
+            try:
+                metadata = session.metadata
+            except:
+                metadata = session["metadata"]
+            payment_type = metadata.get("payment_type")
+            item = "Fight Health Insurance / Fight paperwork"
+            finish_link = None
+            if payment_type == "fax":
+                item = "Fight Health Insurance Fax"
+            elif payment_type == "professional_domain_subscription":
+                item = "Fight Paperwork Professional Domain Subscription"
+                # Temporary until the FPW UI is ready
+                finish_base_link = (
+                    "https://www.fightpaperwork.com/stripe/finish-checkout"
+                )
+                params = urlencode(
+                    {
+                        "domain_id": metadata.get("domain_id"),
+                        "professional_id": metadata.get("professional_id"),
+                    }
+                )
+                finish_link = f"{finish_base_link}?{params}"
+            email: Optional[str] = None
+            try:
+                try:
+                    email = session.customer_email
+                except:
+                    email = session["customer_email"]
+            except:
+                pass
+            if email is None:
+                try:
+                    try:
+                        email = session.customer_details.email
+                    except:
+                        email = session["customer_details"]["email"]
+                except:
+                    pass
+            if email is None:
+                logger.debug(
+                    "No email found in expired checkout session can't send e-mail"
+                )
+                return
+
+            session_id = None
+            if hasattr(session, "id"):
+                session_id = session.id
+
+            # Check if we already have a record for this session or similar data
+            # to avoid sending duplicate emails
+            existing_session = None
+            if session_id:
+                existing_session = LostStripeSession.objects.filter(
+                    session_id=session_id
+                ).first()
+
+            if not existing_session and email and payment_type:
+                existing_session = LostStripeSession.objects.filter(
+                    email=email, payment_type=payment_type
+                ).first()
+
+            if existing_session:
+                logger.debug(
+                    f"Skipping duplicate lost stripe session notification for {email}"
+                )
+                return
+
+            lost_session = LostStripeSession.objects.create(
+                payment_type=payment_type,
+                email=email,
+                session_id=session_id,
+                metadata=metadata,
+            )
+            if finish_link is None:
+                finish_link_base = reverse("complete_payment")
+                finish_link = f"{finish_link_base}?session_id={lost_session.id}"
+            if finish_link:
+                fhi_emails.send_checkout_session_expired(
+                    request,
+                    email=email,
+                    item=item,
+                    link=finish_link,
+                )
+            else:
+                logger.debug(f"Could not create finish link for {payment_type}")
+        except Exception as e:
+            logger.opt(exception=True).error(
+                "Error processing expired checkout session"
+            )
+            raise
+
+    @staticmethod
+    def handle_stripe_webhook(request, event):
+        # First check if we've already received this event
+        event_id = event.id
+
+        # Check if this event has already been processed
+        if StripeWebhookEvents.objects.filter(event_stripe_id=event_id).exists():
+            logger.debug(f"Skipping duplicate stripe event {event_id}")
+            return
+
+        # Create a record of receiving this event
+        webhook_event = StripeWebhookEvents.objects.create(
+            event_stripe_id=event_id,
+            success=False,  # Will be updated to True if handling succeeds
+        )
+
+        try:
+            if event.type == "checkout.session.completed":
+                StripeWebhookHelper.handle_checkout_session_completed(
+                    request, event.data.object
+                )
+            elif event.type == "checkout.session.expired":
+                StripeWebhookHelper.handle_checkout_session_expired(
+                    request, event.data.object
+                )
+            else:
+                logger.debug(f"Unhandled stripe event type {event.type}")
+
+            # Update the webhook event record on success
+            webhook_event.success = True
+            webhook_event.save()
+        except Exception as e:
+            # Record the error
+            webhook_event.error = str(e)[:255]  # Limit to field size
+            webhook_event.save()
+            logger.opt(exception=True).error(
+                f"Error processing stripe webhook {event_id}"
+            )
+            raise

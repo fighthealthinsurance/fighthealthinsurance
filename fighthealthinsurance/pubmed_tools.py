@@ -9,7 +9,6 @@ from .utils import markdown_escape
 from concurrent.futures import Future
 from metapub import FindIt
 
-# Removing stopit imports
 import asyncio
 from .models import Denial
 import json
@@ -191,6 +190,14 @@ class PubMedTools(object):
         return articles
 
     async def find_context_for_denial(self, denial: Denial, timeout=60.0) -> str:
+        result = await self._find_context_for_denial(denial, timeout)
+        if result is not None and len(result) > 1:
+            await Denial.objects.filter(denial_id=denial.denial_id).aupdate(
+                pubmed_context=result
+            )
+        return result
+
+    async def _find_context_for_denial(self, denial: Denial, timeout=60.0) -> str:
         """
         Kind of hacky RAG routine that uses PubMed.
         """
@@ -232,9 +239,11 @@ class PubMedTools(object):
 
                     selected_pmids = list(map(lambda x: x.pmid, possible_articles))
 
-                denial.pubmed_ids_json = selected_pmids
                 logger.debug(f"Updating denial to have some context selected...")
-                await denial.asave()
+                # Use aupdate instead of asave to avoid race conditions
+                await Denial.objects.filter(denial_id=denial.denial_id).aupdate(
+                    pubmed_ids_json=selected_pmids
+                )
                 # Directly fetch the selected articles from the database
                 articles = [
                     article

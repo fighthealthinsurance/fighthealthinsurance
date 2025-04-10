@@ -6,6 +6,7 @@ from stripe import error as stripe_error
 import typing
 from loguru import logger
 from PIL import Image
+import json
 
 
 from django import forms
@@ -25,8 +26,21 @@ from fighthealthinsurance import forms as core_forms
 from fighthealthinsurance import models
 from fighthealthinsurance import followup_emails
 from fighthealthinsurance.stripe_utils import get_or_create_price
+
+from fhi_users import emails as fhi_emails
+from fhi_users.models import UserDomain, ProfessionalUser
+from fhi_users.auth.auth_utils import resolve_domain_id
+from fighthealthinsurance.models import StripeRecoveryInfo
+
 from django.template import loader
 from django.http import HttpResponseForbidden
+
+from django.contrib.auth import get_user_model
+
+if typing.TYPE_CHECKING:
+    from django.contrib.auth.models import User
+else:
+    User = get_user_model()
 
 
 def render_ocr_error(request: HttpRequest, text: str) -> HttpResponseBase:
@@ -113,53 +127,8 @@ def safe_redirect(request, url):
         return HttpResponseRedirect(url)
 
 
-class ProVersionView(generic.FormView):
-    template_name = "professional.html"
-    form_class = core_forms.InterestedProfessionalForm
-    sender = followup_emails.ThankyouEmailSender()
-
-    def form_valid(self, form):
-        interested_professional = form.save()
-        try:
-            self.sender.dosend(interested_pro=interested_professional)
-        except Exception as e:
-            logger.opt(exception=True).error("Failed to send thank you email")
-
-        if not (
-            "clicked_for_paid" in form.cleaned_data
-            and form.cleaned_data["clicked_for_paid"]
-        ):
-            return render(self.request, "professional_thankyou.html")
-
-        (_, price_id) = get_or_create_price(
-            "Professional Pre-Signup", 1000, recurring=False
-        )
-
-        checkout = stripe.checkout.Session.create(
-            line_items=[
-                {
-                    "price": price_id,
-                    "quantity": 1,
-                }
-            ],
-            mode="payment",
-            success_url=self.request.build_absolute_uri(
-                reverse("pro_version_thankyou")
-            ),
-            cancel_url=self.request.build_absolute_uri(reverse("pro_version_thankyou")),
-            customer_email=form.cleaned_data["email"],
-            allow_promotion_codes=True,
-            metadata={
-                "payment_type": "interested_professional_signup",
-                "interested_professional_id": interested_professional.id,
-            },
-        )
-
-        checkout_url = checkout.url
-        if checkout_url is None:
-            raise Exception("Could not create checkout url")
-        else:
-            return safe_redirect(self.request, checkout_url)
+class ProVersionView(generic.RedirectView):
+    url = "https://www.fightpaperwork.com"
 
 
 class IndexView(generic.TemplateView):
@@ -186,6 +155,13 @@ class PrivacyPolicyView(generic.TemplateView):
 
     def get_context_data(self, **kwargs):
         return {"title": "Privacy Policy"}
+
+
+class MHMDAView(generic.TemplateView):
+    template_name = "mhmda.html"
+
+    def get_context_data(self, **kwargs):
+        return {"title": "Consumer Health Data Privacy Notice"}
 
 
 class TermsOfServiceView(generic.TemplateView):
@@ -622,6 +598,13 @@ class AppealFileView(View):
 
 class StripeWebhookView(View):
     def post(self, request):
+        try:
+            return self.do_post(request)
+        except Exception as e:
+            logger.opt(exception=True).error("Error processing Stripe webhook")
+            return HttpResponse(status=500)
+
+    def do_post(self, request):
         payload = request.body
         sig_header = request.META.get("HTTP_STRIPE_SIGNATURE")
 
@@ -631,44 +614,102 @@ class StripeWebhookView(View):
             )
         except ValueError as e:
             logger.error(f"Invalid payload: {e}")
-            return HttpResponse(status=400)
+            return HttpResponse(status=401)
         except stripe_error.SignatureVerificationError as e:  # type: ignore
             logger.error(f"Invalid signature: {e}")
-            return HttpResponse(status=400)
+            return HttpResponse(status=403)
 
-        if event.type == "checkout.session.completed":
-            session = event.data.object
-            payment_type = session.metadata.get("payment_type")
-
-            if payment_type == "interested_professional_signup":
-                models.InterestedProfessional.objects.filter(
-                    id=session.metadata.get("interested_professional_id")
-                ).update(paid=True)
-
-            elif payment_type == "professional_domain_subscription":
-                logger.debug(f"Processing professional domain subscription {session}")
-                subscription_id = session.get("subscription")
-                costumer_id = session.get("customer")
-                if subscription_id:
-                    models.UserDomain.objects.filter(
-                        id=session.metadata.get("domain_id")
-                    ).update(
-                        stripe_subscription_id=subscription_id,
-                        stripe_customer_id=costumer_id,
-                        active=True,
-                        pending=False,
-                    )
-                    models.ProfessionalUser.objects.filter(
-                        id=session.metadata.get("professional_id")
-                    ).update(active=True)
-                else:
-                    logger.error("No subscription ID in completed checkout session")
-
-            elif payment_type == "fax":
-                models.FaxesToSend.objects.filter(
-                    uuid=session.metadata.get("uuid")
-                ).update(paid=True, should_send=True)
-            else:
-                logger.error(f"Unknown payment type: {payment_type}")
-
+        common_view_logic.StripeWebhookHelper.handle_stripe_webhook(request, event)
         return HttpResponse(status=200)
+
+
+class CompletePaymentView(View):
+    def get(self, request):
+        try:
+            # Extract parameters from URL query string
+            session_id = request.GET.get("session_id")
+            cancel_url = request.GET.get(
+                "cancel_url", "https://www.fighthealthinsurance.com/?q=ohno"
+            )
+
+            # Create data dictionary similar to what we'd get from POST
+            data = {
+                "session_id": session_id,
+                "cancel_url": cancel_url,
+            }
+
+            return self.process_payment(data)
+        except Exception as e:
+            logger.opt(exception=True).error(
+                "Error processing payment completion from GET"
+            )
+            return HttpResponse(status=500)
+
+    def post(self, request):
+        try:
+            return self.do_post(request)
+        except Exception as e:
+            logger.opt(exception=True).error("Error processing payment completion")
+            return HttpResponse(status=500)
+
+    def do_post(self, request):
+        data = json.loads(request.body)
+        return self.process_payment(data)
+
+    def process_payment(self, data):
+        session_id = data.get("session_id")
+
+        if not session_id:
+            return HttpResponse(
+                json.dumps({"error": "Missing session_id"}),
+                status=400,
+                content_type="application/json",
+            )
+
+        try:
+            lost_session = models.LostStripeSession.objects.get(session_id=session_id)
+            continue_url = lost_session.success_url
+            cancel_url = lost_session.cancel_url
+            payment_type = lost_session.payment_type
+            metadata: dict[str, str] = lost_session.metadata  # type: ignore
+            recovery_info_id = metadata.get("recovery_info_id")
+            line_items = []
+            if not recovery_info_id:
+                line_items_json = metadata.get("line_items")
+                if not line_items_json:
+                    logger.error(f"No recover info found in metadata {metadata}")
+                    return HttpResponse(
+                        json.dumps({"error": "No recover info found in metadata"}),
+                        status=400,
+                        content_type="application/json",
+                    )
+                line_items = json.loads(line_items_json)
+            else:
+                line_items = StripeRecoveryInfo.objects.get(id=recovery_info_id).items
+            checkout_session = stripe.checkout.Session.create(
+                payment_method_types=["card"],
+                line_items=line_items,  # type: ignore
+                mode="payment",
+                success_url=continue_url or "https://www.fighthealthinsurance.com",
+                cancel_url=cancel_url or "https://www.fighthealthinsurance.com",
+                metadata=metadata,
+            )
+
+            return HttpResponse(
+                json.dumps({"next_url": checkout_session.url}),
+                status=200,
+                content_type="application/json",
+            )
+        except models.LostStripeSession.DoesNotExist:
+            return HttpResponse(
+                json.dumps({"error": "Session not found"}),
+                status=400,
+                content_type="application/json",
+            )
+        except Exception as e:
+            logger.opt(exception=e).error("Error in finishing payment")
+            return HttpResponse(
+                json.dumps({"error": f"Error {e}"}),
+                status=500,
+                content_type="application/json",
+            )

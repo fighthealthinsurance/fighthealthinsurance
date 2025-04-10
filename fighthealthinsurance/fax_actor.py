@@ -79,7 +79,10 @@ class FaxActor:
         print(f"Sending faxes older than target: {target_time}")
 
         delayed_faxes = FaxesToSend.objects.filter(
-            should_send=True, sent=False, date__lt=target_time
+            should_send=True,
+            sent=False,
+            date__lt=target_time,
+            destination__isnull=False,
         )
         t = 0
         f = 0
@@ -159,8 +162,10 @@ class FaxActor:
     def do_send_fax_object(self, fax) -> bool:
         denial = fax.denial_id
         if denial is None:
+            print(f"Fax {fax} has no denial id")
             return False
         if fax.destination is None:
+            print(f"Fax {fax} has no destination")
             return False
         extra = ""
         if denial.claim_id is not None and len(denial.claim_id) > 2:

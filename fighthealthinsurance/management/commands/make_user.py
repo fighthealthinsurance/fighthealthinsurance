@@ -75,7 +75,11 @@ class Command(BaseCommand):
         try:
             user_domain, created = UserDomain.objects.get_or_create(
                 name=domain_clean,
-                defaults={"active": True, "visible_phone_number": visible_phone_number},
+                defaults={
+                    "active": True,
+                    "pending": False,
+                    "visible_phone_number": visible_phone_number,
+                },
             )
             if created:
                 self.stdout.write(
@@ -131,8 +135,8 @@ class Command(BaseCommand):
                 ProfessionalDomainRelation.objects.create(
                     professional=pro_user,
                     domain=user_domain,
-                    active=True,
-                    pending=False,
+                    active_domain_relation=True,
+                    pending_domain_relation=False,
                     admin=True,
                 )
         elif is_provider:
@@ -140,8 +144,8 @@ class Command(BaseCommand):
             ProfessionalDomainRelation.objects.create(
                 professional=pro_user,
                 domain=user_domain,
-                active=True,
-                pending=False,
+                active_domain_relation=True,
+                pending_domain_relation=False,
                 admin=True,
             )
         elif PatientUser.objects.filter(user=user).exists():

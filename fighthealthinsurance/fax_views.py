@@ -1,6 +1,7 @@
 import stripe
 from loguru import logger
 from typing import *
+import json
 
 from django.conf import settings
 from django.shortcuts import redirect, render
@@ -56,7 +57,7 @@ class StageFaxView(generic.FormView):
             "Fight Health Insurance -- a service of Totally Legit Co"
         )
         form_data["include_cover"] = True
-        denial.appeal_fax_number = form_data["fax_number"]
+        denial.appeal_fax_number = form_data["fax_phone"]
         appeal = common_view_logic.AppealAssemblyHelper().create_or_update_appeal(
             **form_data
         )
@@ -78,9 +79,11 @@ class StageFaxView(generic.FormView):
                 "quantity": 1,
             }
         ]
+        stripe_recovery_info = StripeRecoveryInfo.objects.create(items=items)
         metadata = {
             "payment_type": "fax",
             "fax_request_uuid": staged.uuid,
+            "recovery_info_id": stripe_recovery_info.id,
         }
         checkout = stripe.checkout.Session.create(
             line_items=items,  # type: ignore

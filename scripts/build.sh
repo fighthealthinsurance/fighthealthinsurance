@@ -8,9 +8,9 @@ BUILDX_CMD=${BUILDX_CMD:-push}
 source "${SCRIPT_DIR}/setup_templates.sh"
 
 # BUILDKIT_NO_CLIENT_TOKEN=true
-FHI_VERSION=v0.11.8d
+FHI_VERSION=v0.11.18a
 
-MYORG=${MYORG:-holdenk}
+MYORG=${MYORG:-totallylegitco}
 RAY_BASE=${RAY_BASE:-${MYORG}/fhi-ray}
 FHI_BASE=${FHI_BASE:-${MYORG}/fhi-base}
 FHI_DOCKER_USERNAME=${FHI_DOCKER_USERNAME:-holdenk}
@@ -27,6 +27,7 @@ FHI_VERSION_OG=${FHI_VERSION}
 FHI_VERSION=${FHI_VERSION}-dev
 export FHI_VERSION
 
+# Build the dev containers
 source "${SCRIPT_DIR}/build_django.sh"
 
 # Deploy dev
@@ -44,6 +45,10 @@ FHI_VERSION_OG=${FHI_VERSION}
 FHI_VERSION=${FHI_VERSION_OG}
 export FHI_VERSION
 
+# Build the ray container -- we don't use it in staging *BUT*
+# better to have built than be stuck with a half deployed system if
+# dockerhub is having a day.
+source "${SCRIPT_DIR}/build_ray.sh"
 
 # Deploy a staging env
 envsubst < k8s/deploy_staging.yaml | kubectl apply -f -
@@ -55,8 +60,6 @@ case $yn in
     * ) echo "Invalid response. Please enter y or n.";;
 esac
 
-# Build and deploy ray before the "main" app comes up.
-source "${SCRIPT_DIR}/build_ray.sh"
 # The raycluster operator doesn't handle upgrades well so delete + recreate instead.
 kubectl delete raycluster -n totallylegitco raycluster-kuberay || echo "No raycluster present"
 envsubst < k8s/ray/cluster.yaml | kubectl apply -f -

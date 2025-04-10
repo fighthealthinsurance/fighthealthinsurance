@@ -7,6 +7,8 @@ from django.contrib.auth import get_user_model
 from django.db.models.signals import pre_save
 from django.dispatch import receiver
 from enum import Enum
+from loguru import logger
+
 
 if typing.TYPE_CHECKING:
     from django.contrib.auth.models import User
@@ -48,8 +50,8 @@ class UserDomain(models.Model):
         unique=True,
     )
     # Money
-    stripe_subscription_id = models.CharField(max_length=300, null=True)
-    stripe_customer_id = models.CharField(max_length=300, null=True)
+    stripe_subscription_id = models.CharField(max_length=300, null=True, blank=True)
+    stripe_customer_id = models.CharField(max_length=300, null=True, blank=True)
     # Info
     # https://docs.djangoproject.com/en/5.1/ref/models/fields/#django.db.models.Field.null
     name = models.CharField(blank=True, null=True, max_length=300, unique=True)
@@ -69,16 +71,16 @@ class UserDomain(models.Model):
     )
     office_fax = models.CharField(max_length=150, null=True, blank=True)
     country = models.CharField(max_length=150, default="USA")
-    state = models.CharField(max_length=50, null=False)
-    city = models.CharField(max_length=150, null=False)
-    address1 = models.CharField(max_length=200, null=False)
+    state = models.CharField(max_length=50, null=True, blank=True)
+    city = models.CharField(max_length=150, null=True, blank=True)
+    address1 = models.CharField(max_length=200, null=True, blank=True)
     address2 = models.CharField(max_length=200, null=True, blank=True)
     zipcode = models.CharField(max_length=20, null=False)
     # Customize the defaults
     default_procedure = models.CharField(
-        blank=False, null=True, max_length=300, unique=False
+        blank=True, null=True, max_length=300, unique=False
     )
-    cover_template_string = models.CharField(max_length=5000, null=True)
+    cover_template_string = models.CharField(max_length=5000, null=True, blank=True)
     pending = models.BooleanField(default=False)
     beta = models.BooleanField(default=False)
 
@@ -109,10 +111,16 @@ class UserDomain(models.Model):
             ProfessionalDomainRelation,
         )  # local import to avoid circular dependencies
 
-        relations = ProfessionalDomainRelation.objects.filter(
-            domain=self, **relation_filters
-        )
-        return [relation.professional for relation in relations]
+        try:
+            relations = ProfessionalDomainRelation.objects.filter(
+                domain=self, **relation_filters
+            )
+            return [relation.professional for relation in relations]
+        except Exception as e:
+            logger.opt(exception=True).error(
+                f"Error finding professional on {self} with filters {relation_filters}: {str(e)}"
+            )
+            raise e
 
     def get_address(self) -> str:
         mailing_name = self.business_name if self.business_name else self.display_name
@@ -201,7 +209,7 @@ class ProfessionalUser(models.Model):
         return UserDomain.objects.filter(
             professionaldomainrelation__professional=self,
             professionaldomainrelation__admin=True,
-            professionaldomainrelation__active=True,
+            professionaldomainrelation__active_domain_relation=True,
         )
 
     def get_full_name(self):
@@ -212,11 +220,11 @@ class ProfessionalDomainRelation(models.Model):
     professional = models.ForeignKey("ProfessionalUser", on_delete=models.CASCADE)
     domain = models.ForeignKey(UserDomain, on_delete=models.CASCADE)
     # Is the relation "active" (note: we should move this to a function)
-    active = models.BooleanField(default=False)
+    active_domain_relation = models.BooleanField(default=False)
     admin = models.BooleanField(default=False)
     read_only = models.BooleanField(default=False)
-    professional_type = models.CharField(max_length=400, null=True)
-    pending = models.BooleanField(default=True)
+    professional_type = models.CharField(max_length=400, null=True, blank=True)
+    pending_domain_relation = models.BooleanField(default=True)
     suspended = models.BooleanField(default=False)
     rejected = models.BooleanField(default=False)
 
@@ -225,9 +233,11 @@ class ProfessionalDomainRelation(models.Model):
 def professional_domain_relation_presave(
     sender: type, instance: ProfessionalDomainRelation, **kwargs: dict
 ) -> None:
-    """Dynamically set the active field based on pending/suspended/rejected."""
-    instance.active = (
-        not instance.pending and not instance.suspended and not instance.rejected
+    """Dynamically set the active_domain_relation field based on pending_domain_relation/suspended/rejected."""
+    instance.active_domain_relation = (
+        not instance.pending_domain_relation
+        and not instance.suspended
+        and not instance.rejected
     )
 
 
