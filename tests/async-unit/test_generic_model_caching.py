@@ -130,7 +130,7 @@ async def test_denial_uses_generic_cache_no_patient_data():
         diagnosis="osteoarthritis",
         denial_text="",  # Empty to trigger generic path
         health_history="",  # Empty to trigger generic path
-        use_external_model=False,
+        use_external=False,
     )
 
     # Mock cached data

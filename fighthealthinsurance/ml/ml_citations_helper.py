@@ -286,6 +286,7 @@ class MLCitationsHelper:
     ) -> List[str]:
         """
         Generate citations for a denial object if they don't already exist.
+        Pulls the speculative/candidate value if nothing changed since computed.
 
         Args:
             denial: The Denial object to generate citations for

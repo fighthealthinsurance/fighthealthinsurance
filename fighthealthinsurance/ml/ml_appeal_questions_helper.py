@@ -124,7 +124,7 @@ class MLAppealQuestionsHelper:
     ) -> List[Tuple[str, str]]:
         """
         Generate specific appeal questions based on denial text, patient info, procedure, and diagnosis.
-        These are cached for reuse across multiple patients with the same procedure/diagnosis.
+        These are not cached between patients.
 
         Args:
             denial_text: The text of the denial
@@ -170,7 +170,8 @@ class MLAppealQuestionsHelper:
         denial: Denial, speculative: bool
     ) -> List[Tuple[str, str]]:
         """
-        Generate appeal questions for a given denial.
+        Generate appeal questions for a given denial. Uses speculative/candidate generation if nothing
+        changed.
 
         Args:
             denial: The denial object for which to generate questions.
