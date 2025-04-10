@@ -40,16 +40,22 @@ async def test_end_to_end_generic_cache_workflow():
         "fighthealthinsurance.ml.ml_appeal_questions_helper.AppealGenerator"
     ) as MockAppealGenerator, patch(
         "fighthealthinsurance.ml.ml_citations_helper.MLCitationsHelper.ml_router"
-    ) as mock_router:
+    ) as mock_router, patch(
+        "fighthealthinsurance.ml.ml_appeal_questions_helper.best_within_timelimit"
+    ) as mock_questions_best_within_timelimit, patch(
+        "fighthealthinsurance.ml.ml_citations_helper.best_within_timelimit"
+    ) as mock_citations_best_within_timelimit:
 
         # Configure question mock
         mock_appeal_gen = MockAppealGenerator.return_value
         mock_appeal_gen.get_appeal_questions = AsyncMock(return_value=mock_questions)
+        mock_questions_best_within_timelimit.return_value = mock_questions
 
         # Configure citation mock
         mock_backend = MagicMock()
         mock_backend.get_citations = AsyncMock(return_value=mock_citations)
         mock_router.partial_find_citation_backends.return_value = [mock_backend]
+        mock_citations_best_within_timelimit.return_value = mock_citations
 
         # Import here to avoid circular import issues
         from fighthealthinsurance.ml.ml_appeal_questions_helper import (
@@ -72,6 +78,8 @@ async def test_end_to_end_generic_cache_workflow():
         # Reset mocks to verify they're not called again
         mock_appeal_gen.get_appeal_questions.reset_mock()
         mock_backend.get_citations.reset_mock()
+        mock_questions_best_within_timelimit.reset_mock()
+        mock_citations_best_within_timelimit.reset_mock()
 
         # 4. Verify cache entries were created
         question_cache = await GenericQuestionGeneration.objects.filter(
@@ -103,6 +111,8 @@ async def test_end_to_end_generic_cache_workflow():
         # Verify ML model was NOT called
         mock_appeal_gen.get_appeal_questions.assert_not_called()
         mock_backend.get_citations.assert_not_called()
+        mock_questions_best_within_timelimit.assert_not_called()
+        mock_citations_best_within_timelimit.assert_not_called()
 
         # Verify cached results were returned
         assert questions2 == mock_questions

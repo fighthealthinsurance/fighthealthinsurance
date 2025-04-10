@@ -78,15 +78,18 @@ async def test_generic_context_generation_cache():
     # Mock the citation backends to avoid actual ML calls
     with mock.patch(
         "fighthealthinsurance.ml.ml_citations_helper.MLCitationsHelper.ml_router"
-    ) as mock_router:
+    ) as mock_router, mock.patch(
+        "fighthealthinsurance.ml.ml_citations_helper.best_within_timelimit"
+    ) as mock_best_within_timelimit:
         # Setup mock backends that return our predefined citations
         mock_backend = mock.MagicMock()
         mock_backend.get_citations.return_value = mock_citations
         mock_router.partial_find_citation_backends.return_value = [mock_backend]
+        mock_best_within_timelimit.return_value = mock_citations
 
         # First call should create a new cache entry
         result1 = await MLCitationsHelper.generate_generic_citations(
-            procedure=procedure, diagnosis=diagnosis
+            procedure_opt=procedure, diagnosis_opt=diagnosis
         )
 
         # Verify the result matches our mock data
@@ -96,11 +99,12 @@ async def test_generic_context_generation_cache():
         mock_backend.get_citations.assert_called_once()
 
         # Reset the backend mock to verify it's not called again
-        mock_backend.reset_mock()
+        mock_backend.get_citations.reset_mock()
+        mock_best_within_timelimit.reset_mock()
 
         # Second call should use cached data
         result2 = await MLCitationsHelper.generate_generic_citations(
-            procedure=procedure, diagnosis=diagnosis
+            procedure_opt=procedure, diagnosis_opt=diagnosis
         )
 
         # Verify the result is the same
@@ -108,6 +112,7 @@ async def test_generic_context_generation_cache():
 
         # Verify the ML backend was NOT called again
         mock_backend.get_citations.assert_not_called()
+        mock_best_within_timelimit.assert_not_called()
 
         # Verify the database has one cache entry
         cache_entry = await GenericContextGeneration.objects.filter(
@@ -167,9 +172,14 @@ async def test_denial_uses_generic_cache_no_patient_data():
             denial=test_denial, speculative=False
         )
 
-        # Verify we got the cached data
-        assert set(questions) == set(mock_questions)
-        assert set(citations) == set(mock_citations)
+        # Verify we got the cached data - use list comparison instead of set to avoid unhashable type error
+        assert len(questions) == len(mock_questions)
+        for q in questions:
+            assert q in mock_questions
+
+        assert len(citations) == len(mock_citations)
+        for c in citations:
+            assert c in mock_citations
 
         # Verify the ML models were NOT called
         MockAppealGenerator.assert_not_called()
