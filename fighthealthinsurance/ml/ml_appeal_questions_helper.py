@@ -76,8 +76,6 @@ class MLAppealQuestionsHelper:
             timeout=model_timeout,
         )
 
-        # Process the questions using shared logic
-
         # If we have questions, cache them for future use
         if questions:
             try:
@@ -165,20 +163,6 @@ class MLAppealQuestionsHelper:
             score_fn=MLAppealQuestionsHelper.make_score_fn(lambda x: 1),
             timeout=model_timeout,
         )
-
-        # If we have questions, cache them for future use
-        if questions:
-            try:
-                await GenericQuestionGeneration.objects.acreate(
-                    procedure=procedure,
-                    diagnosis=diagnosis,
-                    generated_questions=questions,
-                )
-                logger.debug(f"Cached generic questions for {procedure}/{diagnosis}")
-            except Exception as e:
-                logger.opt(exception=True).warning(
-                    f"Error caching generic questions: {e}"
-                )
         return questions if questions else []
 
     @staticmethod

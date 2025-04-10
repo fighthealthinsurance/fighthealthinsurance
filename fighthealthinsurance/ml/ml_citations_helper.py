@@ -117,23 +117,6 @@ class MLCitationsHelper:
                     )
                     or []
                 )
-
-                # If we have citations, cache them for future use
-                if result:
-                    try:
-                        await GenericContextGeneration.objects.acreate(
-                            procedure=procedure,
-                            diagnosis=diagnosis,
-                            generated_context=result,
-                        )
-                        logger.debug(
-                            f"Cached generic citations for {procedure}/{diagnosis}"
-                        )
-                    except Exception as e:
-                        logger.opt(exception=True).warning(
-                            f"Error caching generic citations: {e}"
-                        )
-
                 return result
             except Exception:
                 logger.opt(exception=True).debug(
@@ -142,7 +125,7 @@ class MLCitationsHelper:
                 return []
         except Exception as e:
             logger.opt(exception=True).warning(
-                f"Failed to generate generic citations: {e}"
+                f"Failed to generate specific citations: {e}"
             )
             return []
 
