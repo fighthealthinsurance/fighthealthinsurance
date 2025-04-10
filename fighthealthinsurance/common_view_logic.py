@@ -1518,10 +1518,15 @@ class AppealsBackendHelper:
 
     @classmethod
     async def generate_appeals(cls, parameters) -> AsyncIterator[str]:
+        logger.debug(f"Raw parameters received: {parameters}")
+
+        # Extract specific parameters needed early
         denial_id = parameters["denial_id"]
         email = parameters["email"]
         semi_sekret = parameters["semi_sekret"]
         hashed_email = Denial.get_hashed_email(email)
+        # Extract the professional_to_finish parameter from the input, default to False
+        professional_to_finish = parameters.get("professional_to_finish", False)
 
         # Initial yield of newline.
         yield "\n"
@@ -1627,6 +1632,10 @@ class AppealsBackendHelper:
             denial.qa_context = json.dumps(qa_context)
         if plan_context is not None:
             denial.plan_context = " ".join(set(plan_context))
+        # Update the denial object with the received parameter if it differs
+        if denial.professional_to_finish != professional_to_finish:
+            logger.info(f"Updating denial {denial.denial_id} professional_to_finish from {denial.professional_to_finish} to {professional_to_finish}")
+            denial.professional_to_finish = professional_to_finish
         await denial.asave()
 
         # Get pubmed and ml citations context
