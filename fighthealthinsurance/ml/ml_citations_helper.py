@@ -132,7 +132,9 @@ class MLCitationsHelper:
     @classmethod
     async def generate_generic_citations(
         cls,
-        denial: Denial,
+        denial: Optional[Denial] = None,
+        procedure_opt: Optional[str] = None,
+        diagnosis_opt: Optional[str] = None,
         timeout: int = 60,
     ) -> List[str]:
         """
@@ -147,8 +149,13 @@ class MLCitationsHelper:
             List of citation strings
         """
         # Normalize inputs - trim whitespace and convert to lowercase
-        procedure = denial.procedure.strip().lower() if denial.procedure else ""
-        diagnosis = denial.diagnosis.strip().lower() if denial.diagnosis else ""
+
+        if denial:
+            procedure = denial.procedure.strip().lower() if denial.procedure else ""
+            diagnosis = denial.diagnosis.strip().lower() if denial.diagnosis else ""
+        else:
+            procedure = procedure_opt.strip().lower() if procedure_opt else ""
+            diagnosis = diagnosis_opt.strip().lower() if diagnosis_opt else ""
 
         # Skip if we don't have enough information
         if not procedure and not diagnosis:
