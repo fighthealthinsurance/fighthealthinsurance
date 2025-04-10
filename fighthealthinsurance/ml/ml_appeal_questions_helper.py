@@ -1,4 +1,4 @@
-from typing import List, Tuple, Optional, cast
+from typing import List, Tuple, Optional, cast, Callable, Coroutine, Any
 from loguru import logger
 import asyncio
 import time
@@ -57,7 +57,6 @@ class MLAppealQuestionsHelper:
             )
 
         # If no cached questions exist, generate them
-        questions: List[Tuple[str, str]] = []
         model_timeout = max(1, timeout - 5)  # Subtract 5 seconds for processing
 
         raw_questions_awaitables = []
@@ -68,7 +67,6 @@ class MLAppealQuestionsHelper:
                     denial_text=None,
                     procedure=procedure,
                     diagnosis=diagnosis,
-                    plan_context=None,
                 )
             )
 
@@ -93,10 +91,12 @@ class MLAppealQuestionsHelper:
                 logger.opt(exception=True).warning(
                     f"Error caching generic questions: {e}"
                 )
-        return questions
+            finally:
+                return questions
+        return []
 
     @staticmethod
-    def make_score_fn(factor: Callable[Coroutine, int]):
+    def make_score_fn(factor: Callable[[Coroutine[Any, Any, Any]], int]):
         def score_fn(result: Optional[List[Tuple[str, str]]], awaitable):
             my_factor = factor(awaitable)
             # Score the result based on a mixture of source and length
@@ -107,7 +107,10 @@ class MLAppealQuestionsHelper:
                 if result and len(result) > 0:
                     # Parse questions into (question, answer) tuples if they aren't already
                     if isinstance(result[0], str):
-                        questions_to_score = self._parse_questions_with_answers(result)
+                        appeal_generator = AppealGenerator()
+                        questions_to_score = (
+                            appeal_generator._parse_questions_with_answers(result)
+                        )
                     questions_to_score = result
                 # Now we look at the model and the number of questions
                 if len(questions_to_score) == 0:
@@ -118,7 +121,7 @@ class MLAppealQuestionsHelper:
                     question_score = 1
                 return my_factor * question_score
             except Exception as e:
-                logger.debug("Failed to parse {answer}")
+                logger.debug(f"Failed to parse: {e}")
                 return 0
 
         return score_fn
@@ -138,10 +141,11 @@ class MLAppealQuestionsHelper:
 
         Args:
             denial_text: The text of the denial
-            patient_info: Information about the patient
+            patient_context: Information about the patient
             procedure: The medical procedure
             diagnosis: The medical diagnosis
             timeout: Timeout for the ML model call in seconds
+            use_external: Whether to use external models
 
         Returns:
             A list of (question, answer) tuples.
@@ -153,7 +157,6 @@ class MLAppealQuestionsHelper:
         diagnosis = diagnosis.strip().lower() if diagnosis else ""
 
         # If no cached questions exist, generate them
-        questions: List[Tuple[str, str]] = []
         model_timeout = max(1, timeout - 5)  # Subtract 5 seconds for processing
 
         raw_questions_awaitables = []
@@ -165,7 +168,6 @@ class MLAppealQuestionsHelper:
                     patient_context=patient_context,
                     procedure=procedure,
                     diagnosis=diagnosis,
-                    plan_context=plan_context,
                 )
             )
 
@@ -188,7 +190,9 @@ class MLAppealQuestionsHelper:
                 logger.opt(exception=True).warning(
                     f"Error caching generic questions: {e}"
                 )
-        return questions
+            finally:
+                return questions
+        return []
 
     @staticmethod
     async def generate_questions_for_denial(
@@ -240,7 +244,7 @@ class MLAppealQuestionsHelper:
                 )
                 context_awaitable = MLAppealQuestionsHelper.generate_specific_questions(
                     denial_text=denial.denial_text,
-                    health_history=denial.health_history,
+                    patient_context=denial.health_history,  # Using health_history as patient_context
                     procedure=denial.procedure,
                     diagnosis=denial.diagnosis,
                     timeout=model_timeout,
@@ -253,11 +257,15 @@ class MLAppealQuestionsHelper:
                         return 2
                     return 1
 
-                raw_questions = await best_within_timelimit(
+                result = await best_within_timelimit(
                     [no_context_awaitable, context_awaitable],
                     score_fn=MLAppealQuestionsHelper.make_score_fn(is_with_context),
                     timeout=model_timeout,
                 )
+
+                # Ensure we have a valid list of questions
+                if result is not None:
+                    questions = result
 
         # Update the denial with the result
         if questions and len(questions) > 0:
