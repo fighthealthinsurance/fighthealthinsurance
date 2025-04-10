@@ -219,44 +219,40 @@ class MLAppealQuestionsHelper:
             # Setup timeout based on whether this is speculative or not
             timeout = 60 if speculative else 45
 
-            # First try to generate patient-specific questions (preferred approach)
-            if (denial.denial_text or denial.health_history) and (
-                denial.procedure or denial.diagnosis
-            ):
-                appeal_generator = AppealGenerator()
-                # Subtract 5 seconds to ensure proper processing time
-                model_timeout = max(1, timeout - 5)
-                no_context_awaitable = (
-                    MLAppealQuestionsHelper.generate_generic_questions(
-                        procedure=denial.procedure,
-                        diagnosis=denial.diagnosis,
-                        timeout=model_timeout,
-                    )
-                )
-                context_awaitable = MLAppealQuestionsHelper.generate_specific_questions(
-                    denial_text=denial.denial_text,
-                    patient_context=denial.health_history,  # Using health_history as patient_context
+            appeal_generator = AppealGenerator()
+            # Subtract 5 seconds to ensure proper processing time
+            model_timeout = max(1, timeout - 5)
+            no_context_awaitable = (
+                MLAppealQuestionsHelper.generate_generic_questions(
                     procedure=denial.procedure,
                     diagnosis=denial.diagnosis,
                     timeout=model_timeout,
-                    use_external=denial.use_external,
                 )
+             )
+            context_awaitable = MLAppealQuestionsHelper.generate_specific_questions(
+                denial_text=denial.denial_text,
+                patient_context=denial.health_history,  # Using health_history as patient_context
+                procedure=denial.procedure,
+                diagnosis=denial.diagnosis,
+                timeout=model_timeout,
+                use_external=denial.use_external,
+            )
 
-                # Bias for context
-                def is_with_context(x):
-                    if x == context_awaitable:
-                        return 2
-                    return 1
+            # Bias for context
+            def is_with_context(x):
+                if x == context_awaitable:
+                    return 2
+                return 1
 
-                result = await best_within_timelimit(
-                    [no_context_awaitable, context_awaitable],
-                    score_fn=MLAppealQuestionsHelper.make_score_fn(is_with_context),
-                    timeout=model_timeout,
-                )
+            result = await best_within_timelimit(
+                [no_context_awaitable, context_awaitable],
+                score_fn=MLAppealQuestionsHelper.make_score_fn(is_with_context),
+                timeout=model_timeout,
+            )
 
-                # Ensure we have a valid list of questions
-                if result is not None:
-                    questions = result
+            # Ensure we have a valid list of questions
+            if result is not None:
+                questions = result
 
         # Update the denial with the result
         if questions and len(questions) > 0:
