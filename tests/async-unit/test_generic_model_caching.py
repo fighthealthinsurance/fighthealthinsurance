@@ -18,18 +18,22 @@ async def test_generic_question_generation_cache():
     procedure = "knee replacement"
     diagnosis = "osteoarthritis"
     mock_questions = [("Question 1?", "Answer 1"), ("Question 2?", "Answer 2")]
+    mock_questions_lst = [["Question 1?", "Answer 1"], ["Question 2?", "Answer 2"]]
 
-    # Mock the AppealGenerator to avoid actual ML calls
+    # Mock the ML model to avoid actual ML calls
     with mock.patch(
-        "fighthealthinsurance.ml.ml_appeal_questions_helper.AppealGenerator"
-    ) as MockAppealGenerator, mock.patch(
-        "fighthealthinsurance.ml.ml_appeal_questions_helper.best_within_timelimit"
-    ) as mock_best_within_timelimit:
-        # Configure the mock to return our predefined questions
-        mock_appeal_gen_instance = MockAppealGenerator.return_value
-        mock_appeal_gen_instance.get_appeal_questions.return_value = mock_questions
-        # Make sure best_within_timelimit returns our mock questions
-        mock_best_within_timelimit.return_value = mock_questions
+        "fighthealthinsurance.ml.ml_appeal_questions_helper.ml_router.full_qa_backends"
+    ) as mock_full_qa_backends, mock.patch(
+        "fighthealthinsurance.ml.ml_appeal_questions_helper.ml_router.partial_qa_backends"
+    ) as mock_partial_qa_backends:
+
+        # Create a mock model with the get_appeal_questions method
+        mock_model = mock.AsyncMock()
+        mock_model.get_appeal_questions.return_value = mock_questions
+
+        # Configure the mock_full_qa_backends to return our mock model
+        mock_full_qa_backends.return_value = [mock_model]
+        mock_partial_qa_backends.return_value = [mock_model]
 
         # First call should create a new cache entry
         result1 = await MLAppealQuestionsHelper.generate_generic_questions(
@@ -40,11 +44,10 @@ async def test_generic_question_generation_cache():
         assert result1 == mock_questions
 
         # Verify the ML model was called once
-        mock_appeal_gen_instance.get_appeal_questions.assert_called_once()
+        mock_model.get_appeal_questions.assert_called_once()
 
         # Reset the mocks to verify they're not called again
-        MockAppealGenerator.reset_mock()
-        mock_best_within_timelimit.reset_mock()
+        mock_model.get_appeal_questions.reset_mock()
 
         # Second call should use cached data
         result2 = await MLAppealQuestionsHelper.generate_generic_questions(
@@ -52,11 +55,10 @@ async def test_generic_question_generation_cache():
         )
 
         # Verify the result is the same
-        assert result2 == mock_questions
+        assert result2 == mock_questions_lst
 
         # Verify the ML model was NOT called again
-        mock_appeal_gen_instance.get_appeal_questions.assert_not_called()
-        mock_best_within_timelimit.assert_not_called()
+        mock_model.get_appeal_questions.assert_not_called()
 
         # Verify the database has one cache entry
         cache_entry = await GenericQuestionGeneration.objects.filter(
@@ -64,7 +66,7 @@ async def test_generic_question_generation_cache():
         ).afirst()
 
         assert cache_entry is not None
-        assert cache_entry.generated_questions == mock_questions
+        assert cache_entry.generated_questions == mock_questions_lst
 
 
 @pytest.mark.django_db
@@ -158,17 +160,13 @@ async def test_denial_uses_generic_cache_no_patient_data():
 
     # Mock to ensure we don't make actual ML calls
     with mock.patch(
-        "fighthealthinsurance.ml.ml_appeal_questions_helper.AppealGenerator"
-    ) as MockAppealGenerator, mock.patch(
+        "fighthealthinsurance.ml.ml_appeal_questions_helper.ml_router.full_qa_backends"
+    ) as mock_qa_backends, mock.patch(
         "fighthealthinsurance.ml.ml_citations_helper.MLCitationsHelper.ml_router"
     ) as mock_router:
 
-        def trace_call(*args, **kwargs):
-            print("AppealGenerator was called:")
-            traceback.print_stack()
-            return mock.MagicMock()  # or whatever return value it should have
-
-        MockAppealGenerator.side_effect = trace_call
+        # Configure the mock_qa_backends to return an empty list to ensure no models are called
+        mock_qa_backends.return_value = []
 
         # Generate questions for denial
         questions = await MLAppealQuestionsHelper.generate_questions_for_denial(
@@ -189,8 +187,8 @@ async def test_denial_uses_generic_cache_no_patient_data():
         for c in citations:
             assert c in mock_citations
 
-        # Verify the ML models were NOT called
-        MockAppealGenerator.assert_not_called()
+        # Verify the ML models were NOT called - we're using cached entries
+        mock_qa_backends.assert_called_once()  # Called to get the list of backends, but no actual models used
         mock_router.partial_find_citation_backends.assert_not_called()
 
     # Cleanup

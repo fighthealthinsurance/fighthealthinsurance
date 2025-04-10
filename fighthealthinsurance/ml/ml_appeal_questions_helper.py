@@ -3,7 +3,6 @@ from loguru import logger
 import asyncio
 import time
 from fighthealthinsurance.models import Denial, GenericQuestionGeneration
-from fighthealthinsurance.generate_appeal import AppealGenerator
 from fighthealthinsurance.utils import best_within_timelimit
 from fighthealthinsurance.ml.ml_router import ml_router
 import re
