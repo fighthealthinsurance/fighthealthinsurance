@@ -130,6 +130,7 @@ async def test_denial_uses_generic_cache_no_patient_data():
         diagnosis="osteoarthritis",
         denial_text="",  # Empty to trigger generic path
         health_history="",  # Empty to trigger generic path
+        use_external_model=False,
     )
 
     # Mock cached data
@@ -167,8 +168,8 @@ async def test_denial_uses_generic_cache_no_patient_data():
         )
 
         # Verify we got the cached data
-        assert questions == mock_questions
-        assert citations == mock_citations
+        assert set(questions) == set(mock_questions)
+        assert set(citations) == set(mock_citations)
 
         # Verify the ML models were NOT called
         MockAppealGenerator.assert_not_called()

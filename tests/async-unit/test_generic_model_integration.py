@@ -8,6 +8,7 @@ from fighthealthinsurance.models import (
 )
 
 
+@pytest.mark.django_db
 @pytest.mark.asyncio
 async def test_end_to_end_generic_cache_workflow():
     """Test the complete workflow from empty cache to cached results."""
