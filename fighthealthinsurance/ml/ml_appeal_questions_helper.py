@@ -222,13 +222,11 @@ class MLAppealQuestionsHelper:
             appeal_generator = AppealGenerator()
             # Subtract 5 seconds to ensure proper processing time
             model_timeout = max(1, timeout - 5)
-            no_context_awaitable = (
-                MLAppealQuestionsHelper.generate_generic_questions(
-                    procedure=denial.procedure,
-                    diagnosis=denial.diagnosis,
-                    timeout=model_timeout,
-                )
-             )
+            no_context_awaitable = MLAppealQuestionsHelper.generate_generic_questions(
+                procedure=denial.procedure,
+                diagnosis=denial.diagnosis,
+                timeout=model_timeout,
+            )
             context_awaitable = MLAppealQuestionsHelper.generate_specific_questions(
                 denial_text=denial.denial_text,
                 patient_context=denial.health_history,  # Using health_history as patient_context
