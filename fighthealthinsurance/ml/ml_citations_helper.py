@@ -1,5 +1,5 @@
 import asyncio
-from typing import List, Optional, Dict, Any, cast
+from typing import List, Optional, Dict, Any, cast, Callable, Coroutine
 from loguru import logger
 
 from fighthealthinsurance.models import Denial, GenericContextGeneration
@@ -13,6 +13,27 @@ class MLCitationsHelper:
     """Helper class for generating citations using ML models"""
 
     ml_router = MLRouter()
+
+    @staticmethod
+    def make_score_fn(factor: Callable[[Any], float] = lambda _: 1.0):
+        """
+        Create a scoring function for citation results.
+
+        Args:
+            factor: A callable that takes an awaitable and returns a float multiplier
+
+        Returns:
+            A scoring function for use with best_within_timelimit
+        """
+
+        def score_fn(result: Optional[List[str]], awaitable: Any) -> float:
+            multiplier = factor(awaitable)
+            # Score the result based on a mixture of source and length
+            if not result:
+                return -1.0
+            return float(len(result)) * multiplier
+
+        return score_fn
 
     @classmethod
     async def generate_generic_citations(
@@ -82,18 +103,12 @@ class MLCitationsHelper:
                     )
                 )
 
-            # Score function for evaluating results
-            def score_fn(result, awaitable):
-                if not result:
-                    return -1
-                return len(result)
-
             # Get the best result within the timeout
             try:
                 result = (
                     await best_within_timelimit(
                         partial_awaitables,
-                        score_fn=score_fn,
+                        score_fn=cls.make_score_fn(),
                         timeout=timeout,
                     )
                     or []
@@ -194,19 +209,16 @@ class MLCitationsHelper:
                     )
                 )
 
-            # Now see what we can find in our time budget.
-            def score_fn(result, awaitable):
-                # Score the result based on a mixture of source and length
-                if not result:
-                    return -1
-                return len(result) * (1 if awaitable in full_awaitables else 0.5)
+            # Create a scoring function that gives higher priority to full backends
+            def is_full_backend(awaitable):
+                return 1.0 if awaitable in full_awaitables else 0.5
 
             # Get the best result within the timeout
             try:
                 result = (
                     await best_within_timelimit(
                         full_awaitables + partial_awaitables,
-                        score_fn=score_fn,
+                        score_fn=cls.make_score_fn(is_full_backend),
                         timeout=timeout,
                     )
                     or []
