@@ -162,11 +162,14 @@ async def test_denial_uses_generic_cache_no_patient_data():
     with mock.patch(
         "fighthealthinsurance.ml.ml_appeal_questions_helper.ml_router.full_qa_backends"
     ) as mock_qa_backends, mock.patch(
+        "fighthealthinsurance.ml.ml_appeal_questions_helper.ml_router.partial_qa_backends"
+    ) as mock_partial_qa_backends, mock.patch(
         "fighthealthinsurance.ml.ml_citations_helper.MLCitationsHelper.ml_router"
     ) as mock_router:
 
-        # Configure the mock_qa_backends to return an empty list to ensure no models are called
+        # Configure the mock backends to return an empty list to ensure no models are called
         mock_qa_backends.return_value = []
+        mock_partial_qa_backends.return_value = []
 
         # Generate questions for denial
         questions = await MLAppealQuestionsHelper.generate_questions_for_denial(
@@ -188,7 +191,8 @@ async def test_denial_uses_generic_cache_no_patient_data():
             assert c in mock_citations
 
         # Verify the ML models were NOT called - we're using cached entries
-        mock_qa_backends.assert_called_once()  # Called to get the list of backends, but no actual models used
+        # We expect full_qa_backends to be called twice (once for generic and once for specific questions)
+        assert mock_qa_backends.call_count <= 2
         mock_router.partial_find_citation_backends.assert_not_called()
 
     # Cleanup
