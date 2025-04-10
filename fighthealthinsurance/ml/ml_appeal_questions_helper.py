@@ -185,7 +185,10 @@ class MLAppealQuestionsHelper:
                     f"Error caching generic questions: {e}"
                 )
             finally:
-                return questions
+        finally:
+            pass
+
+    return questions
         return []
 
     @staticmethod
