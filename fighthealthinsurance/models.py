@@ -542,6 +542,7 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     # Marks this denial as a unique claim example for training or reference
     unique_claim = models.BooleanField(default=False)
     # Marks this denial as a good example for training or reference
+    disability_claim = models.BooleanField(default=False)
     good_appeal_example = models.BooleanField(default=False)
     candidate_procedure = models.CharField(max_length=300, null=True, blank=True)
     candidate_diagnosis = models.CharField(max_length=300, null=True, blank=True)
