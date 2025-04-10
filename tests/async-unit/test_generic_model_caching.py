@@ -9,6 +9,7 @@ from fighthealthinsurance.ml.ml_appeal_questions_helper import MLAppealQuestions
 from fighthealthinsurance.ml.ml_citations_helper import MLCitationsHelper
 
 
+@pytest.mark.django_db
 @pytest.mark.asyncio
 async def test_generic_question_generation_cache():
     """Test that generic questions are cached and reused properly."""
@@ -20,10 +21,14 @@ async def test_generic_question_generation_cache():
     # Mock the AppealGenerator to avoid actual ML calls
     with mock.patch(
         "fighthealthinsurance.ml.ml_appeal_questions_helper.AppealGenerator"
-    ) as MockAppealGenerator:
+    ) as MockAppealGenerator, mock.patch(
+        "fighthealthinsurance.ml.ml_appeal_questions_helper.best_within_timelimit"
+    ) as mock_best_within_timelimit:
         # Configure the mock to return our predefined questions
         mock_appeal_gen_instance = MockAppealGenerator.return_value
         mock_appeal_gen_instance.get_appeal_questions.return_value = mock_questions
+        # Make sure best_within_timelimit returns our mock questions
+        mock_best_within_timelimit.return_value = mock_questions
 
         # First call should create a new cache entry
         result1 = await MLAppealQuestionsHelper.generate_generic_questions(
@@ -36,8 +41,9 @@ async def test_generic_question_generation_cache():
         # Verify the ML model was called once
         mock_appeal_gen_instance.get_appeal_questions.assert_called_once()
 
-        # Reset the mock to verify it's not called again
+        # Reset the mocks to verify they're not called again
         MockAppealGenerator.reset_mock()
+        mock_best_within_timelimit.reset_mock()
 
         # Second call should use cached data
         result2 = await MLAppealQuestionsHelper.generate_generic_questions(
@@ -49,6 +55,7 @@ async def test_generic_question_generation_cache():
 
         # Verify the ML model was NOT called again
         mock_appeal_gen_instance.get_appeal_questions.assert_not_called()
+        mock_best_within_timelimit.assert_not_called()
 
         # Verify the database has one cache entry
         cache_entry = await GenericQuestionGeneration.objects.filter(
@@ -59,6 +66,7 @@ async def test_generic_question_generation_cache():
         assert cache_entry.generated_questions == mock_questions
 
 
+@pytest.mark.django_db
 @pytest.mark.asyncio
 async def test_generic_context_generation_cache():
     """Test that generic context/citations are cached and reused properly."""
@@ -110,6 +118,7 @@ async def test_generic_context_generation_cache():
         assert cache_entry.generated_context == mock_citations
 
 
+@pytest.mark.django_db
 @pytest.mark.asyncio
 async def test_denial_uses_generic_cache_no_patient_data():
     """Test that a denial without patient-specific data uses cached generic questions/context."""
