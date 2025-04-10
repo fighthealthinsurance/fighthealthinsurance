@@ -91,12 +91,7 @@ class MLAppealQuestionsHelper:
                 logger.opt(exception=True).warning(
                     f"Error caching generic questions: {e}"
                 )
-            finally:
-        finally:
-            pass
-
-    return questions
-        return []
+        return questions if questions else []
 
     @staticmethod
     def make_score_fn(factor: Callable[[Coroutine[Any, Any, Any]], int]):
