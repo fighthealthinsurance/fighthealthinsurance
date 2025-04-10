@@ -35,8 +35,8 @@ class RemoteModelLike(DenialBase):
         plan_context,
         pubmed_context,
         ml_citations_context,
+        prof_pov,
         infer_type,
-        for_patient: bool,
     ):
         """
         Abstract method for inference
@@ -277,26 +277,29 @@ class RemoteOpenLike(RemoteModel):
         self._expensive = expensive
 
     def get_system_prompts(
-        self, prompt_type: str, for_patient: bool = True
+        self, prompt_type: str, prof_pov=False
     ) -> list[str]:
         """
         Get the appropriate system prompt based on type and audience.
 
         Args:
             prompt_type: The type of prompt to get (e.g., 'full', 'questions', etc.)
-            for_patient: Whether this is for patient (True) or professional (False)
+            prof_pov: Generating the appeal from the patient (False) or professional (True) point of view 
 
         Returns:
             The system prompt as a string, or the first prompt if multiple are available
         """
         key = prompt_type
-        if not for_patient and f"{prompt_type}_not_patient" in self.system_prompts_map:
+        prompt = "Your are a helpful assistant with extensive medical knowledge who loves helping patients." 
+        # If the prompt type is 'full' and the professional point of view is requested, use a different prompt.
+        if prof_pov or (prof_pov and f"{prompt_type}_not_patient" in self.system_prompts_map):
             key = f"{prompt_type}_not_patient"
-
+            prompt = "You are a medical expert writing on behalf of a patient. Write as the healthcare professional in first person (“I”)—advocating clearly, clinically, and persuasively for the patient’s medical needs. Emphasize medical necessity, clinical evidence, and patient benefit. Maintain a professional, authoritative tone and keep the focus on the appeal." 
+        logger.debug(f"GET SYS PROMPTS > {prompt}")
         return self.system_prompts_map.get(
             key,
             [
-                "Your are a helpful assistant with extensive medical knowledge who loves helping patients."
+                prompt
             ],
         )
 
@@ -324,19 +327,19 @@ class RemoteOpenLike(RemoteModel):
     def parallel_infer(
         self,
         prompt: str,
+        infer_type: str,
         patient_context: Optional[str],
         plan_context: Optional[str],
         pubmed_context: Optional[str],
-        infer_type: str,
         ml_citations_context: Optional[List[str]] = None,
-        for_patient: bool = True,
+        prof_pov: bool = False,
     ) -> List[Future[Tuple[str, Optional[str]]]]:
         logger.debug(f"Running inference on {self} of type {infer_type}")
         temperatures = [0.5]
         if infer_type == "full" and not self._expensive:
             # Special case for the full one where we really want to explore the problem space
             temperatures = [0.6, 0.1]
-        system_prompts = self.get_system_prompts(infer_type, for_patient)
+        system_prompts = self.get_system_prompts(infer_type, prof_pov)
         calls = itertools.chain.from_iterable(
             map(
                 lambda temperature: map(
@@ -882,13 +885,14 @@ class RemoteFullOpenLike(RemoteOpenLike):
     ):
         systems = {
             "full_patient": [
-                """You possess extensive medical expertise and enjoy crafting appeals for health insurance denials as a personal interest. As a patient, not a doctor, you advocate for yourself. Don't assume you have any letter from a physician unless absolutely necessary. Your writing style is direct, akin to patio11 or a bureaucrat, and maintains a professional tone without expressing frustration towards insurance companies. You may consider emphasizing the unique and potentially essential nature of the medical intervention, using "YourNameMagic" as your name, "SCSID" for the subscriber ID, and "GPID" as the group ID. Make sure to write in the form of a letter. Do not use the 3rd person when referring to the patient, instead use the first person (I, my, etc.). You are not a review and should not mention any. Only provide references you are certain exist (e.g. provided as input or found as agent).""",
+                """You possess extensive medical expertise and enjoy crafting appeals for health insurance denials as a personal interest. As a patient, not a doctor, you advocate for yourself. Don't assume you have any letter from a physician unless absolutely necessary. Your writing style is direct, akin to patio11 or a bureaucrat, and maintains a professional tone without expressing frustration towards insurance companies. You may consider emphasizing the unique and potentially essential nature of the medical intervention, using "YourNameMagic" as your name, "SCSID" for the subscriber ID, and "GPID" as the group ID. Make sure to write in the form of a letter. Do not use the 3rd person in the letter when referring to the yourself the patient, instead use the first person (I, my, etc.). You are not a reviewer and should not mention any. Only provide references you are certain exist (e.g. provided as input or found as agent).""",
             ],
             "full": [
-                """You possess extensive medical expertise and enjoy crafting appeals for health insurance denials as a personal interest. As a patient, not a doctor, you advocate for yourself. Don't assume you have any letter from a physician unless absolutely necessary. Your writing style is direct, akin to patio11 or a bureaucrat, and maintains a professional tone without expressing frustration towards insurance companies. You may consider emphasizing the unique and potentially essential nature of the medical intervention, using "YourNameMagic" as your name, "SCSID" for the subscriber ID, and "GPID" as the group ID. Make sure to write in the form of a letter. Do not use the 3rd person when referring to the patient, instead use the first person (I, my, etc.). You are not a review and should not mention any. Only provide references you are certain exist (e.g. provided as input or found as agent).""",
+                """You possess extensive medical expertise and enjoy crafting appeals for health insurance denials as a personal interest. As a patient, not a doctor, you advocate for yourself. Don't assume you have any letter from a physician unless absolutely necessary. Your writing style is direct, akin to patio11 or a bureaucrat, and maintains a professional tone without expressing frustration towards insurance companies. You may consider emphasizing the unique and potentially essential nature of the medical intervention, using "YourNameMagic" as your name, "SCSID" for the subscriber ID, and "GPID" as the group ID. Make sure to write in the form of a letter. Do not use the 3rd person in the letter when referring to the yourself the patient, instead use the first person (I, my, etc.). You are not a reviewer and should not mention any. Only provide references you are certain exist (e.g. provided as input or found as agent).""",
             ],
             "full_not_patient": [
-                """You possess extensive medical expertise and enjoy crafting appeals for health insurance denials as a personal interest. You are working in a healthcare professionals office. Your writing style is direct, akin to patio11 or a bureaucrat, and maintains a professional tone without expressing frustration towards insurance companies. You may consider emphasizing the unique and potentially essential nature of the medical intervention, using "YourNameMagic" as your name, "SCSID" for the subscriber ID, and "GPID" as the group ID. Make sure to write in the form of a letter. You are not a reviewer and should not mention any. Only provide references you are certain exist (e.g. provided as input or found as agent).""",
+                """You possess extensive medical expertise, specializing in crafting appeals for health insurance denials. As a healthcare professional, not the patient, write a formal appeal letter to a health insurance company on behalf of a patient whose claim has been denied. The letter should come your perspective as a healthcare professional. Refer to the patient the appeal letter is for in the third person (e.g., "the patient," "they"). Advocate clearly and persuasively for why the denied service is medically necessary for the patient, using clinical evidence, professional judgment, and the patient’s documented needs. The tone should be professional, respectful, and authoritative—like a skilled medical advocate addressing an insurance reviewer. Maintain a professional tone without expressing frustration towards insurance companies. Use 'YourNameMagic' as your name, 'SCSID' for the subscriber ID, and 'GPID' for the group ID. Write the letter as if it was written by the healthcare professional. Do not frame the letter as if it were written by the patient. Only include references that are verifiable and provided in the input or from reliable sources.
+                """,
             ],
             "procedure": [
                 """You must be concise. You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters to identify the requested procedure and, if available, the associated diagnosis. Each word costs an extra dollar. Provide a concise response with the procedure on one line starting with "Procedure" and Diagnsosis on another line starting with Diagnosis. Do not say not specified. Diagnosis can also be reason for treatment even if it's not a disease (like high risk homosexual behaviour for prep or preventitive and the name of the diagnosis). Remember each result on a seperated line."""
@@ -929,7 +933,7 @@ class RemoteFullOpenLike(RemoteOpenLike):
                 """You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters. Each word costs an extra dollar. Please provide a concise response. You are not an independent medical reviewer and should not mention any. Write concisely in a professional tone akin to patio11. Do not say this is why the decission should be overturned. Just say why you believe it is medically necessary (e.g. to prevent X or to treat Y)."""
             ],
             "generic": [
-                """You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters. Help a patient answer the provided question for their insurance appeal."""
+                """You have an in-depth understanding of insurance and have gained extensive experience working in a medical office. Your expertise lies in deciphering health insurance denial letters. Use your expertise to help answer the provided question for the insurance appeal on behalf of the patient."""
             ],
         }
         return super().__init__(
@@ -985,10 +989,8 @@ class RemoteFullOpenLike(RemoteOpenLike):
         {patient_context_opt} \n
         {diagnosis_opt} \n
         {procedure_opt} \n
-        Your task is to write one to three patient friendly questions about the patient history to help appeal this denial. \n
-        Remember to keep the questions concise and patient-friendly and focused on the potential patient history.\n
-        If you ask questions about the denial it's self the patient will be sad and give up so don't do that.
-        When formatting your output it must be in the format of one question + answer per line with the answer after the question mark.\n
+        Your task is to write 1–3 concise, patient-friendly questions related to the patient's medical history that can help support an appeal. Focus only on relevant history—do not ask about the denial itself, as that may discourage the person working on the appeal.
+        When formatting your output it must be in the format of one question + answer per line with the answer after the question mark. The questions should be in the 3rd person regarding the patient.\n
         Your answer should be in the format of a list of questions with answers from the patients health history if present.
         While your reasoning (that inside of the <think></think> component at the start) can and should discuss the rational you _must not_ include it in the answer.
         For example:

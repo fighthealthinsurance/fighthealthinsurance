@@ -330,7 +330,7 @@ class DenialEndToEnd(APITestCase):
         responses = list(filter(lambda x: len(x) > 4, responses))
         # It's a streaming response with one per new line
         appeal = json.loads(responses[0])
-        assert appeal["content"].startswith("Dear")
+        assert appeal["content"].lstrip().startswith("Dear")
         # Now lets go ahead and provide follow up
         denial = await Denial.objects.aget(denial_id=denial_id)
         followup_url = reverse("followups-list")

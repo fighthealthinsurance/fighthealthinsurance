@@ -627,10 +627,6 @@ class AppealGenerator(object):
             diagnosis=denial.diagnosis,
         )
 
-        for_patient = (
-            denial.primary_professional is None or not denial.professional_to_finish
-        )
-
         # TODO: use the streaming and cancellable APIs (maybe some fancy JS on the client side?)
 
         # For any model that we have a prompt for try to call it and return futures
@@ -642,6 +638,7 @@ class AppealGenerator(object):
             infer_type: str,
             pubmed_context: Optional[str] = None,
             ml_citations_context: Optional[List[str]] = None,
+            prof_pov: bool = False,
         ) -> List[Future[Tuple[str, Optional[str]]]]:
             logger.debug(f"Looking up on {model_name}")
             if model_name not in ml_router.models_by_name:
@@ -662,9 +659,9 @@ class AppealGenerator(object):
                         infer_type=infer_type,
                         pubmed_context=pubmed_context,
                         ml_citations_context=ml_citations_context,
-                        for_patient=for_patient,
+                        prof_pov=prof_pov,
                     )
-                    logger.debug("Got back {result} for {model_name} on {model}")
+                    logger.debug(f"Got back {result} for {model_name} on {model}")
                     return result
                 except Exception as e:
                     logger.debug(f"Backend {model} failed {e}")
@@ -679,7 +676,7 @@ class AppealGenerator(object):
             infer_type: str,
             pubmed_context: Optional[str],
             ml_citations_context: Optional[List[str]],
-            for_patient: bool,
+            prof_pov: bool = False,
         ) -> List[Future[Tuple[str, Optional[str]]]]:
             # If the model has parallelism use it
             results = None
@@ -688,12 +685,12 @@ class AppealGenerator(object):
                     logger.debug(f"Using {model}'s parallel inference")
                     results = model.parallel_infer(
                         prompt=prompt,
+                        infer_type=infer_type,
                         patient_context=patient_context,
                         plan_context=plan_context,
                         pubmed_context=pubmed_context,
                         ml_citations_context=ml_citations_context,
-                        infer_type=infer_type,
-                        for_patient=for_patient,
+                        prof_pov=prof_pov,
                     )
                 else:
                     logger.debug(f"Using system level parallel inference for {model}")
@@ -706,7 +703,7 @@ class AppealGenerator(object):
                             infer_type=infer_type,
                             pubmed_context=pubmed_context,
                             ml_citations_context=ml_citations_context,
-                            for_patient=for_patient,
+                            prof_pov=prof_pov,
                         )
                     ]
             except Exception as e:
@@ -722,7 +719,7 @@ class AppealGenerator(object):
                         infer_type=infer_type,
                         pubmed_context=pubmed_context,
                         ml_citations_context=ml_citations_context,
-                        for_patient=for_patient,
+                        prof_pov=prof_pov,
                     )
                 ]
             logger.debug(
@@ -741,6 +738,7 @@ class AppealGenerator(object):
                 medical_context += denial.qa_context
         if denial.health_history is not None:
             medical_context += denial.health_history
+        prof_pov = denial.professional_to_finish
         plan_context = denial.plan_context
         backup_calls: List[Any] = []
         calls = [
@@ -752,6 +750,7 @@ class AppealGenerator(object):
                 "infer_type": "full",
                 "pubmed_context": pubmed_context,
                 "ml_citations_context": ml_citations_context,
+                "prof_pov": prof_pov,
             },
         ]
 
@@ -766,6 +765,7 @@ class AppealGenerator(object):
                         "plan_context": plan_context,
                         "pubmed_context": pubmed_context,
                         "ml_citations_context": ml_citations_context,
+                        "prof_pov": prof_pov,
                     }
                 ]
             )
@@ -779,6 +779,7 @@ class AppealGenerator(object):
                         "plan_context": plan_context,
                         "pubmed_context": pubmed_context,
                         "ml_citations_context": ml_citations_context,
+                        "prof_pov": prof_pov,
                     }
                 ]
             )
@@ -792,6 +793,7 @@ class AppealGenerator(object):
                         "plan_context": plan_context,
                         "pubmed_context": pubmed_context,
                         "ml_citations_context": ml_citations_context,
+                        "prof_pov": prof_pov,
                     }
                 ]
             )
@@ -810,6 +812,7 @@ class AppealGenerator(object):
                         "plan_context": plan_context,
                         "pubmed_context": pubmed_context,
                         "ml_citations_context": ml_citations_context,
+                        "prof_pov": prof_pov,
                     },
                 ]
             )
@@ -824,6 +827,7 @@ class AppealGenerator(object):
                             "plan_context": plan_context,
                             "pubmed_context": pubmed_context,
                             "ml_citations_context": ml_citations_context,
+                            "prof_pov": prof_pov,
                         },
                     ]
                 )
