@@ -179,12 +179,7 @@ class MLAppealQuestionsHelper:
                 logger.opt(exception=True).warning(
                     f"Error caching generic questions: {e}"
                 )
-            finally:
-        finally:
-            pass
-
-    return questions
-        return []
+        return questions if questions else []
 
     @staticmethod
     async def generate_questions_for_denial(
