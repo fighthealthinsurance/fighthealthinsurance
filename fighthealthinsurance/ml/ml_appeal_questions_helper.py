@@ -200,7 +200,6 @@ class MLAppealQuestionsHelper:
             # Setup timeout based on whether this is speculative or not
             timeout = 60 if speculative else 45
 
-            appeal_generator = AppealGenerator()
             # Subtract 5 seconds to ensure proper processing time
             model_timeout = max(1, timeout - 5)
             no_context_awaitable = MLAppealQuestionsHelper.generate_generic_questions(

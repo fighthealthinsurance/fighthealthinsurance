@@ -7,6 +7,7 @@ from fighthealthinsurance.models import (
 )
 from fighthealthinsurance.ml.ml_appeal_questions_helper import MLAppealQuestionsHelper
 from fighthealthinsurance.ml.ml_citations_helper import MLCitationsHelper
+import traceback
 
 
 @pytest.mark.django_db
@@ -161,6 +162,13 @@ async def test_denial_uses_generic_cache_no_patient_data():
     ) as MockAppealGenerator, mock.patch(
         "fighthealthinsurance.ml.ml_citations_helper.MLCitationsHelper.ml_router"
     ) as mock_router:
+
+        def trace_call(*args, **kwargs):
+            print("AppealGenerator was called:")
+            traceback.print_stack()
+            return mock.MagicMock()  # or whatever return value it should have
+
+        MockAppealGenerator.side_effect = trace_call
 
         # Generate questions for denial
         questions = await MLAppealQuestionsHelper.generate_questions_for_denial(

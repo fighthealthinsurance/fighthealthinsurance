@@ -170,9 +170,13 @@ class MLCitationsHelper:
 
             if cached:
                 logger.debug(
-                    f"Found cached generic citations for {procedure}/{diagnosis}"
+                    f"Found cached generic citations for {procedure}/{diagnosis} -- {cached.generated_context}"
                 )
                 return cast(List[str], cached.generated_context)
+            else:
+                logger.debug(
+                    f"No cached generic citations found for {procedure}/{diagnosis}"
+                )
         except Exception as e:
             logger.opt(exception=True).warning(
                 f"Error fetching cached generic citations: {e}"
@@ -263,6 +267,13 @@ class MLCitationsHelper:
                 denial=denial,
                 timeout=model_timeout,
             )
+
+            # If we have context look for it otherwise short circuit:
+            if (not denial.denial_text or len(denial.denial_text) < 5) and (
+                not denial.health_history or len(denial.health_history) < 5
+            ):
+                return await no_context_awaitable
+
             context_awaitable = cls.generate_specific_citations(
                 denial=denial,
                 timeout=model_timeout,
@@ -303,6 +314,7 @@ class MLCitationsHelper:
             List of generated citation strings
         """
         # Check if we already have citations for this denial
+        logger.debug(f"Generating citations for {denial}")
         citations: List[str] = []
         if (
             denial.ml_citation_context is not None
@@ -319,6 +331,7 @@ class MLCitationsHelper:
             and (
                 not denial.diagnosis or (denial.candidate_diagnosis == denial.diagnosis)
             )
+            and len(denial.candidate_ml_citation_context) > 0
         ):
             logger.debug(f"Using candidate citations for denial {denial.denial_id}")
             citations = cast(List[str], denial.candidate_ml_citation_context)
@@ -328,9 +341,11 @@ class MLCitationsHelper:
             timeout = 75 if speculative else 30
 
             try:
-                # First try to generate patient-specific citations
-                if (denial.denial_text or denial.health_history) and (
-                    denial.procedure or denial.diagnosis
+                if (
+                    denial.denial_text
+                    or denial.health_history
+                    or denial.procedure
+                    or denial.diagnosis
                 ):
                     logger.debug(f"Generating citations for denial {denial.denial_id}")
 
@@ -341,8 +356,11 @@ class MLCitationsHelper:
 
                     if citations:
                         logger.debug(
-                            f"Generated {len(citations)} patient-specific citations for denial {denial.denial_id}"
+                            f"Generated {len(citations)} citations for denial {denial.denial_id}"
                         )
+                else:
+                    logger.debug("Nothing to generate citations for")
+                    return []
             except Exception as e:
                 logger.opt(exception=True).warning(
                     f"Error generating citations for denial {denial.denial_id}: {e}"
