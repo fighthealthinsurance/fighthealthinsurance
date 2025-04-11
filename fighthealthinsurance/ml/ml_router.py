@@ -91,9 +91,7 @@ class MLRouter(object):
 
         # Add Llama Scout model if available
         if "meta-llama/Llama-4-Scout-17B-16E-Instruct" in self.models_by_name:
-            return [
-                self.models_by_name["meta-llama/Llama-4-Scout-17B-16E-Instruct"]
-            ]
+            return [self.models_by_name["meta-llama/Llama-4-Scout-17B-16E-Instruct"]]
 
         return []
 
