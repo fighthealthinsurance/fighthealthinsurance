@@ -11,6 +11,7 @@ class MLRouter(object):
     Tool to route our requests most cheapily.
     """
 
+    # Models by name second value is already sorted by cost
     models_by_name: dict[str, List[RemoteModelLike]] = {}
     internal_models_by_cost: List[RemoteModelLike] = []
     all_models_by_cost: List[RemoteModelLike] = []
@@ -85,13 +86,13 @@ class MLRouter(object):
 
         # Add Perplexity models if available
         if "sonar-reasoning" in self.models_by_name:
-            return [self.models_by_name["sonar-reasoning"]]
+            return self.cheapest("sonar-reasoning")
         if "deepseek" in self.models_by_name:
-            return [self.models_by_name["deepseek"]]
+            return self.cheapest("deepseek")
 
         # Add Llama Scout model if available
         if "meta-llama/Llama-4-Scout-17B-16E-Instruct" in self.models_by_name:
-            return [self.models_by_name["meta-llama/Llama-4-Scout-17B-16E-Instruct"]]
+            return self.cheapest("meta-llama/Llama-4-Scout-17B-16E-Instruct")
 
         return []
 
@@ -106,9 +107,11 @@ class MLRouter(object):
         """
         # Add Perplexity model if available
         if "sonar-reasoning" in self.models_by_name:
-            return [self.models_by_name["sonar-reasoning"]]
+            return self.cheapest("sonar-reasoning")
         if "deepseek" in self.models_by_name:
-            return [self.models_by_name["deepseek"]]
+            return self.cheapest("deepseek")
+        if "sonar" in self.models_by_name:
+            return self.cheapest("sonar")
 
         return []
 
@@ -126,13 +129,11 @@ class MLRouter(object):
         if not use_external:
             return []
 
-        citation_models = []
-
         # Only use Perplexity models for citations
         if "sonar-reasoning" in self.models_by_name:
-            citation_models.extend(self.models_by_name["sonar-reasoning"])
+            return self.cheapest("sonar-reasoning")
 
-        return citation_models
+        return []
 
     def partial_find_citation_backends(self) -> list[RemoteModelLike]:
         """
@@ -145,11 +146,17 @@ class MLRouter(object):
         """
         # Only use Perplexity models for citations
         if "sonar-reasoning" in self.models_by_name:
-            return [self.models_by_name["sonar-reasoning"]]
+            return self.cheapest("sonar-reasoning")
         if "sonar" in self.models_by_name:
-            return [self.models_by_name["sonar"]]
+            return self.cheapest("sonar")
 
         return []
+
+    def cheapest(self, name: str) -> list[RemoteModelLike]:
+        try:
+            return [self.models_by_name[name][0]]
+        except:
+            return []
 
     async def summarize(
         self, title: Optional[str], text: Optional[str], abstract: Optional[str] = None
