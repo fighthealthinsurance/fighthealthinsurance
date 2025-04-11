@@ -7,7 +7,16 @@ import json
 from dataclasses import dataclass
 from string import Template
 import typing
-from typing import AsyncIterator, Awaitable, Any, Optional, Tuple, Iterable, List
+from typing import (
+    AsyncIterator,
+    Awaitable,
+    Any,
+    Coroutine,
+    Optional,
+    Tuple,
+    Iterable,
+    List,
+)
 from loguru import logger
 from PyPDF2 import PdfMerger
 import ray
@@ -37,11 +46,15 @@ from fighthealthinsurance import stripe_utils
 from fhi_users.models import ProfessionalUser, UserDomain
 from fhi_users import emails as fhi_emails
 from .pubmed_tools import PubMedTools
-from .utils import check_call, send_fallback_email
+from .utils import (
+    check_call,
+    send_fallback_email,
+    fire_and_forget_in_new_threadpool,
+    execute_critical_optional_fireandforget,
+)
 
 
 appealGenerator = AppealGenerator()
-background_tasks = set()
 
 
 class RemoveDataHelper:
@@ -946,23 +959,15 @@ class DenialCreatorHelper:
             return []
 
         try:
-            # Start citation generation as a non-blocking task this is non-speculative
-            # because at this point the things we use to generate citations are "fixed"
-            # but we don't want to block the user while we do it.
-            raise Exception(
-                "Skipped for now, we should figure out a better fire and forget."
+            # Use fire_and_forget_in_new_threadpool for citation generation to run in background
+            # This is non-speculative because at this point the things we use to generate citations are "fixed"
+            citation_task = MLCitationsHelper.generate_citations_for_denial(
+                denial, speculative=False
             )
-            citation_task = asyncio.create_task(
-                MLCitationsHelper.generate_citations_for_denial(
-                    denial, speculative=False
-                )
-            )
-            # See https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
-            background_tasks.add(citation_task)
-            citation_task.add_done_callback(background_tasks.discard)
-        except:
+            await fire_and_forget_in_new_threadpool(citation_task)
+        except Exception as e:
             logger.opt(exception=True).warning(
-                f"Failed to start async generate citations for denial {denial_id}"
+                f"Failed to start async generate citations for denial {denial_id}: {e}"
             )
 
         try:
@@ -1008,6 +1013,9 @@ class DenialCreatorHelper:
         patient_user: Optional[PatientUser] = None,
         patient_visible: bool = False,
     ):
+        """
+        Create or update an existing denial.
+        """
         hashed_email = Denial.get_hashed_email(email)
         # If they ask us to store their raw e-mail we do
         possible_email = None
@@ -1114,6 +1122,10 @@ class DenialCreatorHelper:
 
     @classmethod
     async def extract_entity(cls, denial_id: int) -> AsyncIterator[str]:
+        """
+        Perform entity extraction on a given denial id
+        """
+
         # Define a wrapper function that returns both the name and result
         async def named_task(awaitable: Awaitable[Any], name: str) -> tuple[str, Any]:
             try:
@@ -1124,7 +1136,7 @@ class DenialCreatorHelper:
                 return name, None
 
         # Best effort extractions
-        optional_awaitables: list[Awaitable[tuple[str, Any]]] = [
+        optional_awaitables: list[Coroutine[Any, Any, tuple[str, Any]]] = [
             named_task(cls.extract_set_fax_number(denial_id), "fax"),
             named_task(
                 cls.extract_set_insurance_company(denial_id), "insurance company"
@@ -1134,55 +1146,27 @@ class DenialCreatorHelper:
             named_task(cls.extract_set_date_of_service(denial_id), "date of service"),
         ]
 
-        required_awaitables: list[Awaitable[tuple[str, Any]]] = [
+        required_awaitables: list[Coroutine[Any, Any, tuple[str, Any]]] = [
             # Denial type depends on denial and diagnosis
             named_task(cls.extract_set_denial_and_diagnosis(denial_id), "diagnosis"),
             named_task(cls.extract_set_denialtype(denial_id), "type of denial"),
         ]
-
-        async def just_the_name(task: Awaitable[tuple[str, Any]]) -> str:
-            try:
-                name, _ = await task
-                return f"Extracted {name}\n"
-            except Exception as e:
-                logger.opt(exception=True).warning(f"Failed to process task: {e}")
-                return f"Failed extracting task: {str(e)}\n"
-
-        # First create task objects for the required tasks.
-        required_tasks = [
-            asyncio.create_task(just_the_name(task)) for task in required_awaitables
-        ]
-
-        # Create Task objects for all optional operations
-        optional_tasks = [
-            asyncio.wait_for(asyncio.create_task(just_the_name(task)), timeout=45)
-            for task in optional_awaitables
-        ]
-        # We create both sets of tasks at the same time since they're mostly independent and having
-        # the optional ones running at the same time gives us a chance to get more done.
-        tasks = required_tasks + optional_tasks
-        required_tasks_finished = 0
-        # First, execute required tasks (no timeout)
-        for task in asyncio.as_completed(tasks):
-            if task in required_tasks:
-                required_tasks_finished += 1
-            if required_tasks_finished >= len(required_tasks):
-                logger.debug("All done with required tasks")
-                break
-            result: str = await task
-            # Yield each result immediately for streaming
-            yield result
-
-        build_context_task = asyncio.create_task(
-            cls.build_speculative_context(denial_id=denial_id)
-        )
-        background_tasks.add(build_context_task)
-        build_context_task.add_done_callback(background_tasks.discard)
-        yield "Extraction completed\n"
+        async for item in execute_critical_optional_fireandforget(
+            optional=optional_awaitables,
+            required=required_awaitables,
+            fire_and_forget=[],
+            done_record=("Extraction complete", None),
+        ):
+            if item:
+                yield item[0]
 
     @classmethod
-    async def build_speculative_context(cls, denial_id: int):
-        """Build context based on the idea we extracted the correct info"""
+    async def build_speculative_context(cls, denial_id: int) -> None:
+        """
+        Build context based on the idea we extracted the correct info
+        Intended for fire and forget usage.
+        The results are stored on the denial object.
+        """
         denial = await Denial.objects.filter(denial_id=denial_id).aget()
         citations_awaitable = MLCitationsHelper.generate_citations_for_denial(
             denial, speculative=True
@@ -1191,6 +1175,7 @@ class DenialCreatorHelper:
             denial=denial, speculative=True
         )
         await asyncio.gather(citations_awaitable, questions_awaitable)
+        return None
 
     @classmethod
     async def extract_set_denial_and_diagnosis(cls, denial_id: int):
@@ -1219,7 +1204,7 @@ class DenialCreatorHelper:
             # Update all fields in a single atomic database operation
             await Denial.objects.filter(denial_id=denial_id).aupdate(**update_fields)
 
-            # Launch a "fire and forget" task to find related PubMed articles
+            # Use fire_and_forget_in_new_threadpool for background PubMed article search
             # now that we have diagnosis and procedure information
             if denial.procedure or denial.diagnosis or procedure or diagnosis:
 
@@ -1235,8 +1220,8 @@ class DenialCreatorHelper:
                             f"Failed to find PubMed articles for denial {denial_id}: {e}"
                         )
 
-                # Create the task but don't await it - fire and forget
-                asyncio.create_task(find_pubmed_articles())
+                # Fire and forget the PubMed search task
+                await fire_and_forget_in_new_threadpool(find_pubmed_articles())
 
         except Exception as e:
             logger.opt(exception=True).warning(
@@ -1645,29 +1630,30 @@ class AppealsBackendHelper:
         # Get PubMed context
         logger.debug("Looking up the pubmed context")
         pubmed_context_awaitable = asyncio.wait_for(
-            asyncio.shield(cls.pmt.find_context_for_denial(denial)), timeout=45
+            asyncio.shield(cls.pmt.find_context_for_denial(denial)), timeout=30
         )
 
         ml_citation_context_awaitable = asyncio.wait_for(
-                MLCitationsHelper.generate_citations_for_denial(
-                    denial, speculative=False
-                ),
-            timeout=45
+            MLCitationsHelper.generate_citations_for_denial(denial, speculative=False),
+            timeout=30,
         )
 
         # Await both contexts so we can use co-operative multitasking
         try:
+            logger.debug("Gathering contexts")
             results = await asyncio.gather(
                 pubmed_context_awaitable, ml_citation_context_awaitable
             )
             pubmed_context = results[0]
             ml_citation_context = results[1]
+            logger.debug("Success")
         except Exception as e:
             logger.debug(f"Error gathering contexts: {e}")
             # We still might have saved a context.
             await denial.arefresh_from_db()
             pubmed_context = denial.pubmed_context
             ml_citation_context = denial.ml_citation_context
+            logger.debug("Used saved contexts")
 
         async def save_appeal(appeal_text: str) -> dict[str, str]:
             # Save all of the proposed appeals, so we can use RL later.
