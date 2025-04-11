@@ -11,6 +11,7 @@ class MLRouter(object):
     Tool to route our requests most cheapily.
     """
 
+    # Models by name second value is already sorted by cost
     models_by_name: dict[str, List[RemoteModelLike]] = {}
     internal_models_by_cost: List[RemoteModelLike] = []
     all_models_by_cost: List[RemoteModelLike] = []
@@ -83,39 +84,36 @@ class MLRouter(object):
         if not use_external:
             return []
 
-        qa_models = []
-
         # Add Perplexity models if available
         if "sonar-reasoning" in self.models_by_name:
-            qa_models.extend(self.models_by_name["sonar-reasoning"])
+            return self.cheapest("sonar-reasoning")
         if "deepseek" in self.models_by_name:
-            qa_models.extend(self.models_by_name["deepseek"])
+            return self.cheapest("deepseek")
 
         # Add Llama Scout model if available
         if "meta-llama/Llama-4-Scout-17B-16E-Instruct" in self.models_by_name:
-            qa_models.extend(
-                self.models_by_name["meta-llama/Llama-4-Scout-17B-16E-Instruct"]
-            )
+            return self.cheapest("meta-llama/Llama-4-Scout-17B-16E-Instruct")
 
-        return qa_models
+        return []
 
     def partial_qa_backends(self) -> list[RemoteModelLike]:
         """
         Return models for handling partial question-answer pairs (when we have less context).
-        Always returns Perplexity models regardless of the external flag.
+        Always returns Perplexity models since we're only using
+        diagnosis and procedure.
 
         Returns:
             List of RemoteModelLike models suitable for partial QA tasks
         """
-        partial_models = []
-
-        # Add Perplexity models if available
+        # Add Perplexity model if available
         if "sonar-reasoning" in self.models_by_name:
-            partial_models.extend(self.models_by_name["sonar-reasoning"])
+            return self.cheapest("sonar-reasoning")
         if "deepseek" in self.models_by_name:
-            partial_models.extend(self.models_by_name["deepseek"])
+            return self.cheapest("deepseek")
+        if "sonar" in self.models_by_name:
+            return self.cheapest("sonar")
 
-        return partial_models
+        return []
 
     def full_find_citation_backends(self, use_external=False) -> list[RemoteModelLike]:
         """
@@ -131,31 +129,34 @@ class MLRouter(object):
         if not use_external:
             return []
 
-        citation_models = []
-
         # Only use Perplexity models for citations
         if "sonar-reasoning" in self.models_by_name:
-            citation_models.extend(self.models_by_name["sonar-reasoning"])
+            return self.cheapest("sonar-reasoning")
 
-        return citation_models
+        return []
 
     def partial_find_citation_backends(self) -> list[RemoteModelLike]:
         """
         Return models for finding citations when we have less context.
-        Always returns Perplexity models regardless of the external flag.
+        Always returns Perplexity models since we're only using
+        diagnosis and procedure.
 
         Returns:
             List of RemoteModelLike models suitable for citation finding with partial context
         """
-        citation_models = []
-
         # Only use Perplexity models for citations
         if "sonar-reasoning" in self.models_by_name:
-            citation_models.extend(self.models_by_name["sonar-reasoning"])
+            return self.cheapest("sonar-reasoning")
         if "sonar" in self.models_by_name:
-            citation_models.extend(self.models_by_name["sonar"])
+            return self.cheapest("sonar")
 
-        return citation_models
+        return []
+
+    def cheapest(self, name: str) -> list[RemoteModelLike]:
+        try:
+            return [self.models_by_name[name][0]]
+        except:
+            return []
 
     async def summarize(
         self, title: Optional[str], text: Optional[str], abstract: Optional[str] = None

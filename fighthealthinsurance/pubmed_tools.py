@@ -31,7 +31,7 @@ else:
     from async_timeout import timeout as async_timeout
 
 
-PER_QUERY = 3
+PER_QUERY = 2
 
 
 class PubMedTools(object):
@@ -306,7 +306,7 @@ class PubMedTools(object):
             summary = article.basic_summary
         elif article.abstract:
             summary = article.abstract[0:500]
-        summary_opt = "summary {summary}" if summary else ""
+        summary_opt = f"summary {summary}" if summary else ""
         url_opt = f"from {article.article_url}" if article.article_url else ""
         return f"PubMed DOI {article.doi} title {article.title} {url_opt} {summary_opt}"
 

@@ -30,6 +30,8 @@ from fighthealthinsurance.models import (
     StripeProduct,
     StripePrice,
     AppealAttachment,
+    GenericContextGeneration,
+    GenericQuestionGeneration,
 )
 from fhi_users.models import (
     ProfessionalUser,
@@ -38,6 +40,16 @@ from fhi_users.models import (
     ProfessionalDomainRelation,
 )
 from django.contrib.auth.admin import UserAdmin
+
+
+@admin.register(GenericContextGeneration)
+class GenericContextGenerationAdmin(admin.ModelAdmin):
+    """Generic Context"""
+
+
+@admin.register(GenericQuestionGeneration)
+class GenericQuestionsGenerationAdmin(admin.ModelAdmin):
+    """Generic Questions Context"""
 
 
 @admin.register(UserDomain)

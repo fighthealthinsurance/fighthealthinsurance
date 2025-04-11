@@ -26,6 +26,50 @@ else:
     User = get_user_model()
 
 
+class GenericQuestionGeneration(ExportModelOperationsMixin("GenericQuestionGeneration"), models.Model):  # type: ignore
+    """
+    Stores cached question generations for specific procedure and diagnosis combinations
+    that don't contain patient-specific information.
+    """
+
+    id = models.AutoField(primary_key=True)
+    procedure = models.CharField(max_length=300)
+    diagnosis = models.CharField(max_length=300)
+    # Store the questions as a JSONField
+    generated_questions = models.JSONField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["procedure", "diagnosis"]),
+        ]
+
+    def __str__(self):
+        return f"Generic Questions: {self.procedure} / {self.diagnosis}"
+
+
+class GenericContextGeneration(ExportModelOperationsMixin("GenericContextGeneration"), models.Model):  # type: ignore
+    """
+    Stores cached citation/context generations for specific procedure and diagnosis combinations
+    that don't contain patient-specific information.
+    """
+
+    id = models.AutoField(primary_key=True)
+    procedure = models.CharField(max_length=300)
+    diagnosis = models.CharField(max_length=300)
+    # Store the citations as a JSONField
+    generated_context = models.JSONField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["procedure", "diagnosis"]),
+        ]
+
+    def __str__(self):
+        return f"Generic Context: {self.procedure} / {self.diagnosis}"
+
+
 # Money related :p
 class InterestedProfessional(ExportModelOperationsMixin("InterestedProfessional"), models.Model):  # type: ignore
     id = models.AutoField(primary_key=True)
@@ -498,6 +542,7 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     # Marks this denial as a unique claim example for training or reference
     unique_claim = models.BooleanField(default=False)
     # Marks this denial as a good example for training or reference
+    disability_claim = models.BooleanField(default=False)
     good_appeal_example = models.BooleanField(default=False)
     candidate_procedure = models.CharField(max_length=300, null=True, blank=True)
     candidate_diagnosis = models.CharField(max_length=300, null=True, blank=True)
@@ -630,6 +675,8 @@ class Appeal(ExportModelOperationsMixin("Appeal"), models.Model):  # type: ignor
     )
     response_text = models.TextField(max_length=3000000000, null=True)
     response_date = models.DateField(auto_now=False, null=True)
+    # Notes for the professional
+    notes = models.TextField(max_length=3000000000, null=True, blank=True)
     # Track whether an appeal was successful (not just if it got a response)
     success = models.BooleanField(default=False, null=True)
     mod_date = models.DateField(auto_now=True, null=True)
