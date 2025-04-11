@@ -26,9 +26,7 @@ class MLAppealQuestionsHelper:
         Returns:
             A list of (question, answer) tuples.
         """
-        models_to_try = set(
-            ml_router.full_qa_backends(True) + ml_router.partial_qa_backends()
-        )
+        models_to_try = ml_router.partial_qa_backends()
 
         # Normalize inputs - trim whitespace and convert to lowercase
         procedure = procedure.strip().lower() if procedure else ""
@@ -196,6 +194,7 @@ class MLAppealQuestionsHelper:
             logger.debug(f"Using cached questions for denial {denial.denial_id}")
             questions = cast(List[Tuple[str, str]], denial.generated_questions)
         else:
+            logger.debug(f"Generating new questions for denial {denial.denial_id}")
             # Setup timeout based on whether this is speculative or not
             timeout = 60 if speculative else 45
 
@@ -217,8 +216,11 @@ class MLAppealQuestionsHelper:
 
             # Bias for context
             def is_with_context(x):
+                logger.debug(f"{x} is my result")
                 if x == context_awaitable:
+                    logger.debug(f"{x} in context")
                     return 2
+                logger.debug(f"{x} not in context")
                 return 1
 
             result = await best_within_timelimit(

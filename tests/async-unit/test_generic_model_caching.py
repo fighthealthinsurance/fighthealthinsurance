@@ -80,7 +80,7 @@ async def test_generic_context_generation_cache():
 
     # Mock the citation backends to avoid actual ML calls
     with mock.patch(
-        "fighthealthinsurance.ml.ml_citations_helper.MLCitationsHelper.ml_router"
+        "fighthealthinsurance.ml.ml_citations_helper.ml_router"
     ) as mock_router, mock.patch(
         "fighthealthinsurance.ml.ml_citations_helper.best_within_timelimit"
     ) as mock_best_within_timelimit:
@@ -164,7 +164,7 @@ async def test_denial_uses_generic_cache_no_patient_data():
     ) as mock_qa_backends, mock.patch(
         "fighthealthinsurance.ml.ml_appeal_questions_helper.ml_router.partial_qa_backends"
     ) as mock_partial_qa_backends, mock.patch(
-        "fighthealthinsurance.ml.ml_citations_helper.MLCitationsHelper.ml_router"
+        "fighthealthinsurance.ml.ml_citations_helper.ml_router"
     ) as mock_router:
 
         # Configure the mock backends to return an empty list to ensure no models are called

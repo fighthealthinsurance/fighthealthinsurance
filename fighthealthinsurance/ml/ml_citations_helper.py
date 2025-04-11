@@ -3,16 +3,14 @@ from typing import List, Optional, Dict, Any, cast, Callable, Coroutine
 from loguru import logger
 
 from fighthealthinsurance.models import Denial, GenericContextGeneration
-from fighthealthinsurance.ml.ml_router import MLRouter
 from fighthealthinsurance.utils import (
     best_within_timelimit,
 )
+from fighthealthinsurance.ml.ml_router import ml_router
 
 
 class MLCitationsHelper:
     """Helper class for generating citations using ML models"""
-
-    ml_router = MLRouter()
 
     @staticmethod
     def make_score_fn(factor: Callable[[Any], float] = lambda _: 1.0):
@@ -61,43 +59,20 @@ class MLCitationsHelper:
         if not denial_text and not plan_context and not patient_context:
             logger.debug(f"All patient specific context is unset, quick return.")
             return []
-
-        # Skip if we don't have enough information
-        if not procedure and not diagnosis:
-            logger.debug(f"Missing procedure or diagnosis for generic citations")
-            return []
-
-        # Check for existing cached citations first
-        try:
-            cached = await GenericContextGeneration.objects.filter(
-                procedure=procedure, diagnosis=diagnosis
-            ).afirst()
-
-            if cached:
-                logger.debug(
-                    f"Found cached generic citations for {procedure}/{diagnosis}"
-                )
-                return cast(List[str], cached.generated_context)
-        except Exception as e:
-            logger.opt(exception=True).warning(
-                f"Error fetching cached generic citations: {e}"
-            )
-
-        # If no cached citations exist, generate them
         result: List[str] = []
         try:
-            # Get the appropriate citation backends - only partial backends for generic citations
-            partial_citation_backends = cls.ml_router.partial_find_citation_backends()
+            # Get the appropriate citation backends
+            full_citation_backends = ml_router.full_find_citation_backends()
 
             # Only proceed if we have backends to use
-            if not partial_citation_backends:
+            if not full_citation_backends:
                 logger.debug("No citation backends available for generic citations")
                 return []
 
-            # Create tasks for partial backends
-            partial_awaitables = []
-            for backend in partial_citation_backends:
-                partial_awaitables.append(
+            # Create tasks for full backends
+            full_awaitables = []
+            for backend in full_citation_backends:
+                full_awaitables.append(
                     backend.get_citations(
                         denial_text=denial_text,
                         procedure=procedure,
@@ -111,7 +86,7 @@ class MLCitationsHelper:
             try:
                 result = (
                     await best_within_timelimit(
-                        partial_awaitables,
+                        full_awaitables,
                         score_fn=cls.make_score_fn(),
                         timeout=timeout,
                     )
@@ -186,7 +161,7 @@ class MLCitationsHelper:
         result: List[str] = []
         try:
             # Get the appropriate citation backends - only partial backends for generic citations
-            partial_citation_backends = cls.ml_router.partial_find_citation_backends()
+            partial_citation_backends = ml_router.partial_find_citation_backends()
 
             # Only proceed if we have backends to use
             if not partial_citation_backends:
@@ -208,6 +183,9 @@ class MLCitationsHelper:
 
             # Get the best result within the timeout
             try:
+                logger.debug(
+                    f"Generating best generic citations for {procedure}/{diagnosis} w/ {partial_awaitables}"
+                )
                 result = (
                     await best_within_timelimit(
                         partial_awaitables,
@@ -226,7 +204,7 @@ class MLCitationsHelper:
                             generated_context=result,
                         )
                         logger.debug(
-                            f"Cached generic citations for {procedure}/{diagnosis}"
+                            f"Stored cached generic citations for {procedure}/{diagnosis} -- {result}"
                         )
                     except Exception as e:
                         logger.opt(exception=True).warning(

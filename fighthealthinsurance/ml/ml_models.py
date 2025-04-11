@@ -1128,6 +1128,8 @@ class RemoteFullOpenLike(RemoteOpenLike):
         Prioritize high-quality, peer-reviewed research, clinical guidelines, and standard of care documentation.
         """
 
+        logger.debug("Generating citations on backend {self}")
+
         system_prompts: list[str] = self.get_system_prompts("citations")
 
         result = await self._infer(
