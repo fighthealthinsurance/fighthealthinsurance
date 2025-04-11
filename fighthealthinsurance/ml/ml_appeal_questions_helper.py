@@ -33,8 +33,8 @@ class MLAppealQuestionsHelper:
         diagnosis = diagnosis.strip().lower() if diagnosis else ""
 
         # Skip if we don't have enough information
-        if not procedure or not diagnosis:
-            logger.debug(f"Missing procedure or diagnosis for generic questions")
+        if procedure == "" and diagnosis == "":
+            logger.debug(f"Missing procedure and diagnosis for generic questions")
             return []
 
         # Check for existing cached questions first
@@ -139,6 +139,10 @@ class MLAppealQuestionsHelper:
         # Normalize inputs - trim whitespace and convert to lowercase
         procedure = procedure.strip().lower() if procedure else ""
         diagnosis = diagnosis.strip().lower() if diagnosis else ""
+
+        if (not denial_text or denial_text == "") and (not patient_context or patient_context == ""):
+            logger.debug(f"All patient specific context is unset, quick return.")
+            return []
 
         # If no cached questions exist, generate them
         model_timeout = max(1, timeout - 5)  # Subtract 5 seconds for processing
