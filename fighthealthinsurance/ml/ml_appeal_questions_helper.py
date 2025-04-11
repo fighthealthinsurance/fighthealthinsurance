@@ -140,7 +140,9 @@ class MLAppealQuestionsHelper:
         procedure = procedure.strip().lower() if procedure else ""
         diagnosis = diagnosis.strip().lower() if diagnosis else ""
 
-        if (not denial_text or denial_text == "") and (not patient_context or patient_context == ""):
+        if (not denial_text or denial_text == "") and (
+            not patient_context or patient_context == ""
+        ):
             logger.debug(f"All patient specific context is unset, quick return.")
             return []
 

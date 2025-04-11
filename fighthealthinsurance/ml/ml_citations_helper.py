@@ -56,7 +56,11 @@ class MLCitationsHelper:
         plan_context = denial.plan_context
         patient_context = denial.health_history
 
-        if (not denial_text or denial_text == "") and (not plan_context or plan_context == "") and (not patient_context or patient_context == ""):
+        if (
+            (not denial_text or denial_text == "")
+            and (not plan_context or plan_context == "")
+            and (not patient_context or patient_context == "")
+        ):
             logger.debug(f"All patient specific context is unset, quick return.")
             return []
         result: List[str] = []
