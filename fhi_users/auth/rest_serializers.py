@@ -154,6 +154,9 @@ class UserDomainSerializer(serializers.ModelSerializer):
     """
     Serializer for domain information, excluding sensitive fields.
     """
+    # Override name and visible phone so we can re-create.
+    name = serializers.CharField(required=False, allow_blank=True)
+    visible_phone_number = serializers.CharField(required=False, allow_blank=True)
 
     class Meta(object):
         model = UserDomain
@@ -164,6 +167,7 @@ class UserDomainSerializer(serializers.ModelSerializer):
             "active",
             "professionals",
         )
+        validators = []
 
 
 class InviteProfessionalSerializer(serializers.Serializer):

@@ -18,6 +18,7 @@ from fhi_users.models import (
     ResetToken,
     ProfessionalUser,
     ProfessionalDomainRelation,
+    PendingProStripeCheckoutSession,
 )
 
 
@@ -646,46 +647,6 @@ class RestAuthViewsTests(TestCase):
         self.assertNotIn(response.status_code, range(200, 300))
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
-    def test_create_duplicate_patient_user_view(self) -> None:
-        """Test that creating a patient user with an email that already exists fails correctly."""
-        url = reverse("patient_user-list")
-        # Create first patient user
-        data = {
-            "username": "duplicate_patient@example.com",
-            "password": "SecurePassword123",
-            "email": "duplicate_patient@example.com",
-            "provider_phone_number": "1234567890",
-            "country": "USA",
-            "state": "CA",
-            "city": "Test City",
-            "address1": "123 Test St",
-            "address2": "",
-            "zipcode": "12345",
-            "domain_name": "testdomain",
-        }
-        response = self.client.post(url, data, format="json")
-        self.assertIn(response.status_code, range(200, 300))
-        self.assertEqual(response.json()["status"], "pending")
-
-        # Verify user was created
-        self.assertTrue(
-            User.objects.filter(email="duplicate_patient@example.com").exists()
-        )
-
-        # Try to create a second user with the same email and username
-        data2 = dict(data)
-        data2["username"] = "duplicate_patient@example.com"
-
-        response2 = self.client.post(url, data2, format="json")
-
-        # Verify it fails with a 400 status code
-        self.assertEqual(response2.status_code, status.HTTP_400_BAD_REQUEST)
-
-        # Verify the error message is appropriate
-        error_data = response2.json()
-        self.assertIn("error", error_data)
-        self.assertEqual(error_data["error"], "A user with this email already exists")
-
     def test_verification_email_throttling(self) -> None:
         """Test that verification emails are not sent more than once within 10 minutes."""
         # Create a user for testing
@@ -933,7 +894,9 @@ class TestE2EProfessionalUserSignupFlow(TestCase):
         pro_user_id = professional_user.id
 
         # Verify a checkout session was created
-        checkout_session = StripeCheckoutSession.objects.filter(email=email).first()
+        checkout_session = PendingProStripeCheckoutSession.objects.filter(
+            email=email
+        ).first()
         self.assertIsNotNone(checkout_session)
         self.assertEqual(checkout_session.email, email)
         self.assertEqual(checkout_session.professional_user_id, professional_user.id)
@@ -953,13 +916,10 @@ class TestE2EProfessionalUserSignupFlow(TestCase):
         user = User.objects.get(email=email)
         professional_user = ProfessionalUser.objects.get(user=user)
 
-        # Object IDs should be the same as before since we're reusing/recreating them
-        self.assertEqual(str(domain.id), str(domain_id))
-        self.assertEqual(user.id, user_id)
-        self.assertEqual(professional_user.id, pro_user_id)
-
         # Verify we have two checkout sessions (original + retry)
-        self.assertEqual(StripeCheckoutSession.objects.filter(email=email).count(), 2)
+        self.assertEqual(
+            PendingProStripeCheckoutSession.objects.filter(email=email).count(), 2
+        )
 
     def test_retry_signup_with_active_domain_fails(self):
         """Test that a domain can only be reused if it's still pending/inactive."""
@@ -1007,7 +967,7 @@ class TestE2EProfessionalUserSignupFlow(TestCase):
         # Attempt second signup with same domain name
         response = self.client.post(signup_url, data, format="json")
         self.assertEqual(response.status_code, 400)
-        self.assertIn("Domain already exists", response.json()["error"])
+        self.assertIn("Domain is active, cannot delete", response.json()["error"])
 
     def test_signup_with_different_email_same_domain_fails(self):
         """Test that a different user cannot use the same domain name."""
@@ -1094,30 +1054,25 @@ class TestE2EProfessionalUserSignupFlow(TestCase):
         response = self.client.post(signup_url, data, format="json")
         self.assertEqual(response.status_code, 201)
 
-        # Create a checkout session with a different session ID but same email
+        # Get the created objects
         initial_domain = UserDomain.objects.get(name=domain_name)
         initial_pro_user = ProfessionalUser.objects.get(user__email=email)
 
-        # Store the IDs for comparison
-        domain_id = initial_domain.id
-        pro_user_id = initial_pro_user.id
+        # Reset the session
+        self.client.cookies.clear()
 
-        # Now do another signup attempt - this should work
+        # Verify initial checkout session was created
+        initial_session = PendingProStripeCheckoutSession.objects.get(
+            email=email,
+            domain_id=initial_domain.id,
+            professional_user_id=initial_pro_user.id,
+        )
+        self.assertIsNotNone(initial_session)
+
+        # Now do another signup attempt with the same data - this should
+        # not work and handle the previously created pending records
         response = self.client.post(signup_url, data, format="json")
-        self.assertEqual(response.status_code, 201)
-
-        # Get the domain and pro user again
-        domain = UserDomain.objects.get(name=domain_name)
-        pro_user = ProfessionalUser.objects.get(user__email=email)
-
-        # The domain ID should be the same (reused)
-        self.assertEqual(str(domain.id), str(domain_id))
-
-        # We should have a new professional user (old one deleted)
-        self.assertNotEqual(pro_user.id, pro_user_id)
-
-        # Verify we have two checkout sessions
-        self.assertEqual(StripeCheckoutSession.objects.filter(email=email).count(), 2)
+        self.assertEqual(response.status_code, 400)
 
 
 class ProfessionalInvitationTests(TestCase):

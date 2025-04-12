@@ -702,6 +702,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         """
         Creates a new professional user and optionally a new domain.
         """
+        logger.debug(f"Starting professional user creation w/ {request} {request.data}")
         return super().create(request)
 
     def create_stripe_checkout_session(
@@ -835,6 +836,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
 
     @transaction.atomic
     def perform_create(self, request: Request, serializer: Serializer) -> Response:
+        logger.debug(f"Perform called on {request} w/ {serializer}")
         data: dict[str, bool | str | dict[str, str]] = serializer.validated_data  # type: ignore
         user_signup_info: dict[str, str] = data["user_signup_info"]  # type: ignore
         domain_name: Optional[str] = user_signup_info["domain_name"]  # type: ignore
@@ -842,6 +844,14 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         new_domain: bool = bool(data["make_new_domain"])  # type: ignore
         user_domain_opt: Optional[UserDomain] = None
         email: str = user_signup_info["email"]  # type: ignore
+        if not request.session:
+            logger.debug("No session?")
+        elif not request.session.session_key:
+            logger.debug("Making session")
+            request.session.create()
+        session_key = request.session.session_key
+
+        logger.debug(f"Performing create for session: {session_key}")
 
         if not validate_password(user_signup_info["password"]):
             return Response(
@@ -853,7 +863,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         existing_checkout = (
             PendingProStripeCheckoutSession.objects.filter(
                 email=email,
-                django_session_id=request.session.session_key,
+                django_session_id=session_key,
                 visible_phone_number=visible_phone_number,
             )
             .order_by("-created_at")
@@ -898,14 +908,21 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                                 f"Deleted inactive domain {domain_to_delete.name} during signup retry"
                             )
                         else:
-                            raise Exception(
-                                "Domain is active, cannot delete, please contact support42@fighthealthinsurance.com"
-                            )
+                            return Response(
+                        common_serializers.ErrorSerializer(
+                            {
+                                "error": "Domain is active, cannot delete, please contact support42@fighthealthinsurance.com"
+                            }
+                        ).data,
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
                     except UserDomain.DoesNotExist:
                         logger.error("Domain doesn't exist for cleanup")
             except Exception as e:
                 logger.error(f"Error cleaning up existing data for {email}: {str(e)}")
                 raise e
+        else:
+            logger.debug("No existing checkout")
 
         # Ok now back to the regular flow
         # Here we check if the user is joining an existing domain
@@ -1053,7 +1070,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             # Store the checkout session information
             PendingProStripeCheckoutSession.objects.create(
                 stripe_session_id=checkout_session.id,
-                django_session_id=request.session.session_key,
+                django_session_id=session_key,
                 email=email,
                 domain_id=str(user_domain.id),
                 professional_user_id=professional_user.id,
