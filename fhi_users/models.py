@@ -280,3 +280,43 @@ class ResetToken(models.Model):
             else:
                 self.expires_at = datetime.datetime.now() + datetime.timedelta(hours=24)
         super().save(*args, **kwargs)
+
+
+class PendingProStripeCheckoutSession(models.Model):
+    """
+    Track Stripe checkout sessions for professional user signups and other purchases.
+    This helps handle cases where users press back from Stripe checkout and retry.
+    """
+
+    id = models.AutoField(primary_key=True)
+    # Stripe-specific fields
+    stripe_session_id = models.CharField(max_length=255, unique=True)
+    # Django session ID if available
+    django_session_id = models.CharField(max_length=255, null=True, blank=True)
+    # User information
+    email = models.EmailField()
+    # Related models as foreign keys
+    domain = models.ForeignKey(
+        UserDomain, on_delete=models.SET_NULL, null=True, blank=True
+    )
+    professional_user = models.ForeignKey(
+        ProfessionalUser, on_delete=models.SET_NULL, null=True, blank=True
+    )
+    # Tracking metadata
+    created_at = models.DateTimeField(auto_now_add=True)
+    completed = models.BooleanField(default=False)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    # Optional additional data
+    metadata = models.JSONField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = "Stripe Checkout Session"
+        verbose_name_plural = "Stripe Checkout Sessions"
+        indexes = [
+            models.Index(fields=["email"]),
+            models.Index(fields=["stripe_session_id"]),
+            models.Index(fields=["django_session_id"]),
+        ]
+
+    def __str__(self):
+        return f"Stripe Session {self.stripe_session_id} for {self.email}"
