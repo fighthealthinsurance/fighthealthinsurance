@@ -295,6 +295,7 @@ class PendingProStripeCheckoutSession(models.Model):
     django_session_id = models.CharField(max_length=255, null=True, blank=True)
     # User information
     email = models.EmailField()
+    visible_phone_number = models.CharField(max_length=150, null=False, blank=False)
     # Related models as foreign keys
     domain = models.ForeignKey(
         UserDomain, on_delete=models.SET_NULL, null=True, blank=True

@@ -854,6 +854,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             PendingProStripeCheckoutSession.objects.filter(
                 email=email,
                 django_session_id=request.session.session_key,
+                visible_phone_number=visible_phone_number,
             )
             .order_by("-created_at")
             .first()
@@ -866,51 +867,48 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             )
             try:
                 # Clean up any existing user objects
-                if existing_checkout.professional_user_id:
-                    try:
-                        professional_user = ProfessionalUser.objects.get(
-                            id=existing_checkout.professional_user_id
-                        )
-                        user_to_delete = professional_user.user
+                professional_user = existing_checkout.professional_user
+                if not professional_user or not professional_user.user:
+                    raise Exception("User not found?")
+                user_to_delete = professional_user.user
 
-                        # Delete relationships first
-                        ProfessionalDomainRelation.objects.filter(
-                            professional=professional_user
-                        ).delete()
+                # Delete relationships first
+                ProfessionalDomainRelation.objects.filter(
+                    professional=professional_user
+                ).delete()
 
-                        # Delete the professional user
-                        professional_user.delete()
+                # Delete the professional user
+                professional_user.delete()
 
-                        # Delete extra properties
-                        ExtraUserProperties.objects.filter(user=user_to_delete).delete()
+                # Delete extra properties
+                ExtraUserProperties.objects.filter(user=user_to_delete).delete()
 
-                        # Delete the user
-                        user_to_delete.delete()
-                        logger.info(
-                            f"Deleted existing user for {email} during signup retry"
-                        )
-                    except (ProfessionalUser.DoesNotExist, User.DoesNotExist) as e:
-                        logger.info(
-                            f"User or ProfessionalUser doesn't exist for cleanup: {str(e)}"
-                        )
-
+                # Delete the user
+                user_to_delete.delete()
+                logger.info(
+                    f"Deleted existing user for {email} during signup retry"
+                )
                 # Clean up domain if it's a new domain
-                if new_domain and existing_checkout.domain_id:
+                if new_domain and existing_checkout.domain:
                     try:
-                        domain_to_delete = UserDomain.objects.get(
-                            id=existing_checkout.domain_id
-                        )
-                        # Only delete if it's not active - if active, someone else might have completed setup
+                        domain_to_delete = existing_checkout.domain
                         if not domain_to_delete.active:
                             domain_to_delete.delete()
                             logger.info(
                                 f"Deleted inactive domain {domain_to_delete.name} during signup retry"
                             )
+                        else:
+                            raise Exception(
+                                "Domain is active, cannot delete, please contact support42@fighthealthinsurance.com"
+                            )
                     except UserDomain.DoesNotExist:
-                        logger.info("Domain doesn't exist for cleanup")
+                        logger.error("Domain doesn't exist for cleanup")
             except Exception as e:
                 logger.error(f"Error cleaning up existing data for {email}: {str(e)}")
+                raise e
 
+        # Ok now back to the regular flow
+        # Here we check if the user is joining an existing domain
         if not new_domain:
             # In practice the serializer may enforce these for us
             try:
@@ -938,52 +936,26 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             if UserDomain.find_by_name(name=domain_name).count() != 0:
                 # Check if this is the domain we created previously but haven't completed setup
                 existing_domain = UserDomain.find_by_name(name=domain_name).get()
-                if (
-                    existing_checkout
-                    and str(existing_domain.id) == existing_checkout.domain_id
-                    and not existing_domain.active
-                ):
-                    # This is our domain from a previous attempt, we can reuse it
-                    logger.info(
-                        f"Reusing existing inactive domain {domain_name} from previous signup attempt"
-                    )
-                    user_domain_opt = existing_domain
-                else:
-                    return Response(
-                        common_serializers.ErrorSerializer(
-                            {"error": "Domain already exists"}
-                        ).data,
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
+                return Response(
+                    common_serializers.ErrorSerializer(
+                        {"error": "Domain already exists"}
+                    ).data,
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             elif (
                 UserDomain.objects.filter(
                     visible_phone_number=visible_phone_number
                 ).count()
                 != 0
             ):
-                # Similarly check for our previous phone number
-                existing_domain = UserDomain.objects.get(
-                    visible_phone_number=visible_phone_number
+                return Response(
+                    common_serializers.ErrorSerializer(
+                        {
+                            "error": "Visible phone number already exists",
+                        }
+                    ).data,
+                    status=status.HTTP_400_BAD_REQUEST,
                 )
-                if (
-                    existing_checkout
-                    and str(existing_domain.id) == existing_checkout.domain_id
-                    and not existing_domain.active
-                ):
-                    # This is our domain from a previous attempt, we can reuse it
-                    logger.info(
-                        f"Reusing existing inactive domain with phone {visible_phone_number} from previous signup attempt"
-                    )
-                    user_domain_opt = existing_domain
-                else:
-                    return Response(
-                        common_serializers.ErrorSerializer(
-                            {
-                                "error": "Visible phone number already exists",
-                            }
-                        ).data,
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
 
             if user_domain_opt is None:
                 if "user_domain" not in data:
@@ -1056,6 +1028,14 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             pending_domain_relation=not new_domain,
         )
 
+        # If the domain is not new we don't need billing info
+        if not new_domain:
+            return Response(
+                serializers.ProfessionalSignupResponseSerializer(
+                    {"next_url": "https://www.fightpaperwork.com/auth/login"}
+                ).data,
+                status=status.HTTP_201_CREATED,
+            )
         if not (settings.DEBUG and data["skip_stripe"]):
             checkout_session = self.create_stripe_checkout_session(
                 email,
@@ -1077,6 +1057,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 email=email,
                 domain_id=str(user_domain.id),
                 professional_user_id=professional_user.id,
+                visible_phone_number=visible_phone_number, # type: ignore
             )
             return Response(
                 serializers.ProfessionalSignupResponseSerializer(
