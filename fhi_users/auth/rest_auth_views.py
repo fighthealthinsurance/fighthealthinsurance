@@ -303,7 +303,9 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 )
                 return Response(
                     common_serializers.ErrorSerializer(
-                        {"error": "A user with this email already exists"}
+                        {
+                            "error": "A user with this email already exists in this practice/domain."
+                        }
                     ).data,
                     status=status.HTTP_400_BAD_REQUEST,
                 )
@@ -893,9 +895,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
 
                 # Delete the user
                 user_to_delete.delete()
-                logger.info(
-                    f"Deleted existing user for {email} during signup retry"
-                )
+                logger.info(f"Deleted existing user for {email} during signup retry")
                 # Clean up domain if it's a new domain
                 if new_domain and existing_checkout.domain:
                     try:
@@ -907,13 +907,13 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                             )
                         else:
                             return Response(
-                        common_serializers.ErrorSerializer(
-                            {
-                                "error": "Domain is active, cannot delete, please contact support42@fighthealthinsurance.com"
-                            }
-                        ).data,
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
+                                common_serializers.ErrorSerializer(
+                                    {
+                                        "error": "Domain is active, cannot delete, please contact support42@fighthealthinsurance.com"
+                                    }
+                                ).data,
+                                status=status.HTTP_400_BAD_REQUEST,
+                            )
                     except UserDomain.DoesNotExist:
                         logger.error("Domain doesn't exist for cleanup")
             except Exception as e:
@@ -1072,7 +1072,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 email=email,
                 domain_id=str(user_domain.id),
                 professional_user_id=professional_user.id,
-                visible_phone_number=visible_phone_number, # type: ignore
+                visible_phone_number=visible_phone_number,  # type: ignore
             )
             return Response(
                 serializers.ProfessionalSignupResponseSerializer(
@@ -1332,16 +1332,26 @@ class PatientUserViewSet(ViewSet, CreateMixin):
         if "patient_phone_number" in validated_data:
             patient_phone_number = validated_data.pop("patient_phone_number")
         domain_id = auth_utils.get_domain_id_from_request(request)
-        user = create_user(
-            email=validated_data["email"],
-            raw_username=validated_data["username"],
-            first_name=validated_data.get("firstname", ""),
-            last_name=validated_data.get("lastname", ""),
-            domain_name=domain_name,
-            phone_number=provider_phone_number,
-            password=validated_data["password"],
-            domain_id=domain_id,
-        )
+        try:
+            user = create_user(
+                email=validated_data["email"],
+                raw_username=validated_data["username"],
+                first_name=validated_data.get("firstname", ""),
+                last_name=validated_data.get("lastname", ""),
+                domain_name=domain_name,
+                phone_number=provider_phone_number,
+                password=validated_data["password"],
+                domain_id=domain_id,
+            )
+        except IntegrityError:
+
+            logger.opt(exception=True).error("Integrity error when creating user")
+            return Response(
+                common_serializers.ErrorSerializer(
+                    {"error": "A user with this email already exists"}
+                ).data,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         country = "USA"
         if "country" in validated_data:
             country = validated_data["country"]
