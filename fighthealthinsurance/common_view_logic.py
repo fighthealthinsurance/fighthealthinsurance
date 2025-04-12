@@ -1885,7 +1885,7 @@ class StripeWebhookHelper:
                 try:
                     professional_id = metadata.get("professional_id")
                     professional = ProfessionalUser.objects.get(id=professional_id)
-                    if professional.active:
+                    if professional:
                         # Check if the user has active domains
                         active_domains = UserDomain.objects.filter(
                             professionaldomainrelation__professional=professional,
@@ -1895,7 +1895,7 @@ class StripeWebhookHelper:
 
                         if active_domains:
                             logger.info(
-                                f"User {email} already has active domains, not creating LostStripeSession"
+                                f"User {professional} already has active domains, not creating LostStripeSession"
                             )
                             return
                 except Exception as e:
