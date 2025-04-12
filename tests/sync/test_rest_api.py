@@ -1359,7 +1359,7 @@ class DuplicateUserDomainTest(APITestCase):
 
         # Check error message in response
         response_data = response.json()
-        self.assertIn("user_domain", response_data)
+        self.assertIn("Domain", response_data["error"])
 
         # Verify no new domain was created with the same name
         domains_with_same_name = UserDomain.objects.filter(

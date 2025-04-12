@@ -167,8 +167,6 @@ class UserDomainSerializer(serializers.ModelSerializer):
             "active",
             "professionals",
         )
-        validators = []
-
 
 class InviteProfessionalSerializer(serializers.Serializer):
     """
