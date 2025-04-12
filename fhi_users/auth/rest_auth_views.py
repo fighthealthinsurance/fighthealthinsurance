@@ -702,7 +702,6 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         """
         Creates a new professional user and optionally a new domain.
         """
-        logger.debug(f"Starting professional user creation w/ {request} {request.data}")
         return super().create(request)
 
     def create_stripe_checkout_session(
@@ -836,7 +835,6 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
 
     @transaction.atomic
     def perform_create(self, request: Request, serializer: Serializer) -> Response:
-        logger.debug(f"Perform called on {request} w/ {serializer}")
         data: dict[str, bool | str | dict[str, str]] = serializer.validated_data  # type: ignore
         user_signup_info: dict[str, str] = data["user_signup_info"]  # type: ignore
         domain_name: Optional[str] = user_signup_info["domain_name"]  # type: ignore
@@ -951,7 +949,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                     )
         else:
             if UserDomain.find_by_name(name=domain_name).count() != 0:
-                # Check if this is the domain we created previously but haven't completed setup
+                # Check if this is the domain we created previously
                 existing_domain = UserDomain.find_by_name(name=domain_name).get()
                 return Response(
                     common_serializers.ErrorSerializer(
