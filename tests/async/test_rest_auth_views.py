@@ -160,6 +160,33 @@ class RestAuthViewsTests(TestCase):
             )
         )
 
+    def test_patient_user_creates_with_correct_name(self) -> None:
+        """Test that patient user is created with the correct first and last name."""
+        url = reverse("patient_user-list")
+        # Test with first_name and last_name
+        data = {
+            "username": "nameuser1@example.com",
+            "password": "SecurePassword123",
+            "email": "nameuser1@example.com",
+            "first_name": "Test",
+            "last_name": "User",
+            "provider_phone_number": "1234567890",
+            "country": "USA",
+            "state": "CA",
+            "city": "Test City",
+            "address1": "123 Test St",
+            "zipcode": "12345",
+            "domain_name": "testdomain",
+        }
+        response = self.client.post(url, data, format="json")
+        self.assertIn(response.status_code, range(200, 300))
+        self.assertEqual(response.json()["status"], "pending")
+
+        # Verify user was created with correct name
+        new_user1 = User.objects.get(email="nameuser1@example.com")
+        self.assertEqual(new_user1.first_name, "Test")
+        self.assertEqual(new_user1.last_name, "User")
+
     def test_verify_email_view(self) -> None:
         url = reverse("rest_verify_email-verify")
         VerificationToken.objects.create(

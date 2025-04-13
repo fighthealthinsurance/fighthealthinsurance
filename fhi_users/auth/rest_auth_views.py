@@ -1336,8 +1336,8 @@ class PatientUserViewSet(ViewSet, CreateMixin):
             user = create_user(
                 email=validated_data["email"],
                 raw_username=validated_data["username"],
-                first_name=validated_data.get("first_name", validated_data.get("firstname", "")),
-                last_name=validated_data.get("last_name", validated_data.get("lastname", "")),
+                first_name=validated_data.get("first_name", ""),
+                last_name=validated_data.get("last_name", ""),
                 domain_name=domain_name,
                 phone_number=provider_phone_number,
                 password=validated_data["password"],
