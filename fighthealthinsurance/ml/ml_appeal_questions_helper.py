@@ -72,6 +72,9 @@ class MLAppealQuestionsHelper:
             score_fn=MLAppealQuestionsHelper.make_score_fn(lambda x: 1),
             timeout=model_timeout,
         )
+        # Generic should not have answers
+        questions_without_answers = list(map(lambda xy: (xy[0], ""), questions))
+        questions = questions_without_answers
 
         # If we have questions, cache them for future use
         if questions:

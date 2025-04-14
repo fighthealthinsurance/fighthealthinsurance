@@ -631,71 +631,6 @@ class RemoteOpenLike(RemoteModel):
 
         return None
 
-    def _extract_and_append_citations(self, text: str) -> str:
-        """
-        Extract citations from Perplexity-style annotations and append them to the end of the result.
-
-        Perplexity often adds citations in special formats like:
-        "...text...[↗](https://example.com)...more text..."
-        or as footnotes at the end.
-
-        Args:
-            text: The text to process
-
-        Returns:
-            Text with citations properly extracted and appended
-        """
-        if not text:
-            return text
-
-        # Extract citations and text together
-        text, citations = self._extract_and_separate_citations(text)
-
-        # Append citations to the text
-        if citations:
-            clean_text = text.strip()
-            clean_text += "\n\nReferences:\n" + "\n".join(citations)
-            return clean_text
-
-        return text
-
-    def _extract_and_separate_citations(self, text: str) -> Tuple[str, List[str]]:
-        """
-        Extract citations from Perplexity-style annotations and return them separately.
-
-        Args:
-            text: The text to process
-
-        Returns:
-            Tuple containing (clean_text, list_of_citations)
-        """
-        if not text:
-            return text, []
-
-        # Pattern for Perplexity annotations like [↗](https://example.com)
-        perplexity_citations = re.findall(r"\[\↗\]\((https?://[^\)]+)\)", text)
-
-        # Pattern for numbered citations like [1]: https://example.com
-        numbered_citations = re.findall(r"\[(\d+)\]:\s*(https?://[^\s]+)", text)
-
-        # Remove the citation syntax from the main text while keeping the reference numbers
-        clean_text = re.sub(r"\[\↗\]\(https?://[^\)]+\)", "", text)
-
-        # Build a list of citations to return
-        citation_list = []
-
-        # Add Perplexity-style citations
-        for i, url in enumerate(perplexity_citations):
-            citation_list.append(f"[{i+1}]: {url}")
-
-        # Add any numbered citations that weren't already included
-        for num, url in numbered_citations:
-            # Check if this URL is already in our list
-            if not any(url in citation for citation in citation_list):
-                citation_list.append(f"[{num}]: {url}")
-
-        return clean_text, citation_list
-
     async def __timeout_infer(
         self,
         *args,
@@ -809,13 +744,6 @@ class RemoteOpenLike(RemoteModel):
                         response_message["sources"]
                     )
 
-                # Handle Perplexity pasted links format in text content
-                if r and citations == [] and "[↗]" in r:
-                    clean_text, extracted_citations = (
-                        self._extract_and_separate_citations(r)
-                    )
-                    r = clean_text
-                    citations = extracted_citations
             else:
                 # Simple string response
                 r = str(response_message)
@@ -855,21 +783,7 @@ class RemoteOpenLike(RemoteModel):
         formatted_citations: list[str] = []
 
         for citation in citations_data:
-            if isinstance(citation, dict):
-                # Handle citation objects with url/title/etc
-                if "url" in citation:
-                    if "title" in citation:
-                        formatted_citations.append(
-                            f"[{citation.get('title', '')}]({citation['url']})"
-                        )
-                    else:
-                        formatted_citations.append(citation["url"])
-                elif "text" in citation:
-                    formatted_citations.append(citation["text"])
-                elif "content" in citation:
-                    formatted_citations.append(citation["content"])
-            elif isinstance(citation, str):
-                formatted_citations.append(citation)
+            formatted_citations.append(str(citation))
 
         return formatted_citations
 
@@ -979,7 +893,7 @@ class RemoteFullOpenLike(RemoteOpenLike):
         denial_text_opt = (
             f"The denial text is: {denial_text}"
             if denial_text
-            else "No denial text provided, use other context clues."
+            else "No denial text provided, use other context clues as to the denial. Remember do not guess patient information UNKNOWN is an acceptable answer for unknown patient info."
         )
         # Procedure opt is in their multiple times intentionally. ~computers~
         prompt = f"""
