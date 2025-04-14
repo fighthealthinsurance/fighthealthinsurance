@@ -17,8 +17,8 @@ async def test_generic_question_generation_cache():
     # Mock data
     procedure = "knee replacement"
     diagnosis = "osteoarthritis"
-    mock_questions = [("Question 1?", "Answer 1"), ("Question 2?", "Answer 2")]
-    mock_questions_lst = [["Question 1?", "Answer 1"], ["Question 2?", "Answer 2"]]
+    mock_questions = [("Question 1?", ""), ("Question 2?", "")]
+    mock_questions_lst = [["Question 1?", ""], ["Question 2?", ""]]
 
     # Mock the ML model to avoid actual ML calls
     with mock.patch(
@@ -142,7 +142,7 @@ async def test_denial_uses_generic_cache_no_patient_data():
     )
 
     # Mock cached data
-    mock_questions = [("Question 1?", "Answer 1"), ("Question 2?", "Answer 2")]
+    mock_questions = [("Question 1?", ""), ("Question 2?", "")]
     mock_citations = ["Citation 1", "Citation 2", "Citation 3"]
 
     # Create cache entries
