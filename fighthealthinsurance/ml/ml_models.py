@@ -276,31 +276,29 @@ class RemoteOpenLike(RemoteModel):
         self.backup_api_base = backup_api_base
         self._expensive = expensive
 
-    def get_system_prompts(
-        self, prompt_type: str, prof_pov=False
-    ) -> list[str]:
+    def get_system_prompts(self, prompt_type: str, prof_pov=False) -> list[str]:
         """
         Get the appropriate system prompt based on type and audience.
 
         Args:
             prompt_type: The type of prompt to get (e.g., 'full', 'questions', etc.)
-            prof_pov: Generating the appeal from the patient (False) or professional (True) point of view 
+            prof_pov: Generating the appeal from the patient (False) or professional (True) point of view
 
         Returns:
             The system prompt as a string, or the first prompt if multiple are available
         """
         key = prompt_type
-        prompt = "Your are a helpful assistant with extensive medical knowledge who loves helping patients." 
+        prompt = "Your are a helpful assistant with extensive medical knowledge who loves helping patients."
         # If the prompt type is 'full' and the professional point of view is requested, use a different prompt.
-        if prof_pov or (prof_pov and f"{prompt_type}_not_patient" in self.system_prompts_map):
+        if prof_pov or (
+            prof_pov and f"{prompt_type}_not_patient" in self.system_prompts_map
+        ):
             key = f"{prompt_type}_not_patient"
-            prompt = "You are a medical expert writing on behalf of a patient. Write as the healthcare professional in first person (“I”)—advocating clearly, clinically, and persuasively for the patient’s medical needs. Emphasize medical necessity, clinical evidence, and patient benefit. Maintain a professional, authoritative tone and keep the focus on the appeal." 
+            prompt = "You are a medical expert writing on behalf of a patient. Write as the healthcare professional in first person (“I”)—advocating clearly, clinically, and persuasively for the patient’s medical needs. Emphasize medical necessity, clinical evidence, and patient benefit. Maintain a professional, authoritative tone and keep the focus on the appeal."
         logger.debug(f"GET SYS PROMPTS > {prompt}")
         return self.system_prompts_map.get(
             key,
-            [
-                prompt
-            ],
+            [prompt],
         )
 
     def bad_result(self, result: Optional[str], infer_type: str) -> bool:
