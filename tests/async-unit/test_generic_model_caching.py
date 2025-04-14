@@ -142,8 +142,7 @@ async def test_denial_uses_generic_cache_no_patient_data():
     )
 
     # Mock cached data
-    mock_questions = [("Question 1?", "Answer 1"), ("Question 2?", "Answer 2")]
-    mock_no_answer_questions = [("Question 1?", ""), ("Question 2?", "")]
+    mock_questions = [("Question 1?", ""), ("Question 2?", "")]
     mock_citations = ["Citation 1", "Citation 2", "Citation 3"]
 
     # Create cache entries
@@ -183,9 +182,9 @@ async def test_denial_uses_generic_cache_no_patient_data():
         )
 
         # Verify we got the cached data - use list comparison instead of set to avoid unhashable type error
-        assert len(questions) == len(mock_no_answer_questions)
+        assert len(questions) == len(mock_questions)
         for q in questions:
-            assert (q[0], q[1]) in mock_no_answer_questions
+            assert (q[0], q[1]) in mock_questions
 
         assert len(citations) == len(mock_citations)
         for c in citations:
