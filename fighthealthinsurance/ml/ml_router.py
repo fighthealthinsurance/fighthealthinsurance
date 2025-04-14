@@ -102,6 +102,7 @@ class MLRouter(object):
         # Add Llama Scout model if available
         if "meta-llama/Llama-4-Scout-17B-16E-Instruct" in self.models_by_name:
             return self.cheapest("meta-llama/Llama-4-Scout-17B-16E-Instruct")
+        return []
 
     def full_find_citation_backends(self, use_external=False) -> list[RemoteModelLike]:
         """

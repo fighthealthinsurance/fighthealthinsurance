@@ -73,7 +73,8 @@ class MLAppealQuestionsHelper:
             timeout=model_timeout,
         )
         # Generic should not have answers
-        questions_without_answers = list(map(lambda xy: (xy[0], ""), questions))
+        if questions:
+            questions_without_answers = list(map(lambda xy: (xy[0], ""), questions))
         questions = questions_without_answers
 
         # If we have questions, cache them for future use
