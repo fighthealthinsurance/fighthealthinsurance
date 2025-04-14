@@ -40,7 +40,7 @@ from fhi_users.models import (
 )
 from fighthealthinsurance.models import StripeRecoveryInfo
 from fhi_users.auth import rest_serializers as serializers
-from fighthealthinsurance import rest_serializers as common_serializers
+from api import serializers as common_serializers
 from fhi_users.auth import auth_utils
 from fhi_users.auth.auth_utils import (
     create_user,
@@ -51,7 +51,7 @@ from fhi_users.auth.auth_utils import (
     get_next_fake_username,
     validate_password,
 )
-from fighthealthinsurance.rest_mixins import CreateMixin, SerializerMixin
+from api.mixins import CreateMixin, SerializerMixin
 from rest_framework.serializers import Serializer
 from fighthealthinsurance import stripe_utils
 from fhi_users.emails import (

@@ -179,7 +179,7 @@ class PubmedApiTest(APITestCase):
 
         # Mock the REST view's dependency on pubmed_tools module
         with mock.patch(
-            "fighthealthinsurance.rest_views.pubmed_tools"
+            "api.views.pubmed_tools"
         ) as mock_pubmed_tools:
             # Create a coroutine that returns our test articles
             async def mock_find_pubmed_articles(*args, **kwargs):
