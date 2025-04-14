@@ -1636,12 +1636,12 @@ class AppealsBackendHelper:
         logger.debug("Looking up the pubmed context")
         pubmed_context_awaitable = asyncio.wait_for(
             cls.pmt.find_context_for_denial(denial),
-            timeout=20
+            timeout=35
         )
 
         ml_citation_context_awaitable = asyncio.wait_for(
             MLCitationsHelper.generate_citations_for_denial(denial, speculative=False),
-            timeout=20,
+            timeout=35,
         )
 
         # Await both contexts so we can use co-operative multitasking
