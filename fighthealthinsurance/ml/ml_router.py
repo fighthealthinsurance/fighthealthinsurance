@@ -84,12 +84,6 @@ class MLRouter(object):
         if not use_external:
             return []
 
-        # Add Perplexity models if available
-        if "sonar-reasoning" in self.models_by_name:
-            return self.cheapest("sonar-reasoning")
-        if "deepseek" in self.models_by_name:
-            return self.cheapest("deepseek")
-
         # Add Llama Scout model if available
         if "meta-llama/Llama-4-Scout-17B-16E-Instruct" in self.models_by_name:
             return self.cheapest("meta-llama/Llama-4-Scout-17B-16E-Instruct")
@@ -105,15 +99,9 @@ class MLRouter(object):
         Returns:
             List of RemoteModelLike models suitable for partial QA tasks
         """
-        # Add Perplexity model if available
-        if "sonar-reasoning" in self.models_by_name:
-            return self.cheapest("sonar-reasoning")
-        if "deepseek" in self.models_by_name:
-            return self.cheapest("deepseek")
-        if "sonar" in self.models_by_name:
-            return self.cheapest("sonar")
-
-        return []
+        # Add Llama Scout model if available
+        if "meta-llama/Llama-4-Scout-17B-16E-Instruct" in self.models_by_name:
+            return self.cheapest("meta-llama/Llama-4-Scout-17B-16E-Instruct")
 
     def full_find_citation_backends(self, use_external=False) -> list[RemoteModelLike]:
         """
