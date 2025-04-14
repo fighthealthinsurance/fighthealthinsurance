@@ -1167,7 +1167,7 @@ class DenialCreatorHelper:
         Intended for fire and forget usage.
         The results are stored on the denial object.
         """
-        logger.debug("Building specualtive context.")
+        logger.debug("Building speculative context.")
         denial = await Denial.objects.filter(denial_id=denial_id).aget()
         citations_awaitable = MLCitationsHelper.generate_citations_for_denial(
             denial, speculative=True
