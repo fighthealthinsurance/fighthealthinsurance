@@ -976,7 +976,7 @@ class DenialCreatorHelper:
                 MLAppealQuestionsHelper.generate_questions_for_denial(
                     denial, speculative=False
                 ),
-                timeout=30,
+                timeout=25,
             )
 
             # Store the generated questions in the denial object
