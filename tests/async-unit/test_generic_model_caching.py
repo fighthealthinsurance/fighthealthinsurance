@@ -17,8 +17,8 @@ async def test_generic_question_generation_cache():
     # Mock data
     procedure = "knee replacement"
     diagnosis = "osteoarthritis"
-    mock_questions = [("Question 1?", "Answer 1"), ("Question 2?", "Answer 2")]
-    mock_questions_lst = [["Question 1?", "Answer 1"], ["Question 2?", "Answer 2"]]
+    mock_questions = [("Question 1?", ""), ("Question 2?", "")]
+    mock_questions_lst = [["Question 1?", ""], ["Question 2?", ""]]
 
     # Mock the ML model to avoid actual ML calls
     with mock.patch(
