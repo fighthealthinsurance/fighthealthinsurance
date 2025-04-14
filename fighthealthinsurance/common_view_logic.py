@@ -976,7 +976,7 @@ class DenialCreatorHelper:
                 MLAppealQuestionsHelper.generate_questions_for_denial(
                     denial, speculative=False
                 ),
-                timeout=30,
+                timeout=20,
             )
 
             # Store the generated questions in the denial object
@@ -1167,6 +1167,7 @@ class DenialCreatorHelper:
         Intended for fire and forget usage.
         The results are stored on the denial object.
         """
+        logger.debug("Building speculative context.")
         denial = await Denial.objects.filter(denial_id=denial_id).aget()
         citations_awaitable = MLCitationsHelper.generate_citations_for_denial(
             denial, speculative=True
@@ -1221,7 +1222,13 @@ class DenialCreatorHelper:
                         )
 
                 # Fire and forget the PubMed search task
+                logger.debug("Starting pubmed search task.")
                 await fire_and_forget_in_new_threadpool(find_pubmed_articles())
+                # Fire and forget the building the speculative context
+                await fire_and_forget_in_new_threadpool(
+                    cls.build_speculative_context(denial_id)
+                )
+                logger.debug("Fire and forgets fired.")
 
         except Exception as e:
             logger.opt(exception=True).warning(
@@ -1619,7 +1626,9 @@ class AppealsBackendHelper:
             denial.plan_context = " ".join(set(plan_context))
         # Update the denial object with the received parameter if it differs
         if denial.professional_to_finish != professional_to_finish:
-            logger.info(f"Updating denial {denial.denial_id} professional_to_finish from {denial.professional_to_finish} to {professional_to_finish}")
+            logger.info(
+                f"Updating denial {denial.denial_id} professional_to_finish from {denial.professional_to_finish} to {professional_to_finish}"
+            )
             denial.professional_to_finish = professional_to_finish
         await denial.asave()
 
@@ -1630,12 +1639,12 @@ class AppealsBackendHelper:
         # Get PubMed context
         logger.debug("Looking up the pubmed context")
         pubmed_context_awaitable = asyncio.wait_for(
-            asyncio.shield(cls.pmt.find_context_for_denial(denial)), timeout=30
+            cls.pmt.find_context_for_denial(denial), timeout=35
         )
 
         ml_citation_context_awaitable = asyncio.wait_for(
             MLCitationsHelper.generate_citations_for_denial(denial, speculative=False),
-            timeout=30,
+            timeout=35,
         )
 
         # Await both contexts so we can use co-operative multitasking

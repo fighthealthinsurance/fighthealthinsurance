@@ -234,7 +234,7 @@ async def fire_and_forget_in_new_threadpool(task: Coroutine) -> None:
             )
         finally:
             loop.close()
-            logger.debug("Task {task} finished")
+            logger.debug(f"Task {task} finished")
 
     # Create and start a thread that will run the task in its own loop
     thread = threading.Thread(target=run_async_task)
