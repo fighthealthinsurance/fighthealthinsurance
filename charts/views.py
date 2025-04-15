@@ -12,6 +12,7 @@ from bokeh.embed import components
 from bokeh.models import ColumnDataSource
 import pandas as pd
 import csv
+from django.http import HttpResponse, StreamingHttpResponse
 
 
 class BaseEmailsWithRawEmailCSV(View):
@@ -93,6 +94,33 @@ class LastTwoWeeksEmailsCSV(BaseEmailsWithRawEmailCSV):
 
     def get_filename(self):
         return "emails_last_two_weeks.csv"
+
+
+@staff_member_required
+def de_identified_export(request):
+    # Exclude test emails
+    hashed_farts = Denial.get_hashed_email("farts@farts.com")
+    hashed_pcf = Denial.get_hashed_email("holden@pigscanfly.ca")
+    hashed_gmail = Denial.get_hashed_email("holden.karau@gmail.com")
+    exclude_emails = [hashed_farts, hashed_pcf, hashed_gmail]
+    safe_denials = Denial.objects.exclude(
+        Q(hashed_email__in=exclude_emails)
+        | Q(manual_deidentified_denial="")
+        | Q(manual_deidentified_denial__isnull=True)
+    ).values(
+        "denial_id",
+        "manual_deidentified_denial",
+        "manual_deidentified_ocr_cleaned_denial",
+        "manual_deidentified_appeal",
+        "manual_searchterm",
+        "verified_procedure",
+        "verified_diagnosis",
+        "ml_citation_context",
+        "generated_questions",
+        "procedure",
+        "diagnosis",
+    )
+    return StreamingHttpResponse(streaming_content=safe_denials)
 
 
 @staff_member_required
