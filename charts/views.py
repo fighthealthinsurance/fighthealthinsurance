@@ -13,6 +13,7 @@ from bokeh.models import ColumnDataSource
 import pandas as pd
 import csv
 from django.http import HttpResponse, StreamingHttpResponse
+import json
 
 
 class BaseEmailsWithRawEmailCSV(View):
