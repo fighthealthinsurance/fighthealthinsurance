@@ -24,13 +24,6 @@ class UserContactInfoAdmin(admin.ModelAdmin):
     list_filter = ("country", "state")
 
 
-@admin.register(ProfessionalDomainRelation)
-class ProfessionalDomainRelationAdmin(admin.ModelAdmin):
-    list_display = ("id", "professional", "domain", "active", "admin", "read_only")
-    search_fields = ("professional__user__username", "domain__name")
-    list_filter = ("active", "admin", "read_only", "pending", "suspended", "rejected")
-
-
 @admin.register(PatientDomainRelation)
 class PatientDomainRelationAdmin(admin.ModelAdmin):
     list_display = ("id", "patient", "domain")
