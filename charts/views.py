@@ -99,6 +99,7 @@ class LastTwoWeeksEmailsCSV(BaseEmailsWithRawEmailCSV):
 @staff_member_required
 def de_identified_export(request):
     # Exclude test emails
+    limit = request.GET.get("limit")
     hashed_farts = Denial.get_hashed_email("farts@farts.com")
     hashed_pcf = Denial.get_hashed_email("holden@pigscanfly.ca")
     hashed_gmail = Denial.get_hashed_email("holden.karau@gmail.com")
@@ -120,7 +121,19 @@ def de_identified_export(request):
         "procedure",
         "diagnosis",
     )
-    return StreamingHttpResponse(streaming_content=safe_denials)
+    if limit:
+        safe_denials = safe_denials[0:int(limit)]
+
+    def stream_json_lines(queryset):
+        for record in queryset.iterator():
+            yield json.dumps(record, default=str) + "\n"
+
+    return StreamingHttpResponse(
+        streaming_content=
+        stream_json_lines(safe_denials),
+        content_type="application/x-ndjson"
+    )
+
 
 
 @staff_member_required
