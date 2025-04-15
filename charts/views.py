@@ -12,6 +12,8 @@ from bokeh.embed import components
 from bokeh.models import ColumnDataSource
 import pandas as pd
 import csv
+from django.http import HttpResponse, StreamingHttpResponse
+import json
 
 
 class BaseEmailsWithRawEmailCSV(View):
@@ -93,6 +95,46 @@ class LastTwoWeeksEmailsCSV(BaseEmailsWithRawEmailCSV):
 
     def get_filename(self):
         return "emails_last_two_weeks.csv"
+
+
+@staff_member_required
+def de_identified_export(request):
+    # Exclude test emails
+    limit = request.GET.get("limit")
+    hashed_farts = Denial.get_hashed_email("farts@farts.com")
+    hashed_pcf = Denial.get_hashed_email("holden@pigscanfly.ca")
+    hashed_gmail = Denial.get_hashed_email("holden.karau@gmail.com")
+    exclude_emails = [hashed_farts, hashed_pcf, hashed_gmail]
+    safe_denials = Denial.objects.exclude(
+        Q(hashed_email__in=exclude_emails)
+        | Q(manual_deidentified_denial="")
+        | Q(manual_deidentified_denial__isnull=True)
+    ).values(
+        "denial_id",
+        "manual_deidentified_denial",
+        "manual_deidentified_ocr_cleaned_denial",
+        "manual_deidentified_appeal",
+        "manual_searchterm",
+        "verified_procedure",
+        "verified_diagnosis",
+        "ml_citation_context",
+        "generated_questions",
+        "procedure",
+        "diagnosis",
+    )
+    if limit:
+        safe_denials = safe_denials[0:int(limit)]
+
+    def stream_json_lines(queryset):
+        for record in queryset.iterator():
+            yield json.dumps(record, default=str) + "\n"
+
+    return StreamingHttpResponse(
+        streaming_content=
+        stream_json_lines(safe_denials),
+        content_type="application/x-ndjson"
+    )
+
 
 
 @staff_member_required
