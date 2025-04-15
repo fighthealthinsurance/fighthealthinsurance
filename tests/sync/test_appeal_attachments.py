@@ -87,7 +87,7 @@ class AppealAttachmentTests(TestCase):
                 domain__name=self.domain,
             )
         )
-        self.professional_user_domain_admin_relation.pending = False
+        self.professional_user_domain_admin_relation.pending_domain_relation = False
         self.professional_user_domain_admin_relation.save()
         # Setup the patients
         self._primary_patient_user = User.objects.get(

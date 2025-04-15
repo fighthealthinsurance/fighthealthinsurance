@@ -1,0 +1,38 @@
+{% extends './base_email.html' %}
+{% block content %}
+<p>
+Hello {{ provider_name }},
+</p>
+<p>
+{{ inviter_name }} has created an account for you on Fight Health Insurance / Fight Paperwork to help manage insurance denial appeals for {{ practice_name }}.
+</p>
+<p>
+Our platform helps healthcare providers successfully appeal insurance denials and reduce administrative burden. Studies show that when providers appeal denials, they have a high success rate of overturning the initial decision.
+</p>
+<p>
+You can access your account by resetting your password at:
+</p>
+<p>
+<a href="https://www.fightpaperwork.com/auth/reset-password" class="button">Reset Password</a>
+</p>
+<p>
+To reset your password, you'll need:
+</p>
+<ul>
+    <li>Email: {{ email }}</li>
+    <li>Practice name: {{ practice_name }}</li>
+    <li>Practice Phone: {{ practice_phone }}</li>
+</ul>
+<p>
+After setting your password, you can log in with your email and the practice information above.
+</p>
+<p>
+If you have any questions, please feel free to reach out to us at <a href="mailto:support42@fighthealthinsurance.com">support42@fighthealthinsurance.com</a>.
+</p>
+<p>
+Thank you,
+</p>
+<p>
+The Fight Paperwork team
+</p>
+{% endblock %}

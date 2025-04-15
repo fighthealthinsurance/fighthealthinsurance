@@ -16,6 +16,8 @@ from fhi_users.models import (
     PatientUser,
     VerificationToken,
     ResetToken,
+    ProfessionalUser,
+    ProfessionalDomainRelation,
 )
 
 
@@ -194,8 +196,8 @@ class RestAuthViewsTests(TestCase):
         new_user = User.objects.get(email="newuser1289@example.com")
         token = VerificationToken.objects.get(user=new_user)
         self.assertIsNotNone(token)
-        # Check that one message has been sent.
-        self.assertEqual(len(mail.outbox), 1)
+        # Check that two messages have been sent (one to BCC)
+        self.assertEqual(len(mail.outbox), 2)
         # Verify that the subject of the first message is correct.
         self.assertEqual(mail.outbox[0].subject, "Activate your account.")
 
@@ -380,7 +382,7 @@ class RestAuthViewsTests(TestCase):
         self.assertEqual(response.json()["status"], "reset_requested")
         self.assertTrue(ResetToken.objects.filter(user=self.user).exists())
 
-    def test_finish_password_reset(self) -> None:
+    def test_finish_password_reset_invalid(self) -> None:
         reset_token = ResetToken.objects.create(user=self.user, token=uuid.uuid4().hex)
         url = reverse("password_reset-finish-reset")
         data = {
@@ -388,10 +390,20 @@ class RestAuthViewsTests(TestCase):
             "new_password": "newtestpass",
         }
         response = self.client.post(url, data, format="json")
+        self.assertNotIn(response.status_code, range(200, 300))
+
+    def test_finish_password_reset_valid(self) -> None:
+        reset_token = ResetToken.objects.create(user=self.user, token=uuid.uuid4().hex)
+        url = reverse("password_reset-finish-reset")
+        data = {
+            "token": reset_token.token,
+            "new_password": "newtestpass111",
+        }
+        response = self.client.post(url, data, format="json")
         self.assertIn(response.status_code, range(200, 300))
         self.assertEqual(response.json()["status"], "password_reset_complete")
         self.user.refresh_from_db()
-        self.assertTrue(self.user.check_password("newtestpass"))
+        self.assertTrue(self.user.check_password("newtestpass111"))
 
     def test_finish_password_reset_with_invalid_token(self) -> None:
         url = reverse("password_reset-finish-reset")
@@ -457,6 +469,36 @@ class RestAuthViewsTests(TestCase):
         }
         response = self.client.post(url, data, format="json")
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_login_sends_verification_email_for_inactive_user(self) -> None:
+        """Test that attempting to login with an inactive user sends a verification email."""
+        # Set user to inactive
+        self.user.is_active = False
+        self.user.save()
+
+        # Get the current email outbox count
+        email_count_before = len(mail.outbox)
+
+        # Attempt to login with inactive user
+        url = reverse("rest_login-login")
+        data = {
+            "username": "testuser",
+            "password": self.user_password,
+            "domain": "testdomain",
+            "phone": "",
+        }
+        response = self.client.post(url, data, format="json")
+
+        # Verify response is unauthorized
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+        self.assertIn("User is inactive", response.json()["error"])
+
+        # Check that a verification email was sent (plus one for BCC)
+        self.assertEqual(len(mail.outbox), email_count_before + 2)
+
+        # Verify the email subject
+        self.assertEqual(mail.outbox[-2].subject, "Activate your account.")
+        self.assertIn(self.user.email, mail.outbox[-2].to)
 
     def test_verify_email_with_nonexistent_user(self) -> None:
         url = reverse("rest_verify_email-verify")
@@ -574,6 +616,151 @@ class RestAuthViewsTests(TestCase):
         self.assertEqual(data["domain_name"], self.domain.name)
         self.assertTrue(data["beta"])  # Check beta flag
 
+    def test_create_professional_user_with_short_password(self) -> None:
+        url = reverse("professional_user-list")
+        data = {
+            "user_signup_info": {
+                "username": "shortpass",
+                "password": "short",  # Too short password
+                "email": "shortpass@example.com",
+                "first_name": "Short",
+                "last_name": "Pass",
+                "domain_name": "newshortpass",
+                "visible_phone_number": "1234567893",
+                "continue_url": "http://example.com/continue",
+            },
+            "make_new_domain": True,
+            "user_domain": {
+                "name": "newshortpass",
+                "visible_phone_number": "1234567893",
+                "internal_phone_number": "0987654325",
+                "display_name": "Short Pass Domain",
+                "country": "USA",
+                "state": "CA",
+                "city": "Test City",
+                "address1": "123 Test St",
+                "zipcode": "12345",
+            },
+        }
+        response = self.client.post(url, data, format="json")
+        self.assertNotIn(response.status_code, range(200, 300))
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_create_duplicate_patient_user_view(self) -> None:
+        """Test that creating a patient user with an email that already exists fails correctly."""
+        url = reverse("patient_user-list")
+        # Create first patient user
+        data = {
+            "username": "duplicate_patient@example.com",
+            "password": "SecurePassword123",
+            "email": "duplicate_patient@example.com",
+            "provider_phone_number": "1234567890",
+            "country": "USA",
+            "state": "CA",
+            "city": "Test City",
+            "address1": "123 Test St",
+            "address2": "",
+            "zipcode": "12345",
+            "domain_name": "testdomain",
+        }
+        response = self.client.post(url, data, format="json")
+        self.assertIn(response.status_code, range(200, 300))
+        self.assertEqual(response.json()["status"], "pending")
+
+        # Verify user was created
+        self.assertTrue(
+            User.objects.filter(email="duplicate_patient@example.com").exists()
+        )
+
+        # Try to create a second user with the same email and username
+        data2 = dict(data)
+        data2["username"] = "duplicate_patient@example.com"
+
+        response2 = self.client.post(url, data2, format="json")
+
+        # Verify it fails with a 400 status code
+        self.assertEqual(response2.status_code, status.HTTP_400_BAD_REQUEST)
+
+        # Verify the error message is appropriate
+        error_data = response2.json()
+        self.assertIn("error", error_data)
+        self.assertEqual(error_data["error"], "A user with this email already exists")
+
+    def test_verification_email_throttling(self) -> None:
+        """Test that verification emails are not sent more than once within 10 minutes."""
+        # Create a user for testing
+        test_user = User.objects.create_user(
+            username=f"throttleuser🐼{self.domain.id}",
+            password="testpass123",
+            email="throttle@example.com",
+        )
+        test_user.is_active = False
+        test_user.save()
+
+        # Count emails before sending
+        email_count_before = len(mail.outbox)
+
+        # Send first verification email
+        from fhi_users.emails import send_verification_email
+
+        send_verification_email(self.client.request(), test_user)
+
+        # Check that email was sent
+        self.assertEqual(len(mail.outbox), email_count_before + 2)  # +2 for BCC
+
+        # Try to send another verification email immediately
+        send_verification_email(self.client.request(), test_user)
+
+        # Check that no additional email was sent (still just the first one)
+        self.assertEqual(len(mail.outbox), email_count_before + 2)
+
+        # Verify the token exists
+        token = VerificationToken.objects.get(user=test_user)
+        self.assertIsNotNone(token)
+
+        # Manually modify the token creation time to be 11 minutes ago
+        token.created_at = timezone.now() - timezone.timedelta(minutes=11)
+        token.save()
+
+        # Now try sending again
+        send_verification_email(self.client.request(), test_user)
+
+        # Check that a new email was sent
+        self.assertEqual(len(mail.outbox), email_count_before + 4)  # +2 more with BCC
+
+    def test_first_only_parameter_works(self) -> None:
+        """Test that first_only=True prevents sending any follow-up emails."""
+        # Create a user for testing
+        test_user = User.objects.create_user(
+            username=f"firstonlyuser🐼{self.domain.id}",
+            password="testpass123",
+            email="firstonly@example.com",
+        )
+        test_user.is_active = False
+        test_user.save()
+
+        # Count emails before sending
+        email_count_before = len(mail.outbox)
+
+        # Send first verification email with first_only=True
+        from fhi_users.emails import send_verification_email
+
+        send_verification_email(self.client.request(), test_user, first_only=True)
+
+        # Check that email was sent
+        self.assertEqual(len(mail.outbox), email_count_before + 2)  # +2 for BCC
+
+        # Manually modify the token creation time to be 11 minutes ago
+        token = VerificationToken.objects.get(user=test_user)
+        token.created_at = timezone.now() - timezone.timedelta(minutes=11)
+        token.save()
+
+        # Try to send another email with first_only=True
+        send_verification_email(self.client.request(), test_user, first_only=True)
+
+        # Check that no additional email was sent (still just the first one)
+        self.assertEqual(len(mail.outbox), email_count_before + 2)
+
 
 class TestE2EProfessionalUserSignupFlow(TestCase):
     def setUp(self):
@@ -635,8 +822,8 @@ class TestE2EProfessionalUserSignupFlow(TestCase):
             None, stripe_event["data"]["object"]
         )
 
-        # Now we expect it
-        self.assertEqual(len(mail.outbox), old_outbox + 1)
+        # Now we expect it + BCC
+        self.assertEqual(len(mail.outbox), old_outbox + 2)
         # User can not log in pre-verification
         self.assertFalse(
             self.client.login(username=new_user.username, password="temp12345")
@@ -693,3 +880,429 @@ class TestE2EProfessionalUserSignupFlow(TestCase):
         denial_id = denial_response["denial_id"]
 
         # Now we need to call the websocket...
+
+
+class ProfessionalInvitationTests(TestCase):
+    def setUp(self) -> None:
+        self.client = APIClient()
+        self.domain = UserDomain.objects.create(
+            name="testdomain",
+            visible_phone_number="1234567890",
+            internal_phone_number="0987654321",
+            active=True,
+            display_name="Test Domain",
+            country="USA",
+            state="CA",
+            city="Test City",
+            address1="123 Test St",
+            zipcode="12345",
+            beta=True,  # Set beta flag to True
+        )
+        self.admin_password = "adminpass123"
+        self.admin_user = User.objects.create_user(
+            username=f"adminuser🐼{self.domain.id}",
+            password=self.admin_password,
+            email="admin@example.com",
+            first_name="Admin",
+            last_name="User",
+        )
+        self.admin_user.is_active = True
+        self.admin_user.save()
+
+        # Create professional user for admin
+        self.admin_professional = ProfessionalUser.objects.create(
+            user=self.admin_user,
+            active=True,
+        )
+
+        # Create admin relationship with domain
+        ProfessionalDomainRelation.objects.create(
+            professional=self.admin_professional,
+            domain=self.domain,
+            active_domain_relation=True,
+            admin=True,
+            pending_domain_relation=False,
+        )
+
+        # Create non-admin user
+        self.regular_password = "regularpass123"
+        self.regular_user = User.objects.create_user(
+            username=f"regularuser🐼{self.domain.id}",
+            password=self.regular_password,
+            email="regular@example.com",
+            first_name="Regular",
+            last_name="User",
+        )
+        self.regular_user.is_active = True
+        self.regular_user.save()
+
+        self.regular_professional = ProfessionalUser.objects.create(
+            user=self.regular_user,
+            active=True,
+        )
+
+        # Create non-admin relationship with domain
+        self.regular_relation = ProfessionalDomainRelation.objects.create(
+            professional=self.regular_professional,
+            domain=self.domain,
+            active_domain_relation=True,
+            admin=False,
+            pending_domain_relation=False,
+        )
+
+        ExtraUserProperties.objects.create(user=self.admin_user, email_verified=True)
+        ExtraUserProperties.objects.create(user=self.regular_user, email_verified=True)
+
+    def test_invite_professional_as_admin(self):
+        # Login as admin user
+        url = reverse("rest_login-login")
+        data = {
+            "username": "adminuser",
+            "password": self.admin_password,
+            "domain": "testdomain",
+            "phone": "",
+        }
+        response = self.client.post(url, data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.json()["status"], "success")
+
+        # Send invitation
+        invite_url = reverse("professional_user-invite")
+        invite_data = {
+            "user_email": "newinvite@example.com",
+            "name": "New Professional",
+        }
+
+        # Check email count before invitation
+        mail_count_before = len(mail.outbox)
+
+        response = self.client.post(invite_url, invite_data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.json()["status"], "invitation_sent")
+
+        # Verify email was sent + BCC
+        self.assertEqual(len(mail.outbox), mail_count_before + 2)
+        self.assertEqual(mail.outbox[-2].subject, "Invitation to Join Practice")
+        self.assertIn("newinvite@example.com", mail.outbox[-2].to)
+
+        # Check email content
+        email_content = mail.outbox[-2].body
+        self.assertIn("testdomain", email_content)
+        self.assertIn("1234567890", email_content)  # Practice phone number
+        self.assertIn("Admin User", email_content)  # Inviter name
+
+    def test_invite_professional_as_non_admin(self):
+        # Login as regular user
+        url = reverse("rest_login-login")
+        data = {
+            "username": "regularuser",
+            "password": self.regular_password,
+            "domain": "testdomain",
+            "phone": "",
+        }
+        response = self.client.post(url, data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        # Try to send invitation
+        invite_url = reverse("professional_user-invite")
+        invite_data = {
+            "user_email": "newinvite@example.com",
+            "name": "New Professional",
+        }
+
+        response = self.client.post(invite_url, invite_data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(
+            response.json()["error"], "User does not have admin privileges"
+        )
+
+    def test_invite_professional_without_authentication(self):
+        # Try to send invitation without logging in
+        invite_url = reverse("professional_user-invite")
+        invite_data = {
+            "user_email": "newinvite@example.com",
+            "name": "New Professional",
+        }
+
+        response = self.client.post(invite_url, invite_data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_delete_professional_as_admin(self):
+        """Test that an admin can delete (mark as rejected) a professional in the domain"""
+        # Login as admin user
+        url = reverse("rest_login-login")
+        data = {
+            "username": "adminuser",
+            "password": self.admin_password,
+            "domain": "testdomain",
+            "phone": "",
+        }
+        response = self.client.post(url, data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.json()["status"], "success")
+
+        # Delete the regular professional
+        delete_url = reverse("professional_user-delete")
+        delete_data = {
+            "professional_user_id": self.regular_professional.id,
+            "domain_id": str(self.domain.id),
+        }
+        response = self.client.post(delete_url, delete_data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.json()["status"], "deleted")
+
+        # Verify relationship status has been updated
+        self.regular_relation.refresh_from_db()
+        self.assertFalse(self.regular_relation.pending_domain_relation)
+        self.assertFalse(self.regular_relation.active_domain_relation)
+        self.assertTrue(self.regular_relation.rejected)
+
+        # Check that listing active users no longer includes this professional
+        url = reverse("professional_user-list-active-in-domain")
+        response = self.client.post(url, format="json")
+        active_data = response.json()
+        professional_ids = [p["professional_user_id"] for p in active_data]
+        self.assertNotIn(self.regular_professional.id, professional_ids)
+
+    def test_delete_professional_as_non_admin(self):
+        """Test that a non-admin cannot delete a professional in the domain"""
+        # Login as regular user
+        url = reverse("rest_login-login")
+        data = {
+            "username": "regularuser",
+            "password": self.regular_password,
+            "domain": "testdomain",
+            "phone": "",
+        }
+        response = self.client.post(url, data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        # Try to delete another professional
+        delete_url = reverse("professional_user-delete")
+        delete_data = {
+            "professional_user_id": self.admin_professional.id,
+            "domain_id": str(self.domain.id),
+        }
+        response = self.client.post(delete_url, delete_data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(
+            response.json()["error"], "User does not have admin privileges"
+        )
+
+        # Verify admin's relationship status has NOT been updated
+        admin_relation = ProfessionalDomainRelation.objects.get(
+            professional=self.admin_professional, domain=self.domain
+        )
+        self.assertTrue(admin_relation.active_domain_relation)
+        self.assertFalse(admin_relation.rejected)
+
+    def test_delete_professional_without_authentication(self):
+        """Test that unauthenticated user cannot delete a professional in the domain"""
+        # Try to delete without logging in
+        delete_url = reverse("professional_user-delete")
+        delete_data = {
+            "professional_user_id": self.admin_professional.id,
+            "domain_id": str(self.domain.id),
+        }
+        response = self.client.post(delete_url, delete_data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+
+class CreateProfessionalInDomainTests(TestCase):
+    def setUp(self) -> None:
+        self.client = APIClient()
+        self.domain = UserDomain.objects.create(
+            name="testdomain",
+            visible_phone_number="1234567890",
+            internal_phone_number="0987654321",
+            active=True,
+            display_name="Test Domain",
+            country="USA",
+            state="CA",
+            city="Test City",
+            address1="123 Test St",
+            zipcode="12345",
+            beta=True,
+        )
+        self.admin_password = "adminpass123"
+        self.admin_user = User.objects.create_user(
+            username=f"adminuser🐼{self.domain.id}",
+            password=self.admin_password,
+            email="admin@example.com",
+            first_name="Admin",
+            last_name="User",
+        )
+        self.admin_user.is_active = True
+        self.admin_user.save()
+
+        # Create professional user for admin
+        self.admin_professional = ProfessionalUser.objects.create(
+            user=self.admin_user,
+            active=True,
+        )
+
+        # Create admin relationship with domain
+        ProfessionalDomainRelation.objects.create(
+            professional=self.admin_professional,
+            domain=self.domain,
+            active_domain_relation=True,
+            admin=True,
+            pending_domain_relation=False,
+        )
+
+        # Create non-admin user
+        self.regular_password = "regularpass123"
+        self.regular_user = User.objects.create_user(
+            username=f"regularuser🐼{self.domain.id}",
+            password=self.regular_password,
+            email="regular@example.com",
+            first_name="Regular",
+            last_name="User",
+        )
+        self.regular_user.is_active = True
+        self.regular_user.save()
+
+        self.regular_professional = ProfessionalUser.objects.create(
+            user=self.regular_user,
+            active=True,
+        )
+
+        # Create non-admin relationship with domain
+        ProfessionalDomainRelation.objects.create(
+            professional=self.regular_professional,
+            domain=self.domain,
+            active_domain_relation=True,
+            admin=False,
+            pending_domain_relation=False,
+        )
+
+        ExtraUserProperties.objects.create(user=self.admin_user, email_verified=True)
+        ExtraUserProperties.objects.create(user=self.regular_user, email_verified=True)
+
+    def test_create_pro_as_admin(self):
+        # Login as admin user
+        url = reverse("rest_login-login")
+        data = {
+            "username": "adminuser",
+            "password": self.admin_password,
+            "domain": "testdomain",
+            "phone": "",
+        }
+        response = self.client.post(url, data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.json()["status"], "success")
+
+        # Create provider
+        create_url = reverse("professional_user-create-professional-in-current-domain")
+        provider_data = {
+            "email": "newprovider@example.com",
+            "first_name": "New",
+            "last_name": "Provider",
+            "npi_number": "1234567890",
+            "provider_type": "Physician",
+        }
+
+        # Check email count before creation
+        mail_count_before = len(mail.outbox)
+
+        response = self.client.post(create_url, provider_data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.json()["status"], "professional_created")
+
+        # Check that user was created
+        new_user = User.objects.get(email="newprovider@example.com")
+        self.assertEqual(new_user.first_name, "New")
+        self.assertEqual(new_user.last_name, "Provider")
+        # User object should not be active so they can not log in yet
+        self.assertFalse(new_user.is_active)
+
+        # Check that professional user was created
+        professional = ProfessionalUser.objects.get(user=new_user)
+        self.assertEqual(professional.npi_number, "1234567890")
+        self.assertEqual(professional.provider_type, "Physician")
+        # Professional user should be active
+        self.assertTrue(professional.active)
+
+        # Check that relationship was created
+        relation = ProfessionalDomainRelation.objects.get(
+            professional=professional, domain=self.domain
+        )
+        self.assertTrue(relation.active_domain_relation)
+        self.assertFalse(relation.pending_domain_relation)
+        self.assertFalse(relation.admin)
+
+        # Verify the newly created provider appears in the listing of active providers
+        list_url = reverse("professional_user-list-active-in-domain")
+        response = self.client.post(list_url, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        providers_data = response.json()
+        self.assertTrue(isinstance(providers_data, list))
+
+        # Find the newly created provider in the list
+        new_provider_in_list = False
+        for provider in providers_data:
+            if "New" in provider.get("name") and "Provider" in provider.get("name"):
+                new_provider_in_list = True
+        self.assertTrue(
+            new_provider_in_list, f"Should find new provider in list: {providers_data}"
+        )
+
+
+class UserDomainExistsTests(TestCase):
+    def setUp(self) -> None:
+        self.client = APIClient()
+        self.domain = UserDomain.objects.create(
+            name="testdomain",
+            visible_phone_number="1234567890",
+            internal_phone_number="0987654321",
+            active=True,
+            display_name="Test Domain",
+            country="USA",
+            state="CA",
+            city="Test City",
+            address1="123 Test St",
+            zipcode="12345",
+        )
+
+    def test_domain_exists_by_name(self) -> None:
+        url = reverse("domain_exists-check")
+        data = {
+            "domain_name": "testdomain",
+        }
+        response = self.client.post(url, data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.json()["exists"])
+
+    def test_domain_exists_by_phone(self) -> None:
+        url = reverse("domain_exists-check")
+        data = {
+            "phone_number": "1234567890",
+        }
+        response = self.client.post(url, data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.json()["exists"])
+
+    def test_domain_does_not_exist(self) -> None:
+        url = reverse("domain_exists-check")
+        data = {
+            "domain_name": "nonexistentdomain",
+        }
+        response = self.client.post(url, data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(response.json()["exists"])
+
+    def test_domain_does_not_exist_by_phone(self) -> None:
+        url = reverse("domain_exists-check")
+        data = {
+            "phone_number": "9999999999",
+        }
+        response = self.client.post(url, data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(response.json()["exists"])
+
+    def test_missing_both_parameters(self) -> None:
+        url = reverse("domain_exists-check")
+        data = {}
+        response = self.client.post(url, data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)

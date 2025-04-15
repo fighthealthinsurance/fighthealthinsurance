@@ -129,55 +129,8 @@ def safe_redirect(request, url):
         return HttpResponseRedirect(url)
 
 
-class ProVersionView(generic.FormView):
-    template_name = "professional.html"
-    form_class = core_forms.InterestedProfessionalForm
-    sender = followup_emails.ThankyouEmailSender()
-
-    def form_valid(self, form):
-        interested_professional = form.save()
-        try:
-            self.sender.dosend(interested_pro=interested_professional)
-        except Exception as e:
-            logger.opt(exception=True).error("Failed to send thank you email")
-
-        if not (
-            "clicked_for_paid" in form.cleaned_data
-            and form.cleaned_data["clicked_for_paid"]
-        ):
-            return render(self.request, "professional_thankyou.html")
-
-        (_, price_id) = get_or_create_price(
-            "Professional Pre-Signup", 1000, recurring=False
-        )
-
-        line_items = [
-            {
-                "price": price_id,
-                "quantity": 1,
-            }
-        ]
-        checkout = stripe.checkout.Session.create(
-            line_items=line_items,  # type: ignore
-            mode="payment",
-            success_url=self.request.build_absolute_uri(
-                reverse("pro_version_thankyou")
-            ),
-            cancel_url=self.request.build_absolute_uri(reverse("pro_version_thankyou")),
-            customer_email=form.cleaned_data["email"],
-            allow_promotion_codes=True,
-            metadata={
-                "payment_type": "interested_professional_signup",
-                "interested_professional_id": interested_professional.id,
-                "items": json.dumps(line_items),
-            },
-        )
-
-        checkout_url = checkout.url
-        if checkout_url is None:
-            raise Exception("Could not create checkout url")
-        else:
-            return safe_redirect(self.request, checkout_url)
+class ProVersionView(generic.RedirectView):
+    url = "https://www.fightpaperwork.com"
 
 
 class IndexView(generic.TemplateView):
@@ -204,6 +157,13 @@ class PrivacyPolicyView(generic.TemplateView):
 
     def get_context_data(self, **kwargs):
         return {"title": "Privacy Policy"}
+
+
+class MHMDAView(generic.TemplateView):
+    template_name = "mhmda.html"
+
+    def get_context_data(self, **kwargs):
+        return {"title": "Consumer Health Data Privacy Notice"}
 
 
 class TermsOfServiceView(generic.TemplateView):

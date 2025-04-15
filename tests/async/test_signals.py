@@ -28,38 +28,38 @@ class ProfessionalDomainRelationSignalTests(TestCase):
         relation = ProfessionalDomainRelation.objects.create(
             professional=self.professional_user,
             domain=self.domain,
-            pending=True,
+            pending_domain_relation=True,
             suspended=False,
             rejected=False,
         )
-        self.assertFalse(relation.active)
+        self.assertFalse(relation.active_domain_relation)
 
     def test_active_field_when_suspended(self) -> None:
         relation = ProfessionalDomainRelation.objects.create(
             professional=self.professional_user,
             domain=self.domain,
-            pending=False,
+            pending_domain_relation=False,
             suspended=True,
             rejected=False,
         )
-        self.assertFalse(relation.active)
+        self.assertFalse(relation.active_domain_relation)
 
     def test_active_field_when_rejected(self) -> None:
         relation = ProfessionalDomainRelation.objects.create(
             professional=self.professional_user,
             domain=self.domain,
-            pending=False,
+            pending_domain_relation=False,
             suspended=False,
             rejected=True,
         )
-        self.assertFalse(relation.active)
+        self.assertFalse(relation.active_domain_relation)
 
     def test_active_field_when_not_pending_suspended_or_rejected(self) -> None:
         relation = ProfessionalDomainRelation.objects.create(
             professional=self.professional_user,
             domain=self.domain,
-            pending=False,
+            pending_domain_relation=False,
             suspended=False,
             rejected=False,
         )
-        self.assertTrue(relation.active)
+        self.assertTrue(relation.active_domain_relation)

@@ -4,6 +4,8 @@
 
 import uuid
 
+import re
+
 from fhi_users.models import UserDomain
 from django.contrib.auth import get_user_model
 
@@ -20,8 +22,31 @@ else:
     User = get_user_model()
 
 
-def validate_password(password: str) -> bool:
-    return len(password) >= 8 and not password.isdigit()
+def get_domain_id_from_request(request):
+    """
+    Helper function to get the domain id from the session.
+    """
+    session = request.session
+    if hasattr(session, "get"):
+        try:
+            return session.get("domain_id")
+        except Exception:
+            pass
+    if hasattr(session, "user"):
+        current_user: User = request.user  # type: ignore
+        domain_id = current_user.username.split("🐼")[-1]
+        request.session["domain_id"] = domain_id
+        return domain_id
+    raise Exception("Could not find domain id in request session or user")
+
+
+def normalize_phone_number(phone_number: Optional[str]) -> Optional[str]:
+    """Normalize a phone number to a standard format."""
+    # Remove all non-digit characters
+    if phone_number is None:
+        return None
+    lowered = phone_number.lower()
+    return re.sub(r"[^0-9x]", "", lowered)
 
 
 def get_next_fake_username() -> str:
@@ -30,6 +55,19 @@ def get_next_fake_username() -> str:
 
 def validate_username(username: str) -> bool:
     return "🐼" not in username
+
+
+def validate_password(password: str) -> bool:
+    # Check if password is at least 8 characters long
+    if len(password) < 8:
+        return False
+    # Check if password contains at least one digit
+    if not any(char.isdigit() for char in password):
+        return False
+    # Check if password is not entirely composed of digits
+    if password.isdigit():
+        return False
+    return True
 
 
 def is_valid_domain(domain_name: str) -> bool:
@@ -53,8 +91,8 @@ def user_is_admin_in_domain(
             professional__user=user,
             domain_id=domain_id,
             admin=True,
-            pending=False,
-            active=True,
+            pending_domain_relation=False,
+            active_domain_relation=True,
         ).count()
         > 0
     )
@@ -66,6 +104,7 @@ def resolve_domain_id(
     domain_name: Optional[str] = None,
     phone_number: Optional[str] = None,
 ) -> str:
+    phone_number = normalize_phone_number(phone_number)
     if domain:
         return domain.id
     if domain_id:
@@ -145,6 +184,7 @@ def create_user(
     password: str,
     first_name: str,
     last_name: str,
+    domain_id: Optional[str] = None,
 ) -> User:
     """Create a new user with the given email and password.
 
@@ -158,32 +198,50 @@ def create_user(
         The newly created User object -- the user is set to active false until they verify their email.
     """
 
-    username = combine_domain_and_username(
-        raw_username, domain_name=domain_name, phone_number=phone_number
-    )
-    if not validate_password(password):
-        raise Exception(
-            "Password is not valid: must be at least 8 characters and cannot be entirely numeric"
-        )
     try:
-        user = User.objects.get(
-            username=username,
-            email=email,
-            password=None,
-            is_active=False,
+        username = combine_domain_and_username(
+            raw_username,
+            domain_name=domain_name,
+            phone_number=phone_number,
+            domain_id=domain_id,
         )
-        user.password = password
-        user.first_name = first_name
-        user.last_name = last_name
-        user.save()
+
+        if not validate_password(password):
+            logger.opt(exception=True).error(
+                f"Invalid password format during user creation for email: {email}"
+            )
+            raise Exception(
+                "Password is not valid: must be at least 8 characters and cannot be entirely numeric"
+            )
+
+        try:
+            # Was the user created by a domain admin but without a password?
+            user = User.objects.get(
+                username=username,
+                email=email,
+                password=None,
+            )
+            user.password = password
+            user.first_name = first_name
+            user.last_name = last_name
+            user.save()
+            logger.info(
+                f"Updated existing pending user with username: {username}, email: {email}"
+            )
+            return user
+        except User.DoesNotExist:
+            user = User.objects.create_user(
+                username=username,
+                email=email,
+                password=password,
+                first_name=first_name,
+                last_name=last_name,
+                is_active=False,
+            )
+            logger.info(f"Created new user with username: {username}, email: {email}")
         return user
-    except User.DoesNotExist:
-        user = User.objects.create_user(
-            username=username,
-            email=email,
-            password=password,
-            first_name=first_name,
-            last_name=last_name,
-            is_active=False,
+    except Exception as e:
+        logger.opt(exception=True).error(
+            f"Failed to create user {email} in domain {domain_name}: {str(e)}"
         )
-    return user
+        raise

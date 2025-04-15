@@ -50,11 +50,13 @@ def test_non_professional_abandoned_cart():
         mock_create.return_value.url = "https://checkout.stripe.com/test"
 
         # Call the CompletePaymentView with GET parameters
-        query_params = urlencode({
-            "session_id": session_id,
-            "continue_url": "https://example.com/success",
-            "cancel_url": "https://example.com/cancel",
-        })
+        query_params = urlencode(
+            {
+                "session_id": session_id,
+                "continue_url": "https://example.com/success",
+                "cancel_url": "https://example.com/cancel",
+            }
+        )
         response = client.get(f"{reverse('complete_payment')}?{query_params}")
 
         assert response.status_code == 200

@@ -151,7 +151,7 @@ class AppealFileViewTest(TestCase):
         self.professional_user_domain_relation = ProfessionalDomainRelation.objects.get(
             professional=self.professional_user, domain__name=self.domain
         )
-        self.professional_user_domain_relation.pending = False
+        self.professional_user_domain_relation.pending_domain_relation = False
         self.professional_user_domain_relation.save()
 
         # Activate the domain admin
@@ -171,7 +171,7 @@ class AppealFileViewTest(TestCase):
                 domain__name=self.domain,
             )
         )
-        self.professional_user_domain_admin_relation.pending = False
+        self.professional_user_domain_admin_relation.pending_domain_relation = False
         self.professional_user_domain_admin_relation.save()
 
         # Activate the unrelated professional user
@@ -188,7 +188,7 @@ class AppealFileViewTest(TestCase):
         self.professional_user_unrelated = ProfessionalDomainRelation.objects.get(
             professional=self.professional_user_unrelated, domain__name=self.domain
         )
-        self.professional_user_domain_relation.pending = False
+        self.professional_user_domain_relation.pending_domain_relation = False
         self.professional_user_domain_relation.save()
 
         # Setup the patients

@@ -5,7 +5,7 @@ import re
 import time
 import traceback
 from concurrent.futures import Future
-from typing import Any, Iterator, List, Optional, Tuple
+from typing import Any, Coroutine, Iterator, List, Optional, Tuple
 from loguru import logger
 
 from fighthealthinsurance.denial_base import DenialBase
@@ -13,7 +13,7 @@ from fighthealthinsurance.exec import *
 from fighthealthinsurance.ml.ml_models import RemoteFullOpenLike, RemoteModelLike
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.process_denial import *
-from fighthealthinsurance.utils import as_available_nested
+from fighthealthinsurance.utils import as_available_nested, best_within_timelimit
 from typing_extensions import reveal_type
 from .pubmed_tools import PubMedTools
 
@@ -44,165 +44,6 @@ class AppealTemplateGenerator(object):
 class AppealGenerator(object):
     def __init__(self):
         self.regex_denial_processor = ProcessDenialRegex()
-
-    async def get_appeal_questions(
-        self,
-        denial_text: str,
-        procedure: Optional[str],
-        diagnosis: Optional[str],
-        patient_context: Optional[str] = None,
-        plan_context: Optional[str] = None,
-        use_external: bool = False,
-    ) -> List[Tuple[str, str]]:
-        """
-        Generate a list of questions that could help craft a better appeal.
-        If answers are included in the format "Question? Answer", they will be parsed
-        and returned as tuples (question, answer).
-
-        Args:
-            denial_text: The text of the denial letter
-            patient_context: Optional patient health history or context
-            plan_context: Optional insurance plan context
-            use_external: Whether to use external models
-
-        Returns:
-            A list of tuples (question, answer) where answer may be empty if not provided
-        """
-        models_to_try = ml_router.entity_extract_backends(use_external)
-        for model in models_to_try:
-            # First try with patient context if available
-            if patient_context is not None and len(patient_context.strip()) > 0:
-                try:
-                    raw_questions = await model.get_appeal_questions(
-                        denial_text=denial_text,
-                        procedure=procedure,
-                        diagnosis=diagnosis,
-                        patient_context=patient_context,
-                        plan_context=plan_context,
-                    )
-                    if raw_questions and len(raw_questions) > 0:
-                        # Parse questions into (question, answer) tuples if they aren't already
-                        if isinstance(raw_questions[0], str):
-                            return self._parse_questions_with_answers(raw_questions)
-                        return raw_questions
-                except Exception as e:
-                    logger.opt(exception=True).warning(
-                        f"Failed to generate questions with patient context: {e}"
-                    )
-
-            # Then try without patient context
-            try:
-                raw_questions = await model.get_appeal_questions(
-                    denial_text=denial_text,
-                    procedure=procedure,
-                    diagnosis=diagnosis,
-                    plan_context=plan_context,
-                )
-                if raw_questions and len(raw_questions) > 0:
-                    # Parse questions into (question, answer) tuples if they aren't already
-                    if isinstance(raw_questions[0], str):
-                        return self._parse_questions_with_answers(raw_questions)
-                    return raw_questions
-            except Exception as e:
-                logger.opt(exception=True).warning(f"Failed to generate questions: {e}")
-        # If we got here, no models worked, return empty list
-        return []
-
-    def _parse_questions_with_answers(
-        self, questions: List[str]
-    ) -> List[Tuple[str, str]]:
-        """
-        Parse a list of string questions, some of which may contain answers,
-        into a list of (question, answer) tuples.
-
-        Args:
-            questions: A list of questions, possibly with answers after "?"
-
-        Returns:
-            A list of (question, answer) tuples
-        """
-        result = []
-
-        # Handle empty input gracefully
-        if not questions:
-            logger.warning("Received empty question list")
-            return []
-
-        # First check if we received a single string with multiple lines
-        if len(questions) == 1 and "\n" in questions[0]:
-            # Split the single string into separate lines
-            questions = [
-                line.strip() for line in questions[0].split("\n") if line.strip()
-            ]
-
-        for question in questions:
-            # Skip empty lines
-            if not question.strip():
-                continue
-
-            # Remove numbering and bullet points at the beginning of the line
-            # This handles formats like "1. ", "1) ", "• ", "- ", "* ", etc.
-            question = re.sub(r"^\s*(?:\d+[.)\-]|\*|\•|\-)\s+", "", question.strip())
-
-            # Handle markdown-style bold formatting like "**Question?** Answer"
-            question = re.sub(r"\*\*([^*]+)\*\*", r"\1", question)
-
-            # Try to find multiple question-answer pairs in a single line
-            # This pattern looks for "Question1? Answer1. Question2? Answer2." etc.
-            multiple_qa_pattern = r"([^.!?]+\?)\s*([^.!?]*(?:\.|$))"
-            multiple_qa_matches = re.findall(multiple_qa_pattern, question)
-
-            if len(multiple_qa_matches) > 1:
-                # We found multiple question-answer pairs in one line
-                for q, a in multiple_qa_matches:
-                    question_text = q.strip()
-                    answer_text = a.strip().rstrip(
-                        "."
-                    )  # Remove trailing period if present
-                    # Handle common prefixes in answers
-                    answer_text = re.sub(r"^[A:][\s:]*", "", answer_text)
-                    result.append((question_text, answer_text))
-            else:
-                # Process as a single question-answer pair
-                question_mark_pos = question.find("?")
-                if question_mark_pos >= 0:
-                    # We found a question mark, now separate question from answer
-                    question_text = question[: question_mark_pos + 1].strip()
-
-                    # Process the answer part (everything after the question mark)
-                    if len(question) > question_mark_pos + 1:
-                        # Handle common prefixes in answers like "A: ", ": ", " - "
-                        answer_text = question[question_mark_pos + 1 :].strip()
-                        answer_text = re.sub(r"^[A:][\s:]*", "", answer_text)
-                        result.append((question_text, answer_text))
-                    else:
-                        # No answer provided
-                        result.append((question_text, ""))
-                else:
-                    # No question mark found, treat the whole string as a question if it looks like one
-                    if re.search(r"^\s*\w.*\w+", question):
-                        # Ensure it ends with a question mark
-                        if not question.endswith("?"):
-                            question += "?"
-                        result.append((question, ""))
-
-        # If we have a LLM output that's just text with no clear questions, try to extract them
-        if not result and questions and len(" ".join(questions)) > 100:
-            try:
-                # Try more aggressive parsing with a broader pattern
-                combined_text = " ".join(questions)
-                potential_questions = re.findall(
-                    r"([^.!?]+\?)\s*([^?]*?)(?=\s*(?:\d+\.|\*|\-|\•)?\s*[A-Z]|\Z)",
-                    combined_text,
-                )
-                for q, a in potential_questions:
-                    result.append((q.strip(), a.strip()))
-            except Exception as e:
-                logger.warning(
-                    f"Error while trying to extract questions with regex: {e}"
-                )
-
-        return result
 
     async def _extract_entity_with_regexes_and_model(
         self,
@@ -282,14 +123,42 @@ class AppealGenerator(object):
         if denial_text is None:
             return None
 
+        # Short-circuit if there's no mention of fax or facsimile in the text
+        if "fax" not in denial_text.lower() and "facsimile" not in denial_text.lower():
+            logger.debug("No mention of fax or facsimile in text, skipping extraction")
+            return None
+
         # Common fax number regex patterns
         fax_patterns = [
             r"[Ff]ax(?:\s*(?:number|#|:))?\s*[:=]?\s*(\d{3}[-.\s]?\d{3}[-.\s]?\d{4})",
             r"[Ff]ax(?:\s*(?:to|at))?\s*[:=]?\s*(\d{3}[-.\s]?\d{3}[-.\s]?\d{4})",
             r"[Aa]ppeal.*?[Ff]ax.*?(\d{3}[-.\s]?\d{3}[-.\s]?\d{4})",
             r"[Ff]ax.*?[Aa]ppeal.*?(\d{3}[-.\s]?\d{3}[-.\s]?\d{4})",
+            r"[Tt]o\s+[Ff]ax\s+(?:at|to)?\s*(\d{3}[-.\s]?\d{3}[-.\s]?\d{4})",
+            r"[Ss]end\s+(?:an?\s+)?(?:appeal|request).*?(?:to|at)?\s*(?:[Ff]ax|#)?\s*[:]?\s*(\d{3}[-.\s]?\d{3}[-.\s]?\d{4})",
+            r"[Ff]ax.*?(?:to|at)?\s*(?:number|#)?\s*[:]?\s*[\(\[\{]?(\d{3})[\)\]\}]?[-.\s]?(\d{3})[-.\s]?(\d{4})",
+            r"[Ff]ax\s*(?:number|#)?\s*(?:is|:|=)?\s*[\(\[\{]?(\d{3})[\)\]\}]?[-.\s]?(\d{3})[-.\s]?(\d{4})",
+            r"(?:by|via)\s+[Ff]ax\s+(?:at|to)?\s*(?:number|#)?\s*[:]?\s*(\d{3}[-.\s]?\d{3}[-.\s]?\d{4})",
+            r"[Ff]ax\s*[\(\[\{]?(\d{3})[\)\]\}]?[-.\s]?(\d{3})[-.\s]?(\d{4})",
+            r"[Ff]acsimile(?:\s*(?:number|#|:))?\s*[:=]?\s*(\d{3}[-.\s]?\d{3}[-.\s]?\d{4})",
+            r"[Ff]acsimile(?:\s*(?:to|at))?\s*[:=]?\s*(\d{3}[-.\s]?\d{3}[-.\s]?\d{4})",
         ]
 
+        # First try with exact regex matches
+        for pattern in fax_patterns:
+            match = re.search(pattern, denial_text, re.IGNORECASE | re.DOTALL)
+            if match:
+                groups = match.groups()
+                if len(groups) == 1:
+                    # Standard pattern with one capture group
+                    return self._normalize_fax_number(groups[0])
+                elif len(groups) == 3:
+                    # Pattern with separate area code, prefix, line number groups
+                    return self._normalize_fax_number(
+                        f"{groups[0]}{groups[1]}{groups[2]}"
+                    )
+
+        # More flexible matching approach
         return await self._extract_entity_with_regexes_and_model(
             denial_text=denial_text,
             patterns=fax_patterns,
@@ -298,6 +167,24 @@ class AppealGenerator(object):
             model_method_name="get_fax_number",
             find_in_denial=False,  # Since we might have -s or other formatting
         )
+
+    def _normalize_fax_number(self, fax_number: str) -> str:
+        """
+        Normalize a fax number by removing non-digit characters and formatting consistently.
+
+        Args:
+            fax_number: Raw fax number string
+
+        Returns:
+            Normalized fax number in format: XXX-XXX-XXXX
+        """
+        # Extract all digits from the string
+        digits = re.sub(r"\D", "", fax_number)
+
+        # If we have at least 10 digits, format as XXX-XXX-XXXX
+        if len(digits) >= 10:
+            return f"{digits[-10:-7]}-{digits[-7:-4]}-{digits[-4:]}"
+        return fax_number
 
     async def get_insurance_company(
         self, denial_text=None, use_external=False
@@ -546,6 +433,7 @@ class AppealGenerator(object):
         medical_reasons=None,
         non_ai_appeals=None,
         pubmed_context=None,
+        ml_citations_context=None,
     ) -> Iterator[str]:
         logger.debug("Starting to make appeals...")
         if medical_reasons is None:
@@ -563,10 +451,6 @@ class AppealGenerator(object):
             diagnosis=denial.diagnosis,
         )
 
-        for_patient = (
-            denial.primary_professional is None or not denial.professional_to_finish
-        )
-
         # TODO: use the streaming and cancellable APIs (maybe some fancy JS on the client side?)
 
         # For any model that we have a prompt for try to call it and return futures
@@ -577,6 +461,8 @@ class AppealGenerator(object):
             plan_context: Optional[str],
             infer_type: str,
             pubmed_context: Optional[str] = None,
+            ml_citations_context: Optional[List[str]] = None,
+            prof_pov: bool = False,
         ) -> List[Future[Tuple[str, Optional[str]]]]:
             logger.debug(f"Looking up on {model_name}")
             if model_name not in ml_router.models_by_name:
@@ -596,9 +482,10 @@ class AppealGenerator(object):
                         plan_context=plan_context,
                         infer_type=infer_type,
                         pubmed_context=pubmed_context,
-                        for_patient=for_patient,
+                        ml_citations_context=ml_citations_context,
+                        prof_pov=prof_pov,
                     )
-                    logger.debug("Got back {result} for {model_name} on {model}")
+                    logger.debug(f"Got back {result} for {model_name} on {model}")
                     return result
                 except Exception as e:
                     logger.debug(f"Backend {model} failed {e}")
@@ -612,7 +499,8 @@ class AppealGenerator(object):
             plan_context: Optional[str],
             infer_type: str,
             pubmed_context: Optional[str],
-            for_patient: bool,
+            ml_citations_context: Optional[List[str]],
+            prof_pov: bool = False,
         ) -> List[Future[Tuple[str, Optional[str]]]]:
             # If the model has parallelism use it
             results = None
@@ -621,11 +509,12 @@ class AppealGenerator(object):
                     logger.debug(f"Using {model}'s parallel inference")
                     results = model.parallel_infer(
                         prompt=prompt,
+                        infer_type=infer_type,
                         patient_context=patient_context,
                         plan_context=plan_context,
                         pubmed_context=pubmed_context,
-                        infer_type=infer_type,
-                        for_patient=for_patient,
+                        ml_citations_context=ml_citations_context,
+                        prof_pov=prof_pov,
                     )
                 else:
                     logger.debug(f"Using system level parallel inference for {model}")
@@ -637,7 +526,8 @@ class AppealGenerator(object):
                             plan_context=plan_context,
                             infer_type=infer_type,
                             pubmed_context=pubmed_context,
-                            for_patient=for_patient,
+                            ml_citations_context=ml_citations_context,
+                            prof_pov=prof_pov,
                         )
                     ]
             except Exception as e:
@@ -652,7 +542,8 @@ class AppealGenerator(object):
                         plan_context=plan_context,
                         infer_type=infer_type,
                         pubmed_context=pubmed_context,
-                        for_patient=for_patient,
+                        ml_citations_context=ml_citations_context,
+                        prof_pov=prof_pov,
                     )
                 ]
             logger.debug(
@@ -671,6 +562,7 @@ class AppealGenerator(object):
                 medical_context += denial.qa_context
         if denial.health_history is not None:
             medical_context += denial.health_history
+        prof_pov = denial.professional_to_finish
         plan_context = denial.plan_context
         backup_calls: List[Any] = []
         calls = [
@@ -681,6 +573,8 @@ class AppealGenerator(object):
                 "plan_context": plan_context,
                 "infer_type": "full",
                 "pubmed_context": pubmed_context,
+                "ml_citations_context": ml_citations_context,
+                "prof_pov": prof_pov,
             },
         ]
 
@@ -694,6 +588,8 @@ class AppealGenerator(object):
                         "infer_type": "full",
                         "plan_context": plan_context,
                         "pubmed_context": pubmed_context,
+                        "ml_citations_context": ml_citations_context,
+                        "prof_pov": prof_pov,
                     }
                 ]
             )
@@ -706,6 +602,8 @@ class AppealGenerator(object):
                         "infer_type": "full",
                         "plan_context": plan_context,
                         "pubmed_context": pubmed_context,
+                        "ml_citations_context": ml_citations_context,
+                        "prof_pov": prof_pov,
                     }
                 ]
             )
@@ -718,6 +616,8 @@ class AppealGenerator(object):
                         "infer_type": "full",
                         "plan_context": plan_context,
                         "pubmed_context": pubmed_context,
+                        "ml_citations_context": ml_citations_context,
+                        "prof_pov": prof_pov,
                     }
                 ]
             )
@@ -735,6 +635,8 @@ class AppealGenerator(object):
                         "infer_type": "medically_necessary",
                         "plan_context": plan_context,
                         "pubmed_context": pubmed_context,
+                        "ml_citations_context": ml_citations_context,
+                        "prof_pov": prof_pov,
                     },
                 ]
             )
@@ -748,6 +650,8 @@ class AppealGenerator(object):
                             "infer_type": "medically_necessary",
                             "plan_context": plan_context,
                             "pubmed_context": pubmed_context,
+                            "ml_citations_context": ml_citations_context,
+                            "prof_pov": prof_pov,
                         },
                     ]
                 )

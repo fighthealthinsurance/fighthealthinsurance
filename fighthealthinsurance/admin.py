@@ -30,9 +30,26 @@ from fighthealthinsurance.models import (
     StripeProduct,
     StripePrice,
     AppealAttachment,
+    GenericContextGeneration,
+    GenericQuestionGeneration,
 )
-from fhi_users.models import ProfessionalUser, PatientUser, UserDomain
+from fhi_users.models import (
+    ProfessionalUser,
+    PatientUser,
+    UserDomain,
+    ProfessionalDomainRelation,
+)
 from django.contrib.auth.admin import UserAdmin
+
+
+@admin.register(GenericContextGeneration)
+class GenericContextGenerationAdmin(admin.ModelAdmin):
+    """Generic Context"""
+
+
+@admin.register(GenericQuestionGeneration)
+class GenericQuestionsGenerationAdmin(admin.ModelAdmin):
+    """Generic Questions Context"""
 
 
 @admin.register(UserDomain)
@@ -51,6 +68,20 @@ class ProfessionalUserAdmin(admin.ModelAdmin):
     list_display = ("id", "user", "user__first_name", "user__email")
     search_fields = ("user__username", "npi_number", "display_name")
     list_filter = ("active", "provider_type")
+
+
+@admin.register(ProfessionalDomainRelation)
+class ProfessionalDomainRelationAdmin(admin.ModelAdmin):
+    """ProfessionalDomainRelation domains"""
+
+    list_display = (
+        "professional",
+        "admin",
+        "domain",
+        "professional__user",
+        "professional__user__first_name",
+        "professional__user__email",
+    )
 
 
 @admin.register(PatientUser)

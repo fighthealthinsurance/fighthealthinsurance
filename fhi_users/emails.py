@@ -3,11 +3,10 @@ from django.contrib.sites.shortcuts import get_current_site
 from typing import TYPE_CHECKING, Optional
 from fhi_users.models import VerificationToken
 from fighthealthinsurance.utils import send_fallback_email
-from django.utils.html import strip_tags
-from loguru import logger
-from smtplib import SMTPException
-from django.core.exceptions import ImproperlyConfigured
+from django.utils import timezone
+from datetime import timedelta
 from urllib.parse import urlencode
+from loguru import logger
 
 if TYPE_CHECKING:
     from django.contrib.auth.models import User
@@ -63,9 +62,24 @@ def send_error_submitting_appeal_email(user_email, context):
     )
 
 
-def send_verification_email(request, user: "User") -> None:
+def send_verification_email(request, user: "User", first_only: bool = False) -> None:
     """Send verification email with secure activation link."""
     current_site = get_current_site(request)
+    # Check if there is an existing token
+    if VerificationToken.objects.filter(user=user).exists():
+        if first_only:
+            logger.debug(f"Skipping verification e-mail to {user} as already sent")
+            return
+        else:
+            current_token = VerificationToken.objects.filter(user=user).first()
+            if current_token and current_token.created_at > timezone.now() - timedelta(
+                minutes=10
+            ):
+                logger.debug(
+                    f"Skipping verification e-mail to {user} as already sent within 10 minutes"
+                )
+                return
+            VerificationToken.objects.filter(user=user).delete()
     mail_subject = "Activate your account."
     verification_token = default_token_generator.make_token(user)
     
@@ -106,4 +120,24 @@ def send_checkout_session_expired(
             "link": link,
         },
         email,
+    )
+
+
+def send_professional_invitation_email(professional_email, context):
+    """Send invitation email to a professional to join a practice."""
+    send_fallback_email(
+        "Invitation to Join Practice",
+        "invite_professional",
+        context,
+        professional_email,
+    )
+
+
+def send_professional_created_email(professional_email, context):
+    """Send email to a professional that was created by an admin."""
+    send_fallback_email(
+        "Your Professional Account Has Been Created",
+        "professional_created",
+        context,
+        professional_email,
     )

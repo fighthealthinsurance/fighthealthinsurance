@@ -83,6 +83,11 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         staff_member_required(staff_views.ActivateProUserView.as_view()),
         name="activate_pro",
     ),
+    path(
+        "timbit/help/enable_beta",
+        staff_member_required(staff_views.EnableBetaForDomainView.as_view()),
+        name="enable_beta",
+    ),
     # Authentication
     path("v0/auth/", include("fhi_users.urls")),
     # stripe integration (TODO webhooks go here)
@@ -172,7 +177,6 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         csrf_exempt(views.ProVersionThankYouView.as_view()),
         name="pro_version_thankyou",
     ),
-    path("privacy_policy", views.PrivacyPolicyView.as_view(), name="privacy_policy"),
     path("share_denial", views.ShareDenialView.as_view(), name="share_denial"),
     path("share_appeal", views.ShareAppealView.as_view(), name="share_appeal"),
     path("remove_data", views.RemoveDataView.as_view(), name="remove_data"),
@@ -182,6 +186,18 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
             cache_page(60 * 60 * 2)(views.TermsOfServiceView.as_view())
         ),
         name="tos",
+    ),
+    path(
+        "privacy_policy",
+        cache_control(public=True)(
+            cache_page(60 * 60 * 2)(views.PrivacyPolicyView.as_view())
+        ),
+        name="privacy_policy",
+    ),
+    path(
+        "mhmda",
+        cache_control(public=True)(cache_page(60 * 60 * 2)(views.MHMDAView.as_view())),
+        name="mhmda",
     ),
     path(
         "find_next_steps",
