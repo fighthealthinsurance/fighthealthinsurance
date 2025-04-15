@@ -1813,13 +1813,28 @@ class StripeWebhookHelper:
                 item = "Fight Health Insurance Fax"
             elif payment_type == "professional_domain_subscription":
                 item = "Fight Paperwork Professional Domain Subscription"
+                # Check if the domain is already active (due to another checkout session)
+                domain_id = metadata.get("domain_id")
+                if domain_id:
+                    try:
+                        domain = UserDomain.objects.get(id=domain_id)
+                        if domain.active and domain.stripe_subscription_id:
+                            logger.info(
+                                f"Domain {domain_id} is already active with subscription, ignoring expired checkout"
+                            )
+                            return
+                    except UserDomain.DoesNotExist:
+                        logger.info(
+                            f"Domain {domain_id} no longer exists, might have been recreated"
+                        )
+
                 # Temporary until the FPW UI is ready
                 finish_base_link = (
                     "https://www.fightpaperwork.com/stripe/finish-checkout"
                 )
                 params = urlencode(
                     {
-                        "domain_id": metadata.get("domain_id"),
+                        "domain_id": domain_id,
                         "professional_id": metadata.get("professional_id"),
                     }
                 )
@@ -1868,6 +1883,32 @@ class StripeWebhookHelper:
                     f"Skipping duplicate lost stripe session notification for {email}"
                 )
                 return
+
+            # For professional domain subscriptions, check if the user has successfully
+            # created a domain in another session
+            if payment_type == "professional_domain_subscription" and metadata.get(
+                "professional_id"
+            ):
+                try:
+                    professional_id = metadata.get("professional_id")
+                    professional = ProfessionalUser.objects.get(id=professional_id)
+                    if professional:
+                        # Check if the user has active domains
+                        active_domains = UserDomain.objects.filter(
+                            professionaldomainrelation__professional=professional,
+                            professionaldomainrelation__active_domain_relation=True,
+                            active=True,
+                        ).exists()
+
+                        if active_domains:
+                            logger.info(
+                                f"User {professional} already has active domains, not creating LostStripeSession"
+                            )
+                            return
+                except Exception as e:
+                    logger.opt(exception=True).warning(
+                        f"Error checking for active domains for user {email}: {e}"
+                    )
 
             lost_session = LostStripeSession.objects.create(
                 payment_type=payment_type,

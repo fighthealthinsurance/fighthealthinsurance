@@ -4,6 +4,8 @@ from rest_framework.serializers import Serializer
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
 
+from loguru import logger
+
 
 class SerializerMixin:
     serializer_class: typing.Optional[typing.Type[Serializer]] = None
@@ -23,9 +25,13 @@ class CreateMixin(SerializerMixin):
         raise NotImplementedError("Subclasses must implement perform_create()")
 
     def create(self, request) -> Response:
-        request_serializer = self.deserialize(data=request.data)
-        request_serializer.is_valid(raise_exception=True)
-        return self.perform_create(request, request_serializer)
+        try:
+            request_serializer = self.deserialize(data=request.data)
+            request_serializer.is_valid(raise_exception=True)
+            return self.perform_create(request, request_serializer)
+        except Exception as e:
+            logger.opt(exception=True).error(f"Error during request serialization: {e}")
+            raise ValidationError("Invalid data provided")
 
 
 class DeleteMixin(SerializerMixin):
