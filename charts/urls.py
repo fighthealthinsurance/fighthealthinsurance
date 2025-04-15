@@ -10,12 +10,14 @@ from .views import (
     pro_signups_csv_single_lines,
     OlderThanTwoWeeksEmailsCSV,
     LastTwoWeeksEmailsCSV,
+    de_identified_export,
 )
 
 urlpatterns = [
     path("signups_by_day", signups_by_day, name="signups_by_day"),
     path("users_by_day", users_by_day, name="users_by_day"),
     path("sf_signups", sf_signups, name="sf_signups"),
+    path("de_identified", de_identified_export, name="de_identified_export"),
     path("pro_signups_csv", pro_signups_csv, name="pro_signups_csv"),
     path(
         "pro_signups_csv_single_lines",
