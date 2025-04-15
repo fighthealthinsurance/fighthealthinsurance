@@ -37,6 +37,7 @@ from fhi_users.models import (
     ResetToken,
     UserRole,
     UserContactInfo,
+    PendingProStripeCheckoutSession,
 )
 from fighthealthinsurance.models import StripeRecoveryInfo
 from fhi_users.auth import rest_serializers as serializers
@@ -302,7 +303,9 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 )
                 return Response(
                     common_serializers.ErrorSerializer(
-                        {"error": "A user with this email already exists"}
+                        {
+                            "error": "A user with this email already exists in this practice/domain."
+                        }
                     ).data,
                     status=status.HTTP_400_BAD_REQUEST,
                 )
@@ -840,6 +843,15 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         visible_phone_number: Optional[str] = user_signup_info["visible_phone_number"]  # type: ignore
         new_domain: bool = bool(data["make_new_domain"])  # type: ignore
         user_domain_opt: Optional[UserDomain] = None
+        email: str = user_signup_info["email"]  # type: ignore
+        if not request.session:
+            logger.debug("No session?")
+        elif not request.session.session_key:
+            logger.debug("Making session")
+            request.session.create()
+        session_key = request.session.session_key
+
+        logger.debug(f"Performing create for session: {session_key}")
 
         if not validate_password(user_signup_info["password"]):
             return Response(
@@ -847,6 +859,71 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # Check if this user is trying to sign up again (possibly after pressing back from Stripe)
+        existing_checkout = (
+            PendingProStripeCheckoutSession.objects.filter(
+                email=email,
+                django_session_id=session_key,
+                visible_phone_number=visible_phone_number,
+            )
+            .order_by("-created_at")
+            .first()
+        )
+
+        # If we have an existing checkout for this email, let's clean up before creating again
+        if existing_checkout:
+            logger.info(
+                f"Found existing checkout for {email}, cleaning up before recreating"
+            )
+            try:
+                # Clean up any existing user objects
+                professional_user = existing_checkout.professional_user
+                if not professional_user or not professional_user.user:
+                    raise Exception("User not found?")
+                user_to_delete = professional_user.user
+
+                # Delete relationships first
+                ProfessionalDomainRelation.objects.filter(
+                    professional=professional_user
+                ).delete()
+
+                # Delete the professional user
+                professional_user.delete()
+
+                # Delete extra properties
+                ExtraUserProperties.objects.filter(user=user_to_delete).delete()
+
+                # Delete the user
+                user_to_delete.delete()
+                logger.info(f"Deleted existing user for {email} during signup retry")
+                # Clean up domain if it's a new domain
+                if new_domain and existing_checkout.domain:
+                    try:
+                        domain_to_delete = existing_checkout.domain
+                        if not domain_to_delete.active:
+                            domain_to_delete.delete()
+                            logger.info(
+                                f"Deleted inactive domain {domain_to_delete.name} during signup retry"
+                            )
+                        else:
+                            return Response(
+                                common_serializers.ErrorSerializer(
+                                    {
+                                        "error": "Domain is active, cannot delete, please contact support42@fighthealthinsurance.com"
+                                    }
+                                ).data,
+                                status=status.HTTP_400_BAD_REQUEST,
+                            )
+                    except UserDomain.DoesNotExist:
+                        logger.error("Domain doesn't exist for cleanup")
+            except Exception as e:
+                logger.error(f"Error cleaning up existing data for {email}: {str(e)}")
+                raise e
+        else:
+            logger.debug("No existing checkout")
+
+        # Ok now back to the regular flow
+        # Here we check if the user is joining an existing domain
         if not new_domain:
             # In practice the serializer may enforce these for us
             try:
@@ -872,13 +949,15 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                     )
         else:
             if UserDomain.find_by_name(name=domain_name).count() != 0:
+                # Check if this is the domain we created previously
+                existing_domain = UserDomain.find_by_name(name=domain_name).get()
                 return Response(
                     common_serializers.ErrorSerializer(
                         {"error": "Domain already exists"}
                     ).data,
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-            if (
+            elif (
                 UserDomain.objects.filter(
                     visible_phone_number=visible_phone_number
                 ).count()
@@ -892,53 +971,54 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                     ).data,
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-            if "user_domain" not in data:
-                return Response(
-                    common_serializers.ErrorSerializer(
-                        {
-                            "error": "Need domain info when making a new domain or solo provider",
-                        }
-                    ).data,
-                    status=status.HTTP_400_BAD_REQUEST,
+
+            if user_domain_opt is None:
+                if "user_domain" not in data:
+                    return Response(
+                        common_serializers.ErrorSerializer(
+                            {
+                                "error": "Need domain info when making a new domain or solo provider",
+                            }
+                        ).data,
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                user_domain_info: dict[str, Optional[str]] = data["user_domain"]  # type: ignore
+                if domain_name != user_domain_info["name"]:
+                    if user_domain_info["name"] is None:
+                        user_domain_info["name"] = domain_name
+                    else:
+                        return Response(
+                            common_serializers.ErrorSerializer(
+                                {
+                                    "error": "Domain name and user domain name must match",
+                                }
+                            ).data,
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
+                # We want to allow null
+                if user_domain_info["name"] == "":
+                    user_domain_info["name"] = None
+                if visible_phone_number != user_domain_info["visible_phone_number"]:
+                    if user_domain_info["visible_phone_number"] is None:
+                        user_domain_info["visible_phone_number"] = visible_phone_number
+                    else:
+                        return Response(
+                            common_serializers.ErrorSerializer(
+                                {
+                                    "error": "Visible phone number and user domain visible phone number must match",
+                                }
+                            ).data,
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
+                user_domain_opt = UserDomain.objects.create(
+                    active=False,
+                    **user_domain_info,
                 )
-            user_domain_info: dict[str, Optional[str]] = data["user_domain"]  # type: ignore
-            if domain_name != user_domain_info["name"]:
-                if user_domain_info["name"] is None:
-                    user_domain_info["name"] = domain_name
-                else:
-                    return Response(
-                        common_serializers.ErrorSerializer(
-                            {
-                                "error": "Domain name and user domain name must match",
-                            }
-                        ).data,
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
-            # We want to allow null
-            if user_domain_info["name"] == "":
-                user_domain_info["name"] = None
-            if visible_phone_number != user_domain_info["visible_phone_number"]:
-                if user_domain_info["visible_phone_number"] is None:
-                    user_domain_info["visible_phone_number"] = visible_phone_number
-                else:
-                    return Response(
-                        common_serializers.ErrorSerializer(
-                            {
-                                "error": "Visible phone number and user domain visible phone number must match",
-                            }
-                        ).data,
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
-            user_domain_opt = UserDomain.objects.create(
-                active=False,
-                **user_domain_info,
-            )
 
         if not user_domain_opt:
             raise Exception("No user domain found or created")
         user_domain: UserDomain = user_domain_opt  # type: ignore
         raw_username: str = user_signup_info["email"]  # type: ignore
-        email: str = user_signup_info["email"]  # type: ignore
         password: str = user_signup_info["password"]  # type: ignore
         first_name: str = user_signup_info["first_name"]  # type: ignore
         last_name: str = user_signup_info["last_name"]  # type: ignore
@@ -963,6 +1043,14 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             pending_domain_relation=not new_domain,
         )
 
+        # If the domain is not new we don't need billing info
+        if not new_domain:
+            return Response(
+                serializers.ProfessionalSignupResponseSerializer(
+                    {"next_url": "https://www.fightpaperwork.com/auth/login"}
+                ).data,
+                status=status.HTTP_201_CREATED,
+            )
         if not (settings.DEBUG and data["skip_stripe"]):
             checkout_session = self.create_stripe_checkout_session(
                 email,
@@ -977,7 +1065,15 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             extra_user_properties = ExtraUserProperties.objects.create(
                 user=user, email_verified=False
             )
-            subscription_id = checkout_session.subscription
+            # Store the checkout session information
+            PendingProStripeCheckoutSession.objects.create(
+                stripe_session_id=checkout_session.id,
+                django_session_id=session_key,
+                email=email,
+                domain_id=str(user_domain.id),
+                professional_user_id=professional_user.id,
+                visible_phone_number=visible_phone_number,  # type: ignore
+            )
             return Response(
                 serializers.ProfessionalSignupResponseSerializer(
                     {"next_url": checkout_session.url}
@@ -1236,16 +1332,26 @@ class PatientUserViewSet(ViewSet, CreateMixin):
         if "patient_phone_number" in validated_data:
             patient_phone_number = validated_data.pop("patient_phone_number")
         domain_id = auth_utils.get_domain_id_from_request(request)
-        user = create_user(
-            email=validated_data["email"],
-            raw_username=validated_data["username"],
-            first_name=validated_data.get("firstname", ""),
-            last_name=validated_data.get("lastname", ""),
-            domain_name=domain_name,
-            phone_number=provider_phone_number,
-            password=validated_data["password"],
-            domain_id=domain_id,
-        )
+        try:
+            user = create_user(
+                email=validated_data["email"],
+                raw_username=validated_data["username"],
+                first_name=validated_data.get("first_name", ""),
+                last_name=validated_data.get("last_name", ""),
+                domain_name=domain_name,
+                phone_number=provider_phone_number,
+                password=validated_data["password"],
+                domain_id=domain_id,
+            )
+        except IntegrityError:
+
+            logger.opt(exception=True).error("Integrity error when creating user")
+            return Response(
+                common_serializers.ErrorSerializer(
+                    {"error": "A user with this email already exists"}
+                ).data,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         country = "USA"
         if "country" in validated_data:
             country = validated_data["country"]

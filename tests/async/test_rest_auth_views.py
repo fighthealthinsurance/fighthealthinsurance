@@ -18,6 +18,7 @@ from fhi_users.models import (
     ResetToken,
     ProfessionalUser,
     ProfessionalDomainRelation,
+    PendingProStripeCheckoutSession,
 )
 
 
@@ -158,6 +159,33 @@ class RestAuthViewsTests(TestCase):
                 password="newLongerPasswordMagicCheetoCheeto123",
             )
         )
+
+    def test_patient_user_creates_with_correct_name(self) -> None:
+        """Test that patient user is created with the correct first and last name."""
+        url = reverse("patient_user-list")
+        # Test with first_name and last_name
+        data = {
+            "username": "nameuser1@example.com",
+            "password": "SecurePassword123",
+            "email": "nameuser1@example.com",
+            "first_name": "Test",
+            "last_name": "User",
+            "provider_phone_number": "1234567890",
+            "country": "USA",
+            "state": "CA",
+            "city": "Test City",
+            "address1": "123 Test St",
+            "zipcode": "12345",
+            "domain_name": "testdomain",
+        }
+        response = self.client.post(url, data, format="json")
+        self.assertIn(response.status_code, range(200, 300))
+        self.assertEqual(response.json()["status"], "pending")
+
+        # Verify user was created with correct name
+        new_user1 = User.objects.get(email="nameuser1@example.com")
+        self.assertEqual(new_user1.first_name, "Test")
+        self.assertEqual(new_user1.last_name, "User")
 
     def test_verify_email_view(self) -> None:
         url = reverse("rest_verify_email-verify")
@@ -880,6 +908,238 @@ class TestE2EProfessionalUserSignupFlow(TestCase):
         denial_id = denial_response["denial_id"]
 
         # Now we need to call the websocket...
+
+    def test_retry_signup_with_same_email_and_domain(self):
+        """Test that a user can press back and retry the signup from Stripe checkout."""
+        # Do initial signup
+        domain_name = "retry_domain"
+        phone_number = "5551234567"
+        email = "retry@example.com"
+
+        signup_url = reverse("professional_user-list")
+        data = {
+            "user_signup_info": {
+                "username": email,
+                "password": "temp12345",
+                "email": email,
+                "first_name": "Retry",
+                "last_name": "User",
+                "domain_name": domain_name,
+                "visible_phone_number": phone_number,
+                "continue_url": "http://example.com/continue",
+            },
+            "make_new_domain": True,
+            "user_domain": {
+                "name": domain_name,
+                "visible_phone_number": phone_number,
+                "internal_phone_number": "5559876543",
+                "display_name": "Retry Domain",
+                "country": "USA",
+                "state": "CA",
+                "city": "RetryCity",
+                "address1": "123 Retry St",
+                "zipcode": "12345",
+            },
+        }
+
+        # First signup attempt
+        response = self.client.post(signup_url, data, format="json")
+        self.assertEqual(response.status_code, 201)
+        self.assertIn("next_url", response.json())
+
+        # Check that objects were created
+        domain = UserDomain.objects.get(name=domain_name)
+        self.assertFalse(domain.active)  # Domain should be inactive initially
+
+        user = User.objects.get(email=email)
+        professional_user = ProfessionalUser.objects.get(user=user)
+        self.assertFalse(professional_user.active)
+
+        # Store the IDs for comparison later
+        domain_id = domain.id
+        user_id = user.id
+        pro_user_id = professional_user.id
+
+        # Verify a checkout session was created
+        checkout_session = PendingProStripeCheckoutSession.objects.filter(
+            email=email
+        ).first()
+        self.assertIsNotNone(checkout_session)
+        self.assertEqual(checkout_session.email, email)
+        self.assertEqual(checkout_session.professional_user_id, professional_user.id)
+        self.assertEqual(str(checkout_session.domain_id), str(domain.id))
+
+        # Now simulate a second signup attempt (as if user pressed back from Stripe)
+        response = self.client.post(signup_url, data, format="json")
+        self.assertEqual(response.status_code, 201)
+        self.assertIn("next_url", response.json())
+
+        # Check that we don't have duplicate objects
+        self.assertEqual(UserDomain.objects.filter(name=domain_name).count(), 1)
+        self.assertEqual(User.objects.filter(email=email).count(), 1)
+
+        # Get the objects again
+        domain = UserDomain.objects.get(name=domain_name)
+        user = User.objects.get(email=email)
+        professional_user = ProfessionalUser.objects.get(user=user)
+
+        # Verify we have two checkout sessions (original + retry)
+        self.assertEqual(
+            PendingProStripeCheckoutSession.objects.filter(email=email).count(), 2
+        )
+
+    def test_retry_signup_with_active_domain_fails(self):
+        """Test that a domain can only be reused if it's still pending/inactive."""
+        # Initial signup
+        domain_name = "active_domain"
+        phone_number = "5551111111"
+        email = "active@example.com"
+
+        signup_url = reverse("professional_user-list")
+        data = {
+            "user_signup_info": {
+                "username": email,
+                "password": "temp12345",
+                "email": email,
+                "first_name": "Active",
+                "last_name": "User",
+                "domain_name": domain_name,
+                "visible_phone_number": phone_number,
+                "continue_url": "http://example.com/continue",
+            },
+            "make_new_domain": True,
+            "user_domain": {
+                "name": domain_name,
+                "visible_phone_number": phone_number,
+                "internal_phone_number": "5559998888",
+                "display_name": "Active Domain",
+                "country": "USA",
+                "state": "CA",
+                "city": "ActiveCity",
+                "address1": "123 Active St",
+                "zipcode": "12345",
+            },
+        }
+
+        # First signup attempt
+        response = self.client.post(signup_url, data, format="json")
+        self.assertEqual(response.status_code, 201)
+
+        # Manually activate the domain (simulating completed Stripe checkout)
+        domain = UserDomain.objects.get(name=domain_name)
+        domain.active = True
+        domain.stripe_subscription_id = "sub_12345"
+        domain.save()
+
+        # Attempt second signup with same domain name
+        response = self.client.post(signup_url, data, format="json")
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Domain is active, cannot delete", response.json()["error"])
+
+    def test_signup_with_different_email_same_domain_fails(self):
+        """Test that a different user cannot use the same domain name."""
+        # Initial signup
+        domain_name = "shared_domain"
+        phone_number = "5552222222"
+        email = "first@example.com"
+
+        signup_url = reverse("professional_user-list")
+        data = {
+            "user_signup_info": {
+                "username": email,
+                "password": "temp12345",
+                "email": email,
+                "first_name": "First",
+                "last_name": "User",
+                "domain_name": domain_name,
+                "visible_phone_number": phone_number,
+                "continue_url": "http://example.com/continue",
+            },
+            "make_new_domain": True,
+            "user_domain": {
+                "name": domain_name,
+                "visible_phone_number": phone_number,
+                "internal_phone_number": "5557778888",
+                "display_name": "Shared Domain",
+                "country": "USA",
+                "state": "CA",
+                "city": "SharedCity",
+                "address1": "123 Shared St",
+                "zipcode": "12345",
+            },
+        }
+
+        # First user signup
+        response = self.client.post(signup_url, data, format="json")
+        self.assertEqual(response.status_code, 201)
+
+        # Second user with same domain name
+        data2 = data.copy()
+        data2["user_signup_info"] = data["user_signup_info"].copy()
+        data2["user_signup_info"]["email"] = "second@example.com"
+        data2["user_signup_info"]["username"] = "second@example.com"
+
+        # Attempt signup with different email but same domain name
+        response = self.client.post(signup_url, data2, format="json")
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Domain already exists", response.json()["error"])
+
+    def test_signup_with_different_session_id_but_same_email(self):
+        """Test that signup with different session ID but same email cleans up properly."""
+        # Initial signup
+        domain_name = "session_domain"
+        phone_number = "5553333333"
+        email = "session@example.com"
+
+        signup_url = reverse("professional_user-list")
+        data = {
+            "user_signup_info": {
+                "username": email,
+                "password": "temp12345",
+                "email": email,
+                "first_name": "Session",
+                "last_name": "User",
+                "domain_name": domain_name,
+                "visible_phone_number": phone_number,
+                "continue_url": "http://example.com/continue",
+            },
+            "make_new_domain": True,
+            "user_domain": {
+                "name": domain_name,
+                "visible_phone_number": phone_number,
+                "internal_phone_number": "5556667777",
+                "display_name": "Session Domain",
+                "country": "USA",
+                "state": "CA",
+                "city": "SessionCity",
+                "address1": "123 Session St",
+                "zipcode": "12345",
+            },
+        }
+
+        # First signup attempt
+        response = self.client.post(signup_url, data, format="json")
+        self.assertEqual(response.status_code, 201)
+
+        # Get the created objects
+        initial_domain = UserDomain.objects.get(name=domain_name)
+        initial_pro_user = ProfessionalUser.objects.get(user__email=email)
+
+        # Reset the session
+        self.client.cookies.clear()
+
+        # Verify initial checkout session was created
+        initial_session = PendingProStripeCheckoutSession.objects.get(
+            email=email,
+            domain_id=initial_domain.id,
+            professional_user_id=initial_pro_user.id,
+        )
+        self.assertIsNotNone(initial_session)
+
+        # Now do another signup attempt with the same data - this should
+        # not work and handle the previously created pending records
+        response = self.client.post(signup_url, data, format="json")
+        self.assertEqual(response.status_code, 400)
 
 
 class ProfessionalInvitationTests(TestCase):
