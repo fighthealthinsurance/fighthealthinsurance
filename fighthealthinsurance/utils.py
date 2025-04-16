@@ -2,6 +2,9 @@ from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
 from django.conf import settings
 
+
+import random
+import string
 import asyncstdlib
 import asyncio
 from inspect import isabstract
@@ -384,3 +387,16 @@ async def execute_critical_optional_fireandforget(
         await asyncio.gather(*optional_tasks, return_exceptions=True)
     if done_record:
         yield done_record
+
+
+def generate_random_filename_with_extension(original_filename: str) -> str:
+    """Generate a random short filename with the same extension as the original."""
+    _, ext = os.path.splitext(original_filename)
+    rand_str = "".join(random.choices(string.ascii_lowercase + string.digits, k=8))
+    return rand_str + ext
+
+
+def generate_random_unsupported_filename() -> str:
+    """Generate a random short filename with .unsupported extension."""
+    rand_str = "".join(random.choices(string.ascii_lowercase + string.digits, k=8))
+    return rand_str + ".unsupported"
