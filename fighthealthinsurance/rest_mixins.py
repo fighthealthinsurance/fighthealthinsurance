@@ -31,7 +31,7 @@ class CreateMixin(SerializerMixin):
             return self.perform_create(request, request_serializer)
         except Exception as e:
             logger.opt(exception=True).error(f"Error during request serialization: {e}")
-            raise ValidationError("Invalid data provided")
+            raise e
 
 
 class DeleteMixin(SerializerMixin):
