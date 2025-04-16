@@ -8,6 +8,7 @@ from django.db.models import Q
 from django.utils import timezone
 from dateutil.relativedelta import relativedelta
 from django.http import FileResponse
+from django.core.exceptions import SuspiciousFileOperation
 
 from asgiref.sync import sync_to_async, async_to_sync
 
@@ -983,11 +984,38 @@ class AppealAttachmentViewSet(viewsets.ViewSet):
         )
 
         file = serializer.validated_data["file"]
+        attachment = None
+        try:
+            attachment = AppealAttachment.objects.create(
+                appeal=appeal,
+                file=file,
+                filename=file.name,
+                mime_type=file.content_type,
+            )
+        except SuspiciousFileOperation:
+            # Try with random filename, same extension
+            from fighthealthinsurance.utils import (
+                generate_random_filename_with_extension,
+                generate_random_unsupported_filename,
+            )
 
-        attachment = AppealAttachment.objects.create(
-            appeal=appeal, file=file, filename=file.name, mime_type=file.content_type
-        )
-
+            random_filename = generate_random_filename_with_extension(file.name)
+            try:
+                attachment = AppealAttachment.objects.create(
+                    appeal=appeal,
+                    file=file,
+                    filename=random_filename,
+                    mime_type=file.content_type,
+                )
+            except SuspiciousFileOperation:
+                # Try with .unsupported extension
+                fallback_filename = generate_random_unsupported_filename()
+                attachment = AppealAttachment.objects.create(
+                    appeal=appeal,
+                    file=file,
+                    filename=fallback_filename,
+                    mime_type=file.content_type,
+                )
         return Response(
             serializers.AppealAttachmentSerializer(attachment).data,
             status=status.HTTP_201_CREATED,
