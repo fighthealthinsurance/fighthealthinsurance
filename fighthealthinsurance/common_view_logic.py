@@ -1530,19 +1530,16 @@ class AppealsBackendHelper:
 
         # Get the current info
         await asyncio.sleep(0)
-        denial = (
-            await Denial.objects.filter(
-                denial_id=denial_id, semi_sekret=semi_sekret, hashed_email=hashed_email
-            )
-            .select_related(
-                "patient_user",
-                "patient_user__user",
-                "domain",
-                "primary_professional",
-                "primary_professional__user",
-            )
-            .aget()
+        denial_query = Denial.objects.filter(
+            denial_id=denial_id, semi_sekret=semi_sekret, hashed_email=hashed_email
+        ).select_related(
+            "patient_user",
+            "patient_user__user",
+            "domain",
+            "primary_professional",
+            "primary_professional__user",
         )
+        denial = await denial_query.aget()
 
         non_ai_appeals: List[str] = list(
             map(
@@ -1659,7 +1656,11 @@ class AppealsBackendHelper:
         except Exception as e:
             logger.debug(f"Error gathering contexts: {e}")
             # We still might have saved a context.
-            await denial.arefresh_from_db()
+            try:
+                # Added in Django 5.1
+                await denial.arefresh_from_db(from_queryset=denial_query)
+            except:
+                denial = await denial_query.aget()
             pubmed_context = denial.pubmed_context
             ml_citation_context = denial.ml_citation_context
             logger.debug("Used saved contexts")
@@ -1701,14 +1702,19 @@ class AppealsBackendHelper:
                 "{diagnosis}": denial.diagnosis or "{diagnosis}",
                 "{procedure}": denial.procedure or "{procedure}",
             }
-            if denial.patient_user is not None:
-                subs["[Patient Name]"] = denial.patient_user.get_legal_name()
-            if denial and denial.primary_professional is not None:
-                subs["[Professional Name]"] = (
-                    denial.primary_professional.get_full_name()
+            try:
+                if denial.patient_user is not None:
+                    subs["[Patient Name]"] = denial.patient_user.get_legal_name()
+                if denial and denial.primary_professional is not None:
+                    subs["[Professional Name]"] = (
+                        denial.primary_professional.get_full_name()
+                    )
+                if denial.domain:
+                    subs["[Professional Address]"] = denial.domain.get_address()
+            except:
+                logger.opt(exception=True).error(
+                    f"Error fetching info for denial sub {denial.denial_id}"
                 )
-            if denial.domain:
-                subs["[Professional Address]"] = denial.domain.get_address()
             ret = s.safe_substitute(subs)
             appeal["content"] = ret
             logger.debug(f"Updated appeal to {ret}")
