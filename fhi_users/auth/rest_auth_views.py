@@ -925,19 +925,14 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         # Ok now back to the regular flow
         # Here we check if the user is joining an existing domain
         if not new_domain:
-            # In practice the serializer may enforce these for us
-            try:
-                if not domain_name or len(domain_name) == 0:
-                    raise UserDomain.DoesNotExist()
-                user_domain_opt = UserDomain.find_by_name(name=domain_name).get()
-            except UserDomain.DoesNotExist:
-                try:
-                    user_domain_opt = UserDomain.objects.get(
-                        visible_phone_number=visible_phone_number
-                    )
-                except UserDomain.DoesNotExist:
-                    logger.opt(exception=True).error(
-                        f"Error finding domain {domain_name} / {visible_phone_number}"
+            user_domain_exists = UserDomain.find_by_name(name=domain_name).exists()
+            if not user_domain_exists:
+                user_domain_exists = UserDomain.objects.filter(
+                    visible_phone_number=visible_phone_number
+                ).exists()
+                if not user_domain_exists:
+                    logger.debug(
+                        f"Error finding domain a user wants to join {domain_name} / {visible_phone_number}"
                     )
                     return Response(
                         common_serializers.ErrorSerializer(
@@ -947,6 +942,12 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                         ).data,
                         status=status.HTTP_400_BAD_REQUEST,
                     )
+                else:
+                    user_domain_opt = UserDomain.objects.filter(
+                        visible_phone_number=visible_phone_number
+                    ).first()
+            else:
+                user_domain_opt = UserDomain.find_by_name(name=domain_name).get()
         else:
             if UserDomain.find_by_name(name=domain_name).count() != 0:
                 # Check if this is the domain we created previously
