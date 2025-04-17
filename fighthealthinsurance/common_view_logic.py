@@ -1156,6 +1156,7 @@ class DenialCreatorHelper:
             required=required_awaitables,
             fire_and_forget=[],
             done_record=("Extraction complete", None),
+            maximum_time=75,
         ):
             if item:
                 yield item[0]
