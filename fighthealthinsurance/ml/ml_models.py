@@ -662,7 +662,9 @@ class RemoteOpenLike(RemoteModel):
     ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
         if api_base is None:
             api_base = self.api_base
-        logger.debug(f"Looking up model {model} using {api_base} and {prompt}")
+        logger.debug(
+            f"Looking up model {model} using {api_base} and {prompt} on {system_prompt}"
+        )
         if self.api_base is None:
             return None
         if self.token is None:
@@ -1042,7 +1044,7 @@ class RemoteFullOpenLike(RemoteOpenLike):
         Prioritize high-quality, peer-reviewed research, clinical guidelines, and standard of care documentation.
         """
 
-        logger.debug("Generating citations on backend {self}")
+        logger.debug(f"Generating citations on backend {self}")
 
         system_prompts: list[str] = self.get_system_prompts("citations")
 

@@ -356,7 +356,10 @@ class AppealGenerator(object):
         models_to_try.extend(ml_entity_models)
         procedure = None
         diagnosis = None
+        # How many models have we tried?
+        c = 0
         for model in models_to_try:
+            c = c + 1
             logger.debug(f"Hiiii Exploring model {model}")
             procedure_diagnosis = await model.get_procedure_and_diagnosis(denial_text)
             if procedure_diagnosis is not None:
@@ -374,6 +377,11 @@ class AppealGenerator(object):
                     )
                 if procedure is not None and diagnosis is not None:
                     logger.debug(f"Return with procedure {procedure} and {diagnosis}")
+                    return (procedure, diagnosis)
+                elif c > 2 and (procedure is not None or diagnosis is not None):
+                    logger.debug(
+                        f"Return *fast* with procedure {procedure} and {diagnosis}"
+                    )
                     return (procedure, diagnosis)
                 else:
                     logger.debug(f"So far infered {procedure} and {diagnosis}")

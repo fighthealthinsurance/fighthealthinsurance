@@ -75,7 +75,7 @@ class MLAppealQuestionsHelper:
         # Generic should not have answers
         if questions:
             questions_without_answers = list(map(lambda xy: (xy[0], ""), questions))
-        questions = questions_without_answers
+            questions = questions_without_answers
 
         # If we have questions, cache them for future use
         if questions:
