@@ -343,7 +343,7 @@ async def execute_critical_optional_fireandforget(
     optional: Sequence[Coroutine[Any, Any, T]],
     fire_and_forget: Sequence[Coroutine] = [],
     done_record: Optional[T] = None,
-    maximum_time: Optional[int] = None,
+    timeout: Optional[int] = None,
 ) -> AsyncIterator[T]:
     """
     Kicks off all tasks at once.
