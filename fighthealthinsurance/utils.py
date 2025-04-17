@@ -343,6 +343,7 @@ async def execute_critical_optional_fireandforget(
     optional: Sequence[Coroutine[Any, Any, T]],
     fire_and_forget: Sequence[Coroutine] = [],
     done_record: Optional[T] = None,
+    timeout: Optional[int] = None,
 ) -> AsyncIterator[T]:
     """
     Kicks off all tasks at once.
@@ -358,8 +359,10 @@ async def execute_critical_optional_fireandforget(
         Async iterator of the values as finished
     """
     # Start fire and forget tasks
+    logger.debug("Launching fire and forget")
     for fftask in fire_and_forget:
         await fire_and_forget_in_new_threadpool(fftask)
+    logger.debug("Launched")
 
     # We create both sets of tasks at the same time since they're mostly independent and having
     # the optional ones running at the same time gives us a chance to get more done.
@@ -371,7 +374,7 @@ async def execute_critical_optional_fireandforget(
     required_tasks_finished = 0
     # First, execute required tasks (no timeout)
     try:
-        for task in asyncio.as_completed(all_tasks):
+        for task in asyncio.as_completed(all_tasks, timeout=timeout):
             if task in required_set:
                 required_tasks_finished += 1
             result: T = await task
@@ -380,6 +383,11 @@ async def execute_critical_optional_fireandforget(
             if required_tasks_finished >= len(required):
                 logger.debug("All done with required tasks")
                 break
+    except asyncio.TimeoutError as e:
+        logger.opt(exception=True).error(f"Timed out waiting for required task?")
+    except Exception as e:
+        logger.opt(exception=True).error(f"Error executing required tasks {e}")
+        raise e
     finally:
         for t in optional_tasks:
             if not t.done():

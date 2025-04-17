@@ -188,13 +188,16 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
         if "denial_id" in serializer_data:
             denial_id = serializer_data.pop("denial_id")
             if denial_id and is_convertible_to_int(denial_id):
-                logger.debug("Looking up existing denial {denial_id}")
+                logger.debug(f"Looking up existing denial {denial_id}")
                 denial_id = int(denial_id)
                 denial = Denial.filter_to_allowed_denials(current_user).get(
                     denial_id=denial_id
                 )
+            elif denial_id and denial_id != "":
+                logger.debug(f"Unexpected format of denial id {denial_id}")
             else:
-                logger.debug("Unexpected format of denial id {denial_id}")
+                # Denial ID provided but is None
+                pass
         else:
             logger.debug("No denial id present, will make new one.")
         if "patient_id" in serializer_data and is_convertible_to_int(
