@@ -121,6 +121,8 @@ def de_identified_export(request):
         "generated_questions",
         "procedure",
         "diagnosis",
+        "insurance_company",
+        "appeal_fax_number",
     )
     if limit:
         safe_denials = safe_denials[0:int(limit)]
