@@ -522,7 +522,7 @@ class RemoteOpenLike(RemoteModel):
         """
         result = await self._infer_no_context(
             system_prompts=["You are a helpful assistant."],
-            prompt=f"When possible output in the same format as is found in the denial. Tell me the what the date of service was within the provided denial (it could be multiple or a date range, but it can also just be one day). If it is not present or otherwise unknown write UNKNOWN. If known just output the asnwer without any pre-amble and as a snipper from the original doc. The denial follows: {denial}",
+            prompt=f"When possible output in the same format as is found in the denial. Tell me the what the date of service was within the provided denial (it could be multiple or a date range, but it can also just be one day). If it is not present or otherwise unknown write UNKNOWN. If known just output the answer without any pre-amble and as a snipper from the original doc. The denial follows: {denial}",
         )
         if result and "Date of service is" in result:
             return result.split("Date of service is")[1].strip()
@@ -758,7 +758,7 @@ class RemoteOpenLike(RemoteModel):
 
             # If this is a reasoning model, extract the answer portion
             if r and LLMResponseUtils.is_well_formatted_for_reasoning(r):
-                _, extracted_result = LLMResponseUtils.extract_reasoning_and_answer(r)
+                extracted_result = LLMResponseUtils.extract_answer(r)
                 if extracted_result:
                     r = extracted_result.strip()
 

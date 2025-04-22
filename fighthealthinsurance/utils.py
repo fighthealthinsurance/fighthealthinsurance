@@ -224,7 +224,7 @@ async def fire_and_forget_in_new_threadpool(task: Coroutine) -> None:
     Args:
         task: The async task to run
     """
-    logger.debug("Starting fire and forget task {task}")
+    logger.debug(f"Starting fire and forget task {task}")
 
     def run_async_task() -> None:
         loop = asyncio.new_event_loop()
@@ -243,7 +243,7 @@ async def fire_and_forget_in_new_threadpool(task: Coroutine) -> None:
     thread = threading.Thread(target=run_async_task)
     thread.daemon = True  # Thread will exit when main thread exits
     thread.start()
-    logger.debug("Task started good bye :p")
+    logger.debug(f"Task started good bye :p {task}")
     return
 
 

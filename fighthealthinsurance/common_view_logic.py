@@ -1126,6 +1126,8 @@ class DenialCreatorHelper:
         Perform entity extraction on a given denial id
         """
 
+        logger.debug(f"Starting entity extraction for denial {denial_id}")
+
         # Define a wrapper function that returns both the name and result
         async def named_task(awaitable: Awaitable[Any], name: str) -> tuple[str, Any]:
             try:
@@ -1151,6 +1153,10 @@ class DenialCreatorHelper:
             named_task(cls.extract_set_denial_and_diagnosis(denial_id), "diagnosis"),
             named_task(cls.extract_set_denialtype(denial_id), "type of denial"),
         ]
+
+        logger.debug(
+            f"Collecting tasks for {denial_id} with {len(optional_awaitables)} optional and {len(required_awaitables)} required tasks."
+        )
         async for item in execute_critical_optional_fireandforget(
             optional=optional_awaitables,
             required=required_awaitables,
@@ -1214,8 +1220,17 @@ class DenialCreatorHelper:
                     try:
                         pubmed_tool = PubMedTools()
                         # Find related articles based on diagnosis and procedure
-                        await pubmed_tool.find_pubmed_articles_for_denial(
-                            denial, timeout=60.0
+                        # Adding proper timeout handling with asyncio.wait_for
+                        await asyncio.wait_for(
+                            pubmed_tool.find_pubmed_articles_for_denial(
+                                denial, timeout=120.0
+                            ),
+                            timeout=120.0,  # Enforce same timeout at asyncio level
+                        )
+
+                    except asyncio.TimeoutError:
+                        logger.warning(
+                            f"PubMed article search timed out for denial {denial_id} after 120s"
                         )
                     except Exception as e:
                         logger.opt(exception=True).warning(
@@ -1223,7 +1238,7 @@ class DenialCreatorHelper:
                         )
 
                 # Fire and forget the PubMed search task
-                logger.debug("Starting pubmed search task.")
+                logger.debug("Starting pubmed search & building speculative context.")
                 await fire_and_forget_in_new_threadpool(find_pubmed_articles())
                 # Fire and forget the building the speculative context
                 await fire_and_forget_in_new_threadpool(

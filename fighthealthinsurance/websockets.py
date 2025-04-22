@@ -57,11 +57,17 @@ class StreamingEntityBackend(AsyncWebsocketConsumer):
         data = json.loads(text_data)
         aitr = common_view_logic.DenialCreatorHelper.extract_entity(data["denial_id"])
 
-        async for record in aitr:
-            logger.debug(f"Sending record {record}")
-            await self.send(record)
-            await asyncio.sleep(0)
-            await self.send("\n")
-        await asyncio.sleep(1)
-        logger.debug(f"Sent all records")
-        await self.close()
+        try:
+            async for record in aitr:
+                logger.debug(f"Sending record {record}")
+                await self.send(record)
+                await asyncio.sleep(0)
+                await self.send("\n")
+            await asyncio.sleep(1)
+            logger.debug(f"Sent all records")
+        except Exception as e:
+            logger.opt(exception=True).debug(f"Error sending back entity: {e}")
+            raise e
+        finally:
+            await self.close()
+            logger.debug("Closed connection")
