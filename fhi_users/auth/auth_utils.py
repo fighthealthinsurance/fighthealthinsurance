@@ -14,6 +14,9 @@ from typing import TYPE_CHECKING, Optional
 
 from fhi_users.models import ProfessionalDomainRelation, UserDomain, PatientUser
 
+from rest_framework.serializers import ValidationError
+
+
 from loguru import logger
 
 if TYPE_CHECKING:
@@ -246,7 +249,8 @@ def create_user(
         raise
 
 
-def generic_validate_phone_number(value):
+def generic_validate_phone_number(value: str) -> str:
+    """Validate and clean phone number to ensure it contains only digits, 'X', and hyphens."""
     # Remove all hyphens and spaces from the phone number
     cleaned_number = (
         value.replace("-", "")
