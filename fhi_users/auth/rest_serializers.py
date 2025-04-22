@@ -146,6 +146,9 @@ class UserDomainSerializer(serializers.ModelSerializer):
     visible_phone_number = serializers.CharField(required=False, allow_blank=True)
 
     def validate_visible_phone_number(self, value):
+        # Phone number is optional (can also be domain name based)
+        if not value:
+            return
         return generic_validate_phone_number(value)
 
     class Meta(object):
