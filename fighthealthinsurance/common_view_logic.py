@@ -1667,16 +1667,16 @@ class AppealsBackendHelper:
                 pubmed_context_awaitable,
                 ml_citation_context_awaitable,
                 return_exceptions=True,
-                timeout=40,
             )
-            if isinstance(results[0], Exception):
-                pubmed_context = None
-            else:
+            if isinstance(results[0], str):
                 pubmed_context = results[0]
-            if isinstance(results[1], Exception):
-                ml_citation_context = None
             else:
-                ml_citation_context = results[1]
+                pubmed_context = None
+            candidate = results[1]
+            if isinstance(candidate, str):
+                ml_citation_context = candidate
+            else:
+                ml_citation_context = None
             logger.debug("Success")
         except Exception as e:
             logger.opt(exception=True).error(f"Error gathering contexts: {e}")
