@@ -297,7 +297,7 @@ async def best_within_timelimit(
         wrapped_tasks, timeout=timeout, return_when=asyncio.ALL_COMPLETED
     )
 
-    await fire_and_forget_in_new_threadpool(cancel_tasks(list(pending)))
+    asyncio.create_task(cancel_tasks(list(pending)))
 
     # Find the best result from completed tasks
     best_result: Optional[T] = None
@@ -424,8 +424,8 @@ async def execute_critical_optional_fireandforget(
         logger.debug(
             "Required tasks finished, fire and forget canceling optional tasks"
         )
-        await fire_and_forget_in_new_threadpool(cancel_tasks(optional_tasks))
-        logger.debug("Optional tasks canceled")
+        asyncio.create_task(cancel_tasks(optional_tasks))
+        logger.debug("Optional tasks scheduled for cancelation")
 
     if done_record:
         yield done_record
