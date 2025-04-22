@@ -111,7 +111,7 @@ def send_fallback_email(subject: str, template_name: str, context, to_email: str
 
 async def cancel_tasks(tasks: List[asyncio.Task]) -> None:
     """
-    Cancel a list of asyncio tasks and wait for them to finish.
+    Cancel a list of asyncio tasks.
     """
     logger.debug(f"Cancelling {len(tasks)} tasks")
     for task in tasks:
