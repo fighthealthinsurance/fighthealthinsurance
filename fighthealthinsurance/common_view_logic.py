@@ -1666,15 +1666,14 @@ class AppealsBackendHelper:
             results = await asyncio.gather(
                 pubmed_context_awaitable,
                 ml_citation_context_awaitable,
-                return_exceptions=True,
+                return_exceptions=True
             )
             if isinstance(results[0], str):
                 pubmed_context = results[0]
             else:
                 pubmed_context = None
-            candidate = results[1]
-            if isinstance(candidate, str):
-                ml_citation_context = candidate
+            if isinstance(results[1], str):
+                ml_citation_context = results[1]
             else:
                 ml_citation_context = None
             logger.debug("Success")
