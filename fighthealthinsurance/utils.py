@@ -116,7 +116,7 @@ async def cancel_tasks(tasks: List[asyncio.Task]) -> None:
     logger.debug(f"Cancelling {len(tasks)} tasks")
     for task in tasks:
         if not task.done():
-            task.cancel()
+            task.get_loop().call_soon_threadsafe(task.cancel)
     logger.debug("All tasks cancelled")
 
 
@@ -400,6 +400,9 @@ async def execute_critical_optional_fireandforget(
         logger.opt(exception=True).error(f"Error executing required tasks {e}")
 
     if timeout is None:
+        logger.debug("No timeout set, so all tasks should be done")
+        if done_record:
+            yield done_record
         return
     try:
         time_core_finished = time.time()
