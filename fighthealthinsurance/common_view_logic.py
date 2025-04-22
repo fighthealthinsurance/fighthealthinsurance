@@ -1126,6 +1126,8 @@ class DenialCreatorHelper:
         Perform entity extraction on a given denial id
         """
 
+        logger.debug(f"Starting entity extraction for denial {denial_id}")
+
         # Define a wrapper function that returns both the name and result
         async def named_task(awaitable: Awaitable[Any], name: str) -> tuple[str, Any]:
             try:
@@ -1151,6 +1153,10 @@ class DenialCreatorHelper:
             named_task(cls.extract_set_denial_and_diagnosis(denial_id), "diagnosis"),
             named_task(cls.extract_set_denialtype(denial_id), "type of denial"),
         ]
+
+        logger.debug(
+            f"Collecting tasks for {denial_id} with {len(optional_awaitables)} optional and {len(required_awaitables)} required tasks."
+        )
         async for item in execute_critical_optional_fireandforget(
             optional=optional_awaitables,
             required=required_awaitables,
@@ -1214,8 +1220,17 @@ class DenialCreatorHelper:
                     try:
                         pubmed_tool = PubMedTools()
                         # Find related articles based on diagnosis and procedure
-                        await pubmed_tool.find_pubmed_articles_for_denial(
-                            denial, timeout=60.0
+                        # Adding proper timeout handling with asyncio.wait_for
+                        await asyncio.wait_for(
+                            pubmed_tool.find_pubmed_articles_for_denial(
+                                denial, timeout=120.0
+                            ),
+                            timeout=120.0,  # Enforce same timeout at asyncio level
+                        )
+
+                    except asyncio.TimeoutError:
+                        logger.warning(
+                            f"PubMed article search timed out for denial {denial_id} after 120s"
                         )
                     except Exception as e:
                         logger.opt(exception=True).warning(
@@ -1223,7 +1238,7 @@ class DenialCreatorHelper:
                         )
 
                 # Fire and forget the PubMed search task
-                logger.debug("Starting pubmed search task.")
+                logger.debug("Starting pubmed search & building speculative context.")
                 await fire_and_forget_in_new_threadpool(find_pubmed_articles())
                 # Fire and forget the building the speculative context
                 await fire_and_forget_in_new_threadpool(
@@ -1637,7 +1652,7 @@ class AppealsBackendHelper:
         # Get PubMed context
         logger.debug("Looking up the pubmed context")
         pubmed_context_awaitable = asyncio.wait_for(
-            cls.pmt.find_context_for_denial(denial), timeout=35
+            cls.pmt.find_context_for_denial(denial), timeout=30
         )
 
         ml_citation_context_awaitable = asyncio.wait_for(
@@ -1649,13 +1664,21 @@ class AppealsBackendHelper:
         try:
             logger.debug("Gathering contexts")
             results = await asyncio.gather(
-                pubmed_context_awaitable, ml_citation_context_awaitable
+                pubmed_context_awaitable,
+                ml_citation_context_awaitable,
+                return_exceptions=True
             )
-            pubmed_context = results[0]
-            ml_citation_context = results[1]
+            if isinstance(results[0], str):
+                pubmed_context = results[0]
+            else:
+                pubmed_context = None
+            if isinstance(results[1], str):
+                ml_citation_context = results[1]
+            else:
+                ml_citation_context = None
             logger.debug("Success")
         except Exception as e:
-            logger.debug(f"Error gathering contexts: {e}")
+            logger.opt(exception=True).error(f"Error gathering contexts: {e}")
             # We still might have saved a context.
             try:
                 # Added in Django 5.1

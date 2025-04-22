@@ -2,7 +2,7 @@ from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
 from django.conf import settings
 
-
+import time
 import random
 import string
 import asyncstdlib
@@ -107,6 +107,17 @@ def send_fallback_email(subject: str, template_name: str, context, to_email: str
     except Exception as e:
         logger.error(f"Error sending email to BCC: {e}")
         pass
+
+
+async def cancel_tasks(tasks: List[asyncio.Task]) -> None:
+    """
+    Cancel a list of asyncio tasks.
+    """
+    logger.debug(f"Cancelling {len(tasks)} tasks")
+    for task in tasks:
+        if not task.done():
+            task.get_loop().call_soon_threadsafe(task.cancel)
+    logger.debug("All tasks cancelled")
 
 
 async def check_call(cmd, max_retries=0, **kwargs):
@@ -224,7 +235,7 @@ async def fire_and_forget_in_new_threadpool(task: Coroutine) -> None:
     Args:
         task: The async task to run
     """
-    logger.debug("Starting fire and forget task {task}")
+    logger.debug(f"Starting fire and forget task {task}")
 
     def run_async_task() -> None:
         loop = asyncio.new_event_loop()
@@ -243,7 +254,7 @@ async def fire_and_forget_in_new_threadpool(task: Coroutine) -> None:
     thread = threading.Thread(target=run_async_task)
     thread.daemon = True  # Thread will exit when main thread exits
     thread.start()
-    logger.debug("Task started good bye :p")
+    logger.debug(f"Task started good bye :p {task}")
     return
 
 
@@ -286,9 +297,7 @@ async def best_within_timelimit(
         wrapped_tasks, timeout=timeout, return_when=asyncio.ALL_COMPLETED
     )
 
-    # Cancel any pending tasks
-    for task in pending:
-        task.cancel()
+    asyncio.create_task(cancel_tasks(list(pending)))
 
     # Find the best result from completed tasks
     best_result: Optional[T] = None
@@ -344,6 +353,7 @@ async def execute_critical_optional_fireandforget(
     fire_and_forget: Sequence[Coroutine] = [],
     done_record: Optional[T] = None,
     timeout: Optional[int] = None,
+    max_extra_time_for_optional: int = 10,
 ) -> AsyncIterator[T]:
     """
     Kicks off all tasks at once.
@@ -372,6 +382,7 @@ async def execute_critical_optional_fireandforget(
 
     required_set = set(required_tasks)
     required_tasks_finished = 0
+    time_started = time.time()
     # First, execute required tasks (no timeout)
     try:
         for task in asyncio.as_completed(all_tasks, timeout=timeout):
@@ -384,15 +395,41 @@ async def execute_critical_optional_fireandforget(
                 logger.debug("All done with required tasks")
                 break
     except asyncio.TimeoutError as e:
-        logger.opt(exception=True).error(f"Timed out waiting for required task?")
+        logger.opt(exception=True).error(f"Timed out waiting for required tasks?")
     except Exception as e:
         logger.opt(exception=True).error(f"Error executing required tasks {e}")
-        raise e
+
+    if timeout is None:
+        logger.debug("No timeout set, so all tasks should be done")
+        if done_record:
+            yield done_record
+        return
+    try:
+        time_core_finished = time.time()
+        time_remaining_before_timeout: int = int(
+            timeout - (time_core_finished - time_started) - 1
+        )
+        remaining_seconds: int = max(0, min(
+            max_extra_time_for_optional,
+            time_remaining_before_timeout,
+        ))
+        logger.debug(
+            f"Waiting for optional tasks to finish for {remaining_seconds} seconds"
+        )
+        # Wait for optional tasks to finish with a timeout
+        for task in asyncio.as_completed(optional_tasks, timeout=remaining_seconds):
+            optional_result: T = await task
+            # Yield each result immediately for streaming
+            yield optional_result
+    except asyncio.TimeoutError as e:
+        logger.debug(f"Timed out waiting for optional tasks?")
     finally:
-        for t in optional_tasks:
-            if not t.done():
-                t.cancel()
-        await asyncio.gather(*optional_tasks, return_exceptions=True)
+        logger.debug(
+            "Required tasks finished, fire and forget canceling optional tasks"
+        )
+        asyncio.create_task(cancel_tasks(optional_tasks))
+        logger.debug("Optional tasks scheduled for cancelation")
+
     if done_record:
         yield done_record
 
