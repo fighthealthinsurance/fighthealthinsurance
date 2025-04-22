@@ -45,8 +45,7 @@ def normalize_phone_number(phone_number: Optional[str]) -> Optional[str]:
     # Remove all non-digit characters
     if phone_number is None:
         return None
-    lowered = phone_number.lower()
-    return re.sub(r"[^0-9x]", "", lowered)
+    return generic_validate_phone_number(phone_number)
 
 
 def get_next_fake_username() -> str:
@@ -245,3 +244,28 @@ def create_user(
             f"Failed to create user {email} in domain {domain_name}: {str(e)}"
         )
         raise
+
+
+def generic_validate_phone_number(value):
+    # Remove all hyphens and spaces from the phone number
+    cleaned_number = (
+        value.replace("-", "")
+        .replace(" ", "")
+        .replace("+", "")
+        .replace("(", "")
+        .replace(")", "")
+        .replace(",", "x")  # Some folks use comma for extensions
+    )
+
+    # Check that the remaining string only contains digits and 'X' or 'x'
+    if (
+        not all(char.isdigit() or char == "X" or char == "x" for char in cleaned_number)
+        or len(cleaned_number) < 10
+    ):
+        raise ValidationError(
+            f"Phone number can only contain digits, 'X', and hyphens, and must be at least 10 digits long got {value}"
+        )
+    # Drop the leading '1' if present and the number is 11 digits long
+    if cleaned_number.startswith("1") and len(cleaned_number) > 11:
+        cleaned_number = cleaned_number[1:]
+    return cleaned_number
