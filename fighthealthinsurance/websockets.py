@@ -37,9 +37,10 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
         except Exception as e:
             logger.opt(exception=True).debug(f"Error sending back appeals: {e}")
             raise e
+        finally:
+            await asyncio.sleep(1)
+            await self.close()
         logger.debug("All sent")
-        await asyncio.sleep(1)
-        await self.close()
 
 
 class StreamingEntityBackend(AsyncWebsocketConsumer):
@@ -69,5 +70,6 @@ class StreamingEntityBackend(AsyncWebsocketConsumer):
             logger.opt(exception=True).debug(f"Error sending back entity: {e}")
             raise e
         finally:
+            await asyncio.sleep(1)
             await self.close()
             logger.debug("Closed connection")
