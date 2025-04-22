@@ -409,10 +409,10 @@ async def execute_critical_optional_fireandforget(
         time_remaining_before_timeout: int = int(
             timeout - (time_core_finished - time_started) - 1
         )
-        remaining_seconds: int = min(
+        remaining_seconds: int = max(0, min(
             max_extra_time_for_optional,
             time_remaining_before_timeout,
-        )
+        ))
         logger.debug(
             f"Waiting for optional tasks to finish for {remaining_seconds} seconds"
         )
