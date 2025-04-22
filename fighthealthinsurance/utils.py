@@ -2,7 +2,7 @@ from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
 from django.conf import settings
 
-
+import time
 import random
 import string
 import asyncstdlib
@@ -107,6 +107,17 @@ def send_fallback_email(subject: str, template_name: str, context, to_email: str
     except Exception as e:
         logger.error(f"Error sending email to BCC: {e}")
         pass
+
+
+async def cancel_tasks(tasks: List[asyncio.Task[T]]) -> None:
+    """
+    Cancel a list of asyncio tasks and wait for them to finish.
+    """
+    logger.debug(f"Cancelling {len(tasks)} tasks")
+    for task in tasks:
+        if not task.done():
+            task.cancel()
+    logger.debug("All tasks cancelled")
 
 
 async def check_call(cmd, max_retries=0, **kwargs):
@@ -286,9 +297,7 @@ async def best_within_timelimit(
         wrapped_tasks, timeout=timeout, return_when=asyncio.ALL_COMPLETED
     )
 
-    # Cancel any pending tasks
-    for task in pending:
-        task.cancel()
+    await fire_and_forget_in_new_threadpool(cancel_tasks(pending))
 
     # Find the best result from completed tasks
     best_result: Optional[T] = None
@@ -344,6 +353,7 @@ async def execute_critical_optional_fireandforget(
     fire_and_forget: Sequence[Coroutine] = [],
     done_record: Optional[T] = None,
     timeout: Optional[int] = None,
+    max_extra_time_for_optional: Optional[int] = 10,
 ) -> AsyncIterator[T]:
     """
     Kicks off all tasks at once.
@@ -372,6 +382,7 @@ async def execute_critical_optional_fireandforget(
 
     required_set = set(required_tasks)
     required_tasks_finished = 0
+    time_started = time.time()
     # First, execute required tasks (no timeout)
     try:
         for task in asyncio.as_completed(all_tasks, timeout=timeout):
@@ -384,15 +395,33 @@ async def execute_critical_optional_fireandforget(
                 logger.debug("All done with required tasks")
                 break
     except asyncio.TimeoutError as e:
-        logger.opt(exception=True).error(f"Timed out waiting for required task?")
+        logger.opt(exception=True).error(f"Timed out waiting for required tasks?")
     except Exception as e:
         logger.opt(exception=True).error(f"Error executing required tasks {e}")
-        raise e
+
+    try:
+        time_core_finished = time.time()
+        remaining_seconds = min(
+            max_extra_time_for_optional,
+            timeout - (time_core_finished - time_started) - 2,
+        )
+        logger.debug(
+            f"Waiting for optional tasks to finish for {remaining_seconds} seconds"
+        )
+        # Wait for optional tasks to finish with a timeout
+        for task in asyncio.as_completed(optional_tasks, timeout=remaining_seconds):
+            result: T = await task
+            # Yield each result immediately for streaming
+            yield result
+    except asyncio.TimeoutError as e:
+        logger.debug(f"Timed out waiting for optional tasks?")
     finally:
-        for t in optional_tasks:
-            if not t.done():
-                t.cancel()
-        await asyncio.gather(*optional_tasks, return_exceptions=True)
+        logger.debug(
+            "Required tasks finished, fire and forget canceling optional tasks"
+        )
+        await fire_and_forget_in_new_threadpool(cancel_tasks(optional_tasks))
+        logger.debug("Optional tasks canceled")
+
     if done_record:
         yield done_record
 

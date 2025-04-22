@@ -358,6 +358,7 @@ class AppealGenerator(object):
         diagnosis = None
         # How many models have we tried?
         c = 0
+        logger.debug(f"Trying to get procedure and diagnosis using {models_to_try}")
         for model in models_to_try:
             c = c + 1
             logger.debug(f"Hiiii Exploring model {model}")

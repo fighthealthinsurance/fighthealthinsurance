@@ -1652,7 +1652,7 @@ class AppealsBackendHelper:
         # Get PubMed context
         logger.debug("Looking up the pubmed context")
         pubmed_context_awaitable = asyncio.wait_for(
-            cls.pmt.find_context_for_denial(denial), timeout=35
+            cls.pmt.find_context_for_denial(denial), timeout=30
         )
 
         ml_citation_context_awaitable = asyncio.wait_for(
@@ -1664,13 +1664,22 @@ class AppealsBackendHelper:
         try:
             logger.debug("Gathering contexts")
             results = await asyncio.gather(
-                pubmed_context_awaitable, ml_citation_context_awaitable
+                pubmed_context_awaitable,
+                ml_citation_context_awaitable,
+                return_exceptions=True,
+                timeout=40,
             )
-            pubmed_context = results[0]
-            ml_citation_context = results[1]
+            if isinstance(results[0], Exception):
+                pubmed_context = None
+            else:
+                pubmed_context = results[0]
+            if isinstance(results[1], Exception):
+                ml_citation_context = None
+            else:
+                ml_citation_context = results[1]
             logger.debug("Success")
         except Exception as e:
-            logger.debug(f"Error gathering contexts: {e}")
+            logger.opt(exception=True).error(f"Error gathering contexts: {e}")
             # We still might have saved a context.
             try:
                 # Added in Django 5.1
