@@ -1,4 +1,7 @@
 from django import forms
+from fhi_users.auth.auth_utils import (
+    normalize_phone_number,
+)
 
 
 class LoginForm(forms.Form):
@@ -8,6 +11,12 @@ class LoginForm(forms.Form):
     domain = forms.CharField(required=False)
     phone = forms.CharField(required=False)
 
+    def clean_phone(self):
+        phone = self.cleaned_data.get("phone")
+        if phone:
+            return normalize_phone_number(phone)
+        return phone
+
 
 class TOTPForm(forms.Form):
     username = forms.CharField(required=True)
@@ -16,11 +25,23 @@ class TOTPForm(forms.Form):
     phone = forms.CharField(required=False)
     totp = forms.CharField(required=True)
 
+    def clean_phone(self):
+        phone = self.cleaned_data.get("phone")
+        if phone:
+            return normalize_phone_number(phone)
+        return phone
+
 
 class RequestPasswordResetForm(forms.Form):
     username = forms.CharField(required=True)
     domain = forms.CharField(required=False)
     phone = forms.CharField(required=False)
+
+    def clean_phone(self):
+        phone = self.cleaned_data.get("phone")
+        if phone:
+            return normalize_phone_number(phone)
+        return phone
 
 
 class ChangePasswordForm(forms.Form):
