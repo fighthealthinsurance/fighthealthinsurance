@@ -1132,6 +1132,16 @@ class DenialCreatorHelper:
         """
 
         logger.debug(f"Starting entity extraction for denial {denial_id}")
+        denial = await Denial.objects.filter(denial_id=denial_id).aget()
+        if (
+            denial.diagnosis
+            or denial.extract_procedure_diagnosis_finished
+            or denial.procedure
+        ):
+            logger.debug(
+                f"Skipping entity extraction for denial {denial_id} as it is already done."
+            )
+            return
 
         # Define a wrapper function that returns both the name and result
         async def named_task(awaitable: Awaitable[Any], name: str) -> tuple[str, Any]:
