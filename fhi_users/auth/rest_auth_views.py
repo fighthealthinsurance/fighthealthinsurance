@@ -1191,6 +1191,63 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
+    @extend_schema(
+        responses={
+            200: serializers.StatusResponseSerializer,
+            403: common_serializers.ErrorSerializer,
+        }
+    )
+    @action(detail=False, methods=["post"])
+    def get_billing_url(self, request: Request) -> Response:
+        """
+        Returns a Stripe billing portal URL for the current domain if the user is an admin.
+        """
+        current_user: User = request.user  # type: ignore
+        domain_id = auth_utils.get_domain_id_from_request(request)
+        if not domain_id:
+            return Response(
+                common_serializers.ErrorSerializer(
+                    {"error": "Domain ID not found in session"}
+                ).data,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        user_domain = UserDomain.objects.get(id=domain_id)
+        if not user_is_admin_in_domain(current_user, domain_id):
+            return Response(
+                common_serializers.ErrorSerializer(
+                    {"error": "User is not an admin in this domain"}
+                ).data,
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        # Must have a Stripe customer ID to access billing portal
+        if not user_domain.stripe_customer_id:
+            return Response(
+                common_serializers.ErrorSerializer(
+                    {"error": "No Stripe customer found for this domain"}
+                ).data,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        stripe.api_key = settings.STRIPE_API_SECRET_KEY
+        try:
+            session = stripe.billing_portal.Session.create(
+                customer=user_domain.stripe_customer_id,
+                return_url=f"https://{settings.FIGHT_PAPERWORK_DOMAIN}/dashboard/billing",
+            )
+            return Response(
+                serializers.StatusResponseSerializer(
+                    {"status": "success", "next_url": session.url}
+                ).data,
+                status=status.HTTP_200_OK,
+            )
+        except Exception as e:
+            logger.opt(exception=True).error(f"Error creating Stripe billing portal session: {str(e)}")
+            return Response(
+                common_serializers.ErrorSerializer(
+                    {"error": f"Could not create billing portal session: {str(e)}"}
+                ).data,
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
 
 class RestLoginView(ViewSet, SerializerMixin):
     serializer_class = serializers.LoginFormSerializer
