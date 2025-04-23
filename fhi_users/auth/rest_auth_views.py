@@ -909,7 +909,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                             return Response(
                                 common_serializers.ErrorSerializer(
                                     {
-                                        "error": "Domain is active, cannot delete, please contact support42@fighthealthinsurance.com"
+                                        "error": "Domain is active, cannot delete, please contact support42@fightpaperwork.com"
                                     }
                                 ).data,
                                 status=status.HTTP_400_BAD_REQUEST,
