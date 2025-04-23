@@ -725,7 +725,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             "Included Incremental FP Appeal", 0, recurring=True, metered=True
         )
         fax_metered_product_id, fax_metered_price_id = stripe_utils.get_or_create_price(
-            "(Optional) Faxed FP Appeal", 500, recurring=True, metered=True
+            "Optional Faxed FP Appeal", 500, recurring=True, metered=True
         )
         line_items = [
             {"price": base_price_id, "quantity": 1},
