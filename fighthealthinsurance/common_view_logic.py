@@ -372,6 +372,7 @@ class AppealAssemblyHelper:
     ):
         if len(target) < 2:
             return
+        files_for_fax: list[str] = []
         if include_cover:
             # Build our cover page
             onbehalf_of_name = f"{professional_name} and {patient_name}"
@@ -396,7 +397,7 @@ class AppealAssemblyHelper:
                     cover_context
                 )
                 logger.debug(
-                    f"Rendering cover letter from string {cover_template_string} and got {cover_content}"
+                    f"Rendering cover letter from string {cover_template_string} and got {cover_content[0:10]}..."
                 )
             else:
                 cover_content = render_to_string(
@@ -404,15 +405,16 @@ class AppealAssemblyHelper:
                     context=cover_context,
                 )
                 logger.debug(
-                    f"Rendering cover letter from path {cover_template_path} and got {cover_content}"
+                    f"Rendering cover letter from path {cover_template_path} and got {cover_content[0:10]}..."
                 )
-            files_for_fax: list[str] = []
             cover_letter_file = tempfile.NamedTemporaryFile(
                 suffix=".html", prefix="info_cover", mode="w+t", delete=False
             )
+            logger.debug(f"Writing cover letter to {cover_letter_file.name}")
             cover_letter_file.write(cover_content)
             cover_letter_file.flush()
             files_for_fax.append(cover_letter_file.name)
+            logger.debug(f"Added cover letter as {cover_letter_file.name}")
 
         # Appeal text
         appeal_text_file = tempfile.NamedTemporaryFile(
@@ -421,6 +423,7 @@ class AppealAssemblyHelper:
         appeal_text_file.write(completed_appeal_text)
         appeal_text_file.flush()
         files_for_fax.append(appeal_text_file.name)
+        logger.debug(f"Added appeal text as {appeal_text_file.name}")
 
         # Health history
         # Make the file scope up here so it lasts until after we've got the single output
@@ -433,6 +436,7 @@ class AppealAssemblyHelper:
             health_history_file.write(health_history)
             files_for_fax.append(health_history_file.name)
             health_history_file.flush()
+            logger.debug(f"Added health history as {health_history_file.name}")
 
         # PubMed articles
         if pubmed_ids_parsed is not None and len(pubmed_ids_parsed) > 0:
@@ -459,6 +463,7 @@ class AppealAssemblyHelper:
             user_header=str(uuid.uuid4()),
             target=target,
         )
+        logger.debug(f"Final target is {target}")
         return target
 
 
