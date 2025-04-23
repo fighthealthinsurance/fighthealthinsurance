@@ -368,7 +368,9 @@ class AssembleAppealRequestSerializer(serializers.Serializer):
         child=serializers.CharField(required=False, allow_blank=True),
         required=False,
     )
-    include_provided_health_history = serializers.BooleanField(required=False)
+    include_provided_health_history = serializers.BooleanField(
+        required=False, allow_null=True
+    )
 
 
 class AssembleAppealResponseSerializer(serializers.Serializer):
