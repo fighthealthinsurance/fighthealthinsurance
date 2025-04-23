@@ -1060,7 +1060,9 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         if not new_domain:
             return Response(
                 serializers.ProfessionalSignupResponseSerializer(
-                    {"next_url": f"https://{settings.FIGHT_PAPERWORK_DOMAIN}/auth/login"}
+                    {
+                        "next_url": f"https://{settings.FIGHT_PAPERWORK_DOMAIN}/auth/login"
+                    }
                 ).data,
                 status=status.HTTP_201_CREATED,
             )
@@ -1096,7 +1098,9 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         else:
             return Response(
                 serializers.ProfessionalSignupResponseSerializer(
-                    {"next_url": f"https://{settings.FIGHT_PAPERWORK_DOMAIN}/?q=testmode"}
+                    {
+                        "next_url": f"https://{settings.FIGHT_PAPERWORK_DOMAIN}/?q=testmode"
+                    }
                 ).data,
                 status=status.HTTP_201_CREATED,
             )
@@ -1240,7 +1244,9 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 status=status.HTTP_200_OK,
             )
         except Exception as e:
-            logger.opt(exception=True).error(f"Error creating Stripe billing portal session: {str(e)}")
+            logger.opt(exception=True).error(
+                f"Error creating Stripe billing portal session: {str(e)}"
+            )
             return Response(
                 common_serializers.ErrorSerializer(
                     {"error": f"Could not create billing portal session: {str(e)}"}

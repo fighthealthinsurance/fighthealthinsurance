@@ -243,16 +243,21 @@ class NextUrlResponseSerializer(serializers.Serializer):
     """
     Generic serializer for returning a next_url field.
     """
+
     next_url = serializers.URLField()
+
 
 class ProfessionalSignupResponseSerializer(NextUrlResponseSerializer):
     """
     Returns a 'next_url' guiding the user to checkout or follow-up steps.
     """
+
     pass
+
 
 class FinishPaymentResponseSerializer(NextUrlResponseSerializer):
     pass
+
 
 class ProfessionalBillingResponseSerializer(NextUrlResponseSerializer):
     pass
