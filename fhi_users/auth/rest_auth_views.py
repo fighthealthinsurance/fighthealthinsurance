@@ -1193,7 +1193,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
 
     @extend_schema(
         responses={
-            200: serializers.StatusResponseSerializer,
+            200: serializers.ProfessionalBillingResponseSerializer,
             403: common_serializers.ErrorSerializer,
         }
     )
@@ -1231,11 +1231,11 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         try:
             session = stripe.billing_portal.Session.create(
                 customer=user_domain.stripe_customer_id,
-                return_url=f"https://{settings.FIGHT_PAPERWORK_DOMAIN}/dashboard",
+                return_url=f"https://{settings.FIGHT_PAPERWORK_DOMAIN}/dashboard/billing",
             )
             return Response(
-                serializers.StatusResponseSerializer(
-                    {"status": "success", "next_url": session.url}
+                serializers.ProfessionalBillingResponseSerializer(
+                    {"next_url": session.url}
                 ).data,
                 status=status.HTTP_200_OK,
             )

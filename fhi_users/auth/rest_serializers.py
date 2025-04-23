@@ -239,12 +239,23 @@ class FullProfessionalSerializer(serializers.ModelSerializer):
         return f"{user.first_name} {user.last_name}"
 
 
-class ProfessionalSignupResponseSerializer(serializers.Serializer):
+class NextUrlResponseSerializer(serializers.Serializer):
+    """
+    Generic serializer for returning a next_url field.
+    """
+    next_url = serializers.URLField()
+
+class ProfessionalSignupResponseSerializer(NextUrlResponseSerializer):
     """
     Returns a 'next_url' guiding the user to checkout or follow-up steps.
     """
+    pass
 
-    next_url = serializers.URLField()
+class FinishPaymentResponseSerializer(NextUrlResponseSerializer):
+    pass
+
+class ProfessionalBillingResponseSerializer(NextUrlResponseSerializer):
+    pass
 
 
 class AcceptProfessionalUserSerializer(serializers.Serializer):
@@ -407,10 +418,6 @@ class FinishPaymentSerializer(serializers.Serializer):
     cancel_url = serializers.URLField(
         required=False, default="https://www.fightpaperwork.com/?q=ohno"
     )
-
-
-class FinishPaymentResponseSerializer(serializers.Serializer):
-    next_url = serializers.URLField()
 
 
 class DomainExistsSerializer(serializers.Serializer):
