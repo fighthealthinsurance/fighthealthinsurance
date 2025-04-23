@@ -1027,32 +1027,42 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         password: str = user_signup_info["password"]  # type: ignore
         first_name: str = user_signup_info["first_name"]  # type: ignore
         last_name: str = user_signup_info["last_name"]  # type: ignore
-        user = create_user(
-            raw_username=raw_username,
-            domain_name=domain_name,
-            phone_number=visible_phone_number,
-            email=email,
-            password=password,
-            first_name=first_name,
-            last_name=last_name,
-        )
-        professional_user = ProfessionalUser.objects.create(
-            user=user,
-            active=False,
-        )
-        ProfessionalDomainRelation.objects.create(
-            professional=professional_user,
-            domain=user_domain,
-            active_domain_relation=new_domain,
-            admin=new_domain,
-            pending_domain_relation=not new_domain,
-        )
+        try:
+            user = create_user(
+                raw_username=raw_username,
+                domain_name=domain_name,
+                phone_number=visible_phone_number,
+                email=email,
+                password=password,
+                first_name=first_name,
+                last_name=last_name,
+            )
+            professional_user = ProfessionalUser.objects.create(
+                user=user,
+                active=False,
+            )
+            ProfessionalDomainRelation.objects.create(
+                professional=professional_user,
+                domain=user_domain,
+                active_domain_relation=new_domain,
+                admin=new_domain,
+                pending_domain_relation=not new_domain,
+            )
+        except IntegrityError:
+            return Response(
+                common_serializers.ErrorSerializer(
+                    {"error": "User already exists"}
+                ).data,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         # If the domain is not new we don't need billing info
         if not new_domain:
             return Response(
                 serializers.ProfessionalSignupResponseSerializer(
-                    {"next_url": "https://www.fightpaperwork.com/auth/login"}
+                    {
+                        "next_url": f"https://{settings.FIGHT_PAPERWORK_DOMAIN}/auth/login"
+                    }
                 ).data,
                 status=status.HTTP_201_CREATED,
             )
@@ -1063,7 +1073,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 user_domain,
                 user_signup_info["continue_url"],
                 user_signup_info.get(
-                    "cancel_url", "https://www.fightpaperwork.com/?q=ohno"
+                    "cancel_url", f"https://{settings.FIGHT_PAPERWORK_DOMAIN}/?q=ohno"
                 ),
                 card_required=data["card_required"],
             )
@@ -1088,7 +1098,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         else:
             return Response(
                 serializers.ProfessionalSignupResponseSerializer(
-                    {"next_url": "https://www.fightpaperwork.com/?q=testmode"}
+                    {"next_url": "https://settings.FIGHT_PAPERWORK_DOMAIN/?q=testmode"}
                 ).data,
                 status=status.HTTP_201_CREATED,
             )
