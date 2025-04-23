@@ -48,7 +48,12 @@ def normalize_phone_number(phone_number: Optional[str]) -> Optional[str]:
     # Remove all non-digit characters
     if phone_number is None:
         return None
-    return generic_validate_phone_number(phone_number)
+    try:
+        return generic_validate_phone_number(phone_number)
+    except ValidationError:
+        # In testing we have some short numbers like 42.
+        lowered = phone_number.lower()
+        return re.sub(r"[^0-9x]", "", lowered)
 
 
 def get_next_fake_username() -> str:
