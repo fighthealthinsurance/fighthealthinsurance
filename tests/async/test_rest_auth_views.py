@@ -21,6 +21,7 @@ from fhi_users.models import (
     PendingProStripeCheckoutSession,
 )
 
+from unittest.mock import patch
 
 User = get_user_model()
 
@@ -1566,3 +1567,104 @@ class UserDomainExistsTests(TestCase):
         data = {}
         response = self.client.post(url, data, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+class GetBillingUrlTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.domain = UserDomain.objects.create(
+            name="billingtestdomain",
+            visible_phone_number="5550000000",
+            internal_phone_number="5550000001",
+            active=True,
+            display_name="Billing Test Domain",
+            country="USA",
+            state="CA",
+            city="Billing City",
+            address1="123 Billing St",
+            zipcode="11111",
+            beta=True,
+            stripe_customer_id="cus_test12345",  # Required for billing portal
+        )
+        self.admin_password = "adminbillingpass"
+        self.admin_user = User.objects.create_user(
+            username=f"adminbillinguser🐼{self.domain.id}",
+            password=self.admin_password,
+            email="adminbilling@example.com",
+            first_name="Admin",
+            last_name="Billing",
+        )
+        self.admin_user.is_active = True
+        self.admin_user.save()
+        self.admin_professional = ProfessionalUser.objects.create(
+            user=self.admin_user,
+            active=True,
+        )
+        ProfessionalDomainRelation.objects.create(
+            professional=self.admin_professional,
+            domain=self.domain,
+            active_domain_relation=True,
+            admin=True,
+            pending_domain_relation=False,
+        )
+        self.regular_password = "regularbillingpass"
+        self.regular_user = User.objects.create_user(
+            username=f"regularbillinguser🐼{self.domain.id}",
+            password=self.regular_password,
+            email="regularbilling@example.com",
+            first_name="Regular",
+            last_name="Billing",
+        )
+        self.regular_user.is_active = True
+        self.regular_user.save()
+        self.regular_professional = ProfessionalUser.objects.create(
+            user=self.regular_user,
+            active=True,
+        )
+        ProfessionalDomainRelation.objects.create(
+            professional=self.regular_professional,
+            domain=self.domain,
+            active_domain_relation=True,
+            admin=False,
+            pending_domain_relation=False,
+        )
+        ExtraUserProperties.objects.create(user=self.admin_user, email_verified=True)
+        ExtraUserProperties.objects.create(user=self.regular_user, email_verified=True)
+
+    @patch("stripe.billing_portal.Session.create")
+    def test_billing_url_for_admin(self, mock_stripe_portal):
+        mock_stripe_portal.return_value.url = "https://billing.stripe.com/test_portal"
+        # Login as admin
+        url = reverse("rest_login-login")
+        data = {
+            "username": "adminbillinguser",
+            "password": self.admin_password,
+            "domain": "billingtestdomain",
+            "phone": "",
+        }
+        response = self.client.post(url, data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        # Call get_billing_url
+        billing_url = reverse("professional_user-get-billing-url")
+        response = self.client.post(billing_url, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("next_url", response.json())
+        self.assertEqual(response.json()["next_url"], "https://billing.stripe.com/test_portal")
+
+    @patch("stripe.billing_portal.Session.create")
+    def test_billing_url_for_non_admin(self, mock_stripe_portal):
+        # Login as regular user
+        url = reverse("rest_login-login")
+        data = {
+            "username": "regularbillinguser",
+            "password": self.regular_password,
+            "domain": "billingtestdomain",
+            "phone": "",
+        }
+        response = self.client.post(url, data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        # Call get_billing_url
+        billing_url = reverse("professional_user-get-billing-url")
+        response = self.client.post(billing_url, format="json")
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertIn("error", response.json())
+        self.assertIn("not an admin", response.json()["error"])
