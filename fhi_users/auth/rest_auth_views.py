@@ -1231,7 +1231,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         try:
             session = stripe.billing_portal.Session.create(
                 customer=user_domain.stripe_customer_id,
-                return_url=f"https://{settings.FIGHT_PAPERWORK_DOMAIN}/dashboard/billing",
+                return_url=f"https://{settings.FIGHT_PAPERWORK_DOMAIN}/dashboard",
             )
             return Response(
                 serializers.StatusResponseSerializer(
