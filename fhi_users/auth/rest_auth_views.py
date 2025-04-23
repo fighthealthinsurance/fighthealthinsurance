@@ -722,11 +722,15 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             "FP Basic Professional Plan", 2500, recurring=True
         )
         metered_product_id, metered_price_id = stripe_utils.get_or_create_price(
-            "Incremental FP Appeal", 1000, recurring=True, metered=True
+            "Included Incremental FP Appeal", 0, recurring=True, metered=True
+        )
+        fax_metered_product_id, fax_metered_price_id = stripe_utils.get_or_create_price(
+            "Optional Faxed FP Appeal", 500, recurring=True, metered=True
         )
         line_items = [
             {"price": base_price_id, "quantity": 1},
             {"price": metered_price_id},
+            {"price": fax_metered_price_id},
         ]
         stripe_recovery_info = StripeRecoveryInfo.objects.create(items=line_items)
         checkout_session = stripe.checkout.Session.create(
