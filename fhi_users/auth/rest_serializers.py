@@ -13,7 +13,7 @@ from fhi_users.models import *
 from fhi_users.auth.auth_utils import (
     create_user,
     validate_password,
-    normalize_phone_number,
+    generic_validate_phone_number,
 )
 from typing import Any, Optional
 import re
@@ -110,29 +110,15 @@ class UserSignupSerializer(serializers.Serializer):
     # We'll make a "fake" e-mail on the backend if no e-mail provided
     email = serializers.EmailField(required=False, allow_blank=True)
 
+    def validate_visible_phone_number(self, value):
+        return generic_validate_phone_number(value)
+
     def validate_password(self, value):
         if not validate_password(value):
             raise serializers.ValidationError(
                 "Password must be at least 8 characters, contain at least one digit, and not all digits"
             )
         return value
-
-    def validate_visible_phone_number(self, value):
-        # Remove all hyphens from the phone number
-        cleaned_number = value.replace("-", "")
-
-        # Check that the remaining string only contains digits and 'X' or 'x'
-        if (
-            not all(
-                char.isdigit() or char == "X" or char == "x" for char in cleaned_number
-            )
-            or len(cleaned_number) < 7
-        ):
-            raise serializers.ValidationError(
-                "Phone number can only contain digits, 'X', and hyphens, and must be at least 7 characters long."
-            )
-
-        return cleaned_number
 
     def save(self, **kwargs: Any):
         raise Exception(
@@ -158,6 +144,12 @@ class UserDomainSerializer(serializers.ModelSerializer):
     # Override name and visible phone so we can re-create.
     name = serializers.CharField(required=False, allow_blank=True)
     visible_phone_number = serializers.CharField(required=False, allow_blank=True)
+
+    def validate_visible_phone_number(self, value):
+        # Phone number is optional (can also be domain name based)
+        if not value or value == "":
+            return None
+        return generic_validate_phone_number(value)
 
     class Meta(object):
         model = UserDomain

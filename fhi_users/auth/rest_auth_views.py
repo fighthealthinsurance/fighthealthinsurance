@@ -1000,13 +1000,17 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 if user_domain_info["name"] == "":
                     user_domain_info["name"] = None
                 if visible_phone_number != user_domain_info["visible_phone_number"]:
-                    if user_domain_info["visible_phone_number"] is None:
+                    if (
+                        user_domain_info["visible_phone_number"] is None
+                        or user_domain_info["visible_phone_number"] == ""
+                    ):
                         user_domain_info["visible_phone_number"] = visible_phone_number
                     else:
+                        udpn = user_domain_info["visible_phone_number"]
                         return Response(
                             common_serializers.ErrorSerializer(
                                 {
-                                    "error": "Visible phone number and user domain visible phone number must match",
+                                    "error": f"Visible phone number {visible_phone_number} and user domain visible phone number {udpn} must match",
                                 }
                             ).data,
                             status=status.HTTP_400_BAD_REQUEST,
