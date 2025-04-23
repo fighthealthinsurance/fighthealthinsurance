@@ -1500,7 +1500,11 @@ class DenialCreatorHelper:
     def format_denial_response_info(cls, denial):
         appeal_id = None
         if Appeal.objects.filter(for_denial=denial).exists():
-            appeal_id = Appeal.objects.filter(for_denial=denial).first().id
+            appeal_obj = Appeal.objects.filter(for_denial=denial).first()
+            if appeal_obj is None:
+                raise Exception(f"Could not find appeal for denial {denial.denial_id}")
+            else:
+                appeal_id = appeal_obj.id
         else:
             logger.debug(
                 f"Could not find appeal for {denial} -- expected for consumer version"
