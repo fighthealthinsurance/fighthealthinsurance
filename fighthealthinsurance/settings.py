@@ -89,6 +89,7 @@ class Base(Configuration):
     NEWSLETTER_THUMBNAIL = "sorl-thumbnail"
 
     ALLOWED_HOSTS: list[str] = ["*"]
+    USE_X_FORWARDED_HOST = True
 
     SENTRY_ENDPOINT = os.getenv("SENTRY_ENDPOINT")
     # Application definition
@@ -545,7 +546,9 @@ class Prod(Base):
     CORS_ALLOW_PRIVATE_NETWORK = False
     CORS_ALLOW_CREDENTIALS = True
 
-    SESSION_COOKIE_DOMAIN_DYNAMIC = [".fightpaperwork.com", ".fighthealthinsurance.com"]
+    # Domain dynamic overrides the built in domain, we only need to do this for fight paperwork
+    # fight health insurance is already on the vanilla domain.
+    SESSION_COOKIE_DOMAIN_DYNAMIC = [".fightpaperwork.com"]
 
     DEBUG = False
 
