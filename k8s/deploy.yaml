@@ -173,6 +173,7 @@ spec:
       - api.fighthealthinsurance.com
       - www.fuckhealthinsurance.com
       - www.appealhealthinsurance.com
+      - api.fightpaperwork.com
     secretName: combined-tls-secret
   rules:
     - host: www.fuckhealthinsurance.com
