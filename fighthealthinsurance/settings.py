@@ -103,6 +103,13 @@ class Base(Configuration):
         "django.template.context_processors.request",
     ]
 
+    SESSION_COOKIE_DOMAIN_DYNAMIC = [
+        ".fightpaperwork.com",
+        ".fighthealthinsurance.com",
+        ".localhost",
+        "localhost",
+    ]
+
     INSTALLED_APPS = [
         "django.contrib.admin",
         "django.contrib.auth",
@@ -156,6 +163,7 @@ class Base(Configuration):
         "fighthealthinsurance.middleware.CsrfCookieToHeaderMiddleware",
         "corsheaders.middleware.CorsMiddleware",
         "django_prometheus.middleware.PrometheusBeforeMiddleware",
+        "fighthealthinsurance.middleware.SessionMiddlewareDynamicDomain",
         "django.contrib.sessions.middleware.SessionMiddleware",
         "django.contrib.auth.middleware.AuthenticationMiddleware",
         "django.contrib.messages.middleware.MessageMiddleware",
@@ -524,6 +532,21 @@ class TestActor(Dev):
 
 
 class Prod(Base):
+    # Tighten up CORS
+    CORS_ALLOWED_ORIGINS = [
+        "https://www.fightpaperwork.com",
+        "https://fightpaperwork.com",
+        "https://api.fightpaperwork.com",
+        "https://www.fighthealthinsurance.com",
+        "https://fighthealthinsurance.com",
+        "https://api.fighthealthinsurance.com",
+    ]
+    CORS_ALLOW_ALL_ORIGINS = False
+    CORS_ALLOW_PRIVATE_NETWORK = False
+    CORS_ALLOW_CREDENTIALS = True
+
+    SESSION_COOKIE_DOMAIN_DYNAMIC = [".fightpaperwork.com", ".fighthealthinsurance.com"]
+
     DEBUG = False
 
     # Different fido server for production
