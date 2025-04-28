@@ -189,6 +189,10 @@
     form: GenderAffirmingCareBreastAugmentationQuestions
     regex: "\\b(breast augmentation.*transgender)\\b"
     procedure_regex: "breast augmentation"
+- model: fighthealthinsurance.denialtypes
+  pk: 23
+  fields:
+    name: Other
 - model: fighthealthinsurance.diagnosis
   pk: 1
   fields:
