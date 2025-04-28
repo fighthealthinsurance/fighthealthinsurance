@@ -327,6 +327,7 @@ class Base(Configuration):
         "https://www.fighthealthinsurance.com",
         "https://api.fighthealthinsurance.com",
         "https://*.fightpaperwork.com",
+        "https://api.fightpaperwork.com",
         "https://*.fighthealthinsurance.com",
     ]
 
