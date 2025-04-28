@@ -372,9 +372,7 @@ class ThirdPartyQuestions(InsuranceQuestions):
     alternate_insurance_details = forms.CharField(
         max_length=300,
         required=False,
-        label=(
-            "Any details regarding secondary or other insurance if available:"
-        )
+        label=("Any details regarding secondary or other insurance if available:"),
     )
     is_known_3rd_party = forms.BooleanField(
         required=False,
