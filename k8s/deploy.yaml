@@ -226,6 +226,16 @@ spec:
                 name:  web-svc
                 port:
                   number: 80
+    - host: api.fightpaperwork.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name:  web-svc
+                port:
+                  number: 80
     - host: fighthealthinsurance.com
       http:
         paths:
