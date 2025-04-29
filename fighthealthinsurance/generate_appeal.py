@@ -409,6 +409,7 @@ class AppealGenerator(object):
         professional_to_finish=None,
         plan_id=None,
         claim_id=None,
+        insurance_company=None,
     ) -> Optional[str]:
         """
         Constructs a prompt for generating a health insurance appeal based on denial details and optional contextual information.
@@ -435,16 +436,27 @@ class AppealGenerator(object):
             base = "While answering the question keep in mind the patient is trans."
         if professional_to_finish:
             base = f"{base}. Write the appeal from the professional point of view of {professional}."
-        if qa_context is not None:
+        if qa_context is not None and qa_context != "" and qa_context != "UNKNOWN":
             base = f"{base}. You should try and incorporate the following context into your appeal: {qa_context}."
         if patient is not None:
-            base = f"{base}. Please fill in the patients info {patient}."
+            base = f"{base}. Please include and fill in the patients info {patient}."
         if professional is not None:
-            base = f"{base}. Please fill in the professionals info {professional}."
-        if plan_id is not None:
-            base = f"{base}. Please fill in the plan id {plan_id}."
-        if claim_id is not None:
-            base = f"{base}. Please fill in the claim id {claim_id}."
+            base = f"{base}. Please include and fill in the professionals info {professional}."
+        if plan_id is not None and plan_id != "" and plan_id != "UNKNOWN":
+            base = f"{base}. Please include and fill in any references to the plan id as {plan_id}."
+        if (
+            insurance_company is not None
+            and insurance_company != ""
+            and insurance_company != "UNKNOWN"
+        ):
+            base = f"{base}. Please include and fill in any references to the insurance company to be {insurance_company}."
+        if (
+            claim_id is not None
+            and claim_id != ""
+            and claim_id != "UNKNOWN"
+            and claim_id != insurance_company
+        ):
+            base = f"{base}. Please include and fill in any references to the claim id as {claim_id}."
         start = f"Write a health insurance appeal for the following denial:"
         if (
             procedure is not None
@@ -512,6 +524,7 @@ class AppealGenerator(object):
             professional_to_finish=denial.professional_to_finish,
             plan_id=denial.plan_id,
             claim_id=denial.claim_id,
+            insurance_company=denial.insurance_company,
         )
         open_medically_necessary_prompt = self.make_open_med_prompt(
             procedure=denial.procedure,

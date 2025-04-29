@@ -1730,22 +1730,59 @@ class AppealsBackendHelper:
 
         async def sub_in_appeals(appeal: dict[str, str]) -> dict[str, str]:
             await asyncio.sleep(0)
-            s = Template(appeal["content"])
+            content = appeal["content"]
+            insurance_company = "{insurance_company}"
+            if (
+                denial.insurance_company is not None
+                and denial.insurance_company != ""
+                and denial.insurance_company != "UNKNOWN"
+            ):
+                insurance_company = denial.insurance_company
+            claim_id = "{claim_id}"
+            if (
+                denial.claim_id is not None
+                and denial.claim_id != ""
+                and denial.claim_id != "UNKNOWN"
+                and denial.claim_id != insurance_company
+            ):
+                claim_id = denial.claim_id
+            diagnosis = "{diagnosis}"
+            if (
+                denial.diagnosis is not None
+                and denial.diagnosis != ""
+                and denial.diagnosis != "UNKNOWN"
+            ):
+                diagnosis = denial.diagnosis
+            procedure = "{procedure}"
+            if (
+                denial.procedure is not None
+                and denial.procedure != ""
+                and denial.procedure != "UNKNOWN"
+            ):
+                procedure = denial.procedure
             subs = {
-                "insurance_company": denial.insurance_company or "{insurance_company}",
-                "[Insurance Company Name]": denial.insurance_company
-                or "{insurance_company}",
+                "insurance_company": insurance_company,
+                "[Insurance Company Name]": insurance_company,
+                "[Insurance Company]": insurance_company,
                 "[Insert Date]": denial.date or "{date}",
-                "[Reference Number from Denial Letter]": denial.claim_id
-                or "{claim_id}",
-                "[Claim ID]": denial.claim_id or "{claim_id}",
-                "{claim_id}": denial.claim_id or "{claim_id}",
-                "[Diagnosis]": denial.diagnosis or "{diagnosis}",
-                "[Procedure]": denial.procedure or "{procedure}",
-                "{diagnosis}": denial.diagnosis or "{diagnosis}",
-                "{procedure}": denial.procedure or "{procedure}",
+                "[Health Plan]": insurance_company,
+                "[Reference Number from Denial Letter]": claim_id,
+                "Dear Insurance Company": f"Dear {insurance_company}",
+                "Dear Health Plan": f"Dear {insurance_company}",
+                "Dear Sir/Madam": f"Dear {insurance_company}",
+                "[Claim ID]": claim_id,
+                "{claim_id}": claim_id,
+                "[Diagnosis]": diagnosis,
+                "[Procedure]": procedure,
+                "{diagnosis}": diagnosis,
+                "{procedure}": procedure,
             }
             try:
+                if (
+                    denial.professional_to_finish
+                    and denial.primary_professional is not None
+                ):
+                    subs["[Your Name]"] = denial.primary_professional.get_full_name()
                 if denial.patient_user is not None:
                     subs["[Patient Name]"] = denial.patient_user.get_legal_name()
                 if denial and denial.primary_professional is not None:
@@ -1758,9 +1795,10 @@ class AppealsBackendHelper:
                 logger.opt(exception=True).error(
                     f"Error fetching info for denial sub {denial.denial_id}"
                 )
-            ret = s.safe_substitute(subs)
-            appeal["content"] = ret
-            logger.debug(f"Updated appeal to {ret}")
+            for k, v in subs.items():
+                if v and v != "" and v != "UNKNOWN":
+                    content = content.replace(k, str(v))
+            appeal["content"] = content
             return appeal
 
         async def format_response(response: dict[str, str]) -> str:
@@ -1780,13 +1818,14 @@ class AppealsBackendHelper:
         saved_appeals: AsyncIterator[dict[str, str]] = a.map(
             save_appeal, filtered_appeals
         )
+        # Note: we intentionally call save before substution.
         subbed_appeals: AsyncIterator[dict[str, str]] = a.map(
             sub_in_appeals, saved_appeals
         )
-        subbed_appeals_json: AsyncIterator[str] = a.map(format_response, subbed_appeals)
+        appeals_json: AsyncIterator[str] = a.map(format_response, subbed_appeals)
         # StreamignHttpResponse needs a synchronous iterator otherwise it blocks.
         interleaved: AsyncIterator[str] = interleave_iterator_for_keep_alive(
-            subbed_appeals_json
+            appeals_json
         )
         async for i in interleaved:
             logger.debug(f"Yielding {i}")
