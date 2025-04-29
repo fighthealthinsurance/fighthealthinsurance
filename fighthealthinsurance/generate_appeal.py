@@ -476,7 +476,7 @@ class AppealGenerator(object):
             professional=denial.primary_professional,
             qa_context=denial.qa_context,
             professional_to_finish=denial.professional_to_finish,
-            plain_id=denial.plan_id,
+            plan_id=denial.plan_id,
             claim_id=denial.claim_id
         )
         open_medically_necessary_prompt = self.make_open_med_prompt(
