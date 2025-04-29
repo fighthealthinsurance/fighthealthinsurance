@@ -364,10 +364,14 @@ class GenerateAppeal(View):
         # Query dict is of lists
         elems = dict((k, v[0]) for k, v in elems.items())
         try:
-            generated_questions = denial.generated_questions
-            qa_context = denial.qa_context
-            if qa_context:
-                qa_context = json.loads(qa_context)
+            generated_questions: list[tuple[str, str]] = denial.generated_questions  # type: ignore
+            qa_context_str = denial.qa_context
+            qa_context: dict[str, str] = {}
+            if qa_context_str:
+                try:
+                    qa_context = json.loads(qa_context_str)
+                except json.JSONDecodeError:
+                    qa_context["misc"] = qa_context_str
             for k, v in elems.items():
                 key = k
                 if "appeal_generated_" in k:
