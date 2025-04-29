@@ -403,12 +403,30 @@ class AppealGenerator(object):
         procedure=None,
         diagnosis=None,
         is_trans=False,
+        patient=None,
+        professional=None,
+        qa_context=None,
+        professional_to_finish=None,
+        plan_id=None,
+        claim_id=None,
     ) -> Optional[str]:
         if denial_text is None:
             return None
         base = ""
         if is_trans:
             base = "While answering the question keep in mind the patient is trans."
+        if professional_to_finish:
+            base = f"{base}. Write the appeal from the professional point of view of {professional}."
+        if qa_context is not None:
+            base = f"{base}. You should try and incorporate the following context into your appeal: {qa_context}."
+        if patient is not None:
+            base = f"{base}. Please fill in the patients info {patient}."
+        if professional is not None:
+            base = f"{base}. Please fill in the professionals info {professional}."
+        if plan_id is not None:
+            base = f"{base}. Please fill in the plan id {plan_id}."
+        if claim_id is not None:
+            base = f"{base}. Please fill in the claim id {claim_id}."
         start = f"Write a health insurance appeal for the following denial:"
         if (
             procedure is not None
@@ -454,6 +472,12 @@ class AppealGenerator(object):
             denial_text=denial.denial_text,
             procedure=denial.procedure,
             diagnosis=denial.diagnosis,
+            patient=denial.patient_user,
+            professional=denial.primary_professional,
+            qa_context=denial.qa_context,
+            professional_to_finish=denial.professional_to_finish,
+            plain_id=denial.plan_id,
+            claim_id=denial.claim_id
         )
         open_medically_necessary_prompt = self.make_open_med_prompt(
             procedure=denial.procedure,

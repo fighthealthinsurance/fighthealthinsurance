@@ -184,6 +184,9 @@ class PatientUser(models.Model):
         else:
             return f"{display_name} ({legal_name})"
 
+    def __str__(self):
+        return f"{self.get_combined_name()}"
+
 
 class ProfessionalUser(models.Model):
     id = models.AutoField(primary_key=True)
@@ -212,8 +215,30 @@ class ProfessionalUser(models.Model):
             professionaldomainrelation__active_domain_relation=True,
         )
 
+    def get_fax_number(self):
+        if self.fax_number and len(self.fax_number) > 0:
+            return self.fax_number
+        else:
+            # Return the domain fax number if available
+            domains = self.domains.filter(
+                professionaldomainrelation__active_domain_relation=True
+            )
+            if domains.exists():
+                return domains.first().office_fax
+            return None
+
     def get_full_name(self):
         return f"{self.user.first_name} {self.user.last_name}"
+
+    def __str__(self):
+        fax_extra = ""
+        fax_number = self.get_fax_number()
+        if fax_number:
+            fax_extra = f"Professional Fax: {fax_number}"
+        npi_extra = ""
+        if self.npi_number:
+            npi_extra = f"NPI: {self.npi_number}"
+        return f"{self.get_full_name()} ({self.user.email}, {fax_extra}, {npi_extra})"
 
 
 class ProfessionalDomainRelation(models.Model):
