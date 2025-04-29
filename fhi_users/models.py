@@ -242,7 +242,9 @@ class ProfessionalUser(models.Model):
                 professionaldomainrelation__active_domain_relation=True
             )
             if domains.exists():
-                return domains.first().office_fax
+                domain_opt = domains.first()
+                if domain_opt:
+                    return domain_opt.office_fax
             return None
 
     def get_full_name(self):
