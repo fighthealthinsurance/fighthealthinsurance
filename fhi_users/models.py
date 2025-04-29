@@ -174,6 +174,13 @@ class PatientUser(models.Model):
         return f"{self.user.first_name} {self.user.last_name}"
 
     def get_combined_name(self) -> str:
+        """
+        Returns a combined display and legal name for the patient user.
+        
+        If both the display name and legal name are at least two characters long and differ,
+        returns the display name followed by the legal name in parentheses. If they are the same,
+        returns the name. If neither is sufficiently long, returns the user's email address.
+        """
         legal_name = self.get_legal_name()
         display_name = self.get_display_name()
         email = self.user.email
@@ -185,6 +192,9 @@ class PatientUser(models.Model):
             return f"{display_name} ({legal_name})"
 
     def __str__(self):
+        """
+        Returns the combined display or legal name of the patient user as a string.
+        """
         return f"{self.get_combined_name()}"
 
 
@@ -209,6 +219,9 @@ class ProfessionalUser(models.Model):
             return self.user.email
 
     def admin_domains(self):
+        """
+        Returns a queryset of domains where the professional has an active admin relationship.
+        """
         return UserDomain.objects.filter(
             professionaldomainrelation__professional=self,
             professionaldomainrelation__admin=True,
@@ -216,6 +229,11 @@ class ProfessionalUser(models.Model):
         )
 
     def get_fax_number(self):
+        """
+        Returns the professional's fax number, or the office fax number from the first active domain if not set.
+        
+        If neither is available, returns None.
+        """
         if self.fax_number and len(self.fax_number) > 0:
             return self.fax_number
         else:
@@ -228,9 +246,16 @@ class ProfessionalUser(models.Model):
             return None
 
     def get_full_name(self):
+        """
+        Returns the full legal name of the professional user as a single string.
+        """
         return f"{self.user.first_name} {self.user.last_name}"
 
     def __str__(self):
+        """
+        Returns a string representation of the professional user, including full name, email,
+        and, if available, fax number and NPI number.
+        """
         fax_extra = ""
         fax_number = self.get_fax_number()
         if fax_number:
