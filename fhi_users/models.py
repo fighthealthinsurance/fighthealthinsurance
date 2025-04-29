@@ -176,7 +176,7 @@ class PatientUser(models.Model):
     def get_combined_name(self) -> str:
         """
         Returns a combined display and legal name for the patient user.
-        
+
         If both the display name and legal name are at least two characters long and differ,
         returns the display name followed by the legal name in parentheses. If they are the same,
         returns the name. If neither is sufficiently long, returns the user's email address.
@@ -231,7 +231,7 @@ class ProfessionalUser(models.Model):
     def get_fax_number(self):
         """
         Returns the professional's fax number, or the office fax number from the first active domain if not set.
-        
+
         If neither is available, returns None.
         """
         if self.fax_number and len(self.fax_number) > 0:

@@ -412,7 +412,7 @@ class AppealGenerator(object):
     ) -> Optional[str]:
         """
         Constructs a prompt for generating a health insurance appeal based on denial details and optional contextual information.
-        
+
         Args:
             denial_text: The text of the insurance denial letter.
             procedure: The medical procedure being appealed, if known.
@@ -424,7 +424,7 @@ class AppealGenerator(object):
             professional_to_finish: If True, instructs to write from the professional's point of view.
             plan_id: Insurance plan ID to include.
             claim_id: Claim ID to include.
-        
+
         Returns:
             A formatted prompt string for appeal generation, or None if denial_text is not provided.
         """
@@ -482,9 +482,9 @@ class AppealGenerator(object):
     ) -> Iterator[str]:
         """
         Generates an iterator of appeal texts for a given insurance denial using templates, non-AI sources, and AI models.
-        
+
         Combines static template-based appeals, user-provided appeals, and dynamically generated appeals from multiple machine learning models. Incorporates contextual information such as patient details, professional information, QA context, plan ID, and claim ID to enrich the generated appeals. If AI-generated results are unavailable, falls back to backup model calls. Appeals are yielded as they become available, with randomized delays for initial static appeals to ensure varied ordering.
-        
+
         Args:
             denial: The denial object containing all relevant information for appeal generation.
             template_generator: An instance used to generate appeal text templates.
@@ -492,7 +492,7 @@ class AppealGenerator(object):
             non_ai_appeals: Optional list of pre-written appeals to include.
             pubmed_context: Optional PubMed context to provide to AI models.
             ml_citations_context: Optional list of citation contexts for AI models.
-        
+
         Returns:
             An iterator yielding generated appeal texts as strings.
         """
@@ -511,7 +511,7 @@ class AppealGenerator(object):
             qa_context=denial.qa_context,
             professional_to_finish=denial.professional_to_finish,
             plan_id=denial.plan_id,
-            claim_id=denial.claim_id
+            claim_id=denial.claim_id,
         )
         open_medically_necessary_prompt = self.make_open_med_prompt(
             procedure=denial.procedure,
