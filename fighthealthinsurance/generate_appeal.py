@@ -403,12 +403,60 @@ class AppealGenerator(object):
         procedure=None,
         diagnosis=None,
         is_trans=False,
+        patient=None,
+        professional=None,
+        qa_context=None,
+        professional_to_finish=None,
+        plan_id=None,
+        claim_id=None,
+        insurance_company=None,
     ) -> Optional[str]:
+        """
+        Constructs a prompt for generating a health insurance appeal based on denial details and optional contextual information.
+
+        Args:
+            denial_text: The text of the insurance denial letter.
+            procedure: The medical procedure being appealed, if known.
+            diagnosis: The diagnosis related to the appeal, if known.
+            is_trans: Whether the patient is transgender.
+            patient: Patient information to include in the prompt.
+            professional: Professional information to include in the prompt.
+            qa_context: Additional context or background to incorporate into the appeal.
+            professional_to_finish: If True, instructs to write from the professional's point of view.
+            plan_id: Insurance plan ID to include.
+            claim_id: Claim ID to include.
+
+        Returns:
+            A formatted prompt string for appeal generation, or None if denial_text is not provided.
+        """
         if denial_text is None:
             return None
         base = ""
         if is_trans:
             base = "While answering the question keep in mind the patient is trans."
+        if professional_to_finish:
+            base = f"{base}. Write the appeal from the professional point of view of {professional}."
+        if qa_context is not None and qa_context != "" and qa_context != "UNKNOWN":
+            base = f"{base}. You should try and incorporate the following context into your appeal: {qa_context}."
+        if patient is not None:
+            base = f"{base}. Please include and fill in the patients info {patient}."
+        if professional is not None:
+            base = f"{base}. Please include and fill in the professionals info {professional}."
+        if plan_id is not None and plan_id != "" and plan_id != "UNKNOWN":
+            base = f"{base}. Please include and fill in any references to the plan id as {plan_id}."
+        if (
+            insurance_company is not None
+            and insurance_company != ""
+            and insurance_company != "UNKNOWN"
+        ):
+            base = f"{base}. Please include and fill in any references to the insurance company to be {insurance_company}."
+        if (
+            claim_id is not None
+            and claim_id != ""
+            and claim_id != "UNKNOWN"
+            and claim_id != insurance_company
+        ):
+            base = f"{base}. Please include and fill in any references to the claim id as {claim_id}."
         start = f"Write a health insurance appeal for the following denial:"
         if (
             procedure is not None
@@ -444,6 +492,22 @@ class AppealGenerator(object):
         pubmed_context=None,
         ml_citations_context=None,
     ) -> Iterator[str]:
+        """
+        Generates an iterator of appeal texts for a given insurance denial using templates, non-AI sources, and AI models.
+
+        Combines static template-based appeals, user-provided appeals, and dynamically generated appeals from multiple machine learning models. Incorporates contextual information such as patient details, professional information, QA context, plan ID, and claim ID to enrich the generated appeals. If AI-generated results are unavailable, falls back to backup model calls. Appeals are yielded as they become available, with randomized delays for initial static appeals to ensure varied ordering.
+
+        Args:
+            denial: The denial object containing all relevant information for appeal generation.
+            template_generator: An instance used to generate appeal text templates.
+            medical_reasons: Optional list of medical reasons to fill into templates.
+            non_ai_appeals: Optional list of pre-written appeals to include.
+            pubmed_context: Optional PubMed context to provide to AI models.
+            ml_citations_context: Optional list of citation contexts for AI models.
+
+        Returns:
+            An iterator yielding generated appeal texts as strings.
+        """
         logger.debug("Starting to make appeals...")
         if medical_reasons is None:
             medical_reasons = []
@@ -454,6 +518,13 @@ class AppealGenerator(object):
             denial_text=denial.denial_text,
             procedure=denial.procedure,
             diagnosis=denial.diagnosis,
+            patient=denial.patient_user,
+            professional=denial.primary_professional,
+            qa_context=denial.qa_context,
+            professional_to_finish=denial.professional_to_finish,
+            plan_id=denial.plan_id,
+            claim_id=denial.claim_id,
+            insurance_company=denial.insurance_company,
         )
         open_medically_necessary_prompt = self.make_open_med_prompt(
             procedure=denial.procedure,
