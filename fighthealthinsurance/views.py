@@ -350,10 +350,37 @@ class GenerateAppeal(View):
             # TODO: Send user back to fix the form.
             return
 
+        logger.debug("Finishing up prior to appeal gen.")
+        denial_id = form.cleaned_data["denial_id"]
+        email = form.cleaned_data["email"]
+        denial = models.Denial.objects.filter(
+            denial_id=denial_id,
+            hashed_email=models.Denial.get_hashed_email(email),
+            semi_sekret=form.cleaned_data["semi_sekret"],
+        ).get()
+
         # We copy _most_ of the input over for the form context
         elems = dict(request.POST)
         # Query dict is of lists
         elems = dict((k, v[0]) for k, v in elems.items())
+        try:
+            generated_questions = denial.generated_questions
+            qa_context = denial.qa_context
+            if qa_context:
+                qa_context = json.loads(qa_context)
+            for k, v in elems.items():
+                key = k
+                if "appeal_generated_" in k:
+                    key = generated_questions[int(k.split("_")[-1]) - 1][0]
+                if isinstance(v, list):
+                    elems[k] = v[0]
+                if v and v != "" and v != "UNKNOWN":
+                    qa_context[key] = v
+            denial.qa_context = json.dumps(qa_context)
+            denial.save()
+        except Exception as e:
+            logger.error(f"*********************Error updating medical context: {e}")
+
         del elems["csrfmiddlewaretoken"]
         return render(
             request,
