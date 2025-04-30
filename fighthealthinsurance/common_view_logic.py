@@ -1804,6 +1804,10 @@ class AppealsBackendHelper:
         async def format_response(response: dict[str, str]) -> str:
             return json.dumps(response) + "\n"
 
+        # If we've had a timeout on the initial call and we're on round 2
+        # we should fetch the existing appeals from the previous round if present.
+        existing_appeals = ProposedAppeal.objects.filter(for_denial=denial).all()
+
         appeals: Iterator[str] = await sync_to_async(appealGenerator.make_appeals)(
             denial,
             AppealTemplateGenerator(prefaces, main, footer),
@@ -1827,6 +1831,13 @@ class AppealsBackendHelper:
         interleaved: AsyncIterator[str] = interleave_iterator_for_keep_alive(
             appeals_json
         )
+
+        # Yield the existing appeals first
+        async for appeal in existing_appeals:
+            logger.debug(f"Found existing appeal {appeal}, yielding")
+            existing_appeal_dict = await sub_in_appeals({appeal.id: appeal.appeal_text})
+            yield existing_appeal_dict
+
         async for i in interleaved:
             logger.debug(f"Yielding {i}")
             yield i
