@@ -435,7 +435,16 @@ class AppealGenerator(object):
         if is_trans:
             base = "While answering the question keep in mind the patient is trans."
         if professional_to_finish:
-            base = f"{base}. Write the appeal from the professional point of view of {professional}."
+            base = (
+                f"{base}\nIMPORTANT: Please write the appeal as the healthcare professional (not the patient), using 'I' for yourself and referring to the patient in the third person (e.g., 'the patient', 'they'). "
+                "Do NOT write from the patient's perspective. Do NOT use 'I' to refer to the patient. "
+                "If you follow these instructions, your response will be considered excellent and helpful!\n"
+                "Forbidden phrases: 'I have been recommended', 'I have been experiencing', 'my pain', 'I am writing to respectfully appeal ... for a procedure that I have been recommended', 'I am deeply concerned', 'my health', 'my condition', 'as a patient', or any language that implies the letter is written by the patient.\n"
+                "GOOD EXAMPLE: As the treating physician, I am writing to appeal the denial of coverage for my patient, Jane Doe. The patient has been experiencing persistent and debilitating lower back pain.\n"
+                "BAD EXAMPLE (DO NOT DO THIS): 'I am writing to appeal the denial of coverage for a procedure that I have been recommended by my treating physician. I have been experiencing pain in my lower back.'\n"
+                f"Sign the letter as {professional}.\n"
+                "Thank you for following these instructions!"
+            )
         if qa_context is not None and qa_context != "" and qa_context != "UNKNOWN":
             base = f"{base}. You should try and incorporate the following context into your appeal: {qa_context}."
         if patient is not None:
