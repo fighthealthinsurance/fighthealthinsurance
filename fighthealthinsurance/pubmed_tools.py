@@ -189,6 +189,11 @@ class PubMedTools(object):
             logger.debug(
                 f"Timeout in find_pubmed_articles_for_denial: {e} so far got {articles}"
             )
+        except asyncio.exceptions.CancelledError:
+            logger.opt(exception=True).debug(
+                f"Cancelled in find_pubmed_articles_for_denial; so far got {articles}"
+            )
+            pass
         except Exception as e:
             logger.opt(exception=True).debug(f"Unexpected error {e}")
             raise e
@@ -280,6 +285,11 @@ class PubMedTools(object):
             logger.debug(
                 f"Timeout in find_context_for_denial: {e} so far got {articles}"
             )
+        except asyncio.exceptions.CancelledError:
+            logger.opt(exception=True).debug(
+                f"Cancelled in find_context_for_denial; so far got {articles}"
+            )
+            pass
         except Exception as e:
             logger.opt(exception=True).debug("Non-timeout error -- {e}?")
             raise e
