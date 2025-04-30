@@ -45,14 +45,17 @@ class PubMedTools(object):
         timeout: float = 60.0,
     ) -> List[str]:
         """
-        Find PubMed article IDs for a given query. May pull from database.
+        Asynchronously retrieves PubMed article IDs matching a search query, optionally filtered by year.
+
+        Checks for recent cached results in the database and returns them if available. If not cached or if parsing fails, queries the PubMed API, stores new results in the database, and returns the list of PMIDs. Returns an empty list if a timeout or cancellation occurs.
+
         Args:
-            query: The search query for PubMed
-            since: The year to start searching from (optional)
-            timeout: Maximum time to spend searching
+            query: The PubMed search query string.
+            since: Optional year to filter articles published since this year.
+            timeout: Maximum time in seconds to spend on the operation.
 
         Returns:
-            List of PubMed IDs (PMIDs) matching the query
+            A list of PubMed article IDs (PMIDs) matching the query.
         """
         pmids: List[str] = []
 
@@ -102,11 +105,22 @@ class PubMedTools(object):
                 f"Error or timeout in find_pubmed_article_ids_for_query: {e}"
             )
             pass
+        except asyncio.exceptions.CancelledError:
+            # We might be cancelled
+            logger.opt(exception=True).debug(
+                f"Cancelled in find_pubmed_article_ids_for_query: {query}"
+            )
+            pass
         return pmids
 
     async def find_pubmed_articles_for_denial(
         self, denial: Denial, timeout=70.0
     ) -> List[PubMedMiniArticle]:
+        """
+        Asynchronously retrieves and returns a list of PubMedMiniArticle objects relevant to a medical denial.
+
+        Constructs a PubMed search query from the denial's procedure and diagnosis, searches for recent articles across multiple years, and limits the number of articles per query. For each unique PubMed ID found, attempts to retrieve a cached article from the database or fetches metadata from PubMed and stores it if not present. Handles timeouts and logs errors, returning all successfully retrieved articles.
+        """
         pmids: List[str] = []
         articles: List[PubMedMiniArticle] = []
         try:
@@ -183,6 +197,11 @@ class PubMedTools(object):
             logger.debug(
                 f"Timeout in find_pubmed_articles_for_denial: {e} so far got {articles}"
             )
+        except asyncio.exceptions.CancelledError:
+            logger.opt(exception=True).debug(
+                f"Cancelled in find_pubmed_articles_for_denial; so far got {articles}"
+            )
+            pass
         except Exception as e:
             logger.opt(exception=True).debug(f"Unexpected error {e}")
             raise e
@@ -274,6 +293,11 @@ class PubMedTools(object):
             logger.debug(
                 f"Timeout in find_context_for_denial: {e} so far got {articles}"
             )
+        except asyncio.exceptions.CancelledError:
+            logger.opt(exception=True).debug(
+                f"Cancelled in find_context_for_denial; so far got {articles}"
+            )
+            pass
         except Exception as e:
             logger.opt(exception=True).debug("Non-timeout error -- {e}?")
             raise e
