@@ -1202,6 +1202,11 @@ class DenialCreatorHelper:
 
     @classmethod
     async def extract_set_denial_and_diagnosis(cls, denial_id: int):
+        """
+        Asynchronously extracts procedure and diagnosis from a denial's text and updates the denial record.
+
+        Attempts to extract the procedure and diagnosis fields using the appeal generator. Updates the denial with the extracted values and marks extraction as finished, regardless of success. If extraction is successful or existing values are present, triggers background tasks to search for related PubMed articles and build speculative context. Handles timeouts and cancellation during PubMed search gracefully.
+        """
         denial = await Denial.objects.filter(denial_id=denial_id).aget()
         procedure = None
         diagnosis = None
@@ -1232,6 +1237,11 @@ class DenialCreatorHelper:
             if denial.procedure or denial.diagnosis or procedure or diagnosis:
 
                 async def find_pubmed_articles():
+                    """
+                    Asynchronously searches for PubMed articles related to a denial's diagnosis and procedure.
+
+                    Attempts to find relevant articles using PubMedTools with a 120-second timeout. Logs a warning if the search times out, is cancelled, or encounters an error.
+                    """
                     try:
                         pubmed_tool = PubMedTools()
                         # Find related articles based on diagnosis and procedure
@@ -1246,6 +1256,10 @@ class DenialCreatorHelper:
                     except asyncio.TimeoutError:
                         logger.warning(
                             f"PubMed article search timed out for denial {denial_id} after 120s"
+                        )
+                    except asyncio.exceptions.CancelledError:
+                        logger.opt(exception=True).debug(
+                            f"Cancelled PubMed article search for denial {denial_id}"
                         )
                     except Exception as e:
                         logger.opt(exception=True).warning(
@@ -1545,6 +1559,11 @@ class AppealsBackendHelper:
 
     @classmethod
     async def generate_appeals(cls, parameters) -> AsyncIterator[str]:
+        """
+        Asynchronously generates and streams appeal texts for a given denial, including both previously saved and newly generated appeals.
+
+        This coroutine retrieves denial and related context, processes templates and forms to construct appeal components, gathers citation contexts, and yields appeal texts with relevant substitutions applied. Previously saved appeals are yielded first, followed by newly generated appeals, each formatted as a JSON string.
+        """
         logger.debug(f"Raw parameters received: {parameters}")
 
         # Extract specific parameters needed early
@@ -1729,6 +1748,11 @@ class AppealsBackendHelper:
             return {"id": id, "content": appeal_text}
 
         async def sub_in_appeals(appeal: dict[str, str]) -> dict[str, str]:
+            """
+            Performs dynamic substitution of denial and appeal-related fields into an appeal template.
+
+            Replaces placeholders in the appeal's content with actual values from the associated denial, such as insurance company, claim ID, diagnosis, procedure, patient and professional names, and other context-specific information. Returns the appeal dictionary with the substituted content.
+            """
             await asyncio.sleep(0)
             content = appeal["content"]
             insurance_company = "{insurance_company}"
@@ -1761,7 +1785,11 @@ class AppealsBackendHelper:
             ):
                 procedure = denial.procedure
             subs = {
+                "Esteemed Members of the Appeals Committee": insurance_company,
+                "[insurance_company]": insurance_company,
+                "{insurance_company}": insurance_company,
                 "insurance_company": insurance_company,
+                "{{insurance_company}}": insurance_company,
                 "[Insurance Company Name]": insurance_company,
                 "[Insurance Company]": insurance_company,
                 "[Insert Date]": denial.date or "{date}",
@@ -1797,12 +1825,29 @@ class AppealsBackendHelper:
                 )
             for k, v in subs.items():
                 if v and v != "" and v != "UNKNOWN":
+                    # Handle the {{}}
+                    content.replace("{{" + k + "}}", "{" + k + "}")
+                    if "{" in k:
+                        content.replace("{" + k + "}", k)
                     content = content.replace(k, str(v))
             appeal["content"] = content
             return appeal
 
         async def format_response(response: dict[str, str]) -> str:
+            """
+            Serializes a response dictionary to a JSON string with a trailing newline.
+
+            Args:
+                response: A dictionary containing string keys and values to serialize.
+
+            Returns:
+                A JSON-formatted string representation of the response, ending with a newline.
+            """
             return json.dumps(response) + "\n"
+
+        # If we've had a timeout on the initial call and we're on round 2
+        # we should fetch the existing appeals from the previous round if present.
+        existing_appeals = ProposedAppeal.objects.filter(for_denial=denial).all()
 
         appeals: Iterator[str] = await sync_to_async(appealGenerator.make_appeals)(
             denial,
@@ -1827,6 +1872,16 @@ class AppealsBackendHelper:
         interleaved: AsyncIterator[str] = interleave_iterator_for_keep_alive(
             appeals_json
         )
+
+        # Yield the existing appeals first
+        async for appeal in existing_appeals:
+            if appeal.appeal_text is not None:
+                logger.debug(f"Found existing appeal {appeal}, yielding")
+                existing_appeal_dict = await sub_in_appeals(
+                    {"id": str(appeal.id), "content": appeal.appeal_text}
+                )
+                yield await format_response(existing_appeal_dict)
+
         async for i in interleaved:
             logger.debug(f"Yielding {i}")
             yield i
