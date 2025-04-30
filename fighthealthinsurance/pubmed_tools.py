@@ -102,6 +102,12 @@ class PubMedTools(object):
                 f"Error or timeout in find_pubmed_article_ids_for_query: {e}"
             )
             pass
+        except asyncio.exceptions.CancelledError:
+            # We might be cancelled
+            logger.opt(exception=True).debug(
+                f"Cancelled in find_pubmed_article_ids_for_query: {query}"
+            )
+            pass
         return pmids
 
     async def find_pubmed_articles_for_denial(

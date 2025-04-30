@@ -222,6 +222,10 @@ async def _interleave_iterator_for_keep_alive(
         except asyncio.TimeoutError:
             yield ""
             continue
+        except asyncio.exceptions.CancelledError:
+            # If the iterator is cancelled, we should stop
+            logger.debug("Cancellation of generator")
+            yield ""
         except StopAsyncIteration:
             # Break the loop if iteration is complete
             break
@@ -426,6 +430,8 @@ async def execute_critical_optional_fireandforget(
             yield optional_result
     except asyncio.TimeoutError as e:
         logger.debug(f"Timed out waiting for optional tasks?")
+    except asyncio.exceptions.CancelledError:
+        logger.debug("Cancellation waiting for optional tasks")
     finally:
         logger.debug(
             "Required tasks finished, fire and forget canceling optional tasks"

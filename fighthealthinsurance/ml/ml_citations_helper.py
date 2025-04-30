@@ -50,6 +50,7 @@ class MLCitationsHelper:
             List of citation strings
         """
         # Normalize inputs - trim whitespace and convert to lowercase
+        logger.debug(f"Generating specific citations for {denial}")
         procedure = denial.procedure.strip().lower() if denial.procedure else ""
         diagnosis = denial.diagnosis.strip().lower() if denial.diagnosis else ""
         denial_text = denial.denial_text
@@ -96,6 +97,7 @@ class MLCitationsHelper:
                     )
                     or []
                 )
+                logger.debug(f"Huzzah got best citations within timelimit {result}")
                 return result
             except Exception:
                 logger.opt(exception=True).debug(

@@ -1247,6 +1247,10 @@ class DenialCreatorHelper:
                         logger.warning(
                             f"PubMed article search timed out for denial {denial_id} after 120s"
                         )
+                    except asyncio.exceptions.CancelledError:
+                        logger.opt(exception=True).debug(
+                            f"Cancelled PubMed article search for denial {denial_id}"
+                        )
                     except Exception as e:
                         logger.opt(exception=True).warning(
                             f"Failed to find PubMed articles for denial {denial_id}: {e}"
