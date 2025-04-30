@@ -1765,6 +1765,7 @@ class AppealsBackendHelper:
             ):
                 procedure = denial.procedure
             subs = {
+                "Esteemed Members of the Appeals Committee": "insurance_company",
                 "insurance_company": insurance_company,
                 "[Insurance Company Name]": insurance_company,
                 "[Insurance Company]": insurance_company,
@@ -1839,7 +1840,9 @@ class AppealsBackendHelper:
         # Yield the existing appeals first
         async for appeal in existing_appeals:
             logger.debug(f"Found existing appeal {appeal}, yielding")
-            existing_appeal_dict = await sub_in_appeals({appeal.id: appeal.appeal_text})
+            existing_appeal_dict = await sub_in_appeals({
+                "id": appeal.id,
+                "content": appeal.appeal_text})
             yield existing_appeal_dict
 
         async for i in interleaved:
