@@ -1760,6 +1760,7 @@ class AppealsBackendHelper:
                 and denial.procedure != "UNKNOWN"
             ):
                 procedure = denial.procedure
+            # Substitutes for common terms
             subs = {
                 "insurance_company": insurance_company,
                 "[Insurance Company Name]": insurance_company,
@@ -1812,7 +1813,14 @@ class AppealsBackendHelper:
             pubmed_context=pubmed_context,
             ml_citations_context=ml_citation_context,
         )
-        filtered_appeals: Iterator[str] = filter(lambda x: x != None, appeals)
+        # Only filter for professional tone if professional_to_finish is True
+        # This ensures only provider-voice appeals are included when requested
+        if professional_to_finish:
+            filtered_appeals: Iterator[str] = filter(
+                lambda x: x is not None and is_professional_tone(x), appeals
+            )  # Filters out None and non-professional-tone appeals
+        else:
+            filtered_appeals: Iterator[str] = filter(lambda x: x is not None, appeals)  # Only filters out None
 
         # We convert to async here.
         saved_appeals: AsyncIterator[dict[str, str]] = a.map(
@@ -2061,3 +2069,60 @@ class StripeWebhookHelper:
                 f"Error processing stripe webhook {event_id}"
             )
             raise
+
+
+def is_professional_tone(appeal: str) -> bool:
+    """
+    Returns True if the appeal is written in a professional/provider tone (not the patient's voice).
+    Filters out appeals that use first-person patient language and only allows those with clear provider/doctor language.
+    """
+    if not appeal or not isinstance(appeal, str):
+        return False
+    # Common patient-voice phrases to avoid
+    patient_phrases = [
+        "i am the patient",
+        "i have been recommended",
+        "i have been experiencing",
+        "my pain",
+        "my health",
+        "my condition",
+        "as a patient",
+        "i am a patient",
+        "i am writing to appeal",
+        "my treating physician recommended ",
+        "has been recommended for me",
+        "i have been advised",
+        "my claim",
+        "my doctor",
+        "my medical condition",
+        "i am in need",
+        "as the patient in question"
+    ]
+    # Professional-voice cues to encourage
+    professional_phrases = [
+        "my patient",
+        "the patient",
+        "as the provider",
+        "as the treating physician",
+        "appeal the denial of coverage for my patient",
+        "appeal the denial of coverage for the patient",
+        "appeal the denial of coverage for",
+        "my patient's",
+        "the patient's",
+        "my patient has been experiencing",
+        "the patient has been experiencing",
+        "as the healthcare professional",
+        "i recommend",
+        "[patient's name]"
+        "as [patient's name] healthcare provider"
+    ]
+    # If at least one professional phrase is present, accept
+    for phrase in professional_phrases:
+        if phrase.lower() in appeal.lower():
+            return True
+    # If any patient phrase is present, reject
+    for phrase in patient_phrases:
+        if phrase.lower() in appeal.lower():
+            return False
+    # Otherwise, be conservative and reject
+    return False
