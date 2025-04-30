@@ -1204,7 +1204,7 @@ class DenialCreatorHelper:
     async def extract_set_denial_and_diagnosis(cls, denial_id: int):
         """
         Asynchronously extracts procedure and diagnosis from a denial's text and updates the denial record.
-        
+
         Attempts to extract the procedure and diagnosis fields using the appeal generator. Updates the denial with the extracted values and marks extraction as finished, regardless of success. If extraction is successful or existing values are present, triggers background tasks to search for related PubMed articles and build speculative context. Handles timeouts and cancellation during PubMed search gracefully.
         """
         denial = await Denial.objects.filter(denial_id=denial_id).aget()
@@ -1239,7 +1239,7 @@ class DenialCreatorHelper:
                 async def find_pubmed_articles():
                     """
                     Asynchronously searches for PubMed articles related to a denial's diagnosis and procedure.
-                    
+
                     Attempts to find relevant articles using PubMedTools with a 120-second timeout. Logs a warning if the search times out, is cancelled, or encounters an error.
                     """
                     try:
@@ -1561,7 +1561,7 @@ class AppealsBackendHelper:
     async def generate_appeals(cls, parameters) -> AsyncIterator[str]:
         """
         Asynchronously generates and streams appeal texts for a given denial, including both previously saved and newly generated appeals.
-        
+
         This coroutine retrieves denial and related context, processes templates and forms to construct appeal components, gathers citation contexts, and yields appeal texts with relevant substitutions applied. Previously saved appeals are yielded first, followed by newly generated appeals, each formatted as a JSON string.
         """
         logger.debug(f"Raw parameters received: {parameters}")
@@ -1750,7 +1750,7 @@ class AppealsBackendHelper:
         async def sub_in_appeals(appeal: dict[str, str]) -> dict[str, str]:
             """
             Performs dynamic substitution of denial and appeal-related fields into an appeal template.
-            
+
             Replaces placeholders in the appeal's content with actual values from the associated denial, such as insurance company, claim ID, diagnosis, procedure, patient and professional names, and other context-specific information. Returns the appeal dictionary with the substituted content.
             """
             await asyncio.sleep(0)
@@ -1836,12 +1836,12 @@ class AppealsBackendHelper:
         async def format_response(response: dict[str, str]) -> str:
             """
             Serializes a response dictionary to a JSON string with a trailing newline.
-            
+
             Args:
-            	response: A dictionary containing string keys and values to serialize.
-            
+                response: A dictionary containing string keys and values to serialize.
+
             Returns:
-            	A JSON-formatted string representation of the response, ending with a newline.
+                A JSON-formatted string representation of the response, ending with a newline.
             """
             return json.dumps(response) + "\n"
 

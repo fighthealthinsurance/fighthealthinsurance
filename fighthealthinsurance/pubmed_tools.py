@@ -46,14 +46,14 @@ class PubMedTools(object):
     ) -> List[str]:
         """
         Asynchronously retrieves PubMed article IDs matching a search query, optionally filtered by year.
-        
+
         Checks for recent cached results in the database and returns them if available. If not cached or if parsing fails, queries the PubMed API, stores new results in the database, and returns the list of PMIDs. Returns an empty list if a timeout or cancellation occurs.
-        
+
         Args:
             query: The PubMed search query string.
             since: Optional year to filter articles published since this year.
             timeout: Maximum time in seconds to spend on the operation.
-        
+
         Returns:
             A list of PubMed article IDs (PMIDs) matching the query.
         """
@@ -118,7 +118,7 @@ class PubMedTools(object):
     ) -> List[PubMedMiniArticle]:
         """
         Asynchronously retrieves and returns a list of PubMedMiniArticle objects relevant to a medical denial.
-        
+
         Constructs a PubMed search query from the denial's procedure and diagnosis, searches for recent articles across multiple years, and limits the number of articles per query. For each unique PubMed ID found, attempts to retrieve a cached article from the database or fetches metadata from PubMed and stores it if not present. Handles timeouts and logs errors, returning all successfully retrieved articles.
         """
         pmids: List[str] = []

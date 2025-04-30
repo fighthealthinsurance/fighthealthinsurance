@@ -201,7 +201,7 @@ async def _interleave_iterator_for_keep_alive(
 ) -> AsyncIterator[str]:
     """
     Yields strings from an async iterator, interleaving empty strings as keep-alive signals.
-    
+
     This generator yields an empty string before and after each item from the input iterator,
     and also yields an empty string every `timeout` seconds if no new item is available.
     Handles timeouts, cancellations, and exceptions by yielding empty strings to maintain
@@ -245,7 +245,7 @@ async def _interleave_iterator_for_keep_alive(
 async def fire_and_forget_in_new_threadpool(task: Coroutine) -> None:
     """
     Runs an asynchronous coroutine in a separate thread with its own event loop.
-    
+
     The coroutine is executed in a fire-and-forget manner; any exceptions are logged,
     and the function does not wait for completion or return a result.
     """
@@ -371,9 +371,9 @@ async def execute_critical_optional_fireandforget(
 ) -> AsyncIterator[T]:
     """
     Runs required, optional, and fire-and-forget coroutines concurrently, yielding results as they complete.
-    
+
     Starts all tasks at once: required tasks are awaited and must complete, optional tasks run concurrently and are canceled after required tasks finish or timeout, and fire-and-forget tasks are dispatched in background threads. Yields results from required and optional tasks as they finish. Optionally yields a final record when done.
-    
+
     Args:
         required: Coroutines that must complete before optional tasks are canceled.
         optional: Coroutines that may be canceled if not finished after required tasks complete.
@@ -381,7 +381,7 @@ async def execute_critical_optional_fireandforget(
         done_record: Optional value to yield after all processing is complete.
         timeout: Maximum time in seconds to wait for required tasks before canceling optional tasks.
         max_extra_time_for_optional: Maximum additional seconds to wait for optional tasks after required tasks finish.
-    
+
     Yields:
         Results from required and optional tasks as they complete, and optionally the done_record.
     """
