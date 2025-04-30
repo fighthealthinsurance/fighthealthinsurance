@@ -1880,7 +1880,7 @@ class AppealsBackendHelper:
                 existing_appeal_dict = await sub_in_appeals(
                     {"id": str(appeal.id), "content": appeal.appeal_text}
                 )
-                yield existing_appeal_dict["content"]
+                yield format_response(existing_appeal_dict)
 
         async for i in interleaved:
             logger.debug(f"Yielding {i}")
