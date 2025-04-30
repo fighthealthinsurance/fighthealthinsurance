@@ -1789,8 +1789,22 @@ class AppealsBackendHelper:
                     subs["[Professional Name]"] = (
                         denial.primary_professional.get_full_name()
                     )
+                    # Get phone number from professional's domain or contact info
+                    if denial.primary_professional.fax_number:
+                        subs["[Your Fax Number]"] = (
+                            denial.primary_professional.fax_number
+                        )
+
                 if denial.domain:
                     subs["[Professional Address]"] = denial.domain.get_address()
+                    # Use visible_phone_number from domain if available
+                    if denial.domain.visible_phone_number:
+                        subs["[Your Phone Number]"] = denial.domain.visible_phone_number
+
+                # Handle date of service placeholder
+                if denial.date_of_service and denial.date_of_service != "":
+                    subs["[Date of Service]"] = denial.date_of_service
+                    subs["on [Date of Service]"] = f"on {denial.date_of_service}"
             except:
                 logger.opt(exception=True).error(
                     f"Error fetching info for denial sub {denial.denial_id}"
