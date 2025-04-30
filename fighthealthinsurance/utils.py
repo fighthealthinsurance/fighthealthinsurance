@@ -197,10 +197,10 @@ def interleave_iterator_for_keep_alive(
 
 
 async def _interleave_iterator_for_keep_alive(
-    iterator: AsyncIterator[str], timeout: int = 45
+    iterator: AsyncIterator[str], timeout: int = 20
 ) -> AsyncIterator[str]:
     """Interliave executor with some "" for keep alive.
-    We add a "" ahead and behind along with every 45 seconds"""
+    We add a "" ahead and behind along with every 20 seconds"""
     yield ""
     await asyncio.sleep(0)
     # Keep track of the next elem pointer
@@ -224,11 +224,16 @@ async def _interleave_iterator_for_keep_alive(
             continue
         except asyncio.exceptions.CancelledError:
             # If the iterator is cancelled, we should stop
-            logger.debug("Cancellation of generator")
+            logger.debug("Cancellation of task in interleaved generator")
             yield ""
+            c = None
         except StopAsyncIteration:
             # Break the loop if iteration is complete
             break
+        except Exception as e:
+            logger.opt(exception=True).error(f"Error in generator: {e}")
+            yield ""
+            c = None
 
 
 async def fire_and_forget_in_new_threadpool(task: Coroutine) -> None:
