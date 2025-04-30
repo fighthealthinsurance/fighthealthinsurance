@@ -1839,11 +1839,12 @@ class AppealsBackendHelper:
 
         # Yield the existing appeals first
         async for appeal in existing_appeals:
-            logger.debug(f"Found existing appeal {appeal}, yielding")
-            existing_appeal_dict = await sub_in_appeals({
-                "id": appeal.id,
-                "content": appeal.appeal_text})
-            yield existing_appeal_dict
+            if appeal.appeal_text is not None:
+                logger.debug(f"Found existing appeal {appeal}, yielding")
+                existing_appeal_dict = await sub_in_appeals(
+                    {"id": str(appeal.id), "content": appeal.appeal_text}
+                )
+                yield existing_appeal_dict["content"]
 
         async for i in interleaved:
             logger.debug(f"Yielding {i}")
