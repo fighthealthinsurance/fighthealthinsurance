@@ -1766,7 +1766,11 @@ class AppealsBackendHelper:
                 procedure = denial.procedure
             subs = {
                 "Esteemed Members of the Appeals Committee": "insurance_company",
+                "[insurance_company]": insurance_company,
+                "{insurance_company}": insurance_company,
                 "insurance_company": insurance_company,
+                "{insurance_company}": insurance_company,
+                "{{insurance_company}}": insurance_company,
                 "[Insurance Company Name]": insurance_company,
                 "[Insurance Company]": insurance_company,
                 "[Insert Date]": denial.date or "{date}",
