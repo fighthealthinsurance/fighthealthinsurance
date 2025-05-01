@@ -536,7 +536,7 @@ class RemoteOpenLike(RemoteModel):
         if prof_pov:
             c = 0
             last_okish = result
-            while not self.is_professional_tone(result) and c < 2:
+            while not self.is_professional_tone(result) and c < 4:
                 c = c + 1
                 logger.debug(f"Result {result} is not professional")
                 result = await self._infer_no_context(
@@ -550,7 +550,7 @@ class RemoteOpenLike(RemoteModel):
                 )
                 if self.bad_result(result, infer_type):
                     result = last_okish
-                if c == 3:
+                if c == 4:
                     logger.debug(
                         f"Result {result} is not professional and we are out of retries"
                     )
