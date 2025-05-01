@@ -242,7 +242,7 @@ class RemoteModel(RemoteModelLike):
         if result is None or len(result) < 3:
             return True
         return False
-    
+
     def is_professional_tone(self, result: Optional[str]) -> bool:
         """
         Check if the result is written in a professional tone.
@@ -251,7 +251,6 @@ class RemoteModel(RemoteModelLike):
         if result is None or len(result) < 3:
             return False
         return True
-        
 
 
 class RemoteOpenLike(RemoteModel):
@@ -363,7 +362,7 @@ class RemoteOpenLike(RemoteModel):
         if len(result.strip(" ")) < 3:
             return True
         return False
-    
+
     def is_professional_tone(self, result: Optional[str]) -> bool:
         """
         Returns True if the appeal is written in a professional/provider tone (not the patient's voice).
@@ -387,7 +386,7 @@ class RemoteOpenLike(RemoteModel):
             "as the healthcare professional",
             "i recommend",
             "[patient's name]",
-            "as [patient's name] healthcare provider"
+            "as [patient's name] healthcare provider",
         ]
         # Common patient-voice phrases to avoid
         patient_phrases = [
@@ -406,7 +405,8 @@ class RemoteOpenLike(RemoteModel):
             "my doctor",
             "my medical condition",
             "my medical history",
-            "my medical records",]
+            "my medical records",
+        ]
         # If at least one professional phrase is present, accept
         result_lower = result.lower()
         for phrase in professional_phrases:
@@ -463,13 +463,13 @@ class RemoteOpenLike(RemoteModel):
     def _blocking_checked_infer(
         self,
         prompt,
-        patient_context,  
+        patient_context,
         plan_context,
         infer_type: str,
         pubmed_context,
-        system_prompt: str,  
-        temperature: float, 
-        ml_citations_context= None,
+        system_prompt: str,
+        temperature: float,
+        ml_citations_context=None,
         prof_pov: bool = False,
     ):
         return async_to_sync(self._checked_infer)(
@@ -481,7 +481,7 @@ class RemoteOpenLike(RemoteModel):
             system_prompt,
             temperature,
             ml_citations_context,
-            prof_pov
+            prof_pov,
         )
 
     async def _checked_infer(
@@ -527,13 +527,13 @@ class RemoteOpenLike(RemoteModel):
                 pubmed_context=pubmed_context,
                 temperature=temperature,
                 ml_citations_context=ml_citations_context,
-            )        
+            )
             # Ok just an empty list, we failed
             if self.bad_result(result, infer_type):
                 return []
-        
+
         logger.debug(f"Checking if professional")
-       
+
         # If professional_to_finish then check if the result is a professional response | One retry
         if prof_pov:
             if not self.is_professional_tone(result):
@@ -546,12 +546,11 @@ class RemoteOpenLike(RemoteModel):
                     pubmed_context=pubmed_context,
                     temperature=temperature,
                     ml_citations_context=ml_citations_context,
-                )        
+                )
                 if not self.is_professional_tone(result):
                     return []
             else:
                 logger.debug(f"Result {result} is professional")
-
 
         return [
             (
@@ -815,15 +814,20 @@ class RemoteOpenLike(RemoteModel):
                     context_extra += f"You can also use this context from citations: {ml_citations_context}."
 
                 # Detect if backend supports system messages
-# Some backends (e.g., Mistral VLLM) do not support the system role; in those cases, embed the system prompt in the user message.
+                # Some backends (e.g., Mistral VLLM) do not support the system role; in those cases, embed the system prompt in the user message.
                 supports_system = False
-                if api_base and any(x in api_base for x in ["perplexity", "deepinfra", "openai"]):
+                if api_base and any(
+                    x in api_base for x in ["perplexity", "deepinfra", "openai"]
+                ):
                     supports_system = True
 
                 if supports_system:
                     messages = [
                         {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": f"{context_extra}{prompt[0 : self.max_len]}"},
+                        {
+                            "role": "user",
+                            "content": f"{context_extra}{prompt[0 : self.max_len]}",
+                        },
                     ]
                 else:
                     # Fallback: embed system prompt in user message
@@ -1386,4 +1390,3 @@ class DeepInfra(RemoteFullOpenLike):
 
 
 candidate_model_backends: list[type[RemoteModel]] = all_concrete_subclasses(RemoteModel)  # type: ignore[type-abstract]
-

@@ -1682,6 +1682,7 @@ class AppealsBackendHelper:
                 f"Updating denial {denial.denial_id} professional_to_finish from {denial.professional_to_finish} to {professional_to_finish}"
             )
             denial.professional_to_finish = professional_to_finish
+        denial.gen_attempts = (denial.gen_attempts or 0) + 1
         await denial.asave()
 
         # Get pubmed and ml citations context
@@ -1699,34 +1700,38 @@ class AppealsBackendHelper:
             timeout=35,
         )
 
-        # Await both contexts so we can use co-operative multitasking
-        try:
-            logger.debug("Gathering contexts")
-            results = await asyncio.gather(
-                pubmed_context_awaitable,
-                ml_citation_context_awaitable,
-                return_exceptions=True,
-            )
-            if isinstance(results[0], str):
-                pubmed_context = results[0]
-            else:
-                pubmed_context = None
-            if isinstance(results[1], str):
-                ml_citation_context = results[1]
-            else:
-                ml_citation_context = None
-            logger.debug("Success")
-        except Exception as e:
-            logger.opt(exception=True).error(f"Error gathering contexts: {e}")
-            # We still might have saved a context.
+        # If we're getting "late" into our number of retries skip additional ctx.
+        if denial.gen_attempts < 3:
+            # Await both contexts so we can use co-operative multitasking
             try:
-                # Added in Django 5.1
-                await denial.arefresh_from_db(from_queryset=denial_query)
-            except:
-                denial = await denial_query.aget()
-            pubmed_context = denial.pubmed_context
-            ml_citation_context = denial.ml_citation_context
-            logger.debug("Used saved contexts")
+                logger.debug("Gathering contexts")
+                results = await asyncio.gather(
+                    pubmed_context_awaitable,
+                    ml_citation_context_awaitable,
+                    return_exceptions=True,
+                )
+                if isinstance(results[0], str):
+                    pubmed_context = results[0]
+                else:
+                    pubmed_context = None
+                if isinstance(results[1], str):
+                    ml_citation_context = results[1]
+                else:
+                    ml_citation_context = None
+                logger.debug("Success")
+            except Exception as e:
+                logger.opt(exception=True).error(f"Error gathering contexts: {e}")
+                # We still might have saved a context.
+                try:
+                    # Added in Django 5.1
+                    await denial.arefresh_from_db(from_queryset=denial_query)
+                except:
+                    denial = await denial_query.aget()
+                pubmed_context = denial.pubmed_context
+                ml_citation_context = denial.ml_citation_context
+                logger.debug("Used saved contexts")
+        else:
+            logger.debug("Too many retries, skipping ML/pubmed ctx")
 
         async def save_appeal(appeal_text: str) -> dict[str, str]:
             # Save all of the proposed appeals, so we can use RL later.
@@ -1859,8 +1864,8 @@ class AppealsBackendHelper:
             pubmed_context=pubmed_context,
             ml_citations_context=ml_citation_context,
         )
-         # Only filters out None
-        filtered_appeals: Iterator[str] = filter(lambda x: x != None, appeals) 
+        # Only filters out None
+        filtered_appeals: Iterator[str] = filter(lambda x: x != None, appeals)
 
         # We convert to async here.
         saved_appeals: AsyncIterator[dict[str, str]] = a.map(
