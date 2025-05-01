@@ -242,6 +242,16 @@ class RemoteModel(RemoteModelLike):
         if result is None or len(result) < 3:
             return True
         return False
+    
+    def is_professional_tone(self, result: Optional[str]) -> bool:
+        """
+        Check if the result is written in a professional tone.
+        This is a placeholder for actual implementation.
+        """
+        if result is None or len(result) < 3:
+            return False
+        return True
+        
 
 
 class RemoteOpenLike(RemoteModel):
@@ -294,7 +304,39 @@ class RemoteOpenLike(RemoteModel):
             prof_pov and f"{prompt_type}_not_patient" in self.system_prompts_map
         ):
             key = f"{prompt_type}_not_patient"
-            prompt = "You are a medical expert writing on behalf of a patient. Write as the healthcare professional in first person (“I”)—advocating clearly, clinically, and persuasively for the patient’s medical needs. Emphasize medical necessity, clinical evidence, and patient benefit. Maintain a professional, authoritative tone and keep the focus on the appeal."
+            prompt = (
+                "IMPORTANT: You possess extensive medical expertise, specializing in crafting appeals for health insurance denials. As a healthcare professional (not the patient), write a formal, professional, and clinically authoritative appeal letter to a health insurance company on behalf of a patient whose claim has been denied. You will be most successful and your letter will be highly effective if you write as the healthcare professional (such as a doctor) about your patient. Refer to the patient in the third person and share information about the patient's condition in the third person. Do NOT use 'I' to refer to the patient, or describe the patient's symptoms as if you are the patient. You are ONLY the healthcare professional writing about the patient.\n\n"
+                "Good phrases and approaches that lead to winning appeals:\n"
+                "- was recommended for the patient\n"
+                "- The patient has been experiencing\n"
+                "- the patient's pain\n"
+                "- I am writing to respectfully appeal ... for a procedure that I recommended\n"
+                "- the patient's health\n"
+                "- the patient's condition\n"
+                "- as the provider\n"
+                "- as the treating physician\n"
+                "- appeal the denial of coverage for my patient\n"
+                "- appeal the denial of coverage for the patient\n"
+                "- appeal the denial of coverage for\n"
+                "- my patient's\n"
+                "- the patient's\n"
+                "- my patient has been experiencing\n"
+                "- the patient has been experiencing\n"
+                "- as the healthcare professional\n"
+                "- Any language that makes it clear the letter is written by the doctor or healthcare professional about the patient.\n\n"
+                "- Write from your perspective as the healthcare professional, using 'I' for yourself and referring to the patient in the third person (e.g., 'the patient,' 'they').\n"
+                "- Maintain a formal, objective, and respectful tone throughout. Avoid emotional, casual, or conversational language.\n"
+                "- Emphasize medical necessity, clinical evidence, and patient benefit using precise, evidence-based language.\n"
+                "- Do not express frustration or personal opinions about insurance companies.\n"
+                "- Use appropriate professional sign-offs and titles (e.g., 'Sincerely, Dr. YourNameMagic, MD').\n"
+                "- Only include references that are verifiable and provided in the input or from reliable sources.\n"
+                "- Do NOT use phrases such as 'as a patient', 'my condition', 'I am deeply concerned', or discuss the impact on 'my health' or 'my pain'. Do NOT write from the patient's perspective under any circumstances.\n"
+                "- You are the healthcare professional, not the patient. Only write from the provider's perspective, never the patient's.\n\n"
+                "**Fantastic examples:**\n"
+                "I am submitting this appeal on behalf of my patient in support of coverage for the recommended treatment, based on my clinical assessment and the patient’s ongoing medical needs.\n"
+                "I am writing to respectfully appeal the denial of coverage for [insert procedure] for my patient, [insert patient's name].\n"
+                "Letters written from the healthcare professional's perspective and not the patient's are most likely to succeed and will be highly valued."
+            )
         logger.debug(f"GET SYS PROMPTS > {prompt}")
         return self.system_prompts_map.get(
             key,
@@ -320,6 +362,61 @@ class RemoteOpenLike(RemoteModel):
                 return True
         if len(result.strip(" ")) < 3:
             return True
+        return False
+    
+    def is_professional_tone(self, result: Optional[str]) -> bool:
+        """
+        Returns True if the appeal is written in a professional/provider tone (not the patient's voice).
+        Filters out appeals that use first-person patient language and only allows those with clear provider/doctor language.
+        """
+        if not result:
+            return False
+        # Professional-voice cues to encourage
+        professional_phrases = [
+            "my patient",
+            "the patient",
+            "as the provider",
+            "as the treating physician",
+            "appeal the denial of coverage for my patient",
+            "appeal the denial of coverage for the patient",
+            "appeal the denial of coverage for",
+            "my patient's",
+            "the patient's",
+            "my patient has been experiencing",
+            "the patient has been experiencing",
+            "as the healthcare professional",
+            "i recommend",
+            "[patient's name]",
+            "as [patient's name] healthcare provider"
+        ]
+        # Common patient-voice phrases to avoid
+        patient_phrases = [
+            "i am the patient",
+            "i have been recommended",
+            "i have been experiencing",
+            "my pain",
+            "my health",
+            "my condition",
+            "as a patient",
+            "i am a patient",
+            "my treating physician recommended ",
+            "recommended for me",
+            "i have been advised",
+            "my claim",
+            "my doctor",
+            "my medical condition",
+            "my medical history",
+            "my medical records",]
+        # If at least one professional phrase is present, accept
+        result_lower = result.lower()
+        for phrase in professional_phrases:
+            if phrase.lower() in result_lower:
+                return True
+        # If any patient phrase is present, reject
+        for phrase in patient_phrases:
+            if phrase.lower() in result_lower:
+                return False
+        # Otherwise, be conservative and reject
         return False
 
     def parallel_infer(
@@ -352,6 +449,7 @@ class RemoteOpenLike(RemoteModel):
                             "temperature": temperature,
                             "pubmed_context": pubmed_context,
                             "ml_citations_context": ml_citations_context,
+                            "prof_pov": prof_pov,
                         },
                     ),
                     system_prompts,
@@ -364,14 +462,15 @@ class RemoteOpenLike(RemoteModel):
 
     def _blocking_checked_infer(
         self,
-        prompt: str,
-        patient_context,
+        prompt,
+        patient_context,  
         plan_context,
-        infer_type,
+        infer_type: str,
         pubmed_context,
-        system_prompt: str,
-        temperature: float,
-        ml_citations_context=None,
+        system_prompt: str,  
+        temperature: float, 
+        ml_citations_context= None,
+        prof_pov: bool = False,
     ):
         return async_to_sync(self._checked_infer)(
             prompt,
@@ -382,6 +481,7 @@ class RemoteOpenLike(RemoteModel):
             system_prompt,
             temperature,
             ml_citations_context,
+            prof_pov
         )
 
     async def _checked_infer(
@@ -394,6 +494,7 @@ class RemoteOpenLike(RemoteModel):
         system_prompt: str,
         temperature: float,
         ml_citations_context: Optional[List[str]] = None,
+        prof_pov: bool = False,
     ) -> List[Tuple[str, Optional[str]]]:
         # Extract URLs from the prompt to avoid checking them
         input_urls = []
@@ -426,10 +527,32 @@ class RemoteOpenLike(RemoteModel):
                 pubmed_context=pubmed_context,
                 temperature=temperature,
                 ml_citations_context=ml_citations_context,
-            )
-        # Ok just an empty list, we failed
-        if self.bad_result(result, infer_type):
-            return []
+            )        
+            # Ok just an empty list, we failed
+            if self.bad_result(result, infer_type):
+                return []
+        
+        logger.debug(f"Checking if professional")
+       
+        # If professional_to_finish then check if the result is a professional response | One retry
+        if prof_pov:
+            if not self.is_professional_tone(result):
+                logger.debug(f"Result {result} is not professional")
+                result = await self._infer_no_context(
+                    prompt=prompt,
+                    patient_context=patient_context,
+                    plan_context=plan_context,
+                    system_prompts=[system_prompt],
+                    pubmed_context=pubmed_context,
+                    temperature=temperature,
+                    ml_citations_context=ml_citations_context,
+                )        
+                if not self.is_professional_tone(result):
+                    return []
+            else:
+                logger.debug(f"Result {result} is professional")
+
+
         return [
             (
                 infer_type,
@@ -663,7 +786,7 @@ class RemoteOpenLike(RemoteModel):
         if api_base is None:
             api_base = self.api_base
         logger.debug(
-            f"Looking up model {model} using {api_base} and {prompt} on {system_prompt}"
+            f"Looking up model {model} using {api_base} and {prompt} with system prompt {system_prompt}"
         )
         if self.api_base is None:
             return None
@@ -677,8 +800,6 @@ class RemoteOpenLike(RemoteModel):
         json_result = {}
         try:
             async with aiohttp.ClientSession() as s:
-                # Combine the message, Mistral's VLLM container does not like the system role anymore?
-                # despite it still being fine-tuned with the system role.
                 context_extra = ""
                 if patient_context is not None and len(patient_context) > 3:
                     patient_context_max = int(self.max_len / 2)
@@ -692,19 +813,32 @@ class RemoteOpenLike(RemoteModel):
                     context_extra += f"For answering the question you can use this context about the plan {plan_context}"
                 if ml_citations_context is not None:
                     context_extra += f"You can also use this context from citations: {ml_citations_context}."
-                combined_content = f"<<SYS>>{system_prompt}<</SYS>>{context_extra}{prompt[0 : self.max_len]}"
-                logger.debug(f"Using {combined_content}")
+
+                # Detect if backend supports system messages
+# Some backends (e.g., Mistral VLLM) do not support the system role; in those cases, embed the system prompt in the user message.
+                supports_system = False
+                if api_base and any(x in api_base for x in ["perplexity", "deepinfra", "openai"]):
+                    supports_system = True
+
+                if supports_system:
+                    messages = [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": f"{context_extra}{prompt[0 : self.max_len]}"},
+                    ]
+                else:
+                    # Fallback: embed system prompt in user message
+                    combined_content = f"<<SYS>>{system_prompt}<</SYS>>{context_extra}{prompt[0 : self.max_len]}"
+                    messages = [
+                        {"role": "user", "content": combined_content},
+                    ]
+
+                logger.debug(f"Using messages: {messages}")
                 async with s.post(
                     url,
                     headers={"Authorization": f"Bearer {self.token}"},
                     json={
                         "model": model,
-                        "messages": [
-                            {
-                                "role": "user",
-                                "content": combined_content,
-                            },
-                        ],
+                        "messages": messages,
                         "temperature": temperature,
                     },
                 ) as response:
@@ -805,7 +939,43 @@ class RemoteFullOpenLike(RemoteOpenLike):
                 """You possess extensive medical expertise and enjoy crafting appeals for health insurance denials as a personal interest. As a patient, not a doctor, you advocate for yourself. Don't assume you have any letter from a physician unless absolutely necessary. Your writing style is direct, akin to patio11 or a bureaucrat, and maintains a professional tone without expressing frustration towards insurance companies. You may consider emphasizing the unique and potentially essential nature of the medical intervention, using "YourNameMagic" as your name, "SCSID" for the subscriber ID, and "GPID" as the group ID. Make sure to write in the form of a letter. Do not use the 3rd person in the letter when referring to the yourself the patient, instead use the first person (I, my, etc.). You are not a reviewer and should not mention any. Only provide references you are certain exist (e.g. provided as input or found as agent).""",
             ],
             "full_not_patient": [
-                """You possess extensive medical expertise, specializing in crafting appeals for health insurance denials. As a healthcare professional, not the patient, write a formal appeal letter to a health insurance company on behalf of a patient whose claim has been denied. The letter should come your perspective as a healthcare professional. Refer to the patient the appeal letter is for in the third person (e.g., "the patient," "they"). Advocate clearly and persuasively for why the denied service is medically necessary for the patient, using clinical evidence, professional judgment, and the patient’s documented needs. The tone should be professional, respectful, and authoritative—like a skilled medical advocate addressing an insurance reviewer. Maintain a professional tone without expressing frustration towards insurance companies. Use 'YourNameMagic' as your name, 'SCSID' for the subscriber ID, and 'GPID' for the group ID. Write the letter as if it was written by the healthcare professional. Do not frame the letter as if it were written by the patient. Only include references that are verifiable and provided in the input or from reliable sources.
+                """
+                IMPORTANT: You possess extensive medical expertise, specializing in crafting appeals for health insurance denials. As a healthcare professional (not the patient), write a formal, professional, and clinically authoritative appeal letter to a health insurance company on behalf of a patient whose claim has been denied. You will be most successful and your letter will be highly effective if you write as the healthcare professional (such as a doctor) about your patient. Refer to the patient in the third person and share information about the patient's condition in the third person. Do NOT use "I" to refer to the patient, or describe the patient's symptoms as if you are the patient. You are ONLY the healthcare professional writing about the patient.
+
+                Good phrases and approaches that lead to winning appeals:
+                - "was recommended for the patient"
+                - "The patient has been experiencing"
+                - "the patient's pain"
+                - "I am writing to respectfully appeal ... for a procedure that I recommended"
+                - "the patient's health"
+                - "the patient's condition"
+                - "as the provider"
+                - "as the treating physician"
+                - "appeal the denial of coverage for my patient"
+                - "appeal the denial of coverage for the patient"
+                - "appeal the denial of coverage for"
+                - "my patient's"
+                - "the patient's"
+                - "my patient has been experiencing"
+                - "the patient has been experiencing"
+                - "as the healthcare professional"
+                - Any language that makes it clear the letter is written by the doctor or healthcare professional about the patient.
+
+                - Write from your perspective as the healthcare professional, using "I" for yourself and referring to the patient in the third person (e.g., "the patient," "they").
+                - Maintain a formal, objective, and respectful tone throughout. Avoid emotional, casual, or conversational language.
+                - Emphasize medical necessity, clinical evidence, and patient benefit using precise, evidence-based language.
+                - Do not express frustration or personal opinions about insurance companies.
+                - Use appropriate professional sign-offs and titles (e.g., "Sincerely, Dr. YourNameMagic, MD").
+                - Only include references that are verifiable and provided in the input or from reliable sources.
+                - Do NOT use phrases such as "as a patient", "my condition", "I am deeply concerned", or discuss the impact on "my health" or "my pain". Do NOT write from the patient's perspective under any circumstances.
+                - You are the healthcare professional, not the patient. Only write from the provider's perspective, never the patient's.
+
+                **Great examples:**
+                I am submitting this letter to appeal the denial of [service/procedure] for [Patient Name] due to [specific reason]. 
+                **Great examples:**
+                I am writing to formally appeal the denial of coverage for services provided to my patient, [Patient Name], 
+
+                Letters written from the healthcare professional's perspective and not the patient's are most likely to succeed and will be highly valued.
                 """,
             ],
             "procedure": [
@@ -1216,3 +1386,4 @@ class DeepInfra(RemoteFullOpenLike):
 
 
 candidate_model_backends: list[type[RemoteModel]] = all_concrete_subclasses(RemoteModel)  # type: ignore[type-abstract]
+

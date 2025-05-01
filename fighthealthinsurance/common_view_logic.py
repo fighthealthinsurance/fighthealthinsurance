@@ -16,6 +16,7 @@ from typing import (
     Tuple,
     Iterable,
     List,
+    Iterator,
 )
 from loguru import logger
 from PyPDF2 import PdfMerger
@@ -1784,6 +1785,7 @@ class AppealsBackendHelper:
                 and denial.procedure != "UNKNOWN"
             ):
                 procedure = denial.procedure
+            # Substitutes for common terms
             subs = {
                 "Esteemed Members of the Appeals Committee": insurance_company,
                 "[insurance_company]": insurance_company,
@@ -1857,7 +1859,8 @@ class AppealsBackendHelper:
             pubmed_context=pubmed_context,
             ml_citations_context=ml_citation_context,
         )
-        filtered_appeals: Iterator[str] = filter(lambda x: x != None, appeals)
+         # Only filters out None
+        filtered_appeals: Iterator[str] = filter(lambda x: x != None, appeals) 
 
         # We convert to async here.
         saved_appeals: AsyncIterator[dict[str, str]] = a.map(
