@@ -423,59 +423,6 @@ class RemoteOpenLike(RemoteModel):
         # Otherwise, be conservative and reject
         return False
 
-    def is_professional_tone(self, result: Optional[str]) -> bool:
-        """
-        Returns True if the appeal is written in a professional/provider tone (not the patient's voice).
-        Filters out appeals that use first-person patient language and only allows those with clear provider/doctor language.
-        """
-        if not result:
-            return False
-        # Professional-voice cues to encourage
-        professional_phrases = [
-            "my patient",
-            "the patient",
-            "as the provider",
-            "as the treating physician",
-            "my patient's",
-            "the patient's",
-            "my patient has been experiencing",
-            "the patient has been experiencing",
-            "as the healthcare professional",
-            "i recommend",
-            "[patient's name]",
-            "as [patient's name] healthcare provider",
-        ]
-        # Common patient-voice phrases to avoid
-        patient_phrases = [
-            "i am the patient",
-            "i have been recommended",
-            "i have been experiencing",
-            "my pain",
-            "my health",
-            "my condition",
-            "as a patient",
-            "i am a patient",
-            "my treating physician recommended ",
-            "recommended for me",
-            "i have been advised",
-            "my claim",
-            "my doctor",
-            "my medical condition",
-            "my medical history",
-            "my medical records",
-        ]
-        # If at least one professional phrase is present, accept
-        result_lower = result.lower()
-        for phrase in professional_phrases:
-            if phrase.lower() in result_lower:
-                return True
-        # If any patient phrase is present, reject
-        for phrase in patient_phrases:
-            if phrase.lower() in result_lower:
-                return False
-        # Otherwise, be conservative and reject
-        return False
-
     def parallel_infer(
         self,
         prompt: str,
