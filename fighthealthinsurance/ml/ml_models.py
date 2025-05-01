@@ -252,14 +252,6 @@ class RemoteModel(RemoteModelLike):
             return False
         return True
 
-    def is_professional_tone(self, result: Optional[str]) -> bool:
-        """
-        Check if the result is written in a professional tone.
-        This is a placeholder for actual implementation.
-        """
-        if result is None or len(result) < 3:
-            return False
-        return True
 
 
 class RemoteOpenLike(RemoteModel):
