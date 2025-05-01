@@ -1820,6 +1820,7 @@ class AppealsBackendHelper:
                     subs["[Your Name]"] = denial.primary_professional.get_full_name()
                 if denial.patient_user is not None:
                     subs["[Patient Name]"] = denial.patient_user.get_legal_name()
+                    subs["[patient name]"] = denial.patient_user.get_legal_name()
                 if denial and denial.primary_professional is not None:
                     subs["[Professional Name]"] = (
                         denial.primary_professional.get_full_name()
