@@ -242,7 +242,7 @@ class RemoteModel(RemoteModelLike):
         if result is None or len(result) < 3:
             return True
         return False
-    
+
     def is_professional_tone(self, result: Optional[str]) -> bool:
         """
         Check if the result is written in a professional tone.
@@ -251,7 +251,6 @@ class RemoteModel(RemoteModelLike):
         if result is None or len(result) < 3:
             return False
         return True
-        
 
     def is_professional_tone(self, result: Optional[str]) -> bool:
         """
@@ -371,7 +370,7 @@ class RemoteOpenLike(RemoteModel):
         if len(result.strip(" ")) < 3:
             return True
         return False
-    
+
     def is_professional_tone(self, result: Optional[str]) -> bool:
         """
         Returns True if the appeal is written in a professional/provider tone (not the patient's voice).
@@ -412,17 +411,22 @@ class RemoteOpenLike(RemoteModel):
             "my doctor",
             "my medical condition",
             "my medical history",
-            "my medical records",]
+            "my medical records",
+        ]
         # If at least one professional phrase is present, accept
         result_lower = result.lower()
         for phrase in professional_phrases:
             if phrase.lower() in result_lower:
-                logger.debug(f"Result {result} is professional voice due to phrase: {phrase}")
+                logger.debug(
+                    f"Result {result} is professional voice due to phrase: {phrase}"
+                )
                 return True
         # If any patient phrase is present, reject
         for phrase in patient_phrases:
             if phrase.lower() in result_lower:
-                logger.debug(f"Result {result} is not professional due to patient phrase: {phrase}")
+                logger.debug(
+                    f"Result {result} is not professional due to patient phrase: {phrase}"
+                )
                 return False
         # Otherwise, be conservative and reject
         return False
@@ -527,13 +531,13 @@ class RemoteOpenLike(RemoteModel):
     def _blocking_checked_infer(
         self,
         prompt,
-        patient_context,  
+        patient_context,
         plan_context,
         infer_type: str,
         pubmed_context,
-        system_prompt: str,  
-        temperature: float, 
-        ml_citations_context= None,
+        system_prompt: str,
+        temperature: float,
+        ml_citations_context=None,
         prof_pov: bool = False,
     ):
         return async_to_sync(self._checked_infer)(
@@ -1455,4 +1459,3 @@ class DeepInfra(RemoteFullOpenLike):
 
 
 candidate_model_backends: list[type[RemoteModel]] = all_concrete_subclasses(RemoteModel)  # type: ignore[type-abstract]
-

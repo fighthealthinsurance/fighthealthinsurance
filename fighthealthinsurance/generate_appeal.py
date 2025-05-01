@@ -458,8 +458,7 @@ class AppealGenerator(object):
                 "GOOD EXAMPLE: I am submitting this appeal on behalf of my patient in support of coverage for the recommended treatment, based on my clinical assessment and the patient’s ongoing medical needs.\n"
                 "GOOD EXAMPLE: 'As the medical professional overseeing this patient’s care, I am appealing the denial of coverage.'\n"
                 "GOOD EXAMPLE: I am writing to respectfully appeal the denial of coverage for [insert procedure] for my patient, [insert patient's name].\n"
-                f"{sign_off}" +
-                "Thank you for following these instructions.\n"
+                f"{sign_off}" + "Thank you for following these instructions.\n"
             )
         if qa_context is not None and qa_context != "" and qa_context != "UNKNOWN":
             base = f"{base}. You should try and incorporate the following context into your appeal: {qa_context}."
