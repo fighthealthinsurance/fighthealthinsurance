@@ -197,10 +197,16 @@ def interleave_iterator_for_keep_alive(
 
 
 async def _interleave_iterator_for_keep_alive(
-    iterator: AsyncIterator[str], timeout: int = 45
+    iterator: AsyncIterator[str], timeout: int = 20
 ) -> AsyncIterator[str]:
-    """Interliave executor with some "" for keep alive.
-    We add a "" ahead and behind along with every 45 seconds"""
+    """
+    Yields strings from an async iterator, interleaving empty strings as keep-alive signals.
+
+    This generator yields an empty string before and after each item from the input iterator,
+    and also yields an empty string every `timeout` seconds if no new item is available.
+    Handles timeouts, cancellations, and exceptions by yielding empty strings to maintain
+    connection liveness.
+    """
     yield ""
     await asyncio.sleep(0)
     # Keep track of the next elem pointer
@@ -222,18 +228,26 @@ async def _interleave_iterator_for_keep_alive(
         except asyncio.TimeoutError:
             yield ""
             continue
+        except asyncio.exceptions.CancelledError:
+            # If the iterator is cancelled, we should stop
+            logger.debug("Cancellation of task in interleaved generator")
+            yield ""
+            c = None
         except StopAsyncIteration:
             # Break the loop if iteration is complete
             break
+        except Exception as e:
+            logger.opt(exception=True).error(f"Error in generator: {e}")
+            yield ""
+            c = None
 
 
 async def fire_and_forget_in_new_threadpool(task: Coroutine) -> None:
     """
-    Runs an async task in a new threadpool executor.
-    Fire-and-forget style with no return value.
+    Runs an asynchronous coroutine in a separate thread with its own event loop.
 
-    Args:
-        task: The async task to run
+    The coroutine is executed in a fire-and-forget manner; any exceptions are logged,
+    and the function does not wait for completion or return a result.
     """
     logger.debug(f"Starting fire and forget task {task}")
 
@@ -356,17 +370,20 @@ async def execute_critical_optional_fireandforget(
     max_extra_time_for_optional: int = 2,
 ) -> AsyncIterator[T]:
     """
-    Kicks off all tasks at once.
-    Waits only for required tasks to finish; cancels optional after those finish.
-    fire_and_forget tasks run in the background without blocking.
+    Runs required, optional, and fire-and-forget coroutines concurrently, yielding results as they complete.
+
+    Starts all tasks at once: required tasks are awaited and must complete, optional tasks run concurrently and are canceled after required tasks finish or timeout, and fire-and-forget tasks are dispatched in background threads. Yields results from required and optional tasks as they finish. Optionally yields a final record when done.
 
     Args:
-        critical: Sequence of critical awaitable tasks that must complete
-        optional: Sequence of optional awaitable tasks that may be canceled
-        fire_and_forget: Sequence of awaitable tasks that should run in the background in another thread
+        required: Coroutines that must complete before optional tasks are canceled.
+        optional: Coroutines that may be canceled if not finished after required tasks complete.
+        fire_and_forget: Coroutines to run in background threads without blocking.
+        done_record: Optional value to yield after all processing is complete.
+        timeout: Maximum time in seconds to wait for required tasks before canceling optional tasks.
+        max_extra_time_for_optional: Maximum additional seconds to wait for optional tasks after required tasks finish.
 
-    Returns:
-        Async iterator of the values as finished
+    Yields:
+        Results from required and optional tasks as they complete, and optionally the done_record.
     """
     # Start fire and forget tasks
     logger.debug("Launching fire and forget")
@@ -426,6 +443,8 @@ async def execute_critical_optional_fireandforget(
             yield optional_result
     except asyncio.TimeoutError as e:
         logger.debug(f"Timed out waiting for optional tasks?")
+    except asyncio.exceptions.CancelledError:
+        logger.debug("Cancellation waiting for optional tasks")
     finally:
         logger.debug(
             "Required tasks finished, fire and forget canceling optional tasks"

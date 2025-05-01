@@ -253,6 +253,15 @@ class RemoteModel(RemoteModelLike):
         return True
         
 
+    def is_professional_tone(self, result: Optional[str]) -> bool:
+        """
+        Check if the result is written in a professional tone.
+        This is a placeholder for actual implementation.
+        """
+        if result is None or len(result) < 3:
+            return False
+        return True
+
 
 class RemoteOpenLike(RemoteModel):
 
@@ -310,12 +319,16 @@ class RemoteOpenLike(RemoteModel):
                 "- was recommended for the patient\n"
                 "- The patient has been experiencing\n"
                 "- the patient's pain\n"
+                "- I am writing to respectfully appeal ... for a procedure that I recommended\n"
                 "- the patient's health\n"
                 "- the patient's condition\n"
                 "- as the provider\n"
                 "- as the treating physician\n"
-                "- my patient\n"
-                "- the patient\n"
+                "- appeal the denial of coverage for my patient\n"
+                "- appeal the denial of coverage for the patient\n"
+                "- appeal the denial of coverage for\n"
+                "- my patient's\n"
+                "- the patient's\n"
                 "- my patient has been experiencing\n"
                 "- the patient has been experiencing\n"
                 "- as the healthcare professional\n"
@@ -414,6 +427,62 @@ class RemoteOpenLike(RemoteModel):
         # Otherwise, be conservative and reject
         return False
 
+    def is_professional_tone(self, result: Optional[str]) -> bool:
+        """
+        Returns True if the appeal is written in a professional/provider tone (not the patient's voice).
+        Filters out appeals that use first-person patient language and only allows those with clear provider/doctor language.
+        """
+        if not result:
+            return False
+        # Professional-voice cues to encourage
+        professional_phrases = [
+            "my patient",
+            "the patient",
+            "as the provider",
+            "as the treating physician",
+            "appeal the denial of coverage for my patient",
+            "appeal the denial of coverage for the patient",
+            "appeal the denial of coverage for",
+            "my patient's",
+            "the patient's",
+            "my patient has been experiencing",
+            "the patient has been experiencing",
+            "as the healthcare professional",
+            "i recommend",
+            "[patient's name]",
+            "as [patient's name] healthcare provider",
+        ]
+        # Common patient-voice phrases to avoid
+        patient_phrases = [
+            "i am the patient",
+            "i have been recommended",
+            "i have been experiencing",
+            "my pain",
+            "my health",
+            "my condition",
+            "as a patient",
+            "i am a patient",
+            "my treating physician recommended ",
+            "recommended for me",
+            "i have been advised",
+            "my claim",
+            "my doctor",
+            "my medical condition",
+            "my medical history",
+            "my medical records",
+        ]
+        # If at least one professional phrase is present, accept
+        result_lower = result.lower()
+        for phrase in professional_phrases:
+            if phrase.lower() in result_lower:
+                return True
+        # If any patient phrase is present, reject
+        for phrase in patient_phrases:
+            if phrase.lower() in result_lower:
+                return False
+        # Otherwise, be conservative and reject
+        return False
+
     def parallel_infer(
         self,
         prompt: str,
@@ -476,7 +545,7 @@ class RemoteOpenLike(RemoteModel):
             system_prompt,
             temperature,
             ml_citations_context,
-            prof_pov
+            prof_pov,
         )
 
     async def _checked_infer(
@@ -522,16 +591,18 @@ class RemoteOpenLike(RemoteModel):
                 pubmed_context=pubmed_context,
                 temperature=temperature,
                 ml_citations_context=ml_citations_context,
-            )        
+            )
             # Ok just an empty list, we failed
             if self.bad_result(result, infer_type):
                 return []
-        
+
         logger.debug(f"Checking if professional")
-       
-        # If professional_to_finish then check if the result is a professional response | One retry | Logs inside is_professional_tone
+
+        # If professional_to_finish then check if the result is a professional response | One retry
         if prof_pov:
+            c = 0
             if not self.is_professional_tone(result):
+                logger.debug(f"Result {result} is not professional")
                 result = await self._infer_no_context(
                     prompt=prompt,
                     patient_context=patient_context,
@@ -540,11 +611,12 @@ class RemoteOpenLike(RemoteModel):
                     pubmed_context=pubmed_context,
                     temperature=temperature,
                     ml_citations_context=ml_citations_context,
-                )        
-                if self.bad_result(result, infer_type):
-                    return []
+                )
                 if not self.is_professional_tone(result):
                     return []
+            else:
+                logger.debug(f"Result {result} is professional")
+
         return [
             (
                 infer_type,
@@ -807,15 +879,20 @@ class RemoteOpenLike(RemoteModel):
                     context_extra += f"You can also use this context from citations: {ml_citations_context}."
 
                 # Detect if backend supports system messages
-# Some backends (e.g., Mistral VLLM) do not support the system role; in those cases, embed the system prompt in the user message.
+                # Some backends (e.g., Mistral VLLM) do not support the system role; in those cases, embed the system prompt in the user message.
                 supports_system = False
-                if api_base and any(x in api_base for x in ["perplexity", "deepinfra", "openai"]):
+                if api_base and any(
+                    x in api_base for x in ["perplexity", "deepinfra", "openai"]
+                ):
                     supports_system = True
 
                 if supports_system:
                     messages = [
                         {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": f"{context_extra}{prompt[0 : self.max_len]}"},
+                        {
+                            "role": "user",
+                            "content": f"{context_extra}{prompt[0 : self.max_len]}",
+                        },
                     ]
                 else:
                     # Fallback: embed system prompt in user message
@@ -938,6 +1015,7 @@ class RemoteFullOpenLike(RemoteOpenLike):
                 - "was recommended for the patient"
                 - "The patient has been experiencing"
                 - "the patient's pain"
+                - "I am writing to respectfully appeal ... for a procedure that I recommended"
                 - "the patient's health"
                 - "the patient's condition"
                 - "as the provider"

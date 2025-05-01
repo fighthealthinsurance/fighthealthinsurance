@@ -807,7 +807,7 @@ class AppealGenerator(object):
         # we want to add some randomization to the initial appeals so they are
         # not always appearing in the first position.
         def random_delay(appeal) -> Iterator[str]:
-            time.sleep(random.randint(0, 15))
+            time.sleep(random.randint(0, 20))
             return iter([appeal])
 
         delayed_initial_appeals: List[Future[Iterator[str]]] = list(
