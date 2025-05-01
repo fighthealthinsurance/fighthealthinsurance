@@ -462,16 +462,15 @@ class RemoteOpenLike(RemoteModel):
 
     def _blocking_checked_infer(
         self,
-        prompt: str,
-        patient_context: Optional[str],
-        plan_context: Optional[str],
+        prompt,
+        patient_context,  
+        plan_context,
         infer_type: str,
-        pubmed_context: Optional[str],
-        system_prompt: str,
-        temperature: float,
-        ml_citations_context: Optional[List[str]] = None,
+        pubmed_context,
+        system_prompt: str,   
+        ml_citations_context= None,
         prof_pov: bool = False,
-    ) -> List[Tuple[str, Optional[str]]]:
+    ):
         return async_to_sync(self._checked_infer)(
             prompt,
             patient_context,
