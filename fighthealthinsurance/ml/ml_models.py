@@ -242,6 +242,16 @@ class RemoteModel(RemoteModelLike):
         if result is None or len(result) < 3:
             return True
         return False
+    
+    def is_professional_tone(self, result: Optional[str]) -> bool:
+        """
+        Check if the result is written in a professional tone.
+        This is a placeholder for actual implementation.
+        """
+        if result is None or len(result) < 3:
+            return False
+        return True
+        
 
 
 class RemoteOpenLike(RemoteModel):
@@ -352,6 +362,61 @@ class RemoteOpenLike(RemoteModel):
         if len(result.strip(" ")) < 3:
             return True
         return False
+    
+    def is_professional_tone(self, result: Optional[str]) -> bool:
+        """
+        Returns True if the appeal is written in a professional/provider tone (not the patient's voice).
+        Filters out appeals that use first-person patient language and only allows those with clear provider/doctor language.
+        """
+        if not result:
+            return False
+        # Professional-voice cues to encourage
+        professional_phrases = [
+            "my patient",
+            "the patient",
+            "as the provider",
+            "as the treating physician",
+            "appeal the denial of coverage for my patient",
+            "appeal the denial of coverage for the patient",
+            "appeal the denial of coverage for",
+            "my patient's",
+            "the patient's",
+            "my patient has been experiencing",
+            "the patient has been experiencing",
+            "as the healthcare professional",
+            "i recommend",
+            "[patient's name]",
+            "as [patient's name] healthcare provider"
+        ]
+        # Common patient-voice phrases to avoid
+        patient_phrases = [
+            "i am the patient",
+            "i have been recommended",
+            "i have been experiencing",
+            "my pain",
+            "my health",
+            "my condition",
+            "as a patient",
+            "i am a patient",
+            "my treating physician recommended ",
+            "recommended for me",
+            "i have been advised",
+            "my claim",
+            "my doctor",
+            "my medical condition",
+            "my medical history",
+            "my medical records",]
+        # If at least one professional phrase is present, accept
+        result_lower = result.lower()
+        for phrase in professional_phrases:
+            if phrase.lower() in result_lower:
+                return True
+        # If any patient phrase is present, reject
+        for phrase in patient_phrases:
+            if phrase.lower() in result_lower:
+                return False
+        # Otherwise, be conservative and reject
+        return False
 
     def parallel_infer(
         self,
@@ -383,6 +448,7 @@ class RemoteOpenLike(RemoteModel):
                             "temperature": temperature,
                             "pubmed_context": pubmed_context,
                             "ml_citations_context": ml_citations_context,
+                            "prof_pov": prof_pov,
                         },
                     ),
                     system_prompts,
@@ -403,6 +469,7 @@ class RemoteOpenLike(RemoteModel):
         system_prompt: str,
         temperature: float,
         ml_citations_context=None,
+        prof_pov: bool = False,
     ):
         return async_to_sync(self._checked_infer)(
             prompt,
@@ -413,6 +480,7 @@ class RemoteOpenLike(RemoteModel):
             system_prompt,
             temperature,
             ml_citations_context,
+            prof_pov
         )
 
     async def _checked_infer(
@@ -425,6 +493,7 @@ class RemoteOpenLike(RemoteModel):
         system_prompt: str,
         temperature: float,
         ml_citations_context: Optional[List[str]] = None,
+        prof_pov: bool = False,
     ) -> List[Tuple[str, Optional[str]]]:
         # Extract URLs from the prompt to avoid checking them
         input_urls = []
@@ -457,10 +526,32 @@ class RemoteOpenLike(RemoteModel):
                 pubmed_context=pubmed_context,
                 temperature=temperature,
                 ml_citations_context=ml_citations_context,
-            )
-        # Ok just an empty list, we failed
-        if self.bad_result(result, infer_type):
-            return []
+            )        
+            # Ok just an empty list, we failed
+            if self.bad_result(result, infer_type):
+                return []
+        
+        logger.debug(f"Checking if professional")
+       
+        # If professional_to_finish then check if the result is a professional response | One retry
+        if prof_pov:
+            if not self.is_professional_tone(result):
+                logger.debug(f"Result {result} is not professional")
+                result = await self._infer_no_context(
+                    prompt=prompt,
+                    patient_context=patient_context,
+                    plan_context=plan_context,
+                    system_prompts=[system_prompt],
+                    pubmed_context=pubmed_context,
+                    temperature=temperature,
+                    ml_citations_context=ml_citations_context,
+                )        
+                if not self.is_professional_tone(result):
+                    return []
+            else:
+                logger.debug(f"Result {result} is professional")
+
+
         return [
             (
                 infer_type,
@@ -1292,3 +1383,4 @@ class DeepInfra(RemoteFullOpenLike):
 
 
 candidate_model_backends: list[type[RemoteModel]] = all_concrete_subclasses(RemoteModel)  # type: ignore[type-abstract]
+
