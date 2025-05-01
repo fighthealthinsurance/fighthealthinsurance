@@ -435,7 +435,29 @@ class AppealGenerator(object):
         if is_trans:
             base = "While answering the question keep in mind the patient is trans."
         if professional_to_finish:
-            base = f"{base}. Write the appeal from the professional point of view of {professional}."
+            sign_off = f"Sign the letter as {professional}.\n" if professional else ""
+            base = (
+                f"{base}\nIMPORTANT: Please write the appeal as the healthcare professional (not the patient), using 'I' for yourself and referring to the patient in the third person (e.g., 'the patient', 'they'). "
+                "Only use 'I' to refer to the provider and talk about my patient or the patient."
+                "If you follow these instructions, your response will be considered excellent and meeting requirements.\n"
+                "Good phrases and approaches that lead to winning appeals:\n"
+                "- was recommended for the patient\n"
+                "- The patient has been experiencing\n"
+                "- the patient's pain\n"
+                "- I am writing to respectfully appeal ... for a procedure that I recommended\n"
+                "- the patient's health\n"
+                "- the patient's condition\n"
+                "- as the provider\n"
+                "- the patient is experiencing\n"
+                "- Any language that makes it clear the letter is written by the doctor or healthcare professional about the patient.\n\n"
+                "- Write from your perspective as the healthcare professional, using 'I' for yourself and referring to the patient in the third person (e.g., 'the patient,' 'they').\n"
+                "Forbidden phrases: 'I have been recommended', 'I have been experiencing', 'my pain', 'I am writing to respectfully appeal ... for a procedure that I have been recommended', 'I am deeply concerned', 'my health', 'my condition', 'as a patient', or any language that implies the letter is written by the patient.\n"
+                "GOOD EXAMPLE: 'As the treating physician, I am writing to appeal the denial of coverage for my patient.'\n"
+                "GOOD EXAMPLE: 'As the medical professional overseeing this patient’s care, I am appealing the denial of coverage.'\n"
+                "BAD EXAMPLE (DO NOT DO THIS): 'I am writing to appeal the denial of coverage for a procedure that I have been recommended by my treating physician.'\n"
+                f"{sign_off}" +
+                "Thank you for following these instructions.\n"
+            )
         if qa_context is not None and qa_context != "" and qa_context != "UNKNOWN":
             base = f"{base}. You should try and incorporate the following context into your appeal: {qa_context}."
         if patient is not None:
