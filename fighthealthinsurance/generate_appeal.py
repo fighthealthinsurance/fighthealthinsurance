@@ -455,8 +455,7 @@ class AppealGenerator(object):
                 "GOOD EXAMPLE: 'As the treating physician, I am writing to appeal the denial of coverage for my patient.'\n"
                 "GOOD EXAMPLE: 'As the medical professional overseeing this patient’s care, I am appealing the denial of coverage.'\n"
                 "BAD EXAMPLE (DO NOT DO THIS): 'I am writing to appeal the denial of coverage for a procedure that I have been recommended by my treating physician.'\n"
-                f"{sign_off}" +
-                "Thank you for following these instructions.\n"
+                f"{sign_off}" + "Thank you for following these instructions.\n"
             )
         if qa_context is not None and qa_context != "" and qa_context != "UNKNOWN":
             base = f"{base}. You should try and incorporate the following context into your appeal: {qa_context}."
@@ -804,7 +803,7 @@ class AppealGenerator(object):
         # we want to add some randomization to the initial appeals so they are
         # not always appearing in the first position.
         def random_delay(appeal) -> Iterator[str]:
-            time.sleep(random.randint(0, 15))
+            time.sleep(random.randint(0, 20))
             return iter([appeal])
 
         delayed_initial_appeals: List[Future[Iterator[str]]] = list(

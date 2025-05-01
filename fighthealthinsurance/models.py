@@ -548,6 +548,7 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     candidate_diagnosis = models.CharField(max_length=300, null=True, blank=True)
     candidate_generated_questions = models.JSONField(null=True, blank=True)
     candidate_ml_citation_context = models.JSONField(null=True, blank=True)
+    gen_attempts = models.IntegerField(null=True, default=0)
 
     @classmethod
     def filter_to_allowed_denials(cls, current_user: User):

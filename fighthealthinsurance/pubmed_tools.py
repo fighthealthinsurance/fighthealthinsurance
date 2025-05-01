@@ -220,6 +220,8 @@ class PubMedTools(object):
         """
         Kind of hacky RAG routine that uses PubMed.
         """
+        if denial.pubmed_context and len(denial.pubmed_context) > 1:
+            return denial.pubmed_context
         procedure_opt = denial.procedure if denial.procedure else ""
         diagnosis_opt = denial.diagnosis if denial.diagnosis else ""
         query = f"{procedure_opt} {diagnosis_opt}".strip()
