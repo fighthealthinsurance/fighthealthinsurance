@@ -436,9 +436,6 @@ class RemoteOpenLike(RemoteModel):
             "the patient",
             "as the provider",
             "as the treating physician",
-            "appeal the denial of coverage for my patient",
-            "appeal the denial of coverage for the patient",
-            "appeal the denial of coverage for",
             "my patient's",
             "the patient's",
             "my patient has been experiencing",
@@ -596,7 +593,6 @@ class RemoteOpenLike(RemoteModel):
 
         # If professional_to_finish then check if the result is a professional response | One retry
         if prof_pov:
-            c = 0
             if not self.is_professional_tone(result):
                 logger.debug(f"Result {result} is not professional")
                 result = await self._infer_no_context(
