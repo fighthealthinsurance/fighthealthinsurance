@@ -446,7 +446,7 @@ class AppealGenerator(object):
                 "the patient's pain\n"
                 "the patient's health\n"
                 "the patient's condition\n"
-                 "[patient's name]\n"
+                "[patient's name]\n"
                 "the patient is experiencing\n"
                 "Any language that makes it clear the letter is written by the doctor or healthcare professional about the patient.\n\n"
                 "Write from your perspective as the healthcare professional, using 'I' for yourself and referring to the patient in the third person (e.g., 'the patient,' 'they').\n"
@@ -455,7 +455,6 @@ class AppealGenerator(object):
                 "GOOD EXAMPLE: 'I am writing to appeal the denial of coverage for [insert procedure] for my patient, [insert patient's name].'\n"
                 "GOOD EXAMPLE: I am submitting this appeal on behalf of my patient in support of coverage for the recommended treatment, based on my clinical assessment and the patient’s ongoing medical needs.\n"
                 "GOOD EXAMPLE: 'As the medical professional overseeing this patient’s care, I am appealing the denial of coverage.'\n"
-
                 f"{sign_off}" + "Thank you for following these instructions.\n"
             )
         if qa_context is not None and qa_context != "" and qa_context != "UNKNOWN":
