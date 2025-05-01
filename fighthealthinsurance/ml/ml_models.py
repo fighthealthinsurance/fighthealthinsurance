@@ -305,7 +305,7 @@ class RemoteOpenLike(RemoteModel):
             key = f"{prompt_type}_not_patient"
             prompt = (
                 "IMPORTANT: You possess extensive medical expertise, specializing in crafting appeals for health insurance denials. As a healthcare professional (not the patient), write a formal, professional, and clinically authoritative appeal letter to a health insurance company on behalf of a patient whose claim has been denied. You will be most successful and your letter will be highly effective if you write as the healthcare professional (such as a doctor) about your patient. Refer to the patient in the third person and share information about the patient's condition in the third person. Do NOT use 'I' to refer to the patient, or describe the patient's symptoms as if you are the patient. You are ONLY the healthcare professional writing about the patient.\n\n"
-                "Good phrases and approaches that lead to winning appeals:\n"
+                "Here are good phrases and approaches that lead to winning appeals (use as appropriate):\n"
                 "- was recommended for the patient\n"
                 "- The patient has been experiencing\n"
                 "- the patient's pain\n"
@@ -323,17 +323,20 @@ class RemoteOpenLike(RemoteModel):
                 "- the patient has been experiencing\n"
                 "- as the healthcare professional\n"
                 "- Any language that makes it clear the letter is written by the doctor or healthcare professional about the patient.\n\n"
-                "- Write from your perspective as the healthcare professional, using 'I' for yourself and referring to the patient in the third person (e.g., 'the patient,' 'they').\n"
-                "- Maintain a formal, objective, and respectful tone throughout. Avoid emotional, casual, or conversational language.\n"
-                "- Emphasize medical necessity, clinical evidence, and patient benefit using precise, evidence-based language.\n"
-                "- Use appropriate professional sign-offs and titles (e.g., 'Sincerely, Dr. YourNameMagic, MD').\n"
-                "- Only include references that are verifiable and provided in the input or from reliable sources.\n"
-                "- You are the healthcare professional, not the patient. Only write from the provider's perspective, never the patient's.\n\n"
-                "- Do NOT express frustration or personal opinions about insurance companies.\n"
-                "- Do NOT write from the patient's perspective under any circumstances.\n"
-                "**Fantastic examples:**\n"
-                "I am submitting this appeal on behalf of my patient in support of coverage for the recommended treatment, based on my clinical assessment and the patient’s ongoing medical needs.\n"
-                "I am writing to respectfully appeal the denial of coverage for [insert procedure] for my patient, [insert patient's name].\n"
+                "Write from your perspective as the healthcare professional, using 'I' for yourself and referring to the patient in the third person (e.g., 'the patient,' 'they').\n"
+                "Maintain a formal, objective, and respectful tone throughout. Avoid emotional, casual, or conversational language.\n"
+                "Emphasize medical necessity, clinical evidence, and patient benefit using precise, evidence-based language.\n"
+                "Do not express frustration or personal opinions about insurance companies.\n"
+                "Use appropriate professional sign-offs and titles (e.g., 'Sincerely, Dr. YourNameMagic, MD').\n"
+                "Only include references that are verifiable and provided in the input or from reliable sources.\n"
+                "Do NOT use phrases such as 'as a patient', 'my condition', 'I am deeply concerned', or discuss the impact on 'my health' or 'my pain'. Do NOT write from the patient's perspective under any circumstances.\n"
+                "You are the healthcare professional, not the patient. Only write from the provider's perspective, never the patient's.\n\n"
+                "Here are several great example starters (use any style, do not copy the first one):\n"
+                "1. As the treating physician, I am writing to appeal the denial of coverage for my patient. The patient has been experiencing persistent and debilitating lower back pain.\n"
+                "2. I am submitting this appeal on behalf of my patient in support of coverage for the recommended treatment, based on my clinical assessment and the patient’s ongoing medical needs.\n"
+                "3. As the medical professional overseeing this patient’s care, I am appealing the denial of coverage.\n"
+                "4. I am writing to appeal the denial of coverage for [insert procedure] for my patient, [insert patient's name].\n"
+                "Vary your response style. Do not always use the same template.\n\n"
                 "Letters written from the healthcare professional's perspective and not the patient's are most likely to succeed and will be highly valued."
             )
         logger.debug(f"GET SYS PROMPTS > {prompt}")
@@ -426,7 +429,7 @@ class RemoteOpenLike(RemoteModel):
         pubmed_context: Optional[str],
         ml_citations_context: Optional[List[str]] = None,
         prof_pov: bool = False,
-    ) -> List[Future[Tuple[str, Optional[str]]]]:
+    ) -> List[Future[Tuple[str, Optional[str]]]:
         logger.debug(f"Running inference on {self} of type {infer_type}")
         temperatures = [0.5]
         if infer_type == "full" and not self._expensive:
@@ -951,7 +954,7 @@ class RemoteFullOpenLike(RemoteOpenLike):
                 """
                 IMPORTANT: You possess extensive medical expertise, specializing in crafting appeals for health insurance denials. As a healthcare professional (not the patient), write a formal, professional, and clinically authoritative appeal letter to a health insurance company on behalf of a patient whose claim has been denied. You will be most successful and your letter will be highly effective if you write as the healthcare professional (such as a doctor) about your patient. Refer to the patient in the third person and share information about the patient's condition in the third person. Do NOT use "I" to refer to the patient, or describe the patient's symptoms as if you are the patient. You are ONLY the healthcare professional writing about the patient.
 
-                Good phrases and approaches that lead to winning appeals:
+                Here are good phrases and approaches that lead to winning appeals (use as appropriate):
                 - "was recommended for the patient"
                 - "The patient has been experiencing"
                 - "the patient's pain"
@@ -970,19 +973,21 @@ class RemoteFullOpenLike(RemoteOpenLike):
                 - "as the healthcare professional"
                 - Any language that makes it clear the letter is written by the doctor or healthcare professional about the patient.
 
-                - Write from your perspective as the healthcare professional, using "I" for yourself and referring to the patient in the third person (e.g., "the patient," "they").
-                - Maintain a formal, objective, and respectful tone throughout. Avoid emotional, casual, or conversational language.
-                - Emphasize medical necessity, clinical evidence, and patient benefit using precise, evidence-based language.
-                - Do not express frustration or personal opinions about insurance companies.
-                - Use appropriate professional sign-offs and titles (e.g., "Sincerely, Dr. YourNameMagic, MD").
-                - Only include references that are verifiable and provided in the input or from reliable sources.
-                - Do NOT use phrases such as "as a patient", "my condition", "I am deeply concerned", or discuss the impact on "my health" or "my pain". Do NOT write from the patient's perspective under any circumstances.
-                - You are the healthcare professional, not the patient. Only write from the provider's perspective, never the patient's.
+                Write from your perspective as the healthcare professional, using "I" for yourself and referring to the patient in the third person (e.g., "the patient," "they").
+                Maintain a formal, objective, and respectful tone throughout. Avoid emotional, casual, or conversational language.
+                Emphasize medical necessity, clinical evidence, and patient benefit using precise, evidence-based language.
+                Do not express frustration or personal opinions about insurance companies.
+                Use appropriate professional sign-offs and titles (e.g., "Sincerely, Dr. YourNameMagic, MD").
+                Only include references that are verifiable and provided in the input or from reliable sources.
+                Do NOT use phrases such as "as a patient", "my condition", "I am deeply concerned", or discuss the impact on "my health" or "my pain". Do NOT write from the patient's perspective under any circumstances.
+                You are the healthcare professional, not the patient. Only write from the provider's perspective, never the patient's.
 
-                **Great examples:**
-                I am submitting this letter to appeal the denial of [service/procedure] for [Patient Name] due to [specific reason]. 
-                **Great examples:**
-                I am writing to formally appeal the denial of coverage for services provided to my patient, [Patient Name], 
+                Here are several great example starters (use any style, do not copy the first one):
+                1. As the treating physician, I am writing to appeal the denial of coverage for my patient. The patient has been experiencing persistent and debilitating lower back pain.
+                2. I am submitting this appeal on behalf of my patient in support of coverage for the recommended treatment, based on my clinical assessment and the patient’s ongoing medical needs.
+                3. As the medical professional overseeing this patient’s care, I am appealing the denial of coverage.
+                4. I am writing to appeal the denial of coverage for [insert procedure] for my patient, [insert patient's name].
+                Vary your response style. Do not always use the same template.
 
                 Letters written from the healthcare professional's perspective and not the patient's are most likely to succeed and will be highly valued.
                 """,
@@ -1088,7 +1093,7 @@ class RemoteFullOpenLike(RemoteOpenLike):
         While your reasoning (that inside of the <think></think> component at the start) can and should discuss the rational you _must not_ include it in the answer.
         For example:
         1. What is the patient's age? 45
-        2. Has the patient had any previous surgeries? Unknown
+        2. Has the patient participated in a structured weight loss program (e.g., Weight Watchers)?
         """
 
         system_prompts: list[str] = self.get_system_prompts("questions")
