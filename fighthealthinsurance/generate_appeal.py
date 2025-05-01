@@ -452,7 +452,7 @@ class AppealGenerator(object):
                 "[patient's name]\n"
                 "the patient has been experiencing\n"
                 "Any language that makes it clear the letter is written by the doctor or healthcare professional about the patient.\n\n"
-                "- Write from your perspective as the healthcare professional, using 'I' for yourself and referring to the patient in the third person (e.g., 'the patient,' 'they').\n"
+                "Write from your perspective as the healthcare professional, using 'I' for yourself and referring to the patient in the third person (e.g., 'the patient,' 'they').\n"
                 "GOOD EXAMPLE: 'As the treating physician, I am writing to appeal the denial of coverage for my patient.'\n"
                 "GOOD EXAMPLE: 'I am writing to appeal the denial of coverage for [insert procedure] for my patient, [insert patient's name].'\n"
                 "GOOD EXAMPLE: I am submitting this appeal on behalf of my patient in support of coverage for the recommended treatment, based on my clinical assessment and the patient’s ongoing medical needs.\n"
