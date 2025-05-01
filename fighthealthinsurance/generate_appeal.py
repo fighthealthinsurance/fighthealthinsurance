@@ -438,10 +438,10 @@ class AppealGenerator(object):
             sign_off = f"Sign the letter as {professional}.\n" if professional else ""
             # List of good examples to randomize
             good_examples = [
-                "As the treating physician, I am writing to appeal the denial of coverage for my patient.",
                 "I am writing to appeal the denial of coverage for [insert procedure] for my patient, [insert patient's name].",
                 "I am submitting this appeal on behalf of my patient in support of coverage for the recommended treatment, based on my clinical assessment and the patient’s ongoing medical needs.",
                 "As the medical professional overseeing this patient’s care, I am appealing the denial of coverage.",
+                "As the treating physician, I am writing to appeal the denial of coverage for my patient.",
             ]
             random.shuffle(good_examples)
             examples_text = "\n".join(f"GOOD EXAMPLE: {ex}" for ex in good_examples)

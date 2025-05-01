@@ -332,10 +332,10 @@ class RemoteOpenLike(RemoteModel):
                 "Do NOT use phrases such as 'as a patient', 'my condition', 'I am deeply concerned', or discuss the impact on 'my health' or 'my pain'. Do NOT write from the patient's perspective under any circumstances.\n"
                 "You are the healthcare professional, not the patient. Only write from the provider's perspective, never the patient's.\n\n"
                 "Here are several great example starters (use any style, do not copy the first one):\n"
-                "1. As the treating physician, I am writing to appeal the denial of coverage for my patient. The patient has been experiencing persistent and debilitating lower back pain.\n"
-                "2. I am submitting this appeal on behalf of my patient in support of coverage for the recommended treatment, based on my clinical assessment and the patient’s ongoing medical needs.\n"
-                "3. As the medical professional overseeing this patient’s care, I am appealing the denial of coverage.\n"
-                "4. I am writing to appeal the denial of coverage for [insert procedure] for my patient, [insert patient's name].\n"
+                "1. I am writing to appeal the denial of coverage for [insert procedure] for my patient, [insert patient's name].\n"
+                "2. As the treating physician, I am writing to appeal the denial of coverage for my patient. The patient has been experiencing persistent and debilitating lower back pain.\n"
+                "3. I am submitting this appeal on behalf of my patient in support of coverage for the recommended treatment, based on my clinical assessment and the patient’s ongoing medical needs.\n"
+                "4. As the medical professional overseeing this patient’s care, I am appealing the denial of coverage.\n"
                 "Vary your response style. Do not always use the same template.\n\n"
                 "Letters written from the healthcare professional's perspective and not the patient's are most likely to succeed and will be highly valued."
             )
@@ -429,7 +429,7 @@ class RemoteOpenLike(RemoteModel):
         pubmed_context: Optional[str],
         ml_citations_context: Optional[List[str]] = None,
         prof_pov: bool = False,
-    ) -> List[Future[Tuple[str, Optional[str]]]:
+    ) -> List[Future[Tuple[str, Optional[str]]]]:
         logger.debug(f"Running inference on {self} of type {infer_type}")
         temperatures = [0.5]
         if infer_type == "full" and not self._expensive:
