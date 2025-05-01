@@ -33,7 +33,7 @@ class InsuranceQuestions(forms.Form):
         return [
             """Dear {insurance_company};
 
-My name is $your_name_here and I am writing you regarding claim {claim_id}{denial_date_info}. I believe this claim has been incorrectly processed. I am requesting an internal appeal."""
+            My name is $your_name_here and I am writing you regarding claim {claim_id}{denial_date_info}. I believe this claim has been incorrectly processed. I am requesting an internal appeal."""
         ]
 
     def main(self):

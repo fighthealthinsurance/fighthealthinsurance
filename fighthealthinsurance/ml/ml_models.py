@@ -330,9 +330,8 @@ class RemoteOpenLike(RemoteModel):
                 "- Do not express frustration or personal opinions about insurance companies.\n"
                 "- Use appropriate professional sign-offs and titles (e.g., 'Sincerely, Dr. YourNameMagic, MD').\n"
                 "- Only include references that are verifiable and provided in the input or from reliable sources.\n"
-                "- Do NOT use phrases such as 'as a patient', 'my condition', 'I am deeply concerned', or discuss the impact on 'my health' or 'my pain'. Do NOT write from the patient's perspective under any circumstances.\n"
                 "- You are the healthcare professional, not the patient. Only write from the provider's perspective, never the patient's.\n\n"
-                "**Fantastic examples:**\n"
+                "**FANTASTIC EXAMPLES:**\n"
                 "I am submitting this appeal on behalf of my patient in support of coverage for the recommended treatment, based on my clinical assessment and the patient’s ongoing medical needs.\n"
                 "I am writing to respectfully appeal the denial of coverage for [insert procedure] for my patient, [insert patient's name].\n"
                 "Letters written from the healthcare professional's perspective and not the patient's are most likely to succeed and will be highly valued."
@@ -377,17 +376,18 @@ class RemoteOpenLike(RemoteModel):
             "the patient",
             "as the provider",
             "as the treating physician",
-            "appeal the denial of coverage for my patient",
-            "appeal the denial of coverage for the patient",
-            "appeal the denial of coverage for",
             "my patient's",
             "the patient's",
             "my patient has been experiencing",
             "the patient has been experiencing",
             "as the healthcare professional",
-            "i recommend",
+            "i prescribed",
+            "i am the provider",
+            "i am the treating physician",
+            "i am the healthcare professional",
+            "i recommended",
             "[patient's name]",
-            "as [patient's name] healthcare provider"
+            "as [patient's name] healthcare provider",
         ]
         # Common patient-voice phrases to avoid
         patient_phrases = [
@@ -411,10 +411,12 @@ class RemoteOpenLike(RemoteModel):
         result_lower = result.lower()
         for phrase in professional_phrases:
             if phrase.lower() in result_lower:
+                logger.debug(f"Result {result} is professional voice due to phrase: {phrase}")
                 return True
         # If any patient phrase is present, reject
         for phrase in patient_phrases:
             if phrase.lower() in result_lower:
+                logger.debug(f"Result {result} is not professional due to patient phrase: {phrase}")
                 return False
         # Otherwise, be conservative and reject
         return False
@@ -534,10 +536,9 @@ class RemoteOpenLike(RemoteModel):
         
         logger.debug(f"Checking if professional")
        
-        # If professional_to_finish then check if the result is a professional response | One retry
+        # If professional_to_finish then check if the result is a professional response | One retry | Logs inside is_professional_tone
         if prof_pov:
             if not self.is_professional_tone(result):
-                logger.debug(f"Result {result} is not professional")
                 result = await self._infer_no_context(
                     prompt=prompt,
                     patient_context=patient_context,
@@ -549,9 +550,6 @@ class RemoteOpenLike(RemoteModel):
                 )        
                 if not self.is_professional_tone(result):
                     return []
-            else:
-                logger.debug(f"Result {result} is professional")
-
 
         return [
             (
@@ -946,7 +944,6 @@ class RemoteFullOpenLike(RemoteOpenLike):
                 - "was recommended for the patient"
                 - "The patient has been experiencing"
                 - "the patient's pain"
-                - "I am writing to respectfully appeal ... for a procedure that I recommended"
                 - "the patient's health"
                 - "the patient's condition"
                 - "as the provider"
@@ -954,8 +951,8 @@ class RemoteFullOpenLike(RemoteOpenLike):
                 - "appeal the denial of coverage for my patient"
                 - "appeal the denial of coverage for the patient"
                 - "appeal the denial of coverage for"
-                - "my patient's"
-                - "the patient's"
+                - "my patient"
+                - "the patient"
                 - "my patient has been experiencing"
                 - "the patient has been experiencing"
                 - "as the healthcare professional"
@@ -964,10 +961,10 @@ class RemoteFullOpenLike(RemoteOpenLike):
                 - Write from your perspective as the healthcare professional, using "I" for yourself and referring to the patient in the third person (e.g., "the patient," "they").
                 - Maintain a formal, objective, and respectful tone throughout. Avoid emotional, casual, or conversational language.
                 - Emphasize medical necessity, clinical evidence, and patient benefit using precise, evidence-based language.
-                - Do not express frustration or personal opinions about insurance companies.
                 - Use appropriate professional sign-offs and titles (e.g., "Sincerely, Dr. YourNameMagic, MD").
                 - Only include references that are verifiable and provided in the input or from reliable sources.
-                - Do NOT use phrases such as "as a patient", "my condition", "I am deeply concerned", or discuss the impact on "my health" or "my pain". Do NOT write from the patient's perspective under any circumstances.
+                - Do NOT write from the patient's perspective under any circumstances.
+                - Do NOT express frustration or personal opinions about insurance companies.
                 - You are the healthcare professional, not the patient. Only write from the provider's perspective, never the patient's.
 
                 **Great examples:**
