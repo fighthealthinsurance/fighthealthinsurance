@@ -332,8 +332,9 @@ class RemoteOpenLike(RemoteModel):
                 "- Only include references that are verifiable and provided in the input or from reliable sources.\n"
                 "- Do NOT use phrases such as 'as a patient', 'my condition', 'I am deeply concerned', or discuss the impact on 'my health' or 'my pain'. Do NOT write from the patient's perspective under any circumstances.\n"
                 "- You are the healthcare professional, not the patient. Only write from the provider's perspective, never the patient's.\n\n"
-                "**Winning example:**\n"
-                "As the treating physician, I am writing to appeal the denial of coverage for my patient, Jane Doe. The patient has been experiencing persistent and debilitating lower back pain.\n\n"
+                "**Fantastic examples:**\n"
+                "I am submitting this appeal on behalf of my patient in support of coverage for the recommended treatment, based on my clinical assessment and the patient’s ongoing medical needs.\n"
+                "I am writing to respectfully appeal the denial of coverage for [insert procedure] for my patient, [insert patient's name].\n"
                 "Letters written from the healthcare professional's perspective and not the patient's are most likely to succeed and will be highly valued."
             )
         logger.debug(f"GET SYS PROMPTS > {prompt}")
@@ -462,15 +463,15 @@ class RemoteOpenLike(RemoteModel):
     def _blocking_checked_infer(
         self,
         prompt: str,
-        patient_context,
-        plan_context,
-        infer_type,
-        pubmed_context,
+        patient_context: Optional[str],
+        plan_context: Optional[str],
+        infer_type: str,
+        pubmed_context: Optional[str],
         system_prompt: str,
         temperature: float,
-        ml_citations_context=None,
+        ml_citations_context: Optional[List[str]] = None,
         prof_pov: bool = False,
-    ):
+    ) -> List[Tuple[str, Optional[str]]]:
         return async_to_sync(self._checked_infer)(
             prompt,
             patient_context,
@@ -969,8 +970,10 @@ class RemoteFullOpenLike(RemoteOpenLike):
                 - Do NOT use phrases such as "as a patient", "my condition", "I am deeply concerned", or discuss the impact on "my health" or "my pain". Do NOT write from the patient's perspective under any circumstances.
                 - You are the healthcare professional, not the patient. Only write from the provider's perspective, never the patient's.
 
-                **Winning example:**
-                As the treating physician, I am writing to appeal the denial of coverage for my patient, Jane Doe. The patient has been experiencing persistent and debilitating lower back pain.
+                **Great examples:**
+                I am submitting this letter to appeal the denial of [service/procedure] for [Patient Name] due to [specific reason]. 
+                **Great examples:**
+                I am writing to formally appeal the denial of coverage for services provided to my patient, [Patient Name], 
 
                 Letters written from the healthcare professional's perspective and not the patient's are most likely to succeed and will be highly valued.
                 """,
@@ -1070,8 +1073,8 @@ class RemoteFullOpenLike(RemoteOpenLike):
         {patient_context_opt} \n
         {diagnosis_opt} \n
         {procedure_opt} \n
-        Your task is to write 1–3 concise, patient-friendly questions related to the patient's medical history that can help support an appeal. Focus only on relevant history—do not ask about the denial itself, as mark.that may discourage the person working on the appeal.
-        When formatting your output it must be in the format of one question + answer per line with the answer after the question? The questions should be in the 3rd person regarding the patient.\n
+        Your task is to write 1–3 concise, patient-friendly questions related to the patient's medical history that can help support an appeal. Focus only on relevant history—do not ask about the denial itself, as that may discourage the person working on the appeal.
+        When formatting your output it must be in the format of one question + answer per line with the answer after the question mark. The questions should be in the 3rd person regarding the patient.\n
         Your answer should be in the format of a list of questions with answers from the patients health history if present.
         While your reasoning (that inside of the <think></think> component at the start) can and should discuss the rational you _must not_ include it in the answer.
         For example:
