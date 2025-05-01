@@ -436,6 +436,15 @@ class AppealGenerator(object):
             base = "While answering the question keep in mind the patient is trans."
         if professional_to_finish:
             sign_off = f"Sign the letter as {professional}.\n" if professional else ""
+            # List of good examples to randomize
+            good_examples = [
+                "I am writing to appeal the denial of coverage for [insert procedure] for my patient, [insert patient's name].",
+                "I am submitting this appeal on behalf of my patient in support of coverage for the recommended treatment, based on my clinical assessment and the patient’s ongoing medical needs.",
+                "As the medical professional overseeing this patient’s care, I am appealing the denial of coverage.",
+                "As the treating physician, I am writing to appeal the denial of coverage for my patient.",
+            ]
+            random.shuffle(good_examples)
+            examples_text = "\n".join(f"GOOD EXAMPLE: {ex}" for ex in good_examples)
             base = (
                 f"{base}\nIMPORTANT: Please write the appeal as the healthcare professional (not the patient), using 'I' for yourself and referring to the patient in the third person (e.g., 'the patient', 'they'). "
                 "Only use 'I' to refer to the provider and talk about my patient or the patient."
@@ -451,10 +460,7 @@ class AppealGenerator(object):
                 "Any language that makes it clear the letter is written by the doctor or healthcare professional about the patient.\n\n"
                 "Write from your perspective as the healthcare professional, using 'I' for yourself and referring to the patient in the third person (e.g., 'the patient,' 'they').\n"
                 "Forbidden any language that implies the letter is written by the patient.\n"
-                "GOOD EXAMPLE: 'As the treating physician, I am writing to appeal the denial of coverage for my patient.'\n"
-                "GOOD EXAMPLE: 'I am writing to appeal the denial of coverage for [insert procedure] for my patient, [insert patient's name].'\n"
-                "GOOD EXAMPLE: I am submitting this appeal on behalf of my patient in support of coverage for the recommended treatment, based on my clinical assessment and the patient’s ongoing medical needs.\n"
-                "GOOD EXAMPLE: 'As the medical professional overseeing this patient’s care, I am appealing the denial of coverage.'\n"
+                f"{examples_text}\n"
                 f"{sign_off}" + "Thank you for following these instructions.\n"
             )
         if qa_context is not None and qa_context != "" and qa_context != "UNKNOWN":

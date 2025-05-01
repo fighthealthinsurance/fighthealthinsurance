@@ -103,27 +103,28 @@ class MedicalNeccessaryQuestions(InsuranceQuestions):
 
     def main(self):
         return [
-            "I understand that my claim was denied as not medically necessary, however I believe it is medically necessary for {medical_reason}."
+            "The claim was denied as not medically necessary; however, it is medically necessary for {medical_reason}."
         ]
 
 
 class ExperimentalQuestions(MedicalNeccessaryQuestions):
     medical_reason = forms.CharField(
         max_length=200,
-        label="Insurance companies love to claim anything expensive is experimental."
-        + " Some good ways to show something is not experimental: look for "
-        + ' documents like the "standards of care" or any medical journals (including the NIH or pubmed).',
+        label="Why do you believe this is not experimental?",
+        help_text=(
+            "Insurance companies tend to claim anything expensive is experimental. "
+            "Good ways to show something is not experimental: look for documents like the 'standards of care' or medical journals (including the NIH or pubmed)."
+        ),
+        required=False,
     )
 
 
 class NotCoveredQuestions(MedicalNeccessaryQuestions):
     medical_reason = forms.CharField(
         max_length=200,
-        label="Here the health plan has not said (necessarily) that it is not "
-        + "medically necessary, just that they don't want to pay for it."
-        + "This one is tricky, but some good avenues to argue for coverage include asking"
-        + " for the plan documents and or demanding the policy under which "
-        + " it is not covered under.",
+        label="Why should this be covered?",
+        help_text="The plan may not say it's not medically necessary, just that they don't want to pay. Good arguments: request plan documents, demand the policy under which it is not covered, or explain why it should be covered.",
+        required=False,
     )
 
 
@@ -134,11 +135,8 @@ class NotCoveredByQuestions(NotCoveredQuestions):
 class OutOfNetworkReimbursement(forms.Form):
     why_need_out_of_network = forms.CharField(
         max_length=300,
-        label="Explain why you need to go out of network. "
-        + "Some common reasons: there is no "
-        + "in-network provider, the in-network providers don't meet the standards of care "
-        + " the in-network providers don't accept new patients or "
-        + " the in-network providers don't perform the service needed.",
+        label="Why do you need to go out of network?",
+        help_text="E.g., no in-network provider, in-network providers don't meet standards of care, don't accept new patients, or don't perform the needed service.",
     )
 
     def medical_context(self):
@@ -329,11 +327,8 @@ class PreventiveCareQuestions(InsuranceQuestions):
     )
     trans_gender = forms.BooleanField(
         required=False,
-        label=(
-            "Are you trans*? Some preventive care is traditionally only "
-            "covered for certain genders certain genders and if you're trans "
-            "it's not uncommon for insurance to incorrectly deny necessary coverage."
-        ),
+        label="Are you transgender?",
+        help_text="Some preventive care is only covered for certain genders. If you're trans, insurance may incorrectly deny necessary coverage. Check this box if it applies to you.",
     )
 
     def medical_context(self):
@@ -372,15 +367,12 @@ class ThirdPartyQuestions(InsuranceQuestions):
     alternate_insurance_details = forms.CharField(
         max_length=300,
         required=False,
-        label=("Any details regarding secondary or other insurance if available:"),
+        label="Any details regarding secondary or other insurance if available?",
     )
     is_known_3rd_party = forms.BooleanField(
         required=False,
-        label=(
-            "Was this medical claim the result of an accident that is "
-            "covered by another insurance (e.g. auto accident where "
-            "there is known auto insurance or workers comp)"
-        ),
+        label="Was this claim due to an accident covered by other insurance?",
+        help_text="E.g., auto accident with known auto insurance, or workers comp. Check if another insurer should be responsible.",
     )
 
     def preface(self):
@@ -398,9 +390,6 @@ class StepTherapy(MedicalNeccessaryQuestions):
 
     medically_necessary = forms.CharField(
         required=False,
-        label=(
-            "Why the option from the insurnace company does not "
-            "work (e.g. you've tried the suggested medication, are "
-            "allergic, not recommended, etc.)"
-        ),
+        label="Why doesn't the insurance supported option work for you?",
+        help_text="E.g., you've tried the suggested medication, are allergic, it is not recommended, or it was ineffective. Briefly explain why the insurer's alternative is not appropriate in your case.",
     )
