@@ -246,6 +246,8 @@ class MLCitationsHelper:
         Returns:
             List of citation strings
         """
+        if denial.ml_citation_context and len(denial.ml_citation_context) > 0:
+            return denial.ml_citation_context  # type: ignore
         try:
             model_timeout = timeout - 10
 
