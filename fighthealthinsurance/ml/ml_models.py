@@ -467,7 +467,8 @@ class RemoteOpenLike(RemoteModel):
         plan_context,
         infer_type: str,
         pubmed_context,
-        system_prompt: str,   
+        system_prompt: str,  
+        temperature: float, 
         ml_citations_context= None,
         prof_pov: bool = False,
     ):
