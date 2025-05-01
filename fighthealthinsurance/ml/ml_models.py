@@ -326,11 +326,11 @@ class RemoteOpenLike(RemoteModel):
                 "- Write from your perspective as the healthcare professional, using 'I' for yourself and referring to the patient in the third person (e.g., 'the patient,' 'they').\n"
                 "- Maintain a formal, objective, and respectful tone throughout. Avoid emotional, casual, or conversational language.\n"
                 "- Emphasize medical necessity, clinical evidence, and patient benefit using precise, evidence-based language.\n"
-                "- Do not express frustration or personal opinions about insurance companies.\n"
                 "- Use appropriate professional sign-offs and titles (e.g., 'Sincerely, Dr. YourNameMagic, MD').\n"
                 "- Only include references that are verifiable and provided in the input or from reliable sources.\n"
-                "- Do NOT use phrases such as 'as a patient', 'my condition', 'I am deeply concerned', or discuss the impact on 'my health' or 'my pain'. Do NOT write from the patient's perspective under any circumstances.\n"
                 "- You are the healthcare professional, not the patient. Only write from the provider's perspective, never the patient's.\n\n"
+                "- Do NOT express frustration or personal opinions about insurance companies.\n"
+                "- Do NOT write from the patient's perspective under any circumstances.\n"
                 "**Fantastic examples:**\n"
                 "I am submitting this appeal on behalf of my patient in support of coverage for the recommended treatment, based on my clinical assessment and the patient’s ongoing medical needs.\n"
                 "I am writing to respectfully appeal the denial of coverage for [insert procedure] for my patient, [insert patient's name].\n"
@@ -378,9 +378,8 @@ class RemoteOpenLike(RemoteModel):
             "as the treating physician",
             "appeal the denial of coverage for my patient",
             "appeal the denial of coverage for the patient",
-            "appeal the denial of coverage for",
-            "my patient's",
-            "the patient's",
+            "my patient",
+            "the patient",
             "my patient has been experiencing",
             "the patient has been experiencing",
             "as the healthcare professional",
@@ -399,7 +398,6 @@ class RemoteOpenLike(RemoteModel):
             "as a patient",
             "i am a patient",
             "my treating physician recommended ",
-            "recommended for me",
             "i have been advised",
             "my claim",
             "my doctor",
@@ -548,6 +546,8 @@ class RemoteOpenLike(RemoteModel):
                     ml_citations_context=ml_citations_context,
                 )
                 if not self.is_professional_tone(result):
+                    return []
+                if self.bad_result(result, infer_type):
                     return []
             else:
                 logger.debug(f"Result {result} is professional")
