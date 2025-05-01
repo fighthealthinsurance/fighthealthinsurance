@@ -534,7 +534,10 @@ class RemoteOpenLike(RemoteModel):
 
         # If professional_to_finish then check if the result is a professional response | One retry
         if prof_pov:
-            if not self.is_professional_tone(result):
+            c = 0
+            last_okish = result
+            while not self.is_professional_tone(result) and c < 2:
+                c = c + 1
                 logger.debug(f"Result {result} is not professional")
                 result = await self._infer_no_context(
                     prompt=prompt,
@@ -545,10 +548,12 @@ class RemoteOpenLike(RemoteModel):
                     temperature=temperature,
                     ml_citations_context=ml_citations_context,
                 )
-                if not self.is_professional_tone(result):
-                    return []
                 if self.bad_result(result, infer_type):
-                    return []
+                    result = last_okish
+                if c == 3:
+                    logger.debug(
+                        f"Result {result} is not professional and we are out of retries"
+                    )
             else:
                 logger.debug(f"Result {result} is professional")
 
