@@ -1619,7 +1619,7 @@ class AppealsBackendHelper:
         async for dt in denial.denial_type.all():
             form = await sync_to_async(dt.get_form)()
             if form is not None:
-                parsed = form(parameters)
+                parsed= form(parameters)
                 if parsed.is_valid():
                     # Check and see if the form has a context method
                     op = getattr(parsed, "medical_context", None)
@@ -1651,15 +1651,15 @@ class AppealsBackendHelper:
                         medical_reasons.add(parsed.cleaned_data["medical_reason"])
                         logger.debug(f"Med reason {medical_reasons}")
                     # Questionable dynamic template
-                    new_prefaces = parsed.preface()
+                    new_prefaces = parsed.preface(professional_to_finish)
                     for p in new_prefaces:
                         if p not in prefaces:
                             prefaces.append(p)
-                    new_main = parsed.main()
+                    new_main = parsed.main(professional_to_finish)
                     for m in new_main:
                         if m not in main:
                             main.append(m)
-                    new_footer = parsed.footer()
+                    new_footer = parsed.footer(professional_to_finish)
                     for f in new_footer:
                         if f not in footer:
                             footer.append(f)
