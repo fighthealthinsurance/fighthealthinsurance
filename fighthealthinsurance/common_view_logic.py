@@ -767,8 +767,11 @@ class FindNextStepsHelper:
                 existing_answers["date of service"] = date_of_service
             if "date_of_service" not in existing_answers:
                 existing_answers["date_of_service"] = date_of_service
+        # This is unique to professional so using this for now to help specialize questions
+        prof_pov = False
         if in_network is not None:
             denial.provider_in_network = in_network
+            prof_pov = True
             if "in_network" not in existing_answers:
                 existing_answers["in_network"] = str(in_network)
         if single_case is not None:
@@ -776,11 +779,13 @@ class FindNextStepsHelper:
 
         denial.save()
 
+        # Define the special questions form for the denial
         question_forms = []
         for dt in denial.denial_type.all():
             new_form = dt.get_form()
             if new_form is not None:
-                new_form = new_form(initial={"medical_reason": dt.appeal_text})
+                new_form = new_form(initial={"medical_reason": dt.appeal_text}, prof_pov=prof_pov)
+                logger.debug(f"Adding form medical reason *********** {dt.appeal_text} and professional_to_finish {prof_pov}")
                 question_forms.append(new_form)
 
         # Generate questions for better appeal creation
@@ -1651,15 +1656,15 @@ class AppealsBackendHelper:
                         medical_reasons.add(parsed.cleaned_data["medical_reason"])
                         logger.debug(f"Med reason {medical_reasons}")
                     # Questionable dynamic template
-                    new_prefaces = parsed.preface(professional_to_finish)
+                    new_prefaces = parsed.preface()
                     for p in new_prefaces:
                         if p not in prefaces:
                             prefaces.append(p)
-                    new_main = parsed.main(professional_to_finish)
+                    new_main = parsed.main()
                     for m in new_main:
                         if m not in main:
                             main.append(m)
-                    new_footer = parsed.footer(professional_to_finish)
+                    new_footer = parsed.footer()
                     for f in new_footer:
                         if f not in footer:
                             footer.append(f)

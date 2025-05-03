@@ -13,6 +13,15 @@ from loguru import logger
 class InsuranceQuestions(forms.Form):
     """Insurance Questions"""
 
+    def __init__(self, *args, prof_pov: bool = False, **kwargs):
+        self.prof_pov = prof_pov
+        super().__init__(*args, **kwargs)
+        if self.prof_pov:
+            # Remove in_network, pre_service, and urgent fields for professional context
+            for field in ["in_network"]:
+                if field in self.fields:
+                    self.fields.pop(field)
+
     in_network = forms.BooleanField(required=False, label="In-network visit")
     pre_service = forms.BooleanField(
         required=False, label="Pre-service (claim before doctors visit/service)"
@@ -25,12 +34,13 @@ class InsuranceQuestions(forms.Form):
             response += "This is an urgent claim."
         if "pre_service" in self.cleaned_data and self.cleaned_data["pre_service"]:
             response += "This is a pre-service claim."
-        if "in_network" in self.cleaned_data and self.cleaned_data["in_network"]:
-            response += "This is an in-network claim."
+        if not self.prof_pov:
+            if "in_network" in self.cleaned_data and self.cleaned_data["in_network"]:
+                response += "This is an in-network claim."
         return response
 
-    def preface(self, prof_pov: bool = False):
-        if prof_pov:
+    def preface(self):
+        if self.prof_pov:
             return [
                 """Dear {insurance_company},\n\nAs a medical professional, I have reviewed the details of claim {claim_id}{denial_date_info} and, in my professional opinion, I believe it has been incorrectly processed. I am requesting an internal appeal on behalf of my patient."""
             ]
@@ -38,10 +48,10 @@ class InsuranceQuestions(forms.Form):
             """Dear {insurance_company};\n\nMy name is $your_name_here and I am writing you regarding claim {claim_id}{denial_date_info}. I believe this claim has been incorrectly processed. I am requesting an internal appeal."""
         ]
 
-    def main(self, prof_pov: bool = False):
+    def main(self):
         return []
 
-    def footer(self, prof_pov: bool = False):
+    def footer(self):
         common = ""
         if (
             "urgent" in self.cleaned_data
@@ -49,7 +59,7 @@ class InsuranceQuestions(forms.Form):
             and self.cleaned_data["urgent"]
             and self.cleaned_data["pre_service"]
         ):
-            if prof_pov:
+            if self.prof_pov:
                 return [
                     common,
                       (
@@ -113,7 +123,7 @@ class MedicalNeccessaryQuestions(InsuranceQuestions):
         else:
             return [self.cleaned_data["medical_reason"]]
 
-    def main(self, prof_pov: bool = False):
+    def main(self):
         return [
             "The claim was denied as not medically necessary; however, it is medically necessary for {medical_reason}."
         ]
@@ -151,6 +161,10 @@ class OutOfNetworkReimbursement(forms.Form):
         help_text="E.g., no in-network provider, in-network providers don't meet standards of care, don't accept new patients, or don't perform the needed service.",
     )
 
+    def __init__(self, *args, prof_pov: bool = False, **kwargs):
+        self.prof_pov = prof_pov
+        super().__init__(*args, **kwargs)
+
     def medical_context(self):
         r = self.cleaned_data["why_need_out_of_network"]
         if r is not None and r != "":
@@ -161,8 +175,8 @@ class OutOfNetworkReimbursement(forms.Form):
         else:
             return ""
 
-    def main(self, prof_pov: bool = False):
-        if prof_pov:
+    def main(self):
+        if self.prof_pov:
             return [
                 "Based on my professional assessment, out-of-network services are medically necessary in this case because "
                 + self.cleaned_data["why_need_out_of_network"]
@@ -179,9 +193,13 @@ class BalanceBillQuestions(forms.Form):
     emergency = forms.BooleanField(required=False)
     match_eob = forms.BooleanField(required=False)
 
-    def preface(self, prof_pov: bool = False):
+    def __init__(self, *args, prof_pov: bool = False, **kwargs):
+        self.prof_pov = prof_pov
+        super().__init__(*args, **kwargs)
+
+    def preface(self):
         if "emergency" in self.cleaned_data:
-            if prof_pov:
+            if self.prof_pov:
                 return (
                     "The No Surprises Act prohibits balance billing and similar practices in the majority of emergency cases (see https://www.cms.gov/newsroom/fact-sheets/no-surprises-understand-your-rights-against-surprise-medical-bills). Please ensure full compliance with these federal requirements in the processing of claim {claim_id}{denial_date_info}."
                 )
@@ -354,6 +372,10 @@ class PreventiveCareQuestions(InsuranceQuestions):
         help_text="Some preventive care is only covered for certain genders. If the patient is transgender, insurance may incorrectly deny necessary coverage. Check this box if it applies.",
     )
 
+    def __init__(self, *args, prof_pov: bool = False, **kwargs):
+        self.prof_pov = prof_pov
+        super().__init__(*args, **kwargs)
+
     def medical_context(self):
         response = (
             "This procedure may be preventive, make sure to include a link to "
@@ -372,10 +394,10 @@ class PreventiveCareQuestions(InsuranceQuestions):
             )
         return response
 
-    def main(self, prof_pov: bool = False):
+    def main(self):
         r = []
         if "trans_gender" in self.cleaned_data and self.cleaned_data["trans_gender"]:
-            if prof_pov:
+            if self.prof_pov:
                 r.append(
                     "The patient is transgender, so it is important that preventive coverage for all relevant genders is provided."
                 )
@@ -402,9 +424,13 @@ class ThirdPartyQuestions(InsuranceQuestions):
         help_text="E.g., auto accident with known auto insurance, or workers comp. Check if another insurer should be responsible.",
     )
 
-    def preface(self, prof_pov: bool = False):
+    def __init__(self, *args, prof_pov=False, **kwargs):
+        self.prof_pov = prof_pov
+        super().__init__(*args, **kwargs)
+
+    def preface(self):
         if "is_known_3rd_party" in self.cleaned_data:
-            if prof_pov:
+            if self.prof_pov:
                 return (
                     "As requested, I am providing details regarding third-party insurance coverage for this claim: "
                     + self.cleaned_data["alternate_insurance_details"]
@@ -414,7 +440,7 @@ class ThirdPartyQuestions(InsuranceQuestions):
                 "As requested, the third-party insurance is "
                 + self.cleaned_data["alternate_insurance_details"]
             )
-        return super().preface(prof_pov=prof_pov)
+        return super().preface()
 
 
 class StepTherapy(MedicalNeccessaryQuestions):
