@@ -675,6 +675,7 @@ class FindNextStepsHelper:
         date_of_service: Optional[str] = None,
         in_network: Optional[bool] = None,
         single_case: Optional[bool] = None,
+        prof_pov: Optional[bool] = False,
     ) -> NextStepInfo:
         hashed_email = Denial.get_hashed_email(email)
         # Update the denial
@@ -768,9 +769,10 @@ class FindNextStepsHelper:
             if "date_of_service" not in existing_answers:
                 existing_answers["date_of_service"] = date_of_service
         # This is unique to professional so using this for now to help specialize questions
-        prof_pov = False
+        prof_pov = denial.professional_to_finish
         if in_network is not None:
-            denial.provider_in_network = in_network
+            denial.provider_inz_network = in_network
+            # If they know about in_network they are definitely a professional
             prof_pov = True
             if "in_network" not in existing_answers:
                 existing_answers["in_network"] = str(in_network)
@@ -785,7 +787,6 @@ class FindNextStepsHelper:
             new_form = dt.get_form()
             if new_form is not None:
                 new_form = new_form(initial={"medical_reason": dt.appeal_text}, prof_pov=prof_pov)
-                logger.debug(f"Adding form medical reason *********** {dt.appeal_text} and professional_to_finish {prof_pov}")
                 question_forms.append(new_form)
 
         # Generate questions for better appeal creation

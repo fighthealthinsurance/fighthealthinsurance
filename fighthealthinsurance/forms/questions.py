@@ -13,20 +13,20 @@ from loguru import logger
 class InsuranceQuestions(forms.Form):
     """Insurance Questions"""
 
-    def __init__(self, *args, prof_pov: bool = False, **kwargs):
-        self.prof_pov = prof_pov
-        super().__init__(*args, **kwargs)
-        if self.prof_pov:
-            # Remove in_network, pre_service, and urgent fields for professional context
-            for field in ["in_network"]:
-                if field in self.fields:
-                    self.fields.pop(field)
-
     in_network = forms.BooleanField(required=False, label="In-network visit")
     pre_service = forms.BooleanField(
         required=False, label="Pre-service (claim before doctors visit/service)"
     )
     urgent = forms.BooleanField(required=False, label="Urgent claim")
+
+    def __init__(self, *args, prof_pov: bool = False, **kwargs):
+        self.prof_pov = prof_pov
+        logger.debug(f"InsuranceQuestions initialized with prof_pov={prof_pov}")
+        super().__init__(*args, **kwargs)
+        if self.prof_pov:
+            # Remove in_network field for professional view since it is asked in an earlier form
+            if "in_network" in self.fields:
+                self.fields.pop("in_network")
 
     def medical_context(self):
         response = ""

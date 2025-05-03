@@ -24,10 +24,13 @@ def magic_combined_form(
     forms_to_merge: list[forms.Form], existing_answers: dict[str, str]
 ) -> forms.Form:
     combined_form = forms.Form()
+    seen_fields = set()
+
     for f in forms_to_merge:
         for field_name, field in f.fields.items():
-            # Add new fields to the combined form
-            if field_name not in combined_form.fields:
+            # Only add field if we haven't seen it before
+            if field_name not in seen_fields:
+                seen_fields.add(field_name)
                 combined_form.fields[field_name] = field
                 # Check if this field has a value in existing_answers
                 if field_name in existing_answers:
@@ -42,8 +45,5 @@ def magic_combined_form(
                     # Handle string fields and others
                     else:
                         combined_form.fields[field_name].initial = value
-            # For existing fields, append initial value if not None
-            elif field.initial is not None:
-                combined_form.fields[field_name].initial += field.initial
 
     return combined_form
