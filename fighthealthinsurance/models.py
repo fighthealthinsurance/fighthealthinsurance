@@ -16,6 +16,8 @@ from django_encrypted_filefield.fields import EncryptedFileField
 from django.contrib.auth import get_user_model
 from django_encrypted_filefield.crypt import Cryptographer
 
+from django.shortcuts import get_object_or_404
+
 
 from fighthealthinsurance.utils import sekret_gen
 from fhi_users.models import *
@@ -892,18 +894,14 @@ class PriorAuthRequest(ExportModelOperationsMixin("PriorAuthRequest"), models.Mo
             return cls.objects.none()
 
         try:
-            professional_user = ProfessionalUser.objects.get(user=current_user)
+            professional_user = get_object_or_404(ProfessionalUser, user=current_user)
             if not professional_user.active:
                 return cls.objects.none()
 
-            # Get the domains this user is active in
-            active_domains = professional_user.domains.filter(
-                professionaldomainrelation__active_domain_relation=True
-            )
-
-            # Return requests created by this user or in domains they're active in
+            # Requests created by the user or created for the user
             return cls.objects.filter(
-                Q(professional_user=professional_user) | Q(domain__in=active_domains)
+                Q(creator_professional_user=professional_user)
+                | Q(created_for_professional_user=professional_user)
             )
         except ProfessionalUser.DoesNotExist:
             return cls.objects.none()

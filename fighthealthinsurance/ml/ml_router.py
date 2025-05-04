@@ -150,7 +150,7 @@ class MLRouter(object):
 
         return []
 
-    def prior_auth_backends(self) -> list[RemoteModelLike]:
+    def get_prior_auth_backends(self) -> list[RemoteModelLike]:
         """
         Return models for generating prior authorizations.
         """

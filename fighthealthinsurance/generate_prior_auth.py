@@ -60,7 +60,7 @@ class PriorAuthGenerator:
         }  # type: Dict[str, Any]
 
         # Get available models
-        models = ml_router.prior_auth_backends()
+        models = ml_router.get_prior_auth_backends()
         if not models:
             yield {"error": "No language models are currently available."}
             return

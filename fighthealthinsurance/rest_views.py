@@ -1181,7 +1181,10 @@ class PriorAuthViewSet(viewsets.ViewSet, SerializerMixin):
     @action(detail=True, methods=["post"], url_path="answers")
     def submit_answers(self, request: Request, pk=None) -> Response:
         """Submit answers to the questions for a prior authorization request."""
-        prior_auth = get_object_or_404(PriorAuthRequest, id=pk)
+        current_user: User = request.user  # type: ignore
+        prior_auth = get_object_or_404(
+            PriorAuthRequest.filter_to_allowed_requests(current_user), id=pk
+        )
         serializer = self.deserialize(data=request.data)
         serializer.is_valid(raise_exception=True)
 
@@ -1206,7 +1209,10 @@ class PriorAuthViewSet(viewsets.ViewSet, SerializerMixin):
     @action(detail=True, methods=["post"], url_path="select")
     def select_proposal(self, request: Request, pk=None) -> Response:
         """Select a proposed prior authorization as the final version."""
-        prior_auth = get_object_or_404(PriorAuthRequest, id=pk)
+        current_user: User = request.user  # type: ignore
+        prior_auth = get_object_or_404(
+            PriorAuthRequest.filter_to_allowed_requests(current_user), id=pk
+        )
         serializer = self.deserialize(data=request.data)
         serializer.is_valid(raise_exception=True)
 

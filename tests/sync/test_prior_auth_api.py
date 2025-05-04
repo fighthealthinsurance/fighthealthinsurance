@@ -2,8 +2,8 @@
 
 import json
 import typing
-import pytest
 import uuid
+from unittest.mock import patch, MagicMock
 from channels.testing import WebsocketCommunicator
 
 from django.urls import reverse
@@ -22,6 +22,9 @@ from fighthealthinsurance.models import (
 )
 from fighthealthinsurance.websockets import PriorAuthConsumer
 from fhi_users.models import ProfessionalDomainRelation
+from .mock_prior_auth_model import MockPriorAuthModel
+
+from asgiref.sync import sync_to_async, async_to_sync
 
 if typing.TYPE_CHECKING:
     from django.contrib.auth.models import User
@@ -104,13 +107,13 @@ class PriorAuthAPITest(APITestCase):
         prior_auth = PriorAuthRequest.objects.get(id=prior_auth_id)
         self.assertEqual(prior_auth.diagnosis, data["diagnosis"])
         self.assertEqual(prior_auth.treatment, data["treatment"])
-        self.assertEqual(prior_auth.professional_user, self.professional)
+        self.assertEqual(prior_auth.creator_professional_user, self.professional)
 
     def test_submit_answers(self):
         """Test submitting answers to a prior authorization request."""
         # Create a prior auth request first
         prior_auth = PriorAuthRequest.objects.create(
-            professional_user=self.professional,
+            creator_professional_user=self.professional,
             domain=self.domain,
             diagnosis="Sleep Apnea",
             treatment="CPAP Machine",
@@ -146,7 +149,7 @@ class PriorAuthAPITest(APITestCase):
         """Test selecting a prior authorization proposal."""
         # Create a prior auth request
         prior_auth = PriorAuthRequest.objects.create(
-            professional_user=self.professional,
+            creator_professional_user=self.professional,
             domain=self.domain,
             diagnosis="Migraine",
             treatment="CGRP Inhibitors",
@@ -188,7 +191,7 @@ class PriorAuthAPITest(APITestCase):
         """Test listing prior authorization requests."""
         # Create a few prior auth requests
         PriorAuthRequest.objects.create(
-            professional_user=self.professional,
+            creator_professional_user=self.professional,
             domain=self.domain,
             diagnosis="Condition 1",
             treatment="Treatment 1",
@@ -197,7 +200,7 @@ class PriorAuthAPITest(APITestCase):
         )
 
         PriorAuthRequest.objects.create(
-            professional_user=self.professional,
+            creator_professional_user=self.professional,
             domain=self.domain,
             diagnosis="Condition 2",
             treatment="Treatment 2",
@@ -215,7 +218,7 @@ class PriorAuthAPITest(APITestCase):
         """Test filtering prior authorization requests by status."""
         # Create a few prior auth requests with different statuses
         PriorAuthRequest.objects.create(
-            professional_user=self.professional,
+            creator_professional_user=self.professional,
             domain=self.domain,
             diagnosis="Condition 1",
             treatment="Treatment 1",
@@ -224,7 +227,7 @@ class PriorAuthAPITest(APITestCase):
         )
 
         PriorAuthRequest.objects.create(
-            professional_user=self.professional,
+            creator_professional_user=self.professional,
             domain=self.domain,
             diagnosis="Condition 2",
             treatment="Treatment 2",
@@ -243,8 +246,27 @@ class PriorAuthAPITest(APITestCase):
 class PriorAuthWebSocketTest(APITestCase):
     """Test the WebSocket endpoints for prior authorization."""
 
+    async def asyncSetUp(self):
+        """Set up the test environment with mocks."""
+        # Create a mock model instance
+        self.mock_model = MockPriorAuthModel()
+
+        # Patch the get_prior_auth_backends method to return our mock model
+        self.get_prior_auth_backends_patcher = patch(
+            "fighthealthinsurance.ml.ml_router.MLRouter.get_prior_auth_backends"
+        )
+        self.mock_get_prior_auth_backends = self.get_prior_auth_backends_patcher.start()
+        self.mock_get_prior_auth_backends.return_value = [self.mock_model]
+
+    async def asyncTearDown(self):
+        """Clean up the test environment."""
+        self.get_prior_auth_backends_patcher.stop()
+
     async def test_prior_auth_websocket(self):
         """Test that the prior auth WebSocket connection works and generates proposals."""
+        # Set up the async environment
+        await self.asyncSetUp()
+
         # Create a user and a prior auth request with answers
         user = await sync_to_async(User.objects.create_user)(
             username="testuser", password="testpass", email="test@example.com"
@@ -254,7 +276,7 @@ class PriorAuthWebSocketTest(APITestCase):
         )
 
         prior_auth = await sync_to_async(PriorAuthRequest.objects.create)(
-            professional_user=professional,
+            creator_professional_user=professional,
             diagnosis="Rheumatoid Arthritis",
             treatment="Biologic Therapy",
             insurance_company="Cigna",
@@ -310,3 +332,6 @@ class PriorAuthWebSocketTest(APITestCase):
             prior_auth_request=prior_auth
         ).count()
         self.assertGreater(proposal_count, 0)
+
+        # Clean up
+        await self.asyncTearDown()

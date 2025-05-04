@@ -599,8 +599,10 @@ class PriorAuthRequestSerializer(serializers.ModelSerializer):
     @extend_schema_field(serializers.CharField())
     def get_professional_name(self, obj):
         """Get the name of the professional user."""
-        if obj.professional_user:
-            return obj.professional_user.get_display_name()
+        if obj.created_for_professional_user:
+            return obj.created_for_professional_user.get_display_name()
+        elif obj.creator_professional_user:
+            return obj.creator_professional_user.get_display_name()
         return None
 
 
