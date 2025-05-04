@@ -1098,7 +1098,7 @@ class PriorAuthViewSet(viewsets.ViewSet, SerializerMixin):
 
         prior_auth.save()
 
-        async_to_sync(self._generate_questions(prior_auth))
+        async_to_sync(self._generate_questions)(prior_auth)
 
         # Return the response immediately with status questions_asked
 

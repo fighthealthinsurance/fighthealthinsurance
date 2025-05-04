@@ -9,8 +9,8 @@ import traceback
 from fighthealthinsurance.ml.ml_models import RemoteModelLike
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.models import PriorAuthRequest, ProposedPriorAuth
-from fighthealthinsurance.utils import as_available_nested, best_within_timelimit
-from asgiref.sync import sync_to_async
+from fighthealthinsurance.utils import as_available, best_within_timelimit
+from asgiref.sync import sync_to_async, async_to_sync
 import random
 from fighthealthinsurance.exec import executor
 
@@ -72,10 +72,12 @@ class PriorAuthGenerator:
             )
             futures.append(future)
 
-        # Stream results as they become available using as_available_nested
-        for result in as_available_nested(futures):
+        # Stream results as they become available using as_available
+        for result in as_available(futures):
             if result and "proposed_id" in result and "text" in result:
-                yield result
+                yield result # type: ignore
+            else:
+                logger.error(f"Error generating proposal: {result}")
 
     def _sync_generate_single_proposal(
         self,
