@@ -150,6 +150,8 @@ class RemoteModelLike(DenialBase):
                 result = raw_result[0]
         if result is None:
             return (None, None)
+        if "🐼" not in result:
+            return (result, None)
         answer, summary = result.split("🐼")
         return (answer, summary)
 
