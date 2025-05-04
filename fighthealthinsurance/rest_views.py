@@ -1076,6 +1076,15 @@ class PriorAuthViewSet(viewsets.ViewSet, SerializerMixin):
         current_user: User = request.user  # type: ignore
         professional_user = get_object_or_404(ProfessionalUser, user=current_user)
 
+        created_for_professional_user_id = serializer.validated_data.get(
+            "created_for_professional_user_id"
+        )
+        created_for_professional_user = None
+        if created_for_professional_user_id:
+            created_for_professional_user = get_object_or_404(
+                ProfessionalUser, id=created_for_professional_user_id
+            )
+
         # Extract domain from session
         domain_id = request.session.get("domain_id")
         domain = None
@@ -1084,7 +1093,8 @@ class PriorAuthViewSet(viewsets.ViewSet, SerializerMixin):
 
         # Create the prior auth request
         prior_auth = PriorAuthRequest.objects.create(
-            professional_user=professional_user,
+            creator_professional_user=professional_user,
+            created_for_professional_user=created_for_professional_user,
             diagnosis=serializer.validated_data["diagnosis"],
             treatment=serializer.validated_data["treatment"],
             insurance_company=serializer.validated_data["insurance_company"],

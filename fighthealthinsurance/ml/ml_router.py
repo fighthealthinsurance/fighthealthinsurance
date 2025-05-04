@@ -159,6 +159,20 @@ class MLRouter(object):
 
         return []
 
+    def get_chat_backends(self, use_external=False) -> list[RemoteModelLike]:
+        """
+        Return models for handling chat interactions.
+        Args:
+            use_external: Whether to use external models
+
+        Returns:
+            List of RemoteModelLike models suitable for chat tasks
+        """
+        if "fhi-2025-may" in self.models_by_name:
+            return self.cheapest("fhi-2025-may")
+
+        return []
+
     def cheapest(self, name: str) -> list[RemoteModelLike]:
         try:
             return [self.models_by_name[name][0]]

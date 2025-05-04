@@ -126,8 +126,8 @@ class PriorAuthAPITest(APITestCase):
         data = {
             "token": str(prior_auth.token),
             "answers": {
-                "0": "Patient has had sleep apnea for 2 years",
-                "1": "Patient has tried positional therapy without success",
+                "How long has the patient had this condition?": "Patient has had sleep apnea for 2 years",
+                "Has the patient tried any alternative treatments?": "Patient has tried positional therapy without success",
             },
         }
 

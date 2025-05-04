@@ -14,7 +14,7 @@ from fighthealthinsurance.models import (
     OngoingChat,
     ProfessionalUser,
 )
-from fighthealthinsurance.ml.generate_prior_auth import prior_auth_generator
+from fighthealthinsurance.generate_prior_auth import prior_auth_generator
 
 
 class StreamingAppealsBackend(AsyncWebsocketConsumer):
@@ -137,6 +137,10 @@ class PriorAuthConsumer(AsyncWebsocketConsumer):
                 prior_auth, "prior_auth_requested"
             )
 
+            # Fetch the related created_for & creator fields
+            created_for = prior_auth.creator_professional_user
+            creator = prior_auth.creator_professional_user
+
             # Generate proposals
             generator = self.pag._generate_prior_auth_proposals(prior_auth)
 
@@ -228,10 +232,7 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                 professional_user, chat_id
             )
 
-            # Add the user message to the chat history
-            await sync_to_async(self._add_message_to_history)(chat, "user", message)
-
-            # Generate response
+            # Generate response (this also updates chat history)
             response = await self._generate_llm_response(chat, message)
 
             # Send response to the client
@@ -274,7 +275,7 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
         from fighthealthinsurance.ml.ml_router import ml_router
 
         # Get the available *internal* text generation model
-        models = ml_router.internal_models_by_cost
+        models = ml_router.get_chat_backends(use_external=False)
         if not models:
             return "Sorry, no language models are currently available."
 
@@ -286,7 +287,9 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
             try:
                 # Add our current chat message to the chat history
                 if not chat.chat_history:
-                    chat.chat_history = []
+                    chat.chat_history = []  # type: list[dict[str, str]]
+                if not chat.summary_for_next_call:
+                    chat.summary_for_next_call = []  # type: list[str]
                 chat.chat_history.append(
                     {
                         "role": "user",
@@ -298,14 +301,10 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                 (response_text, context_part) = await model.generate_chat_response(
                     message, previous_context_summary=context
                 )
-                # Save the context summary
-                if context_part:
-                    if chat.summary_for_next_call:
-                        chat.summary_for_next_call.append(context_part)
-                    else:
-                        chat.summary_for_next_call = [context_part]
-
                 if response_text:
+                    # Save the context summary if present.
+                    if context_part:
+                        chat.summary_for_next_call.append(context_part)
                     # Add the assistant's response to the chat history
                     chat.chat_history.append(
                         {

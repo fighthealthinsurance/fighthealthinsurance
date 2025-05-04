@@ -21,6 +21,8 @@ from fighthealthinsurance.models import (
 from fighthealthinsurance.websockets import OngoingChatConsumer
 from fhi_users.models import ProfessionalDomainRelation
 
+from asgiref.sync import sync_to_async, async_to_sync
+
 if typing.TYPE_CHECKING:
     from django.contrib.auth.models import User
 else:
@@ -67,7 +69,6 @@ class OngoingChatWebSocketTest(APITestCase):
 
         # Add the user to the scope
         communicator.scope["user"] = user
-        communicator.scope["user"].is_authenticated = True
 
         connected, _ = await communicator.connect()
         self.assertTrue(connected)
@@ -125,7 +126,6 @@ class OngoingChatWebSocketTest(APITestCase):
 
         # Add the user to the scope
         communicator.scope["user"] = user
-        communicator.scope["user"].is_authenticated = True
 
         connected, _ = await communicator.connect()
         self.assertTrue(connected)
@@ -149,9 +149,7 @@ class OngoingChatWebSocketTest(APITestCase):
 
         # Verify a new chat was created
         chat_id = response["chat_id"]
-        chat_exists = await sync_to_async(OngoingChat.objects.filter)(
-            id=chat_id
-        ).exists()
+        chat_exists = await OngoingChat.objects.filter(id=chat_id).aexists()
         self.assertTrue(chat_exists)
 
         # Verify message was added to chat history

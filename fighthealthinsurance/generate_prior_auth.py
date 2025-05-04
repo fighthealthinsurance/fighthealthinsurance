@@ -40,6 +40,10 @@ class PriorAuthGenerator:
         diagnosis = prior_auth.diagnosis
         treatment = prior_auth.treatment
         insurance_company = prior_auth.insurance_company
+        provider_info = (
+            prior_auth.created_for_professional_user
+            or prior_auth.creator_professional_user
+        )
         patient_health_history = prior_auth.patient_health_history
         questions = prior_auth.questions
         answers = prior_auth.answers
@@ -51,6 +55,7 @@ class PriorAuthGenerator:
             "treatment": treatment,
             "insurance_company": insurance_company,
             "patient_health_history": patient_health_history,
+            "provider_info": provider_info,
             "qa_pairs": answers,
         }  # type: Dict[str, Any]
 
@@ -75,7 +80,7 @@ class PriorAuthGenerator:
         # Stream results as they become available using as_available
         for result in as_available(futures):
             if result and "proposed_id" in result and "text" in result:
-                yield result # type: ignore
+                yield result  # type: ignore
             else:
                 logger.error(f"Error generating proposal: {result}")
 
@@ -167,6 +172,8 @@ class PriorAuthGenerator:
         insurance_company = context.get("insurance_company", "")
         patient_health_history = context.get("patient_health_history", "")
         qa_pairs = context.get("qa_pairs", [])
+        provider_info = context.get("provider_info", {})
+        patient_info = context.get("patient_info", {})
 
         # Build the prompt
         prompt = f"""
@@ -184,11 +191,17 @@ class PriorAuthGenerator:
         if patient_health_history:
             prompt += f"\n\nAdditional Patient History:\n{patient_health_history}"
 
+        if provider_info:
+            prompt += f"\n\nProvider Information:\n{provider_info}"
+
+        if patient_info:
+            prompt += f"\n\nPatient Information:\n{patient_info}"
+
         # Add formatting instructions
         prompt += """
         Format the prior authorization request as a formal letter with:
         1. Date and header
-        2. Patient and provider information (use placeholders)
+        2. Patient and provider information (use placeholders if unknown)
         3. Clear statement of the requested treatment/procedure
         4. Medical necessity justification
         5. Supporting evidence and clinical rationale

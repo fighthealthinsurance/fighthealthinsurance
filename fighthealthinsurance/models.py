@@ -835,8 +835,17 @@ class PriorAuthRequest(ExportModelOperationsMixin("PriorAuthRequest"), models.Mo
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    professional_user = models.ForeignKey(
-        ProfessionalUser, on_delete=models.SET_NULL, null=True
+    creator_professional_user = models.ForeignKey(
+        ProfessionalUser,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="prior_auth_requests_creators",
+    )
+    created_for_professional_user = models.ForeignKey(
+        ProfessionalUser,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="created_for_professional_user",
     )
     domain = models.ForeignKey(
         UserDomain, on_delete=models.SET_NULL, null=True, blank=True
