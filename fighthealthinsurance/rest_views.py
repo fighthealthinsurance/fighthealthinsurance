@@ -1170,15 +1170,15 @@ class PriorAuthViewSet(viewsets.ViewSet, SerializerMixin):
             prior_auth.questions = questions
             prior_auth.status = "questions_asked"
             await prior_auth.asave()
-            return prior_auth
-
             logger.info(
                 f"Generated {len(questions)} questions for prior auth {prior_auth.id}"
             )
+            return prior_auth
         except Exception as e:
             logger.opt(exception=True).error(
                 f"Error generating questions for prior auth {prior_auth.id}: {e}"
             )
+            return prior_auth
 
     @extend_schema(responses=serializers.PriorAuthRequestSerializer)
     @action(detail=True, methods=["post"], url_path="answers")

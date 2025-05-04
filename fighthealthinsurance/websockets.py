@@ -288,9 +288,9 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
             try:
                 # Add our current chat message to the chat history
                 if not chat.chat_history:
-                    chat.chat_history = []  # type: list[dict[str, str]]
+                    chat.chat_history = []  # type: ignore
                 if not chat.summary_for_next_call:
-                    chat.summary_for_next_call = []  # type: list[str]
+                    chat.summary_for_next_call = []  # type: ignore
                 chat.chat_history.append(
                     {
                         "role": "user",
