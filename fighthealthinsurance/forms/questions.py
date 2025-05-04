@@ -19,21 +19,35 @@ class InsuranceQuestions(forms.Form):
     )
     urgent = forms.BooleanField(required=False, label="Urgent claim")
 
+    def __init__(self, *args, prof_pov: bool = False, **kwargs):
+        self.prof_pov = prof_pov
+        logger.debug(f"InsuranceQuestions initialized with prof_pov={prof_pov}")
+        super().__init__(*args, **kwargs)
+        if self.prof_pov and "in_network" in self.fields:
+            # Remove in_network field for professional view since it is asked in an earlier form
+            self.fields.pop("in_network")
+
     def medical_context(self):
         response = ""
         if "urgent" in self.cleaned_data and self.cleaned_data["urgent"]:
             response += "This is an urgent claim."
         if "pre_service" in self.cleaned_data and self.cleaned_data["pre_service"]:
             response += "This is a pre-service claim."
-        if "in_network" in self.cleaned_data and self.cleaned_data["in_network"]:
+        if (
+            not self.prof_pov
+            and "in_network" in self.cleaned_data
+            and self.cleaned_data["in_network"]
+        ):
             response += "This is an in-network claim."
         return response
 
     def preface(self):
+        if self.prof_pov:
+            return [
+                """Dear {insurance_company},\n\nAs a medical professional, I have reviewed the details of claim {claim_id}{denial_date_info} and, in my professional opinion, I believe it has been incorrectly processed. I am requesting an internal appeal on behalf of my patient."""
+            ]
         return [
-            """Dear {insurance_company};
-
-My name is $your_name_here and I am writing you regarding claim {claim_id}{denial_date_info}. I believe this claim has been incorrectly processed. I am requesting an internal appeal."""
+            """Dear {insurance_company};\n\nMy name is $your_name_here and I am writing you regarding claim {claim_id}{denial_date_info}. I believe this claim has been incorrectly processed. I am requesting an internal appeal."""
         ]
 
     def main(self):
@@ -47,6 +61,16 @@ My name is $your_name_here and I am writing you regarding claim {claim_id}{denia
             and self.cleaned_data["urgent"]
             and self.cleaned_data["pre_service"]
         ):
+            if self.prof_pov:
+                return [
+                    common,
+                    (
+                        "As an urgent pre-service claim you must respond within the "
+                        "timeline required for my medical situation (up to a maximum "
+                        "of four days). This also serves as notice of concurrent "
+                        "request of external review."
+                    ),
+                ]
             return [
                 common,
                 (
@@ -59,7 +83,7 @@ My name is $your_name_here and I am writing you regarding claim {claim_id}{denia
         elif "pre_service" in self.cleaned_data and self.cleaned_data["pre_service"]:
             return [
                 common,
-                "As non-urgent pre-service claim I believe you ~30 days to respond.",
+                "As this is a non-urgent pre-service claim, I understand you have approximately 30 days to respond.",
             ]
         else:
             return [
@@ -139,6 +163,10 @@ class OutOfNetworkReimbursement(forms.Form):
         help_text="E.g., no in-network provider, in-network providers don't meet standards of care, don't accept new patients, or don't perform the needed service.",
     )
 
+    def __init__(self, *args, prof_pov: bool = False, **kwargs):
+        self.prof_pov = prof_pov
+        super().__init__(*args, **kwargs)
+
     def medical_context(self):
         r = self.cleaned_data["why_need_out_of_network"]
         if r is not None and r != "":
@@ -150,11 +178,14 @@ class OutOfNetworkReimbursement(forms.Form):
             return ""
 
     def main(self):
-        return [
-            (
-                "I believe you should cover this out of network service since "
+        if self.prof_pov:
+            return [
+                "Based on my professional assessment, out-of-network services are medically necessary in this case because "
                 + self.cleaned_data["why_need_out_of_network"]
-            )
+            ]
+        return [
+            "I believe you should cover this out of network service since "
+            + self.cleaned_data["why_need_out_of_network"]
         ]
 
 
@@ -164,13 +195,24 @@ class BalanceBillQuestions(forms.Form):
     emergency = forms.BooleanField(required=False)
     match_eob = forms.BooleanField(required=False)
 
+    def __init__(self, *args, prof_pov: bool = False, **kwargs):
+        self.prof_pov = prof_pov
+        super().__init__(*args, **kwargs)
+
     def preface(self):
         if "emergency" in self.cleaned_data:
-            return "As you are aware the no-surprises act prohibits balance billing and similar practices in the majority of emergency cases (see https://www.cms.gov/newsroom/fact-sheets/no-surprises-understand-your-rights-against-surprise-medical-bills)"
+            if self.prof_pov:
+                return [
+                    "The No Surprises Act prohibits balance billing and similar practices in the majority of emergency cases (see https://www.cms.gov/newsroom/fact-sheets/no-surprises-understand-your-rights-against-surprise-medical-bills). Please ensure full compliance with these federal requirements in the processing of claim {claim_id}{denial_date_info}."
+                ]
+            return [
+                "As you are aware the no-surprises act prohibits balance billing and similar practices in the majority of emergency cases (see https://www.cms.gov/newsroom/fact-sheets/no-surprises-understand-your-rights-against-surprise-medical-bills)"
+            ]
         else:
-            return ""
+            return [""]
 
 
+# This is related to why weren't you able to get a prior auth.
 class PriorAuthQuestions(InsuranceQuestions):
     emergency = forms.BooleanField(required=False)
     contact_insurance_before = forms.BooleanField(required=False)
@@ -186,7 +228,7 @@ class PriorAuthQuestions(InsuranceQuestions):
                 + "obtained."
             )
         if "told_prior_auth_not_needed" in self.cleaned_data:
-            r.append("I was told prior auth would not be needed.")
+            r.append("It was communicated that prior authorization was not necessary.")
         if "prior_auth_id" in self.cleaned_data:
             r.append(
                 "Prior auth was obtained (id "
@@ -311,10 +353,10 @@ class GenderAffirmingCareBreastAugmentationQuestions(GenderAffirmingCareQuestion
     def plan_context(self, denial: Denial):
         if self.wpath_version(denial) == "7":
             return """The plan references version 7 of the WPATH SOC. As covered on P59 of the WPATH 7 SOC the only requirements for breast augmentation is 1. Persistent, well-documented gender dysphoria;
-2. Capacity to make a fully informed decision and to consent for treatment;
-3. Age of majority in a given country (if younger, follow the SOC for children and adolescents);
-4. If significant medical or mental health concerns are present, they must be reasonably well
-controlled."""
+            2. Capacity to make a fully informed decision and to consent for treatment;
+            3. Age of majority in a given country (if younger, follow the SOC for children and adolescents);
+            4. If significant medical or mental health concerns are present, they must be reasonably well
+            controlled."""
 
 
 class PreventiveCareQuestions(InsuranceQuestions):
@@ -323,13 +365,18 @@ class PreventiveCareQuestions(InsuranceQuestions):
     medical_reason = forms.CharField(
         max_length=300,
         required=False,
-        label="Any reasons why you are at an elevated risk requiring this screening.",
+        label="Reason for elevated risk requiring this screening.",
+        help_text="Briefly describe any factors that may increase the need for this preventive screening (e.g., family history, prior conditions, or other risk factors).",
     )
     trans_gender = forms.BooleanField(
         required=False,
-        label="Are you transgender?",
-        help_text="Some preventive care is only covered for certain genders. If you're trans, insurance may incorrectly deny necessary coverage. Check this box if it applies to you.",
+        label="Is the patient transgender?",
+        help_text="Some preventive care is only covered for certain genders. If the patient is transgender, insurance may incorrectly deny necessary coverage. Check this box if it applies.",
     )
+
+    def __init__(self, *args, prof_pov: bool = False, **kwargs):
+        self.prof_pov = prof_pov
+        super().__init__(*args, **kwargs)
 
     def medical_context(self):
         response = (
@@ -352,10 +399,14 @@ class PreventiveCareQuestions(InsuranceQuestions):
     def main(self):
         r = []
         if "trans_gender" in self.cleaned_data and self.cleaned_data["trans_gender"]:
-            r.append(
-                "I am trans so it is important that preventive coverage "
-                "for both genders be covered."
-            )
+            if self.prof_pov:
+                r.append(
+                    "The patient is transgender, so it is important that preventive coverage for all relevant genders is provided."
+                )
+            else:
+                r.append(
+                    "I am trans so it is important that preventive coverage for both genders be covered."
+                )
         if self.cleaned_data["medical_reason"]:
             r.append(self.cleaned_data["medical_reason"])
         return r
@@ -375,13 +426,22 @@ class ThirdPartyQuestions(InsuranceQuestions):
         help_text="E.g., auto accident with known auto insurance, or workers comp. Check if another insurer should be responsible.",
     )
 
+    def __init__(self, *args, prof_pov=False, **kwargs):
+        self.prof_pov = prof_pov
+        super().__init__(*args, **kwargs)
+
     def preface(self):
         if "is_known_3rd_party" in self.cleaned_data:
-            return (
-                "As requested the 3rd party insurance is "
+            if self.prof_pov:
+                return [
+                    "As requested, I am providing details regarding third-party insurance coverage for this claim: "
+                    + self.cleaned_data["alternate_insurance_details"]
+                    + ". Please ensure that all relevant coordination of benefits is considered in the review of this claim."
+                ]
+            return [
+                "As requested, the third-party insurance is "
                 + self.cleaned_data["alternate_insurance_details"]
-            )
-
+            ]
         return super().preface()
 
 
@@ -390,6 +450,6 @@ class StepTherapy(MedicalNeccessaryQuestions):
 
     medically_necessary = forms.CharField(
         required=False,
-        label="Why doesn't the insurance supported option work for you?",
+        label="Why doesn't the insurance supported care option work?",
         help_text="E.g., you've tried the suggested medication, are allergic, it is not recommended, or it was ineffective. Briefly explain why the insurer's alternative is not appropriate in your case.",
     )
