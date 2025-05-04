@@ -786,7 +786,9 @@ class FindNextStepsHelper:
         for dt in denial.denial_type.all():
             new_form = dt.get_form()
             if new_form is not None:
-                new_form = new_form(initial={"medical_reason": dt.appeal_text}, prof_pov=prof_pov)
+                new_form = new_form(
+                    initial={"medical_reason": dt.appeal_text}, prof_pov=prof_pov
+                )
                 question_forms.append(new_form)
 
         # Generate questions for better appeal creation
@@ -1625,7 +1627,7 @@ class AppealsBackendHelper:
         async for dt in denial.denial_type.all():
             form = await sync_to_async(dt.get_form)()
             if form is not None:
-                parsed= form(parameters)
+                parsed = form(parameters)
                 if parsed.is_valid():
                     # Check and see if the form has a context method
                     op = getattr(parsed, "medical_context", None)

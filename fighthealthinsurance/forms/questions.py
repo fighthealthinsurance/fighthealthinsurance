@@ -62,7 +62,7 @@ class InsuranceQuestions(forms.Form):
             if self.prof_pov:
                 return [
                     common,
-                      (
+                    (
                         "As an urgent pre-service claim you must respond within the "
                         "timeline required for my medical situation (up to a maximum "
                         "of four days). This also serves as notice of concurrent "
@@ -200,12 +200,8 @@ class BalanceBillQuestions(forms.Form):
     def preface(self):
         if "emergency" in self.cleaned_data:
             if self.prof_pov:
-                return (
-                    "The No Surprises Act prohibits balance billing and similar practices in the majority of emergency cases (see https://www.cms.gov/newsroom/fact-sheets/no-surprises-understand-your-rights-against-surprise-medical-bills). Please ensure full compliance with these federal requirements in the processing of claim {claim_id}{denial_date_info}."
-                )
-            return (
-                "As you are aware the no-surprises act prohibits balance billing and similar practices in the majority of emergency cases (see https://www.cms.gov/newsroom/fact-sheets/no-surprises-understand-your-rights-against-surprise-medical-bills)"
-            )
+                return "The No Surprises Act prohibits balance billing and similar practices in the majority of emergency cases (see https://www.cms.gov/newsroom/fact-sheets/no-surprises-understand-your-rights-against-surprise-medical-bills). Please ensure full compliance with these federal requirements in the processing of claim {claim_id}{denial_date_info}."
+            return "As you are aware the no-surprises act prohibits balance billing and similar practices in the majority of emergency cases (see https://www.cms.gov/newsroom/fact-sheets/no-surprises-understand-your-rights-against-surprise-medical-bills)"
         else:
             return ""
 
