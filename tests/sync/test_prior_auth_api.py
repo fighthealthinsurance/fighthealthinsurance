@@ -328,9 +328,9 @@ class PriorAuthWebSocketTest(APITestCase):
         self.assertEqual(prior_auth.status, "prior_auth_requested")
 
         # Verify proposals were created
-        proposal_count = await sync_to_async(ProposedPriorAuth.objects.filter)(
+        proposal_count = await ProposedPriorAuth.objects.filter(
             prior_auth_request=prior_auth
-        ).count()
+        ).acount()
         self.assertGreater(proposal_count, 0)
 
         # Clean up
