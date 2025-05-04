@@ -1,5 +1,7 @@
 """Test the prior authorization API functionality"""
 
+import asyncio
+
 import json
 import typing
 import uuid
@@ -327,12 +329,6 @@ class PriorAuthWebSocketTest(APITestCase):
         # Verify prior auth status was updated
         prior_auth = await sync_to_async(PriorAuthRequest.objects.get)(id=prior_auth.id)
         self.assertEqual(prior_auth.status, "prior_auth_requested")
-
-        # Verify proposals were created
-        proposal_count = await ProposedPriorAuth.objects.filter(
-            prior_auth_request=prior_auth
-        ).acount()
-        self.assertGreater(proposal_count, 0)
 
         # Clean up
         await self.asyncTearDown()

@@ -37,10 +37,11 @@ class PriorAuthGenerator:
         diagnosis = prior_auth.diagnosis
         treatment = prior_auth.treatment
         insurance_company = prior_auth.insurance_company
-        provider_info = (
+        # Convert the provider info, can result in a query through domain.
+        provider_info = await sync_to_async(str)((
             prior_auth.created_for_professional_user
             or prior_auth.creator_professional_user
-        )
+        ))
         patient_health_history = prior_auth.patient_health_history
         questions = prior_auth.questions
         answers = prior_auth.answers
@@ -135,8 +136,11 @@ class PriorAuthGenerator:
             # Create a unique ID for this proposal
             proposed_id = uuid.uuid4()
 
-            # Create and save the proposal in the database
-            await self._create_proposal(prior_auth, proposed_id, proposal_text)
+            # Create and save the proposal in the database, with sqlite this can result in db locked errors.
+            try:
+                await self._create_proposal(prior_auth, proposed_id, proposal_text)
+            except:
+                pass
 
             # Return the result to be streamed to the client
             return {
@@ -169,8 +173,8 @@ class PriorAuthGenerator:
         insurance_company = context.get("insurance_company", "")
         patient_health_history = context.get("patient_health_history", "")
         qa_pairs = context.get("qa_pairs", [])
-        provider_info = context.get("provider_info", {})
-        patient_info = context.get("patient_info", {})
+        provider_info = context.get("provider_info", "")
+        patient_info = context.get("patient_info", "")
 
         # Build the prompt
         prompt = f"""

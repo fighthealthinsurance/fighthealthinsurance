@@ -167,8 +167,10 @@ class PriorAuthConsumer(AsyncWebsocketConsumer):
             prior_auth = await PriorAuthRequest.objects.select_related(
                 "creator_professional_user",
                 "created_for_professional_user",
+                "created_for_professional_user",
                 "created_for_professional_user__user",
                 "creator_professional_user__user",
+                "creator_professional_user",
             ).aget(id=prior_auth_id, token=token)
             return prior_auth
         except PriorAuthRequest.DoesNotExist:
