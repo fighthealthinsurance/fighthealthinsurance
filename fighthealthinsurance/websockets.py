@@ -14,6 +14,7 @@ from fighthealthinsurance.models import (
     OngoingChat,
     ProfessionalUser,
 )
+from fighthealthinsurance.ml.generate_prior_auth import prior_auth_generator
 
 
 class StreamingAppealsBackend(AsyncWebsocketConsumer):
@@ -87,6 +88,9 @@ class StreamingEntityBackend(AsyncWebsocketConsumer):
 class PriorAuthConsumer(AsyncWebsocketConsumer):
     """Streaming back the proposed prior authorizations as JSON."""
 
+    def __init__(self, *args, **kwargs):
+        self.pag = prior_auth_generator
+
     async def connect(self):
         logger.debug("Accepting connection for prior auth streaming")
         await self.accept()
@@ -118,14 +122,6 @@ class PriorAuthConsumer(AsyncWebsocketConsumer):
                 await self.close()
                 return
 
-            # Check if the prior auth has answers
-            if not prior_auth.answers:
-                await self.send(
-                    json.dumps({"error": "Prior auth request does not have answers"})
-                )
-                await self.close()
-                return
-
             # Generate prior auth proposals
             await self.send(
                 json.dumps(
@@ -142,7 +138,7 @@ class PriorAuthConsumer(AsyncWebsocketConsumer):
             )
 
             # Generate proposals
-            generator = self._generate_prior_auth_proposals(prior_auth)
+            generator = self.pag._generate_prior_auth_proposals(prior_auth)
 
             # We do a try/except here to log since the WS framework may swallow exceptions
             try:
@@ -182,98 +178,6 @@ class PriorAuthConsumer(AsyncWebsocketConsumer):
         prior_auth.status = status
         prior_auth.save()
         return prior_auth
-
-    async def _generate_prior_auth_proposals(self, prior_auth):
-        """Generate prior auth proposals using ML models."""
-        from fighthealthinsurance.ml.ml_router import ml_router
-
-        # Extract relevant information
-        diagnosis = prior_auth.diagnosis
-        treatment = prior_auth.treatment
-        insurance_company = prior_auth.insurance_company
-        patient_health_history = prior_auth.patient_health_history
-        questions = prior_auth.questions
-        answers = prior_auth.answers
-
-        # Prepare prompt context
-        context = {
-            "diagnosis": diagnosis,
-            "treatment": treatment,
-            "insurance_company": insurance_company,
-            "patient_health_history": patient_health_history,
-            "qa_pairs": [],
-        }
-
-        # Add Q&A pairs
-        if questions and answers:
-            for question, answer in zip(questions, answers):
-                # Only include questions that have answers
-                if question and answer:
-                    context["qa_pairs"].append({"question": question, "answer": answer})
-
-        # Get available models
-        models = ml_router.generate_text_backends()
-
-        # Generate 2-3 different proposals
-        num_proposals = max(min(len(models), 3), 2)
-
-        for i in range(num_proposals):
-            # Select different models for variety
-            model = models[i % len(models)]
-
-            try:
-                # Generate the proposal text
-                prompt = f"""
-                Generate a prior authorization request letter for {treatment} to treat {diagnosis}.
-                Insurance Company: {insurance_company}
-
-                Use the following information from the patient's answers:
-                """
-
-                for qa in context["qa_pairs"]:
-                    prompt += f"\nQ: {qa['question']}\nA: {qa['answer']}\n"
-
-                if patient_health_history:
-                    prompt += (
-                        f"\nAdditional Patient History:\n{patient_health_history}\n"
-                    )
-
-                prompt += """
-                Format the prior authorization request as a formal letter with:
-                1. Date and header
-                2. Patient and provider information (use placeholders)
-                3. Clear statement of the requested treatment/procedure
-                4. Medical necessity justification
-                5. Supporting evidence and clinical rationale
-                6. Relevant billing codes if available
-                7. Closing with provider details
-
-                Make it persuasive, evidence-based, and compliant with insurance requirements.
-                """
-
-                # Generate the text - wrap in try/except since different backends might have different interfaces
-                try:
-                    proposal_text = await model.generate_text(prompt)
-                except:
-                    # Fallback to a different method signature if needed
-                    proposal_text = await model.generate_text(prompt=prompt)
-
-                # Create and save the proposal
-                proposed_id = uuid.uuid4()
-                proposal = await sync_to_async(self._create_proposal)(
-                    prior_auth, proposed_id, proposal_text
-                )
-
-                # Yield the proposal to be sent to the client
-                yield {"proposed_id": str(proposed_id), "text": proposal_text}
-
-                # Small delay between generations
-                await asyncio.sleep(1)
-
-            except Exception as e:
-                logger.opt(exception=True).debug(f"Error generating proposal: {e}")
-                # Continue with next model despite errors
-                continue
 
     def _create_proposal(self, prior_auth, proposed_id, text):
         """Create a proposal in the database."""
@@ -392,7 +296,7 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                 )
                 # Generate the response using the model
                 (response_text, context_part) = await model.generate_chat_response(
-                    message, context=context
+                    message, previous_context_summary=context
                 )
                 # Save the context summary
                 if context_part:

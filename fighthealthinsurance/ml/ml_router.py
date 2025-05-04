@@ -150,6 +150,15 @@ class MLRouter(object):
 
         return []
 
+    def prior_auth_backends(self) -> list[RemoteModelLike]:
+        """
+        Return models for generating prior authorizations.
+        """
+        if "fhi-2025-may" in self.models_by_name:
+            return self.cheapest("fhi-2025-may")
+
+        return []
+
     def cheapest(self, name: str) -> list[RemoteModelLike]:
         try:
             return [self.models_by_name[name][0]]

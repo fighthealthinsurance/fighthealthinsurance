@@ -84,12 +84,32 @@ class RemoteModelLike(DenialBase):
             return result[0]
         return result
 
+    async def generate_prior_auth_response(self, prompt: str) -> Optional[str]:
+        """
+        Generate a prior authorization response from the model.
+
+        Args:
+            prompt: The prompt for the model
+
+        Returns:
+            Generated response or None
+        """
+        system_prompt = "You are an AI assistant helping a healthcare professional with insurance and medical questions. Provide accurate, helpful, and concise information."
+        result = await self._infer(
+            system_prompts=[system_prompt],
+            prompt=prompt,
+            temperature=0.7,
+        )
+        if result:
+            return result[0]
+        return None
+
     async def generate_chat_response(
         self,
         current_message: str,
         previous_context_summary: Optional[str] = None,
         temperature: float = 0.7,
-    ) -> Optional[tuple[str, str]]:
+    ) -> tuple[Optional[str], Optional[str]]:
         """
         Generate a chat response from the model.
 
@@ -128,6 +148,8 @@ class RemoteModelLike(DenialBase):
             )
             if raw_result:
                 result = raw_result[0]
+        if result is None:
+            return (None, None)
         answer, summary = result.split("🐼")
         return (answer, summary)
 

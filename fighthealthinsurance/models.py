@@ -856,12 +856,8 @@ class PriorAuthRequest(ExportModelOperationsMixin("PriorAuthRequest"), models.Mo
     mode = models.CharField(max_length=10, choices=MODE_CHOICES, default="guided")
 
     # Q&A for the request
-    questions = models.JSONField(
-        null=True, blank=True
-    )  # List of (question, answer_template) tuples
-    answers = models.JSONField(
-        null=True, blank=True
-    )  # Dict of question index to answer
+    questions = models.JSONField(null=True, blank=True)  # Dict of {question: default}
+    answers = models.JSONField(null=True, blank=True)  # Dict of {question: answer}
 
     # Status tracking
     STATUS_CHOICES = (

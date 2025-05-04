@@ -1096,12 +1096,11 @@ class PriorAuthViewSet(viewsets.ViewSet, SerializerMixin):
             status="initial",
         )
 
-        # Generate questions asynchronously
-        asyncio.create_task(self._generate_questions(prior_auth))
+        prior_auth.save()
+
+        async_to_sync(self._generate_questions(prior_auth))
 
         # Return the response immediately with status questions_asked
-        prior_auth.status = "questions_asked"
-        prior_auth.save()
 
         response_data = serializers.PriorAuthRequestSerializer(prior_auth).data
         return Response(response_data, status=status.HTTP_201_CREATED)
@@ -1156,9 +1155,9 @@ class PriorAuthViewSet(viewsets.ViewSet, SerializerMixin):
                             questions.append(q)
 
             # Update the prior auth with the generated questions
-            await sync_to_async(
-                PriorAuthRequest.objects.filter(id=prior_auth.id).update
-            )(questions=questions)
+            await PriorAuthRequest.objects.filter(id=prior_auth.id).aupdate(
+                questions=questions
+            )
 
             logger.info(
                 f"Generated {len(questions)} questions for prior auth {prior_auth.id}"
