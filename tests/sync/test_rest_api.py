@@ -180,6 +180,7 @@ class DenialEndToEnd(APITestCase):
         ExtraUserProperties.objects.create(user=self.user, email_verified=True)
 
     @pytest.mark.asyncio
+    # Testing end to end for professional user
     async def test_denial_end_to_end(self):
         login_result = await sync_to_async(self.client.login)(
             username=self.username, password=self.password
@@ -278,8 +279,8 @@ class DenialEndToEnd(APITestCase):
             content_type="application/json",
         )
         find_next_steps_parsed: Dict[str, Any] = find_next_steps_response.json()
-        # Make sure we got back a reasonable set of questions.
-        assert len(find_next_steps_parsed["combined_form"]) >= 5
+        # Make sure we got back a reasonable set of questions. Reduced to 4 since in_network is handled separately for professionals
+        assert len(find_next_steps_parsed["combined_form"]) >= 4
         assert list(find_next_steps_parsed["combined_form"][0].keys()) == [
             "name",
             "field_type",
