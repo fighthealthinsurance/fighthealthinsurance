@@ -156,8 +156,7 @@ class MLRouter(object):
         """
         if "fhi-2025-may" in self.models_by_name:
             return self.cheapest("fhi-2025-may")
-
-        return []
+        return self.internal_models_by_cost[:2]
 
     def get_chat_backends(self, use_external=False) -> list[RemoteModelLike]:
         """
@@ -171,7 +170,7 @@ class MLRouter(object):
         if "fhi-2025-may" in self.models_by_name:
             return self.cheapest("fhi-2025-may")
 
-        return []
+        return self.internal_models_by_cost[:2]
 
     def cheapest(self, name: str) -> list[RemoteModelLike]:
         try:
