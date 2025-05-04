@@ -1108,14 +1108,14 @@ class PriorAuthViewSet(viewsets.ViewSet, SerializerMixin):
 
         prior_auth.save()
 
-        async_to_sync(self._generate_questions)(prior_auth)
+        prior_auth = async_to_sync(self._generate_questions)(prior_auth)
 
         # Return the response immediately with status questions_asked
 
         response_data = serializers.PriorAuthRequestSerializer(prior_auth).data
         return Response(response_data, status=status.HTTP_201_CREATED)
 
-    async def _generate_questions(self, prior_auth: PriorAuthRequest) -> None:
+    async def _generate_questions(self, prior_auth: PriorAuthRequest) -> PriorAuthRequest:
         """
         Generate questions for the prior authorization request using MLAppealQuestionsHelper.
         This runs asynchronously after the initial response is sent.
@@ -1165,9 +1165,10 @@ class PriorAuthViewSet(viewsets.ViewSet, SerializerMixin):
                             questions.append(q)
 
             # Update the prior auth with the generated questions
-            await PriorAuthRequest.objects.filter(id=prior_auth.id).aupdate(
-                questions=questions
-            )
+            prior_auth.questions = questions
+            prior_auth.status = "questions_asked"
+            await prior_auth.asave()
+            return prior_auth
 
             logger.info(
                 f"Generated {len(questions)} questions for prior auth {prior_auth.id}"
