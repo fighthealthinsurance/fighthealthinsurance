@@ -40,7 +40,7 @@ class DictionaryStringField(serializers.DictField):
 # Common View Logic Results
 class NextStepInfoSerizableSerializer(serializers.Serializer):
     outside_help_details = StringListField()
-    combined_form = DictionaryStringField()
+    combined_form = DictionaryListField()
     semi_sekret = serializers.CharField()
 
 
@@ -550,7 +550,7 @@ class PriorAuthAnswersSerializer(serializers.Serializer):
     """Serializer for submitting answers to prior authorization questions."""
 
     token = serializers.CharField(required=True)
-    answers = DictionaryListField()
+    answers = DictionaryStringField()
 
 
 class PriorAuthSelectSerializer(serializers.Serializer):
@@ -593,12 +593,19 @@ class PriorAuthRequestSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id", "token", "status", "created_at", "updated_at"]
 
-    @extend_schema_field(serializers.ListField(child=serializers.DictField()))
+    @extend_schema_field(DictionaryStringField)
     def get_questions(self, obj):
         """Format questions for display."""
         if not obj.questions:
-            return []
-        return [{"index": i, "question": q[0]} for i, q in enumerate(obj.questions)]
+            return {}
+        try:
+            questions = {}
+            for (k, v) in obj.questions:
+                questions[k] = v
+            return questions
+        except Exception as e:
+            logger.opts(exception=True).debug("Error serializing questions")
+            return {}
 
     @extend_schema_field(serializers.CharField())
     def get_professional_name(self, obj):

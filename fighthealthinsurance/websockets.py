@@ -184,13 +184,6 @@ class PriorAuthConsumer(AsyncWebsocketConsumer):
         await prior_auth.asave()
         return prior_auth
 
-    def _create_proposal(self, prior_auth, proposed_id, text):
-        """Create a proposal in the database."""
-        proposal = ProposedPriorAuth.objects.create(
-            proposed_id=proposed_id, prior_auth_request=prior_auth, text=text
-        )
-        return proposal
-
 
 class OngoingChatConsumer(AsyncWebsocketConsumer):
     """WebSocket consumer for ongoing chat with LLM for pro users."""
@@ -243,9 +236,6 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
             logger.opt(exception=True).debug(f"Error in ongoing chat: {e}")
             await self.send(json.dumps({"error": f"Server error: {str(e)}"}))
 
-        finally:
-            await self.close()
-
     def _get_professional_user(self, user):
         """Get the professional user from the Django user."""
         try:
@@ -268,7 +258,7 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
         return OngoingChat.objects.create(
             professional_user=professional_user,
             chat_history=[],
-            summary_for_next_call={},
+            summary_for_next_call=[],
         )
 
     async def _generate_llm_response(self, chat, message):

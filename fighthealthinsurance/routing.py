@@ -15,7 +15,7 @@ websocket_urlpatterns = [
     path(
         "ws/streaming-appeals-backend/",
         StreamingAppealsBackend.as_asgi(),
-        name="streamingentity_json_backend",
+        name="streamingappeals_json_backend",
     ),
     path(
         "ws/prior-auth/",

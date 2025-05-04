@@ -16,9 +16,6 @@ from django_encrypted_filefield.fields import EncryptedFileField
 from django.contrib.auth import get_user_model
 from django_encrypted_filefield.crypt import Cryptographer
 
-from django.shortcuts import get_object_or_404
-
-
 from fighthealthinsurance.utils import sekret_gen
 from fhi_users.models import *
 from regex_field.fields import RegexField
@@ -894,7 +891,7 @@ class PriorAuthRequest(ExportModelOperationsMixin("PriorAuthRequest"), models.Mo
             return cls.objects.none()
 
         try:
-            professional_user = get_object_or_404(ProfessionalUser, user=current_user)
+            professional_user = ProfessionalUser.objects.get(user=current_user)
             if not professional_user.active:
                 return cls.objects.none()
 
