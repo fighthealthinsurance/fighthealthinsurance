@@ -315,7 +315,8 @@ class PriorAuthWebSocketTest(APITestCase):
                 if "proposed_id" in response and "text" in response:
                     received_proposal = True
                     break
-            except:
+            except asyncio.TimeoutError:
+                # No message yet – loop again
                 pass
 
         self.assertTrue(received_proposal)

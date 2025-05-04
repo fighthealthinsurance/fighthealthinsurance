@@ -606,7 +606,7 @@ class PriorAuthRequestSerializer(serializers.ModelSerializer):
                 questions[k] = v
             return questions
         except Exception as e:
-            logger.opt(exception=True).debug("Error serializing questions")
+            logger.opt(exception=True).debug(f"Error serializing questions: {e}")
             return {}
 
     @extend_schema_field(serializers.CharField())

@@ -1,16 +1,11 @@
 """Test the ongoing chat functionality"""
 
-import json
 import typing
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 from channels.testing import WebsocketCommunicator
 
-from django.urls import reverse
 from django.contrib.auth import get_user_model
-from django.utils import timezone
 
-from rest_framework import status
 from rest_framework.test import APITestCase
 
 from fighthealthinsurance.models import (
