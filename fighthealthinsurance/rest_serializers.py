@@ -600,7 +600,7 @@ class PriorAuthRequestSerializer(serializers.ModelSerializer):
             return {}
         try:
             questions = {}
-            for (k, v) in obj.questions:
+            for k, v in obj.questions:
                 questions[k] = v
             return questions
         except Exception as e:

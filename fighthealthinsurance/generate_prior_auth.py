@@ -183,11 +183,10 @@ class PriorAuthGenerator:
 
         # Add Q&A information if available
         if qa_pairs:
--            prompt += "\n\nUse the following information from the patient's answers: {qa_pairs}"
-+            prompt += (
-+                f"\n\nUse the following information from the patient's answers: "
-+                f"{qa_pairs}"
-+            )
+            prompt += (
+                f"\n\nUse the following information from the patient's answers: "
+                f"{qa_pairs}"
+            )
         # Add patient history if available
         if patient_health_history:
             prompt += f"\n\nAdditional Patient History:\n{patient_health_history}"
