@@ -40,6 +40,12 @@ router.register(
 router.register(
     r"mailinglist_subscribe", MailingListSubscriberViewSet, basename="subscribe"
 )
+router.register(r"prior-auth", rest_views.PriorAuthViewSet, basename="prior-auth")
+router.register(
+    r"prior-auth/(?P<prior_auth_id>[^/.]+)/proposals",
+    rest_views.ProposedPriorAuthViewSet,
+    basename="prior-auth-proposals",
+)
 
 urlpatterns = [
     # Non-viewset but still rest API endpoints.

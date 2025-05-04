@@ -1,4 +1,5 @@
 import typing
+import asyncio
 from typing import Optional
 
 from django.conf import settings
@@ -44,6 +45,8 @@ from fighthealthinsurance.models import (
     DenialQA,
     AppealAttachment,
     PubMedMiniArticle,
+    PriorAuthRequest,
+    ProposedPriorAuth,
 )
 from fighthealthinsurance.pubmed_tools import PubMedTools
 
@@ -1050,3 +1053,257 @@ class AppealAttachmentViewSet(viewsets.ViewSet):
         )
         attachment.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class PriorAuthViewSet(viewsets.ViewSet, SerializerMixin):
+    """ViewSet for managing prior authorization requests."""
+
+    def get_serializer_class(self):
+        if self.action == "create":
+            return serializers.PriorAuthCreateSerializer
+        elif self.action == "submit_answers":
+            return serializers.PriorAuthAnswersSerializer
+        elif self.action == "select_proposal":
+            return serializers.PriorAuthSelectSerializer
+        return serializers.PriorAuthRequestSerializer
+
+    @extend_schema(responses=serializers.PriorAuthRequestSerializer)
+    def create(self, request: Request) -> Response:
+        """Create a new prior authorization request and generate initial questions."""
+        serializer = self.deserialize(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        current_user: User = request.user  # type: ignore
+        professional_user = get_object_or_404(ProfessionalUser, user=current_user)
+
+        created_for_professional_user_id = serializer.validated_data.get(
+            "created_for_professional_user_id"
+        )
+        created_for_professional_user = None
+        if created_for_professional_user_id:
+            created_for_professional_user = get_object_or_404(
+                ProfessionalUser, id=created_for_professional_user_id
+            )
+
+        # Extract domain from session
+        domain_id = request.session.get("domain_id")
+        domain = None
+        if domain_id:
+            domain = get_object_or_404(UserDomain, id=domain_id)
+
+        # Create the prior auth request
+        prior_auth = PriorAuthRequest.objects.create(
+            creator_professional_user=professional_user,
+            created_for_professional_user=created_for_professional_user,
+            diagnosis=serializer.validated_data["diagnosis"],
+            treatment=serializer.validated_data["treatment"],
+            insurance_company=serializer.validated_data["insurance_company"],
+            patient_health_history=serializer.validated_data.get(
+                "patient_health_history", ""
+            ),
+            domain=domain,
+            mode=serializer.validated_data.get("mode", "guided"),
+            status="initial",
+        )
+
+        prior_auth.save()
+
+        prior_auth = async_to_sync(self._generate_questions)(prior_auth)
+
+        # Return the response immediately with status questions_asked
+
+        response_data = serializers.PriorAuthRequestSerializer(prior_auth).data
+        return Response(response_data, status=status.HTTP_201_CREATED)
+
+    async def _generate_questions(
+        self, prior_auth: PriorAuthRequest
+    ) -> PriorAuthRequest:
+        """
+        Generate questions for the prior authorization request using MLAppealQuestionsHelper.
+        This runs asynchronously after the initial response is sent.
+
+        For 'raw' mode: generates a single question asking for patient health history
+        For 'guided' mode: generates multiple structured questions based on diagnosis and treatment
+        """
+        try:
+            from fighthealthinsurance.ml.ml_appeal_questions_helper import (
+                MLAppealQuestionsHelper,
+            )
+
+            # Handle based on the selected mode
+            if prior_auth.mode == "raw":
+                # For raw mode, just provide a single generic question for patient history
+                questions = [
+                    (
+                        "Please provide the patient's complete health history relevant to this prior authorization request:",
+                        "",
+                    )
+                ]
+            else:
+                # For guided mode, generate structured questions
+                questions = await MLAppealQuestionsHelper.generate_generic_questions(
+                    procedure=prior_auth.treatment,
+                    diagnosis=prior_auth.diagnosis,
+                    timeout=90,
+                )
+
+                # Also generate specific questions if health history is provided
+                if prior_auth.patient_health_history:
+                    specific_questions = (
+                        await MLAppealQuestionsHelper.generate_specific_questions(
+                            denial_text=None,
+                            patient_context=prior_auth.patient_health_history,
+                            procedure=prior_auth.treatment,
+                            diagnosis=prior_auth.diagnosis,
+                            timeout=90,
+                            use_external=False,
+                        )
+                    )
+
+                    # Combine questions, removing duplicates
+                    existing_questions = {q[0] for q in questions}
+                    for q in specific_questions:
+                        if q[0] not in existing_questions:
+                            questions.append(q)
+
+            # Update the prior auth with the generated questions
+            prior_auth.questions = questions
+            prior_auth.status = "questions_asked"
+            await prior_auth.asave()
+            logger.info(
+                f"Generated {len(questions)} questions for prior auth {prior_auth.id}"
+            )
+            return prior_auth
+        except Exception as e:
+            logger.opt(exception=True).error(
+                f"Error generating questions for prior auth {prior_auth.id}: {e}"
+            )
+            return prior_auth
+
+    @extend_schema(responses=serializers.PriorAuthRequestSerializer)
+    @action(detail=True, methods=["post"])
+    def submit_answers(self, request: Request, pk=None) -> Response:
+        """Submit answers to the questions for a prior authorization request."""
+        current_user: User = request.user  # type: ignore
+        prior_auth = get_object_or_404(
+            PriorAuthRequest.filter_to_allowed_requests(current_user), id=pk
+        )
+        serializer = self.deserialize(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        answers = None
+        if "answers" in serializer.validated_data:
+            answers = serializer.validated_data["answers"]
+
+        # Verify token
+        token = serializer.validated_data["token"]
+        if str(prior_auth.token) != str(token):
+            return Response(
+                {"error": "Invalid token"}, status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Save answers and update status
+        prior_auth.answers = serializer.validated_data["answers"]
+        prior_auth.status = "questions_answered"
+        prior_auth.save()
+
+        return Response(
+            serializers.PriorAuthRequestSerializer(prior_auth).data,
+            status=status.HTTP_200_OK,
+        )
+
+    @extend_schema(responses=serializers.SuccessSerializer)
+    @action(detail=True, methods=["post"])
+    def select_proposal(self, request: Request, pk=None) -> Response:
+        """Select a proposed prior authorization as the final version."""
+        current_user: User = request.user  # type: ignore
+        prior_auth = get_object_or_404(
+            PriorAuthRequest.filter_to_allowed_requests(current_user), id=pk
+        )
+        serializer = self.deserialize(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        # Verify token
+        token = serializer.validated_data["token"]
+        if str(prior_auth.token) != str(token):
+            return Response(
+                {"error": "Invalid token"}, status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Find the proposal
+        proposed_id = serializer.validated_data["proposed_id"]
+        proposal = get_object_or_404(
+            ProposedPriorAuth, proposed_id=proposed_id, prior_auth_request=prior_auth
+        )
+
+        # Mark as selected and update status
+        ProposedPriorAuth.objects.filter(prior_auth_request=prior_auth).update(
+            selected=False
+        )
+        proposal.selected = True
+        proposal.save()
+
+        prior_auth.status = "completed"
+        prior_auth.save()
+
+        return Response(
+            serializers.SuccessSerializer(
+                {"message": "Prior authorization proposal selected successfully"}
+            ).data,
+            status=status.HTTP_200_OK,
+        )
+
+    @extend_schema(responses=serializers.PriorAuthRequestSerializer)
+    def retrieve(self, request: Request, pk=None) -> Response:
+        """Retrieve a specific prior authorization request."""
+        current_user: User = request.user  # type: ignore
+        prior_auth = get_object_or_404(
+            PriorAuthRequest.filter_to_allowed_requests(current_user), id=pk
+        )
+
+        return Response(
+            serializers.PriorAuthRequestSerializer(prior_auth).data,
+            status=status.HTTP_200_OK,
+        )
+
+    @extend_schema(responses=serializers.PriorAuthRequestSerializer(many=True))
+    def list(self, request: Request) -> Response:
+        """List all prior authorization requests accessible to the current user."""
+        current_user: User = request.user  # type: ignore
+        prior_auths = PriorAuthRequest.filter_to_allowed_requests(current_user)
+
+        # Basic filtering options
+        status_filter = request.query_params.get("status")
+        if status_filter:
+            prior_auths = prior_auths.filter(status=status_filter)
+
+        # Sorting
+        sort_by = request.query_params.get("sort_by", "-created_at")
+        prior_auths = prior_auths.order_by(sort_by)
+
+        return Response(
+            serializers.PriorAuthRequestSerializer(prior_auths, many=True).data,
+            status=status.HTTP_200_OK,
+        )
+
+
+class ProposedPriorAuthViewSet(viewsets.ReadOnlyModelViewSet):
+    """ViewSet for viewing proposed prior authorizations."""
+
+    serializer_class = serializers.ProposedPriorAuthSerializer
+
+    def get_queryset(self):
+        current_user: User = self.request.user  # type: ignore
+
+        # Get the prior auth ID from the URL
+        prior_auth_id = self.kwargs.get("prior_auth_id")
+        if not prior_auth_id:
+            return ProposedPriorAuth.objects.none()
+
+        # Check if the user has access to the related prior auth
+        prior_auth = get_object_or_404(
+            PriorAuthRequest.filter_to_allowed_requests(current_user), id=prior_auth_id
+        )
+
+        # Return proposals for this prior auth
+        return ProposedPriorAuth.objects.filter(prior_auth_request=prior_auth)

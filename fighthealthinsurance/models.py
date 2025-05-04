@@ -9,12 +9,12 @@ from loguru import logger
 
 from django.conf import settings
 from django.db import models
+from django.db.models import Q
 from django.db.models.functions import Now
 from django_prometheus.models import ExportModelOperationsMixin
 from django_encrypted_filefield.fields import EncryptedFileField
 from django.contrib.auth import get_user_model
 from django_encrypted_filefield.crypt import Cryptographer
-
 
 from fighthealthinsurance.utils import sekret_gen
 from fhi_users.models import *
@@ -825,3 +825,128 @@ class StripeWebhookEvents(models.Model):
     created_at = models.DateTimeField(auto_now_add=True, blank=True)
     success = models.BooleanField(default=False)
     error = models.CharField(max_length=255, null=True, blank=True)
+
+
+class PriorAuthRequest(ExportModelOperationsMixin("PriorAuthRequest"), models.Model):  # type: ignore
+    """
+    Stores information about a prior authorization request.
+    Used to track the status of the request and store the questions and answers.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    creator_professional_user = models.ForeignKey(
+        ProfessionalUser,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="prior_auth_requests_creators",
+    )
+    created_for_professional_user = models.ForeignKey(
+        ProfessionalUser,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="prior_auth_requests_created_for",
+    )
+    domain = models.ForeignKey(
+        UserDomain, on_delete=models.SET_NULL, null=True, blank=True
+    )
+
+    # Medical information
+    diagnosis = models.TextField()
+    treatment = models.TextField()
+    insurance_company = models.TextField()
+    patient_health_history = models.TextField(blank=True)
+
+    # Mode selection for the request
+    MODE_CHOICES = (
+        ("guided", "Guided"),
+        ("raw", "Raw"),
+    )
+    mode = models.CharField(max_length=10, choices=MODE_CHOICES, default="guided")
+
+    # Q&A for the request
+    questions = models.JSONField(null=True, blank=True)  # List of [(question, default)]
+    answers = models.JSONField(null=True, blank=True)  # Dict of {question: answer}
+
+    # Status tracking
+    STATUS_CHOICES = (
+        ("initial", "Initial"),
+        ("questions_asked", "Questions Asked"),
+        ("questions_answered", "Questions Answered"),
+        ("prior_auth_requested", "Prior Auth Requested"),
+        ("completed", "Completed"),
+    )
+    status = models.CharField(max_length=50, choices=STATUS_CHOICES, default="initial")
+
+    # Security token for WebSocket access
+    token = models.UUIDField(default=uuid.uuid4, editable=False)
+
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    @classmethod
+    def filter_to_allowed_requests(cls, current_user):
+        """Filter to requests that the current user is allowed to see."""
+        if not current_user.is_authenticated:
+            return cls.objects.none()
+
+        try:
+            professional_user = ProfessionalUser.objects.get(user=current_user)
+            if not professional_user.active:
+                return cls.objects.none()
+
+            # Requests created by the user or created for the user
+            return cls.objects.filter(
+                Q(creator_professional_user=professional_user)
+                | Q(created_for_professional_user=professional_user)
+            )
+        except ProfessionalUser.DoesNotExist:
+            return cls.objects.none()
+
+    def __str__(self):
+        return f"Prior Auth Request {self.id} - {self.status}"
+
+
+class ProposedPriorAuth(ExportModelOperationsMixin("ProposedPriorAuth"), models.Model):  # type: ignore
+    """
+    Model for proposed prior authorization text, similar to ProposedAppeal.
+    """
+
+    proposed_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    prior_auth_request = models.ForeignKey(PriorAuthRequest, on_delete=models.CASCADE)
+    text = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    selected = models.BooleanField(default=False)
+
+    def __str__(self):
+        return (
+            f"Proposed Prior Auth {self.proposed_id} for {self.prior_auth_request.id}"
+        )
+
+
+class OngoingChat(models.Model):
+    """
+    Model for storing ongoing chat sessions between professional users and LLM.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    professional_user = models.ForeignKey(
+        ProfessionalUser, on_delete=models.SET_NULL, null=True
+    )
+    chat_history = models.JSONField(
+        default=list, null=True, blank=True
+    )  # JSON List of strings
+    summary_for_next_call = models.JSONField(
+        null=True, blank=True
+    )  # JSON List of strings
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    domain = models.ForeignKey(
+        UserDomain, null=True, on_delete=models.SET_NULL, blank=True
+    )
+
+    def __str__(self):
+        if self.professional_user:
+            return f"Ongoing Chat {self.id} for {self.professional_user.get_display_name()}"
+        else:
+            return f"Ongoing Chat {self.id} (no professional user)"

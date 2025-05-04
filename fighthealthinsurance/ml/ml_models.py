@@ -84,6 +84,77 @@ class RemoteModelLike(DenialBase):
             return result[0]
         return result
 
+    async def generate_prior_auth_response(self, prompt: str) -> Optional[str]:
+        """
+        Generate a prior authorization response from the model.
+
+        Args:
+            prompt: The prompt for the model
+
+        Returns:
+            Generated response or None
+        """
+        system_prompt = "You are an AI assistant helping a healthcare professional with insurance and medical questions. Provide accurate, helpful, and concise information."
+        result = await self._infer(
+            system_prompts=[system_prompt],
+            prompt=prompt,
+            temperature=0.7,
+        )
+        if result:
+            return result[0]
+        return None
+
+    async def generate_chat_response(
+        self,
+        current_message: str,
+        previous_context_summary: Optional[str] = None,
+        temperature: float = 0.7,
+    ) -> tuple[Optional[str], Optional[str]]:
+        """
+        Generate a chat response from the model.
+
+        Args:
+            current_message: The current message from the user
+            previous_context_summary: Optional summary of previous context
+            temperature: Temperature for the model
+
+        Returns:
+            Generated response or None
+        """
+        previous_context_extra = (
+            f"The previous context is: {previous_context_summary}"
+            if previous_context_summary
+            else ""
+        )
+        system_prompt = """You are an AI assistant helping a healthcare professional with insurance and medical questions.
+        Provide accurate, helpful, and concise information.
+        Use professional language appropriate for healthcare settings.
+        After your response, add the symbol 🐼 followed by CONTEXT: and then a brief summary of
+        this conversation that will help you maintain context in future messages.
+        The user will not see the content after the 🐼 symbol.
+        The summary should be concise and relevant to the conversation.
+        """
+        result: Optional[str] = None
+        c = 0
+        while result is None or "🐼" not in result and c < 3:
+            c = c + 1
+            result_extra = ""
+            if result and len(result) > 0:
+                result_extra = f"Your previous answer {result} was missing the panda emoji 🐼. Please try again."
+            raw_result = await self._infer(
+                system_prompts=[system_prompt],
+                prompt=f"{current_message}\n{previous_context_extra}\n{result_extra}",
+                temperature=temperature,
+            )
+            if raw_result:
+                result = raw_result[0]
+        if result is None:
+            return (None, None)
+        if "🐼" not in result:
+            return (result, None)
+        answer, summary = result.split("🐼")
+        return (answer, summary)
+
     async def get_denialtype(self, denial_text, procedure, diagnosis) -> Optional[str]:
         """Get the denial type from the text and procedure/diagnosis"""
         return None

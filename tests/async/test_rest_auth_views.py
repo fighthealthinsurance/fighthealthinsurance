@@ -1568,6 +1568,7 @@ class UserDomainExistsTests(TestCase):
         response = self.client.post(url, data, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
+
 class GetBillingUrlTests(TestCase):
     def setUp(self):
         self.client = APIClient()
@@ -1648,7 +1649,9 @@ class GetBillingUrlTests(TestCase):
         response = self.client.post(billing_url, format="json")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn("next_url", response.json())
-        self.assertEqual(response.json()["next_url"], "https://billing.stripe.com/test_portal")
+        self.assertEqual(
+            response.json()["next_url"], "https://billing.stripe.com/test_portal"
+        )
 
     @patch("stripe.billing_portal.Session.create")
     def test_billing_url_for_non_admin(self, mock_stripe_portal):
