@@ -847,7 +847,7 @@ class PriorAuthRequest(ExportModelOperationsMixin("PriorAuthRequest"), models.Mo
         ProfessionalUser,
         on_delete=models.SET_NULL,
         null=True,
-        related_name="created_for_professional_user",
+        related_name="prior_auth_requests_created_for",
     )
     domain = models.ForeignKey(
         UserDomain, on_delete=models.SET_NULL, null=True, blank=True
