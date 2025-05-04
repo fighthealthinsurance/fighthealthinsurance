@@ -1,6 +1,8 @@
 from django import forms
 from django.urls import reverse
 
+from loguru import logger
+
 from drf_braces.serializers.form_serializer import (
     FormSerializer,
 )
@@ -13,6 +15,9 @@ from fighthealthinsurance.models import (
     AppealAttachment,
     Denial,
     PubMedMiniArticle,
+    PriorAuthRequest,
+    ProposedPriorAuth,
+    OngoingChat,
 )
 from rest_framework import serializers
 
@@ -28,6 +33,10 @@ class StringListField(serializers.ListField):
 
 class DictionaryListField(serializers.ListField):
     child = serializers.DictField(child=serializers.CharField())
+
+
+class DictionaryStringField(serializers.DictField):
+    child = serializers.CharField()
 
 
 # Common View Logic Results
@@ -525,3 +534,128 @@ class SelectContextArticlesSerializer(serializers.Serializer):
 class SelectAppealArticlesSerializer(serializers.Serializer):
     appeal_id = serializers.IntegerField(required=True)
     pmids = serializers.ListField(child=serializers.CharField(), required=True)
+
+
+# Prior Authorization Serializers
+class PriorAuthCreateSerializer(serializers.Serializer):
+    """Serializer for creating a new prior authorization request."""
+
+    diagnosis = serializers.CharField(required=True)
+    treatment = serializers.CharField(required=True)
+    insurance_company = serializers.CharField(required=True)
+    mode = serializers.ChoiceField(choices=["guided", "raw"], default="guided")
+    patient_health_history = serializers.CharField(required=False, allow_blank=True)
+    creator_professional_user_id = serializers.IntegerField(required=False)
+
+
+class PriorAuthAnswersSerializer(serializers.Serializer):
+    """Serializer for submitting answers to prior authorization questions."""
+
+    token = serializers.CharField(required=True)
+    answers = DictionaryStringField()
+
+
+class PriorAuthSelectSerializer(serializers.Serializer):
+    """Serializer for selecting a proposed prior authorization."""
+
+    token = serializers.CharField(required=True)
+    proposed_id = serializers.CharField(required=True)
+
+
+class ProposedPriorAuthSerializer(serializers.ModelSerializer):
+    """Serializer for proposed prior authorizations."""
+
+    class Meta:
+        model = ProposedPriorAuth
+        fields = ["proposed_id", "text", "created_at", "selected"]
+
+
+class PriorAuthRequestSerializer(serializers.ModelSerializer):
+    """Serializer for prior authorization requests."""
+
+    professional_name = serializers.SerializerMethodField()
+    questions = serializers.SerializerMethodField()
+    proposals = ProposedPriorAuthSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = PriorAuthRequest
+        fields = [
+            "id",
+            "professional_name",
+            "diagnosis",
+            "treatment",
+            "insurance_company",
+            "status",
+            "token",
+            "questions",
+            "answers",
+            "created_at",
+            "updated_at",
+            "proposals",
+        ]
+        read_only_fields = ["id", "token", "status", "created_at", "updated_at"]
+
+    @extend_schema_field(DictionaryStringField)
+    def get_questions(self, obj):
+        """Format questions for display."""
+        if not obj.questions:
+            return {}
+        try:
+            questions = {}
+            for k, v in obj.questions:
+                questions[k] = v
+            return questions
+        except Exception as e:
+            logger.opt(exception=True).debug(f"Error serializing questions: {e}")
+            return {}
+
+    @extend_schema_field(serializers.CharField())
+    def get_professional_name(self, obj):
+        """Get the name of the professional user."""
+        if obj.created_for_professional_user:
+            return obj.created_for_professional_user.get_display_name()
+        elif obj.creator_professional_user:
+            return obj.creator_professional_user.get_display_name()
+        return None
+
+
+# Ongoing Chat Serializers
+class OngoingChatMessageSerializer(serializers.Serializer):
+    """Serializer for individual chat messages."""
+
+    role = serializers.CharField()
+    content = serializers.CharField()
+    timestamp = serializers.DateTimeField(required=False)
+
+
+class OngoingChatSerializer(serializers.ModelSerializer):
+    """Serializer for ongoing chats."""
+
+    messages = serializers.SerializerMethodField()
+    professional_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = OngoingChat
+        fields = ["id", "professional_name", "messages", "created_at", "updated_at"]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+    @extend_schema_field(OngoingChatMessageSerializer(many=True))
+    def get_messages(self, obj):
+        """Get formatted chat messages."""
+        if not obj.chat_history:
+            return []
+        return obj.chat_history
+
+    @extend_schema_field(serializers.CharField())
+    def get_professional_name(self, obj):
+        """Get the name of the professional user."""
+        if obj.professional_user:
+            return obj.professional_user.get_display_name()
+        return None
+
+
+class ChatMessageRequestSerializer(serializers.Serializer):
+    """Serializer for sending a new chat message."""
+
+    chat_id = serializers.CharField(required=False, allow_null=True)
+    message = serializers.CharField(required=True)
