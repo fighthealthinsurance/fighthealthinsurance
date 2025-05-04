@@ -23,10 +23,9 @@ class InsuranceQuestions(forms.Form):
         self.prof_pov = prof_pov
         logger.debug(f"InsuranceQuestions initialized with prof_pov={prof_pov}")
         super().__init__(*args, **kwargs)
-        if self.prof_pov:
+        if self.prof_pov and "in_network" in self.fields:
             # Remove in_network field for professional view since it is asked in an earlier form
-            if "in_network" in self.fields:
-                self.fields.pop("in_network")
+            self.fields.pop("in_network")
 
     def medical_context(self):
         response = ""
@@ -34,9 +33,12 @@ class InsuranceQuestions(forms.Form):
             response += "This is an urgent claim."
         if "pre_service" in self.cleaned_data and self.cleaned_data["pre_service"]:
             response += "This is a pre-service claim."
-        if not self.prof_pov:
-            if "in_network" in self.cleaned_data and self.cleaned_data["in_network"]:
-                response += "This is an in-network claim."
+        if (
+            not self.prof_pov
+            and "in_network" in self.cleaned_data
+            and self.cleaned_data["in_network"]
+        ):
+            response += "This is an in-network claim."
         return response
 
     def preface(self):
@@ -200,10 +202,14 @@ class BalanceBillQuestions(forms.Form):
     def preface(self):
         if "emergency" in self.cleaned_data:
             if self.prof_pov:
-                return "The No Surprises Act prohibits balance billing and similar practices in the majority of emergency cases (see https://www.cms.gov/newsroom/fact-sheets/no-surprises-understand-your-rights-against-surprise-medical-bills). Please ensure full compliance with these federal requirements in the processing of claim {claim_id}{denial_date_info}."
-            return "As you are aware the no-surprises act prohibits balance billing and similar practices in the majority of emergency cases (see https://www.cms.gov/newsroom/fact-sheets/no-surprises-understand-your-rights-against-surprise-medical-bills)"
+                return [
+                    "The No Surprises Act prohibits balance billing and similar practices in the majority of emergency cases (see https://www.cms.gov/newsroom/fact-sheets/no-surprises-understand-your-rights-against-surprise-medical-bills). Please ensure full compliance with these federal requirements in the processing of claim {claim_id}{denial_date_info}."
+                ]
+            return [
+                "As you are aware the no-surprises act prohibits balance billing and similar practices in the majority of emergency cases (see https://www.cms.gov/newsroom/fact-sheets/no-surprises-understand-your-rights-against-surprise-medical-bills)"
+            ]
         else:
-            return ""
+            return [""]
 
 
 # This is related to why weren't you able to get a prior auth.
@@ -347,10 +353,10 @@ class GenderAffirmingCareBreastAugmentationQuestions(GenderAffirmingCareQuestion
     def plan_context(self, denial: Denial):
         if self.wpath_version(denial) == "7":
             return """The plan references version 7 of the WPATH SOC. As covered on P59 of the WPATH 7 SOC the only requirements for breast augmentation is 1. Persistent, well-documented gender dysphoria;
-2. Capacity to make a fully informed decision and to consent for treatment;
-3. Age of majority in a given country (if younger, follow the SOC for children and adolescents);
-4. If significant medical or mental health concerns are present, they must be reasonably well
-controlled."""
+            2. Capacity to make a fully informed decision and to consent for treatment;
+            3. Age of majority in a given country (if younger, follow the SOC for children and adolescents);
+            4. If significant medical or mental health concerns are present, they must be reasonably well
+            controlled."""
 
 
 class PreventiveCareQuestions(InsuranceQuestions):
@@ -427,15 +433,15 @@ class ThirdPartyQuestions(InsuranceQuestions):
     def preface(self):
         if "is_known_3rd_party" in self.cleaned_data:
             if self.prof_pov:
-                return (
+                return [
                     "As requested, I am providing details regarding third-party insurance coverage for this claim: "
                     + self.cleaned_data["alternate_insurance_details"]
                     + ". Please ensure that all relevant coordination of benefits is considered in the review of this claim."
-                )
-            return (
+                ]
+            return [
                 "As requested, the third-party insurance is "
                 + self.cleaned_data["alternate_insurance_details"]
-            )
+            ]
         return super().preface()
 
 
