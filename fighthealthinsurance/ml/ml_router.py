@@ -69,6 +69,15 @@ class MLRouter(object):
         else:
             return self.internal_models_by_cost
 
+    def generate_text_backends(self) -> list[RemoteModelLike]:
+        """Return models for text generation tasks like prior authorization and ongoing chat."""
+        # First try to find specific text generation models
+        if "meta-llama/Llama-4-Scout-17B-16E-Instruct" in self.models_by_name:
+            return self.cheapest("meta-llama/Llama-4-Scout-17B-16E-Instruct")
+
+        # Fall back to any available models
+        return self.all_models_by_cost[:3] if self.all_models_by_cost else []
+
     def full_qa_backends(self, use_external=False) -> list[RemoteModelLike]:
         """
         Return models for handling question-answer pairs for appeal generation.

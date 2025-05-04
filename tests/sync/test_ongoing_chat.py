@@ -1,6 +1,7 @@
 """Test the ongoing chat functionality"""
 
 import json
+import typing
 import pytest
 from channels.testing import WebsocketCommunicator
 

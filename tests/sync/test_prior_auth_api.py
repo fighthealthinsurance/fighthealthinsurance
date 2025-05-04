@@ -1,6 +1,7 @@
 """Test the prior authorization API functionality"""
 
 import json
+import typing
 import pytest
 import uuid
 from channels.testing import WebsocketCommunicator

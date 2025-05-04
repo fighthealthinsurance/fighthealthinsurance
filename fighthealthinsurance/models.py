@@ -9,6 +9,7 @@ from loguru import logger
 
 from django.conf import settings
 from django.db import models
+from django.db.models import Q
 from django.db.models.functions import Now
 from django_prometheus.models import ExportModelOperationsMixin
 from django_encrypted_filefield.fields import EncryptedFileField
@@ -932,8 +933,12 @@ class OngoingChat(models.Model):
     professional_user = models.ForeignKey(
         ProfessionalUser, on_delete=models.SET_NULL, null=True
     )
-    chat_history = models.JSONField(default=list, null=True, blank=True)
-    summary_for_next_call = models.JSONField(null=True, blank=True)
+    chat_history = models.JSONField(
+        default=list, null=True, blank=True
+    )  # JSON List of strings
+    summary_for_next_call = models.JSONField(
+        null=True, blank=True
+    )  # JSON List of strings
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     domain = models.ForeignKey(

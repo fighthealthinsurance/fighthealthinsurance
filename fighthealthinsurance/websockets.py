@@ -1,10 +1,19 @@
 import json
+import uuid
 from loguru import logger
 import asyncio
+from django.utils import timezone
+from asgiref.sync import sync_to_async
 
 from channels.generic.websocket import AsyncWebsocketConsumer
 
 from fighthealthinsurance import common_view_logic
+from fighthealthinsurance.models import (
+    PriorAuthRequest,
+    ProposedPriorAuth,
+    OngoingChat,
+    ProfessionalUser,
+)
 
 
 class StreamingAppealsBackend(AsyncWebsocketConsumer):
@@ -197,17 +206,16 @@ class PriorAuthConsumer(AsyncWebsocketConsumer):
 
         # Add Q&A pairs
         if questions and answers:
-            for i, (question, _) in enumerate(questions):
-                if i < len(answers) and answers.get(str(i)):
-                    context["qa_pairs"].append(
-                        {"question": question, "answer": answers.get(str(i), "")}
-                    )
+            for question, answer in zip(questions, answers):
+                # Only include questions that have answers
+                if question and answer:
+                    context["qa_pairs"].append({"question": question, "answer": answer})
 
         # Get available models
         models = ml_router.generate_text_backends()
 
         # Generate 2-3 different proposals
-        num_proposals = min(len(models), 3)
+        num_proposals = max(min(len(models), 3), 2)
 
         for i in range(num_proposals):
             # Select different models for variety
@@ -357,86 +365,57 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
             summary_for_next_call={},
         )
 
-    def _add_message_to_history(self, chat, role, content):
-        """Add a message to the chat history."""
-        if not chat.chat_history:
-            chat.chat_history = []
-
-        chat.chat_history.append(
-            {"role": role, "content": content, "timestamp": timezone.now().isoformat()}
-        )
-        chat.save()
-        return chat
-
     async def _generate_llm_response(self, chat, message):
         """Generate a response from the LLM."""
         from fighthealthinsurance.ml.ml_router import ml_router
 
-        # Get the available text generation model
-        models = ml_router.generate_text_backends()
+        # Get the available *internal* text generation model
+        models = ml_router.internal_models_by_cost
         if not models:
             return "Sorry, no language models are currently available."
 
-        model = models[0]  # Use the first available model
+        context = None
+        if chat.summary_for_next_call and len(chat.summary_for_next_call) > 0:
+            context = chat.summary_for_next_call[-1]
 
-        # Prepare the system prompt
-        system_prompt = """
-        You are an AI assistant helping a healthcare professional with insurance and medical questions.
-        Provide accurate, helpful, and concise information.
-        Use professional language appropriate for healthcare settings.
-        After your response, add the symbol 🐼 followed by CONTEXT: and then a brief summary of
-        this conversation that will help you maintain context in future messages.
-        The user will not see the content after the 🐼 symbol.
-        """
-
-        # Prepare the conversation history
-        history = [{"role": "system", "content": system_prompt}]
-
-        # Add context from previous summary if available
-        if chat.summary_for_next_call:
-            prev_context = chat.summary_for_next_call.get("summary", "")
-            if prev_context:
-                history.append(
-                    {"role": "system", "content": f"Previous context: {prev_context}"}
+        for model in models:
+            try:
+                # Add our current chat message to the chat history
+                if not chat.chat_history:
+                    chat.chat_history = []
+                chat.chat_history.append(
+                    {
+                        "role": "user",
+                        "content": message,
+                        "timestamp": timezone.now().isoformat(),
+                    }
                 )
-
-        # Add chat history (last few messages only)
-        if chat.chat_history:
-            # Only include the last 10 messages to avoid context overflow
-            for msg in chat.chat_history[-10:]:
-                history.append({"role": msg["role"], "content": msg["content"]})
-
-        # Add the current message
-        history.append({"role": "user", "content": message})
-
-        try:
-            # Generate response
-            response = await model.generate_chat_response(history)
-
-            # Extract the response text and context summary
-            if "🐼" in response:
-                response_text, context_part = response.split("🐼", 1)
-                context_summary = context_part.replace("CONTEXT:", "").strip()
-
+                # Generate the response using the model
+                (response_text, context_part) = await model.generate_chat_response(
+                    message, context=context
+                )
                 # Save the context summary
-                await sync_to_async(self._update_context_summary)(chat, context_summary)
+                if context_part:
+                    if chat.summary_for_next_call:
+                        chat.summary_for_next_call.append(context_part)
+                    else:
+                        chat.summary_for_next_call = [context_part]
 
-                # Add the assistant's response to the chat history
-                await sync_to_async(self._add_message_to_history)(
-                    chat, "assistant", response_text.strip()
-                )
+                if response_text:
+                    # Add the assistant's response to the chat history
+                    chat.chat_history.append(
+                        {
+                            "role": "assistant",
+                            "content": response_text,
+                            "timestamp": timezone.now().isoformat(),
+                        }
+                    )
+                    await chat.asave()
+                    return response_text.strip()
 
-                return response_text.strip()
-            else:
-                # If no separator, use the whole response
-                await sync_to_async(self._add_message_to_history)(
-                    chat, "assistant", response
-                )
-                return response
-
-        except Exception as e:
-            logger.opt(exception=True).debug(f"Error generating LLM response: {e}")
-            return "Sorry, I encountered an error while processing your request."
+            except Exception as e:
+                logger.opt(exception=True).debug(f"Error generating LLM response: {e}")
+        return "Sorry, I encountered an error while processing your request."
 
     def _update_context_summary(self, chat, summary):
         """Update the context summary for the chat."""
