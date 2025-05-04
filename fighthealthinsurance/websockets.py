@@ -135,10 +135,6 @@ class PriorAuthConsumer(AsyncWebsocketConsumer):
             # Update status
             await self._update_prior_auth_status(prior_auth, "prior_auth_requested")
 
-            # Fetch the related created_for & creator fields
-            created_for = prior_auth.creator_professional_user
-            creator = prior_auth.creator_professional_user
-
             # Generate proposals
             generator = self.pag.generate_prior_auth_proposals(prior_auth)
 
@@ -310,9 +306,3 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
             except Exception as e:
                 logger.opt(exception=True).debug(f"Error generating LLM response: {e}")
         return "Sorry, I encountered an error while processing your request."
-
-    def _update_context_summary(self, chat, summary):
-        """Update the context summary for the chat."""
-        chat.summary_for_next_call = {"summary": summary}
-        chat.save()
-        return chat
