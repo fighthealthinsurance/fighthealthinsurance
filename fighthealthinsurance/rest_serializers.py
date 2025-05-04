@@ -33,10 +33,14 @@ class DictionaryListField(serializers.ListField):
     child = serializers.DictField(child=serializers.CharField())
 
 
+class DictionaryStringField(serializers.DictField):
+    child = serializers.CharField()
+
+
 # Common View Logic Results
 class NextStepInfoSerizableSerializer(serializers.Serializer):
     outside_help_details = StringListField()
-    combined_form = DictionaryListField()
+    combined_form = DictionaryStringField()
     semi_sekret = serializers.CharField()
 
 
@@ -546,7 +550,7 @@ class PriorAuthAnswersSerializer(serializers.Serializer):
     """Serializer for submitting answers to prior authorization questions."""
 
     token = serializers.CharField(required=True)
-    answers = serializers.JSONField(required=True)
+    answers = DictionaryListField()
 
 
 class PriorAuthSelectSerializer(serializers.Serializer):

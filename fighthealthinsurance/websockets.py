@@ -89,7 +89,9 @@ class PriorAuthConsumer(AsyncWebsocketConsumer):
     """Streaming back the proposed prior authorizations as JSON."""
 
     def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         self.pag = prior_auth_generator
+        self.groups = []
 
     async def connect(self):
         logger.debug("Accepting connection for prior auth streaming")
@@ -114,9 +116,7 @@ class PriorAuthConsumer(AsyncWebsocketConsumer):
 
         # Get the prior auth request
         try:
-            prior_auth = await sync_to_async(self._get_prior_auth_request)(
-                prior_auth_id, token
-            )
+            prior_auth = await self._get_prior_auth_request(prior_auth_id, token)
             if not prior_auth:
                 await self.send(json.dumps({"error": "Invalid token or prior auth ID"}))
                 await self.close()
@@ -133,16 +133,14 @@ class PriorAuthConsumer(AsyncWebsocketConsumer):
             )
 
             # Update status
-            await sync_to_async(self._update_prior_auth_status)(
-                prior_auth, "prior_auth_requested"
-            )
+            await self._update_prior_auth_status(prior_auth, "prior_auth_requested")
 
             # Fetch the related created_for & creator fields
             created_for = prior_auth.creator_professional_user
             creator = prior_auth.creator_professional_user
 
             # Generate proposals
-            generator = self.pag._generate_prior_auth_proposals(prior_auth)
+            generator = self.pag.generate_prior_auth_proposals(prior_auth)
 
             # We do a try/except here to log since the WS framework may swallow exceptions
             try:
@@ -167,20 +165,23 @@ class PriorAuthConsumer(AsyncWebsocketConsumer):
             await self.send(json.dumps({"error": f"Server error: {str(e)}"}))
             await self.close()
 
-    def _get_prior_auth_request(self, prior_auth_id, token):
+    async def _get_prior_auth_request(self, prior_auth_id, token):
         """Get the prior auth request and validate the token."""
         try:
-            prior_auth = PriorAuthRequest.objects.get(id=prior_auth_id)
-            if str(prior_auth.token) != str(token):
-                return None
+            prior_auth = await PriorAuthRequest.objects.select_related(
+                "creator_professional_user",
+                "created_for_professional_user",
+                "created_for_professional_user__user",
+                "creator_professional_user__user",
+            ).aget(id=prior_auth_id, token=token)
             return prior_auth
         except PriorAuthRequest.DoesNotExist:
             return None
 
-    def _update_prior_auth_status(self, prior_auth, status):
+    async def _update_prior_auth_status(self, prior_auth, status):
         """Update the status of the prior auth request."""
         prior_auth.status = status
-        prior_auth.save()
+        await prior_auth.asave()
         return prior_auth
 
     def _create_proposal(self, prior_auth, proposed_id, text):

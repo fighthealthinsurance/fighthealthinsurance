@@ -286,8 +286,8 @@ class PriorAuthWebSocketTest(APITestCase):
                 ["Have they tried other DMARDs?", ""],
             ],
             answers={
-                "0": "Patient diagnosed 3 years ago",
-                "1": "Yes, tried methotrexate with inadequate response",
+                "How long has the patient had this condition?": "Patient diagnosed 3 years ago",
+                "Have they tried other DMARDs?": "Yes, tried methotrexate with inadequate response",
             },
         )
 
