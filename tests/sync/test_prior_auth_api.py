@@ -127,7 +127,7 @@ class PriorAuthAPITest(APITestCase):
             ],
         )
 
-        url = reverse("prior-auth-answers", args=[str(prior_auth.id)])
+        url = reverse("prior-auth-submit_answers", args=[str(prior_auth.id)])
         data = {
             "token": str(prior_auth.token),
             "answers": {
@@ -168,7 +168,7 @@ class PriorAuthAPITest(APITestCase):
             prior_auth_request=prior_auth, text="Proposal 2 text here"
         )
 
-        url = reverse("prior-auth-select", args=[str(prior_auth.id)])
+        url = reverse("prior-auth-select_proposal", args=[str(prior_auth.id)])
         data = {
             "token": str(prior_auth.token),
             "proposed_id": str(proposal2.proposed_id),

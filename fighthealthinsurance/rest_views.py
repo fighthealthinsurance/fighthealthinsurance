@@ -1181,7 +1181,7 @@ class PriorAuthViewSet(viewsets.ViewSet, SerializerMixin):
             return prior_auth
 
     @extend_schema(responses=serializers.PriorAuthRequestSerializer)
-    @action(detail=True, methods=["post"], url_path="answers")
+    @action(detail=True, methods=["post"])
     def submit_answers(self, request: Request, pk=None) -> Response:
         """Submit answers to the questions for a prior authorization request."""
         current_user: User = request.user  # type: ignore
@@ -1213,7 +1213,7 @@ class PriorAuthViewSet(viewsets.ViewSet, SerializerMixin):
         )
 
     @extend_schema(responses=serializers.SuccessSerializer)
-    @action(detail=True, methods=["post"], url_path="select")
+    @action(detail=True, methods=["post"])
     def select_proposal(self, request: Request, pk=None) -> Response:
         """Select a proposed prior authorization as the final version."""
         current_user: User = request.user  # type: ignore
