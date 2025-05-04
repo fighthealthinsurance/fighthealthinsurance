@@ -3,6 +3,7 @@
 import json
 import typing
 import pytest
+from unittest.mock import patch, MagicMock
 from channels.testing import WebsocketCommunicator
 
 from django.urls import reverse
@@ -20,6 +21,7 @@ from fighthealthinsurance.models import (
 )
 from fighthealthinsurance.websockets import OngoingChatConsumer
 from fhi_users.models import ProfessionalDomainRelation
+from .mock_chat_model import MockChatModel
 
 from asgiref.sync import sync_to_async, async_to_sync
 
@@ -32,8 +34,27 @@ else:
 class OngoingChatWebSocketTest(APITestCase):
     """Test the WebSocket endpoints for ongoing chat."""
 
+    async def asyncSetUp(self):
+        """Set up the test environment with mocks."""
+        # Create a mock model instance
+        self.mock_model = MockChatModel()
+
+        # Patch the get_chat_backends method to return our mock model
+        self.get_chat_backends_patcher = patch(
+            "fighthealthinsurance.ml.ml_router.MLRouter.get_chat_backends"
+        )
+        self.mock_get_chat_backends = self.get_chat_backends_patcher.start()
+        self.mock_get_chat_backends.return_value = [self.mock_model]
+
+    async def asyncTearDown(self):
+        """Clean up the test environment."""
+        self.get_chat_backends_patcher.stop()
+
     async def test_ongoing_chat_websocket(self):
         """Test that the ongoing chat WebSocket connection works and generates responses."""
+        # Set up the async environment
+        await self.asyncSetUp()
+
         # Create a user
         user = await sync_to_async(User.objects.create_user)(
             username="testuser", password="testpass", email="test@example.com"
@@ -57,9 +78,9 @@ class OngoingChatWebSocketTest(APITestCase):
                     "timestamp": "2025-01-01T12:01:00Z",
                 },
             ],
-            summary_for_next_call={
-                "summary": "Professional is asking about appealing a denied MRI claim. I provided basic appeal steps."
-            },
+            summary_for_next_call=[
+                "Professional is asking about appealing a denied MRI claim. I provided basic appeal steps."
+            ],
         )
 
         # Connect to the WebSocket with authenticated user
@@ -107,10 +128,19 @@ class OngoingChatWebSocketTest(APITestCase):
 
         # Verify context summary was updated
         self.assertIsNotNone(chat.summary_for_next_call)
-        self.assertIn("summary", chat.summary_for_next_call)
+        self.assertIn(
+            "Professional is asking about appealing a denied MRI claim. I provided basic appeal steps.",
+            chat.summary_for_next_call,
+        )
+
+        # Clean up
+        await self.asyncTearDown()
 
     async def test_start_new_chat(self):
         """Test starting a new chat without providing a chat ID."""
+        # Set up the async environment
+        await self.asyncSetUp()
+
         # Create a user
         user = await sync_to_async(User.objects.create_user)(
             username="testuser", password="testpass", email="test@example.com"
@@ -162,8 +192,14 @@ class OngoingChatWebSocketTest(APITestCase):
         )
         self.assertEqual(chat.chat_history[1]["role"], "assistant")
 
+        # Clean up
+        await self.asyncTearDown()
+
     async def test_authentication_required(self):
         """Test that authentication is required for the chat WebSocket."""
+        # Set up the async environment
+        await self.asyncSetUp()
+
         # Connect to the WebSocket without an authenticated user
         communicator = WebsocketCommunicator(
             OngoingChatConsumer.as_asgi(), "/ws/ongoing-chat/"
@@ -187,3 +223,6 @@ class OngoingChatWebSocketTest(APITestCase):
 
         # Disconnect
         await communicator.disconnect()
+
+        # Clean up
+        await self.asyncTearDown()
