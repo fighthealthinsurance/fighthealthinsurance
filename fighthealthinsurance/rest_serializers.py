@@ -1,6 +1,8 @@
 from django import forms
 from django.urls import reverse
 
+from loguru import logger
+
 from drf_braces.serializers.form_serializer import (
     FormSerializer,
 )
@@ -604,7 +606,7 @@ class PriorAuthRequestSerializer(serializers.ModelSerializer):
                 questions[k] = v
             return questions
         except Exception as e:
-            logger.opts(exception=True).debug("Error serializing questions")
+            logger.opt(exception=True).debug("Error serializing questions")
             return {}
 
     @extend_schema_field(serializers.CharField())
