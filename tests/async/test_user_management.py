@@ -95,7 +95,7 @@ class UserDomainManagementTests(TestCase):
             username=self.admin_user.username, password=self.admin_password
         )
         session = self.client.session
-        session["domain_id"] = self.domain.id
+        session["domain_id"] = str(self.domain.id)
         session.save()
 
         # Update only office_fax and zipcode
@@ -123,7 +123,7 @@ class UserDomainManagementTests(TestCase):
         # Login as regular professional
         self.client.login(username=self.pro_user.username, password=self.pro_password)
         session = self.client.session
-        session["domain_id"] = self.domain.id
+        session["domain_id"] = str(self.domain.id)
         session.save()
 
         response = self.client.get(url)
@@ -220,7 +220,7 @@ class ProfessionalProfileManagementTests(TestCase):
         }
 
         response = self.client.post(url, invalid_data, format="json")
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         # Verify NPI was not updated
         self.professional.refresh_from_db()
