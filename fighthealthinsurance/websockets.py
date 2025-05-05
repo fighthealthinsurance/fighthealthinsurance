@@ -143,8 +143,14 @@ class PriorAuthConsumer(AsyncWebsocketConsumer):
                 await asyncio.sleep(1)
                 async for proposal in generator:
                     await asyncio.sleep(0)  # Allow other tasks to run
-                    logger.debug(f"Sending proposal {proposal['proposed_id']}")
-                    await self.send(json.dumps(proposal))
+                    if "proposed_id" in proposal:
+                        logger.debug(f"Sending proposal {proposal['proposed_id']}")
+                        await self.send(json.dumps(proposal))
+                        logger.debug(f"Sent!")
+                    elif "error" in proposal:
+                        logger.error(f"Error in proposal: {proposal['error']}")
+                    else:
+                        logger.debug(f"Malformed proposal {proposal}")
                     await asyncio.sleep(0)
             except Exception as e:
                 logger.opt(exception=True).debug(
