@@ -1901,7 +1901,36 @@ class PasswordViewSet(viewsets.ViewSet, SerializerMixin):
         try:
             serializer = self.deserialize(data=request.data)
             serializer.is_valid(raise_exception=True)
-            serializer.save()
+            current_user: User = request.user  # type: ignore
+            # Check the user is authenticated
+            if not current_user.is_authenticated:
+                return Response(
+                    common_serializers.ErrorSerializer(
+                        {"error": "User is not authenticated"}
+                    ).data,
+                    status=status.HTTP_401_UNAUTHORIZED,
+                )
+            # Check the old password is correct
+            if not current_user.check_password(
+                serializer.validated_data["current_password"]
+            ):
+                return Response(
+                    common_serializers.ErrorSerializer(
+                        {"error": "Current password is incorrect"}
+                    ).data,
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            # Validate the new password
+            if not validate_password(serializer.validated_data["new_password"]):
+                return Response(
+                    common_serializers.ErrorSerializer(
+                        {"error": "Invalid new password"}
+                    ).data,
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            # Change the password
+            current_user.set_password(serializer.validated_data["new_password"])
+            current_user.save()
 
             return Response(
                 serializers.StatusResponseSerializer(

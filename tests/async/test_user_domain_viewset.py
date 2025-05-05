@@ -119,6 +119,8 @@ class UserDomainViewSetTests(TestCase):
             "office_fax": "5551234567",
             "address1": "456 New St",
             "city": "New City",
+            "zipcode": "54321",
+            "state": "NY",
         }
 
         # Unauthenticated request should fail
@@ -240,7 +242,7 @@ class PasswordViewSetTests(TestCase):
             is_active=True,
         )
 
-    def test_change_password(self) -> None:
+    def test_change_password_correct(self) -> None:
         """Test changing password works."""
         url = reverse("password-change-password")
         new_password = "newPassword456"

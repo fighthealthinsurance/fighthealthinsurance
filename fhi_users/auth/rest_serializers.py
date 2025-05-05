@@ -504,22 +504,3 @@ class ChangePasswordSerializer(serializers.Serializer):
 
     current_password = serializers.CharField(write_only=True, required=True)
     new_password = serializers.CharField(write_only=True, required=True)
-
-    def validate_current_password(self, value):
-        user = self.context["request"].user
-        if not user.check_password(value):
-            raise serializers.ValidationError("Current password is incorrect.")
-        return value
-
-    def validate_new_password(self, value):
-        if not validate_password(value):
-            raise serializers.ValidationError(
-                "Password must be at least 8 characters, contain at least one digit, and not all digits"
-            )
-        return value
-
-    def save(self, **kwargs: Any) -> User:
-        user: User = self.context["request"].user  # type: ignore
-        user.set_password(self.validated_data["new_password"])
-        user.save()
-        return user
