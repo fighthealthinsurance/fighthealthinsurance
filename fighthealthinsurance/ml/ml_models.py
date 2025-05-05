@@ -46,6 +46,10 @@ class RemoteModelLike(DenialBase):
         """
         pass
 
+    @property
+    def slow(self):
+        return False
+
     @abstractmethod
     async def _infer(
         self,
@@ -341,7 +345,7 @@ class RemoteOpenLike(RemoteModel):
         self.model = model
         self.system_prompts_map = system_prompts_map
         self.max_len = 4096 * 8
-        self._timeout = 90
+        self._timeout = 120
         self.invalid_diag_procedure_regex = re.compile(
             r"(not (available|provided|specified|applicable)|unknown|as per reviewer)",
             re.IGNORECASE,
@@ -502,7 +506,7 @@ class RemoteOpenLike(RemoteModel):
     ) -> List[Future[Tuple[str, Optional[str]]]]:
         logger.debug(f"Running inference on {self} of type {infer_type}")
         temperatures = [0.5]
-        if infer_type == "full" and not self._expensive:
+        if infer_type == "full" and not self._expensive and not self.slow():
             # Special case for the full one where we really want to explore the problem space
             temperatures = [0.6, 0.1]
         system_prompts = self.get_system_prompts(infer_type, prof_pov)
@@ -1429,6 +1433,14 @@ class NewRemoteInternal(RemoteFullOpenLike):
     @property
     def external(self):
         return False
+
+    @property
+    def slow(self):
+        """
+        We are slow because of partial off-loading.
+        Talk to Holden if youre interested :p
+        """
+        return True
 
     @classmethod
     def models(cls) -> List[ModelDescription]:
