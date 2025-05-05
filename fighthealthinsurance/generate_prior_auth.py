@@ -12,6 +12,7 @@ from asgiref.sync import sync_to_async, async_to_sync
 import random
 from fighthealthinsurance.exec import executor
 
+
 class PriorAuthGenerator:
     """
     Generator for prior authorization proposals using ML models.
@@ -38,10 +39,12 @@ class PriorAuthGenerator:
         treatment = prior_auth.treatment
         insurance_company = prior_auth.insurance_company
         # Convert the provider info, can result in a query through domain.
-        provider_info = await sync_to_async(str)((
-            prior_auth.created_for_professional_user
-            or prior_auth.creator_professional_user
-        ))
+        provider_info = await sync_to_async(str)(
+            (
+                prior_auth.created_for_professional_user
+                or prior_auth.creator_professional_user
+            )
+        )
         patient_health_history = prior_auth.patient_health_history
         questions = prior_auth.questions
         answers = prior_auth.answers
