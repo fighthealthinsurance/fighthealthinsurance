@@ -1410,7 +1410,7 @@ class RemoteHealthInsurance(RemoteFullOpenLike):
         return [
             ModelDescription(cost=1, name="fhi", internal_name=model_name),
             ModelDescription(
-                cost=2,
+                cost=10,
                 name="fhi",
                 internal_name=os.getenv("HEALTH_BACKUP_BACKEND_MODEL", model_name),
             ),
@@ -1446,7 +1446,7 @@ class NewRemoteInternal(RemoteFullOpenLike):
     def models(cls) -> List[ModelDescription]:
         model_name = os.getenv("NEW_HEALTH_BACKEND_MODEL", "/models/fhi-2025-may-0.1")
         return [
-            ModelDescription(cost=0, name="fhi-2025-may-0.1", internal_name=model_name),
+            ModelDescription(cost=2, name="fhi-2025-may-0.1", internal_name=model_name),
         ]
 
 

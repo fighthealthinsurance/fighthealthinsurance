@@ -68,7 +68,7 @@ class PriorAuthGenerator:
 
         # Maximum number of models to use (2-3 is typically good)
         num_models = max(min(len(models), 3), 2)
-        selected_models = random.choices(models, k=num_models)
+        selected_models = models[0:num_models]
 
         # Create tasks for concurrent generation
         futures: List[Future[Dict[str, Any]]] = []
