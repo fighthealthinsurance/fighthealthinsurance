@@ -10,6 +10,9 @@ from fhi_users.auth.rest_auth_views import (
     PatientUserViewSet,
     VerifyEmailViewSet,
     PasswordResetViewSet,
+    UserDomainViewSet,
+    ProfessionalUserUpdateViewSet,
+    PasswordViewSet,
 )
 from rest_framework import routers
 
@@ -32,6 +35,13 @@ router.register(r"whoami", rest_auth_views.WhoAmIViewSet, basename="whoami")
 router.register(
     r"domain_exists", rest_auth_views.UserDomainExistsViewSet, basename="domain_exists"
 )
+router.register(r"user_domain", UserDomainViewSet, basename="user_domain")
+router.register(
+    r"professional_profile",
+    ProfessionalUserUpdateViewSet,
+    basename="professional_profile",
+)
+router.register(r"password", PasswordViewSet, basename="password")
 
 urlpatterns = [
     # Rest APIs served under here
