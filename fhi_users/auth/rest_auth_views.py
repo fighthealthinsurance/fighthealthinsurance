@@ -1748,7 +1748,7 @@ class UserDomainViewSet(viewsets.ViewSet, SerializerMixin):
                 )
 
             domain = get_object_or_404(UserDomain, id=domain_id)
-            serializer = self.get_serializer(domain)
+            serializer = serializers.UserDomainSerializer(domain)
             return Response(serializer.data)
 
         except Exception as e:
@@ -1792,11 +1792,11 @@ class UserDomainViewSet(viewsets.ViewSet, SerializerMixin):
                 )
 
             domain = get_object_or_404(UserDomain, id=domain_id)
-            serializer = self.deserialize(
-                data=request.data, instance=domain, partial=True
-            )
+            serializer = self.deserialize(data=request.data)
             serializer.is_valid(raise_exception=True)
-            serializer.save()
+            for attr, value in serializer.validated_data.items():
+                setattr(domain, attr, value)
+            domain.save()
 
             return Response(
                 serializers.StatusResponseSerializer(
@@ -1851,11 +1851,11 @@ class ProfessionalUserUpdateViewSet(viewsets.ViewSet, SerializerMixin):
                     status=status.HTTP_404_NOT_FOUND,
                 )
 
-            serializer = self.deserialize(
-                data=request.data, instance=professional_user, partial=True
-            )
+            serializer = self.deserialize(data=request.data)
             serializer.is_valid(raise_exception=True)
-            serializer.save()
+            for attr, value in serializer.validated_data.items():
+                setattr(professional_user, attr, value)
+            professional_user.save()
 
             return Response(
                 serializers.StatusResponseSerializer(
@@ -1899,9 +1899,7 @@ class PasswordViewSet(viewsets.ViewSet, SerializerMixin):
         Change the user's password.
         """
         try:
-            serializer = self.deserialize(
-                data=request.data, context={"request": request}
-            )
+            serializer = self.deserialize(data=request.data)
             serializer.is_valid(raise_exception=True)
             serializer.save()
 

@@ -518,8 +518,8 @@ class ChangePasswordSerializer(serializers.Serializer):
             )
         return value
 
-    def save(self):
-        user = self.context["request"].user
+    def save(self, **kwargs: Any) -> User:
+        user: User = self.context["request"].user  # type: ignore
         user.set_password(self.validated_data["new_password"])
         user.save()
         return user
