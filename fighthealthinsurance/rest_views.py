@@ -1091,9 +1091,10 @@ class PriorAuthViewSet(viewsets.ViewSet, SerializerMixin):
         if domain_id:
             domain = get_object_or_404(UserDomain, id=domain_id)
 
-        patient_name = None
+        # It should allow nulls but it's being difficult and not allowing it
+        patient_name = ""
         if "patient_name" in serializer.validated_data:
-            patient_name = serializer.validated_data["patient_name"]
+            patient_name = serializer.validated_data["patient_name"] or ""
 
         # Create the prior auth request
         prior_auth = PriorAuthRequest.objects.create(
