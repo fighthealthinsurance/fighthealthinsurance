@@ -856,6 +856,10 @@ class PriorAuthRequest(ExportModelOperationsMixin("PriorAuthRequest"), models.Mo
     insurance_company = models.TextField()
     patient_health_history = models.TextField(blank=True)
 
+    # Patient information
+    patient_name = models.TextField(blank=True, null=True)
+    plan_id = models.TextField(blank=True, null=True)
+
     # Mode selection for the request
     MODE_CHOICES = (
         ("guided", "Guided"),

@@ -65,6 +65,15 @@ else
    echo 'No connection to kube vllm health svc'
 fi
 
+if kubectl get service -n totallylegitco vllm-health-svc-slipstream; then
+   export NEW_HEALTH_BACKEND_PORT=4281
+   export NEW_HEALTH_BACKEND_HOST=localhost
+   kubectl port-forward -n totallylegitco service/vllm-health-svc-slipstream 4281:80 &
+else
+   echo 'No connection to _new_ kube vllm health svc'
+fi
+
+
 python manage.py migrate
 python manage.py loaddata initial
 python manage.py loaddata followup
