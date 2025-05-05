@@ -95,16 +95,9 @@ class RemoteModelLike(DenialBase):
             Generated response or None
         """
         system_prompt = "You are an AI assistant helping a healthcare professional with insurance and medical questions. Provide accurate, helpful, and concise information."
-        result = await self._checked_infer(
-            system_prompt=system_prompt,
+        result = await self._infer(
+            system_prompts=[system_prompt],
             prompt=prompt,
-            pubmed_context=None,  # TODO: Add
-            ml_citations_context=None,  # TODO: Add
-            patient_context=None,  # TODO: Add
-            plan_context=None,
-            temperature=0.7,
-            infer_type="prior_auth",
-            prof_pov=True,
         )
         if result:
             return result[0]
@@ -655,6 +648,32 @@ class RemoteOpenLike(RemoteModel):
         if self.invalid_diag_procedure_regex.search(response):
             return None
         return self.diagnosis_response_regex.sub("", response)
+
+    async def generate_prior_auth_response(self, prompt: str) -> Optional[str]:
+        """
+        Generate a prior authorization response from the model.
+
+        Args:
+            prompt: The prompt for the model
+
+        Returns:
+            Generated response or None
+        """
+        system_prompt = "You are an AI assistant helping a healthcare professional with insurance and medical questions. Provide accurate, helpful, and concise information."
+        result = await self._checked_infer(
+            system_prompt=system_prompt,
+            prompt=prompt,
+            pubmed_context=None,  # TODO: Add
+            ml_citations_context=None,  # TODO: Add
+            patient_context=None,  # TODO: Add
+            plan_context=None,
+            temperature=0.7,
+            infer_type="prior_auth",
+            prof_pov=True,
+        )
+        if result:
+            return result[0]
+        return None
 
     async def get_fax_number(self, denial: str) -> Optional[str]:
         result = await self._infer_no_context(

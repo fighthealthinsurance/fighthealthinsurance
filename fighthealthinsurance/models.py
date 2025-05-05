@@ -846,7 +846,7 @@ class PriorAuthRequest(ExportModelOperationsMixin("PriorAuthRequest"), models.Mo
         null=True,
         related_name="prior_auth_requests_created_for",
     )
-    patient_name = models.TextField(blank=True)
+    patient_name = models.TextField(blank=True, null=True)
     domain = models.ForeignKey(
         UserDomain, on_delete=models.SET_NULL, null=True, blank=True
     )
