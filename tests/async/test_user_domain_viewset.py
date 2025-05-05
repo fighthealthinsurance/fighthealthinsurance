@@ -90,7 +90,7 @@ class UserDomainViewSetTests(TestCase):
             username=self.admin_user.username, password=self.admin_password
         )
         session = self.client.session
-        session["domain_id"] = self.domain.id
+        session["domain_id"] = str(self.domain.id)
         session.save()
 
         response = self.client.get(url)
@@ -104,7 +104,7 @@ class UserDomainViewSetTests(TestCase):
             username=self.regular_user.username, password=self.user_password
         )
         session = self.client.session
-        session["domain_id"] = self.domain.id
+        session["domain_id"] = str(self.domain.id)
         session.save()
 
         response = self.client.get(url)
@@ -130,7 +130,7 @@ class UserDomainViewSetTests(TestCase):
             username=self.regular_user.username, password=self.user_password
         )
         session = self.client.session
-        session["domain_id"] = self.domain.id
+        session["domain_id"] = str(self.domain.id)
         session.save()
 
         response = self.client.post(url, update_data, format="json")
@@ -142,7 +142,7 @@ class UserDomainViewSetTests(TestCase):
             username=self.admin_user.username, password=self.admin_password
         )
         session = self.client.session
-        session["domain_id"] = self.domain.id
+        session["domain_id"] = str(self.domain.id)
         session.save()
 
         response = self.client.post(url, update_data, format="json")
