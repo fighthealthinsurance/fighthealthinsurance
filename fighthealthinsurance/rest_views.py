@@ -1091,6 +1091,10 @@ class PriorAuthViewSet(viewsets.ViewSet, SerializerMixin):
         if domain_id:
             domain = get_object_or_404(UserDomain, id=domain_id)
 
+        patient_name = None
+        if "patient_name" in serializer.validated_data:
+            patient_name = serializer.validated_data["patient_name"]
+
         # Create the prior auth request
         prior_auth = PriorAuthRequest.objects.create(
             creator_professional_user=professional_user,
@@ -1098,6 +1102,7 @@ class PriorAuthViewSet(viewsets.ViewSet, SerializerMixin):
             diagnosis=serializer.validated_data["diagnosis"],
             treatment=serializer.validated_data["treatment"],
             insurance_company=serializer.validated_data["insurance_company"],
+            patient_name=patient_name,
             patient_health_history=serializer.validated_data.get(
                 "patient_health_history", ""
             ),

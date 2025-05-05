@@ -1394,6 +1394,31 @@ class RemoteHealthInsurance(RemoteFullOpenLike):
         ]
 
 
+class NewRemoteInternal(RemoteFullOpenLike):
+    def __init__(self, model: str):
+        self.port = os.getenv("NEW_HEALTH_BACKEND_PORT", "80")
+        self.host = os.getenv("NEW_HEALTH_BACKEND_HOST")
+        if self.host is None and self.backup_host is None:
+            raise Exception("Can not construct New FHI backend without a host")
+        self.url = None
+        if self.port is not None and self.host is not None:
+            self.url = f"http://{self.host}:{self.port}/v1"
+        else:
+            logger.debug(f"Error setting up remote health {self.host}:{self.port}")
+        super().__init__(self.url, token="", model=model)
+
+    @property
+    def external(self):
+        return False
+
+    @classmethod
+    def models(cls) -> List[ModelDescription]:
+        model_name = os.getenv("NEW_HEALTH_BACKEND_MODEL", "/models/fhi-2025-may-0.1")
+        return [
+            ModelDescription(cost=0, name="fhi-2025-may-0.1", internal_name=model_name),
+        ]
+
+
 class RemotePerplexity(RemoteFullOpenLike):
     """Use RemotePerplexity for denial magic calls a service"""
 

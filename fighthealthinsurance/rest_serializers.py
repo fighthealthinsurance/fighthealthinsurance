@@ -542,9 +542,11 @@ class PriorAuthCreateSerializer(serializers.Serializer):
 
     diagnosis = serializers.CharField(required=True)
     treatment = serializers.CharField(required=True)
-    insurance_company = serializers.CharField(required=True)
+    insurance_company = serializers.CharField(required=False, allow_blank=True)
     mode = serializers.ChoiceField(choices=["guided", "raw"], default="guided")
     patient_health_history = serializers.CharField(required=False, allow_blank=True)
+    patient_name = serializers.CharField(required=False, allow_blank=True)
+    plan_id = serializers.CharField(required=False, allow_blank=True)
     creator_professional_user_id = serializers.IntegerField(required=False)
 
 
@@ -585,6 +587,9 @@ class PriorAuthRequestSerializer(serializers.ModelSerializer):
             "diagnosis",
             "treatment",
             "insurance_company",
+            "patient_health_history",
+            "patient_name",
+            "plan_id",
             "status",
             "token",
             "questions",
