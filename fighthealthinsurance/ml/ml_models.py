@@ -671,8 +671,8 @@ class RemoteOpenLike(RemoteModel):
             infer_type="prior_auth",
             prof_pov=True,
         )
-        if result:
-            return result[0]
+        if result and len(result) > 0:
+            return result[0][1]
         return None
 
     async def get_fax_number(self, denial: str) -> Optional[str]:
@@ -1417,7 +1417,7 @@ class NewRemoteInternal(RemoteFullOpenLike):
     def __init__(self, model: str):
         self.port = os.getenv("NEW_HEALTH_BACKEND_PORT", "80")
         self.host = os.getenv("NEW_HEALTH_BACKEND_HOST")
-        if self.host is None and self.backup_host is None:
+        if self.host is None:
             raise Exception("Can not construct New FHI backend without a host")
         self.url = None
         if self.port is not None and self.host is not None:
