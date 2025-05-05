@@ -111,9 +111,9 @@ class UserDomainViewSetTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["name"], "testdomain")
 
-    def test_user_domain_update(self) -> None:
+    def test_user_domain_update_address(self) -> None:
         """Test updating domain info works for admin users only."""
-        url = reverse("user_domain-update")
+        url = reverse("user_domain-update-address")
         update_data = {
             "display_name": "Updated Domain Name",
             "office_fax": "5551234567",

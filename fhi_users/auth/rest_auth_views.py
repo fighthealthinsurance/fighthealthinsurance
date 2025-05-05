@@ -1767,9 +1767,9 @@ class UserDomainViewSet(viewsets.ViewSet, SerializerMixin):
         }
     )
     @action(detail=False, methods=["post"])
-    def update(self, request: Request) -> Response:
+    def update_address(self, request: Request) -> Response:
         """
-        Update domain information. Only admin users can update their domain.
+        Update domain address information. Only admin users can update their domain.
         """
         try:
             domain_id = auth_utils.get_domain_id_from_request(request)
