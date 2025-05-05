@@ -683,6 +683,16 @@ class AppealGenerator(object):
                 "ml_citations_context": ml_citations_context,
                 "prof_pov": prof_pov,
             },
+            {
+                "model_name": "fhi-2025-may-0.1",
+                "prompt": open_prompt,
+                "patient_context": medical_context,
+                "plan_context": plan_context,
+                "infer_type": "full",
+                "pubmed_context": pubmed_context,
+                "ml_citations_context": ml_citations_context,
+                "prof_pov": prof_pov,
+            },
         ]
 
         if denial.use_external:
