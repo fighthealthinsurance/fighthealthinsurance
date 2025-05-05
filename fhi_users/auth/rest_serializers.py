@@ -449,3 +449,77 @@ class MakeAdminSerializer(serializers.Serializer):
 
     professional_user_id = serializers.IntegerField()
     domain_id = serializers.CharField()
+
+
+class UpdateUserDomainSerializer(serializers.ModelSerializer):
+    """
+    Serializer for updating UserDomain information.
+    Limited to specific fields that can be modified by admin users.
+    """
+
+    class Meta:
+        model = UserDomain
+        fields = [
+            "address1",
+            "address2",
+            "city",
+            "state",
+            "zipcode",
+            "country",
+            "office_fax",
+            "default_procedure",
+            "cover_template_string",
+            "display_name",
+            "business_name",
+        ]
+
+
+class UpdateProfessionalUserSerializer(serializers.ModelSerializer):
+    """
+    Serializer for updating ProfessionalUser fields.
+    """
+
+    class Meta:
+        model = ProfessionalUser
+        fields = [
+            "npi_number",
+            "provider_type",
+            "most_common_denial",
+            "fax_number",
+            "display_name",
+        ]
+
+    def validate_npi_number(self, value):
+        # Only validate if a value is provided
+        if value and not re.match(r"^\d{10}$", str(value)):
+            raise serializers.ValidationError("Invalid NPI number format.")
+        return value
+
+
+class ChangePasswordSerializer(serializers.Serializer):
+    """
+    Serializer for changing a user's password.
+    Requires the current password for verification.
+    """
+
+    current_password = serializers.CharField(write_only=True, required=True)
+    new_password = serializers.CharField(write_only=True, required=True)
+
+    def validate_current_password(self, value):
+        user = self.context["request"].user
+        if not user.check_password(value):
+            raise serializers.ValidationError("Current password is incorrect.")
+        return value
+
+    def validate_new_password(self, value):
+        if not validate_password(value):
+            raise serializers.ValidationError(
+                "Password must be at least 8 characters, contain at least one digit, and not all digits"
+            )
+        return value
+
+    def save(self):
+        user = self.context["request"].user
+        user.set_password(self.validated_data["new_password"])
+        user.save()
+        return user

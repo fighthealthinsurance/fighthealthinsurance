@@ -1708,3 +1708,213 @@ class PasswordResetViewSet(ViewSet, SerializerMixin):
                 ).data,
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+
+class UserDomainViewSet(viewsets.ViewSet, SerializerMixin):
+    """
+    ViewSet for viewing and updating domain information.
+    Only admin users can make updates to their domain.
+    """
+
+    def get_serializer_class(self):
+        if self.action == "update":
+            return serializers.UpdateUserDomainSerializer
+        return serializers.UserDomainSerializer
+
+    def get_permissions(self):
+        permission_classes = [IsAuthenticated]
+        return [permission() for permission in permission_classes]
+
+    @method_decorator(cache_control(max_age=600, private=True))
+    @method_decorator(vary_on_cookie)
+    @extend_schema(
+        responses={
+            200: serializers.UserDomainSerializer,
+            404: common_serializers.ErrorSerializer,
+        }
+    )
+    def list(self, request: Request) -> Response:
+        """
+        Return domain information for the current user.
+        """
+        try:
+            domain_id = auth_utils.get_domain_id_from_request(request)
+            if not domain_id:
+                return Response(
+                    common_serializers.ErrorSerializer(
+                        {"error": "Domain ID not found in session"}
+                    ).data,
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            domain = get_object_or_404(UserDomain, id=domain_id)
+            serializer = self.get_serializer(domain)
+            return Response(serializer.data)
+
+        except Exception as e:
+            logger.opt(exception=e).error("Error retrieving domain information")
+            return Response(
+                common_serializers.ErrorSerializer({"error": str(e)}).data,
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+    @extend_schema(
+        responses={
+            200: serializers.UpdateUserDomainSerializer,
+            400: common_serializers.ErrorSerializer,
+            403: common_serializers.ErrorSerializer,
+            404: common_serializers.ErrorSerializer,
+        }
+    )
+    @action(detail=False, methods=["post"])
+    def update(self, request: Request) -> Response:
+        """
+        Update domain information. Only admin users can update their domain.
+        """
+        try:
+            domain_id = auth_utils.get_domain_id_from_request(request)
+            if not domain_id:
+                return Response(
+                    common_serializers.ErrorSerializer(
+                        {"error": "Domain ID not found in session"}
+                    ).data,
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            # Verify user is admin for this domain
+            current_user: User = request.user  # type: ignore
+            if not user_is_admin_in_domain(current_user, domain_id):
+                return Response(
+                    common_serializers.ErrorSerializer(
+                        {"error": "User does not have admin privileges"}
+                    ).data,
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+            domain = get_object_or_404(UserDomain, id=domain_id)
+            serializer = self.deserialize(
+                data=request.data, instance=domain, partial=True
+            )
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+
+            return Response(
+                serializers.StatusResponseSerializer(
+                    {"status": "success", "message": "Domain information updated"}
+                ).data,
+                status=status.HTTP_200_OK,
+            )
+
+        except Exception as e:
+            logger.opt(exception=e).error("Error updating domain information")
+            return Response(
+                common_serializers.ErrorSerializer({"error": str(e)}).data,
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class ProfessionalUserUpdateViewSet(viewsets.ViewSet, SerializerMixin):
+    """
+    ViewSet for updating professional user information.
+    Users can only update their own information.
+    """
+
+    def get_serializer_class(self):
+        return serializers.UpdateProfessionalUserSerializer
+
+    def get_permissions(self):
+        permission_classes = [IsAuthenticated]
+        return [permission() for permission in permission_classes]
+
+    @extend_schema(
+        responses={
+            200: serializers.StatusResponseSerializer,
+            400: common_serializers.ErrorSerializer,
+            403: common_serializers.ErrorSerializer,
+            404: common_serializers.ErrorSerializer,
+        }
+    )
+    @action(detail=False, methods=["post"])
+    def update_profile(self, request: Request) -> Response:
+        """
+        Update professional user profile information.
+        """
+        try:
+            current_user: User = request.user  # type: ignore
+            try:
+                professional_user = ProfessionalUser.objects.get(user=current_user)
+            except ProfessionalUser.DoesNotExist:
+                return Response(
+                    common_serializers.ErrorSerializer(
+                        {"error": "User is not a professional user"}
+                    ).data,
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            serializer = self.deserialize(
+                data=request.data, instance=professional_user, partial=True
+            )
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+
+            return Response(
+                serializers.StatusResponseSerializer(
+                    {"status": "success", "message": "Professional profile updated"}
+                ).data,
+                status=status.HTTP_200_OK,
+            )
+
+        except Exception as e:
+            logger.opt(exception=e).error(
+                "Error updating professional user information"
+            )
+            return Response(
+                common_serializers.ErrorSerializer({"error": str(e)}).data,
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class PasswordViewSet(viewsets.ViewSet, SerializerMixin):
+    """
+    ViewSet for changing user passwords.
+    Users can only change their own password.
+    """
+
+    def get_serializer_class(self):
+        return serializers.ChangePasswordSerializer
+
+    def get_permissions(self):
+        return [IsAuthenticated()]
+
+    @extend_schema(
+        responses={
+            200: serializers.StatusResponseSerializer,
+            400: common_serializers.ErrorSerializer,
+            401: common_serializers.ErrorSerializer,
+        }
+    )
+    @action(detail=False, methods=["post"])
+    def change_password(self, request: Request) -> Response:
+        """
+        Change the user's password.
+        """
+        try:
+            serializer = self.deserialize(
+                data=request.data, context={"request": request}
+            )
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+
+            return Response(
+                serializers.StatusResponseSerializer(
+                    {"status": "success", "message": "Password changed successfully"}
+                ).data,
+                status=status.HTTP_200_OK,
+            )
+
+        except Exception as e:
+            logger.opt(exception=e).error("Error changing password")
+            return Response(
+                common_serializers.ErrorSerializer({"error": str(e)}).data,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
