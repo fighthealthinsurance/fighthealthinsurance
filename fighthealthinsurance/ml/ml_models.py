@@ -323,12 +323,14 @@ class RemoteModel(RemoteModelLike):
         """
         Check if the result is a valid response based on the type of inference.
         """
-        logger.debug(f"Checking if result is ok: {result}")
+        logger.debug(f"Checking if result is ok for {infer_type}")
         if self.bad_result(result, infer_type):
             return False
         if prof_pov and not self.is_professional_tone(result):
+            logger.debug("Not professional")
             return False
         elif infer_type == "prior_auth" and not self.is_prior_auth(result):
+            logger.debug("Not prior auth")
             return False
         else:
             return True
@@ -537,6 +539,10 @@ class RemoteOpenLike(RemoteModel):
             "my medical condition",
             "my medical history",
             "my medical records",
+            "as a concerned parent",
+            "for my son",
+            "for my daughter",
+            "for my child",
         ]
         # If at least one professional phrase is present, accept
         result_lower = result.lower()
