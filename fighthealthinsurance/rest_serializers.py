@@ -562,6 +562,7 @@ class PriorAuthSelectSerializer(serializers.Serializer):
 
     token = serializers.CharField(required=True)
     proposed_id = serializers.CharField(required=True)
+    user_text = serializers.CharField(required=False, allow_blank=True)
 
 
 class ProposedPriorAuthSerializer(serializers.ModelSerializer):
@@ -621,6 +622,68 @@ class PriorAuthRequestSerializer(serializers.ModelSerializer):
             return obj.created_for_professional_user.get_display_name()
         elif obj.creator_professional_user:
             return obj.creator_professional_user.get_display_name()
+        return None
+
+
+class PriorAuthDetailSerializer(PriorAuthRequestSerializer):
+    """Detailed serializer for prior authorization requests."""
+
+    domain_info = serializers.SerializerMethodField()
+    creator_professional = serializers.SerializerMethodField()
+    created_for_professional = serializers.SerializerMethodField()
+
+    class Meta(PriorAuthRequestSerializer.Meta):
+        # Include all fields from the parent serializer plus the new fields
+        fields = PriorAuthRequestSerializer.Meta.fields + [
+            "domain_info",
+            "creator_professional",
+            "created_for_professional",
+            "mode",
+            "text",
+        ]
+
+    @extend_schema_field(serializers.DictField())
+    def get_domain_info(self, obj):
+        """Get information about the domain."""
+        if obj.domain:
+            return {
+                "id": obj.domain.id,
+                "name": obj.domain.name,
+                "display_name": obj.domain.display_name,
+                "business_name": obj.domain.business_name,
+            }
+        return None
+
+    @extend_schema_field(serializers.DictField())
+    def get_creator_professional(self, obj):
+        """Get detailed information about the creator professional user."""
+        if obj.creator_professional_user:
+            return {
+                "id": obj.creator_professional_user.id,
+                "name": obj.creator_professional_user.get_display_name(),
+                "npi_number": obj.creator_professional_user.npi_number,
+                "email": (
+                    obj.creator_professional_user.user.email
+                    if obj.creator_professional_user.user
+                    else None
+                ),
+            }
+        return None
+
+    @extend_schema_field(serializers.DictField())
+    def get_created_for_professional(self, obj):
+        """Get detailed information about the professional user the request was created for."""
+        if obj.created_for_professional_user:
+            return {
+                "id": obj.created_for_professional_user.id,
+                "name": obj.created_for_professional_user.get_display_name(),
+                "npi_number": obj.created_for_professional_user.npi_number,
+                "email": (
+                    obj.created_for_professional_user.user.email
+                    if obj.created_for_professional_user.user
+                    else None
+                ),
+            }
         return None
 
 
