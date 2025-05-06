@@ -1157,7 +1157,7 @@ class PriorAuthViewSet(viewsets.ViewSet, SerializerMixin):
                     questions = []
                 questions.append(
                     (
-                        "Please provide the patient's complete health history relevant to this prior authorization request:",
+                        "Please provide any additional health history relevant to this prior authorization request:",
                         prior_auth.patient_health_history or "",
                     ),
                 )

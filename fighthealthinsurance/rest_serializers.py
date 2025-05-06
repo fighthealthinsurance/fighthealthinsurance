@@ -32,11 +32,13 @@ class StringListField(serializers.ListField):
 
 
 class DictionaryListField(serializers.ListField):
-    child = serializers.DictField(child=serializers.CharField())
+    child = serializers.DictField(
+        child=serializers.CharField(required=False, allow_blank=True)
+    )
 
 
 class DictionaryStringField(serializers.DictField):
-    child = serializers.CharField()
+    child = serializers.CharField(required=False, allow_blank=True)
 
 
 # Common View Logic Results
