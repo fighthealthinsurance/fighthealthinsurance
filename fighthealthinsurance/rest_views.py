@@ -1065,6 +1065,8 @@ class PriorAuthViewSet(viewsets.ViewSet, SerializerMixin):
             return serializers.PriorAuthAnswersSerializer
         elif self.action == "select_proposal":
             return serializers.PriorAuthSelectSerializer
+        elif self.action == "retrieve":
+            return serializers.PriorAuthDetailSerializer
         return serializers.PriorAuthRequestSerializer
 
     @extend_schema(responses=serializers.PriorAuthRequestSerializer)
@@ -1141,7 +1143,7 @@ class PriorAuthViewSet(viewsets.ViewSet, SerializerMixin):
                 questions = [
                     (
                         "Please provide the patient's complete health history relevant to this prior authorization request:",
-                        "",
+                        prior_auth.patient_health_history or "",
                     )
                 ]
             else:
@@ -1150,6 +1152,14 @@ class PriorAuthViewSet(viewsets.ViewSet, SerializerMixin):
                     procedure=prior_auth.treatment,
                     diagnosis=prior_auth.diagnosis,
                     timeout=90,
+                )
+                if questions is None:
+                    questions = []
+                questions.append(
+                    (
+                        "Please provide the patient's complete health history relevant to this prior authorization request:",
+                        prior_auth.patient_health_history or "",
+                    ),
                 )
 
                 # Also generate specific questions if health history is provided
@@ -1228,6 +1238,10 @@ class PriorAuthViewSet(viewsets.ViewSet, SerializerMixin):
         serializer = self.deserialize(data=request.data)
         serializer.is_valid(raise_exception=True)
 
+        user_text = None
+        if "user_text" in serializer.validated_data:
+            user_text = serializer.validated_data["user_text"]
+
         # Verify token
         token = serializer.validated_data["token"]
         if str(prior_auth.token) != str(token):
@@ -1248,6 +1262,8 @@ class PriorAuthViewSet(viewsets.ViewSet, SerializerMixin):
         proposal.selected = True
         proposal.save()
 
+        prior_auth.text = user_text or proposal.text
+
         prior_auth.status = "completed"
         prior_auth.save()
 
@@ -1258,16 +1274,16 @@ class PriorAuthViewSet(viewsets.ViewSet, SerializerMixin):
             status=status.HTTP_200_OK,
         )
 
-    @extend_schema(responses=serializers.PriorAuthRequestSerializer)
+    @extend_schema(responses=serializers.PriorAuthDetailSerializer)
     def retrieve(self, request: Request, pk=None) -> Response:
-        """Retrieve a specific prior authorization request."""
+        """Retrieve a detailed view of a specific prior authorization request."""
         current_user: User = request.user  # type: ignore
         prior_auth = get_object_or_404(
             PriorAuthRequest.filter_to_allowed_requests(current_user), id=pk
         )
 
         return Response(
-            serializers.PriorAuthRequestSerializer(prior_auth).data,
+            serializers.PriorAuthDetailSerializer(prior_auth).data,
             status=status.HTTP_200_OK,
         )
 

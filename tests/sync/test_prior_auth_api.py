@@ -244,6 +244,74 @@ class PriorAuthAPITest(APITestCase):
         self.assertEqual(len(response.data), 1)
         self.assertEqual(response.data[0]["status"], "completed")
 
+    def test_retrieve_prior_auth_detail(self):
+        """Test retrieving a detailed view of a specific prior authorization request."""
+        # Create a prior auth request with all relevant fields populated
+        prior_auth = PriorAuthRequest.objects.create(
+            creator_professional_user=self.professional,
+            domain=self.domain,
+            diagnosis="Chronic Migraine",
+            treatment="Botox Injections",
+            insurance_company="Aetna",
+            patient_name="Jane Doe",
+            patient_health_history="History of migraines for 10+ years",
+            plan_id="AETNA123456",
+            mode="guided",
+            status="questions_asked",
+            questions=[
+                ["Frequency of migraines?", ""],
+                ["Previous treatments?", ""],
+            ],
+            answers={
+                "Frequency of migraines?": "15+ days per month",
+                "Previous treatments?": "Failed oral preventives",
+            },
+        )
+
+        # Create some proposals
+        ProposedPriorAuth.objects.create(
+            prior_auth_request=prior_auth,
+            text="This is a proposed prior auth text",
+            selected=True,
+        )
+
+        url = reverse("prior-auth-detail", args=[str(prior_auth.id)])
+        response = self.client.get(url)
+
+        # Check status code and basic response structure
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("id", response.data)
+        self.assertEqual(str(response.data["id"]), str(prior_auth.id))
+
+        # Check standard fields
+        self.assertEqual(response.data["diagnosis"], "Chronic Migraine")
+        self.assertEqual(response.data["treatment"], "Botox Injections")
+        self.assertEqual(response.data["insurance_company"], "Aetna")
+        self.assertEqual(response.data["patient_name"], "Jane Doe")
+        self.assertEqual(response.data["plan_id"], "AETNA123456")
+        self.assertEqual(
+            response.data["patient_health_history"], "History of migraines for 10+ years"
+        )
+        self.assertEqual(response.data["status"], "questions_asked")
+        self.assertEqual(response.data["mode"], "guided")
+
+        # Check calculated fields
+        self.assertEqual(
+            response.data["professional_name"], self.professional.get_display_name()
+        )
+
+        # Check detailed fields
+        self.assertIn("domain_info", response.data)
+        self.assertIsNotNone(response.data["domain_info"])
+        self.assertEqual(response.data["domain_info"]["name"], self.domain.name)
+
+        self.assertIn("creator_professional", response.data)
+        self.assertIsNotNone(response.data["creator_professional"])
+        self.assertEqual(response.data["creator_professional"]["id"], self.professional.id)
+
+        # Check proposals
+        self.assertIn("text", response.data)
+
 
 class PriorAuthWebSocketTest(APITestCase):
     """Test the WebSocket endpoints for prior authorization."""

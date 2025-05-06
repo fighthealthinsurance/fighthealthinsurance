@@ -888,6 +888,9 @@ class PriorAuthRequest(ExportModelOperationsMixin("PriorAuthRequest"), models.Mo
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    # Final text chosen
+    text = models.TextField(blank=True, null=True)
+
     @classmethod
     def filter_to_allowed_requests(cls, current_user):
         """Filter to requests that the current user is allowed to see."""
