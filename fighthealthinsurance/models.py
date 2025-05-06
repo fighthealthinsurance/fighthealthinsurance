@@ -899,8 +899,6 @@ class PriorAuthRequest(ExportModelOperationsMixin("PriorAuthRequest"), models.Mo
 
         try:
             professional_user = ProfessionalUser.objects.get(user=current_user)
-            if not professional_user.active:
-                return cls.objects.none()
 
             # Requests created by the user or created for the user
             return cls.objects.filter(

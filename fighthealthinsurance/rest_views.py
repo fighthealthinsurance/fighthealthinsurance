@@ -1081,11 +1081,15 @@ class PriorAuthViewSet(viewsets.ViewSet, SerializerMixin):
         created_for_professional_user_id = serializer.validated_data.get(
             "created_for_professional_user_id"
         )
-        created_for_professional_user = None
-        if created_for_professional_user_id:
-            created_for_professional_user = get_object_or_404(
-                ProfessionalUser, id=created_for_professional_user_id
+        logger.debug(
+            "Looking up created_for_professional_user_id {}".format(
+                created_for_professional_user_id
             )
+        )
+        created_for_professional_user = None
+        created_for_professional_user = get_object_or_404(
+            ProfessionalUser, id=created_for_professional_user_id
+        )
 
         # Extract domain from session
         domain_id = request.session.get("domain_id")
@@ -1204,7 +1208,14 @@ class PriorAuthViewSet(viewsets.ViewSet, SerializerMixin):
             PriorAuthRequest.filter_to_allowed_requests(current_user), id=pk
         )
         serializer = self.deserialize(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        try:
+            serializer.is_valid(raise_exception=True)
+        except serializers.ValidationError as e:
+            logger.error(f"Validation error: {e}")
+            return Response(
+                {"error": "Invalid data", "details": str(e)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         answers = None
         if "answers" in serializer.validated_data:

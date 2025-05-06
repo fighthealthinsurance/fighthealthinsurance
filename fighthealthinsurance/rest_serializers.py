@@ -550,6 +550,7 @@ class PriorAuthCreateSerializer(serializers.Serializer):
     patient_name = serializers.CharField(required=False, allow_blank=True)
     plan_id = serializers.CharField(required=False, allow_blank=True)
     creator_professional_user_id = serializers.IntegerField(required=False)
+    created_for_professional_user_id = serializers.IntegerField(required=False)
 
 
 class PriorAuthAnswersSerializer(serializers.Serializer):

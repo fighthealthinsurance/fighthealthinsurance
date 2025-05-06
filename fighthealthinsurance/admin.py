@@ -32,6 +32,8 @@ from fighthealthinsurance.models import (
     AppealAttachment,
     GenericContextGeneration,
     GenericQuestionGeneration,
+    PriorAuthRequest,
+    ProposedPriorAuth,
 )
 from fhi_users.models import (
     ProfessionalUser,
@@ -40,6 +42,31 @@ from fhi_users.models import (
     ProfessionalDomainRelation,
 )
 from django.contrib.auth.admin import UserAdmin
+
+
+@admin.register(PriorAuthRequest)
+class PriorAuthRequestAdmin(admin.ModelAdmin):
+    """Prior Authorization Request"""
+
+    list_display = (
+        "created_at",
+        "id",
+        "diagnosis",
+        "treatment",
+        "insurance_company",
+        "patient_name",
+    )
+    search_fields = ("diagnosis", "treatment", "insurance_company")
+    ordering = ("-created_at",)
+
+
+@admin.register(ProposedPriorAuth)
+class ProposedPriorAuthAdmin(admin.ModelAdmin):
+    """Proposed Prior Authorization Request"""
+
+    list_display = ("prior_auth_request_id", "proposed_id")
+    search_fields = ()
+    ordering = ("-proposed_id",)
 
 
 @admin.register(GenericContextGeneration)
