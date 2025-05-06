@@ -21,6 +21,7 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError
 
 from drf_spectacular.utils import extend_schema
 from drf_spectacular.utils import OpenApiParameter
@@ -1081,6 +1082,11 @@ class PriorAuthViewSet(viewsets.ViewSet, SerializerMixin):
         created_for_professional_user_id = serializer.validated_data.get(
             "created_for_professional_user_id"
         )
+        logger.debug(
+            "Looking up created_for_professional_user_id {}".format(
+                created_for_professional_user_id
+            )
+        )
         created_for_professional_user = None
         if created_for_professional_user_id:
             created_for_professional_user = get_object_or_404(
@@ -1157,7 +1163,7 @@ class PriorAuthViewSet(viewsets.ViewSet, SerializerMixin):
                     questions = []
                 questions.append(
                     (
-                        "Please provide the patient's complete health history relevant to this prior authorization request:",
+                        "Please provide any additional health history relevant to this prior authorization request:",
                         prior_auth.patient_health_history or "",
                     ),
                 )
@@ -1204,7 +1210,14 @@ class PriorAuthViewSet(viewsets.ViewSet, SerializerMixin):
             PriorAuthRequest.filter_to_allowed_requests(current_user), id=pk
         )
         serializer = self.deserialize(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        try:
+            serializer.is_valid(raise_exception=True)
+        except ValidationError as e:
+            logger.error(f"Validation error: {e}")
+            return Response(
+                {"error": "Invalid data", "details": str(e)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         answers = None
         if "answers" in serializer.validated_data:
