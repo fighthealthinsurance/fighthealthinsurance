@@ -317,6 +317,31 @@ class RemoteModel(RemoteModelLike):
             return True
         return False
 
+    def check_is_ok(
+        self, result: Optional[str], infer_type: str, prof_pov: bool
+    ) -> bool:
+        """
+        Check if the result is a valid response based on the type of inference.
+        """
+        logger.debug(f"Checking if result is ok: {result}")
+        if self.bad_result(result, infer_type):
+            return False
+        if prof_pov and not self.is_professional_tone(result):
+            return False
+        elif infer_type == "prior_auth" and not self.is_prior_auth(result):
+            return False
+        else:
+            return True
+
+    def is_prior_auth(self, result: Optional[str]) -> bool:
+        """
+        Check if the result is a prior authorization request.
+        This is a placeholder for actual implementation.
+        """
+        if result is None or len(result) < 3:
+            return False
+        return True
+
     def is_professional_tone(self, result: Optional[str]) -> bool:
         """
         Check if the result is written in a professional tone.
@@ -439,6 +464,37 @@ class RemoteOpenLike(RemoteModel):
         if len(result.strip(" ")) < 3:
             return True
         return False
+
+    def is_prior_auth(self, result: Optional[str]) -> bool:
+        """
+        Returns True if the result is a prior authorization request.
+        """
+        if not result:
+            return False
+        # Check for common phrases indicating a prior authorization request
+        prior_auth_phrases = [
+            "prior authorization",
+            "pre-authorization",
+            "precertification",
+            "authorization request",
+            "request for prior authorization",
+            "request for pre-authorization",
+        ]
+        bad_phrases = [
+            "appeal the denial of coverage",
+            "appeal the denial",
+            "was denied",
+        ]
+        result_lower = result.lower()
+        for phrase in prior_auth_phrases:
+            if phrase.lower() in result_lower:
+                return True
+
+        for phrase in bad_phrases:
+            if phrase.lower() in result_lower:
+                return False
+
+        return True
 
     def is_professional_tone(self, result: Optional[str]) -> bool:
         """
@@ -570,6 +626,7 @@ class RemoteOpenLike(RemoteModel):
         temperature: float,
         ml_citations_context: Optional[List[str]] = None,
         prof_pov: bool = False,
+        pa: bool = False,
     ) -> List[Tuple[str, Optional[str]]]:
         # Extract URLs from the prompt to avoid checking them
         input_urls = []
@@ -610,12 +667,12 @@ class RemoteOpenLike(RemoteModel):
         logger.debug(f"Checking if professional")
 
         # If professional_to_finish then check if the result is a professional response | One retry
-        if prof_pov:
+        if prof_pov or pa:
             c = 0
             last_okish = result
-            while not self.is_professional_tone(result) and c < 4:
+            while not self.check_is_ok(result, infer_type, prof_pov) and c < 4:
                 c = c + 1
-                logger.debug(f"Result {result} is not professional")
+                logger.debug(f"Result {result} is not professional or not PA")
                 result = await self._infer_no_context(
                     prompt=prompt,
                     patient_context=patient_context,
