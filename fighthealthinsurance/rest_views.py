@@ -1087,9 +1087,10 @@ class PriorAuthViewSet(viewsets.ViewSet, SerializerMixin):
             )
         )
         created_for_professional_user = None
-        created_for_professional_user = get_object_or_404(
-            ProfessionalUser, id=created_for_professional_user_id
-        )
+        if created_for_professional_user_id:
+            created_for_professional_user = get_object_or_404(
+                ProfessionalUser, id=created_for_professional_user_id
+            )
 
         # Extract domain from session
         domain_id = request.session.get("domain_id")
