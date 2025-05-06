@@ -21,6 +21,7 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError
 
 from drf_spectacular.utils import extend_schema
 from drf_spectacular.utils import OpenApiParameter
@@ -1211,7 +1212,7 @@ class PriorAuthViewSet(viewsets.ViewSet, SerializerMixin):
         serializer = self.deserialize(data=request.data)
         try:
             serializer.is_valid(raise_exception=True)
-        except serializers.ValidationError as e:
+        except ValidationError as e:
             logger.error(f"Validation error: {e}")
             return Response(
                 {"error": "Invalid data", "details": str(e)},
