@@ -1826,6 +1826,45 @@ class ProfessionalUserUpdateViewSet(viewsets.ViewSet, SerializerMixin):
         permission_classes = [IsAuthenticated]
         return [permission() for permission in permission_classes]
 
+    @method_decorator(
+        cache_control(max_age=600, private=True)
+    )  # Cache for 10 minutes, private to user, vary only on cookie header
+    @method_decorator(vary_on_cookie)  # Vary only on the session cookie
+    @extend_schema(
+        responses={
+            200: serializers.UpdateProfessionalUserSerializer,
+            404: common_serializers.ErrorSerializer,
+        }
+    )
+    @action(detail=False, methods=["get"])
+    def get_current_user(self, request: Request) -> Response:
+        """
+        Returns the current professional user's information.
+        """
+        try:
+            current_user: User = request.user  # type: ignore
+            try:
+                professional_user = ProfessionalUser.objects.get(user=current_user)
+            except ProfessionalUser.DoesNotExist:
+                return Response(
+                    common_serializers.ErrorSerializer(
+                        {"error": "User is not a professional user"}
+                    ).data,
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            serializer = serializers.UpdateProfessionalUserSerializer(professional_user)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            logger.opt(exception=e).error(
+                "Error retrieving professional user information"
+            )
+            return Response(
+                common_serializers.ErrorSerializer({"error": str(e)}).data,
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
     @extend_schema(
         responses={
             200: serializers.StatusResponseSerializer,
