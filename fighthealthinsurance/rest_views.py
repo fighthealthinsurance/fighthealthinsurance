@@ -84,8 +84,6 @@ class ChatViewSet(viewsets.ViewSet):
     Provides metadata about each chat including the first user message preview.
     """
 
-    permission_classes = [permissions.IsAuthenticated]
-
     def list(self, request):
         """List all chats for the current professional user."""
         user: User = request.user  # type: ignore
