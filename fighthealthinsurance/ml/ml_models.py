@@ -1516,9 +1516,12 @@ class NewRemoteInternal(RemoteFullOpenLike):
 
     @classmethod
     def models(cls) -> List[ModelDescription]:
-        model_name = os.getenv("NEW_HEALTH_BACKEND_MODEL", "/models/fhi-2025-may-0.1")
+        model_name = os.getenv(
+            "NEW_HEALTH_BACKEND_MODEL",
+            "/models/fhi-2025-may-0.2-float16-q8-vllm-compressed",
+        )
         return [
-            ModelDescription(cost=2, name="fhi-2025-may-0.1", internal_name=model_name),
+            ModelDescription(cost=2, name="fhi-2025-may-0.2", internal_name=model_name),
         ]
 
 
