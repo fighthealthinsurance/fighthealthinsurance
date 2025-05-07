@@ -40,7 +40,7 @@ class UserDomainManagementTests(TestCase):
         # Create an admin user
         self.admin_password = "AdminPass123!"
         self.admin_user = User.objects.create_user(
-            username=f"admin_doctor🐼{self.domain.id}",
+            username=f"admin_doctor{self.domain.id}",
             password=self.admin_password,
             email="admin_doctor@example.com",
             first_name="Admin",
@@ -65,7 +65,7 @@ class UserDomainManagementTests(TestCase):
         # Create a regular professional user
         self.pro_password = "DocPass123!"
         self.pro_user = User.objects.create_user(
-            username=f"doctor🐼{self.domain.id}",
+            username=f"doctor{self.domain.id}",
             password=self.pro_password,
             email="doctor@example.com",
             first_name="Regular",
@@ -164,7 +164,7 @@ class ProfessionalProfileManagementTests(TestCase):
         # Create a professional user
         self.password = "SpecPass123!"
         self.user = User.objects.create_user(
-            username=f"specialist🐼{self.domain.id}",
+            username="specialist_test",  # Simple username without emojis
             password=self.password,
             email="specialist@example.com",
             first_name="Special",
@@ -176,6 +176,9 @@ class ProfessionalProfileManagementTests(TestCase):
             active=True,
             npi_number="7778889999",
             provider_type="Neurologist",
+            display_name="Dr. Specialist",
+            most_common_denial="Experimental treatment",
+            fax_number="9998887777",
         )
         ProfessionalDomainRelation.objects.create(
             professional=self.professional,
@@ -183,6 +186,50 @@ class ProfessionalProfileManagementTests(TestCase):
             active_domain_relation=True,
             pending_domain_relation=False,
         )
+
+    def test_get_current_user(self) -> None:
+        """Test getting the current professional user's information."""
+        url = reverse("professional_profile-get-current-user")
+
+        # Test unauthenticated access
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+        # Login and test authenticated access
+        self.client.login(username=self.user.username, password=self.password)
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        # Verify all fields are returned correctly
+        data = response.json()
+        self.assertEqual(data["npi_number"], "7778889999")
+        self.assertEqual(data["provider_type"], "Neurologist")
+        self.assertEqual(data["display_name"], "Dr. Specialist")
+        self.assertEqual(data["most_common_denial"], "Experimental treatment")
+        self.assertEqual(data["fax_number"], "9998887777")
+
+    def test_get_current_user_not_professional(self) -> None:
+        """Test get_current_user when the user is not a professional user."""
+        url = reverse("professional_profile-get-current-user")
+
+        # Create a regular user (not a professional)
+        User.objects.create_user(
+            username="regular_user",
+            password="RegPass123!",
+            email="regular@example.com",
+            is_active=True,
+        )
+
+        # Login as regular user
+        self.client.login(username="regular_user", password="RegPass123!")
+
+        # Should return 404 because the user is not a professional
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+        # Check error message
+        data = response.json()
+        self.assertEqual(data["error"], "User is not a professional user")
 
     def test_update_professional_partial_fields(self) -> None:
         """Test updating only some fields of professional profile."""
@@ -241,7 +288,7 @@ class PasswordManagementTests(TestCase):
         # Regular user
         self.password = "InitialPass123!"
         self.user = User.objects.create_user(
-            username=f"doctor🐼{self.domain.id}",
+            username=f"doctor{self.domain.id}",
             password=self.password,
             email="doctor@example.com",
             is_active=True,
@@ -256,7 +303,7 @@ class PasswordManagementTests(TestCase):
         # Patient user
         self.patient_password = "PatientPass123!"
         self.patient_user = User.objects.create_user(
-            username=f"patient🐼{self.domain.id}",
+            username=f"patient{self.domain.id}",
             password=self.patient_password,
             email="patient@example.com",
             is_active=True,
