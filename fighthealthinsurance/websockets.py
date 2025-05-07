@@ -205,8 +205,9 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
         logger.debug("Received message for ongoing chat")
 
         # Get the required data
-        message = data.get("message")
-        chat_id = data.get("chat_id")
+        message = data.get("message", None)
+        chat_id = data.get("chat_id", None)
+        replay_requested = data.get("replay_request", False)
 
         # Get the user from scope (authenticated by Django Channels)
         user = self.scope.get("user")
@@ -230,11 +231,25 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                 professional_user, chat_id
             )
 
-            # Generate response (this also updates chat history)
-            response = await self._generate_llm_response(chat, message)
+            if not replay_requested:
+                # Generate response (this also updates chat history)
+                response = await self._generate_llm_response(chat, message)
 
-            # Send response to the client
-            await self.send(json.dumps({"chat_id": str(chat.id), "response": response}))
+                # Send response to the client
+                await self.send(
+                    json.dumps(
+                        {
+                            "chat_id": str(chat.id),
+                            "role": "assistant",
+                            "content": response,
+                        }
+                    )
+                )
+
+            else:
+                await self.send(
+                    {"messages": chat.chat_history, "chat_id": str(chat.id)}
+                )
 
         except Exception as e:
             logger.opt(exception=True).debug(f"Error in ongoing chat: {e}")

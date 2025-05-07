@@ -93,7 +93,7 @@ class OngoingChatWebSocketTest(APITestCase):
         await communicator.send_json_to(
             {
                 "chat_id": str(chat.id),
-                "message": "What specific codes should I reference for the MRI denial?",
+                "content": "What specific codes should I reference for the MRI denial?",
             }
         )
 
@@ -102,9 +102,9 @@ class OngoingChatWebSocketTest(APITestCase):
 
         # Verify the response contains expected fields
         self.assertIn("chat_id", response)
-        self.assertIn("response", response)
+        self.assertIn("content", response)
         self.assertEqual(response["chat_id"], str(chat.id))
-        self.assertIsNotNone(response["response"])
+        self.assertIsNotNone(response["content"])
 
         # Disconnect
         await communicator.disconnect()
@@ -157,7 +157,7 @@ class OngoingChatWebSocketTest(APITestCase):
 
         # Send a message without a chat_id
         await communicator.send_json_to(
-            {"message": "How do I check if a procedure requires prior authorization?"}
+            {"content": "How do I check if a procedure requires prior authorization?"}
         )
 
         # Wait for a response
@@ -165,9 +165,9 @@ class OngoingChatWebSocketTest(APITestCase):
 
         # Verify the response contains a new chat_id
         self.assertIn("chat_id", response)
-        self.assertIn("response", response)
+        self.assertIn("content", response)
         self.assertIsNotNone(response["chat_id"])
-        self.assertIsNotNone(response["response"])
+        self.assertIsNotNone(response["content"])
 
         # Disconnect
         await communicator.disconnect()
@@ -186,6 +186,17 @@ class OngoingChatWebSocketTest(APITestCase):
             "How do I check if a procedure requires prior authorization?",
         )
         self.assertEqual(chat.chat_history[1]["role"], "assistant")
+
+        connected, _ = await communicator.connect()
+        self.assertTrue(connected)
+
+        # Send a message without a chat_id
+        await communicator.send_json_to({"replay": True, "chat_id": chat_id})
+
+        # Wait for a response
+        response = await communicator.receive_json_from(timeout=15)
+        assertIn("chat_id", response)
+        assertIn("messages", response)
 
         # Clean up
         await self.asyncTearDown()
