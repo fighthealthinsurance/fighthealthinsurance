@@ -372,13 +372,14 @@ class GenerateAppeal(View):
                     qa_context = json.loads(qa_context_str)
                 except json.JSONDecodeError:
                     qa_context["misc"] = qa_context_str
+            restricted = ["csrfmiddlewaretoken", "denial_id", "email", "semi_sekret"]
             for k, v in elems.items():
                 key = k
                 if "appeal_generated_" in k:
                     key = generated_questions[int(k.split("_")[-1]) - 1][0]
                 if isinstance(v, list):
                     elems[k] = v[0]
-                if v and v != "" and v != "UNKNOWN":
+                if v and v != "" and v != "UNKNOWN" and key not in restricted:
                     qa_context[key] = v
             denial.qa_context = json.dumps(qa_context)
             denial.save()
