@@ -290,7 +290,8 @@ class PriorAuthAPITest(APITestCase):
         self.assertEqual(response.data["patient_name"], "Jane Doe")
         self.assertEqual(response.data["plan_id"], "AETNA123456")
         self.assertEqual(
-            response.data["patient_health_history"], "History of migraines for 10+ years"
+            response.data["patient_health_history"],
+            "History of migraines for 10+ years",
         )
         self.assertEqual(response.data["status"], "questions_asked")
         self.assertEqual(response.data["mode"], "guided")
@@ -307,7 +308,9 @@ class PriorAuthAPITest(APITestCase):
 
         self.assertIn("creator_professional", response.data)
         self.assertIsNotNone(response.data["creator_professional"])
-        self.assertEqual(response.data["creator_professional"]["id"], self.professional.id)
+        self.assertEqual(
+            response.data["creator_professional"]["id"], self.professional.id
+        )
 
         # Check proposals
         self.assertIn("text", response.data)
