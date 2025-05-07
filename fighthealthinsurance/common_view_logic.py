@@ -1041,7 +1041,7 @@ class DenialCreatorHelper:
         if not isinstance(creating_professional, ProfessionalUser):
             creating_professional = None
         # For the pro flow we default to pro to finish
-        professional_to_finish = not creating_professional
+        professional_to_finish = creating_professional is not None
         # If we don't have a denial we're making a new one
         if denial is None:
             try:
