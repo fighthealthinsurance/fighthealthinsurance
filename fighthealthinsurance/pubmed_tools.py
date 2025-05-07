@@ -165,10 +165,13 @@ class PubMedTools(object):
                             if fetched:
                                 url = None
                                 try:
-                                    logger.debug(f"Looking for {pmid} with findit")
+                                    t = timeout / 5.0
+                                    logger.debug(
+                                        f"Looking for {pmid} with  with timeout of {t}"
+                                    )
                                     src = await asyncio.wait_for(
                                         sync_to_async(FindIt)(pmid),
-                                        timeout=timeout / 5.0,
+                                        timeout=t,
                                     )
                                     logger.debug(f"Found it {src}")
                                     url = src.url

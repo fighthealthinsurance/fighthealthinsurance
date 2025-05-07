@@ -410,6 +410,8 @@ class AppealGenerator(object):
         plan_id=None,
         claim_id=None,
         insurance_company=None,
+        ml_context=None,
+        pubmed_context=None,
     ) -> Optional[str]:
         """
         Constructs a prompt for generating a health insurance appeal based on denial details and optional contextual information.
@@ -464,13 +466,17 @@ class AppealGenerator(object):
                 f"{sign_off}" + "Thank you for following these instructions.\n"
             )
         if qa_context is not None and qa_context != "" and qa_context != "UNKNOWN":
-            base = f"{base}. You should try and incorporate the following context into your appeal: {qa_context}."
+            base = f"{base}. You should try and incorporate the following QA context into your appeal: {qa_context}."
         if patient is not None:
             base = f"{base}. Please include and fill in the patients info {patient}."
         if professional is not None:
             base = f"{base}. Please include and fill in the professionals info {professional}."
         if plan_id is not None and plan_id != "" and plan_id != "UNKNOWN":
             base = f"{base}. Please include and fill in any references to the plan id as {plan_id}."
+        if ml_context is not None and ml_context != "":
+            base = f"{base}. Please include any relevant citations from: {ml_context}."
+        if pubmed_context is not None and pubmed_context != "":
+            base = f"{base}. Please include any relevant citations from PubMed, the ones we found are: {pubmed_context}."
         if (
             insurance_company is not None
             and insurance_company != ""
@@ -552,6 +558,8 @@ class AppealGenerator(object):
             plan_id=denial.plan_id,
             claim_id=denial.claim_id,
             insurance_company=denial.insurance_company,
+            ml_context=denial.ml_citation_context,
+            pubmed_context=denial.pubmed_context,
         )
         open_medically_necessary_prompt = self.make_open_med_prompt(
             procedure=denial.procedure,
@@ -684,7 +692,7 @@ class AppealGenerator(object):
                 "prof_pov": prof_pov,
             },
             {
-                "model_name": "fhi-2025-may-0.1",
+                "model_name": "fhi-2025-may-0.2",
                 "prompt": open_prompt,
                 "patient_context": medical_context,
                 "plan_context": plan_context,
