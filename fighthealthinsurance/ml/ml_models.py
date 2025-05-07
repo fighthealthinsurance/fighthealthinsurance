@@ -543,6 +543,15 @@ class RemoteOpenLike(RemoteModel):
             "for my son",
             "for my daughter",
             "for my child",
+            "your relationship to the patient, such as family",
+            "my family member",
+            "my family member's",
+            "my healthcare provider",
+            "i have been prescribed",
+            "my health.",
+            "i have a history of",
+            "my personal use.",
+            "my personal medical history",
         ]
         # If at least one professional phrase is present, accept
         result_lower = result.lower()
@@ -676,7 +685,7 @@ class RemoteOpenLike(RemoteModel):
         if prof_pov or pa:
             c = 0
             last_okish = result
-            while not self.check_is_ok(result, infer_type, prof_pov) and c < 4:
+            while not self.check_is_ok(result, infer_type, prof_pov) and c < 5:
                 c = c + 1
                 logger.debug(f"Result {result} is not professional or not PA")
                 result = await self._infer_no_context(
