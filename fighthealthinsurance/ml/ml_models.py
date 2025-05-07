@@ -577,7 +577,7 @@ class RemoteOpenLike(RemoteModel):
     ) -> List[Future[Tuple[str, Optional[str]]]]:
         logger.debug(f"Running inference on {self} of type {infer_type}")
         temperatures = [0.5]
-        if infer_type == "full" and not self._expensive and not self.slow():
+        if infer_type == "full" and not self._expensive and not self.slow:
             # Special case for the full one where we really want to explore the problem space
             temperatures = [0.6, 0.1]
         system_prompts = self.get_system_prompts(infer_type, prof_pov)
