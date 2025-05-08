@@ -471,7 +471,6 @@ class UpdateUserDomainSerializer(serializers.ModelSerializer):
             "cover_template_string",
             "display_name",
             "business_name",
-            "credentials",
         ]
 
 
@@ -488,6 +487,7 @@ class UpdateProfessionalUserSerializer(serializers.ModelSerializer):
             "most_common_denial",
             "fax_number",
             "display_name",
+            "credentials",
         ]
 
     def validate_npi_number(self, value):
