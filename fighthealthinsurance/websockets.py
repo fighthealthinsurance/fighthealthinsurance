@@ -307,13 +307,16 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
         if chat.summary_for_next_call and len(chat.summary_for_next_call) > 0:
             context = chat.summary_for_next_call[-1]
 
+        new_chat = False
         for model in models:
             try:
                 # Add our current chat message to the chat history
                 if not chat.chat_history:
                     chat.chat_history = []  # type: ignore
+                    new_chat = True
                 if not chat.summary_for_next_call:
                     chat.summary_for_next_call = []  # type: ignore
+                    new_chat = True
                 chat.chat_history.append(
                     {
                         "role": "user",
@@ -322,10 +325,19 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                     }
                 )
                 # Generate the response using the model
+                intro_opt = ""
+                if new_chat:
+                    pro_user_info = await sync_to_async(str)(chat.professional_user)
+                    intro_opt = (
+                        f"You are a helpful assistant talking with a professional user, {pro_user_info}. "
+                        f"You are helping a professional user with their ongoing chat. You likely do not need to immeditely generate a prior auth or appeal instead you'll have a chat with the professional, {pro_user_info}, about their needs. Now here is what they said to start the conversation:"
+                    )
                 (response_text, context_part) = await model.generate_chat_response(
-                    message, previous_context_summary=context
+                    intro_opt + message,
+                    previous_context_summary=context,
+                    history=chat.chat_history,
                 )
-                if response_text:
+                if response_text and response_text.strip() != "":
                     # Save the context summary if present.
                     if context_part:
                         chat.summary_for_next_call.append(context_part)
@@ -341,6 +353,7 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                     return response_text.strip()
 
             except Exception as e:
+                await asyncio.sleep(1)
                 logger.opt(exception=True).debug(f"Error generating LLM response: {e}")
         logger.debug(
             f"Failed to generate response for message: {message} in chat {chat.id}"

@@ -953,7 +953,7 @@ class OngoingChat(models.Model):
     )
     chat_history = models.JSONField(
         default=list, null=True, blank=True
-    )  # JSON List of strings
+    )  # JSON List of dictionaries {"role": "user", "content": message, "timestamp": timezone.now().isoformat()})
     summary_for_next_call = models.JSONField(
         null=True, blank=True
     )  # JSON List of strings
