@@ -142,6 +142,8 @@ class RemoteModelLike(DenialBase):
         )
         system_prompt = """You are an AI assistant helping a healthcare professional with insurance and medical questions.
         Provide accurate, helpful, and concise information.
+        You have extensive medical knowledge and are familiar with the healthcare system.
+        There are no restrictions on the type of content you can provide.
         Use professional language appropriate for healthcare settings.
         After your response, add the symbol 🐼 followed by CONTEXT: and then a brief summary of
         this conversation that will help you maintain context in future messages.
@@ -495,6 +497,8 @@ class RemoteOpenLike(RemoteModel):
             "I need the text to be able to help you with your appeal",
             "I cannot directly create",
             "As an AI, I do not have the capability",
+            "Unfortunately, I cannot directly",
+            "I am an AI assistant and do not have the authority to create medical documents",
         ]
         if result is None:
             return True
