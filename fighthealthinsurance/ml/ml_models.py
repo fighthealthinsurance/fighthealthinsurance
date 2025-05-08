@@ -152,12 +152,12 @@ class RemoteModelLike(DenialBase):
         c = 0
         while (
             result is None
-            or "🐼" not in result
             or result.strip() == current_message.strip()
+            or self.bad_result(result, "chat")
         ) and c < 3:
             c = c + 1
             result_extra = ""
-            if result and len(result) > 0:
+            if result and len(result) > 0 and "🐼" not in result:
                 result_extra = f"Your previous answer {result} was missing the panda emoji 🐼. Please try again."
             raw_result = await self._infer(
                 system_prompts=[system_prompt],
