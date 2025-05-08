@@ -489,6 +489,8 @@ class RemoteOpenLike(RemoteModel):
             "the physician reviewer overturned",
             "91111111111111111111111",
             "I need the text to be able to help you with your appeal",
+            "I cannot directly create",
+            "As an AI, I do not have the capability",
         ]
         if result is None:
             return True
