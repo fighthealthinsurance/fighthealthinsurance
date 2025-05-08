@@ -197,8 +197,9 @@ class RemoteModelLike(DenialBase):
             system_prompts=["You are a helpful assistant."],
             prompt=f"Extract the {entity_type} from the following text: {input_text}",
         )
+        # Just get the text response.
         if result:
-            if result[1]:
+            if result[1] and len(result[1]) > 0:
                 return result[1][0]
         return None
 
