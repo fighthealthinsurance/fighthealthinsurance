@@ -209,7 +209,6 @@ class ProfessionalUser(models.Model):
     fax_number = models.CharField(blank=True, null=True, max_length=40)
     domains = models.ManyToManyField("UserDomain", through="ProfessionalDomainRelation")  # type: ignore
     display_name = models.CharField(max_length=400, null=True, blank=True)
-    credentials = models.CharField(max_length=400, null=True, blank=True)
 
     def get_display_name(self) -> str:
         if self.display_name and len(self.display_name) > 0:
