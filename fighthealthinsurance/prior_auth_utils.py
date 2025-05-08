@@ -3,6 +3,7 @@ from loguru import logger
 from fighthealthinsurance.models import PriorAuthRequest, ProposedPriorAuth, UserDomain
 import re
 
+
 class PriorAuthTextSubstituter:
     """
     Utility class for substituting professional and patient information into prior authorization proposals.
@@ -49,7 +50,7 @@ class PriorAuthTextSubstituter:
             for k, v in context.items():
                 if v is None:
                     continue
-                pattern = rf'(?i)(\${k}|\[{k}\])'
+                pattern = rf"(?i)(\${k}|\[{k}\])"
                 proposal_text = re.sub(pattern, str(v), proposal_text)
             return proposal_text
         except Exception as e:
@@ -99,7 +100,9 @@ class PriorAuthTextSubstituter:
             context["insurance_company"] = insurance_company
             context["insurance company"] = insurance_company
             context["health plan name"] = insurance_company
-            context["Esteemed Members of the Health Plan Review Board"] = insurance_company
+            context["Esteemed Members of the Health Plan Review Board"] = (
+                insurance_company
+            )
 
             # Insurance information
             insurance_information = f"Plan ID: {plan_id}, Member ID: {member_id}, Insurance Company: {insurance_company}"
@@ -128,7 +131,6 @@ class PriorAuthTextSubstituter:
                 context["provider_credentials"] = credentials
                 context["Your Title/Credentials"] = credentials
                 context["Your Credentials"] = credentials
-
 
                 # Get professional contact information
                 fax = professional.get_fax_number() or ["PROVIDER FAX"]

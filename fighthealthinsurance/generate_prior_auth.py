@@ -152,9 +152,8 @@ class PriorAuthGenerator:
 
             # Substitute in patient and provider information
             substituted_text = await sync_to_async(
-                PriorAuthTextSubstituter.substitute_patient_and_provider_info)(
-                    prior_auth, proposal_text
-                )
+                PriorAuthTextSubstituter.substitute_patient_and_provider_info
+            )(prior_auth, proposal_text)
 
             # Create a unique ID for this proposal
             proposed_id = uuid.uuid4()
