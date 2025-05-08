@@ -46,9 +46,14 @@ class PriorAuthGenerator:
             )
         )
         patient_health_history = prior_auth.patient_health_history
-        questions = prior_auth.questions
         answers = prior_auth.answers
-        mode = prior_auth.mode
+        patient_info = {}
+        if prior_auth.patient_name and len(prior_auth.patient_name) > 0:
+            patient_info["name"] = prior_auth.patient_name
+        if prior_auth.patient_dob:
+            patient_info["dob"] = str(prior_auth.patient_dob)
+        if prior_auth.plan_id:
+            patient_info["plan_id"] = prior_auth.plan_id
 
         # Prepare prompt context
         context = {
@@ -58,6 +63,8 @@ class PriorAuthGenerator:
             "patient_health_history": patient_health_history,
             "provider_info": provider_info,
             "qa_pairs": answers,
+            "urgent": prior_auth.urgent,
+            "patient_info": patient_info,
         }  # type: Dict[str, Any]
 
         # Get available models
@@ -122,7 +129,10 @@ class PriorAuthGenerator:
         """
         try:
             # Generate the proposal text
-            prompt = self._create_prompt(context)
+            letter = True
+            if prior_auth.proposal_type and prior_auth.proposal_type != "letter":
+                letter = False
+            prompt = self._create_prompt(context, letter=letter)
 
             proposal_text = None
             try:
@@ -162,12 +172,13 @@ class PriorAuthGenerator:
                 "error": f"Error generating proposal with model {index+1}: {str(e)}"
             }
 
-    def _create_prompt(self, context: Dict[str, Any]) -> str:
+    def _create_prompt(self, context: Dict[str, Any], letter: bool) -> str:
         """
         Create a prompt for the language model based on the context.
 
         Args:
             context: Dictionary with diagnosis, treatment, etc.
+            letter: Boolean indicating whether to generate a letter format
 
         Returns:
             Formatted prompt string
@@ -181,9 +192,15 @@ class PriorAuthGenerator:
         provider_info = context.get("provider_info", "")
         patient_info = context.get("patient_info", "")
 
+        what_to_gen = (
+            "prior authorization request letter"
+            if letter
+            else "medical note to include in a prior authorization request"
+        )
+
         # Build the prompt
         prompt = f"""
-        Generate a prior authorization request letter for {treatment} to treat {diagnosis}.
+        Generate a {what_to_gen} for {treatment} to treat {diagnosis}.
         Insurance Company: {insurance_company}
         """
 

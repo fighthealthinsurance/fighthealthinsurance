@@ -209,6 +209,7 @@ class ProfessionalUser(models.Model):
     fax_number = models.CharField(blank=True, null=True, max_length=40)
     domains = models.ManyToManyField("UserDomain", through="ProfessionalDomainRelation")  # type: ignore
     display_name = models.CharField(max_length=400, null=True, blank=True)
+    credentials = models.CharField(max_length=400, null=True, blank=True)
 
     def get_display_name(self) -> str:
         if self.display_name and len(self.display_name) > 0:
@@ -260,12 +261,15 @@ class ProfessionalUser(models.Model):
         """
         fax_extra = ""
         fax_number = self.get_fax_number()
-        if fax_number:
+        if fax_number and len(fax_number) > 0:
             fax_extra = f"Professional Fax: {fax_number}"
         npi_extra = ""
-        if self.npi_number:
+        if self.npi_number and len(self.npi_number) > 0:
             npi_extra = f"NPI: {self.npi_number}"
-        return f"{self.get_full_name()} ({self.user.email}, {fax_extra}, {npi_extra})"
+        credentials_extra = ""
+        if self.credentials and len(self.credentials) > 0:
+            credentials_extra = f"Credentials: {self.credentials}"
+        return f"{self.get_full_name()} ({self.user.email}, {fax_extra}, {npi_extra}, {credentials_extra})"
 
 
 class ProfessionalDomainRelation(models.Model):

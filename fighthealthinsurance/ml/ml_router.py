@@ -165,7 +165,12 @@ class MLRouter(object):
         Returns:
             List of RemoteModelLike models suitable for chat tasks
         """
-        return self.internal_models_by_cost[:2]
+        models = []
+        if "fhi-2025-may-0.2" in self.models_by_name:
+            models += self.models_by_name["fhi-2025-may-0.2"]
+            models += self.models_by_name["fhi-2025-may-0.2"]
+        models += self.internal_models_by_cost[:3]
+        return models
 
     def cheapest(self, name: str) -> list[RemoteModelLike]:
         try:

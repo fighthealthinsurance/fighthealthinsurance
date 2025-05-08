@@ -1181,7 +1181,115 @@ class PriorAuthViewSet(viewsets.ViewSet, SerializerMixin):
             return serializers.PriorAuthSelectSerializer
         elif self.action == "retrieve":
             return serializers.PriorAuthDetailSerializer
+        elif self.action == "extract_patient_fields":
+            return serializers.ExtractPatientFieldsSerializer
         return serializers.PriorAuthRequestSerializer
+
+    @extend_schema(
+        request=serializers.ExtractPatientFieldsSerializer,
+        responses={200: serializers.ExtractPatientFieldsResponseSerializer},
+    )
+    @action(detail=False, methods=["post"])
+    def extract_patient_fields(self, request: Request) -> Response:
+        """
+        Extract patient fields from uploaded PDF text content using ML entity extraction.
+
+        Accepts raw text extracted from a PDF and returns structured field values that can
+        be used to prefill a prior auth form.
+        """
+        # Ensure user is authenticated
+        if not request.user.is_authenticated:
+            return Response(
+                {"error": "Authentication required"},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        # Deserialize and validate the request data
+        serializer = serializers.ExtractPatientFieldsSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        # Get the raw text from the request
+        text = serializer.validated_data["text"]
+
+        # Get entity extraction backends
+        entity_backends = ml_router.entity_extract_backends(use_external=False)
+
+        if not entity_backends:
+            return Response(
+                {"error": "No entity extraction models available"},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        # Get the first available model
+        model = entity_backends[0]
+
+        # Call entity extraction asynchronously for each field
+        async def extract_fields():
+            """Extract all required fields from the text asynchronously."""
+            # Create tasks for parallel execution
+            tasks = [
+                model.get_entity(text, "patient_name"),
+                model.get_entity(text, "member_id"),
+                model.get_entity(text, "date_of_birth"),
+                model.get_entity(text, "plan_id"),
+                model.get_entity(text, "insurance_company"),
+                # Remove diagnosis as it's not available from patient biographics
+            ]
+
+            # Field names corresponding to the tasks
+            fields = [
+                "patient_name",
+                "member_id",
+                "dob",
+                "plan_id",
+                "insurance_company",
+            ]
+
+            # Run all extraction tasks in parallel
+            results = {}
+            extracted_values = await asyncio.gather(*tasks, return_exceptions=True)
+
+            for i, value in enumerate(extracted_values):
+                if i < len(fields):  # Safety check
+                    field = fields[i]
+                    if not isinstance(value, Exception) and value:
+                        results[field] = value
+                    elif isinstance(value, Exception):
+                        logger.error(f"Error extracting {field}: {value}")
+
+            return results
+
+        # Run the extraction and get the results
+        try:
+            extracted_fields = async_to_sync(extract_fields)()
+
+            # Process date of birth if present
+            if "dob" in extracted_fields:
+                try:
+                    # Try to parse the date from various formats
+                    from dateutil import parser
+
+                    dob_str = extracted_fields["dob"]
+                    # If parsing fails, the field will remain as string
+                    extracted_fields["dob"] = parser.parse(dob_str).date()
+                except Exception as e:
+                    logger.error(f"Error parsing date of birth: {e}")
+                    # Keep the original string if date parsing fails
+
+            # Create a response serializer to validate the data
+            response_serializer = serializers.ExtractPatientFieldsResponseSerializer(
+                extracted_fields
+            )
+
+            # Return the response with the extracted fields
+            return Response(response_serializer.data, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.error(f"Error in extract_patient_fields: {e}")
+            return Response(
+                {"error": "Failed to extract patient information"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
     @extend_schema(responses=serializers.PriorAuthRequestSerializer)
     def create(self, request: Request) -> Response:
@@ -1230,6 +1338,10 @@ class PriorAuthViewSet(viewsets.ViewSet, SerializerMixin):
             domain=domain,
             mode=serializer.validated_data.get("mode", "guided"),
             status="initial",
+            urgent=serializer.validated_data.get("urgent", False),
+            member_id=serializer.validated_data.get("member_id", ""),
+            patient_dob=serializer.validated_data.get("patient_dob", None),
+            proposal_type=serializer.validated_data.get("proposal_type", "letter"),
         )
 
         prior_auth.save()

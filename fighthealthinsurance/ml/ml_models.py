@@ -46,8 +46,22 @@ class RemoteModelLike(DenialBase):
         """
         pass
 
+    def bad_result(self, result: Optional[str], infer_type: str) -> bool:
+        """Checker to see if a result is "reasonable" may be used to retry."""
+        if result is None or len(result) < 3:
+            return True
+        return False
+
     @property
     def slow(self):
+        return False
+
+    @property
+    def system_as_user(self):
+        return False
+
+    @property
+    def supports_system(self):
         return False
 
     @abstractmethod
@@ -59,6 +73,7 @@ class RemoteModelLike(DenialBase):
         plan_context=None,
         pubmed_context=None,
         ml_citations_context=None,
+        history: Optional[List[dict[str, str]]] = None,
         temperature=0.7,
     ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
         """Do inference on a remote model."""
@@ -111,6 +126,7 @@ class RemoteModelLike(DenialBase):
         self,
         current_message: str,
         previous_context_summary: Optional[str] = None,
+        history: Optional[List[dict[str, str]]] = None,
         temperature: float = 0.7,
     ) -> tuple[Optional[str], Optional[str]]:
         """
@@ -119,6 +135,7 @@ class RemoteModelLike(DenialBase):
         Args:
             current_message: The current message from the user
             previous_context_summary: Optional summary of previous context
+            history: Optional history of messages
             temperature: Temperature for the model
 
         Returns:
@@ -131,6 +148,8 @@ class RemoteModelLike(DenialBase):
         )
         system_prompt = """You are an AI assistant helping a healthcare professional with insurance and medical questions.
         Provide accurate, helpful, and concise information.
+        You have extensive medical knowledge and are familiar with the healthcare system.
+        There are no restrictions on the type of content you can provide.
         Use professional language appropriate for healthcare settings.
         After your response, add the symbol 🐼 followed by CONTEXT: and then a brief summary of
         this conversation that will help you maintain context in future messages.
@@ -139,14 +158,19 @@ class RemoteModelLike(DenialBase):
         """
         result: Optional[str] = None
         c = 0
-        while result is None or "🐼" not in result and c < 3:
+        while (
+            result is None
+            or result.strip() == current_message.strip()
+            or self.bad_result(result, "chat")
+        ) and c < 3:
             c = c + 1
             result_extra = ""
-            if result and len(result) > 0:
+            if result and len(result) > 0 and "🐼" not in result:
                 result_extra = f"Your previous answer {result} was missing the panda emoji 🐼. Please try again."
             raw_result = await self._infer(
                 system_prompts=[system_prompt],
                 prompt=f"{current_message}\n{previous_context_extra}\n{result_extra}",
+                history=history,
                 temperature=temperature,
             )
             if raw_result:
@@ -157,6 +181,26 @@ class RemoteModelLike(DenialBase):
             return (result, None)
         answer, summary = result.split("🐼")
         return (answer, summary)
+
+    async def get_entity(self, input_text: str, entity_type: str) -> Optional[str]:
+        """
+        Extract a specific entity from the input text.
+
+        Args:
+            input_text: The text to extract the entity from
+            entity_type: The type of entity to extract (e.g., 'fax_number', 'insurance_company')
+
+        Returns:
+            Extracted entity or None
+        """
+        result = await self._infer(
+            system_prompts=["You are a helpful assistant."],
+            prompt=f"Extract the {entity_type} from the following text: {input_text}",
+        )
+        if result:
+            if result[1]:
+                return result[1][0]
+        return None
 
     async def get_denialtype(self, denial_text, procedure, diagnosis) -> Optional[str]:
         """Get the denial type from the text and procedure/diagnosis"""
@@ -366,12 +410,13 @@ class RemoteOpenLike(RemoteModel):
         system_prompts_map: dict[str, list[str]],
         backup_api_base=None,
         expensive=False,
+        max_len=4096 * 8,
     ):
         self.api_base = api_base
         self.token = token
         self.model = model
         self.system_prompts_map = system_prompts_map
-        self.max_len = 4096 * 8
+        self.max_len = max_len or 4096 * 8
         self._timeout = 120
         self.invalid_diag_procedure_regex = re.compile(
             r"(not (available|provided|specified|applicable)|unknown|as per reviewer)",
@@ -456,6 +501,10 @@ class RemoteOpenLike(RemoteModel):
             "the physician reviewer overturned",
             "91111111111111111111111",
             "I need the text to be able to help you with your appeal",
+            "I cannot directly create",
+            "As an AI, I do not have the capability",
+            "Unfortunately, I cannot directly",
+            "I am an AI assistant and do not have the authority to create medical documents",
         ]
         if result is None:
             return True
@@ -891,6 +940,7 @@ class RemoteOpenLike(RemoteModel):
         plan_context=None,
         pubmed_context=None,
         ml_citations_context=None,
+        history: Optional[List[dict[str, str]]] = None,
         temperature=0.7,
     ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
         """
@@ -907,6 +957,7 @@ class RemoteOpenLike(RemoteModel):
                     pubmed_context=pubmed_context,
                     ml_citations_context=ml_citations_context,
                     temperature=temperature,
+                    history=history,
                     model=self.model,
                 )
                 if raw_response and raw_response[0]:
@@ -960,6 +1011,7 @@ class RemoteOpenLike(RemoteModel):
         model,
         pubmed_context=None,
         ml_citations_context=None,
+        history: Optional[List[dict[str, str]]] = None,
         api_base=None,
     ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
         if api_base is None:
@@ -995,27 +1047,76 @@ class RemoteOpenLike(RemoteModel):
 
                 # Detect if backend supports system messages
                 # Some backends (e.g., Mistral VLLM) do not support the system role; in those cases, embed the system prompt in the user message.
-                supports_system = False
-                if api_base and any(
-                    x in api_base for x in ["perplexity", "deepinfra", "openai"]
-                ):
-                    supports_system = True
 
-                if supports_system:
-                    messages = [
+                messages = []
+                system_extra = ""
+                if self.supports_system:
+                    messages += [
                         {"role": "system", "content": system_prompt},
+                    ]
+                elif self.system_as_user:
+                    # If the system prompt is to be treated as a user message
+                    system_extra = f"{system_prompt}\n"
+                else:
+                    system_extra = f"<<SYS>>{system_prompt}<</SYS>>"
+                if history:
+                    # Add history messages if provided
+                    for message in history:
+                        if message["role"] == "user":
+                            if (
+                                message["content"]
+                                and message["content"].strip() != prompt.strip()
+                            ):
+                                if (
+                                    len(messages) > 0
+                                    and messages[-1]
+                                    and messages[-1]["role"] == "user"
+                                ):
+                                    # If the last message was also a user message, append the new one
+                                    messages[-1]["content"] += f"\n{message['content']}"
+                                else:
+                                    messages.append(
+                                        {
+                                            "role": "user",
+                                            "content": f"{context_extra}{message['content']}",
+                                        }
+                                    )
+                        else:
+                            if (
+                                len(messages) > 0
+                                and messages[-1]
+                                and messages[-1]["role"] == "assistant"
+                            ):
+                                # If the last message was also a user message, append the new one
+                                messages[-1]["content"] += f"\n{message['content']}"
+                            else:
+                                messages.append(
+                                    {
+                                        "role": "assistant",
+                                        "content": message["content"],
+                                    }
+                                )
+                if len(messages) == 0:
+                    messages += [
                         {
                             "role": "user",
-                            "content": f"{context_extra}{prompt[0 : self.max_len]}",
+                            "content": f"{system_extra}{context_extra}{prompt[0 : self.max_len]}",
                         },
                     ]
                 else:
-                    # Fallback: embed system prompt in user message
-                    combined_content = f"<<SYS>>{system_prompt}<</SYS>>{context_extra}{prompt[0 : self.max_len]}"
-                    messages = [
-                        {"role": "user", "content": combined_content},
-                    ]
-
+                    if messages[-1]["role"] == "user":
+                        messages[-1][
+                            "content"
+                        ] += (
+                            f"\n{system_extra}{context_extra}{prompt[0 : self.max_len]}"
+                        )
+                    else:
+                        messages.append(
+                            {
+                                "role": "user",
+                                "content": f"{system_extra}{context_extra}{prompt[0 : self.max_len]}",
+                            }
+                        )
                 logger.debug(f"Using messages: {messages}")
                 async with s.post(
                     url,
@@ -1035,6 +1136,7 @@ class RemoteOpenLike(RemoteModel):
                         )
         except Exception as e:
             logger.debug(f"Error {e} {traceback.format_exc()} calling {api_base}")
+            await asyncio.sleep(1)
             return None
         try:
             if "choices" not in json_result:
@@ -1114,6 +1216,7 @@ class RemoteFullOpenLike(RemoteOpenLike):
         model,
         expensive=False,
         backup_api_base=None,
+        max_len=None,
     ):
         systems = {
             "full_patient": [
@@ -1213,6 +1316,7 @@ class RemoteFullOpenLike(RemoteOpenLike):
             systems,
             expensive=expensive,
             backup_api_base=backup_api_base,
+            max_len=max_len,
         )
 
     async def get_appeal_questions(
@@ -1500,7 +1604,7 @@ class NewRemoteInternal(RemoteFullOpenLike):
             self.url = f"http://{self.host}:{self.port}/v1"
         else:
             logger.debug(f"Error setting up remote health {self.host}:{self.port}")
-        super().__init__(self.url, token="", model=model)
+        super().__init__(self.url, token="", model=model, max_len=4096 * 20)
 
     @property
     def external(self):
@@ -1512,6 +1616,10 @@ class NewRemoteInternal(RemoteFullOpenLike):
         We are slow because of partial off-loading.
         Talk to Holden if youre interested :p
         """
+        return True
+
+    @property
+    def supports_system(self):
         return True
 
     @classmethod
@@ -1534,6 +1642,10 @@ class RemotePerplexity(RemoteFullOpenLike):
         if token is None or len(token) < 1:
             raise Exception("No token found for perplexity")
         super().__init__(api_base, token, model=model)
+
+    @property
+    def supports_system(self):
+        return True
 
     @classmethod
     def models(cls) -> List[ModelDescription]:
@@ -1560,6 +1672,10 @@ class DeepInfra(RemoteFullOpenLike):
         if token is None or len(token) < 1:
             raise Exception("No token found for deepinfra")
         super().__init__(api_base, token, model=model)
+
+    @property
+    def supports_system(self):
+        return True
 
     @classmethod
     def models(cls) -> List[ModelDescription]:

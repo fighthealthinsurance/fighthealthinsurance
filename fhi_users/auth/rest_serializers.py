@@ -487,6 +487,7 @@ class UpdateProfessionalUserSerializer(serializers.ModelSerializer):
             "most_common_denial",
             "fax_number",
             "display_name",
+            "credentials",
         ]
 
     def validate_npi_number(self, value):

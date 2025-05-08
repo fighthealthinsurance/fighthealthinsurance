@@ -551,6 +551,12 @@ class PriorAuthCreateSerializer(serializers.Serializer):
     plan_id = serializers.CharField(required=False, allow_blank=True)
     creator_professional_user_id = serializers.IntegerField(required=False)
     created_for_professional_user_id = serializers.IntegerField(required=False)
+    urgent = serializers.BooleanField(required=False, default=False)
+    member_id = serializers.CharField(required=False, allow_blank=True)
+    patient_dob = serializers.DateField(required=False)
+    proposal_type = serializers.ChoiceField(
+        choices=["letter", "case_note"], default="letter"
+    )
 
 
 class PriorAuthAnswersSerializer(serializers.Serializer):
@@ -730,3 +736,21 @@ class ChatMessageRequestSerializer(serializers.Serializer):
 
     chat_id = serializers.CharField(required=False, allow_null=True)
     message = serializers.CharField(required=True)
+
+
+class ExtractPatientFieldsSerializer(serializers.Serializer):
+    """Serializer for extracting patient fields from text."""
+
+    text = serializers.CharField(required=True)
+
+
+class ExtractPatientFieldsResponseSerializer(serializers.Serializer):
+    """Serializer for patient field extraction response."""
+
+    patient_name = serializers.CharField(required=False, allow_blank=True, default="")
+    member_id = serializers.CharField(required=False, allow_blank=True, default="")
+    dob = serializers.DateField(required=False, allow_null=True)
+    plan_id = serializers.CharField(required=False, allow_blank=True, default="")
+    insurance_company = serializers.CharField(
+        required=False, allow_blank=True, default=""
+    )
