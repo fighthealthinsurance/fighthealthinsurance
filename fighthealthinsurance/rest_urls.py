@@ -5,7 +5,6 @@ from django.urls import path
 from django.conf import settings
 
 from fighthealthinsurance import rest_views
-from fighthealthinsurance.rest_views import AppealViewSet, MailingListSubscriberViewSet
 
 from rest_framework import routers
 
@@ -24,6 +23,8 @@ router.register(
     r"healthhistory", rest_views.HealthHistoryViewSet, basename="healthhistory"
 )
 
+router.register(r"chats", rest_views.ChatViewSet, basename="chats")
+
 
 router.register(
     r"data_removal",
@@ -31,14 +32,16 @@ router.register(
     basename="dataremoval",
 )
 
-router.register(r"appeals", AppealViewSet, basename="appeals")
+router.register(r"appeals", rest_views.AppealViewSet, basename="appeals")
 router.register(
     r"appeal_attachments",
     rest_views.AppealAttachmentViewSet,
     basename="appeal_attachments",
 )
 router.register(
-    r"mailinglist_subscribe", MailingListSubscriberViewSet, basename="subscribe"
+    r"mailinglist_subscribe",
+    rest_views.MailingListSubscriberViewSet,
+    basename="subscribe",
 )
 router.register(r"prior-auth", rest_views.PriorAuthViewSet, basename="prior-auth")
 router.register(
