@@ -67,8 +67,8 @@ class RemoteModelLike(DenialBase):
         plan_context=None,
         pubmed_context=None,
         ml_citations_context=None,
-        temperature=0.7,
         history: Optional[List[dict[str, str]]] = None,
+        temperature=0.7,
     ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
         """Do inference on a remote model."""
         await asyncio.sleep(0)  # yield
@@ -185,10 +185,14 @@ class RemoteModelLike(DenialBase):
         Returns:
             Extracted entity or None
         """
-        return await self._infer(
+        result = await self._infer(
             system_prompts=["You are a helpful assistant."],
             prompt=f"Extract the {entity_type} from the following text: {input_text}",
         )
+        if result:
+            if result[1]:
+                return result[1][0]
+        return None
 
     async def get_denialtype(self, denial_text, procedure, diagnosis) -> Optional[str]:
         """Get the denial type from the text and procedure/diagnosis"""
