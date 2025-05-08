@@ -72,30 +72,39 @@ class PriorAuthTextSubstituter:
 
         try:
             # Patient information
-            if prior_auth.patient_name:
-                context["patient_name"] = prior_auth.patient_name
-            else:
-                context["patient_name"] = "[PATIENT NAME]"
+            patient_name = prior_auth.patient_name or "[PATIENT NAME]"
+            context["patient_name"] = patient_name
+            context["patient name"] = patient_name
 
-            if prior_auth.plan_id:
-                context["plan_id"] = prior_auth.plan_id
-            else:
-                context["plan_id"] = "[PLAN ID]"
+            plan_id = prior_auth.plan_id or "[PLAN ID]"
+            context["plan_id"] = plan_id
+            context["plan id"] = plan_id
 
-            if prior_auth.member_id:
-                context["member_id"] = prior_auth.member_id
-            else:
-                context["member_id"] = "[MEMBER ID]"
+            member_id = prior_auth.member_id or "[MEMBER ID]"
+            context["member_id"] = member_id
+            context["member id"] = member_id
+            context["enter member id"] = member_id
 
-            if prior_auth.patient_dob:
-                context["patient_dob"] = str(prior_auth.patient_dob)
-            else:
-                context["patient_dob"] = "[DATE OF BIRTH]"
+            patient_dob = prior_auth.patient_dob or "[DATE OF BIRTH]"
+            context["patient_dob"] = patient_dob
+            context["Patient DOB"] = patient_dob
+            context["Enter DOB"] = patient_dob
 
             # Medical information
-            context["diagnosis"] = prior_auth.diagnosis
-            context["treatment"] = prior_auth.treatment
-            context["insurance_company"] = prior_auth.insurance_company
+            diagnosis = prior_auth.diagnosis or "[DIAGNOSIS]"
+            context["diagnosis"] = diagnosis
+            treatement = prior_auth.treatment or "[TREATMENT]"
+            context["treatment"] = treatement
+            insurance_company = prior_auth.insurance_company or "[INSURANCE COMPANY]"
+            context["insurance_company"] = insurance_company
+            context["insurance company"] = insurance_company
+            context["health plan name"] = insurance_company
+            context["Esteemed Members of the Health Plan Review Board"] = insurance_company
+
+            # Insurance information
+            insurance_information = f"Plan ID: {plan_id}, Member ID: {member_id}, Insurance Company: {insurance_company}"
+            context["insurance information"] = insurance_information
+            context["insurance_information"] = insurance_information
 
             # Add urgent flag if applicable
             context["urgent"] = "URGENT" if prior_auth.urgent else ""
@@ -107,19 +116,25 @@ class PriorAuthTextSubstituter:
             )
             if professional:
                 context["provider_name"] = professional.get_display_name()
+                context["provider name"] = professional.get_display_name()
+                context["your name"] = professional.get_display_name()
+                context["your_name"] = professional.get_display_name()
                 context["provider_npi"] = professional.npi_number or "[NPI NUMBER]"
                 context["provider_type"] = (
                     professional.provider_type or "[PROVIDER TYPE]"
                 )
-                context["provider_credentials"] = (
-                    professional.credentials or "[CREDENTIALS]"
-                )
+                credentials = professional.credentials or "[CREDENTIALS]"
+                context["CREDENTIALS"] = credentials
+                context["provider_credentials"] = credentials
+                context["Your Title/Credentials"] = credentials
+                context["Your Credentials"] = credentials
+
 
                 # Get professional contact information
-                if professional.fax_number and len(professional.fax_number) > 5:
-                    context["provider_fax"] = professional.fax_number
-                else:
-                    context["provider_fax"] = "[PROVIDER FAX]"
+                fax = professional.get_fax_number() or ["PROVIDER FAX"]
+                context["provider_fax"] = fax
+                context["provider fax"] = fax
+                context["Your Contact Information"] = fax
             else:
                 # Default placeholders if no professional is associated
                 context["provider_name"] = "[PROVIDER NAME]"
