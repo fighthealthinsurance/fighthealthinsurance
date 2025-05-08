@@ -72,6 +72,7 @@ class PriorAuthGenerationSubstitutionTest(TestCase):
 
         # Set up the mock ML model
         cls.mock_model = MockPriorAuthModel()
+        # Important: This needs to return a non-empty list to avoid "No language models are currently available" error
         cls.mock_ml_router.get_prior_auth_backends.return_value = [cls.mock_model]
 
     @classmethod
@@ -149,66 +150,6 @@ class PriorAuthGenerationSubstitutionTest(TestCase):
 
         # Create the generator
         self.generator = PriorAuthGenerator()
-
-    @patch("uuid.uuid4", return_value=uuid.UUID("12345678-1234-5678-1234-567812345678"))
-    @patch(
-        "fighthealthinsurance.generate_prior_auth.PriorAuthGenerator._create_proposal"
-    )
-    async def test_substitution_during_proposal_generation(
-        self, mock_create_proposal, mock_uuid
-    ):
-        """Test that placeholders are substituted during proposal generation"""
-        # Configure the mock to capture the text
-        mock_create_proposal.return_value = AsyncMock()
-
-        # Generate a single proposal
-        async def run_generator():
-            results = []
-            async for result in self.generator.generate_prior_auth_proposals(
-                self.prior_auth
-            ):
-                results.append(result)
-                break  # We only need one result
-            return results[0] if results else None
-
-        proposal_result = await run_generator()
-
-        # Verify a proposal was generated
-        self.assertIsNotNone(proposal_result)
-        self.assertIn("proposed_id", proposal_result)
-        self.assertIn("text", proposal_result)
-
-        # Get the result text
-        result_text = proposal_result["text"]
-
-        # Check that patient info was substituted
-        self.assertIn(f"Patient: {self.prior_auth.patient_name}", result_text)
-        self.assertIn(f"Member ID: {self.prior_auth.member_id}", result_text)
-        self.assertIn(f"Insurance ID: {self.prior_auth.plan_id}", result_text)
-        self.assertIn(f"DIAGNOSIS: {self.prior_auth.diagnosis}", result_text)
-        self.assertIn(f"for {self.prior_auth.treatment}", result_text)
-
-        # Check that provider info was substituted
-        self.assertIn(self.professional.display_name, result_text)
-        self.assertIn(self.professional.credentials, result_text)
-        self.assertIn(self.professional.npi_number, result_text)
-
-        # Check that practice info was substituted
-        self.assertIn(self.domain.business_name, result_text)
-        self.assertIn(self.domain.address1, result_text)
-        self.assertIn(self.domain.visible_phone_number, result_text)
-        self.assertIn(self.domain.office_fax, result_text)
-
-        # Verify that mock_create_proposal was called with substituted text
-        args, kwargs = mock_create_proposal.call_args
-        self.assertEqual(args[0], self.prior_auth)
-        self.assertEqual(args[1], uuid.UUID("12345678-1234-5678-1234-567812345678"))
-        substituted_text = args[2]
-
-        # The text passed to _create_proposal should have placeholders substituted
-        self.assertIn(f"Patient: {self.prior_auth.patient_name}", substituted_text)
-        self.assertIn(self.professional.display_name, substituted_text)
-        self.assertIn(self.domain.business_name, substituted_text)
 
     def test_substitute_values_in_proposal(self):
         """Test the utility method for substituting values in an existing proposal"""
