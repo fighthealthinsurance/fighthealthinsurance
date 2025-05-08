@@ -48,6 +48,7 @@ from fighthealthinsurance.models import (
     PubMedMiniArticle,
     PriorAuthRequest,
     ProposedPriorAuth,
+    OngoingChat,
 )
 from fighthealthinsurance.pubmed_tools import PubMedTools
 
@@ -73,6 +74,118 @@ else:
 
 appeal_assembly_helper = AppealAssemblyHelper()
 pubmed_tools = PubMedTools()
+
+
+class ChatViewSet(viewsets.ViewSet):
+    """
+    ViewSet for managing ongoing chats with the LLM assistant.
+
+    Lists all chats for the authenticated professional user, ordered by most recently updated.
+    Provides metadata about each chat including the first user message preview.
+    """
+
+    def list(self, request):
+        """List all chats for the current professional user."""
+        user: User = request.user  # type: ignore
+
+        try:
+            professional_user = ProfessionalUser.objects.get(user=user, active=True)
+        except ProfessionalUser.DoesNotExist:
+            logger.warning(f"Professional user not found for user {user.id}")
+            return Response({"error": "Professional user not found"}, status=404)
+
+        # Get all chats for this professional user, ordered by most recently updated
+        chats = OngoingChat.objects.filter(
+            professional_user=professional_user
+        ).order_by("-updated_at")
+
+        # Prepare the response data
+        chat_list = []
+        for chat in chats:
+            # Extract the first user message (if it exists)
+            first_message_preview = ""
+            if chat.chat_history and len(chat.chat_history) > 0:
+                for message in chat.chat_history:
+                    if message.get("role") == "user":
+                        content = message.get("content", "")
+                        first_message_preview = content[:100] + (
+                            "..." if len(content) > 100 else ""
+                        )
+                        break
+
+            # Get timestamps
+            created_at = chat.created_at if hasattr(chat, "created_at") else None
+            updated_at = chat.updated_at if hasattr(chat, "updated_at") else None
+
+            # Get the date from the most recent message if available
+            last_message_date = None
+            if chat.chat_history and len(chat.chat_history) > 0:
+                for message in reversed(chat.chat_history):
+                    if "timestamp" in message:
+                        try:
+                            last_message_date = message["timestamp"]
+                            break
+                        except (ValueError, TypeError):
+                            pass
+
+            chat_list.append(
+                {
+                    "id": str(chat.id),
+                    "created_at": created_at,
+                    "updated_at": updated_at or last_message_date,
+                    "message_preview": first_message_preview,
+                    "message_count": len(chat.chat_history) if chat.chat_history else 0,
+                    "title": self._generate_chat_title(chat),
+                }
+            )
+
+        return Response(chat_list)
+
+    @action(detail=True, methods=["delete"])
+    def delete(self, request, pk=None):
+        """Delete a specific chat."""
+        user: User = request.user  # type: ignore
+
+        try:
+            professional_user = ProfessionalUser.objects.get(user=user, active=True)
+        except ProfessionalUser.DoesNotExist:
+            logger.warning(f"Professional user not found for user {user.id}")
+            return Response({"error": "Professional user not found"}, status=404)
+
+        try:
+            chat = OngoingChat.objects.get(id=pk, professional_user=professional_user)
+            chat.delete()
+            return Response(
+                {"status": "success", "message": "Chat deleted successfully"}
+            )
+        except OngoingChat.DoesNotExist:
+            return Response({"error": "Chat not found"}, status=404)
+
+    def _generate_chat_title(self, chat):
+        """Generate a title for the chat based on its content."""
+        if not chat.chat_history or len(chat.chat_history) == 0:
+            return "New conversation"
+
+        # Try to find the first user message
+        for message in chat.chat_history:
+            if message.get("role") == "user":
+                content = message.get("content", "")
+                # Extract first line or first few words
+                title = ""
+                if "\n" in content:
+                    title = content.split("\n")[0][:50]
+                else:
+                    words = content.split()
+                    title = " ".join(words[: min(5, len(words))])
+
+                if len(title) > 50:
+                    title = title[:47] + "..."
+
+                # Ensure the title is not empty
+                if len(title) > 5:
+                    return title
+
+        return "Life, the universe and everything? 42"
 
 
 class DataRemovalViewSet(viewsets.ViewSet, DeleteMixin, DeleteOnlyMixin):
