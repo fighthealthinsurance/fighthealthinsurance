@@ -46,9 +46,14 @@ class PriorAuthGenerator:
             )
         )
         patient_health_history = prior_auth.patient_health_history
-        questions = prior_auth.questions
         answers = prior_auth.answers
-        mode = prior_auth.mode
+        patient_info = {}
+        if prior_auth.patient_name and len(prior_auth.patient_name) > 0:
+            patient_info["name"] = prior_auth.patient_name
+        if prior_auth.patient_dob:
+            patient_info["dob"] = str(prior_auth.patient_dob)
+        if prior_auth.plan_id:
+            patient_info["plan_id"] = prior_auth.plan_id
 
         # Prepare prompt context
         context = {
@@ -59,6 +64,7 @@ class PriorAuthGenerator:
             "provider_info": provider_info,
             "qa_pairs": answers,
             "urgent": prior_auth.urgent,
+            "patient_info": patient_info,
         }  # type: Dict[str, Any]
 
         # Get available models

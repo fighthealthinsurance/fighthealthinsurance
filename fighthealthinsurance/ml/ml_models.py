@@ -46,6 +46,12 @@ class RemoteModelLike(DenialBase):
         """
         pass
 
+    def bad_result(self, result: Optional[str], infer_type: str) -> bool:
+        """Checker to see if a result is "reasonable" may be used to retry."""
+        if result is None or len(result) < 3:
+            return True
+        return False
+
     @property
     def slow(self):
         return False
@@ -1061,7 +1067,11 @@ class RemoteOpenLike(RemoteModel):
                                 message["content"]
                                 and message["content"].strip() != prompt.strip()
                             ):
-                                if messages[-1] and messages[-1]["role"] == "user":
+                                if (
+                                    len(messages) > 0
+                                    and messages[-1]
+                                    and messages[-1]["role"] == "user"
+                                ):
                                     # If the last message was also a user message, append the new one
                                     messages[-1]["content"] += f"\n{message['content']}"
                                 else:
@@ -1072,7 +1082,11 @@ class RemoteOpenLike(RemoteModel):
                                         }
                                     )
                         else:
-                            if messages[-1] and messages[-1]["role"] == "assistant":
+                            if (
+                                len(messages) > 0
+                                and messages[-1]
+                                and messages[-1]["role"] == "assistant"
+                            ):
                                 # If the last message was also a user message, append the new one
                                 messages[-1]["content"] += f"\n{message['content']}"
                             else:

@@ -860,7 +860,7 @@ class PriorAuthRequest(ExportModelOperationsMixin("PriorAuthRequest"), models.Mo
     # Patient information
     patient_name = models.TextField(blank=True, null=True)
     plan_id = models.TextField(blank=True, null=True)
-    patient_id = models.TextField(blank=True, null=True)
+    member_id = models.TextField(blank=True, null=True)
     patient_dob = models.DateField(null=True, blank=True)
 
     # Mode selection for the request

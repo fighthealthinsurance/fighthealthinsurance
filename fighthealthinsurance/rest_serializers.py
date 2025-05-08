@@ -552,8 +552,11 @@ class PriorAuthCreateSerializer(serializers.Serializer):
     creator_professional_user_id = serializers.IntegerField(required=False)
     created_for_professional_user_id = serializers.IntegerField(required=False)
     urgent = serializers.BooleanField(required=False, default=False)
-    patient_id = serializers.CharField(required=False, allow_blank=True)
+    member_id = serializers.CharField(required=False, allow_blank=True)
     patient_dob = serializers.DateField(required=False)
+    proposal_type = serializers.ChoiceField(
+        choices=["letter", "case_note"], default="letter"
+    )
 
 
 class PriorAuthAnswersSerializer(serializers.Serializer):
