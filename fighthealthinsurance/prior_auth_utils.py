@@ -1,8 +1,7 @@
-from string import Template
 from typing import Dict, Any, Optional
 from loguru import logger
 from fighthealthinsurance.models import PriorAuthRequest, ProposedPriorAuth, UserDomain
-
+import re
 
 class PriorAuthTextSubstituter:
     """
@@ -38,13 +37,21 @@ class PriorAuthTextSubstituter:
             return proposal_text
 
         # Build context dictionary with all available information
-        context = PriorAuthTextSubstituter._build_context_dict(prior_auth)
+        try:
+            context = PriorAuthTextSubstituter._build_context_dict(prior_auth)
+        except Exception as e:
+            logger.error(f"Error building context dictionary: {e}")
+            # Return the original if there was an error
+            return proposal_text
 
         # Use string.Template to substitute values
         try:
-            template = Template(proposal_text)
-            result = template.safe_substitute(context)
-            return result
+            for k, v in context.items():
+                if v is None:
+                    continue
+                pattern = rf'(?i)(\${k}|\[{k}\])'
+                proposal_text = re.sub(pattern, str(v), proposal_text)
+            return proposal_text
         except Exception as e:
             logger.error(f"Error substituting values in prior auth text: {e}")
             # Return the original if there was an error
