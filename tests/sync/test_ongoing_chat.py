@@ -187,6 +187,14 @@ class OngoingChatWebSocketTest(APITestCase):
         )
         self.assertEqual(chat.chat_history[1]["role"], "assistant")
 
+        # Verify replay works, we need to make a new connection.
+        communicator = WebsocketCommunicator(
+            OngoingChatConsumer.as_asgi(), "/ws/ongoing-chat/"
+        )
+
+        # Add the user to the scope
+        communicator.scope["user"] = user
+
         connected, _ = await communicator.connect()
         self.assertTrue(connected)
 
@@ -195,8 +203,8 @@ class OngoingChatWebSocketTest(APITestCase):
 
         # Wait for a response
         response = await communicator.receive_json_from(timeout=15)
-        assertIn("chat_id", response)
-        assertIn("messages", response)
+        self.assertIn("chat_id", response)
+        self.assertIn("messages", response)
 
         # Clean up
         await self.asyncTearDown()

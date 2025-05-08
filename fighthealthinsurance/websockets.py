@@ -202,12 +202,23 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
 
     async def receive(self, text_data):
         data = json.loads(text_data)
-        logger.debug("Received message for ongoing chat")
+        logger.debug(f"Received message for ongoing chat {data}")
 
-        # Get the required data
-        message = data.get("message", None)
+        # Get the required data -- note the message should be sent as "content"
+        # but we also accept "message" for backward compatibility.
+        message = data.get("message", data.get("content", None))
         chat_id = data.get("chat_id", None)
-        replay_requested = data.get("replay_request", False)
+        replay_requested = data.get("replay", False)
+
+        logger.debug(f"Message: {message} replay {replay_requested} chat_id {chat_id}")
+
+        # Validate we have the required data
+        if replay_requested and not chat_id:
+            await self.send(
+                json.dumps({"error": "chat_id is required for replay requests"})
+            )
+            await self.close()
+            return
 
         # Get the user from scope (authenticated by Django Channels)
         user = self.scope.get("user")
@@ -227,13 +238,15 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                 return
 
             # Get or create the chat session
-            chat = await sync_to_async(self._get_or_create_chat)(
-                professional_user, chat_id
-            )
+            chat = await self._get_or_create_chat(professional_user, chat_id)
+
+            logger.debug(f"Chat: {chat.id}")
 
             if not replay_requested:
+                logger.debug(f"Generating response for message: {message}")
                 # Generate response (this also updates chat history)
                 response = await self._generate_llm_response(chat, message)
+                logger.debug(f"Response: {response} to send")
 
                 # Send response to the client
                 await self.send(
@@ -245,10 +258,11 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                         }
                     )
                 )
+                logger.debug(f"Sent response: {response}")
 
             else:
                 await self.send(
-                    {"messages": chat.chat_history, "chat_id": str(chat.id)}
+                    json.dumps({"messages": chat.chat_history, "chat_id": str(chat.id)})
                 )
 
         except Exception as e:
@@ -262,11 +276,11 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
         except ProfessionalUser.DoesNotExist:
             return None
 
-    def _get_or_create_chat(self, professional_user, chat_id=None):
+    async def _get_or_create_chat(self, professional_user, chat_id=None):
         """Get an existing chat or create a new one."""
         if chat_id:
             try:
-                return OngoingChat.objects.get(
+                return await OngoingChat.objects.aget(
                     id=chat_id, professional_user=professional_user
                 )
             except OngoingChat.DoesNotExist:
@@ -274,7 +288,7 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                 pass
 
         # Create a new chat
-        return OngoingChat.objects.create(
+        return await OngoingChat.objects.acreate(
             professional_user=professional_user,
             chat_history=[],
             summary_for_next_call=[],
@@ -328,4 +342,7 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
 
             except Exception as e:
                 logger.opt(exception=True).debug(f"Error generating LLM response: {e}")
+        logger.debug(
+            f"Failed to generate response for message: {message} in chat {chat.id}"
+        )
         return "Sorry, I encountered an error while processing your request."
