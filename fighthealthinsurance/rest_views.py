@@ -1181,7 +1181,77 @@ class PriorAuthViewSet(viewsets.ViewSet, SerializerMixin):
             return serializers.PriorAuthSelectSerializer
         elif self.action == "retrieve":
             return serializers.PriorAuthDetailSerializer
+        elif self.action == "extract_patient_fields":
+            return serializers.ExtractPatientFieldsSerializer
         return serializers.PriorAuthRequestSerializer
+
+    @extend_schema(
+        request=serializers.Serializer({"text": serializers.CharField(required=True)}),
+        responses={200: serializers.Serializer},
+    )
+    @action(detail=False, methods=["post"])
+    def extract_patient_fields(self, request: Request) -> Response:
+        """
+        Extract patient fields from uploaded PDF text content using ML entity extraction.
+
+        Accepts raw text extracted from a PDF and returns structured field values that can
+        be used to prefill a prior auth form.
+        """
+        # Ensure user is authenticated
+        if not request.user.is_authenticated:
+            return Response(
+                {"error": "Authentication required"},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        # Validate the input data
+        if "text" not in request.data or not request.data["text"]:
+            return Response(
+                {"error": "Text content is required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Get the raw text from the request
+        text = request.data["text"]
+
+        # Call entity extraction asynchronously for each field
+        async def extract_fields():
+            """Extract all required fields from the text asynchronously."""
+            tasks = {
+                "patient_name": ml_router.get_entity(text, "patient_name"),
+                "member_id": ml_router.get_entity(text, "member_id"),
+                "dob": ml_router.get_entity(text, "date_of_birth"),
+                "plan_id": ml_router.get_entity(text, "plan_id"),
+                "insurance_company": ml_router.get_entity(text, "insurance_company"),
+                "diagnosis": ml_router.get_entity(text, "diagnosis"),
+                # Add other relevant fields as needed
+            }
+
+            # Run all extraction tasks concurrently
+            results = {}
+            for field, task in tasks.items():
+                try:
+                    result = await task
+                    if result:
+                        results[field] = result
+                except Exception as e:
+                    # Log the error but continue with other fields
+                    logger.error(f"Error extracting {field}: {e}")
+
+            return results
+
+        # Run the extraction and get the results
+        try:
+            extracted_fields = async_to_sync(extract_fields)()
+
+            # Return the extracted fields
+            return Response(extracted_fields, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.error(f"Error in extract_patient_fields: {e}")
+            return Response(
+                {"error": "Failed to extract patient information"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
     @extend_schema(responses=serializers.PriorAuthRequestSerializer)
     def create(self, request: Request) -> Response:

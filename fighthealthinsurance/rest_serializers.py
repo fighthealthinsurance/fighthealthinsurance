@@ -733,3 +733,19 @@ class ChatMessageRequestSerializer(serializers.Serializer):
 
     chat_id = serializers.CharField(required=False, allow_null=True)
     message = serializers.CharField(required=True)
+
+
+class ExtractPatientFieldsSerializer(serializers.Serializer):
+    """Serializer for extracting patient fields from text."""
+    text = serializers.CharField(required=True)
+
+
+class ExtractPatientFieldsResponseSerializer(serializers.Serializer):
+    """Serializer for patient field extraction response."""
+    patient_name = serializers.CharField(required=False, allow_blank=True)
+    member_id = serializers.CharField(required=False, allow_blank=True)
+    dob = serializers.CharField(required=False, allow_blank=True)
+    plan_id = serializers.CharField(required=False, allow_blank=True)
+    insurance_company = serializers.CharField(required=False, allow_blank=True)
+    # Use DictionaryStringField for generic response that can include any field
+    fields = DictionaryStringField(required=False)

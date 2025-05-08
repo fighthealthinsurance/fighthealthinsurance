@@ -158,6 +158,22 @@ class RemoteModelLike(DenialBase):
         answer, summary = result.split("🐼")
         return (answer, summary)
 
+    async def get_entity(self, input_text: str, entity_type: str) -> Optional[str]:
+        """
+        Extract a specific entity from the input text.
+
+        Args:
+            input_text: The text to extract the entity from
+            entity_type: The type of entity to extract (e.g., 'fax_number', 'insurance_company')
+
+        Returns:
+            Extracted entity or None
+        """
+        return await self._infer(
+            system_prompts=["You are a helpful assistant."],
+            prompt=f"Extract the {entity_type} from the following text: {input_text}",
+        )
+
     async def get_denialtype(self, denial_text, procedure, diagnosis) -> Optional[str]:
         """Get the denial type from the text and procedure/diagnosis"""
         return None
