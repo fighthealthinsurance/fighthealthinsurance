@@ -14,6 +14,7 @@ from fighthealthinsurance.models import (
     ProfessionalUser,
     UserDomain,
 )
+from fhi_users.models import ProfessionalDomainRelation
 from fighthealthinsurance.generate_prior_auth import PriorAuthGenerator
 from fighthealthinsurance.prior_auth_utils import PriorAuthTextSubstituter
 
