@@ -7,7 +7,10 @@ class MockChatModel:
     """A mock model that returns predefined responses for chat."""
 
     async def generate_chat_response(
-        self, message: str, previous_context_summary: Optional[Dict[str, Any]] = None
+        self,
+        message: str,
+        previous_context_summary: Optional[Dict[str, Any]] = None,
+        history: Optional[list[dict[str, str]]] = None,
     ) -> Tuple[str, Dict[str, Any]]:
         """
         Generate a mock response to a chat message.
@@ -15,6 +18,7 @@ class MockChatModel:
         Args:
             message: The user's message
             previous_context_summary: Optional context from previous interactions
+            history: Optional history of messages
 
         Returns:
             A tuple of (response_text, updated_context)
