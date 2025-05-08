@@ -3,6 +3,7 @@ from typing import Any, List, Dict, AsyncIterator
 from loguru import logger
 import asyncio
 import uuid
+import datetime
 
 from fighthealthinsurance.ml.ml_models import RemoteModelLike
 from fighthealthinsurance.ml.ml_router import ml_router
@@ -11,6 +12,7 @@ from fighthealthinsurance.utils import as_available
 from asgiref.sync import sync_to_async, async_to_sync
 import random
 from fighthealthinsurance.exec import executor
+from fighthealthinsurance.prior_auth_utils import PriorAuthTextSubstituter
 
 
 class PriorAuthGenerator:
@@ -148,19 +150,26 @@ class PriorAuthGenerator:
                     "error": f"Failed to generate proposal text with model {index+1}"
                 }
 
+            # Substitute in patient and provider information
+            substituted_text = (
+                PriorAuthTextSubstituter.substitute_patient_and_provider_info(
+                    prior_auth, proposal_text
+                )
+            )
+
             # Create a unique ID for this proposal
             proposed_id = uuid.uuid4()
 
             # Create and save the proposal in the database, with sqlite this can result in db locked errors.
             try:
-                await self._create_proposal(prior_auth, proposed_id, proposal_text)
+                await self._create_proposal(prior_auth, proposed_id, substituted_text)
             except:
                 pass
 
             # Return the result to be streamed to the client
             return {
                 "proposed_id": str(proposed_id),
-                "text": proposal_text,
+                "text": substituted_text,
                 "model_index": index,
             }
 
@@ -220,6 +229,8 @@ class PriorAuthGenerator:
         if patient_info:
             prompt += f"\n\nPatient Information:\n{patient_info}"
 
+        prompt += f"\n\n Today's date is {str(datetime.date.today())}.\n\n"
+
         # Add formatting instructions
         prompt += """
         Format the prior authorization request as a formal letter with:
@@ -230,6 +241,13 @@ class PriorAuthGenerator:
         5. Supporting evidence and clinical rationale
         6. Relevant billing codes if available
         7. Closing with provider details
+
+        Use $placeholders for information that will be filled in later, such as:
+        - $patient_name, $patient_dob, $plan_id, $member_id
+        - $provider_name, $provider_npi, $provider_type, $provider_credentials
+        - $practice_name, $practice_phone, $practice_fax, $practice_address
+
+        But if the information is available, use it directly.
 
         Make it persuasive, evidence-based, and compliant with insurance requirements.
         """
@@ -254,6 +272,24 @@ class PriorAuthGenerator:
             proposed_id=proposed_id, prior_auth_request=prior_auth, text=text
         )
         return proposal
+
+    def substitute_values_in_proposal(
+        self, prior_auth: PriorAuthRequest, proposal_text: str
+    ) -> str:
+        """
+        Substitute patient and provider values into a prior auth proposal text.
+        Can be called on saved proposals to refresh the placeholders.
+
+        Args:
+            prior_auth: The PriorAuthRequest object
+            proposal_text: The proposal text with placeholders
+
+        Returns:
+            The proposal text with patient and provider information substituted
+        """
+        return PriorAuthTextSubstituter.substitute_patient_and_provider_info(
+            prior_auth, proposal_text
+        )
 
 
 # Create a singleton instance for import
