@@ -1230,6 +1230,9 @@ class PriorAuthViewSet(viewsets.ViewSet, SerializerMixin):
             domain=domain,
             mode=serializer.validated_data.get("mode", "guided"),
             status="initial",
+            urgent=serializer.validated_data.get("urgent", False),
+            patient_id=serializer.validated_data.get("patient_id", ""),
+            patient_dob=serializer.validated_data.get("patient_dob", None),
         )
 
         prior_auth.save()

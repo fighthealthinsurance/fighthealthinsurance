@@ -551,6 +551,9 @@ class PriorAuthCreateSerializer(serializers.Serializer):
     plan_id = serializers.CharField(required=False, allow_blank=True)
     creator_professional_user_id = serializers.IntegerField(required=False)
     created_for_professional_user_id = serializers.IntegerField(required=False)
+    urgent = serializers.BooleanField(required=False, default=False)
+    patient_id = serializers.CharField(required=False, allow_blank=True)
+    patient_dob = serializers.DateField(required=False, allow_blank=True)
 
 
 class PriorAuthAnswersSerializer(serializers.Serializer):

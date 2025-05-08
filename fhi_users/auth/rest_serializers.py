@@ -471,6 +471,7 @@ class UpdateUserDomainSerializer(serializers.ModelSerializer):
             "cover_template_string",
             "display_name",
             "business_name",
+            "credentials",
         ]
 
 

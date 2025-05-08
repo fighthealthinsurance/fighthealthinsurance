@@ -855,10 +855,13 @@ class PriorAuthRequest(ExportModelOperationsMixin("PriorAuthRequest"), models.Mo
     treatment = models.TextField()
     insurance_company = models.TextField()
     patient_health_history = models.TextField(blank=True)
+    urgent = models.BooleanField(default=False)
 
     # Patient information
     patient_name = models.TextField(blank=True, null=True)
     plan_id = models.TextField(blank=True, null=True)
+    patient_id = models.TextField(blank=True, null=True)
+    patient_dob = models.DateField(null=True, blank=True)
 
     # Mode selection for the request
     MODE_CHOICES = (
@@ -866,6 +869,16 @@ class PriorAuthRequest(ExportModelOperationsMixin("PriorAuthRequest"), models.Mo
         ("raw", "Raw"),
     )
     mode = models.CharField(max_length=10, choices=MODE_CHOICES, default="guided")
+
+    # Letter or case note
+    PROPOSAL_TYPE = (
+        ("letter", "Letter"),
+        ("case_note", "Case Note"),
+    )
+
+    proposal_type = models.CharField(
+        max_length=10, choices=PROPOSAL_TYPE, default="letter"
+    )
 
     # Q&A for the request
     questions = models.JSONField(null=True, blank=True)  # List of [(question, default)]
