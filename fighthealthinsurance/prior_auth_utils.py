@@ -100,8 +100,8 @@ class PriorAuthTextSubstituter:
             # Medical information
             diagnosis = prior_auth.diagnosis or "[DIAGNOSIS]"
             context["diagnosis"] = diagnosis
-            treatement = prior_auth.treatment or "[TREATMENT]"
-            context["treatment"] = treatement
+            treatment = prior_auth.treatment or "[TREATMENT]"
+            context["treatment"] = treatment
             insurance_company = prior_auth.insurance_company or "[INSURANCE COMPANY]"
             context["insurance_company"] = insurance_company
             context["insurance company"] = insurance_company
