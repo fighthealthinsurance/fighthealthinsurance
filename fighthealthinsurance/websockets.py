@@ -327,7 +327,7 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                 # Generate the response using the model
                 intro_opt = ""
                 if new_chat:
-                    pro_user_info = await sync_to_async(str)(chat.professional_user)
+                    pro_user_info = await sync_to_async(chat.summarize_professional_user)()
                     intro_opt = (
                         f"You are a helpful assistant talking with a professional user, {pro_user_info}. "
                         f"You are helping a professional user with their ongoing chat. You likely do not need to immeditely generate a prior auth or appeal instead you'll have a chat with the professional, {pro_user_info}, about their needs. Now here is what they said to start the conversation:"

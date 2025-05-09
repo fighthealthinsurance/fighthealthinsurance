@@ -963,6 +963,9 @@ class OngoingChat(models.Model):
         UserDomain, null=True, on_delete=models.SET_NULL, blank=True
     )
 
+    def summarize_professional_user(self):
+        return str(self.professional_user)
+
     def __str__(self):
         if self.professional_user:
             return f"Ongoing Chat {self.id} for {self.professional_user.get_display_name()}"
