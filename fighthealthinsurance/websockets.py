@@ -313,9 +313,9 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                 # Add our current chat message to the chat history
                 if not chat.chat_history:
                     chat.chat_history = []  # type: ignore
-                    new_chat = True
                 if not chat.summary_for_next_call:
                     chat.summary_for_next_call = []  # type: ignore
+                if not chat.chat_history and not chat.summary_for_next_call:
                     new_chat = True
                 # Generate the response using the model
                 intro_opt = ""
