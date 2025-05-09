@@ -195,11 +195,17 @@ class RemoteModelLike(DenialBase):
         """
         result = await self._infer(
             system_prompts=["You are a helpful assistant."],
-            prompt=f"Extract the {entity_type} from the following text: {input_text}",
+            prompt=f"Extract the {entity_type} from the following text: {input_text}. In your answer just provide the value no description of what it is (e.g. don't use things like the member is.. just provide their name). If unknown provide UNKNOWN",
         )
+        # Just get the text response.
+        logger.debug(f"Result was {result}")
         if result:
-            if result[1]:
-                return result[1][0]
+            if result[0]:
+                stripped = result[0].strip()
+                if "unknown" in stripped.lower():
+                    return None
+                else:
+                    return stripped
         return None
 
     async def get_denialtype(self, denial_text, procedure, diagnosis) -> Optional[str]:

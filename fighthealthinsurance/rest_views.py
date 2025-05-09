@@ -1500,8 +1500,20 @@ class PriorAuthViewSet(viewsets.ViewSet, SerializerMixin):
         proposal.selected = True
         proposal.save()
 
-        prior_auth.text = user_text or proposal.text
+        # Determine which text to use (user-edited or original proposal)
+        text_to_use = user_text or proposal.text
 
+        # Substitute patient and provider information into the text
+        from fighthealthinsurance.prior_auth_utils import PriorAuthTextSubstituter
+
+        substituted_text = (
+            PriorAuthTextSubstituter.substitute_patient_and_provider_info(
+                prior_auth, text_to_use
+            )
+        )
+
+        # Save the substituted text
+        prior_auth.text = substituted_text
         prior_auth.status = "completed"
         prior_auth.save()
 
