@@ -229,7 +229,7 @@ class ProfessionalUser(models.Model):
             professionaldomainrelation__active_domain_relation=True,
         )
 
-    def get_fax_number(self):
+    def get_fax_number(self) -> typing.Optional[str]:
         """
         Returns the professional's fax number, or the office fax number from the first active domain if not set.
 
@@ -245,8 +245,9 @@ class ProfessionalUser(models.Model):
             if domains.exists():
                 domain_opt = domains.first()
                 if domain_opt:
-                    return domain_opt.office_fax
-            return None
+                    if domain_opt.office_fax:
+                        return domain_opt.office_fax # type: ignore
+        return None
 
     def get_full_name(self):
         """
