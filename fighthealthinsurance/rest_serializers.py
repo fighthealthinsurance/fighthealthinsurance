@@ -649,6 +649,7 @@ class PriorAuthDetailSerializer(PriorAuthRequestSerializer):
             "created_for_professional",
             "mode",
             "text",
+            "urgent",
         ]
 
     @extend_schema_field(serializers.DictField())
