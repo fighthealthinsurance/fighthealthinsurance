@@ -86,7 +86,9 @@ class PriorAuthTextSubstituter:
             context["member id"] = member_id
             context["enter member id"] = member_id
 
-            patient_dob = prior_auth.patient_dob or "[DATE OF BIRTH]"
+            patient_dob = "[DATE OF BIRTH]"
+            if prior_auth.patient_dob:
+                patient_dob = str(prior_auth.patient_dob)
             context["patient_dob"] = patient_dob
             context["Patient DOB"] = patient_dob
             context["Enter DOB"] = patient_dob
@@ -133,7 +135,7 @@ class PriorAuthTextSubstituter:
                 context["Your Credentials"] = credentials
 
                 # Get professional contact information
-                fax = professional.get_fax_number() or ["PROVIDER FAX"]
+                fax = professional.get_fax_number() or "[PROVIDER FAX]"
                 context["provider_fax"] = fax
                 context["provider fax"] = fax
                 context["Your Contact Information"] = fax
