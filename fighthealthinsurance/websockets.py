@@ -313,21 +313,16 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                 # Add our current chat message to the chat history
                 if not chat.chat_history:
                     chat.chat_history = []  # type: ignore
-                    new_chat = True
                 if not chat.summary_for_next_call:
                     chat.summary_for_next_call = []  # type: ignore
+                if not chat.chat_history and not chat.summary_for_next_call:
                     new_chat = True
-                chat.chat_history.append(
-                    {
-                        "role": "user",
-                        "content": message,
-                        "timestamp": timezone.now().isoformat(),
-                    }
-                )
                 # Generate the response using the model
                 intro_opt = ""
                 if new_chat:
-                    pro_user_info = await sync_to_async(str)(chat.professional_user)
+                    pro_user_info = await sync_to_async(
+                        chat.summarize_professional_user
+                    )()
                     intro_opt = (
                         f"You are a helpful assistant talking with a professional user, {pro_user_info}. "
                         f"You are helping a professional user with their ongoing chat. You likely do not need to immeditely generate a prior auth or appeal instead you'll have a chat with the professional, {pro_user_info}, about their needs. Now here is what they said to start the conversation:"
@@ -338,6 +333,18 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                     history=chat.chat_history,
                 )
                 if response_text and response_text.strip() != "":
+                    # Add the user's message to the chat history
+                    # We intentionally do this after the model call so we
+                    # avoid loading a message which breaks the model
+                    # (also since we try multiple models so we don't load
+                    # the message multiple times)
+                    chat.chat_history.append(
+                        {
+                            "role": "user",
+                            "content": message,
+                            "timestamp": timezone.now().isoformat(),
+                        }
+                    )
                     # Save the context summary if present.
                     if context_part:
                         chat.summary_for_next_call.append(context_part)
