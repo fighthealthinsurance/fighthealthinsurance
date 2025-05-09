@@ -3,6 +3,8 @@ from loguru import logger
 from fighthealthinsurance.models import PriorAuthRequest, ProposedPriorAuth, UserDomain
 import re
 
+from datetime import date
+
 
 class PriorAuthTextSubstituter:
     """
@@ -51,7 +53,7 @@ class PriorAuthTextSubstituter:
                 if v is None:
                     continue
                 pattern = rf"(?i)(\${k}|\[{k}\])"
-                proposal_text = re.sub(pattern, str(v), proposal_text)
+                proposal_text = re.sub(pattern, re.escape(str(v)), proposal_text)
             return proposal_text
         except Exception as e:
             logger.error(f"Error substituting values in prior auth text: {e}")
@@ -192,9 +194,7 @@ class PriorAuthTextSubstituter:
                 context["practice_fax"] = context.get("provider_fax", "[PRACTICE FAX]")
                 context["practice_address"] = "[PRACTICE ADDRESS]"
 
-            # Add today's date
-            from datetime import date
-
+            # Add the date
             context["today"] = date.today().strftime("%B %d, %Y")
 
         except Exception as e:
