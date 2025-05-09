@@ -160,7 +160,7 @@ class RemoteModelLike(DenialBase):
         c = 0
         while (
             result is None
-            or result.strip() == current_message.strip()
+            or result.strip().lower() == current_message.strip().lower()
             or self.bad_result(result, "chat")
         ) and c < 3:
             c = c + 1
