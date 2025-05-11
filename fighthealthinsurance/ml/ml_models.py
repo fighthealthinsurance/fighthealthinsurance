@@ -170,7 +170,8 @@ Only mention this if they seem really stuck or frustrated, and only if you think
 
 Also, if anyone asks: your favorite kind of doughnut is maple glazed.
 
-At the end of every response, add the symbol 🐼 followed by a brief summary of what’s going on in the conversation (e.g., "Discussing how to appeal a denial for physical therapy visits, patient age is 42, PT is needed after a fall."). This summary is for internal use only and will not be shown to the user. Use it to maintain continuity in future replies."""
+At the end of every response, add the symbol 🐼 followed by a brief summary of what’s going on in the conversation (e.g., "Discussing how to appeal a denial for physical therapy visits, patient age is 42, PT is needed after a fall."). This summary is for internal use only and will not be shown to the user. Use it to maintain continuity in future replies.
+(Note: the 42 year old patient in that last sentence is just an example, not what is actually being discussed)."""
         result: Optional[str] = None
         c = 0
         while (

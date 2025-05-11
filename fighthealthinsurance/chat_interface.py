@@ -72,8 +72,11 @@ class ChatInterface:
         )
 
         pubmed_context_str = ""
-        pubmed_query_terms_regex = r"[\[\*]{1,2}pubmed[ _]?query:(.*?)[\*\]]{1,2}"
-        if response_text:
+        pubmed_query_terms_regex = r"[\[\*]{1,4}pubmed[ _]?query:{0,1}\s*(.*?)\s*[\*\]]{1,4}"
+        if not response_text:
+            logger.debug("Got empty response from LLM")
+            return None, None
+        try:
             # Extract the PubMedQuery terms using regex
             match = re.search(
                 pubmed_query_terms_regex, response_text, flags=re.IGNORECASE
@@ -81,6 +84,9 @@ class ChatInterface:
             if match:
                 pubmed_query_terms = match.group(1).strip()
                 cleaned_response = response_text.replace(match.group(0), "").strip()
+                if "your search terms" in pubmed_query_terms:
+                    logger.debug("Got bad PubMed Query {pubmed_query_terms}")
+                    return cleaned_response, context_part
                 # Short circuit if no query terms
                 if len(pubmed_query_terms.strip()) == 0:
                     return (cleaned_response, context_part)
@@ -88,26 +94,44 @@ class ChatInterface:
                     f"Searching PubMed for: {pubmed_query_terms}..."
                 )
 
-                article_ids = await self.pubmed_tools.find_pubmed_article_ids_for_query(
+
+                recent_article_ids_awaitable = self.pubmed_tools.find_pubmed_article_ids_for_query(
+                    query=pubmed_query_terms, since=2024, timeout=30.0
+                )
+                all_article_ids_awaitable = self.pubmed_tools.find_pubmed_article_ids_for_query(
                     query=pubmed_query_terms, timeout=30.0
                 )
-                if article_ids:
+                (recent_article_ids, all_article_ids) = await asyncio.gather(
+                    recent_article_ids_awaitable,
+                    all_article_ids_awaitable
+                )
+                if all_article_ids or recent_article_ids:
+                    article_ids = []
+                    if not all_article_ids:
+                        article_ids = recent_article_ids
+                    elif recent_article_ids:
+                        article_ids = set(recent_article_ids[:5] + all_article_ids[:5])
+                    else:
+                        article_ids = all_article_ids[:6]
+                    await self.send_status_message(
+                        f"Found {len(all_article_ids)} articles. Looking at {len(article_ids)} for context."
+                    )
                     articles_data = await self.pubmed_tools.get_articles(
-                        article_ids[:3]
-                    )  # Limit to 3 articles
+                        article_ids
+                    )
                     summaries = []
                     for art in articles_data:
                         summary_text = art.abstract if art.abstract else art.text
                         if art.title and summary_text:
+                            await self.send_status_message(
+                                f"Found article: {art.title}"
+                            )
                             summaries.append(
                                 f"Title: {art.title}\\nAbstract: {summary_text[:500]}..."
                             )  # Truncate abstract
                     if summaries:
                         pubmed_context_str = (
-                            "\\n\\nPubMed Search Results:\\n" + "\\n\\n".join(summaries)
-                        )
-                        await self.send_status_message(
-                            f"Found {len(article_ids)} relevant articles. Incorporating information into response..."
+                            "\\n\\nWe got back pubmedcontext:[:\\n" + "\\n\\n".join(summaries) +"]. If you reference them make sure to include the title and journal.\\n"
                         )
                         additional_response_text, additional_context_part = (
                             await self._call_llm_with_optional_pubmed(
@@ -117,18 +141,24 @@ class ChatInterface:
                                 history_for_llm,
                             )
                         )
-                        response_text += additional_response_text
+                        cleaned_response += additional_response_text
                         context_part = (
                             context_part + additional_context_part
                             if context_part and additional_context_part
                             else additional_context_part
                         )
+                        response_text = cleaned_response
                 else:
                     await self.send_status_message(
                         "No detailed information found for the articles from PubMed."
                     )
-            else:
-                await self.send_status_message("No articles found for the given query.")
+        except Exception as e:
+            logger.warning(
+                f"Error while processing PubMed query: {e}. Continuing with the original response."
+            )
+            await self.send_status_message(
+                "Error while processing PubMed query. Continuing with the original response."
+            )
         context = (
             context_part + pubmed_context_str if context_part else pubmed_context_str
         )
