@@ -52,7 +52,7 @@ class ChatInterface:
         )
 
         pubmed_context_str = ""
-        if response_text and response_text.contains("**pubmedquery:"):
+        if response_text and "**pubmedquery:" in response_text:
             # Extract the PubMedQuery terms using regex
             pubmed_query_terms_regex = r"\*\*pubmedquery:(.*?)\*\*"
             match = re.search(pubmed_query_terms_regex, response_text)
