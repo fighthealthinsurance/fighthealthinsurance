@@ -1,3 +1,4 @@
+import re
 import asyncio
 import json
 from asgiref.sync import sync_to_async
@@ -13,23 +14,42 @@ from fighthealthinsurance.pubmed_tools import PubMedTools
 
 class ChatInterface:
     def __init__(
-        self, send_json_message_func: Callable[[Dict[str, Any]], Awaitable[None]]
+        self, send_json_message_func: Callable[[Dict[str, Any]], Awaitable[None]],
+        chat: OngoingChat
     ):  # Changed to Dict[str, Any]
-        self.send_json_message_func = send_json_message_func
+        def wrap_send_json_message_func(
+            message: Dict[str, Any]
+        ) -> Awaitable[None]:
+            """Wraps the send_json_message_func to ensure it's always awaited."""
+            if "chat_id" not in message:
+                message["chat_id"] = str(chat.id)
+            return send_json_message_func(message)
+        self.send_json_message_func = wrap_send_json_message_func
         self.pubmed_tools = PubMedTools()
+        self.chat: OngoingChat = chat
 
-    async def send_message_to_client(self, content: str, is_error: bool = False):
-        """Sends a message or an error to the connected client."""
-        # Removed: if self.send_json_message_func: (it's guaranteed by __init__)
-        if is_error:
-            await self.send_json_message_func({"error": content})
-        else:
-            await self.send_json_message_func({"message": content})
+    async def send_error_message(self, message: str):
+        """Sends an error message to the client."""
+        await self.send_json_message_func(
+            {"error": message, "chat_id": str(self.chat.id)}
+        )
 
-    async def _get_professional_user_info(self, chat: OngoingChat) -> str:
+    async def send_status_message(self, message: str):
+        """Sends a status message to the client."""
+        await self.send_json_message_func(
+            {"status": message, "chat_id": str(self.chat.id)}
+        )
+
+    async def send_message_to_client(self, message: str):
+        """Sends a message to the client."""
+        await self.send_json_message_func(
+            {"content": message, "chat_id": str(self.chat.id), "role": "assistant"}
+        )
+
+    async def _get_professional_user_info(self) -> str:
         """Generates a descriptive string for the professional user."""
         try:
-            return await sync_to_async(chat.summarize_professional_user)()
+            return await sync_to_async(self.chat.summarize_professional_user)()
         except Exception as e:
             logger.warning(f"Could not generate detailed professional user info: {e}")
             return "a professional user"
@@ -37,7 +57,6 @@ class ChatInterface:
     async def _call_llm_with_optional_pubmed(
         self,
         model_backend: RemoteModelLike,
-        chat: OngoingChat,
         current_message_for_llm: str,
         previous_context_summary: Optional[str],
         history_for_llm: List[Dict[str, str]],
@@ -45,6 +64,7 @@ class ChatInterface:
         """
         Calls the LLM, handles PubMed query requests if present and returns the response.
         """
+        chat = self.chat
         response_text, context_part = await model_backend.generate_chat_response(
             current_message_for_llm,
             previous_context_summary=previous_context_summary,
@@ -62,7 +82,7 @@ class ChatInterface:
                 # Short circuit if no query terms
                 if len(pubmed_query_terms.strip()) == 0:
                     return (cleaned_response, context_part)
-                await self.send_message_to_client(
+                await self.send_status_message(
                     f"Searching PubMed for: {pubmed_query_terms}..."
                 )
 
@@ -84,36 +104,37 @@ class ChatInterface:
                     pubmed_context_str = (
                         "\\n\\nPubMed Search Results:\\n" + "\\n\\n".join(summaries)
                     )
-                    await self.send_message_to_client(
+                    await self.send_status_message(
                         f"Found {len(article_ids)} relevant articles. Incorporating information into response..."
                     )
                     response_text, context_part = (
                         await self._call_llm_with_optional_pubmed(
                             model_backend,
-                            chat,
                             pubmed_context_str,
                             previous_context_summary,
                             history_for_llm,
                         )
                     )
                 else:
-                    await self.send_message_to_client(
+                    await self.send_status_message(
                         "No detailed information found for the articles from PubMed."
                     )
             else:
-                await self.send_message_to_client(
+                await self.send_status_message(
                     "No articles found for the given query."
                 )
-        return response_text, context_part + pubmed_context_str
+        context = context_part + pubmed_context_str if context_part else pubmed_context_str
+        return response_text, context
 
-    async def handle_chat_message(self, chat: OngoingChat, user_message: str):
+    async def handle_chat_message(self, user_message: str):
         """
         Handles an incoming chat message, interacts with LLMs, and manages chat history.
         """
+        chat = self.chat
         models = ml_router.get_chat_backends(use_external=False)
         if not models:
-            await self.send_message_to_client(
-                "Sorry, no language models are currently available.", is_error=True
+            await self.send_error_message(
+                "Sorry, no language models are currently available."
             )
             return
 
@@ -125,7 +146,7 @@ class ChatInterface:
         llm_input_message = user_message
 
         if is_new_chat:
-            pro_user_info_str = await self._get_professional_user_info(chat)
+            pro_user_info_str = await self._get_professional_user_info()
             intro_prefix = (
                 f"You are a helpful assistant talking with {pro_user_info_str}. "
                 f"You are helping them with their ongoing chat. You likely do not need to immediately generate a prior auth or appeal; instead, you'll have a chat with {pro_user_info_str} about their needs. Now, here is what they said to start the conversation:"
@@ -142,7 +163,6 @@ class ChatInterface:
             try:
                 response_text, context_part = await self._call_llm_with_optional_pubmed(
                     model_backend,
-                    chat,
                     llm_input_message,
                     current_llm_context,
                     history_for_llm,  # Pass current history
@@ -191,48 +211,14 @@ class ChatInterface:
             logger.error(
                 f"Failed to generate response for user_message: '{user_message}' in chat {chat.id} after trying all models."
             )
-            await self.send_message_to_client(err_msg, is_error=True)
+            await self.send_error_message(err_msg)
 
-    async def replay_chat_history(self, chat: OngoingChat):
+    async def replay_chat_history(self):
         """Sends the existing chat history to the client."""
-        # Removed: if not self.send_json_message_func: (guaranteed by __init__)
-        # logger.error("send_json_message_func is not set in ChatInterface. Cannot replay history.")
-        # return
-
+        chat = self.chat
         history: Optional[List[Dict[str, Any]]] = (
             chat.chat_history
-        )  # Type hint for clarity
-        if history:
-            for entry in history:
-                timestamp = entry.get("timestamp")
-                timestamp_str: str
-                if hasattr(timestamp, "isoformat"):
-                    timestamp_str = timestamp.isoformat()
-                elif isinstance(timestamp, str):
-                    timestamp_str = timestamp
-                else:
-                    # Fallback, ideally log this unexpected case
-                    logger.warning(
-                        f"Unexpected timestamp type: {type(timestamp)} in chat {chat.id}. Using current time."
-                    )
-                    timestamp_str = timezone.now().isoformat()
-
-                message_to_send: Dict[str, Any] = {}
-                role = entry.get("role")
-                content = entry.get("content")
-
-                if role == "user":
-                    message_to_send = {
-                        "user_message": content,
-                        "timestamp": timestamp_str,
-                    }
-                elif role == "assistant":
-                    message_to_send = {"message": content, "timestamp": timestamp_str}
-
-                if (
-                    message_to_send
-                ):  # Only send if we have a recognized role and content
-                    await self.send_json_message_func(message_to_send)
-                    await asyncio.sleep(0.01)  # Small delay between messages
-
-        await self.send_json_message_func({"status": "replay_complete"})
+        )
+        await self.send_json_message_func(
+            {"messages": chat.chat_history}
+        )

@@ -4,6 +4,7 @@ from loguru import logger
 import asyncio
 from django.utils import timezone
 from asgiref.sync import sync_to_async
+from typing import Optional
 
 from channels.generic.websocket import AsyncWebsocketConsumer
 
@@ -193,13 +194,11 @@ class PriorAuthConsumer(AsyncWebsocketConsumer):
 class OngoingChatConsumer(AsyncWebsocketConsumer):
     """WebSocket consumer for ongoing chat with LLM for pro users."""
 
+    chat_interface: Optional[ChatInterface] = None
+
     async def connect(self):
         logger.debug("Accepting connection for ongoing chat")
         await self.accept()
-        # Pass a method to ChatInterface that can send JSON messages
-        self.chat_interface = ChatInterface(
-            send_json_message_func=self.send_json_message
-        )
 
     async def send_json_message(self, data: dict):
         """Helper to send JSON data to the client."""
@@ -247,6 +246,11 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                 return
 
             chat = await self._get_or_create_chat(professional_user, chat_id)
+            if not hasattr(self, "chat_interface") or self.chat_interface is None or chat.id != self.chat_interface.chat.id:
+                self.chat_interface = ChatInterface(
+                    send_json_message_func=self.send_json_message,
+                    chat=chat
+                )
 
             logger.debug(f"Chat: {chat.id}")
 
@@ -257,10 +261,10 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                     )  # Use helper
                     return
                 # Delegate to ChatInterface
-                await self.chat_interface.handle_chat_message(chat, message)
+                await self.chat_interface.handle_chat_message(message)
             else:
                 # Delegate replay to ChatInterface
-                await self.chat_interface.replay_chat_history(chat)
+                await self.chat_interface.replay_chat_history()
 
         except Exception as e:
             logger.opt(exception=True).debug(f"Error in ongoing chat: {e}")
