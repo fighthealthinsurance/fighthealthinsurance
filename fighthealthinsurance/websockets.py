@@ -246,10 +246,13 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                 return
 
             chat = await self._get_or_create_chat(professional_user, chat_id)
-            if not hasattr(self, "chat_interface") or self.chat_interface is None or chat.id != self.chat_interface.chat.id:
+            if (
+                not hasattr(self, "chat_interface")
+                or self.chat_interface is None
+                or chat.id != self.chat_interface.chat.id
+            ):
                 self.chat_interface = ChatInterface(
-                    send_json_message_func=self.send_json_message,
-                    chat=chat
+                    send_json_message_func=self.send_json_message, chat=chat
                 )
 
             logger.debug(f"Chat: {chat.id}")

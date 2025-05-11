@@ -14,16 +14,16 @@ from fighthealthinsurance.pubmed_tools import PubMedTools
 
 class ChatInterface:
     def __init__(
-        self, send_json_message_func: Callable[[Dict[str, Any]], Awaitable[None]],
-        chat: OngoingChat
+        self,
+        send_json_message_func: Callable[[Dict[str, Any]], Awaitable[None]],
+        chat: OngoingChat,
     ):  # Changed to Dict[str, Any]
-        def wrap_send_json_message_func(
-            message: Dict[str, Any]
-        ) -> Awaitable[None]:
+        def wrap_send_json_message_func(message: Dict[str, Any]) -> Awaitable[None]:
             """Wraps the send_json_message_func to ensure it's always awaited."""
             if "chat_id" not in message:
                 message["chat_id"] = str(chat.id)
             return send_json_message_func(message)
+
         self.send_json_message_func = wrap_send_json_message_func
         self.pubmed_tools = PubMedTools()
         self.chat: OngoingChat = chat
@@ -72,10 +72,12 @@ class ChatInterface:
         )
 
         pubmed_context_str = ""
-        if response_text and "**pubmedquery:" in response_text:
+        pubmed_query_terms_regex = r"[\[\*]{1,2}pubmed[ _]?query:(.*?)[\*\]]{1,2}"
+        if response_text:
             # Extract the PubMedQuery terms using regex
-            pubmed_query_terms_regex = r"\*\*pubmedquery:(.*?)\*\*"
-            match = re.search(pubmed_query_terms_regex, response_text)
+            match = re.search(
+                pubmed_query_terms_regex, response_text, flags=re.IGNORECASE
+            )
             if match:
                 pubmed_query_terms = match.group(1).strip()
                 cleaned_response = response_text.replace(match.group(0), "").strip()
@@ -86,44 +88,50 @@ class ChatInterface:
                     f"Searching PubMed for: {pubmed_query_terms}..."
                 )
 
-            article_ids = await self.pubmed_tools.find_pubmed_article_ids_for_query(
-                query=pubmed_query_terms, timeout=30.0
-            )
-            if article_ids:
-                articles_data = await self.pubmed_tools.get_articles(
-                    article_ids[:3]
-                )  # Limit to 3 articles
-                summaries = []
-                for art in articles_data:
-                    summary_text = art.abstract if art.abstract else art.text
-                    if art.title and summary_text:
-                        summaries.append(
-                            f"Title: {art.title}\\nAbstract: {summary_text[:500]}..."
-                        )  # Truncate abstract
-                if summaries:
-                    pubmed_context_str = (
-                        "\\n\\nPubMed Search Results:\\n" + "\\n\\n".join(summaries)
-                    )
-                    await self.send_status_message(
-                        f"Found {len(article_ids)} relevant articles. Incorporating information into response..."
-                    )
-                    response_text, context_part = (
-                        await self._call_llm_with_optional_pubmed(
-                            model_backend,
-                            pubmed_context_str,
-                            previous_context_summary,
-                            history_for_llm,
+                article_ids = await self.pubmed_tools.find_pubmed_article_ids_for_query(
+                    query=pubmed_query_terms, timeout=30.0
+                )
+                if article_ids:
+                    articles_data = await self.pubmed_tools.get_articles(
+                        article_ids[:3]
+                    )  # Limit to 3 articles
+                    summaries = []
+                    for art in articles_data:
+                        summary_text = art.abstract if art.abstract else art.text
+                        if art.title and summary_text:
+                            summaries.append(
+                                f"Title: {art.title}\\nAbstract: {summary_text[:500]}..."
+                            )  # Truncate abstract
+                    if summaries:
+                        pubmed_context_str = (
+                            "\\n\\nPubMed Search Results:\\n" + "\\n\\n".join(summaries)
                         )
-                    )
+                        await self.send_status_message(
+                            f"Found {len(article_ids)} relevant articles. Incorporating information into response..."
+                        )
+                        additional_response_text, additional_context_part = (
+                            await self._call_llm_with_optional_pubmed(
+                                model_backend,
+                                pubmed_context_str,
+                                previous_context_summary,
+                                history_for_llm,
+                            )
+                        )
+                        response_text += additional_response_text
+                        context_part = (
+                            context_part + additional_context_part
+                            if context_part and additional_context_part
+                            else additional_context_part
+                        )
                 else:
                     await self.send_status_message(
                         "No detailed information found for the articles from PubMed."
                     )
             else:
-                await self.send_status_message(
-                    "No articles found for the given query."
-                )
-        context = context_part + pubmed_context_str if context_part else pubmed_context_str
+                await self.send_status_message("No articles found for the given query.")
+        context = (
+            context_part + pubmed_context_str if context_part else pubmed_context_str
+        )
         return response_text, context
 
     async def handle_chat_message(self, user_message: str):
@@ -216,9 +224,5 @@ class ChatInterface:
     async def replay_chat_history(self):
         """Sends the existing chat history to the client."""
         chat = self.chat
-        history: Optional[List[Dict[str, Any]]] = (
-            chat.chat_history
-        )
-        await self.send_json_message_func(
-            {"messages": chat.chat_history}
-        )
+        history: Optional[List[Dict[str, Any]]] = chat.chat_history
+        await self.send_json_message_func({"messages": chat.chat_history})
