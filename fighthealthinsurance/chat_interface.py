@@ -85,7 +85,7 @@ class ChatInterface:
                 pubmed_query_terms = match.group(1).strip()
                 cleaned_response = response_text.replace(match.group(0), "").strip()
                 if "your search terms" in pubmed_query_terms:
-                    logger.debug("Got bad PubMed Query {pubmed_query_terms}")
+                    logger.debug(f"Got bad PubMed Query {pubmed_query_terms}")
                     return cleaned_response, context_part
                 # Short circuit if no query terms
                 if len(pubmed_query_terms.strip()) == 0:
