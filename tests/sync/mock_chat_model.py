@@ -11,7 +11,7 @@ class MockChatModel:
         message: str,
         previous_context_summary: Optional[Dict[str, Any]] = None,
         history: Optional[list[dict[str, str]]] = None,
-    ) -> Tuple[str, Dict[str, Any]]:
+    ) -> Tuple[str, str]:
         """
         Generate a mock response to a chat message.
 
@@ -27,8 +27,8 @@ class MockChatModel:
         response = "This is a standard mock response to your question."
 
         # Generate a simple context summary
-        context = {
+        context = str({
             "summary": f"User asked: {message[:50]}... I provided a standard response."
-        }
+        })
 
         return response, context

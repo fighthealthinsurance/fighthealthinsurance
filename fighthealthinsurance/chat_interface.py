@@ -96,7 +96,7 @@ class ChatInterface:
 
 
                 recent_article_ids_awaitable = self.pubmed_tools.find_pubmed_article_ids_for_query(
-                    query=pubmed_query_terms, since=2024, timeout=30.0
+                    query=pubmed_query_terms, since="2024", timeout=30.0
                 )
                 all_article_ids_awaitable = self.pubmed_tools.find_pubmed_article_ids_for_query(
                     query=pubmed_query_terms, timeout=30.0
@@ -109,8 +109,8 @@ class ChatInterface:
                     article_ids = []
                     if not all_article_ids:
                         article_ids = recent_article_ids
-                    elif recent_article_ids:
-                        article_ids = set(recent_article_ids[:5] + all_article_ids[:5])
+                    elif recent_article_ids and all_article_ids:
+                        article_ids = list(set(recent_article_ids[:5] + all_article_ids[:5]))
                     else:
                         article_ids = all_article_ids[:6]
                     await self.send_status_message(
@@ -141,7 +141,10 @@ class ChatInterface:
                                 history_for_llm,
                             )
                         )
-                        cleaned_response += additional_response_text
+                        if cleaned_response and additional_response_text:
+                            cleaned_response += additional_response_text
+                        elif additional_response_text:
+                            cleaned_response = additional_response_text
                         context_part = (
                             context_part + additional_context_part
                             if context_part and additional_context_part
