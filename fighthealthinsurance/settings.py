@@ -407,6 +407,7 @@ class Dev(Base):
         "https://localhost:3000",
         "http://localhost:3000",
         "http://localhost:3001",
+        "https://localhost:3001",
         "https://localhost:8000",
     ]
     DEFF_SALT = os.getenv("DEFF_SALT", "dev-salt")
