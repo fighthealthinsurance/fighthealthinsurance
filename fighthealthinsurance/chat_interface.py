@@ -60,10 +60,13 @@ class ChatInterface:
         current_message_for_llm: str,
         previous_context_summary: Optional[str],
         history_for_llm: List[Dict[str, str]],
+        depth: int = 0,
     ) -> Tuple[Optional[str], Optional[str]]:
         """
         Calls the LLM, handles PubMed query requests if present and returns the response.
         """
+        if depth > 2:
+            return None, None
         chat = self.chat
         response_text, context_part = await model_backend.generate_chat_response(
             current_message_for_llm,
@@ -110,7 +113,7 @@ class ChatInterface:
                     if not all_article_ids:
                         article_ids = recent_article_ids
                     elif recent_article_ids and all_article_ids:
-                        article_ids = list(set(recent_article_ids[:5] + all_article_ids[:5]))
+                        article_ids = list(set(recent_article_ids[:6] + all_article_ids[:6]))
                     else:
                         article_ids = all_article_ids[:6]
                     await self.send_status_message(
@@ -139,6 +142,7 @@ class ChatInterface:
                                 pubmed_context_str,
                                 previous_context_summary,
                                 history_for_llm,
+                                depth = depth + 1,
                             )
                         )
                         if cleaned_response and additional_response_text:
