@@ -57,6 +57,11 @@ class PriorAuthGenerator:
         if prior_auth.plan_id:
             patient_info["plan_id"] = prior_auth.plan_id
 
+        proposal_type = "letter"
+        if prior_auth.proposal_type and prior_auth.proposal_type != "letter":
+            proposal_type = prior_auth.proposal_type
+        logger.debug(f"Creating proposal type {proposal_type} from {prior_auth}")
+
         # Prepare prompt context
         context = {
             "diagnosis": diagnosis,
@@ -67,6 +72,7 @@ class PriorAuthGenerator:
             "qa_pairs": answers,
             "urgent": prior_auth.urgent,
             "patient_info": patient_info,
+            "proposal_type": proposal_type,
         }  # type: Dict[str, Any]
 
         # Get available models
@@ -198,10 +204,11 @@ class PriorAuthGenerator:
         qa_pairs = context.get("qa_pairs", [])
         provider_info = context.get("provider_info", "")
         patient_info = context.get("patient_info", "")
+        proposal_type = context.get("proposal_type", "letter")
 
         what_to_gen = (
             "prior authorization request letter"
-            if letter
+            if proposal_type == "letter"
             else "medical note to include in a prior authorization request"
         )
 
@@ -230,8 +237,9 @@ class PriorAuthGenerator:
         prompt += f"\n\n Today's date is {str(datetime.date.today())}.\n\n"
 
         # Add formatting instructions
-        prompt += """
-        Format the prior authorization request as a formal letter with:
+        if proposal_type == "letter":
+            prompt += """
+        Format the prior authorization request as a formal {{what_to_gen}} with:
         1. Date and header
         2. Patient and provider information (use placeholders if unknown)
         3. Clear statement of the requested treatment/procedure
@@ -249,6 +257,8 @@ class PriorAuthGenerator:
 
         Make it persuasive, evidence-based, and compliant with insurance requirements.
         """
+        else:
+            prompt += """Format the medical note as a concise summary written by the provider about the patient."""
 
         return prompt
 
