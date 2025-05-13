@@ -692,7 +692,7 @@ class AppealGenerator(object):
                 "prof_pov": prof_pov,
             },
             {
-                "model_name": "fhi-2025-may-0.2",
+                "model_name": "fhi-2025-may",
                 "prompt": open_prompt,
                 "patient_context": medical_context,
                 "plan_context": plan_context,
