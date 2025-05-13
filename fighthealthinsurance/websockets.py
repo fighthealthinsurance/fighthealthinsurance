@@ -4,6 +4,7 @@ from loguru import logger
 import asyncio
 from django.utils import timezone
 from asgiref.sync import sync_to_async
+from typing import Optional
 
 from channels.generic.websocket import AsyncWebsocketConsumer
 
@@ -15,6 +16,7 @@ from fighthealthinsurance.models import (
     ProfessionalUser,
 )
 from fighthealthinsurance.generate_prior_auth import prior_auth_generator
+from .chat_interface import ChatInterface
 
 
 class StreamingAppealsBackend(AsyncWebsocketConsumer):
@@ -192,9 +194,15 @@ class PriorAuthConsumer(AsyncWebsocketConsumer):
 class OngoingChatConsumer(AsyncWebsocketConsumer):
     """WebSocket consumer for ongoing chat with LLM for pro users."""
 
+    chat_interface: Optional[ChatInterface] = None
+
     async def connect(self):
         logger.debug("Accepting connection for ongoing chat")
         await self.accept()
+
+    async def send_json_message(self, data: dict):
+        """Helper to send JSON data to the client."""
+        await self.send(text_data=json.dumps(data))
 
     async def disconnect(self, close_code):
         logger.debug(f"Disconnecting ongoing chat with code {close_code}")
@@ -214,60 +222,58 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
 
         # Validate we have the required data
         if replay_requested and not chat_id:
-            await self.send(
-                json.dumps({"error": "chat_id is required for replay requests"})
-            )
-            await self.close()
+            await self.send_json_message(
+                {"error": "Chat ID is required for replay."}
+            )  # Use helper
             return
 
         # Get the user from scope (authenticated by Django Channels)
         user = self.scope.get("user")
 
         if not user or not user.is_authenticated:
-            await self.send(json.dumps({"error": "Authentication required"}))
+            await self.send_json_message(
+                {"error": "User not authenticated."}
+            )  # Use helper
             await self.close()
             return
 
         try:
-            # Get or create professional user
             professional_user = await sync_to_async(self._get_professional_user)(user)
-
             if not professional_user:
-                await self.send(json.dumps({"error": "Professional user not found"}))
-                await self.close()
+                await self.send_json_message(
+                    {"error": "Professional user not found or not active."}
+                )  # Use helper
                 return
 
-            # Get or create the chat session
             chat = await self._get_or_create_chat(professional_user, chat_id)
+            if (
+                not hasattr(self, "chat_interface")
+                or self.chat_interface is None
+                or chat.id != self.chat_interface.chat.id
+            ):
+                self.chat_interface = ChatInterface(
+                    send_json_message_func=self.send_json_message, chat=chat
+                )
 
             logger.debug(f"Chat: {chat.id}")
 
             if not replay_requested:
-                logger.debug(f"Generating response for message: {message}")
-                # Generate response (this also updates chat history)
-                response = await self._generate_llm_response(chat, message)
-                logger.debug(f"Response: {response} to send")
-
-                # Send response to the client
-                await self.send(
-                    json.dumps(
-                        {
-                            "chat_id": str(chat.id),
-                            "role": "assistant",
-                            "content": response,
-                        }
-                    )
-                )
-                logger.debug(f"Sent response: {response}")
-
+                if not message:
+                    await self.send_json_message(
+                        {"error": "Message content is required."}
+                    )  # Use helper
+                    return
+                # Delegate to ChatInterface
+                await self.chat_interface.handle_chat_message(message)
             else:
-                await self.send(
-                    json.dumps({"messages": chat.chat_history, "chat_id": str(chat.id)})
-                )
+                # Delegate replay to ChatInterface
+                await self.chat_interface.replay_chat_history()
 
         except Exception as e:
             logger.opt(exception=True).debug(f"Error in ongoing chat: {e}")
-            await self.send(json.dumps({"error": f"Server error: {str(e)}"}))
+            await self.send_json_message(
+                {"error": f"Server error: {str(e)}"}
+            )  # Use helper
 
     def _get_professional_user(self, user):
         """Get the professional user from the Django user."""
@@ -285,84 +291,15 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                 )
             except OngoingChat.DoesNotExist:
                 # Fall through to create a new chat
-                pass
+                logger.warning(
+                    f"Chat with id {chat_id} not found for user {professional_user.id}. Creating new chat."
+                )
+                pass  # Fall through to create a new one
 
         # Create a new chat
+        logger.info(f"Creating new chat for user {professional_user.id}")
         return await OngoingChat.objects.acreate(
             professional_user=professional_user,
             chat_history=[],
             summary_for_next_call=[],
         )
-
-    async def _generate_llm_response(self, chat, message):
-        """Generate a response from the LLM."""
-        from fighthealthinsurance.ml.ml_router import ml_router
-
-        # Get the available *internal* text generation model
-        models = ml_router.get_chat_backends(use_external=False)
-        if not models:
-            return "Sorry, no language models are currently available."
-
-        context = None
-        if chat.summary_for_next_call and len(chat.summary_for_next_call) > 0:
-            context = chat.summary_for_next_call[-1]
-
-        new_chat = False
-        for model in models:
-            try:
-                # Add our current chat message to the chat history
-                if not chat.chat_history:
-                    chat.chat_history = []  # type: ignore
-                if not chat.summary_for_next_call:
-                    chat.summary_for_next_call = []  # type: ignore
-                if not chat.chat_history and not chat.summary_for_next_call:
-                    new_chat = True
-                # Generate the response using the model
-                intro_opt = ""
-                if new_chat:
-                    pro_user_info = await sync_to_async(
-                        chat.summarize_professional_user
-                    )()
-                    intro_opt = (
-                        f"You are a helpful assistant talking with a professional user, {pro_user_info}. "
-                        f"You are helping a professional user with their ongoing chat. You likely do not need to immeditely generate a prior auth or appeal instead you'll have a chat with the professional, {pro_user_info}, about their needs. Now here is what they said to start the conversation:"
-                    )
-                (response_text, context_part) = await model.generate_chat_response(
-                    intro_opt + message,
-                    previous_context_summary=context,
-                    history=chat.chat_history,
-                )
-                if response_text and response_text.strip() != "":
-                    # Add the user's message to the chat history
-                    # We intentionally do this after the model call so we
-                    # avoid loading a message which breaks the model
-                    # (also since we try multiple models so we don't load
-                    # the message multiple times)
-                    chat.chat_history.append(
-                        {
-                            "role": "user",
-                            "content": message,
-                            "timestamp": timezone.now().isoformat(),
-                        }
-                    )
-                    # Save the context summary if present.
-                    if context_part:
-                        chat.summary_for_next_call.append(context_part)
-                    # Add the assistant's response to the chat history
-                    chat.chat_history.append(
-                        {
-                            "role": "assistant",
-                            "content": response_text,
-                            "timestamp": timezone.now().isoformat(),
-                        }
-                    )
-                    await chat.asave()
-                    return response_text.strip()
-
-            except Exception as e:
-                await asyncio.sleep(1)
-                logger.opt(exception=True).debug(f"Error generating LLM response: {e}")
-        logger.debug(
-            f"Failed to generate response for message: {message} in chat {chat.id}"
-        )
-        return "Sorry, I encountered an error while processing your request."
