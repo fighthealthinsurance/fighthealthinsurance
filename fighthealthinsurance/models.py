@@ -963,7 +963,7 @@ class OngoingChat(models.Model):
         UserDomain, null=True, on_delete=models.SET_NULL, blank=True
     )
 
-    def summarize_professional_user(self):
+    def summarize_professional_user(self) -> str:
         return str(self.professional_user)
 
     def __str__(self):
