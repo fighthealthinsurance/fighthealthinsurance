@@ -97,6 +97,13 @@ class ProcessDenialRegex(DenialBase):
                 if s is not None:
                     logger.debug("positive regex match")
                     return s.groups("procedure")[0]
+        generic_regexes = [
+            r"request for coverage of (.*?) has been denied\."
+        ]
+        for g in generic_regexes:
+            m = g.search(text)
+            if m:
+                return m.group(1)
         return None
 
     async def get_diagnosis(self, text):
