@@ -1305,8 +1305,8 @@ class DenialCreatorHelper:
 
             # Validate insurance company name - simple validation to avoid hallucinations
             if insurance_company is not None:
-                # Check if the name appears in the text or is reasonable length
-                if (insurance_company in denial.denial_text) or len(
+                # Check if the name appears in the text and is reasonable length
+                if (insurance_company.lower() in denial.denial_text.lower()) and len(
                     insurance_company
                 ) < 50:
                     # Use aupdate() directly instead of loading and saving the object
