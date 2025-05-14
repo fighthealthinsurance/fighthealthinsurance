@@ -11,6 +11,7 @@ from .views import (
     OlderThanTwoWeeksEmailsCSV,
     LastTwoWeeksEmailsCSV,
     de_identified_export,
+    incomplete_signups_csv,
 )
 
 urlpatterns = [
@@ -33,5 +34,8 @@ urlpatterns = [
         "emails_last_two_weeks",
         staff_member_required(LastTwoWeeksEmailsCSV.as_view()),
         name="emails_last_two_weeks",
+    ),
+    path(
+        "incomplete_signups_csv", incomplete_signups_csv, name="incomplete_signups_csv"
     ),
 ]
