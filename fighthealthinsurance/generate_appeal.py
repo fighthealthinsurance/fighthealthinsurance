@@ -130,18 +130,18 @@ class AppealGenerator(object):
 
         # Common fax number regex patterns
         fax_patterns = [
-            r"[Ff]ax(?:\s*(?:number|#|:))?\s*[:=]?\s*(\d{3}[-.\s]?\d{3}[-.\s]?\d{4})",
-            r"[Ff]ax(?:\s*(?:to|at))?\s*[:=]?\s*(\d{3}[-.\s]?\d{3}[-.\s]?\d{4})",
-            r"[Aa]ppeal.*?[Ff]ax.*?(\d{3}[-.\s]?\d{3}[-.\s]?\d{4})",
-            r"[Ff]ax.*?[Aa]ppeal.*?(\d{3}[-.\s]?\d{3}[-.\s]?\d{4})",
-            r"[Tt]o\s+[Ff]ax\s+(?:at|to)?\s*(\d{3}[-.\s]?\d{3}[-.\s]?\d{4})",
-            r"[Ss]end\s+(?:an?\s+)?(?:appeal|request).*?(?:to|at)?\s*(?:[Ff]ax|#)?\s*[:]?\s*(\d{3}[-.\s]?\d{3}[-.\s]?\d{4})",
-            r"[Ff]ax.*?(?:to|at)?\s*(?:number|#)?\s*[:]?\s*[\(\[\{]?(\d{3})[\)\]\}]?[-.\s]?(\d{3})[-.\s]?(\d{4})",
-            r"[Ff]ax\s*(?:number|#)?\s*(?:is|:|=)?\s*[\(\[\{]?(\d{3})[\)\]\}]?[-.\s]?(\d{3})[-.\s]?(\d{4})",
-            r"(?:by|via)\s+[Ff]ax\s+(?:at|to)?\s*(?:number|#)?\s*[:]?\s*(\d{3}[-.\s]?\d{3}[-.\s]?\d{4})",
-            r"[Ff]ax\s*[\(\[\{]?(\d{3})[\)\]\}]?[-.\s]?(\d{3})[-.\s]?(\d{4})",
-            r"[Ff]acsimile(?:\s*(?:number|#|:))?\s*[:=]?\s*(\d{3}[-.\s]?\d{3}[-.\s]?\d{4})",
-            r"[Ff]acsimile(?:\s*(?:to|at))?\s*[:=]?\s*(\d{3}[-.\s]?\d{3}[-.\s]?\d{4})",
+            r"^\s*[Ff]ax(?:\s*(?:number|#|:))?\s*[:=]?\s*\+*\d*-*(\d{3}[-.\s]?\d{3}[-.\s]?\d{4})",
+            r"^\s*[Ff]ax(?:\s*(?:to|at))?\s*[:=]?\s*\+*\d*-*(\d{3}[-.\s]?\d{3}[-.\s]?\d{4})",
+            r"^\s*[Aa]ppeal.*?[Ff]ax.*?\+*\d*-*(\d{3}[-.\s]?\d{3}[-.\s]?\d{4})",
+            r"^\s*[Ff]ax.*?[Aa]ppeal.*?\+*\d*-*(\d{3}[-.\s]?\d{3}[-.\s]?\d{4})",
+            r"^\s*[Tt]o\s+[Ff]ax\s+(?:at|to)?\s*\+*\d*-*(\d{3}[-.\s]?\d{3}[-.\s]?\d{4})",
+            r"^\s*[Ss]end\s+(?:an?\s+)?(?:appeal|request).*?(?:to|at)?\s*(?:[Ff]ax|#)?\s*[:]?\s*\d*-*(\d{3}[-.\s]?\d{3}[-.\s]?\d{4})",
+            r"^\s*[Ff]ax.*?(?:to|at)?\s*(?:number|#)?\s*[:]?\s*[\(\[\{]?(\d{3})[\)\]\}]?[-.\s]?(\d{3})[-.\s]?(\d{4})",
+            r"^\s*[Ff]ax\s*(?:number|#)?\s*(?:is|:|=)?\s*[\(\[\{]?(\d{3})[\)\]\}]?[-.\s]?(\d{3})[-.\s]?(\d{4})",
+            r"^\s*(?:by|via)\s+[Ff]ax\s+(?:at|to)?\s*(?:number|#)?\s*[:]?\s*(\d{3}[-.\s]?\d{3}[-.\s]?\d{4})",
+            r"^\s*[Ff]ax\s*[\(\[\{]?(\d{3})[\)\]\}]?[-.\s]?(\d{3})[-.\s]?(\d{4})",
+            r"^\s*[Ff]acsimile(?:\s*(?:number|#|:))?\s*[:=]?\s*(\d{3}[-.\s]?\d{3}[-.\s]?\d{4})",
+            r"^\s*[Ff]acsimile(?:\s*(?:to|at))?\s*[:=]?\s*(\d{3}[-.\s]?\d{3}[-.\s]?\d{4})",
         ]
 
         # First try with exact regex matches
@@ -211,7 +211,7 @@ class AppealGenerator(object):
 
         # Try direct regex matches
         for pattern in company_patterns:
-            match = re.search(pattern, denial_text, re.IGNORECASE | re.MULTILINE)
+            match = re.search(pattern, denial_text, re.IGNORECASE)
             if match:
                 return match.group(1).strip()
 
