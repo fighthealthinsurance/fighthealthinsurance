@@ -101,7 +101,7 @@ class ProcessDenialRegex(DenialBase):
             r"request for coverage of (.*?) has been denied\."
         ]
         for g in generic_regexes:
-            m = g.search(text)
+            m = re.search(g, text)
             if m:
                 return m.group(1)
         return None
