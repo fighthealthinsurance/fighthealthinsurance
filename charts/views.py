@@ -7,6 +7,7 @@ from django.db.models import Count, Q
 from django.utils import timezone
 from datetime import timedelta
 from fighthealthinsurance.models import Denial, InterestedProfessional
+from fhi_users.models import ProfessionalUser, UserDomain, ProfessionalDomainRelation
 from bokeh.plotting import figure
 from bokeh.embed import components
 from bokeh.models import ColumnDataSource
@@ -98,6 +99,44 @@ class LastTwoWeeksEmailsCSV(BaseEmailsWithRawEmailCSV):
 
 
 @staff_member_required
+def incomplete_signups_csv(request):
+    response = HttpResponse(content_type="text/csv")
+    response["Content-Disposition"] = 'attachment; filename="incomplete_signups.csv"'
+
+    writer = csv.writer(response)
+    writer.writerow(
+        ["Provider Name", "Business Name", "Visible Phone", "Internal Phone", "Email"]
+    )
+
+    # Query ProfessionalDomainRelation for links between inactive professionals and inactive domains
+    inactive_relations = ProfessionalDomainRelation.objects.filter(
+        professional__active=False, domain__active=False
+    ).select_related(
+        "professional", "professional__user", "domain",
+    )
+
+    for relation in inactive_relations:
+        prof = relation.professional
+        domain = relation.domain
+        email = prof.user.email if prof.user else "N/A"
+
+        provider_name = prof.display_name
+        if not provider_name:
+            provider_name = prof.user.get_full_name() if prof.user else "N/A"
+
+        business_name = domain.business_name if domain.business_name else ""
+        # visible_phone_number is not nullable, so direct access is fine.
+        visible_phone = domain.visible_phone_number
+        internal_phone = (
+            domain.internal_phone_number if domain.internal_phone_number else ""
+        )
+
+        writer.writerow([provider_name, business_name, visible_phone, internal_phone, email])
+
+    return response
+
+
+@staff_member_required
 def de_identified_export(request):
     # Exclude test emails
     limit = request.GET.get("limit")
@@ -125,18 +164,16 @@ def de_identified_export(request):
         "appeal_fax_number",
     )
     if limit:
-        safe_denials = safe_denials[0:int(limit)]
+        safe_denials = safe_denials[0 : int(limit)]
 
     def stream_json_lines(queryset):
         for record in queryset.iterator():
             yield json.dumps(record, default=str) + "\n"
 
     return StreamingHttpResponse(
-        streaming_content=
-        stream_json_lines(safe_denials),
-        content_type="application/x-ndjson"
+        streaming_content=stream_json_lines(safe_denials),
+        content_type="application/x-ndjson",
     )
-
 
 
 @staff_member_required
