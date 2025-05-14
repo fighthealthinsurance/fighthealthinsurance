@@ -56,6 +56,9 @@ class RemoteModelLike(DenialBase):
     def slow(self):
         return False
 
+    def thinking_option(self) -> Optional[str]:
+        return None
+
     @property
     def system_as_user(self):
         return False
@@ -970,9 +973,12 @@ class RemoteOpenLike(RemoteModel):
         """
         try:
             for system_prompt in system_prompts:
+                current_system_prompt = system_prompt
+                if self.thinking_option():
+                    current_system_prompt = f"{self.thinking_option()}{system_prompt}"
                 # Call the actual inference method
                 raw_response = await self.__timeout_infer(
-                    system_prompt=system_prompt,
+                    system_prompt=current_system_prompt,
                     prompt=prompt,
                     patient_context=patient_context,
                     plan_context=plan_context,
@@ -1653,6 +1659,9 @@ class NewRemoteInternal(RemoteFullOpenLike):
         return [
             ModelDescription(cost=2, name="fhi-2025-may", internal_name=model_name),
         ]
+
+    def thinking_option(self) -> Optional[str]:
+        return """You are a deep thinking AI. Please answer the question in the form of <thinking>{reasoning goes here}</thinking><answer>{the correct answer}</answer>."""
 
 
 class RemotePerplexity(RemoteFullOpenLike):
