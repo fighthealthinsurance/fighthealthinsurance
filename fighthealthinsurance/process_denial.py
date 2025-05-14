@@ -98,7 +98,7 @@ class ProcessDenialRegex(DenialBase):
                     logger.debug("positive regex match")
                     return s.groups("procedure")[0]
         generic_regexes = [
-            r"request for coverage of (.*?) has been denied\."
+            r"request for coverage of ([a-zA-Z0-9\(\)\[\]]*?) has been denied\."
         ]
         for g in generic_regexes:
             m = re.search(g, text)
