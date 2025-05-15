@@ -695,6 +695,30 @@ class Appeal(ExportModelOperationsMixin("Appeal"), models.Model):  # type: ignor
         default=False, null=True
     )
 
+    def details(self):
+        return f"""
+        {self.id}
+        {self.response_text}
+        {self.response_date}
+        {self.notes}
+        {self.success}
+        {self.mod_date}
+        {self.creation_date}
+        {self.billed}
+        {self.include_provided_health_history_in_appeal}
+        {self.for_denial.ml_citation_context}
+        {self.for_denial.qa_context}
+        """
+
+    @classmethod
+    def get_optional_for_user(cls, current_user: User, id):
+        return (
+            cls.filter_to_allowed_appeals(current_user)
+            .select_related("for_denial")
+            .filter(id=id)
+            .first()
+        )
+
     # Similar to the method on denial -- TODO refactor to a mixin / DRY
     @classmethod
     def filter_to_allowed_appeals(cls, current_user: User):
@@ -920,6 +944,18 @@ class PriorAuthRequest(ExportModelOperationsMixin("PriorAuthRequest"), models.Mo
     # Final text chosen
     text = models.TextField(blank=True, null=True)
 
+    def details(self):
+        return f"""
+        {self.id}
+        {self.diagnosis}
+        {self.treatment}
+        {self.insurance_company}
+        {self.patient_health_history}
+        {self.urgent}
+        {self.answers}
+        {self.proposal_type}
+        {self.text}"""
+
     @classmethod
     def filter_to_allowed_requests(cls, current_user):
         """Filter to requests that the current user is allowed to see."""
@@ -936,6 +972,10 @@ class PriorAuthRequest(ExportModelOperationsMixin("PriorAuthRequest"), models.Mo
             )
         except ProfessionalUser.DoesNotExist:
             return cls.objects.none()
+
+    @classmethod
+    def get_optional_for_user(cls, current_user: User, id):
+        return cls.filter_to_allowed_requests(current_user).filter(id=id).first()
 
     def __str__(self):
         return f"Prior Auth Request {self.id} - {self.status}"

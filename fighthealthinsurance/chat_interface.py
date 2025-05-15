@@ -190,14 +190,16 @@ class ChatInterface:
         chat = self.chat
         # Handle chat ↔ appeal/prior auth linking if requested
         from fighthealthinsurance.models import Appeal, PriorAuthRequest
+        from fhi_users.models import ProfessionalUser
 
         link_message = None
         user_facing_message = None
         # Note: We intentionally do NOT send the link message to the LLM/model immediately.
         # This allows the user to drive the next step, and avoids confusing the model with system state changes.
+        # Also we require their is a pro user to enable linking.
         if iterate_on_appeal:
-            appeal = await Appeal.filter_to_allowed_appeals(user).aget(
-                iterate_on_appeal
+            appeal = await sync_to_async(Appeal.get_optional_for_user)(
+                user, id=iterate_on_appeal
             )
             if not appeal:
                 await self.send_error_message(
@@ -207,17 +209,16 @@ class ChatInterface:
             if appeal.chat_id != chat.id:
                 appeal.chat = chat
                 await appeal.asave()
-                link_message = f"Linked this chat to Appeal #{appeal.id} -- help the user iterate on {appeal}"
+                link_message = f"Linked this chat to Appeal #{appeal.id} -- help the user iterate on {appeal.details}"
                 user_facing_message = "Awesome, I'm happy to help you iterate on this appeal -- what would you like to do next?"
             else:
-                link_message = f"This chat chat is already linked to #{appeal.id} -- the current appeal text is {appeal}, help the user iterate on it"
+                link_message = f"This chat chat is already linked to #{appeal.id} -- the current appeal text is {appeal.details}, help the user iterate on it"
                 user_facing_message = "Awesome, I'm happy to help you iterate on this appeal -- what would you like to do next?"
         if iterate_on_prior_auth:
-            try:
-                prior_auth = await PriorAuthRequest.filter_to_allowed_requests(
-                    user
-                ).aget(id=iterate_on_prior_auth)
-            except PriorAuthRequest.DoesNotExist:
+            prior_auth = await sync_to_async(PriorAuthRequest.get_optional_for_user)(
+                user, id=iterate_on_prior_auth
+            )
+            if not prior_auth:
                 await self.send_error_message(
                     "Prior Auth Request not found or you do not have permission to access it."
                 )
@@ -225,9 +226,9 @@ class ChatInterface:
             if prior_auth.chat_id != chat.id:
                 prior_auth.chat = chat
                 await prior_auth.asave()
-                link_message = (
-                    f"Linked this chat to Prior Auth Request #{prior_auth.id}."
-                )
+                link_message = f"Linked this chat to Prior Auth Request #{prior_auth.id}, details are {prior_auth.details}"
+                user_facing_message = "Awesome, I'm happy to help you iterate on this prior auth request -- what would you like to do next?"
+            else:
                 user_facing_message = "Awesome, I'm happy to help you iterate on this prior auth request -- what would you like to do next?"
         if link_message:
             if not chat.chat_history:
