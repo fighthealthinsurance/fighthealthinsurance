@@ -27,8 +27,10 @@ class MockChatModel:
         response = "This is a standard mock response to your question."
 
         # Generate a simple context summary
-        context = str({
-            "summary": f"User asked: {message[:50]}... I provided a standard response."
-        })
+        context = str(
+            {
+                "summary": f"User asked: {message[:50]}... I provided a standard response."
+            }
+        )
 
         return response, context

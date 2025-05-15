@@ -235,7 +235,6 @@ class PriorAuthTextSubstituterTest(TestCase):
         self.assertIn(f"Patient name: {self.prior_auth.patient_name}", result)
         self.assertIn("$placeholder is invalid", result)
 
-
     @patch(
         "fighthealthinsurance.prior_auth_utils.PriorAuthTextSubstituter._build_context_dict"
     )

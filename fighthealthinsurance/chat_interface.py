@@ -75,7 +75,9 @@ class ChatInterface:
         )
 
         pubmed_context_str = ""
-        pubmed_query_terms_regex = r"[\[\*]{1,4}pubmed[ _]?query:{0,1}\s*(.*?)\s*[\*\]]{1,4}"
+        pubmed_query_terms_regex = (
+            r"[\[\*]{1,4}pubmed[ _]?query:{0,1}\s*(.*?)\s*[\*\]]{1,4}"
+        )
         if not response_text:
             logger.debug("Got empty response from LLM")
             return None, None
@@ -97,31 +99,33 @@ class ChatInterface:
                     f"Searching PubMed for: {pubmed_query_terms}..."
                 )
 
-
-                recent_article_ids_awaitable = self.pubmed_tools.find_pubmed_article_ids_for_query(
-                    query=pubmed_query_terms, since="2024", timeout=30.0
+                recent_article_ids_awaitable = (
+                    self.pubmed_tools.find_pubmed_article_ids_for_query(
+                        query=pubmed_query_terms, since="2024", timeout=30.0
+                    )
                 )
-                all_article_ids_awaitable = self.pubmed_tools.find_pubmed_article_ids_for_query(
-                    query=pubmed_query_terms, timeout=30.0
+                all_article_ids_awaitable = (
+                    self.pubmed_tools.find_pubmed_article_ids_for_query(
+                        query=pubmed_query_terms, timeout=30.0
+                    )
                 )
                 (recent_article_ids, all_article_ids) = await asyncio.gather(
-                    recent_article_ids_awaitable,
-                    all_article_ids_awaitable
+                    recent_article_ids_awaitable, all_article_ids_awaitable
                 )
                 if all_article_ids or recent_article_ids:
                     article_ids = []
                     if not all_article_ids:
                         article_ids = recent_article_ids
                     elif recent_article_ids and all_article_ids:
-                        article_ids = list(set(recent_article_ids[:6] + all_article_ids[:6]))
+                        article_ids = list(
+                            set(recent_article_ids[:6] + all_article_ids[:6])
+                        )
                     else:
                         article_ids = all_article_ids[:6]
                     await self.send_status_message(
                         f"Found {len(all_article_ids)} articles. Looking at {len(article_ids)} for context."
                     )
-                    articles_data = await self.pubmed_tools.get_articles(
-                        article_ids
-                    )
+                    articles_data = await self.pubmed_tools.get_articles(article_ids)
                     summaries = []
                     for art in articles_data:
                         summary_text = art.abstract if art.abstract else art.text
@@ -134,7 +138,9 @@ class ChatInterface:
                             )  # Truncate abstract
                     if summaries:
                         pubmed_context_str = (
-                            "\\n\\nWe got back pubmedcontext:[:\\n" + "\\n\\n".join(summaries) +"]. If you reference them make sure to include the title and journal.\\n"
+                            "\\n\\nWe got back pubmedcontext:[:\\n"
+                            + "\\n\\n".join(summaries)
+                            + "]. If you reference them make sure to include the title and journal.\\n"
                         )
                         additional_response_text, additional_context_part = (
                             await self._call_llm_with_optional_pubmed(
@@ -142,7 +148,7 @@ class ChatInterface:
                                 pubmed_context_str,
                                 previous_context_summary,
                                 history_for_llm,
-                                depth = depth + 1,
+                                depth=depth + 1,
                             )
                         )
                         if cleaned_response and additional_response_text:
@@ -171,7 +177,13 @@ class ChatInterface:
         )
         return response_text, context
 
-    async def handle_chat_message(self, user_message: str, iterate_on_appeal=None, iterate_on_prior_auth=None, user=None):
+    async def handle_chat_message(
+        self,
+        user_message: str,
+        iterate_on_appeal=None,
+        iterate_on_prior_auth=None,
+        user=None,
+    ):
         """
         Handles an incoming chat message, interacts with LLMs, and manages chat history.
         """
@@ -184,43 +196,49 @@ class ChatInterface:
         # Note: We intentionally do NOT send the link message to the LLM/model immediately.
         # This allows the user to drive the next step, and avoids confusing the model with system state changes.
         if iterate_on_appeal:
-            try:
-                appeal = await sync_to_async(Appeal.objects.get)(id=iterate_on_appeal)
-            except Appeal.DoesNotExist:
-                await self.send_error_message("Appeal not found.")
-                return
-            allowed_appeals = set(await sync_to_async(list)(Appeal.filter_to_allowed_appeals(user)))
-            if appeal not in allowed_appeals:
-                await self.send_error_message("You do not have permission to link this appeal.")
+            appeal = await Appeal.filter_to_allowed_appeals(user).aget(
+                iterate_on_appeal
+            )
+            if not appeal:
+                await self.send_error_message(
+                    "Appeal not found, or you do not have permission to access it."
+                )
                 return
             if appeal.chat_id != chat.id:
                 appeal.chat = chat
-                await sync_to_async(appeal.save)()
-                link_message = f"Linked this chat to Appeal #{appeal.id}."
+                await appeal.asave()
+                link_message = f"Linked this chat to Appeal #{appeal.id} -- help the user iterate on {appeal}"
+                user_facing_message = "Awesome, I'm happy to help you iterate on this appeal -- what would you like to do next?"
+            else:
+                link_message = f"This chat chat is already linked to #{appeal.id} -- the current appeal text is {appeal}, help the user iterate on it"
                 user_facing_message = "Awesome, I'm happy to help you iterate on this appeal -- what would you like to do next?"
         if iterate_on_prior_auth:
             try:
-                prior_auth = await sync_to_async(PriorAuthRequest.objects.get)(id=iterate_on_prior_auth)
+                prior_auth = await PriorAuthRequest.filter_to_allowed_requests(
+                    user
+                ).aget(id=iterate_on_prior_auth)
             except PriorAuthRequest.DoesNotExist:
-                await self.send_error_message("Prior Auth Request not found.")
-                return
-            allowed_auths = set(await sync_to_async(list)(PriorAuthRequest.filter_to_allowed_requests(user)))
-            if prior_auth not in allowed_auths:
-                await self.send_error_message("You do not have permission to link this prior auth request.")
+                await self.send_error_message(
+                    "Prior Auth Request not found or you do not have permission to access it."
+                )
                 return
             if prior_auth.chat_id != chat.id:
                 prior_auth.chat = chat
-                await sync_to_async(prior_auth.save)()
-                link_message = f"Linked this chat to Prior Auth Request #{prior_auth.id}."
+                await prior_auth.asave()
+                link_message = (
+                    f"Linked this chat to Prior Auth Request #{prior_auth.id}."
+                )
                 user_facing_message = "Awesome, I'm happy to help you iterate on this prior auth request -- what would you like to do next?"
         if link_message:
             if not chat.chat_history:
                 chat.chat_history = []
-            chat.chat_history.append({
-                "role": "system",
-                "content": link_message,
-                "timestamp": timezone.now().isoformat(),
-            })
+            chat.chat_history.append(
+                {
+                    "role": "system",
+                    "content": link_message,
+                    "timestamp": timezone.now().isoformat(),
+                }
+            )
             await chat.asave()
             # Send user-facing message (not to LLM)
             if user_facing_message:

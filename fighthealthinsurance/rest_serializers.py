@@ -725,7 +725,16 @@ class OngoingChatSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = OngoingChat
-        fields = ["id", "professional_name", "messages", "created_at", "updated_at", "appeals", "prior_auths"]
+        fields = [
+            "id",
+            "professional_name",
+            "messages",
+            "created_at",
+            "updated_at",
+            "appeals",
+            "prior_auths",
+        ]
+
     @extend_schema_field(serializers.ListField(child=serializers.IntegerField()))
     def get_appeals(self, obj):
         return list(obj.appeals.values_list("id", flat=True))

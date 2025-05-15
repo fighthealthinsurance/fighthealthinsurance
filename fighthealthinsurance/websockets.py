@@ -220,7 +220,9 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
         iterate_on_appeal = data.get("iterate_on_appeal")
         iterate_on_prior_auth = data.get("iterate_on_prior_auth")
 
-        logger.debug(f"Message: {message} replay {replay_requested} chat_id {chat_id} iterate_on_appeal {iterate_on_appeal} iterate_on_prior_auth {iterate_on_prior_auth}")
+        logger.debug(
+            f"Message: {message} replay {replay_requested} chat_id {chat_id} iterate_on_appeal {iterate_on_appeal} iterate_on_prior_auth {iterate_on_prior_auth}"
+        )
 
         # Validate we have the required data
         if replay_requested and not chat_id:

@@ -644,7 +644,7 @@ class Appeal(ExportModelOperationsMixin("Appeal"), models.Model):  # type: ignor
         Denial, on_delete=models.CASCADE, null=True, blank=True
     )
     chat = models.ForeignKey(
-        'OngoingChat',
+        "OngoingChat",
         null=True,
         blank=True,
         on_delete=models.SET_NULL,
@@ -837,7 +837,7 @@ class StripeWebhookEvents(models.Model):
 
 class PriorAuthRequest(ExportModelOperationsMixin("PriorAuthRequest"), models.Model):  # type: ignore
     chat = models.ForeignKey(
-        'OngoingChat',
+        "OngoingChat",
         null=True,
         blank=True,
         on_delete=models.SET_NULL,
