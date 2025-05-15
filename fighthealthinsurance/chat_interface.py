@@ -178,41 +178,42 @@ class ChatInterface:
         chat = self.chat
         # Handle chat ↔ appeal/prior auth linking if requested
         from fighthealthinsurance.models import Appeal, PriorAuthRequest
+
         link_message = None
+        user_facing_message = None
+        # Note: We intentionally do NOT send the link message to the LLM/model immediately.
+        # This allows the user to drive the next step, and avoids confusing the model with system state changes.
         if iterate_on_appeal:
             try:
                 appeal = await sync_to_async(Appeal.objects.get)(id=iterate_on_appeal)
             except Appeal.DoesNotExist:
                 await self.send_error_message("Appeal not found.")
                 return
-            # Permission check: user must be allowed to access this appeal
             allowed_appeals = set(await sync_to_async(list)(Appeal.filter_to_allowed_appeals(user)))
             if appeal not in allowed_appeals:
                 await self.send_error_message("You do not have permission to link this appeal.")
                 return
-            # Link both ways if not already linked
             if appeal.chat_id != chat.id:
                 appeal.chat = chat
                 await sync_to_async(appeal.save)()
                 link_message = f"Linked this chat to Appeal #{appeal.id}."
+                user_facing_message = "Awesome, I'm happy to help you iterate on this appeal -- what would you like to do next?"
         if iterate_on_prior_auth:
             try:
                 prior_auth = await sync_to_async(PriorAuthRequest.objects.get)(id=iterate_on_prior_auth)
             except PriorAuthRequest.DoesNotExist:
                 await self.send_error_message("Prior Auth Request not found.")
                 return
-            # Permission check: user must be allowed to access this prior auth
             allowed_auths = set(await sync_to_async(list)(PriorAuthRequest.filter_to_allowed_requests(user)))
             if prior_auth not in allowed_auths:
                 await self.send_error_message("You do not have permission to link this prior auth request.")
                 return
-            # Link both ways if not already linked
             if prior_auth.chat_id != chat.id:
                 prior_auth.chat = chat
                 await sync_to_async(prior_auth.save)()
                 link_message = f"Linked this chat to Prior Auth Request #{prior_auth.id}."
+                user_facing_message = "Awesome, I'm happy to help you iterate on this prior auth request -- what would you like to do next?"
         if link_message:
-            # Inject a system message about the linking
             if not chat.chat_history:
                 chat.chat_history = []
             chat.chat_history.append({
@@ -220,6 +221,10 @@ class ChatInterface:
                 "content": link_message,
                 "timestamp": timezone.now().isoformat(),
             })
+            await chat.asave()
+            # Send user-facing message (not to LLM)
+            if user_facing_message:
+                await self.send_message_to_client(user_facing_message)
 
         models = ml_router.get_chat_backends(use_external=False)
         if not models:
