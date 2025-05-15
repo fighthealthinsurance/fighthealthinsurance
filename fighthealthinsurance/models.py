@@ -643,6 +643,14 @@ class Appeal(ExportModelOperationsMixin("Appeal"), models.Model):  # type: ignor
     for_denial = models.ForeignKey(
         Denial, on_delete=models.CASCADE, null=True, blank=True
     )
+    chat = models.ForeignKey(
+        'OngoingChat',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="appeals",
+        db_index=True,
+    )
     hashed_email = models.CharField(max_length=300, primary_key=False)
     creating_professional = models.ForeignKey(
         ProfessionalUser,
@@ -828,6 +836,14 @@ class StripeWebhookEvents(models.Model):
 
 
 class PriorAuthRequest(ExportModelOperationsMixin("PriorAuthRequest"), models.Model):  # type: ignore
+    chat = models.ForeignKey(
+        'OngoingChat',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="prior_auths",
+        db_index=True,
+    )
     """
     Stores information about a prior authorization request.
     Used to track the status of the request and store the questions and answers.
