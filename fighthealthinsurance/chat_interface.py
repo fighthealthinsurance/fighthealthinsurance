@@ -210,10 +210,10 @@ class ChatInterface:
                 appeal.chat = chat
                 await appeal.asave()
                 link_message = f"Linked this chat to Appeal #{appeal.id} -- help the user iterate on {appeal.details}"
-                user_facing_message = "Awesome, I'm happy to help you iterate on this appeal -- what would you like to do next?"
+                user_facing_message = "I've linked this chat to your appeal. How can I help you iterate on it?"
             else:
-                link_message = f"This chat chat is already linked to #{appeal.id} -- the current appeal text is {appeal.details}, help the user iterate on it"
-                user_facing_message = "Awesome, I'm happy to help you iterate on this appeal -- what would you like to do next?"
+                link_message = f"This chat is already linked to Appeal #{appeal.id} -- the current appeal text is {appeal.details}, help the user iterate on it"
+                user_facing_message = "This chat is already linked to your appeal. How can I help you with it?"
         if iterate_on_prior_auth:
             prior_auth = await sync_to_async(PriorAuthRequest.get_optional_for_user)(
                 user, id=iterate_on_prior_auth
@@ -227,9 +227,9 @@ class ChatInterface:
                 prior_auth.chat = chat
                 await prior_auth.asave()
                 link_message = f"Linked this chat to Prior Auth Request #{prior_auth.id}, details are {prior_auth.details}"
-                user_facing_message = "Awesome, I'm happy to help you iterate on this prior auth request -- what would you like to do next?"
+                user_facing_message = "I've linked this chat to your prior authorization request. How can I help you with it?"
             else:
-                user_facing_message = "Awesome, I'm happy to help you iterate on this prior auth request -- what would you like to do next?"
+                user_facing_message = "This chat is already linked to your prior authorization request. How can I help you with it?"
         if link_message:
             if not chat.chat_history:
                 chat.chat_history = []
