@@ -643,6 +643,14 @@ class Appeal(ExportModelOperationsMixin("Appeal"), models.Model):  # type: ignor
     for_denial = models.ForeignKey(
         Denial, on_delete=models.CASCADE, null=True, blank=True
     )
+    chat = models.ForeignKey(
+        "OngoingChat",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="appeals",
+        db_index=True,
+    )
     hashed_email = models.CharField(max_length=300, primary_key=False)
     creating_professional = models.ForeignKey(
         ProfessionalUser,
@@ -686,6 +694,43 @@ class Appeal(ExportModelOperationsMixin("Appeal"), models.Model):  # type: ignor
     include_provided_health_history_in_appeal = models.BooleanField(
         default=False, null=True
     )
+
+    def details(self):
+        ml_citation_context = (
+            self.for_denial.ml_citation_context
+            if self.for_denial and hasattr(self.for_denial, "ml_citation_context")
+            else None
+        )
+        qa_context = (
+            self.for_denial.qa_context
+            if self.for_denial and hasattr(self.for_denial, "qa_context")
+            else None
+        )
+
+        patient_extra = ""
+        if self.patient_user is not None:
+            patient_extra = f" -- {self.patient_user.user.username}"
+
+        return f"""
+        appeal id: {self.id}
+        internal notes: {self.notes}
+        modification date: {self.mod_date}
+        creation date: {self.creation_date}
+        patient visible: {self.patient_visible}
+        include provided health history in appeal: {self.include_provided_health_history_in_appeal}
+        possible citation context: {ml_citation_context}
+        qa context: {qa_context}
+        {patient_extra}
+        """
+
+    @classmethod
+    def get_optional_for_user(cls, current_user: User, id):
+        return (
+            cls.filter_to_allowed_appeals(current_user)
+            .select_related("for_denial")
+            .filter(id=id)
+            .first()
+        )
 
     # Similar to the method on denial -- TODO refactor to a mixin / DRY
     @classmethod
@@ -828,6 +873,14 @@ class StripeWebhookEvents(models.Model):
 
 
 class PriorAuthRequest(ExportModelOperationsMixin("PriorAuthRequest"), models.Model):  # type: ignore
+    chat = models.ForeignKey(
+        "OngoingChat",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="prior_auths",
+        db_index=True,
+    )
     """
     Stores information about a prior authorization request.
     Used to track the status of the request and store the questions and answers.
@@ -904,6 +957,18 @@ class PriorAuthRequest(ExportModelOperationsMixin("PriorAuthRequest"), models.Mo
     # Final text chosen
     text = models.TextField(blank=True, null=True)
 
+    def details(self):
+        return f"""
+        prior auth id: {self.id}
+        diagnosis: {self.diagnosis}
+        treatment: {self.treatment}
+        insurance company: {self.insurance_company}
+        patient health history: {self.patient_health_history}
+        urgent: {self.urgent}
+        answers: {self.answers}
+        proposal type: {self.proposal_type}
+        prior auth text: {self.text}"""
+
     @classmethod
     def filter_to_allowed_requests(cls, current_user):
         """Filter to requests that the current user is allowed to see."""
@@ -920,6 +985,10 @@ class PriorAuthRequest(ExportModelOperationsMixin("PriorAuthRequest"), models.Mo
             )
         except ProfessionalUser.DoesNotExist:
             return cls.objects.none()
+
+    @classmethod
+    def get_optional_for_user(cls, current_user: User, id):
+        return cls.filter_to_allowed_requests(current_user).filter(id=id).first()
 
     def __str__(self):
         return f"Prior Auth Request {self.id} - {self.status}"

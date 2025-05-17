@@ -217,8 +217,12 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
         message = data.get("message", data.get("content", None))
         chat_id = data.get("chat_id", None)
         replay_requested = data.get("replay", False)
+        iterate_on_appeal = data.get("iterate_on_appeal")
+        iterate_on_prior_auth = data.get("iterate_on_prior_auth")
 
-        logger.debug(f"Message: {message} replay {replay_requested} chat_id {chat_id}")
+        logger.debug(
+            f"Message: {message} replay {replay_requested} chat_id {chat_id} iterate_on_appeal {iterate_on_appeal} iterate_on_prior_auth {iterate_on_prior_auth}"
+        )
 
         # Validate we have the required data
         if replay_requested and not chat_id:
@@ -263,8 +267,13 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                         {"error": "Message content is required."}
                     )  # Use helper
                     return
-                # Delegate to ChatInterface
-                await self.chat_interface.handle_chat_message(message)
+                # Delegate to ChatInterface, passing new linking fields
+                await self.chat_interface.handle_chat_message(
+                    message,
+                    iterate_on_appeal=iterate_on_appeal,
+                    iterate_on_prior_auth=iterate_on_prior_auth,
+                    user=user,
+                )
             else:
                 # Delegate replay to ChatInterface
                 await self.chat_interface.replay_chat_history()
@@ -286,8 +295,10 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
         """Get an existing chat or create a new one."""
         if chat_id:
             try:
-                return await OngoingChat.objects.aget(
-                    id=chat_id, professional_user=professional_user
+                return (
+                    await OngoingChat.objects.prefetch_related()
+                    .select_related()
+                    .aget(id=chat_id, professional_user=professional_user)
                 )
             except OngoingChat.DoesNotExist:
                 # Fall through to create a new chat

@@ -4,12 +4,23 @@ import json
 from asgiref.sync import sync_to_async
 from django.utils import timezone
 from loguru import logger
-from typing import Optional, Callable, Awaitable, List, Dict, Tuple, Any  # Added Any
+from typing import (
+    Optional,
+    Callable,
+    Awaitable,
+    List,
+    Dict,
+    Tuple,
+    Any,
+    Union,
+)  # Added Any, Union
+from fhi_users.models import User  # Import the correct User model
 
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.ml.ml_models import RemoteModelLike
-from fighthealthinsurance.models import OngoingChat
+from fighthealthinsurance.models import OngoingChat, Denial, Appeal, PriorAuthRequest
 from fighthealthinsurance.pubmed_tools import PubMedTools
+from fighthealthinsurance import settings
 
 
 class ChatInterface:
@@ -54,7 +65,7 @@ class ChatInterface:
             logger.warning(f"Could not generate detailed professional user info: {e}")
             return "a professional user"
 
-    async def _call_llm_with_optional_pubmed(
+    async def _call_llm_with_actions(
         self,
         model_backend: RemoteModelLike,
         current_message_for_llm: str,
@@ -64,6 +75,7 @@ class ChatInterface:
     ) -> Tuple[Optional[str], Optional[str]]:
         """
         Calls the LLM, handles PubMed query requests if present and returns the response.
+        Also processes special tokens for creating or updating Appeals and PriorAuthRequests.
         """
         if depth > 2:
             return None, None
@@ -75,10 +87,205 @@ class ChatInterface:
         )
 
         pubmed_context_str = ""
-        pubmed_query_terms_regex = r"[\[\*]{1,4}pubmed[ _]?query:{0,1}\s*(.*?)\s*[\*\]]{1,4}"
+        pubmed_query_terms_regex = (
+            r"[\[\*]{0,4}pubmed[ _]?query:{0,1}\s*(.*?)\s*[\*\]]{0,4}"
+        )
         if not response_text:
             logger.debug("Got empty response from LLM")
             return None, None
+
+        # Process the special tokens for Appeals and PriorAuthRequests
+        create_or_update_appeal_regex = (
+            r"^\s*\*{0,4}create_or_update_appeal\*{0,4}\s*(\{.*\})\s*$"
+        )
+        create_or_update_prior_auth_regex = (
+            r"^\s*\*{0,4}create_or_update_prior_auth\*{0,4}\s*(\{.*\})\s*$"
+        )
+        # Use relative links
+        domain = ""
+
+        try:
+            # Process create_or_update_appeal token
+            appeal_match = re.search(
+                create_or_update_appeal_regex, response_text, re.DOTALL | re.MULTILINE
+            )
+            if appeal_match:
+                json_data = appeal_match.group(1).strip()
+                try:
+                    appeal_data = json.loads(json_data)
+                    await self.send_status_message("Processing update appeal data...")
+
+                    # Find an existing appeal linked to this chat or create a new one
+                    from fighthealthinsurance.models import Appeal
+
+                    appeal = None
+                    denial = None
+
+                    if await chat.appeals.aexists():
+                        appeal = await chat.appeals.afirst()
+                        if appeal:
+                            await self.send_status_message(
+                                f"Updating existing Appeal #{appeal.id}"
+                            )
+                            denial = await sync_to_async(lambda x: x.denial)(appeal)
+                    else:
+                        pro_user = await sync_to_async(lambda: chat.professional_user)()
+                        denial = await Denial.objects.acreate(
+                            creating_professional=pro_user,
+                        )
+                        appeal = await Appeal.objects.acreate(
+                            chat=chat, creating_professional=pro_user, for_denial=denial
+                        )
+                        if (
+                            "hashed_email" not in appeal_data
+                            and hasattr(chat, "user")
+                            and chat.user
+                        ):
+                            user_email = await sync_to_async(lambda: chat.user.email)()
+                            if user_email:
+                                appeal_data["hashed_email"] = Denial.get_hashed_email(
+                                    user_email
+                                )
+
+                    # Update appeal fields
+                    if appeal and denial:
+                        for key, value in appeal_data.items():
+                            set_field = False
+                            if hasattr(appeal, key):
+                                set_field = True
+                                setattr(appeal, key, value)
+                            if hasattr(denial, key):
+                                set_field = True
+                                setattr(denial, key, value)
+
+                            if not set_field:
+                                logger.warning(
+                                    f"Key {key} not found in Appeal or Denial model. Skipping."
+                                )
+                                await self.send_status_message(
+                                    f"Key {key} not found in Appeal or Denial model. The value {value} is not synced back yet."
+                                )
+
+                        await appeal.asave()
+                        await denial.asave()
+
+                        # Replace the token and JSON data with a status message
+                        cleaned_response = response_text.replace(
+                            appeal_match.group(0),
+                            f"I've created/updated [Appeal #{appeal.id}]({domain}/appeals/{appeal.id}) for you.",
+                        )
+                        await self.send_status_message(
+                            f"Appeal #{appeal.id} has been created/updated successfully."
+                        )
+                    else:
+                        # Handle the case where appeal is None
+                        cleaned_response = response_text.replace(
+                            appeal_match.group(0),
+                            "I couldn't create or update the appeal.",
+                        )
+                        await self.send_status_message(
+                            "Failed to create or update appeal."
+                        )
+
+                    response_text = cleaned_response
+
+                except json.JSONDecodeError as e:
+                    logger.warning(
+                        f"Invalid JSON data {e} in create_or_update_appeal token: {json_data}"
+                    )
+                    await self.send_error_message(
+                        f"Error processing appeal data: Invalid JSON format {e}"
+                    )
+                except Exception as e:
+                    logger.opt(exception=True).warning(
+                        f"Error processing appeal data: {e}"
+                    )
+                    await self.send_error_message(
+                        f"Error processing appeal data: {str(e)}"
+                    )
+
+            # Process create_or_update_prior_auth token
+            prior_auth_match = re.search(
+                create_or_update_prior_auth_regex,
+                response_text,
+                re.DOTALL | re.MULTILINE,
+            )
+            if prior_auth_match:
+                json_data = prior_auth_match.group(1).strip()
+                try:
+                    prior_auth_data = json.loads(json_data)
+                    await self.send_status_message(
+                        "Processing prior authorization update/create data..."
+                    )
+
+                    # Find an existing prior auth linked to this chat or create a new one
+                    prior_auth = None
+
+                    if await chat.prior_auths.aexists():
+                        prior_auth = await chat.prior_auths.afirst()
+                        if prior_auth:
+                            await self.send_status_message(
+                                f"Updating existing Prior Auth Request #{prior_auth.id}"
+                            )
+                    else:
+                        prior_auth = await PriorAuthRequest.objects.acreate(
+                            chat=chat,
+                            creator_professional_user=chat.professional_user,
+                        )
+
+                    # Update prior auth fields
+                    if prior_auth:
+                        for key, value in prior_auth_data.items():
+                            key = key.lower().strip()
+                            if key == "medication" or key == "medication_name":
+                                key = "treatment"
+                            if hasattr(prior_auth, key):
+                                setattr(prior_auth, key, value)
+                            else:
+                                logger.warning(
+                                    f"Key {key} not found in Prior Auth model. Skipping."
+                                )
+
+                        await prior_auth.asave()
+
+                        # Replace the token and JSON data with a status message
+                        cleaned_response = response_text.replace(
+                            prior_auth_match.group(0),
+                            f"I've created/updated [Prior Auth Request #{prior_auth.id}]({domain}/prior-auths/view/{prior_auth.id}) for you.",
+                        )
+                        await self.send_status_message(
+                            f"Prior Auth Request #{prior_auth.id} has been created/updated successfully."
+                        )
+                    else:
+                        # Handle the case where prior_auth is None
+                        cleaned_response = response_text.replace(
+                            prior_auth_match.group(0),
+                            "I couldn't create or update the prior authorization request.",
+                        )
+                        await self.send_status_message(
+                            "Failed to create or update prior authorization request."
+                        )
+
+                    response_text = cleaned_response
+
+                except json.JSONDecodeError:
+                    logger.warning(
+                        f"Invalid JSON data in create_or_update_prior_auth token: {json_data}"
+                    )
+                    await self.send_status_message(
+                        "Error processing prior auth data: Invalid JSON format."
+                    )
+                except Exception as e:
+                    logger.opt(exception=True).warning(
+                        f"Error processing prior auth data: {e}"
+                    )
+                    await self.send_status_message(
+                        f"Error processing prior auth data: {str(e)}"
+                    )
+        except Exception as e:
+            logger.opt(exception=True).warning(f"Error processing special tokens: {e}")
+            await self.send_status_message(f"Error processing special tokens: {str(e)}")
+
         try:
             # Extract the PubMedQuery terms using regex
             match = re.search(
@@ -97,31 +304,45 @@ class ChatInterface:
                     f"Searching PubMed for: {pubmed_query_terms}..."
                 )
 
-
-                recent_article_ids_awaitable = self.pubmed_tools.find_pubmed_article_ids_for_query(
-                    query=pubmed_query_terms, since="2024", timeout=30.0
+                recent_article_ids_awaitable = (
+                    self.pubmed_tools.find_pubmed_article_ids_for_query(
+                        query=pubmed_query_terms, since="2024", timeout=30.0
+                    )
                 )
-                all_article_ids_awaitable = self.pubmed_tools.find_pubmed_article_ids_for_query(
-                    query=pubmed_query_terms, timeout=30.0
+                all_article_ids_awaitable = (
+                    self.pubmed_tools.find_pubmed_article_ids_for_query(
+                        query=pubmed_query_terms, timeout=30.0
+                    )
                 )
-                (recent_article_ids, all_article_ids) = await asyncio.gather(
+                article_id_results: tuple[
+                    Union[list[str], None, BaseException],
+                    Union[list[str], None, BaseException],
+                ] = await asyncio.gather(
                     recent_article_ids_awaitable,
-                    all_article_ids_awaitable
+                    all_article_ids_awaitable,
+                    return_exceptions=True,
                 )
-                if all_article_ids or recent_article_ids:
-                    article_ids = []
-                    if not all_article_ids:
-                        article_ids = recent_article_ids
-                    elif recent_article_ids and all_article_ids:
-                        article_ids = list(set(recent_article_ids[:6] + all_article_ids[:6]))
-                    else:
-                        article_ids = all_article_ids[:6]
+                recent_article_ids = article_id_results[0]
+                all_article_ids = article_id_results[1]
+                if isinstance(all_article_ids, list) or isinstance(
+                    recent_article_ids, list
+                ):
+                    article_ids_set: set[str] = set()
+                    # Display the higher of all and recent, generally all will be higher unless it failed.
+                    num_articles = 0
+
+                    if isinstance(recent_article_ids, list):
+                        article_ids_set = article_ids_set | set(recent_article_ids[:6])
+                        num_articles = len(recent_article_ids)
+                    if isinstance(all_article_ids, list):
+                        article_ids_set = article_ids_set | set(all_article_ids[:2])
+                        if num_articles < len(all_article_ids):
+                            num_articles = len(all_article_ids)
+                    article_ids = list(article_ids_set)
                     await self.send_status_message(
-                        f"Found {len(all_article_ids)} articles. Looking at {len(article_ids)} for context."
+                        f"Found {num_articles} articles. Looking at {len(article_ids)} for context."
                     )
-                    articles_data = await self.pubmed_tools.get_articles(
-                        article_ids
-                    )
+                    articles_data = await self.pubmed_tools.get_articles(article_ids)
                     summaries = []
                     for art in articles_data:
                         summary_text = art.abstract if art.abstract else art.text
@@ -134,15 +355,17 @@ class ChatInterface:
                             )  # Truncate abstract
                     if summaries:
                         pubmed_context_str = (
-                            "\\n\\nWe got back pubmedcontext:[:\\n" + "\\n\\n".join(summaries) +"]. If you reference them make sure to include the title and journal.\\n"
+                            "\\n\\nWe got back pubmedcontext:[:\\n"
+                            + "\\n\\n".join(summaries)
+                            + "]. If you reference them make sure to include the title and journal.\\n"
                         )
                         additional_response_text, additional_context_part = (
-                            await self._call_llm_with_optional_pubmed(
+                            await self._call_llm_with_actions(
                                 model_backend,
                                 pubmed_context_str,
                                 previous_context_summary,
                                 history_for_llm,
-                                depth = depth + 1,
+                                depth=depth + 1,
                             )
                         )
                         if cleaned_response and additional_response_text:
@@ -171,11 +394,88 @@ class ChatInterface:
         )
         return response_text, context
 
-    async def handle_chat_message(self, user_message: str):
+    async def handle_chat_message(
+        self,
+        user_message: str,
+        iterate_on_appeal: Optional[str] = None,
+        iterate_on_prior_auth: Optional[str] = None,
+        user: Optional[User] = None,
+    ):
         """
         Handles an incoming chat message, interacts with LLMs, and manages chat history.
         """
         chat = self.chat
+        # Handle chat ↔ appeal/prior auth linking if requested
+        from fighthealthinsurance.models import Appeal, PriorAuthRequest
+
+        link_message = None
+        user_facing_message = None
+        # Note: We intentionally do NOT send the link message to the LLM/model immediately.
+        # This allows the user to drive the next step, and avoids confusing the model with system state changes.
+        # Also we require their is a pro user to enable linking.
+        if iterate_on_appeal and user:
+            await self.send_status_message("Linking appeal into chat")
+            appeal = await sync_to_async(Appeal.get_optional_for_user)(
+                user, id=iterate_on_appeal
+            )
+            if not appeal:
+                await self.send_error_message(
+                    "Appeal not found, or you do not have permission to access it."
+                )
+                return
+            appeal_details = await sync_to_async(appeal.details)()
+            if appeal.chat_id != chat.id:
+                appeal.chat = chat
+                await appeal.asave()
+                link_message = f"Linked this chat to Appeal #{appeal.id} -- help the user iterate on {appeal_details}"
+                user_facing_message = "I've linked this chat to your appeal. How can I help you iterate on it?"
+            else:
+                link_message = f"This chat is already linked to Appeal #{appeal.id} -- the current appeal text is {appeal_details}, help the user iterate on it"
+                user_facing_message = "This chat is already linked to your appeal. How can I help you with it?"
+        if iterate_on_prior_auth and user:
+            await self.send_status_message(
+                "Linking prior authorization request into chat"
+            )
+            prior_auth = await sync_to_async(PriorAuthRequest.get_optional_for_user)(
+                user, id=iterate_on_prior_auth
+            )
+            if not prior_auth:
+                await self.send_error_message(
+                    "Prior Auth Request not found or you do not have permission to access it."
+                )
+                return
+            prior_auth_details = await sync_to_async(prior_auth.details)()
+            if prior_auth.chat_id != chat.id:
+                prior_auth.chat = chat
+                await prior_auth.asave()
+                link_message = f"Linked this chat to Prior Auth Request #{prior_auth.id}, details are {prior_auth_details}"
+                user_facing_message = "I've linked this chat to your prior authorization request. How can I help you with it?"
+            else:
+                link_message = f"This chat is already linked to Prior Auth Request #{prior_auth.id}, current details are {prior_auth_details}"
+                user_facing_message = "This chat is already linked to your prior authorization request. How can I help you with it?"
+        if link_message and user_facing_message:
+            await asyncio.sleep(0.01)
+            if not chat.chat_history:
+                chat.chat_history = []
+            chat.chat_history.append(
+                {
+                    "role": "user",
+                    "content": link_message,
+                    "timestamp": timezone.now().isoformat(),
+                }
+            )
+            chat.chat_history.append(
+                {
+                    "role": "assistant",
+                    "content": user_facing_message,
+                    "timestamp": timezone.now().isoformat(),
+                }
+            )
+            await asyncio.gather(
+                chat.asave(), self.send_message_to_client(user_facing_message)
+            )
+            return
+
         models = ml_router.get_chat_backends(use_external=False)
         if not models:
             await self.send_error_message(
@@ -206,7 +506,7 @@ class ChatInterface:
 
         for model_backend in models:
             try:
-                response_text, context_part = await self._call_llm_with_optional_pubmed(
+                response_text, context_part = await self._call_llm_with_actions(
                     model_backend,
                     llm_input_message,
                     current_llm_context,

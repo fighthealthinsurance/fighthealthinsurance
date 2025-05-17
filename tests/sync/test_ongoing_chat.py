@@ -1,5 +1,3 @@
-"""Test the ongoing chat functionality"""
-
 import typing
 from unittest.mock import patch
 from channels.testing import WebsocketCommunicator
@@ -44,6 +42,206 @@ class OngoingChatWebSocketTest(APITestCase):
     async def asyncTearDown(self):
         """Clean up the test environment."""
         self.get_chat_backends_patcher.stop()
+
+    async def test_link_chat_to_appeal_success(self):
+        """Test linking a chat to an appeal with permission."""
+        await self.asyncSetUp()
+        user = await sync_to_async(User.objects.create_user)(
+            username="appealuser", password="testpass", email="appeal@example.com"
+        )
+        professional = await sync_to_async(ProfessionalUser.objects.create)(
+            user=user, active=True, npi_number="1111111111"
+        )
+        chat = await sync_to_async(OngoingChat.objects.create)(
+            professional_user=professional,
+            chat_history=[],
+            summary_for_next_call=[],
+        )
+        from fighthealthinsurance.models import Appeal
+
+        appeal = await sync_to_async(Appeal.objects.create)(
+            creating_professional=professional,
+            primary_professional=professional,
+            hashed_email="hashappeal@example.com",
+        )
+        communicator = WebsocketCommunicator(
+            OngoingChatConsumer.as_asgi(), "/ws/ongoing-chat/"
+        )
+        communicator.scope["user"] = user
+        connected, _ = await communicator.connect()
+        self.assertTrue(connected)
+        await communicator.send_json_to(
+            {
+                "chat_id": str(chat.id),
+                "iterate_on_appeal": appeal.id,
+                "content": "Let's work on this appeal.",
+            }
+        )
+        response = await communicator.receive_json_from(timeout=15)
+        while "status" in response:
+            response = await communicator.receive_json_from(timeout=15)
+        self.assertIn("content", response)
+        self.assertIn("linked", response["content"])
+        # Appeal is linked
+        appeal_refresh = await sync_to_async(Appeal.objects.get)(id=appeal.id)
+        self.assertEqual(appeal_refresh.chat_id, chat.id)
+        await communicator.disconnect()
+        await self.asyncTearDown()
+
+    async def test_link_chat_to_prior_auth_success(self):
+        """Test linking a chat to a prior auth with permission."""
+        await self.asyncSetUp()
+        user = await sync_to_async(User.objects.create_user)(
+            username="priorauthuser", password="testpass", email="priorauth@example.com"
+        )
+        professional = await sync_to_async(ProfessionalUser.objects.create)(
+            user=user, active=True, npi_number="2222222222"
+        )
+        chat = await sync_to_async(OngoingChat.objects.create)(
+            professional_user=professional,
+            chat_history=[],
+            summary_for_next_call=[],
+        )
+        from fighthealthinsurance.models import PriorAuthRequest
+
+        prior_auth = await sync_to_async(PriorAuthRequest.objects.create)(
+            creator_professional_user=professional,
+            created_for_professional_user=professional,
+            diagnosis="Test diagnosis",
+            treatment="Test treatment",
+            insurance_company="Test Insurance",
+        )
+        communicator = WebsocketCommunicator(
+            OngoingChatConsumer.as_asgi(), "/ws/ongoing-chat/"
+        )
+        communicator.scope["user"] = user
+        connected, _ = await communicator.connect()
+        self.assertTrue(connected)
+        await communicator.send_json_to(
+            {
+                "chat_id": str(chat.id),
+                "iterate_on_prior_auth": str(prior_auth.id),
+                "content": "Let's work on this prior auth.",
+            }
+        )
+        response = await communicator.receive_json_from(timeout=15)
+        while "status" in response:
+            response = await communicator.receive_json_from(timeout=15)
+        self.assertIn("content", response)
+        self.assertIn("linked", response["content"])
+        # PriorAuthRequest is linked
+        prior_auth_refresh = await sync_to_async(PriorAuthRequest.objects.get)(
+            id=prior_auth.id
+        )
+        self.assertEqual(prior_auth_refresh.chat_id, chat.id)
+        await communicator.disconnect()
+        await self.asyncTearDown()
+
+    async def test_link_chat_to_appeal_permission_denied(self):
+        """Test linking a chat to an appeal without permission is denied."""
+        await self.asyncSetUp()
+        user1 = await sync_to_async(User.objects.create_user)(
+            username="user1", password="testpass", email="user1@example.com"
+        )
+        user2 = await sync_to_async(User.objects.create_user)(
+            username="user2", password="testpass", email="user2@example.com"
+        )
+        professional1 = await sync_to_async(ProfessionalUser.objects.create)(
+            user=user1, active=True, npi_number="3333333333"
+        )
+        professional2 = await sync_to_async(ProfessionalUser.objects.create)(
+            user=user2, active=True, npi_number="4444444444"
+        )
+        chat = await sync_to_async(OngoingChat.objects.create)(
+            professional_user=professional2,
+            chat_history=[],
+            summary_for_next_call=[],
+        )
+        from fighthealthinsurance.models import Appeal
+
+        appeal = await sync_to_async(Appeal.objects.create)(
+            creating_professional=professional1,
+            primary_professional=professional1,
+            hashed_email="hashappeal2@example.com",
+        )
+        communicator = WebsocketCommunicator(
+            OngoingChatConsumer.as_asgi(), "/ws/ongoing-chat/"
+        )
+        communicator.scope["user"] = user2
+        connected, _ = await communicator.connect()
+        self.assertTrue(connected)
+        await communicator.send_json_to(
+            {
+                "chat_id": str(chat.id),
+                "iterate_on_appeal": appeal.id,
+                "content": "Try to link without permission.",
+            }
+        )
+        response = await communicator.receive_json_from(timeout=15)
+        while "status" in response:
+            response = await communicator.receive_json_from(timeout=15)
+        self.assertIn("error", response)
+        self.assertIn("permission", response["error"])
+        # Appeal is not linked
+        appeal_refresh = await sync_to_async(Appeal.objects.get)(id=appeal.id)
+        self.assertIsNone(appeal_refresh.chat_id)
+        await communicator.disconnect()
+        await self.asyncTearDown()
+
+    async def test_link_chat_to_prior_auth_permission_denied(self):
+        """Test linking a chat to a prior auth without permission is denied."""
+        await self.asyncSetUp()
+        user1 = await sync_to_async(User.objects.create_user)(
+            username="user3", password="testpass", email="user3@example.com"
+        )
+        user2 = await sync_to_async(User.objects.create_user)(
+            username="user4", password="testpass", email="user4@example.com"
+        )
+        professional1 = await sync_to_async(ProfessionalUser.objects.create)(
+            user=user1, active=True, npi_number="5555555555"
+        )
+        professional2 = await sync_to_async(ProfessionalUser.objects.create)(
+            user=user2, active=True, npi_number="6666666666"
+        )
+        chat = await sync_to_async(OngoingChat.objects.create)(
+            professional_user=professional2,
+            chat_history=[],
+            summary_for_next_call=[],
+        )
+        from fighthealthinsurance.models import PriorAuthRequest
+
+        prior_auth = await sync_to_async(PriorAuthRequest.objects.create)(
+            creator_professional_user=professional1,
+            created_for_professional_user=professional1,
+            diagnosis="Test diagnosis",
+            treatment="Test treatment",
+            insurance_company="Test Insurance",
+        )
+        communicator = WebsocketCommunicator(
+            OngoingChatConsumer.as_asgi(), "/ws/ongoing-chat/"
+        )
+        communicator.scope["user"] = user2
+        connected, _ = await communicator.connect()
+        self.assertTrue(connected)
+        await communicator.send_json_to(
+            {
+                "chat_id": str(chat.id),
+                "iterate_on_prior_auth": str(prior_auth.id),
+                "content": "Try to link prior auth without permission.",
+            }
+        )
+        response = await communicator.receive_json_from(timeout=15)
+        while "status" in response:
+            response = await communicator.receive_json_from(timeout=15)
+        self.assertIn("error", response)
+        self.assertIn("permission", response["error"])
+        # PriorAuthRequest is not linked
+        prior_auth_refresh = await sync_to_async(PriorAuthRequest.objects.get)(
+            id=prior_auth.id
+        )
+        self.assertIsNone(prior_auth_refresh.chat_id)
+        await communicator.disconnect()
+        await self.asyncTearDown()
 
     async def test_ongoing_chat_websocket(self):
         """Test that the ongoing chat WebSocket connection works and generates responses."""
@@ -239,4 +437,126 @@ class OngoingChatWebSocketTest(APITestCase):
         await communicator.disconnect()
 
         # Clean up
+        await self.asyncTearDown()
+
+    async def test_appeal_url_generation_in_response(self):
+        """Test that URLs in responses for appeals are properly formatted with the domain."""
+        await self.asyncSetUp()
+        # Set up a test domain
+        with patch(
+            "django.conf.settings.FIGHT_PAPERWORK_DOMAIN", "test-domain.example.com"
+        ):
+            user = await sync_to_async(User.objects.create_user)(
+                username="appealurluser",
+                password="testpass",
+                email="appealurl@example.com",
+            )
+            professional = await sync_to_async(ProfessionalUser.objects.create)(
+                user=user, active=True, npi_number="5555555555"
+            )
+            chat = await sync_to_async(OngoingChat.objects.create)(
+                professional_user=professional,
+                chat_history=[],
+                summary_for_next_call=[],
+            )
+
+            # Mock the LLM to return a response with a create_or_update_appeal token
+            self.mock_model.set_next_response(
+                '***create_or_update_appeal***\n{"diagnosis": "Test diagnosis", "procedure": "Test procedure"}\n',
+                "Summary context",
+            )
+
+            communicator = WebsocketCommunicator(
+                OngoingChatConsumer.as_asgi(), "/ws/ongoing-chat/"
+            )
+            communicator.scope["user"] = user
+            connected, _ = await communicator.connect()
+            self.assertTrue(connected)
+
+            # Send a message that would trigger appeal creation
+            await communicator.send_json_to(
+                {
+                    "chat_id": str(chat.id),
+                    "content": "Create an appeal for me",
+                }
+            )
+
+            # Get the response
+            response = await communicator.receive_json_from(timeout=15)
+            while "status" in response:
+                response = await communicator.receive_json_from(timeout=15)
+            self.assertIn("content", response)
+
+            # Check that the response contains a properly formatted URL with the domain
+            from fighthealthinsurance.models import Appeal
+
+            appeals = await sync_to_async(list)(Appeal.objects.filter(chat=chat))
+            self.assertTrue(len(appeals) > 0)
+            appeal_id = appeals[0].id
+            expected_url_part = f"/appeals/{appeal_id}"
+            self.assertIn(expected_url_part, response["content"])
+
+            await communicator.disconnect()
+        await self.asyncTearDown()
+
+    async def test_prior_auth_url_generation_in_response(self):
+        """Test that URLs in responses for prior auths are properly formatted with the domain."""
+        await self.asyncSetUp()
+        # Set up a test domain
+        with patch(
+            "django.conf.settings.FIGHT_PAPERWORK_DOMAIN", "test-domain.example.com"
+        ):
+            user = await sync_to_async(User.objects.create_user)(
+                username="priorauthurl",
+                password="testpass",
+                email="priorauthurl@example.com",
+            )
+            professional = await sync_to_async(ProfessionalUser.objects.create)(
+                user=user, active=True, npi_number="6666666666"
+            )
+            chat = await sync_to_async(OngoingChat.objects.create)(
+                professional_user=professional,
+                chat_history=[],
+                summary_for_next_call=[],
+            )
+
+            # Mock the LLM to return a response with a create_or_update_prior_auth token
+            self.mock_model.set_next_response(
+                '***create_or_update_prior_auth***\n{"diagnosis": "Test diagnosis", "treatment": "Test treatment"}\n',
+                "Summary context",
+            )
+
+            communicator = WebsocketCommunicator(
+                OngoingChatConsumer.as_asgi(), "/ws/ongoing-chat/"
+            )
+            communicator.scope["user"] = user
+            connected, _ = await communicator.connect()
+            self.assertTrue(connected)
+
+            # Send a message that would trigger prior auth creation
+            await communicator.send_json_to(
+                {
+                    "chat_id": str(chat.id),
+                    "content": "Create a prior auth for me",
+                }
+            )
+
+            # Get the response
+            response = await communicator.receive_json_from(timeout=15)
+            while "status" in response:
+                response = await communicator.receive_json_from(timeout=15)
+            self.assertIn("content", response)
+
+            # Check that the response contains a properly formatted URL with the domain
+            from fighthealthinsurance.models import PriorAuthRequest
+
+            prior_auths = await sync_to_async(list)(
+                PriorAuthRequest.objects.filter(chat=chat)
+            )
+            self.assertTrue(len(prior_auths) > 0)
+            prior_auth_id = prior_auths[0].id
+            expected_url_part = f"/prior-auths/view/{prior_auth_id}"
+            self.assertIn(expected_url_part, response["content"])
+
+            await communicator.disconnect()
         await self.asyncTearDown()

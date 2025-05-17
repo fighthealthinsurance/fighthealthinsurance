@@ -165,6 +165,7 @@ class AppealListRequestSerializer(serializers.Serializer):
 
 
 class AppealSummarySerializer(serializers.ModelSerializer):
+    chat_id = serializers.IntegerField(source="chat.id", read_only=True)
     status = serializers.SerializerMethodField()
     professional_name = serializers.SerializerMethodField()
     patient_name = serializers.SerializerMethodField()
@@ -186,6 +187,7 @@ class AppealSummarySerializer(serializers.ModelSerializer):
             "denial_reason",
             "creation_date",
             "mod_date",
+            "chat_id",
         ]
 
     @extend_schema_field(serializers.CharField)
@@ -235,6 +237,7 @@ class DenialModelSerializer(serializers.ModelSerializer):
 
 
 class AppealDetailSerializer(serializers.ModelSerializer):
+    chat_id = serializers.IntegerField(source="chat.id", read_only=True)
     appeal_pdf_url = serializers.SerializerMethodField()
     status = serializers.SerializerMethodField()
     professional_name = serializers.SerializerMethodField()
@@ -259,6 +262,7 @@ class AppealDetailSerializer(serializers.ModelSerializer):
             "creation_date",
             "mod_date",
             "appeal_pdf_url",
+            "chat_id",
         ]
 
     @extend_schema_field(serializers.CharField)
@@ -317,6 +321,7 @@ class NotifyPatientRequestSerializer(serializers.Serializer):
 
 
 class AppealFullSerializer(serializers.ModelSerializer):
+    chat_id = serializers.IntegerField(source="chat.id", read_only=True)
     appeal_pdf_url = serializers.SerializerMethodField()
     denial = serializers.SerializerMethodField()
     in_userdomain = serializers.SerializerMethodField()
@@ -583,6 +588,7 @@ class ProposedPriorAuthSerializer(serializers.ModelSerializer):
 
 
 class PriorAuthRequestSerializer(serializers.ModelSerializer):
+    chat_id = serializers.IntegerField(source="chat.id", read_only=True)
     """Serializer for prior authorization requests."""
 
     professional_name = serializers.SerializerMethodField()
@@ -607,6 +613,7 @@ class PriorAuthRequestSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
             "proposals",
+            "chat_id",
         ]
         read_only_fields = ["id", "token", "status", "created_at", "updated_at"]
 
@@ -650,6 +657,7 @@ class PriorAuthDetailSerializer(PriorAuthRequestSerializer):
             "mode",
             "text",
             "urgent",
+            "chat_id",
         ]
 
     @extend_schema_field(serializers.DictField())
@@ -711,11 +719,30 @@ class OngoingChatSerializer(serializers.ModelSerializer):
 
     messages = serializers.SerializerMethodField()
     professional_name = serializers.SerializerMethodField()
+    appeals = serializers.SerializerMethodField()
+    prior_auths = serializers.SerializerMethodField()
 
     class Meta:
         model = OngoingChat
-        fields = ["id", "professional_name", "messages", "created_at", "updated_at"]
-        read_only_fields = ["id", "created_at", "updated_at"]
+        fields = [
+            "id",
+            "professional_name",
+            "messages",
+            "created_at",
+            "updated_at",
+            "appeals",
+            "prior_auths",
+        ]
+
+    read_only_fields = ["id", "created_at", "updated_at"]
+
+    @extend_schema_field(serializers.ListField(child=serializers.IntegerField()))
+    def get_appeals(self, obj):
+        return list(obj.appeals.values_list("id", flat=True))
+
+    @extend_schema_field(serializers.ListField(child=serializers.CharField()))
+    def get_prior_auths(self, obj):
+        return list(obj.prior_auths.values_list("id", flat=True))
 
     @extend_schema_field(OngoingChatMessageSerializer(many=True))
     def get_messages(self, obj):
