@@ -170,7 +170,7 @@ class ChatInterface:
                         # Replace the token and JSON data with a status message
                         cleaned_response = response_text.replace(
                             appeal_match.group(0),
-                            f"I've created/updated (Appeal #{appeal.id})[https://{domain}/appeals/{appeal.id}] for you.",
+                            f"I've created/updated [Appeal #{appeal.id}](https://{domain}/appeals/{appeal.id}) for you.",
                         )
                         await self.send_status_message(
                             f"Appeal #{appeal.id} has been created/updated successfully."
