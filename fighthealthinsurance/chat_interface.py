@@ -150,15 +150,15 @@ class ChatInterface:
                     # Update appeal fields
                     if appeal and denial:
                         for key, value in appeal_data.items():
-                            set = False
+                            set_field = False
                             if hasattr(appeal, key):
-                                set = True
+                                set_field = True
                                 setattr(appeal, key, value)
                             if hasattr(denial, key):
-                                set = True
+                                set_field = True
                                 setattr(denial, key, value)
 
-                            if not set:
+                            if not set_field:
                                 logger.warning(
                                     f"Key {key} not found in Appeal or Denial model. Skipping."
                                 )
@@ -314,21 +314,33 @@ class ChatInterface:
                         query=pubmed_query_terms, timeout=30.0
                     )
                 )
-                (recent_article_ids, all_article_ids) = await asyncio.gather(
-                    recent_article_ids_awaitable, all_article_ids_awaitable
+                article_id_results: tuple[
+                    Union[list[str], None, BaseException],
+                    Union[list[str], None, BaseException],
+                ] = await asyncio.gather(
+                    recent_article_ids_awaitable,
+                    all_article_ids_awaitable,
+                    return_exceptions=True,
                 )
-                if all_article_ids or recent_article_ids:
-                    article_ids = []
-                    if not all_article_ids:
-                        article_ids = recent_article_ids
-                    elif recent_article_ids and all_article_ids:
-                        article_ids = list(
-                            set(recent_article_ids[:6] + all_article_ids[:6])
-                        )
-                    else:
-                        article_ids = all_article_ids[:6]
+                recent_article_ids = article_id_results[0]
+                all_article_ids = article_id_results[1]
+                if isinstance(all_article_ids, list) or isinstance(
+                    recent_article_ids, list
+                ):
+                    article_ids_set: set[str] = set()
+                    # Display the higher of all and recent, generally all will be higher unless it failed.
+                    num_articles = 0
+
+                    if isinstance(recent_article_ids, list):
+                        article_ids_set = article_ids_set | set(recent_article_ids[:6])
+                        num_articles = len(recent_article_ids)
+                    if isinstance(all_article_ids, list):
+                        article_ids_set = article_ids_set | set(all_article_ids[:2])
+                        if num_articles < len(all_article_ids):
+                            num_articles = len(all_article_ids)
+                    article_ids = list(article_ids_set)
                     await self.send_status_message(
-                        f"Found {len(all_article_ids)} articles. Looking at {len(article_ids)} for context."
+                        f"Found {num_articles} articles. Looking at {len(article_ids)} for context."
                     )
                     articles_data = await self.pubmed_tools.get_articles(article_ids)
                     summaries = []
