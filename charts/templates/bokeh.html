@@ -11,15 +11,21 @@
   <script src="https://cdn.bokeh.org/bokeh/release/bokeh-mathjax-3.6.2.min.js"
           crossorigin="anonymous"></script>
   <head>
-    <title>Bokeh magic</title>
+    <title>{{ title|default:"Bokeh Chart" }}</title>
     {{ script | safe }}
   </head>
   <body>
-    Graph<br/>
-    {{ div | safe }}
-    Data<br/>
-    {{ df_html|safe }}
-    Totals<br/>
-    {{ totals_html|safe }}
+    <h1>{{ title|default:"Chart" }}</h1>
+    <div class="graph">
+      {{ div | safe }}
+    </div>
+    <h2>Data</h2>
+    <div class="data">
+      {{ df_html|safe }}
+    </div>
+    <h2>Summary</h2>
+    <div class="totals">
+      {{ totals_html|safe }}
+    </div>
   </body>
 </html>
