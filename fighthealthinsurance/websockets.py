@@ -295,7 +295,7 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
         """Get an existing chat or create a new one."""
         if chat_id:
             try:
-                return await OngoingChat.objects.aget(
+                return await OngoingChat.objects.prefetch_related().select_related().aget(
                     id=chat_id, professional_user=professional_user
                 )
             except OngoingChat.DoesNotExist:

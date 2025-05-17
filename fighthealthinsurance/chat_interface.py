@@ -18,7 +18,7 @@ from fhi_users.models import User  # Import the correct User model
 
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.ml.ml_models import RemoteModelLike
-from fighthealthinsurance.models import OngoingChat
+from fighthealthinsurance.models import OngoingChat, Denial, Appeal, PriorAuthRequest
 from fighthealthinsurance.pubmed_tools import PubMedTools
 from fighthealthinsurance import settings
 
@@ -128,11 +128,12 @@ class ChatInterface:
                             )
                             denial = await sync_to_async(lambda x: x.denial)(appeal)
                     else:
-                        denial = Denial(
-                            creator_professional_user=chat.professional_user,
+                        pro_user = await sync_to_async(lambda: chat.professional_user)()
+                        denial = await Denial.objects.acreate(
+                            creating_professional=pro_user,
                         )
-                        appeal = Appeal(
-                            chat=chat, creator_professional_user=chat.professional_user
+                        appeal = await Appeal.objects.acreate(
+                            chat=chat, creating_professional=pro_user
                         )
                         if (
                             "hashed_email" not in appeal_data
@@ -141,8 +142,6 @@ class ChatInterface:
                         ):
                             user_email = await sync_to_async(lambda: chat.user.email)()
                             if user_email:
-                                from fighthealthinsurance.models import Denial
-
                                 appeal_data["hashed_email"] = Denial.get_hashed_email(
                                     user_email
                                 )
@@ -218,8 +217,6 @@ class ChatInterface:
                     )
 
                     # Find an existing prior auth linked to this chat or create a new one
-                    from fighthealthinsurance.models import PriorAuthRequest
-
                     prior_auth = None
 
                     if await chat.prior_auths.aexists():
@@ -229,7 +226,7 @@ class ChatInterface:
                                 f"Updating existing Prior Auth Request #{prior_auth.id}"
                             )
                     else:
-                        prior_auth = PriorAuthRequest(
+                        prior_auth = await PriorAuthRequest.objects.acreate(
                             chat=chat,
                             creator_professional_user=chat.professional_user,
                         )
