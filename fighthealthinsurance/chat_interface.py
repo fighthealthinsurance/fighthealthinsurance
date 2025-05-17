@@ -101,7 +101,8 @@ class ChatInterface:
         create_or_update_prior_auth_regex = (
             r"^\s*\*{0,4}create_or_update_prior_auth\*{0,4}\s*(\{.*\})\s*$"
         )
-        domain = settings.FIGHT_PAPERWORK_DOMAIN
+        # Use relative links
+        domain = ""
 
         try:
             # Process create_or_update_appeal token
@@ -170,7 +171,7 @@ class ChatInterface:
                         # Replace the token and JSON data with a status message
                         cleaned_response = response_text.replace(
                             appeal_match.group(0),
-                            f"I've created/updated [Appeal #{appeal.id}](https://{domain}/appeals/{appeal.id}) for you.",
+                            f"I've created/updated [Appeal #{appeal.id}]({domain}/appeals/{appeal.id}) for you.",
                         )
                         await self.send_status_message(
                             f"Appeal #{appeal.id} has been created/updated successfully."
@@ -249,7 +250,7 @@ class ChatInterface:
                         # Replace the token and JSON data with a status message
                         cleaned_response = response_text.replace(
                             prior_auth_match.group(0),
-                            f"I've created/updated [Prior Auth Request #{prior_auth.id}](https://{domain}/prior-auths/view/{prior_auth.id}) for you.",
+                            f"I've created/updated [Prior Auth Request #{prior_auth.id}]({domain}/prior-auths/view/{prior_auth.id}) for you.",
                         )
                         await self.send_status_message(
                             f"Prior Auth Request #{prior_auth.id} has been created/updated successfully."
@@ -438,7 +439,7 @@ class ChatInterface:
             else:
                 link_message = f"This chat is already linked to Prior Auth Request #{prior_auth.id}, current details are {prior_auth.details()}"
                 user_facing_message = "This chat is already linked to your prior authorization request. How can I help you with it?"
-        if link_message:
+        if link_message and user_facing_message:
             await asyncio.sleep(0.01)
             if not chat.chat_history:
                 chat.chat_history = []
