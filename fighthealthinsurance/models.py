@@ -959,7 +959,7 @@ class PriorAuthRequest(ExportModelOperationsMixin("PriorAuthRequest"), models.Mo
 
     def details(self):
         return f"""
-        prior auht id: {self.id}
+        prior auth id: {self.id}
         diagnosis: {self.diagnosis}
         treatment: {self.treatment}
         insurance company: {self.insurance_company}

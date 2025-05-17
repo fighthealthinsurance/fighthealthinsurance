@@ -134,7 +134,7 @@ class ChatInterface:
                             creating_professional=pro_user,
                         )
                         appeal = await Appeal.objects.acreate(
-                            chat=chat, creating_professional=pro_user
+                            chat=chat, creating_professional=pro_user, for_denial=denial
                         )
                         if (
                             "hashed_email" not in appeal_data
@@ -167,6 +167,7 @@ class ChatInterface:
                                 )
 
                         await appeal.asave()
+                        await denial.asave()
 
                         # Replace the token and JSON data with a status message
                         cleaned_response = response_text.replace(

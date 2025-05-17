@@ -642,7 +642,6 @@ class PriorAuthRequestSerializer(serializers.ModelSerializer):
 
 
 class PriorAuthDetailSerializer(PriorAuthRequestSerializer):
-    chat_id = serializers.IntegerField(source="chat.id", read_only=True)
     """Detailed serializer for prior authorization requests."""
 
     domain_info = serializers.SerializerMethodField()
@@ -716,12 +715,13 @@ class OngoingChatMessageSerializer(serializers.Serializer):
 
 
 class OngoingChatSerializer(serializers.ModelSerializer):
-    appeals = serializers.SerializerMethodField()
-    prior_auths = serializers.SerializerMethodField()
     """Serializer for ongoing chats."""
 
     messages = serializers.SerializerMethodField()
     professional_name = serializers.SerializerMethodField()
+    appeals = serializers.SerializerMethodField()
+    prior_auths = serializers.SerializerMethodField()
+
 
     class Meta:
         model = OngoingChat
@@ -735,6 +735,8 @@ class OngoingChatSerializer(serializers.ModelSerializer):
             "prior_auths",
         ]
 
+    read_only_fields = ["id", "created_at", "updated_at"]
+
     @extend_schema_field(serializers.ListField(child=serializers.IntegerField()))
     def get_appeals(self, obj):
         return list(obj.appeals.values_list("id", flat=True))
@@ -742,7 +744,6 @@ class OngoingChatSerializer(serializers.ModelSerializer):
     @extend_schema_field(serializers.ListField(child=serializers.CharField()))
     def get_prior_auths(self, obj):
         return list(obj.prior_auths.values_list("id", flat=True))
-        read_only_fields = ["id", "created_at", "updated_at"]
 
     @extend_schema_field(OngoingChatMessageSerializer(many=True))
     def get_messages(self, obj):
