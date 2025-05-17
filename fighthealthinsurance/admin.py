@@ -55,6 +55,7 @@ class PriorAuthRequestAdmin(admin.ModelAdmin):
         "treatment",
         "insurance_company",
         "patient_name",
+        "chat",
     )
     search_fields = ("diagnosis", "treatment", "insurance_company")
     ordering = ("-created_at",)
@@ -388,6 +389,7 @@ class AppealAdmin(admin.ModelAdmin):
         "id",
         "uuid",
         "for_denial",
+        "chat",
         "pending",
         "sent",
         "success",
