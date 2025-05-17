@@ -696,18 +696,31 @@ class Appeal(ExportModelOperationsMixin("Appeal"), models.Model):  # type: ignor
     )
 
     def details(self):
+        ml_citation_context = (
+            self.for_denial.ml_citation_context
+            if self.for_denial and hasattr(self.for_denial, "ml_citation_context")
+            else None
+        )
+        qa_context = (
+            self.for_denial.qa_context
+            if self.for_denial and hasattr(self.for_denial, "qa_context")
+            else None
+        )
+
+        patient_extra = ""
+        if self.patient_user is not None:
+            patient_extra = f" -- {self.patient_user.user.username}"
+
         return f"""
-        {self.id}
-        {self.response_text}
-        {self.response_date}
-        {self.notes}
-        {self.success}
-        {self.mod_date}
-        {self.creation_date}
-        {self.billed}
-        {self.include_provided_health_history_in_appeal}
-        {self.for_denial.ml_citation_context}
-        {self.for_denial.qa_context}
+        appeal id: {self.id}
+        internal notes: {self.notes}
+        modification date: {self.mod_date}
+        creation date: {self.creation_date}
+        patient visible: {self.patient_visible}
+        include provided health history in appeal: {self.include_provided_health_history_in_appeal}
+        possible citation context: {ml_citation_context}
+        qa context: {qa_context}
+        {patient_extra}
         """
 
     @classmethod
@@ -946,15 +959,15 @@ class PriorAuthRequest(ExportModelOperationsMixin("PriorAuthRequest"), models.Mo
 
     def details(self):
         return f"""
-        {self.id}
-        {self.diagnosis}
-        {self.treatment}
-        {self.insurance_company}
-        {self.patient_health_history}
-        {self.urgent}
-        {self.answers}
-        {self.proposal_type}
-        {self.text}"""
+        prior auht id: {self.id}
+        diagnosis: {self.diagnosis}
+        treatment: {self.treatment}
+        insurance company: {self.insurance_company}
+        patient health history: {self.patient_health_history}
+        urgent: {self.urgent}
+        answers: {self.answers}
+        proposal type: {self.proposal_type}
+        prior auth text: {self.text}"""
 
     @classmethod
     def filter_to_allowed_requests(cls, current_user):
