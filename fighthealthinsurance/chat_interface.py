@@ -432,13 +432,14 @@ class ChatInterface:
                     "Prior Auth Request not found or you do not have permission to access it."
                 )
                 return
+            prior_auth_details = await sync_to_async(prior_auth.details)()
             if prior_auth.chat_id != chat.id:
                 prior_auth.chat = chat
                 await prior_auth.asave()
-                link_message = f"Linked this chat to Prior Auth Request #{prior_auth.id}, details are {prior_auth.details()}"
+                link_message = f"Linked this chat to Prior Auth Request #{prior_auth.id}, details are {prior_auth_details}"
                 user_facing_message = "I've linked this chat to your prior authorization request. How can I help you with it?"
             else:
-                link_message = f"This chat is already linked to Prior Auth Request #{prior_auth.id}, current details are {prior_auth.details()}"
+                link_message = f"This chat is already linked to Prior Auth Request #{prior_auth.id}, current details are {prior_auth_details}"
                 user_facing_message = "This chat is already linked to your prior authorization request. How can I help you with it?"
         if link_message and user_facing_message:
             await asyncio.sleep(0.01)

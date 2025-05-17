@@ -722,7 +722,6 @@ class OngoingChatSerializer(serializers.ModelSerializer):
     appeals = serializers.SerializerMethodField()
     prior_auths = serializers.SerializerMethodField()
 
-
     class Meta:
         model = OngoingChat
         fields = [
