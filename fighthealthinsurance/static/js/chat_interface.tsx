@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { createRoot } from "react-dom/client";
 import ReactMarkdown from "react-markdown";
 import {
@@ -15,7 +15,18 @@ import {
   Title,
   Image,
   Flex,
+  ActionIcon,
+  FileButton,
+  Tooltip,
+  TextInput,
+  Checkbox,
+  Stack,
+  Anchor,
+  Card,
+  Stepper,
 } from "@mantine/core";
+
+import { IconPaperclip, IconSend, IconUser, IconArrowRight } from "./icons";
 
 // Define types for our chat messages
 interface ChatMessage {
@@ -32,6 +43,18 @@ interface ChatState {
   input: string;
   chatId: string | null;
   error: string | null;
+  isProcessingFile: boolean;
+}
+
+interface UserInfo {
+  firstName: string;
+  lastName: string;
+  email: string;
+  address: string;
+  city: string;
+  state: string;
+  zipCode: string;
+  acceptedTerms: boolean;
 }
 
 // Typing animation component for loading state
@@ -67,6 +90,142 @@ const getSessionKey = (): string => {
   return newKey;
 };
 
+// Save user info to local storage
+const saveUserInfo = (userInfo: UserInfo): void => {
+  localStorage.setItem("fhi_user_info", JSON.stringify(userInfo));
+};
+
+// Get user info from local storage
+const getUserInfo = (): UserInfo | null => {
+  const storedInfo = localStorage.getItem("fhi_user_info");
+  if (storedInfo) {
+    try {
+      return JSON.parse(storedInfo) as UserInfo;
+    } catch (e) {
+      console.error("Error parsing stored user info:", e);
+      return null;
+    }
+  }
+  return null;
+};
+
+// Replace personal info in a message with placeholders
+const scrubPersonalInfo = (message: string, userInfo: UserInfo): string => {
+  if (!userInfo) return message;
+
+  let scrubbedMessage = message;
+
+  // Replace name - use word boundaries to avoid partial matches
+  if (userInfo.firstName) {
+    scrubbedMessage = scrubbedMessage.replace(
+      new RegExp(`\\b${userInfo.firstName}\\b`, "gi"),
+      "[FIRST_NAME]",
+    );
+  }
+
+  if (userInfo.lastName) {
+    scrubbedMessage = scrubbedMessage.replace(
+      new RegExp(`\\b${userInfo.lastName}\\b`, "gi"),
+      "[LAST_NAME]",
+    );
+  }
+
+  // Replace address
+  if (userInfo.address) {
+    scrubbedMessage = scrubbedMessage.replace(
+      new RegExp(userInfo.address, "gi"),
+      "[ADDRESS]",
+    );
+  }
+
+  // Replace city
+  if (userInfo.city) {
+    scrubbedMessage = scrubbedMessage.replace(
+      new RegExp(`\\b${userInfo.city}\\b`, "gi"),
+      "[CITY]",
+    );
+  }
+
+  // Replace state
+  if (userInfo.state) {
+    scrubbedMessage = scrubbedMessage.replace(
+      new RegExp(`\\b${userInfo.state}\\b`, "gi"),
+      "[STATE]",
+    );
+  }
+
+  // Replace zip code
+  if (userInfo.zipCode) {
+    scrubbedMessage = scrubbedMessage.replace(
+      new RegExp(`\\b${userInfo.zipCode}\\b`, "gi"),
+      "[ZIP_CODE]",
+    );
+  }
+
+  // Replace email
+  if (userInfo.email) {
+    // Email regex to avoid partial matches
+    scrubbedMessage = scrubbedMessage.replace(
+      new RegExp(userInfo.email.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"),
+      "[EMAIL]",
+    );
+  }
+
+  return scrubbedMessage;
+};
+
+// Replace placeholders in a message with actual personal info
+const restorePersonalInfo = (message: string, userInfo: UserInfo): string => {
+  if (!userInfo) return message;
+
+  let restoredMessage = message;
+
+  // Restore name
+  if (userInfo.firstName) {
+    restoredMessage = restoredMessage.replace(
+      /\[FIRST_NAME\]/g,
+      userInfo.firstName,
+    );
+  }
+
+  if (userInfo.lastName) {
+    restoredMessage = restoredMessage.replace(
+      /\[LAST_NAME\]/g,
+      userInfo.lastName,
+    );
+  }
+
+  // Restore address
+  if (userInfo.address) {
+    restoredMessage = restoredMessage.replace(/\[ADDRESS\]/g, userInfo.address);
+  }
+
+  // Restore city
+  if (userInfo.city) {
+    restoredMessage = restoredMessage.replace(/\[CITY\]/g, userInfo.city);
+  }
+
+  // Restore state
+  if (userInfo.state) {
+    restoredMessage = restoredMessage.replace(/\[STATE\]/g, userInfo.state);
+  }
+
+  // Restore zip code
+  if (userInfo.zipCode) {
+    restoredMessage = restoredMessage.replace(
+      /\[ZIP_CODE\]/g,
+      userInfo.zipCode,
+    );
+  }
+
+  // Restore email
+  if (userInfo.email) {
+    restoredMessage = restoredMessage.replace(/\[EMAIL\]/g, userInfo.email);
+  }
+
+  return restoredMessage;
+};
+
 const ChatInterface: React.FC = () => {
   // State for our chat interface
   const [state, setState] = useState<ChatState>({
@@ -75,9 +234,63 @@ const ChatInterface: React.FC = () => {
     input: "",
     chatId: localStorage.getItem("fhi_chat_id"),
     error: null,
+    isProcessingFile: false,
   });
+
+  // State for user onboarding
+  const [userInfoState, setUserInfoState] = useState<
+    UserInfo & { step: number }
+  >({
+    firstName: "",
+    lastName: "",
+    email: "",
+    address: "",
+    city: "",
+    state: "",
+    zipCode: "",
+    acceptedTerms: false,
+    step: 0, // 0 = onboarding not completed, 1 = terms accepted, 2 = info collected
+  });
+
+  // Check if user has completed onboarding
+  const [onboardingComplete, setOnboardingComplete] = useState<boolean>(false);
+
   const wsRef = useRef<WebSocket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Load saved user info on component mount
+  useEffect(() => {
+    const savedUserInfo = getUserInfo();
+    if (savedUserInfo) {
+      setUserInfoState({
+        ...savedUserInfo,
+        step: 2, // Set to completed onboarding
+      });
+      setOnboardingComplete(true);
+    }
+  }, []);
+
+  // Initialize welcome message when onboarding completes
+  useEffect(() => {
+    if (onboardingComplete && state.messages.length === 0) {
+      const userInfo = getUserInfo();
+
+      // Add a welcome message from the assistant
+      const welcomeMessage: ChatMessage = {
+        role: "assistant",
+        content: userInfo
+          ? `Welcome to Fight Health Insurance, ${userInfo.firstName}! I'm here to help you with your health insurance questions and appeals. Feel free to ask me anything or upload relevant documents using the paperclip icon.`
+          : "Welcome to Fight Health Insurance! I'm here to help you with your health insurance questions and appeals. Feel free to ask me anything or upload relevant documents using the paperclip icon.",
+        timestamp: new Date().toISOString(),
+        status: "done",
+      };
+
+      setState((prev) => ({
+        ...prev,
+        messages: [welcomeMessage],
+      }));
+    }
+  }, [onboardingComplete, state.messages.length]);
 
   // Scroll to the bottom when new messages arrive
   const scrollToBottom = () => {
@@ -114,8 +327,18 @@ const ChatInterface: React.FC = () => {
         const data = JSON.parse(event.data);
         console.log("Received message:", data);
 
+        // Get user info for restoring personal info
+        const userInfo = getUserInfo();
+
         // Handle different types of messages from the server
         if (data.error) {
+          // Skip the professional user error message as we're in patient mode
+          if (
+            data.error.includes("Professional user not found or not active")
+          ) {
+            return;
+          }
+
           setState((prev) => ({
             ...prev,
             isLoading: false,
@@ -123,9 +346,20 @@ const ChatInterface: React.FC = () => {
           }));
         } else if (data.messages) {
           // This is a history replay
+          // Restore personal info in the message content if we have user info
+          const processedMessages = data.messages.map((msg: ChatMessage) => {
+            if (msg.role === "assistant" && userInfo) {
+              return {
+                ...msg,
+                content: restorePersonalInfo(msg.content, userInfo),
+              };
+            }
+            return msg;
+          });
+
           setState((prev) => ({
             ...prev,
-            messages: data.messages,
+            messages: processedMessages,
           }));
         } else if (data.chat_id && !state.chatId) {
           // Save the chat ID for future use
@@ -137,14 +371,19 @@ const ChatInterface: React.FC = () => {
         }
 
         if (data.content && data.role) {
-          // This is a new message
+          // This is a new message - restore personal info if it's from the assistant
+          const processedContent =
+            data.role === "assistant" && userInfo
+              ? restorePersonalInfo(data.content, userInfo)
+              : data.content;
+
           setState((prev) => ({
             ...prev,
             messages: [
               ...prev.messages,
               {
                 role: data.role,
-                content: data.content,
+                content: processedContent,
                 timestamp: data.timestamp || new Date().toISOString(),
                 status: "done",
               },
@@ -182,11 +421,83 @@ const ChatInterface: React.FC = () => {
     };
   }, []);
 
+  // Handle file upload
+  const handleFileUpload = useCallback(
+    async (file: File | null) => {
+      if (!file || !wsRef.current) return;
+
+      try {
+        setState((prev) => ({ ...prev, isProcessingFile: true }));
+
+        // Create a FormData object to send the file
+        const formData = new FormData();
+        formData.append("file", file);
+
+        // Upload the file to the server for OCR processing
+        const response = await fetch("/server_side_ocr", {
+          method: "POST",
+          body: formData,
+        });
+
+        if (!response.ok) {
+          throw new Error("Failed to process file");
+        }
+
+        const result = await response.text();
+        const fileContent = result;
+
+        // Add a user message showing the file was uploaded
+        const userMessage: ChatMessage = {
+          role: "user",
+          content: `I've uploaded a document: ${file.name}`,
+          timestamp: new Date().toISOString(),
+          status: "done",
+        };
+
+        setState((prev) => ({
+          ...prev,
+          messages: [...prev.messages, userMessage],
+          isLoading: true,
+        }));
+
+        // Get user info for scrubbing
+        const userInfo = getUserInfo();
+
+        // Send extracted content to the chat
+        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+          const messageToSend = {
+            chat_id: state.chatId,
+            content: fileContent, // No need to scrub PDF content as it's processed server-side
+            is_patient: true,
+            session_key: getSessionKey(),
+            is_document: true,
+            document_name: file.name,
+          };
+
+          wsRef.current.send(JSON.stringify(messageToSend));
+        }
+      } catch (error) {
+        console.error("Error processing file:", error);
+        setState((prev) => ({
+          ...prev,
+          error: "Error processing the uploaded file. Please try again.",
+          isProcessingFile: false,
+        }));
+      } finally {
+        setState((prev) => ({ ...prev, isProcessingFile: false }));
+      }
+    },
+    [state.chatId],
+  );
+
   // Handle sending a new message
   const handleSendMessage = () => {
-    if (!state.input.trim() || !wsRef.current) return;
+    if (!state.input.trim() || !wsRef.current || state.isLoading) return;
 
-    // Add the user message to the UI immediately
+    // Get user info for scrubbing
+    const userInfo = getUserInfo();
+
+    // Add the user message to the UI immediately - show the original (unscrubbed) message to the user
     const userMessage: ChatMessage = {
       role: "user",
       content: state.input,
@@ -201,10 +512,15 @@ const ChatInterface: React.FC = () => {
       isLoading: true,
     }));
 
+    // Scrub personal information before sending
+    const scrubbedContent = userInfo
+      ? scrubPersonalInfo(state.input, userInfo)
+      : state.input;
+
     // Send the message to the server
     const messageToSend = {
       chat_id: state.chatId, // Can be null if starting a new chat
-      content: state.input,
+      content: scrubbedContent,
       is_patient: true, // This is for the patient-facing version
       session_key: getSessionKey(),
     };
@@ -253,86 +569,429 @@ const ChatInterface: React.FC = () => {
     );
   };
 
-  return (
-    <Container size="md" my="lg">
-      <Paper
-        shadow="md"
-        p="md"
-        withBorder
-        style={{
-          height: "calc(100vh - 150px)",
-          display: "flex",
-          flexDirection: "column",
-        }}
-      >
-        <Title order={2} size="xl" fw={700} mb="md">
-          Fight Health Insurance Chat
+  // Terms of Service component for step 1
+  const TermsOfServiceStep: React.FC<{
+    acceptedTerms: boolean;
+    setAcceptedTerms: (accepted: boolean) => void;
+    onContinue: () => void;
+  }> = ({ acceptedTerms, setAcceptedTerms, onContinue }) => {
+    return (
+      <Card shadow="sm" p="lg" radius="md" withBorder>
+        <Title order={3} mb="md">
+          Terms of Service
         </Title>
 
-        {state.error && (
-          <MantineText c="red" size="sm" mb="md">
-            {state.error}
+        <ScrollArea h={300} mb="md">
+          <MantineText>
+            <p>
+              These terms of use are entered into by and between you and Fight
+              Health Insurance, Inc. ("<strong>we</strong>", "
+              <strong>our</strong>", or "<strong>us</strong>"). The following
+              terms and conditions (" <strong>Terms of Use,</strong>" "
+              <strong>Terms</strong>"), govern your access to and use of{" "}
+              <a href="https://www.fighthealthinsurance.com">
+                www.fighthealthinsurance.com
+              </a>{" "}
+              (the "<strong>WebServices</strong>"), including any functionality
+              or services offered on or through the WebServices (together with
+              the WebServices, referred to as the "<strong>Services</strong>").
+            </p>
+            <p>
+              PLEASE READ THESE TERMS CAREFULLY. THESE TERMS FORM A LEGALLY
+              ENFORCEABLE AGREEMENT. BY USING THE SERVICES, ACCESSING ANY
+              INFORMATION FROM THIS SERVICES, BENEFITTING FROM THE SERVICES,
+              POSTING OR DOWNLOADING CONTENT OR ANY OTHER INFORMATION TO OR FROM
+              THE SERVICES, OR MANIFESTING YOUR ASSENT TO THESE TERMS IN ANY
+              OTHER MANNER, YOU HEREBY UNEQUIVOCALLY AND EXPRESSLY AGREE TO BE
+              BOUND BY, AND SHALL BE SUBJECT TO, THESE TERMS. IF YOU DO NOT
+              UNEQUIVOCALLY AGREE TO THESE TERMS, YOU MAY NOT USE OR OTHERWISE
+              ACCESS, BENEFIT FROM, POST OR DOWNLOAD CONTENT OR ANY OTHER
+              INFORMATION TO OR FROM THE SERVICES.
+            </p>
+            <p>
+              Template appeals and other outputs provided by the Services are
+              created by using machine learning technologies that analyze and
+              use the information you submit to us. When you use the Services,
+              we collect the information that is included in your inputs, file
+              uploads, or other feedback that you provide to the Services. We
+              also use the information you submit through the Services to train
+              large language models that are used in providing the Services. As
+              such, it is your responsibility to remove all direct identifiers,
+              including your name, address, email address, insurance numbers,
+              and any other identifiers (collectively, "
+              <strong>Identifiers</strong>") prior to submitting any information
+              to us. ALL PERSONAL INFORMATION, INCLUDING IDENTIFIERS, MEDICAL,
+              HEALTHCARE, AND INSURANCE INFORMATION YOU SUBMIT TO THE SERVICES
+              MAY BE COLLECTED AND USED IN A MANNER CONSISTENT WITH OUR PRIVACY
+              POLICY. If you have mistakenly submitted Identifiers to us or want
+              to delete them, you may submit a request or contact us to request
+              deletion of such information.
+            </p>
+            <p>
+              NEITHER THE SERVICES NOR ANY CONTENT OR OUTPUT FROM THE SERVICES
+              (FOR EXAMPLE, A TEMPLATE FOR YOUR APPEAL) IS INTENDED TO
+              CONSTITUTE OR PROVIDE LEGAL OR MEDICAL ADVICE. YOU SHOULD
+              CAREFULLY READ YOUR HEALTH INSURANCE POLICY AND YOUR APPEAL RIGHTS
+              BEFORE SUBMITTING AN APPEAL, AND CONSULT AN ATTORNEY AND/OR YOUR
+              HEALTH CARE PROVIDER IF YOU HAVE ANY QUESTIONS OR CONCERNS.
+            </p>
           </MantineText>
-        )}
-
-        <ScrollArea
-          flex={1}
-          mb="md"
-          style={{ display: "flex", flexDirection: "column" }}
-        >
-          <Box p="xs">
-            {state.messages.length === 0 ? (
-              <MantineText ta="center" c="dimmed" mt="xl">
-                No messages yet. Start a conversation!
-              </MantineText>
-            ) : (
-              state.messages.map(renderMessage)
-            )}
-
-            {state.isLoading && (
-              <Paper
-                shadow="xs"
-                p="md"
-                style={{ backgroundColor: "#f9fafb", marginBottom: 10 }}
-              >
-                <Flex align="center" gap="xs">
-                  <Image
-                    src="/static/images/better-logo.png"
-                    width={24}
-                    height={24}
-                    alt="FHI Logo"
-                  />
-                  <MantineText fw={500} size="sm" c="dark">
-                    FightHealthInsurance Assistant
-                  </MantineText>
-                </Flex>
-                <Box mt="xs">
-                  <TypingAnimation />
-                </Box>
-              </Paper>
-            )}
-            <div ref={messagesEndRef} />
-          </Box>
         </ScrollArea>
-        <div style={{ display: "flex", width: "100%" }}>
-          <Textarea
-            placeholder="Type your message..."
-            value={state.input}
-            onChange={(e) => setState({ ...state, input: e.target.value })}
-            onKeyDown={(e) =>
-              e.key === "Enter" && !e.shiftKey && handleSendMessage()
-            }
-            minRows={4}
-            style={{ width: "100%" }}
+
+        <Checkbox
+          label="I agree to the Terms of Service and Privacy Policy"
+          checked={acceptedTerms}
+          onChange={(e) => setAcceptedTerms(e.currentTarget.checked)}
+          mb="md"
+        />
+
+        <Button
+          onClick={onContinue}
+          disabled={!acceptedTerms}
+          rightSection={<IconArrowRight size={16} />}
+          fullWidth
+        >
+          Continue
+        </Button>
+      </Card>
+    );
+  };
+
+  // User Information Step for step 2
+  const UserInfoStep: React.FC<{
+    userInfo: Omit<UserInfo, "acceptedTerms">;
+    setUserInfo: (field: string, value: string) => void;
+    onSubmit: () => void;
+    onBack: () => void;
+  }> = ({ userInfo, setUserInfo, onSubmit, onBack }) => {
+    // Check if required fields are filled in
+    const isFormValid =
+      userInfo.firstName && userInfo.lastName && userInfo.email;
+
+    return (
+      <Card shadow="sm" p="lg" radius="md" withBorder>
+        <Title order={3} mb="md">
+          Your Information
+        </Title>
+
+        <MantineText mb="md" size="sm" c="dimmed">
+          This information will be used to protect your privacy by replacing
+          personal details in your messages. We never share this information
+          with third parties.
+        </MantineText>
+
+        <Stack gap="md">
+          <TextInput
+            label="First Name"
+            required
+            value={userInfo.firstName}
+            onChange={(e) => setUserInfo("firstName", e.target.value)}
+            placeholder="Enter your first name"
           />
-          <Button
-            onClick={handleSendMessage}
-            disabled={!state.input.trim() || state.isLoading}
-          >
-            Send
+
+          <TextInput
+            label="Last Name"
+            required
+            value={userInfo.lastName}
+            onChange={(e) => setUserInfo("lastName", e.target.value)}
+            placeholder="Enter your last name"
+          />
+
+          <TextInput
+            label="Email"
+            required
+            type="email"
+            value={userInfo.email}
+            onChange={(e) => setUserInfo("email", e.target.value)}
+            placeholder="Enter your email"
+          />
+
+          <TextInput
+            label="Street Address"
+            value={userInfo.address}
+            onChange={(e) => setUserInfo("address", e.target.value)}
+            placeholder="Enter your street address"
+          />
+
+          <MantineGroup grow>
+            <TextInput
+              label="City"
+              value={userInfo.city}
+              onChange={(e) => setUserInfo("city", e.target.value)}
+              placeholder="City"
+            />
+
+            <TextInput
+              label="State"
+              value={userInfo.state}
+              onChange={(e) => setUserInfo("state", e.target.value)}
+              placeholder="State"
+            />
+
+            <TextInput
+              label="ZIP Code"
+              value={userInfo.zipCode}
+              onChange={(e) => setUserInfo("zipCode", e.target.value)}
+              placeholder="ZIP Code"
+            />
+          </MantineGroup>
+        </Stack>
+
+        <MantineGroup justify="space-between" mt="xl">
+          <Button variant="light" onClick={onBack}>
+            Back
           </Button>
-        </div>
-      </Paper>
+
+          <Button
+            onClick={onSubmit}
+            disabled={!isFormValid}
+            rightSection={<IconArrowRight size={16} />}
+          >
+            Complete Setup
+          </Button>
+        </MantineGroup>
+      </Card>
+    );
+  };
+
+  // Handlers for the user onboarding process
+  const handleTermsAccepted = () => {
+    setUserInfoState((prev) => ({ ...prev, acceptedTerms: true, step: 1 }));
+  };
+
+  const handleUserInfoUpdate = (field: string, value: string) => {
+    setUserInfoState((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleUserInfoBack = () => {
+    setUserInfoState((prev) => ({ ...prev, step: 0 }));
+  };
+
+  const handleUserInfoSubmit = () => {
+    // Save the user information
+    const userInfoToSave: UserInfo = {
+      firstName: userInfoState.firstName,
+      lastName: userInfoState.lastName,
+      email: userInfoState.email,
+      address: userInfoState.address,
+      city: userInfoState.city,
+      state: userInfoState.state,
+      zipCode: userInfoState.zipCode,
+      acceptedTerms: userInfoState.acceptedTerms,
+    };
+
+    saveUserInfo(userInfoToSave);
+    setUserInfoState((prev) => ({ ...prev, step: 2 }));
+    setOnboardingComplete(true);
+  };
+
+  return (
+    <Container size="md" my="lg">
+      {!onboardingComplete ? (
+        // Show onboarding process if not completed
+        <Box>
+          {userInfoState.step === 0 && (
+            <TermsOfServiceStep
+              acceptedTerms={userInfoState.acceptedTerms}
+              setAcceptedTerms={(accepted) =>
+                setUserInfoState((prev) => ({
+                  ...prev,
+                  acceptedTerms: accepted,
+                }))
+              }
+              onContinue={handleTermsAccepted}
+            />
+          )}
+
+          {userInfoState.step === 1 && (
+            <UserInfoStep
+              userInfo={{
+                firstName: userInfoState.firstName,
+                lastName: userInfoState.lastName,
+                email: userInfoState.email,
+                address: userInfoState.address,
+                city: userInfoState.city,
+                state: userInfoState.state,
+                zipCode: userInfoState.zipCode,
+              }}
+              setUserInfo={handleUserInfoUpdate}
+              onSubmit={handleUserInfoSubmit}
+              onBack={handleUserInfoBack}
+            />
+          )}
+        </Box>
+      ) : (
+        // Show chat interface after onboarding is complete
+        <Paper
+          shadow="md"
+          p="md"
+          withBorder
+          style={{
+            height: "calc(100vh - 150px)",
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          <Title order={2} size="xl" fw={700} mb="md">
+            Fight Health Insurance Chat
+          </Title>
+
+          <Flex justify="space-between" align="center" mb="md">
+            <Box>
+              {state.error && (
+                <MantineText c="red" size="sm">
+                  {state.error}
+                </MantineText>
+              )}
+            </Box>
+            <Button
+              variant="subtle"
+              size="xs"
+              onClick={() => {
+                // Clear user info from local storage and reset state
+                localStorage.removeItem("fhi_user_info");
+                setOnboardingComplete(false);
+                setUserInfoState({
+                  firstName: "",
+                  lastName: "",
+                  email: "",
+                  address: "",
+                  city: "",
+                  state: "",
+                  zipCode: "",
+                  acceptedTerms: false,
+                  step: 0,
+                });
+              }}
+              leftSection={<IconUser size={14} />}
+            >
+              Update Personal Info
+            </Button>
+          </Flex>
+
+          <ScrollArea
+            flex={1}
+            mb="md"
+            style={{ display: "flex", flexDirection: "column" }}
+          >
+            <Box p="xs">
+              {state.messages.length === 0 ? (
+                <MantineText ta="center" c="dimmed" mt="xl">
+                  No messages yet. Start a conversation!
+                </MantineText>
+              ) : (
+                state.messages.map(renderMessage)
+              )}
+
+              {state.isLoading && (
+                <Paper
+                  shadow="xs"
+                  p="md"
+                  style={{ backgroundColor: "#f9fafb", marginBottom: 10 }}
+                >
+                  <Flex align="center" gap="xs">
+                    <Image
+                      src="/static/images/better-logo.png"
+                      width={24}
+                      height={24}
+                      alt="FHI Logo"
+                    />
+                    <MantineText fw={500} size="sm" c="dark">
+                      FightHealthInsurance Assistant
+                    </MantineText>
+                  </Flex>
+                  <Box mt="xs">
+                    <TypingAnimation />
+                  </Box>
+                </Paper>
+              )}
+              <div ref={messagesEndRef} />
+            </Box>
+          </ScrollArea>
+
+          <Box p="xs" style={{ width: "100%", marginTop: "auto" }}>
+            <Paper
+              radius="lg"
+              p="xs"
+              shadow="sm"
+              withBorder
+              style={{ width: "100%" }}
+            >
+              <Flex align="flex-end" style={{ width: "100%" }}>
+                <Tooltip label="Upload PDF" position="top">
+                  <FileButton
+                    onChange={handleFileUpload}
+                    accept="application/pdf"
+                    disabled={state.isLoading || state.isProcessingFile}
+                  >
+                    {(props) => (
+                      <ActionIcon
+                        {...props}
+                        size="lg"
+                        variant="light"
+                        radius="xl"
+                        color="gray"
+                        loading={state.isProcessingFile}
+                        disabled={state.isLoading || state.isProcessingFile}
+                        mr="xs"
+                      >
+                        <IconPaperclip size={18} />
+                      </ActionIcon>
+                    )}
+                  </FileButton>
+                </Tooltip>
+
+                <ScrollArea.Autosize
+                  mah={200}
+                  style={{ flex: 1, width: "100%" }}
+                >
+                  <Textarea
+                    placeholder={
+                      state.isLoading
+                        ? "Assistant is typing..."
+                        : "Type your message..."
+                    }
+                    value={state.input}
+                    onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
+                      setState({ ...state, input: e.target.value })
+                    }
+                    onKeyDown={(
+                      e: React.KeyboardEvent<HTMLTextAreaElement>,
+                    ) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        handleSendMessage();
+                      }
+                    }}
+                    autosize
+                    minRows={3}
+                    maxRows={6}
+                    variant="unstyled"
+                    disabled={state.isLoading || state.isProcessingFile}
+                    style={{ flex: 1, width: "100%" }}
+                  />
+                </ScrollArea.Autosize>
+
+                <ActionIcon
+                  onClick={handleSendMessage}
+                  size="lg"
+                  radius="xl"
+                  color="blue"
+                  variant="filled"
+                  disabled={
+                    !state.input.trim() ||
+                    state.isLoading ||
+                    state.isProcessingFile
+                  }
+                  ml="xs"
+                >
+                  <IconSend size={18} />
+                </ActionIcon>
+              </Flex>
+            </Paper>
+          </Box>
+        </Paper>
+      )}
     </Container>
   );
 };

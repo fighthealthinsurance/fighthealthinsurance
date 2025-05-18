@@ -343,10 +343,12 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                     user
                 )
                 if not professional_user:
-                    await self.send_json_message(
-                        {"error": "Professional user not found or not active."}
+                    # Instead of an error message, set as patient user when pro user not found
+                    logger.info(
+                        f"User {user.username} is not a professional user, treating as patient"
                     )
-                    return
+                    professional_user = None
+                    is_patient = True
                 self.chat_id = chat_id
 
             chat = await self._get_or_create_chat(
