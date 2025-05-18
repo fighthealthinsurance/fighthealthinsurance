@@ -252,6 +252,11 @@ else:
             name="chat",
         ),
         path(
+            "chat/",
+            sensitive_post_parameters()(views.chat_interface_view),
+            name="chat-alt",
+        ),
+        path(
             "chat-consent",
             sensitive_post_parameters()(views.ChatUserConsentView.as_view()),
             name="chat_consent",

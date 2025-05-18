@@ -244,13 +244,6 @@ const ChatInterface: React.FC = () => {
   useEffect(() => {
     const userInfo = getUserInfo();
 
-    // If user info isn't in localStorage, it means the Django form was not completed
-    // This shouldn't happen normally because of the server-side redirect
-    if (!userInfo) {
-      window.location.href = "/chat-consent";
-      return;
-    }
-
     // Add a welcome message from the assistant
     if (state.messages.length === 0) {
       const welcomeMessage: ChatMessage = {
@@ -497,6 +490,7 @@ const ChatInterface: React.FC = () => {
     // Send the message to the server
     const messageToSend = {
       chat_id: state.chatId, // Can be null if starting a new chat
+      email: userInfo?.email, // Include email for server-side processing
       content: scrubbedContent,
       is_patient: true, // This is for the patient-facing version
       session_key: getSessionKey(),

@@ -761,21 +761,22 @@ def chat_interface_view(request):
 
     If the user hasn't accepted the terms of service yet, redirect to the consent form.
     """
-    # Ensure we have a session for anonymous users
-    if not request.session.session_key:
-        request.session.save()
+    logger.debug(f"Chat interface view called with session: {request.session}")
 
     # Check if the user completed the consent process by looking for session data
     consent_completed = request.session.get("consent_completed", False)
+    email = request.session.get("email", None)
 
     # If the user hasn't completed the consent process, redirect to the consent form
     if not consent_completed:
+        logger.debug("User has not completed consent process, redirecting to consent form.")
         return redirect("chat_consent")
 
     context = {
         "title": "Chat with FightHealthInsurance",
+        "email": email,
     }
-
+    logger.debug(f"Rendering chat interface with context: {context}")
     return render(request, "chat_interface.html", context)
 
 
@@ -795,6 +796,7 @@ class ChatUserConsentView(FormView):
     def form_valid(self, form):
         # Mark consent as completed in the session
         self.request.session["consent_completed"] = True
+        self.request.session["email"] = form.cleaned_data.get("email") # Used for data deletion requests
         self.request.session.save()
 
         # No need to save form data to database - it will be saved in browser localStorage via JavaScript
