@@ -237,45 +237,22 @@ const ChatInterface: React.FC = () => {
     isProcessingFile: false,
   });
 
-  // State for user onboarding
-  const [userInfoState, setUserInfoState] = useState<
-    UserInfo & { step: number }
-  >({
-    firstName: "",
-    lastName: "",
-    email: "",
-    address: "",
-    city: "",
-    state: "",
-    zipCode: "",
-    acceptedTerms: false,
-    step: 0, // 0 = onboarding not completed, 1 = terms accepted, 2 = info collected
-  });
-
-  // Check if user has completed onboarding
-  const [onboardingComplete, setOnboardingComplete] = useState<boolean>(false);
-
   const wsRef = useRef<WebSocket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Load saved user info on component mount
+  // Initialize chat interface on load
   useEffect(() => {
-    const savedUserInfo = getUserInfo();
-    if (savedUserInfo) {
-      setUserInfoState({
-        ...savedUserInfo,
-        step: 2, // Set to completed onboarding
-      });
-      setOnboardingComplete(true);
+    const userInfo = getUserInfo();
+
+    // If user info isn't in localStorage, it means the Django form was not completed
+    // This shouldn't happen normally because of the server-side redirect
+    if (!userInfo) {
+      window.location.href = "/chat-consent";
+      return;
     }
-  }, []);
 
-  // Initialize welcome message when onboarding completes
-  useEffect(() => {
-    if (onboardingComplete && state.messages.length === 0) {
-      const userInfo = getUserInfo();
-
-      // Add a welcome message from the assistant
+    // Add a welcome message from the assistant
+    if (state.messages.length === 0) {
       const welcomeMessage: ChatMessage = {
         role: "assistant",
         content: userInfo
@@ -290,7 +267,7 @@ const ChatInterface: React.FC = () => {
         messages: [welcomeMessage],
       }));
     }
-  }, [onboardingComplete, state.messages.length]);
+  }, [state.messages.length]);
 
   // Scroll to the bottom when new messages arrive
   const scrollToBottom = () => {
@@ -569,429 +546,161 @@ const ChatInterface: React.FC = () => {
     );
   };
 
-  // Terms of Service component for step 1
-  const TermsOfServiceStep: React.FC<{
-    acceptedTerms: boolean;
-    setAcceptedTerms: (accepted: boolean) => void;
-    onContinue: () => void;
-  }> = ({ acceptedTerms, setAcceptedTerms, onContinue }) => {
-    return (
-      <Card shadow="sm" p="lg" radius="md" withBorder>
-        <Title order={3} mb="md">
-          Terms of Service
-        </Title>
-
-        <ScrollArea h={300} mb="md">
-          <MantineText>
-            <p>
-              These terms of use are entered into by and between you and Fight
-              Health Insurance, Inc. ("<strong>we</strong>", "
-              <strong>our</strong>", or "<strong>us</strong>"). The following
-              terms and conditions (" <strong>Terms of Use,</strong>" "
-              <strong>Terms</strong>"), govern your access to and use of{" "}
-              <a href="https://www.fighthealthinsurance.com">
-                www.fighthealthinsurance.com
-              </a>{" "}
-              (the "<strong>WebServices</strong>"), including any functionality
-              or services offered on or through the WebServices (together with
-              the WebServices, referred to as the "<strong>Services</strong>").
-            </p>
-            <p>
-              PLEASE READ THESE TERMS CAREFULLY. THESE TERMS FORM A LEGALLY
-              ENFORCEABLE AGREEMENT. BY USING THE SERVICES, ACCESSING ANY
-              INFORMATION FROM THIS SERVICES, BENEFITTING FROM THE SERVICES,
-              POSTING OR DOWNLOADING CONTENT OR ANY OTHER INFORMATION TO OR FROM
-              THE SERVICES, OR MANIFESTING YOUR ASSENT TO THESE TERMS IN ANY
-              OTHER MANNER, YOU HEREBY UNEQUIVOCALLY AND EXPRESSLY AGREE TO BE
-              BOUND BY, AND SHALL BE SUBJECT TO, THESE TERMS. IF YOU DO NOT
-              UNEQUIVOCALLY AGREE TO THESE TERMS, YOU MAY NOT USE OR OTHERWISE
-              ACCESS, BENEFIT FROM, POST OR DOWNLOAD CONTENT OR ANY OTHER
-              INFORMATION TO OR FROM THE SERVICES.
-            </p>
-            <p>
-              Template appeals and other outputs provided by the Services are
-              created by using machine learning technologies that analyze and
-              use the information you submit to us. When you use the Services,
-              we collect the information that is included in your inputs, file
-              uploads, or other feedback that you provide to the Services. We
-              also use the information you submit through the Services to train
-              large language models that are used in providing the Services. As
-              such, it is your responsibility to remove all direct identifiers,
-              including your name, address, email address, insurance numbers,
-              and any other identifiers (collectively, "
-              <strong>Identifiers</strong>") prior to submitting any information
-              to us. ALL PERSONAL INFORMATION, INCLUDING IDENTIFIERS, MEDICAL,
-              HEALTHCARE, AND INSURANCE INFORMATION YOU SUBMIT TO THE SERVICES
-              MAY BE COLLECTED AND USED IN A MANNER CONSISTENT WITH OUR PRIVACY
-              POLICY. If you have mistakenly submitted Identifiers to us or want
-              to delete them, you may submit a request or contact us to request
-              deletion of such information.
-            </p>
-            <p>
-              NEITHER THE SERVICES NOR ANY CONTENT OR OUTPUT FROM THE SERVICES
-              (FOR EXAMPLE, A TEMPLATE FOR YOUR APPEAL) IS INTENDED TO
-              CONSTITUTE OR PROVIDE LEGAL OR MEDICAL ADVICE. YOU SHOULD
-              CAREFULLY READ YOUR HEALTH INSURANCE POLICY AND YOUR APPEAL RIGHTS
-              BEFORE SUBMITTING AN APPEAL, AND CONSULT AN ATTORNEY AND/OR YOUR
-              HEALTH CARE PROVIDER IF YOU HAVE ANY QUESTIONS OR CONCERNS.
-            </p>
-          </MantineText>
-        </ScrollArea>
-
-        <Checkbox
-          label="I agree to the Terms of Service and Privacy Policy"
-          checked={acceptedTerms}
-          onChange={(e) => setAcceptedTerms(e.currentTarget.checked)}
-          mb="md"
-        />
-
-        <Button
-          onClick={onContinue}
-          disabled={!acceptedTerms}
-          rightSection={<IconArrowRight size={16} />}
-          fullWidth
-        >
-          Continue
-        </Button>
-      </Card>
-    );
-  };
-
-  // User Information Step for step 2
-  const UserInfoStep: React.FC<{
-    userInfo: Omit<UserInfo, "acceptedTerms">;
-    setUserInfo: (field: string, value: string) => void;
-    onSubmit: () => void;
-    onBack: () => void;
-  }> = ({ userInfo, setUserInfo, onSubmit, onBack }) => {
-    // Check if required fields are filled in
-    const isFormValid =
-      userInfo.firstName && userInfo.lastName && userInfo.email;
-
-    return (
-      <Card shadow="sm" p="lg" radius="md" withBorder>
-        <Title order={3} mb="md">
-          Your Information
-        </Title>
-
-        <MantineText mb="md" size="sm" c="dimmed">
-          This information will be used to protect your privacy by replacing
-          personal details in your messages. We never share this information
-          with third parties.
-        </MantineText>
-
-        <Stack gap="md">
-          <TextInput
-            label="First Name"
-            required
-            value={userInfo.firstName}
-            onChange={(e) => setUserInfo("firstName", e.target.value)}
-            placeholder="Enter your first name"
-          />
-
-          <TextInput
-            label="Last Name"
-            required
-            value={userInfo.lastName}
-            onChange={(e) => setUserInfo("lastName", e.target.value)}
-            placeholder="Enter your last name"
-          />
-
-          <TextInput
-            label="Email"
-            required
-            type="email"
-            value={userInfo.email}
-            onChange={(e) => setUserInfo("email", e.target.value)}
-            placeholder="Enter your email"
-          />
-
-          <TextInput
-            label="Street Address"
-            value={userInfo.address}
-            onChange={(e) => setUserInfo("address", e.target.value)}
-            placeholder="Enter your street address"
-          />
-
-          <MantineGroup grow>
-            <TextInput
-              label="City"
-              value={userInfo.city}
-              onChange={(e) => setUserInfo("city", e.target.value)}
-              placeholder="City"
-            />
-
-            <TextInput
-              label="State"
-              value={userInfo.state}
-              onChange={(e) => setUserInfo("state", e.target.value)}
-              placeholder="State"
-            />
-
-            <TextInput
-              label="ZIP Code"
-              value={userInfo.zipCode}
-              onChange={(e) => setUserInfo("zipCode", e.target.value)}
-              placeholder="ZIP Code"
-            />
-          </MantineGroup>
-        </Stack>
-
-        <MantineGroup justify="space-between" mt="xl">
-          <Button variant="light" onClick={onBack}>
-            Back
-          </Button>
-
-          <Button
-            onClick={onSubmit}
-            disabled={!isFormValid}
-            rightSection={<IconArrowRight size={16} />}
-          >
-            Complete Setup
-          </Button>
-        </MantineGroup>
-      </Card>
-    );
-  };
-
-  // Handlers for the user onboarding process
-  const handleTermsAccepted = () => {
-    setUserInfoState((prev) => ({ ...prev, acceptedTerms: true, step: 1 }));
-  };
-
-  const handleUserInfoUpdate = (field: string, value: string) => {
-    setUserInfoState((prev) => ({ ...prev, [field]: value }));
-  };
-
-  const handleUserInfoBack = () => {
-    setUserInfoState((prev) => ({ ...prev, step: 0 }));
-  };
-
-  const handleUserInfoSubmit = () => {
-    // Save the user information
-    const userInfoToSave: UserInfo = {
-      firstName: userInfoState.firstName,
-      lastName: userInfoState.lastName,
-      email: userInfoState.email,
-      address: userInfoState.address,
-      city: userInfoState.city,
-      state: userInfoState.state,
-      zipCode: userInfoState.zipCode,
-      acceptedTerms: userInfoState.acceptedTerms,
-    };
-
-    saveUserInfo(userInfoToSave);
-    setUserInfoState((prev) => ({ ...prev, step: 2 }));
-    setOnboardingComplete(true);
-  };
-
   return (
     <Container size="md" my="lg">
-      {!onboardingComplete ? (
-        // Show onboarding process if not completed
-        <Box>
-          {userInfoState.step === 0 && (
-            <TermsOfServiceStep
-              acceptedTerms={userInfoState.acceptedTerms}
-              setAcceptedTerms={(accepted) =>
-                setUserInfoState((prev) => ({
-                  ...prev,
-                  acceptedTerms: accepted,
-                }))
-              }
-              onContinue={handleTermsAccepted}
-            />
-          )}
+      <Paper
+        shadow="md"
+        p="md"
+        withBorder
+        style={{
+          height: "calc(100vh - 150px)",
+          display: "flex",
+          flexDirection: "column",
+        }}
+      >
+        <Title order={2} size="xl" fw={700} mb="md">
+          Fight Health Insurance Chat
+        </Title>
 
-          {userInfoState.step === 1 && (
-            <UserInfoStep
-              userInfo={{
-                firstName: userInfoState.firstName,
-                lastName: userInfoState.lastName,
-                email: userInfoState.email,
-                address: userInfoState.address,
-                city: userInfoState.city,
-                state: userInfoState.state,
-                zipCode: userInfoState.zipCode,
-              }}
-              setUserInfo={handleUserInfoUpdate}
-              onSubmit={handleUserInfoSubmit}
-              onBack={handleUserInfoBack}
-            />
-          )}
-        </Box>
-      ) : (
-        // Show chat interface after onboarding is complete
-        <Paper
-          shadow="md"
-          p="md"
-          withBorder
-          style={{
-            height: "calc(100vh - 150px)",
-            display: "flex",
-            flexDirection: "column",
-          }}
-        >
-          <Title order={2} size="xl" fw={700} mb="md">
-            Fight Health Insurance Chat
-          </Title>
-
-          <Flex justify="space-between" align="center" mb="md">
-            <Box>
-              {state.error && (
-                <MantineText c="red" size="sm">
-                  {state.error}
-                </MantineText>
-              )}
-            </Box>
-            <Button
-              variant="subtle"
-              size="xs"
-              onClick={() => {
-                // Clear user info from local storage and reset state
-                localStorage.removeItem("fhi_user_info");
-                setOnboardingComplete(false);
-                setUserInfoState({
-                  firstName: "",
-                  lastName: "",
-                  email: "",
-                  address: "",
-                  city: "",
-                  state: "",
-                  zipCode: "",
-                  acceptedTerms: false,
-                  step: 0,
-                });
-              }}
-              leftSection={<IconUser size={14} />}
-            >
-              Update Personal Info
-            </Button>
-          </Flex>
-
-          <ScrollArea
-            flex={1}
-            mb="md"
-            style={{ display: "flex", flexDirection: "column" }}
-          >
-            <Box p="xs">
-              {state.messages.length === 0 ? (
-                <MantineText ta="center" c="dimmed" mt="xl">
-                  No messages yet. Start a conversation!
-                </MantineText>
-              ) : (
-                state.messages.map(renderMessage)
-              )}
-
-              {state.isLoading && (
-                <Paper
-                  shadow="xs"
-                  p="md"
-                  style={{ backgroundColor: "#f9fafb", marginBottom: 10 }}
-                >
-                  <Flex align="center" gap="xs">
-                    <Image
-                      src="/static/images/better-logo.png"
-                      width={24}
-                      height={24}
-                      alt="FHI Logo"
-                    />
-                    <MantineText fw={500} size="sm" c="dark">
-                      FightHealthInsurance Assistant
-                    </MantineText>
-                  </Flex>
-                  <Box mt="xs">
-                    <TypingAnimation />
-                  </Box>
-                </Paper>
-              )}
-              <div ref={messagesEndRef} />
-            </Box>
-          </ScrollArea>
-
-          <Box p="xs" style={{ width: "100%", marginTop: "auto" }}>
-            <Paper
-              radius="lg"
-              p="xs"
-              shadow="sm"
-              withBorder
-              style={{ width: "100%" }}
-            >
-              <Flex align="flex-end" style={{ width: "100%" }}>
-                <Tooltip label="Upload PDF" position="top">
-                  <FileButton
-                    onChange={handleFileUpload}
-                    accept="application/pdf"
-                    disabled={state.isLoading || state.isProcessingFile}
-                  >
-                    {(props) => (
-                      <ActionIcon
-                        {...props}
-                        size="lg"
-                        variant="light"
-                        radius="xl"
-                        color="gray"
-                        loading={state.isProcessingFile}
-                        disabled={state.isLoading || state.isProcessingFile}
-                        mr="xs"
-                      >
-                        <IconPaperclip size={18} />
-                      </ActionIcon>
-                    )}
-                  </FileButton>
-                </Tooltip>
-
-                <ScrollArea.Autosize
-                  mah={200}
-                  style={{ flex: 1, width: "100%" }}
-                >
-                  <Textarea
-                    placeholder={
-                      state.isLoading
-                        ? "Assistant is typing..."
-                        : "Type your message..."
-                    }
-                    value={state.input}
-                    onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
-                      setState({ ...state, input: e.target.value })
-                    }
-                    onKeyDown={(
-                      e: React.KeyboardEvent<HTMLTextAreaElement>,
-                    ) => {
-                      if (e.key === "Enter" && !e.shiftKey) {
-                        e.preventDefault();
-                        handleSendMessage();
-                      }
-                    }}
-                    autosize
-                    minRows={3}
-                    maxRows={6}
-                    variant="unstyled"
-                    disabled={state.isLoading || state.isProcessingFile}
-                    style={{ flex: 1, width: "100%" }}
-                  />
-                </ScrollArea.Autosize>
-
-                <ActionIcon
-                  onClick={handleSendMessage}
-                  size="lg"
-                  radius="xl"
-                  color="blue"
-                  variant="filled"
-                  disabled={
-                    !state.input.trim() ||
-                    state.isLoading ||
-                    state.isProcessingFile
-                  }
-                  ml="xs"
-                >
-                  <IconSend size={18} />
-                </ActionIcon>
-              </Flex>
-            </Paper>
+        <Flex justify="space-between" align="center" mb="md">
+          <Box>
+            {state.error && (
+              <MantineText c="red" size="sm">
+                {state.error}
+              </MantineText>
+            )}
           </Box>
-        </Paper>
-      )}
+          <Button
+            variant="subtle"
+            size="xs"
+            onClick={() => {
+              // Clear user info from local storage and redirect to consent form
+              localStorage.removeItem("fhi_user_info");
+              window.location.href = "/chat-consent";
+            }}
+            leftSection={<IconUser size={14} />}
+          >
+            Update Personal Info
+          </Button>
+        </Flex>
+
+        <ScrollArea
+          flex={1}
+          mb="md"
+          style={{ display: "flex", flexDirection: "column" }}
+        >
+          <Box p="xs">
+            {state.messages.length === 0 ? (
+              <MantineText ta="center" c="dimmed" mt="xl">
+                No messages yet. Start a conversation!
+              </MantineText>
+            ) : (
+              state.messages.map(renderMessage)
+            )}
+
+            {state.isLoading && (
+              <Paper
+                shadow="xs"
+                p="md"
+                style={{ backgroundColor: "#f9fafb", marginBottom: 10 }}
+              >
+                <Flex align="center" gap="xs">
+                  <Image
+                    src="/static/images/better-logo.png"
+                    width={24}
+                    height={24}
+                    alt="FHI Logo"
+                  />
+                  <MantineText fw={500} size="sm" c="dark">
+                    FightHealthInsurance Assistant
+                  </MantineText>
+                </Flex>
+                <Box mt="xs">
+                  <TypingAnimation />
+                </Box>
+              </Paper>
+            )}
+            <div ref={messagesEndRef} />
+          </Box>
+        </ScrollArea>
+
+        <Box p="xs" style={{ width: "100%", marginTop: "auto" }}>
+          <Paper
+            radius="lg"
+            p="xs"
+            shadow="sm"
+            withBorder
+            style={{ width: "100%" }}
+          >
+            <Flex align="flex-end" style={{ width: "100%" }}>
+              <Tooltip label="Upload PDF" position="top">
+                <FileButton
+                  onChange={handleFileUpload}
+                  accept="application/pdf"
+                  disabled={state.isLoading || state.isProcessingFile}
+                >
+                  {(props) => (
+                    <ActionIcon
+                      {...props}
+                      size="lg"
+                      variant="light"
+                      radius="xl"
+                      color="gray"
+                      loading={state.isProcessingFile}
+                      disabled={state.isLoading || state.isProcessingFile}
+                      mr="xs"
+                    >
+                      <IconPaperclip size={18} />
+                    </ActionIcon>
+                  )}
+                </FileButton>
+              </Tooltip>
+
+              <ScrollArea.Autosize mah={200} style={{ flex: 1, width: "100%" }}>
+                <Textarea
+                  placeholder={
+                    state.isLoading
+                      ? "Assistant is typing..."
+                      : "Type your message..."
+                  }
+                  value={state.input}
+                  onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
+                    setState({ ...state, input: e.target.value })
+                  }
+                  onKeyDown={(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSendMessage();
+                    }
+                  }}
+                  autosize
+                  minRows={3}
+                  maxRows={6}
+                  variant="unstyled"
+                  disabled={state.isLoading || state.isProcessingFile}
+                  style={{ flex: 1, width: "100%" }}
+                />
+              </ScrollArea.Autosize>
+
+              <ActionIcon
+                onClick={handleSendMessage}
+                size="lg"
+                radius="xl"
+                color="blue"
+                variant="filled"
+                disabled={
+                  !state.input.trim() ||
+                  state.isLoading ||
+                  state.isProcessingFile
+                }
+                ml="xs"
+              >
+                <IconSend size={18} />
+              </ActionIcon>
+            </Flex>
+          </Paper>
+        </Box>
+      </Paper>
     </Container>
   );
 };

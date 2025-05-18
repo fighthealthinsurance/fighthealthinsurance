@@ -20,11 +20,13 @@ from django.core.exceptions import SuspiciousOperation
 from django.http import HttpResponseRedirect
 from django.contrib.auth.decorators import login_required
 from django.views.decorators.csrf import ensure_csrf_cookie
+from django.views.generic.edit import FormView
 
 from django_encrypted_filefield.crypt import Cryptographer
 
 from fighthealthinsurance import common_view_logic
 from fighthealthinsurance import forms as core_forms
+from fighthealthinsurance.chat_forms import UserConsentForm
 from fighthealthinsurance import models
 from fighthealthinsurance import followup_emails
 from fighthealthinsurance.stripe_utils import get_or_create_price
@@ -756,28 +758,52 @@ def chat_interface_view(request):
     - Authenticated professional users
     - Authenticated patient users
     - Anonymous users (session-based)
+
+    If the user hasn't accepted the terms of service yet, redirect to the consent form.
     """
     # Ensure we have a session for anonymous users
     if not request.session.session_key:
         request.session.save()
+
+    # Check if the user completed the consent process by looking for session data
+    consent_completed = request.session.get("consent_completed", False)
+
+    # If the user hasn't completed the consent process, redirect to the consent form
+    if not consent_completed:
+        return redirect("chat_consent")
 
     context = {
         "title": "Chat with FightHealthInsurance",
     }
 
     return render(request, "chat_interface.html", context)
-    """
-    Render the chat interface for all user types:
-    - Authenticated professional users
-    - Authenticated patient users
-    - Anonymous users (session-based)
-    """
-    # Ensure we have a session for anonymous users
-    if not request.session.session_key:
-        request.session.save()
 
-    context = {
-        "title": "Chat with FightHealthInsurance",
-    }
 
-    return render(request, "chat_interface.html", context)
+class ChatUserConsentView(FormView):
+    """
+    View for collecting user consent and information before using the chat interface.
+    This form collects personal information that is stored only in the browser's localStorage
+    for privacy protection (scrubbing personal information from messages).
+    """
+
+    template_name = "chat_consent.html"
+    form_class = UserConsentForm
+    success_url = (
+        "/chat/"  # Redirect to chat interface after successful form submission
+    )
+
+    def form_valid(self, form):
+        # Mark consent as completed in the session
+        self.request.session["consent_completed"] = True
+        self.request.session.save()
+
+        # No need to save form data to database - it will be saved in browser localStorage via JavaScript
+        return super().form_valid(form)
+
+    def get(self, request, *args, **kwargs):
+        # Check if the user already has a session key
+        if not request.session.session_key:
+            request.session.save()
+
+        # Continue with normal form rendering
+        return super().get(request, *args, **kwargs)
