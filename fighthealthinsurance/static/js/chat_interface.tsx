@@ -4,7 +4,7 @@ import ReactMarkdown from "react-markdown";
 import {
   Box,
   Container,
-  TextInput,
+  Textarea,
   Button,
   Paper,
   Text as MantineText,
@@ -13,6 +13,8 @@ import {
   Group as MantineGroup,
   MantineProvider,
   Title,
+  Image,
+  Flex,
 } from "@mantine/core";
 
 // Define types for our chat messages
@@ -31,6 +33,24 @@ interface ChatState {
   chatId: string | null;
   error: string | null;
 }
+
+// Typing animation component for loading state
+const TypingAnimation: React.FC = () => {
+  const [dots, setDots] = useState(".");
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setDots((prevDots) => {
+        if (prevDots.length >= 3) return ".";
+        return prevDots + ".";
+      });
+    }, 500);
+
+    return () => clearInterval(interval);
+  }, []);
+
+  return <span style={{ marginLeft: 4 }}>Typing{dots}</span>;
+};
 
 // Get a session key or use an existing one from localStorage
 const getSessionKey = (): string => {
@@ -204,18 +224,27 @@ const ChatInterface: React.FC = () => {
         style={{
           backgroundColor: isUser ? "#f0f9ff" : "#f9fafb",
           marginBottom: 10,
-          maxWidth: "80%",
+          width: "100%",
           marginLeft: isUser ? "auto" : 0,
           marginRight: isUser ? 0 : "auto",
         }}
       >
-        <MantineText fw={500} size="sm" c={isUser ? "blue" : "dark"}>
-          {isUser ? "You" : "FightHealthInsurance Assistant"}
-        </MantineText>
-
+        <Flex align="center" gap="xs">
+          {!isUser && (
+            <Image
+              src="/static/images/better-logo.png"
+              width={24}
+              height={24}
+              alt="FHI Logo"
+            />
+          )}
+          <MantineText fw={500} size="sm" c={isUser ? "blue" : "dark"}>
+            {isUser ? "You" : "FightHealthInsurance Assistant"}
+          </MantineText>
+        </Flex>{" "}
         <Box mt="xs">
           {message.status === "typing" ? (
-            <Loader size="sm" />
+            <TypingAnimation />
           ) : (
             <ReactMarkdown>{message.content}</ReactMarkdown>
           )}
@@ -266,25 +295,35 @@ const ChatInterface: React.FC = () => {
                 p="md"
                 style={{ backgroundColor: "#f9fafb", marginBottom: 10 }}
               >
-                <MantineText fw={500} size="sm" c="dark">
-                  FightHealthInsurance Assistant
-                </MantineText>
+                <Flex align="center" gap="xs">
+                  <Image
+                    src="/static/images/better-logo.png"
+                    width={24}
+                    height={24}
+                    alt="FHI Logo"
+                  />
+                  <MantineText fw={500} size="sm" c="dark">
+                    FightHealthInsurance Assistant
+                  </MantineText>
+                </Flex>
                 <Box mt="xs">
-                  <Loader size="sm" />
+                  <TypingAnimation />
                 </Box>
               </Paper>
             )}
             <div ref={messagesEndRef} />
           </Box>
         </ScrollArea>
-
-        <MantineGroup gap="xs" style={{ display: "flex" }}>
-          <TextInput
+        <div style={{ display: "flex", width: "100%" }}>
+          <Textarea
             placeholder="Type your message..."
             value={state.input}
             onChange={(e) => setState({ ...state, input: e.target.value })}
-            onKeyDown={(e) => e.key === "Enter" && handleSendMessage()}
-            style={{ flex: 1 }}
+            onKeyDown={(e) =>
+              e.key === "Enter" && !e.shiftKey && handleSendMessage()
+            }
+            minRows={4}
+            style={{ width: "100%" }}
           />
           <Button
             onClick={handleSendMessage}
@@ -292,7 +331,7 @@ const ChatInterface: React.FC = () => {
           >
             Send
           </Button>
-        </MantineGroup>
+        </div>
       </Paper>
     </Container>
   );
