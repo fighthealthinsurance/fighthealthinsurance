@@ -9,13 +9,8 @@
     "moduleResolution": "node",
     "allowSyntheticDefaultImports": true,
     "sourceMap": true,
-    "esModuleInterop": true,
+    "esModuleInterop": true
   },
-  "include": [
-    "./*.ts",
-    "./*.tsx"
-  ], // Files to include in the compilation
-  "exclude": [
-    "node_modules"
-  ] // Exclude node_modules
+  "include": ["./*.ts", "./*.tsx"], // Files to include in the compilation
+  "exclude": ["node_modules"] // Exclude node_modules
 }
