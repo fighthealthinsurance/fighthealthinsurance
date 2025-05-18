@@ -246,6 +246,11 @@ else:
             sensitive_post_parameters("email")(views.InitialProcessView.as_view()),
             name="scan",
         ),
+        path(
+            "chat",
+            sensitive_post_parameters()(views.chat_interface_view),
+            name="chat",
+        ),
     ]
 
 

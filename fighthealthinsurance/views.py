@@ -18,6 +18,8 @@ from django.views import View, generic
 from django.http import HttpRequest, HttpResponseBase, HttpResponse
 from django.core.exceptions import SuspiciousOperation
 from django.http import HttpResponseRedirect
+from django.contrib.auth.decorators import login_required
+from django.views.decorators.csrf import ensure_csrf_cookie
 
 from django_encrypted_filefield.crypt import Cryptographer
 
@@ -745,3 +747,37 @@ class CompletePaymentView(View):
                 status=500,
                 content_type="application/json",
             )
+
+
+@ensure_csrf_cookie
+def chat_interface_view(request):
+    """
+    Render the chat interface for all user types:
+    - Authenticated professional users
+    - Authenticated patient users
+    - Anonymous users (session-based)
+    """
+    # Ensure we have a session for anonymous users
+    if not request.session.session_key:
+        request.session.save()
+
+    context = {
+        "title": "Chat with FightHealthInsurance",
+    }
+
+    return render(request, "chat_interface.html", context)
+    """
+    Render the chat interface for all user types:
+    - Authenticated professional users
+    - Authenticated patient users
+    - Anonymous users (session-based)
+    """
+    # Ensure we have a session for anonymous users
+    if not request.session.session_key:
+        request.session.save()
+
+    context = {
+        "title": "Chat with FightHealthInsurance",
+    }
+
+    return render(request, "chat_interface.html", context)
