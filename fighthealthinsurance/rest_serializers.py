@@ -719,6 +719,7 @@ class OngoingChatSerializer(serializers.ModelSerializer):
 
     messages = serializers.SerializerMethodField()
     professional_name = serializers.SerializerMethodField()
+    user_name = serializers.SerializerMethodField()
     appeals = serializers.SerializerMethodField()
     prior_auths = serializers.SerializerMethodField()
 
@@ -727,14 +728,24 @@ class OngoingChatSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "professional_name",
+            "user_name",
             "messages",
             "created_at",
             "updated_at",
             "appeals",
             "prior_auths",
+            "is_patient",
+            "denied_item",
+            "denied_reason",
         ]
 
-    read_only_fields = ["id", "created_at", "updated_at"]
+    read_only_fields = [
+        "id",
+        "created_at",
+        "updated_at",
+        "denied_item",
+        "denied_reason",
+    ]
 
     @extend_schema_field(serializers.ListField(child=serializers.IntegerField()))
     def get_appeals(self, obj):
@@ -753,8 +764,19 @@ class OngoingChatSerializer(serializers.ModelSerializer):
 
     @extend_schema_field(serializers.CharField())
     def get_professional_name(self, obj):
-        """Get the name of the professional user."""
-        if obj.professional_user:
+        """Get the name of the user (professional or patient)."""
+        if obj.is_patient and obj.user:
+            return None
+        elif obj.professional_user:
+            return obj.professional_user.get_display_name()
+        return None
+
+    @extend_schema_field(serializers.CharField())
+    def get_user_name(self, obj):
+        """Get the name of the user (professional or patient)."""
+        if obj.is_patient and obj.user:
+            return obj.user.email
+        elif obj.professional_user:
             return obj.professional_user.get_display_name()
         return None
 
@@ -764,6 +786,9 @@ class ChatMessageRequestSerializer(serializers.Serializer):
 
     chat_id = serializers.CharField(required=False, allow_null=True)
     message = serializers.CharField(required=True)
+    iterate_on_appeal = serializers.UUIDField(required=False, allow_null=True)
+    iterate_on_prior_auth = serializers.UUIDField(required=False, allow_null=True)
+    is_patient = serializers.BooleanField(required=False, default=False)
 
 
 class ExtractPatientFieldsSerializer(serializers.Serializer):

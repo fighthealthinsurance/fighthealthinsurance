@@ -192,9 +192,10 @@ class PriorAuthConsumer(AsyncWebsocketConsumer):
 
 
 class OngoingChatConsumer(AsyncWebsocketConsumer):
-    """WebSocket consumer for ongoing chat with LLM for pro users."""
+    """WebSocket consumer for ongoing chat with LLMs for both pro users and patients."""
 
     chat_interface: Optional[ChatInterface] = None
+    chat_id: Optional[str] = None
 
     async def connect(self):
         logger.debug("Accepting connection for ongoing chat")
@@ -206,7 +207,85 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
 
     async def disconnect(self, close_code):
         logger.debug(f"Disconnecting ongoing chat with code {close_code}")
-        pass
+        # If a chat was active, trigger analysis of denied items
+        if self.chat_interface and self.chat_id:
+            await self._analyze_denied_items(self.chat_id)
+
+    async def _analyze_denied_items(self, chat_id: str):
+        """
+        Analyzes the chat history to identify denied items and reasons.
+        This is run when the websocket disconnects to avoid blocking the chat flow.
+        """
+        try:
+            chat = await OngoingChat.objects.aget(id=chat_id)
+
+            # Only process this if we don't already have denied item information
+            if not chat.denied_item or not chat.denied_reason:
+                logger.info(f"Analyzing denied items for chat {chat_id}")
+
+                # Get a backend model to analyze the chat
+                models = ml_router.get_chat_backends(use_external=False)
+                if not models:
+                    logger.warning("No models available for denied item analysis")
+                    return
+
+                model = models[0]
+
+                # Create a prompt to analyze the denied items
+                history_text = ""
+                if chat.chat_history and len(chat.chat_history) > 0:
+                    for msg in chat.chat_history:
+                        if msg.get("role") and msg.get("content"):
+                            history_text += f"{msg['role']}: {msg['content']}\n\n"
+
+                analysis_prompt = (
+                    "Based on the conversation above, extract the following information:\n"
+                    "1. What specific healthcare item or service was denied by the insurance company?\n"
+                    "2. What was the reason given for the denial?\n"
+                    "Respond in JSON format with two fields: 'denied_item' and 'denied_reason'.\n"
+                    "If you cannot determine either field, respond with null for that field."
+                )
+
+                # Get the analysis from the model
+                response_text, _ = await model.generate_chat_response(
+                    f"{history_text}\n{analysis_prompt}"
+                )
+
+                if response_text:
+                    # Extract JSON from response
+                    json_match = re.search(r"\{.*\}", response_text, re.DOTALL)
+                    if json_match:
+                        try:
+                            analysis_data = json.loads(json_match.group(0))
+                            denied_item = analysis_data.get("denied_item")
+                            denied_reason = analysis_data.get("denied_reason")
+
+                            # Update the chat record
+                            if denied_item:
+                                chat.denied_item = denied_item
+                            if denied_reason:
+                                chat.denied_reason = denied_reason
+
+                            await chat.asave()
+                            logger.info(
+                                f"Updated chat {chat_id} with denied item: {denied_item}, reason: {denied_reason}"
+                            )
+                        except json.JSONDecodeError:
+                            logger.warning(
+                                f"Could not parse JSON from analysis response: {response_text}"
+                            )
+                    else:
+                        logger.warning(
+                            f"No JSON found in analysis response: {response_text}"
+                        )
+                else:
+                    logger.warning(f"No response from model for denied item analysis")
+            else:
+                logger.info(f"Chat {chat_id} already has denied item information")
+        except Exception as e:
+            logger.opt(exception=True).error(
+                f"Error analyzing denied items for chat {chat_id}: {e}"
+            )
 
     async def receive(self, text_data):
         data = json.loads(text_data)
@@ -219,9 +298,12 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
         replay_requested = data.get("replay", False)
         iterate_on_appeal = data.get("iterate_on_appeal")
         iterate_on_prior_auth = data.get("iterate_on_prior_auth")
+        is_patient = data.get(
+            "is_patient", False
+        )  # New parameter to identify patient users
 
         logger.debug(
-            f"Message: {message} replay {replay_requested} chat_id {chat_id} iterate_on_appeal {iterate_on_appeal} iterate_on_prior_auth {iterate_on_prior_auth}"
+            f"Message: {message} replay {replay_requested} chat_id {chat_id} iterate_on_appeal {iterate_on_appeal} iterate_on_prior_auth {iterate_on_prior_auth} is_patient {is_patient}"
         )
 
         # Validate we have the required data
@@ -242,14 +324,27 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
             return
 
         try:
-            professional_user = await sync_to_async(self._get_professional_user)(user)
-            if not professional_user:
-                await self.send_json_message(
-                    {"error": "Professional user not found or not active."}
-                )  # Use helper
-                return
+            if is_patient:
+                # For patient users, we don't need a professional user record
+                professional_user = None
+                # Store the chat ID for disconnection handling
+                self.chat_id = chat_id
+            else:
+                # For professional users, get their professional user record
+                professional_user = await sync_to_async(self._get_professional_user)(
+                    user
+                )
+                if not professional_user:
+                    await self.send_json_message(
+                        {"error": "Professional user not found or not active."}
+                    )  # Use helper
+                    return
+                # Store the chat ID for disconnection handling
+                self.chat_id = chat_id
 
-            chat = await self._get_or_create_chat(professional_user, chat_id)
+            chat = await self._get_or_create_chat(
+                user, professional_user, is_patient, chat_id
+            )
             if (
                 not hasattr(self, "chat_interface")
                 or self.chat_interface is None
@@ -291,26 +386,49 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
         except ProfessionalUser.DoesNotExist:
             return None
 
-    async def _get_or_create_chat(self, professional_user, chat_id=None):
+    async def _get_or_create_chat(
+        self, user, professional_user=None, is_patient=False, chat_id=None
+    ):
         """Get an existing chat or create a new one."""
         if chat_id:
             try:
-                return (
-                    await OngoingChat.objects.prefetch_related()
-                    .select_related()
-                    .aget(id=chat_id, professional_user=professional_user)
-                )
+                # If chat_id is provided, try to find the chat
+                if is_patient:
+                    # For patient users, look up by user
+                    return (
+                        await OngoingChat.objects.prefetch_related()
+                        .select_related()
+                        .aget(id=chat_id, user=user, is_patient=True)
+                    )
+                else:
+                    # For professional users, look up by professional_user
+                    return (
+                        await OngoingChat.objects.prefetch_related()
+                        .select_related()
+                        .aget(id=chat_id, professional_user=professional_user)
+                    )
             except OngoingChat.DoesNotExist:
                 # Fall through to create a new chat
                 logger.warning(
-                    f"Chat with id {chat_id} not found for user {professional_user.id}. Creating new chat."
+                    f"Chat with id {chat_id} not found for user {user.id}. Creating new chat."
                 )
                 pass  # Fall through to create a new one
 
         # Create a new chat
-        logger.info(f"Creating new chat for user {professional_user.id}")
-        return await OngoingChat.objects.acreate(
-            professional_user=professional_user,
-            chat_history=[],
-            summary_for_next_call=[],
-        )
+        if is_patient:
+            logger.info(f"Creating new patient chat for user {user.id}")
+            return await OngoingChat.objects.acreate(
+                user=user,
+                is_patient=True,
+                chat_history=[],
+                summary_for_next_call=[],
+            )
+        else:
+            logger.info(
+                f"Creating new professional chat for user {professional_user.id}"
+            )
+            return await OngoingChat.objects.acreate(
+                professional_user=professional_user,
+                chat_history=[],
+                summary_for_next_call=[],
+            )

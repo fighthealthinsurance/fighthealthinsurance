@@ -21,6 +21,7 @@ from fighthealthinsurance.ml.ml_models import RemoteModelLike
 from fighthealthinsurance.models import OngoingChat, Denial, Appeal, PriorAuthRequest
 from fighthealthinsurance.pubmed_tools import PubMedTools
 from fighthealthinsurance import settings
+from fighthealthinsurance.prompt_templates import get_intro_template
 
 
 class ChatInterface:
@@ -57,13 +58,13 @@ class ChatInterface:
             {"content": message, "chat_id": str(self.chat.id), "role": "assistant"}
         )
 
-    async def _get_professional_user_info(self) -> str:
-        """Generates a descriptive string for the professional user."""
+    async def _get_user_info(self) -> str:
+        """Generates a descriptive string for the user (either professional or patient)."""
         try:
-            return await sync_to_async(self.chat.summarize_professional_user)()
+            return await sync_to_async(self.chat.summarize_user)()
         except Exception as e:
-            logger.warning(f"Could not generate detailed professional user info: {e}")
-            return "a professional user"
+            logger.warning(f"Could not generate detailed user info: {e}")
+            return "a user"
 
     async def _call_llm_with_actions(
         self,
@@ -491,12 +492,11 @@ class ChatInterface:
         llm_input_message = user_message
 
         if is_new_chat:
-            pro_user_info_str = await self._get_professional_user_info()
-            intro_prefix = (
-                f"You are a helpful assistant talking with {pro_user_info_str}. "
-                f"You are helping them with their ongoing chat. You likely do not need to immediately generate a prior auth or appeal; instead, you'll have a chat with {pro_user_info_str} about their needs. Now, here is what they said to start the conversation:"
+            user_info_str = await self._get_user_info()
+            template = get_intro_template(chat.is_patient)
+            llm_input_message = template.format(
+                user_info=user_info_str, message=user_message
             )
-            llm_input_message = intro_prefix + "\\n" + user_message
 
         # History passed to LLM should be the state *before* this user_message
         history_for_llm = list(chat.chat_history) if chat.chat_history else []
