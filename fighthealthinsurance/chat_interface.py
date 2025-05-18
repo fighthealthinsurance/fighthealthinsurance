@@ -142,7 +142,7 @@ class ChatInterface:
                             and hasattr(chat, "user")
                             and chat.user
                         ):
-                            user_email = await sync_to_async(lambda: chat.user.email)()
+                            user_email = await sync_to_async(lambda: chat.user.email)()  # type: ignore
                             if user_email:
                                 appeal_data["hashed_email"] = Denial.get_hashed_email(
                                     user_email

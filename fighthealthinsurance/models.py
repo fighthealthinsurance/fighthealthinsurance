@@ -1014,7 +1014,8 @@ class ProposedPriorAuth(ExportModelOperationsMixin("ProposedPriorAuth"), models.
 class OngoingChat(models.Model):
     """
     Model for storing ongoing chat sessions between users and LLM.
-    Can be associated with either professional users or regular users (patients).
+    Can be associated with either professional users, regular users (patients),
+    or anonymous users (via session).
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -1025,6 +1026,8 @@ class OngoingChat(models.Model):
         User, on_delete=models.SET_NULL, null=True, blank=True, related_name="chats"
     )
     is_patient = models.BooleanField(default=False)
+    # For anonymous users (not logged in), track by session ID
+    session_key = models.CharField(max_length=100, null=True, blank=True, db_index=True)
     chat_history = models.JSONField(
         default=list, null=True, blank=True
     )  # JSON List of dictionaries {"role": "user", "content": message, "timestamp": timezone.now().isoformat()})
@@ -1058,11 +1061,13 @@ class OngoingChat(models.Model):
             return "a user"
 
     def summarize_user(self) -> str:
-        """Returns a description of the user - either patient or professional."""
+        """Returns a description of the user - either patient, professional, or anonymous."""
         if self.is_patient and self.user:
             return f"a patient user (ID: {self.user.id})"
         elif self.professional_user:
             return f"a professional user ({self.professional_user.get_display_name()})"
+        elif self.session_key:
+            return f"an anonymous user (Session: {self.session_key[:8]})"
         else:
             return "a user"
 
@@ -1071,6 +1076,9 @@ class OngoingChat(models.Model):
             return f"Ongoing Chat {self.id} for patient {self.user.email}"
         elif self.professional_user:
             return f"Ongoing Chat {self.id} for {self.professional_user.get_display_name()}"
+        elif self.session_key:
+            return (
+                f"Ongoing Chat {self.id} for anonymous session {self.session_key[:8]}"
+            )
         else:
             return f"Ongoing Chat {self.id} (no associated user)"
-            return f"Ongoing Chat {self.id} (no professional user)"

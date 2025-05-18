@@ -5,6 +5,8 @@ import asyncio
 from django.utils import timezone
 from asgiref.sync import sync_to_async
 from typing import Optional
+import re
+from fighthealthinsurance.ml.ml_router import ml_router
 
 from channels.generic.websocket import AsyncWebsocketConsumer
 
@@ -301,49 +303,54 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
         is_patient = data.get(
             "is_patient", False
         )  # New parameter to identify patient users
+        session_key = data.get("session_key", None)  # Session key for anonymous users
 
         logger.debug(
-            f"Message: {message} replay {replay_requested} chat_id {chat_id} iterate_on_appeal {iterate_on_appeal} iterate_on_prior_auth {iterate_on_prior_auth} is_patient {is_patient}"
+            f"Message: {message} replay {replay_requested} chat_id {chat_id} "
+            f"iterate_on_appeal {iterate_on_appeal} iterate_on_prior_auth {iterate_on_prior_auth} "
+            f"is_patient {is_patient} session_key {session_key}"
         )
 
         # Validate we have the required data
         if replay_requested and not chat_id:
-            await self.send_json_message(
-                {"error": "Chat ID is required for replay."}
-            )  # Use helper
+            await self.send_json_message({"error": "Chat ID is required for replay."})
             return
 
         # Get the user from scope (authenticated by Django Channels)
         user = self.scope.get("user")
+        is_authenticated = user and user.is_authenticated
 
-        if not user or not user.is_authenticated:
+        # For anonymous users, we need a session key
+        if not is_authenticated and not session_key:
             await self.send_json_message(
-                {"error": "User not authenticated."}
-            )  # Use helper
-            await self.close()
+                {"error": "Session key is required for anonymous users."}
+            )
             return
 
         try:
-            if is_patient:
-                # For patient users, we don't need a professional user record
+            # Handle different user types
+            if not is_authenticated:
+                # Anonymous user with session key
                 professional_user = None
-                # Store the chat ID for disconnection handling
+                self.chat_id = chat_id
+            elif is_patient:
+                # Patient user (authenticated)
+                professional_user = None
                 self.chat_id = chat_id
             else:
-                # For professional users, get their professional user record
+                # Professional user
                 professional_user = await sync_to_async(self._get_professional_user)(
                     user
                 )
                 if not professional_user:
                     await self.send_json_message(
                         {"error": "Professional user not found or not active."}
-                    )  # Use helper
+                    )
                     return
-                # Store the chat ID for disconnection handling
                 self.chat_id = chat_id
 
             chat = await self._get_or_create_chat(
-                user, professional_user, is_patient, chat_id
+                user, professional_user, is_patient, chat_id, session_key
             )
             if (
                 not hasattr(self, "chat_interface")
@@ -387,18 +394,30 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
             return None
 
     async def _get_or_create_chat(
-        self, user, professional_user=None, is_patient=False, chat_id=None
+        self,
+        user,
+        professional_user=None,
+        is_patient=False,
+        chat_id=None,
+        session_key=None,
     ):
         """Get an existing chat or create a new one."""
         if chat_id:
             try:
                 # If chat_id is provided, try to find the chat
-                if is_patient:
+                if is_patient and user and user.is_authenticated:
                     # For patient users, look up by user
                     return (
                         await OngoingChat.objects.prefetch_related()
                         .select_related()
                         .aget(id=chat_id, user=user, is_patient=True)
+                    )
+                elif session_key:
+                    # For anonymous users, look up by session_key
+                    return (
+                        await OngoingChat.objects.prefetch_related()
+                        .select_related()
+                        .aget(id=chat_id, session_key=session_key)
                     )
                 else:
                     # For professional users, look up by professional_user
@@ -409,13 +428,20 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                     )
             except OngoingChat.DoesNotExist:
                 # Fall through to create a new chat
-                logger.warning(
-                    f"Chat with id {chat_id} not found for user {user.id}. Creating new chat."
-                )
+                logger.warning(f"Chat with id {chat_id} not found. Creating new chat.")
                 pass  # Fall through to create a new one
 
         # Create a new chat
-        if is_patient:
+        if session_key:
+            # Anonymous user
+            logger.info(f"Creating new anonymous chat for session {session_key[:8]}")
+            return await OngoingChat.objects.acreate(
+                session_key=session_key,
+                chat_history=[],
+                summary_for_next_call=[],
+            )
+        elif is_patient and user and user.is_authenticated:
+            # Patient user
             logger.info(f"Creating new patient chat for user {user.id}")
             return await OngoingChat.objects.acreate(
                 user=user,
@@ -424,6 +450,7 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                 summary_for_next_call=[],
             )
         else:
+            # Professional user
             logger.info(
                 f"Creating new professional chat for user {professional_user.id}"
             )
