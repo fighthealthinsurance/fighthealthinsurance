@@ -85,6 +85,9 @@ class ChatInterface:
             current_message_for_llm,
             previous_context_summary=previous_context_summary,
             history=history_for_llm,
+            is_professional=self.chat.professional_user is not None,
+            is_logged_in=self.chat.user is not None
+            or self.chat.professional_user is not None,
         )
 
         pubmed_context_str = ""

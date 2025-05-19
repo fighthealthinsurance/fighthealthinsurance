@@ -250,7 +250,10 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
 
                 # Get the analysis from the model
                 response_text, _ = await model.generate_chat_response(
-                    f"{history_text}\n{analysis_prompt}"
+                    f"{history_text}\n{analysis_prompt}",
+                    is_professional=chat.professional_user is not None,
+                    is_logged_in=chat.user is not None
+                    or chat.professional_user is not None,
                 )
 
                 if response_text:
