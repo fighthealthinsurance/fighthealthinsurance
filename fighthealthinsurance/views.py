@@ -769,7 +769,9 @@ def chat_interface_view(request):
 
     # If the user hasn't completed the consent process, redirect to the consent form
     if not consent_completed:
-        logger.debug("User has not completed consent process, redirecting to consent form.")
+        logger.debug(
+            "User has not completed consent process, redirecting to consent form."
+        )
         return redirect("chat_consent")
 
     context = {
@@ -796,7 +798,9 @@ class ChatUserConsentView(FormView):
     def form_valid(self, form):
         # Mark consent as completed in the session
         self.request.session["consent_completed"] = True
-        self.request.session["email"] = form.cleaned_data.get("email") # Used for data deletion requests
+        self.request.session["email"] = form.cleaned_data.get(
+            "email"
+        )  # Used for data deletion requests
         self.request.session.save()
 
         # No need to save form data to database - it will be saved in browser localStorage via JavaScript

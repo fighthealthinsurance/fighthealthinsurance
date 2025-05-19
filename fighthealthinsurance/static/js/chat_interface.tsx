@@ -27,6 +27,7 @@ import {
 } from "@mantine/core";
 
 import { IconPaperclip, IconSend, IconUser, IconArrowRight } from "./icons";
+import { recognize } from "./scrub_ocr";
 
 // Define types for our chat messages
 interface ChatMessage {
@@ -399,22 +400,16 @@ const ChatInterface: React.FC = () => {
       try {
         setState((prev) => ({ ...prev, isProcessingFile: true }));
 
-        // Create a FormData object to send the file
-        const formData = new FormData();
-        formData.append("file", file);
+        // Process the file with local OCR instead of sending to server
+        let fileContent = "";
 
-        // Upload the file to the server for OCR processing
-        const response = await fetch("/server_side_ocr", {
-          method: "POST",
-          body: formData,
-        });
+        // Use a function to collect text from OCR
+        const addText = (text: string) => {
+          fileContent += text;
+        };
 
-        if (!response.ok) {
-          throw new Error("Failed to process file");
-        }
-
-        const result = await response.text();
-        const fileContent = result;
+        // Use the local OCR implementation
+        await recognize(file, addText);
 
         // Add a user message showing the file was uploaded
         const userMessage: ChatMessage = {
@@ -433,11 +428,16 @@ const ChatInterface: React.FC = () => {
         // Get user info for scrubbing
         const userInfo = getUserInfo();
 
+        // Scrub personal information in the extracted content
+        const scrubbedContent = userInfo
+          ? scrubPersonalInfo(fileContent, userInfo)
+          : fileContent;
+
         // Send extracted content to the chat
         if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
           const messageToSend = {
             chat_id: state.chatId,
-            content: fileContent, // No need to scrub PDF content as it's processed server-side
+            content: scrubbedContent, // Use scrubbed content
             is_patient: true,
             session_key: getSessionKey(),
             is_document: true,

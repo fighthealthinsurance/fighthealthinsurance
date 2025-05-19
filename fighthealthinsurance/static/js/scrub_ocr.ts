@@ -55,8 +55,12 @@ const recognizePDF = async function (
   console.log("Data?");
   console.log(typedarray);
   const loadingTask = pdfjsLib.getDocument(typedarray);
+  console.log("Loading task...");
   const doc = await loadingTask.promise;
+  console.log("Got back doc");
   const pdfText = await getPDFText(doc);
+  console.log("Got text:");
+  console.log(pdfText);
   addText(pdfText);
   // Did we have almost no text? Try OCR
   if (pdfText.trim().length < 10) {
@@ -100,14 +104,16 @@ export const recognize = async function (
     console.log("probably pdf");
     try {
       await recognizePDF(file, addText);
-    } catch {
+    } catch (error) {
+      console.error("Error processing PDF, trying image route:", error);
       await recognizeImage(file, addText);
     }
   } else {
     console.log("Assuming image...");
     try {
       await recognizeImage(file, addText);
-    } catch {
+    } catch (error) {
+      console.error("Error processing image, trying PDF route:", error);
       await recognizePDF(file, addText);
     }
   }
