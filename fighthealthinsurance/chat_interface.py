@@ -29,6 +29,8 @@ class ChatInterface:
         self,
         send_json_message_func: Callable[[Dict[str, Any]], Awaitable[None]],
         chat: OngoingChat,
+        user: User,
+        is_patient: bool
     ):  # Changed to Dict[str, Any]
         def wrap_send_json_message_func(message: Dict[str, Any]) -> Awaitable[None]:
             """Wraps the send_json_message_func to ensure it's always awaited."""
@@ -39,6 +41,8 @@ class ChatInterface:
         self.send_json_message_func = wrap_send_json_message_func
         self.pubmed_tools = PubMedTools()
         self.chat: OngoingChat = chat
+        self.user: User = user
+        self.is_patient: bool = is_patient
 
     async def send_error_message(self, message: str):
         """Sends an error message to the client."""
@@ -85,9 +89,8 @@ class ChatInterface:
             current_message_for_llm,
             previous_context_summary=previous_context_summary,
             history=history_for_llm,
-            is_professional=self.chat.professional_user is not None,
-            is_logged_in=self.chat.user is not None
-            or self.chat.professional_user is not None,
+            is_professional=not self.is_patient,
+            is_logged_in=self.user is not None,
         )
 
         pubmed_context_str = ""

@@ -363,7 +363,8 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                 or chat.id != self.chat_interface.chat.id
             ):
                 self.chat_interface = ChatInterface(
-                    send_json_message_func=self.send_json_message, chat=chat
+                    send_json_message_func=self.send_json_message, chat=chat,
+                    user=user, is_patient=is_patient
                 )
 
             logger.debug(f"Chat: {chat.id}")
