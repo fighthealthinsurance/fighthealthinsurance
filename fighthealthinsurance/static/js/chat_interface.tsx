@@ -541,7 +541,7 @@ const ChatInterface: React.FC = () => {
   };
 
   return (
-    <Container size="md" my="lg">
+    <Container fluid size="md" px={0}>
       <Paper
         shadow="md"
         p="md"
@@ -667,12 +667,18 @@ const ChatInterface: React.FC = () => {
                       handleSendMessage();
                     }
                   }}
-                  autosize
                   minRows={3}
-                  maxRows={6}
-                  variant="unstyled"
+                  maxRows={10}
                   disabled={state.isLoading || state.isProcessingFile}
-                  style={{ flex: 1, width: "100%" }}
+                  styles={{
+                    input: {
+                      width: "100%",
+                    },
+                    root: {
+                      flex: 1,
+                      width: "100%",
+                    },
+                  }}
                 />
               </ScrollArea.Autosize>
 
