@@ -98,6 +98,7 @@ class MailingListSubscriber(models.Model):
     name = models.CharField(max_length=300, default="", blank=True)
     comments = models.TextField(default="", blank=True)
     signup_date = models.DateField(auto_now_add=True)
+    phone = models.CharField(max_length=300, default="", blank=True)
 
     def __str__(self):
         return self.email

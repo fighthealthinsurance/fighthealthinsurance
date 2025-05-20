@@ -114,6 +114,11 @@ Terms of Service & Setup - FightHealthInsurance Chat Assistant (Alpha)
                 </div>
 
                 <div class="mb-3">
+                  <label for="phone" class="form-label">Phone</label>
+                  {{ form.phone }}
+                </div>
+
+                <div class="mb-3">
                   <label for="store_street" class="form-label">Street Address</label>
                   {{ form.address }}
                 </div>
@@ -148,6 +153,14 @@ Terms of Service & Setup - FightHealthInsurance Chat Assistant (Alpha)
                   {{ form.privacy_policy }}
                   <label for="privacy" class="form-check-label">
                     I have read and understand the <a href="{% url 'privacy_policy' %}" target="_blank">Privacy Policy</a>.
+                  </label>
+                </div>
+
+                <div class="form-check mb-3">
+                  {{ form.subscribe }}
+                  <label for="subscribe" class="form-check-label">
+                    I wish to subscribe for updates and news from Fight Health Insurance and Fight Paperwork (our pro-version).
+                    Choosing to subscribe will not affect your experience, but we do appreciate it!
                   </label>
                 </div>
               </div>

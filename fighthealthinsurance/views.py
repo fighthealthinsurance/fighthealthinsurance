@@ -802,6 +802,14 @@ class ChatUserConsentView(FormView):
             "email"
         )  # Used for data deletion requests
         self.request.session.save()
+        if form.cleaned_data.get("subscribe"):
+            # Does the user want to subscribe to the newsletter?
+            models.MailingListSubscriber.objects.create(
+                email=form.cleaned_data.get("email"),
+                phone=form.cleaned_data.get("phone"),
+                name=form.cleaned_data.get("name"),
+                comments="From chat consent form",
+            )
 
         # No need to save form data to database - it will be saved in browser localStorage via JavaScript
         return super().form_valid(form)

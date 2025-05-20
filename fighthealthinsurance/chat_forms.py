@@ -39,6 +39,18 @@ class UserConsentForm(forms.Form):
         ),
     )
 
+    phone = forms.CharField(
+        max_length=20,
+        required=False,
+        widget=forms.TextInput(
+            attrs={
+                "class": "form-control",
+                "id": "phone",
+                "placeholder": "Enter your phone number",
+            }
+        ),
+    )
+
     address = forms.CharField(
         max_length=200,
         required=False,
@@ -96,5 +108,13 @@ class UserConsentForm(forms.Form):
         required=True,
         widget=forms.CheckboxInput(
             attrs={"class": "form-check-input", "id": "privacy"}
+        ),
+    )
+
+    subscribe = forms.BooleanField(
+        required=False,
+        initial=True,
+        widget=forms.CheckboxInput(
+            attrs={"class": "form-check-input", "id": "subscribe"}
         ),
     )
