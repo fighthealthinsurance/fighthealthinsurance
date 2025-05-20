@@ -12,6 +12,7 @@ from .views import (
     LastTwoWeeksEmailsCSV,
     de_identified_export,
     incomplete_signups_csv,
+    procedures_denied_chart,
 )
 
 urlpatterns = [
@@ -37,5 +38,10 @@ urlpatterns = [
     ),
     path(
         "incomplete_signups_csv", incomplete_signups_csv, name="incomplete_signups_csv"
+    ),
+    path(
+        "procedures_denied_chart",
+        procedures_denied_chart,
+        name="procedures_denied_chart",
     ),
 ]

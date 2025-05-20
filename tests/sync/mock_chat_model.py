@@ -28,6 +28,8 @@ class MockChatModel:
         message: str,
         previous_context_summary: Optional[Dict[str, Any]] = None,
         history: Optional[list[dict[str, str]]] = None,
+        is_professional: Optional[bool] = True,
+        is_logged_in: Optional[bool] = True,
     ) -> Tuple[str, str]:
         """
         Generate a mock response to a chat message.
@@ -36,6 +38,8 @@ class MockChatModel:
             message: The user's message
             previous_context_summary: Optional context from previous interactions
             history: Optional history of messages
+            is_professional: Optional boolean indicating if the user is a professional
+            is_logged_in: Optional boolean indicating if the user is logged in
 
         Returns:
             A tuple of (response_text, updated_context)

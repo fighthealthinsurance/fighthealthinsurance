@@ -18,11 +18,15 @@ from django.views import View, generic
 from django.http import HttpRequest, HttpResponseBase, HttpResponse
 from django.core.exceptions import SuspiciousOperation
 from django.http import HttpResponseRedirect
+from django.contrib.auth.decorators import login_required
+from django.views.decorators.csrf import ensure_csrf_cookie
+from django.views.generic.edit import FormView
 
 from django_encrypted_filefield.crypt import Cryptographer
 
 from fighthealthinsurance import common_view_logic
 from fighthealthinsurance import forms as core_forms
+from fighthealthinsurance.chat_forms import UserConsentForm
 from fighthealthinsurance import models
 from fighthealthinsurance import followup_emails
 from fighthealthinsurance.stripe_utils import get_or_create_price
@@ -745,3 +749,76 @@ class CompletePaymentView(View):
                 status=500,
                 content_type="application/json",
             )
+
+
+@ensure_csrf_cookie
+def chat_interface_view(request):
+    """
+    Render the chat interface for all user types:
+    - Authenticated professional users
+    - Authenticated patient users
+    - Anonymous users (session-based)
+
+    If the user hasn't accepted the terms of service yet, redirect to the consent form.
+    """
+    logger.debug(f"Chat interface view called with session: {request.session}")
+
+    # Check if the user completed the consent process by looking for session data
+    consent_completed = request.session.get("consent_completed", False)
+    email = request.session.get("email", None)
+
+    # If the user hasn't completed the consent process, redirect to the consent form
+    if not consent_completed:
+        logger.debug(
+            "User has not completed consent process, redirecting to consent form."
+        )
+        return redirect("chat_consent")
+
+    context = {
+        "title": "Chat with FightHealthInsurance",
+        "email": email,
+    }
+    logger.debug(f"Rendering chat interface with context: {context}")
+    return render(request, "chat_interface.html", context)
+
+
+class ChatUserConsentView(FormView):
+    """
+    View for collecting user consent and information before using the chat interface.
+    This form collects personal information that is stored only in the browser's localStorage
+    for privacy protection (scrubbing personal information from messages).
+    """
+
+    template_name = "chat_consent.html"
+    form_class = UserConsentForm
+    success_url = (
+        "/chat/"  # Redirect to chat interface after successful form submission
+    )
+
+    def form_valid(self, form):
+        # Mark consent as completed in the session
+        self.request.session["consent_completed"] = True
+        self.request.session["email"] = form.cleaned_data.get(
+            "email"
+        )  # Used for data deletion requests
+        self.request.session.save()
+        if form.cleaned_data.get("subscribe"):
+            name = f"{form.cleaned_data.get('first_name')} {form.cleaned_data.get('last_name')}"
+            # Does the user want to subscribe to the newsletter?
+            models.MailingListSubscriber.objects.create(
+                email=form.cleaned_data.get("email"),
+                phone=form.cleaned_data.get("phone"),
+                name=name,
+                comments="From chat consent form",
+            )
+
+        # No need to save form data to database - it will be saved in browser localStorage via JavaScript
+        return super().form_valid(form)
+
+    def get(self, request, *args, **kwargs):
+        # Check if the user already has a session key
+        if not request.session.session_key:
+            request.session.save()
+
+        # Continue with normal form rendering
+        return super().get(request, *args, **kwargs)
