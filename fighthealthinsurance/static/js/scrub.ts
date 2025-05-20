@@ -13,6 +13,11 @@ import {
 const recognizeEvent = async function (evt: Event) {
   const input = evt.target as HTMLInputElement;
   const files = input.files;
+
+  if (!files) {
+    return; // Exit early if files is null
+  }
+
   const filesArray = Array.from(files);
 
   for (const file of filesArray) {

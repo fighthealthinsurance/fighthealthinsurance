@@ -58,18 +58,28 @@ var scrubRegex: ScrubRegex[] = [
   ],
 ];
 
+// Helper function to escape special regex characters in a string
+function escapeRegExp(string: string): string {
+  // Escapes special characters in a string to safely use it inside a RegExp
+  // $& inserts the matched character, and \\ escapes it
+  return string.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function scrubText(text: string): string {
   var reservedTokens = [];
   var nodes = document.querySelectorAll("input");
-  for (var i = 0; i < nodes.length; i++) {
+  for (let i = 0; i < nodes.length; i++) {
     var node = nodes[i];
     if (node.id.startsWith("store_") && node.value != "") {
-      reservedTokens.push([new RegExp(node.value, "gi"), node.id]);
-      for (var j = 0; j < nodes.length; j++) {
+      reservedTokens.push([
+        new RegExp(escapeRegExp(node.value), "gi"),
+        node.id,
+      ]);
+      for (let j = 0; j < nodes.length; j++) {
         var secondNode = nodes[j];
         if (secondNode.value != "") {
           reservedTokens.push([
-            new RegExp(node.value + secondNode.value, "gi"),
+            new RegExp(escapeRegExp(node.value + secondNode.value), "gi"),
             node.id + "_" + secondNode.id,
           ]);
         }
@@ -81,7 +91,7 @@ function scrubText(text: string): string {
   console.log("Scrubbing with:");
   console.log(reservedTokens);
   console.log(scrubRegex);
-  for (var i = 0; i < scrubRegex.length; i++) {
+  for (let i = 0; i < scrubRegex.length; i++) {
     const match = scrubRegex[i][0].exec(text);
     if (match !== null) {
       // I want to use the groups syntax here but it is not working so just index in I guess.
@@ -91,7 +101,7 @@ function scrubText(text: string): string {
     }
     text = text.replace(scrubRegex[i][0], scrubRegex[i][2]);
   }
-  for (var i = 0; i < reservedTokens.length; i++) {
+  for (let i = 0; i < reservedTokens.length; i++) {
     text = text.replace(reservedTokens[i][0], " " + reservedTokens[i][1]);
   }
   return text;

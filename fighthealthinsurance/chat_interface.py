@@ -30,7 +30,7 @@ class ChatInterface:
         send_json_message_func: Callable[[Dict[str, Any]], Awaitable[None]],
         chat: OngoingChat,
         user: User,
-        is_patient: bool
+        is_patient: bool,
     ):  # Changed to Dict[str, Any]
         def wrap_send_json_message_func(message: Dict[str, Any]) -> Awaitable[None]:
             """Wraps the send_json_message_func to ensure it's always awaited."""

@@ -110,6 +110,13 @@ const getUserInfo = (): UserInfo | null => {
   return null;
 };
 
+// Helper function to escape special regex characters in a string
+const escapeRegExp = (string: string): string => {
+  // Escapes special characters in a string to safely use it inside a RegExp
+  // $& inserts the matched character, and \\ escapes it
+  return string.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+};
+
 // Replace personal info in a message with placeholders
 const scrubPersonalInfo = (message: string, userInfo: UserInfo): string => {
   if (!userInfo) return message;
@@ -119,14 +126,14 @@ const scrubPersonalInfo = (message: string, userInfo: UserInfo): string => {
   // Replace name - use word boundaries to avoid partial matches
   if (userInfo.firstName) {
     scrubbedMessage = scrubbedMessage.replace(
-      new RegExp(`\\b${userInfo.firstName}\\b`, "gi"),
+      new RegExp(`\\b${escapeRegExp(userInfo.firstName)}\\b`, "gi"),
       "[FIRST_NAME]",
     );
   }
 
   if (userInfo.lastName) {
     scrubbedMessage = scrubbedMessage.replace(
-      new RegExp(`\\b${userInfo.lastName}\\b`, "gi"),
+      new RegExp(`\\b${escapeRegExp(userInfo.lastName)}\\b`, "gi"),
       "[LAST_NAME]",
     );
   }
@@ -134,7 +141,7 @@ const scrubPersonalInfo = (message: string, userInfo: UserInfo): string => {
   // Replace address
   if (userInfo.address) {
     scrubbedMessage = scrubbedMessage.replace(
-      new RegExp(userInfo.address, "gi"),
+      new RegExp(escapeRegExp(userInfo.address), "gi"),
       "[ADDRESS]",
     );
   }
@@ -142,7 +149,7 @@ const scrubPersonalInfo = (message: string, userInfo: UserInfo): string => {
   // Replace city
   if (userInfo.city) {
     scrubbedMessage = scrubbedMessage.replace(
-      new RegExp(`\\b${userInfo.city}\\b`, "gi"),
+      new RegExp(`\\b${escapeRegExp(userInfo.city)}\\b`, "gi"),
       "[CITY]",
     );
   }
@@ -150,7 +157,7 @@ const scrubPersonalInfo = (message: string, userInfo: UserInfo): string => {
   // Replace state
   if (userInfo.state) {
     scrubbedMessage = scrubbedMessage.replace(
-      new RegExp(`\\b${userInfo.state}\\b`, "gi"),
+      new RegExp(`\\b${escapeRegExp(userInfo.state)}\\b`, "gi"),
       "[STATE]",
     );
   }
@@ -158,7 +165,7 @@ const scrubPersonalInfo = (message: string, userInfo: UserInfo): string => {
   // Replace zip code
   if (userInfo.zipCode) {
     scrubbedMessage = scrubbedMessage.replace(
-      new RegExp(`\\b${userInfo.zipCode}\\b`, "gi"),
+      new RegExp(`\\b${escapeRegExp(userInfo.zipCode)}\\b`, "gi"),
       "[ZIP_CODE]",
     );
   }
@@ -167,7 +174,7 @@ const scrubPersonalInfo = (message: string, userInfo: UserInfo): string => {
   if (userInfo.email) {
     // Email regex to avoid partial matches
     scrubbedMessage = scrubbedMessage.replace(
-      new RegExp(userInfo.email.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"),
+      new RegExp(escapeRegExp(userInfo.email), "gi"),
       "[EMAIL]",
     );
   }

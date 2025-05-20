@@ -43,7 +43,7 @@ function descrub() {
   const email_address = getLocalStorageItemOrDefaultEQ("email_address");
   const name = fname + " " + lname;
   text = text.replace("fname", fname);
-  text = text.replace("lname", fname);
+  text = text.replace("lname", lname);
   text = text.replace("YourNameMagic", fname);
   text = text.replace("[Your Name]", name);
   text = text.replace("[Patient's Name]", name);

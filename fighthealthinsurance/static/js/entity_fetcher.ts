@@ -71,7 +71,7 @@ export function doQuery(
   backend_url: string,
   data: Map<string, string>,
   retries: number,
-): void {
+) {
   return connectWebSocket(
     backend_url,
     data,
