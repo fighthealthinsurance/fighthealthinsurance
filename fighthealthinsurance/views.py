@@ -803,11 +803,12 @@ class ChatUserConsentView(FormView):
         )  # Used for data deletion requests
         self.request.session.save()
         if form.cleaned_data.get("subscribe"):
+            name = f"{form.cleaned_data.get('first_name')} {form.cleaned_data.get('last_name')}"
             # Does the user want to subscribe to the newsletter?
             models.MailingListSubscriber.objects.create(
                 email=form.cleaned_data.get("email"),
                 phone=form.cleaned_data.get("phone"),
-                name=form.cleaned_data.get("name"),
+                name=name,
                 comments="From chat consent form",
             )
 
