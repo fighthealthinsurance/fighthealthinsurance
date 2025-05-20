@@ -16,8 +16,10 @@ import csv
 from django.http import HttpResponse, StreamingHttpResponse
 import json
 
+from charts.base_analytics import BaseAnalyticsView
 
-class BaseEmailsWithRawEmailCSV(View):
+
+class BaseEmailsWithRawEmailCSV(BaseAnalyticsView):
     """Base class for views that export email addresses from denials where raw_email is not null."""
 
     def get_queryset(self):
@@ -32,12 +34,8 @@ class BaseEmailsWithRawEmailCSV(View):
         """Handle the request and return a CSV response."""
         denials_qs = self.get_queryset()
 
-        # Exclude test emails
-        hashed_farts = Denial.get_hashed_email("farts@farts.com")
-        hashed_pcf = Denial.get_hashed_email("holden@pigscanfly.ca")
-        denials_qs = denials_qs.exclude(
-            Q(hashed_email=hashed_farts) | Q(hashed_email=hashed_pcf)
-        )
+        # Exclude test emails using the base class method
+        denials_qs = denials_qs.exclude(self.get_email_exclude_q())
 
         # Exclude professional denials
         denials_qs = denials_qs.filter(
@@ -144,10 +142,7 @@ def incomplete_signups_csv(request):
 def de_identified_export(request):
     # Exclude test emails
     limit = request.GET.get("limit")
-    hashed_farts = Denial.get_hashed_email("farts@farts.com")
-    hashed_pcf = Denial.get_hashed_email("holden@pigscanfly.ca")
-    hashed_gmail = Denial.get_hashed_email("holden.karau@gmail.com")
-    exclude_emails = [hashed_farts, hashed_pcf, hashed_gmail]
+    exclude_emails = BaseAnalyticsView.get_excluded_hashed_emails()
     safe_denials = Denial.objects.exclude(
         Q(hashed_email__in=exclude_emails)
         | Q(manual_deidentified_denial="")
@@ -184,7 +179,7 @@ def de_identified_export(request):
 def pro_signups_csv(request):
     interested_professionals_qs = (
         InterestedProfessional.objects.exclude(
-            Q(email="farts@farts.com") | Q(email="holden@pigscanfly.ca")
+            BaseAnalyticsView.get_raw_email_exclude_q()
         )
         .values(
             "email",
@@ -223,7 +218,7 @@ def pro_signups_csv(request):
 def pro_signups_csv_single_lines(request):
     interested_professionals_qs = (
         InterestedProfessional.objects.exclude(
-            Q(email="farts@farts.com") | Q(email="holden@pigscanfly.ca")
+            BaseAnalyticsView.get_raw_email_exclude_q()
         )
         .values(
             "email",
@@ -279,7 +274,7 @@ def signups_by_day(request):
     try:
         signups_per_day = (
             InterestedProfessional.objects.exclude(
-                Q(email="farts@farts.com") | Q(email="holden@pigscanfly.ca")
+                BaseAnalyticsView.get_raw_email_exclude_q()
             )
             .distinct("email")
             .order_by("signup_date")
@@ -291,7 +286,7 @@ def signups_by_day(request):
     except:
         signups_per_day = (
             InterestedProfessional.objects.exclude(
-                Q(email="farts@farts.com") | Q(email="holden@pigscanfly.ca")
+                BaseAnalyticsView.get_raw_email_exclude_q()
             )
             .order_by("signup_date")
             .values("signup_date", "clicked_for_paid")
@@ -372,7 +367,7 @@ def signups_by_day(request):
 def sf_signups(request):
     pro_signups = (
         InterestedProfessional.objects.exclude(
-            Q(email="farts@farts.com") | Q(email="holden@pigscanfly.ca")
+            BaseAnalyticsView.get_raw_email_exclude_q()
         )
         .filter(
             Q(address__icontains="San Francisco")
@@ -401,13 +396,9 @@ def sf_signups(request):
 @staff_member_required
 def users_by_day(request):
     # Query to count users by day
-    # Our "test" users are farts@farts.com & holden@pigscanfly.ca
-    hashed_farts = Denial.get_hashed_email("farts@farts.com")
-    hashed_pcf = Denial.get_hashed_email("holden@pigscanfly.ca")
+    # Use the base analytics view to exclude test users
     users_per_day = (
-        Denial.objects.exclude(
-            Q(hashed_email=hashed_farts) | Q(hashed_email=hashed_pcf)
-        )
+        Denial.objects.exclude(BaseAnalyticsView.get_email_exclude_q())
         .order_by("date")
         .values("date")
         .annotate(count=Count("hashed_email", distinct=True))
@@ -458,11 +449,8 @@ def procedures_denied_chart(request):
     Create a chart showing the count of each procedure that has been denied,
     grouped together in a case-insensitive and space-insensitive way.
     """
-    # Exclude test emails
-    hashed_farts = Denial.get_hashed_email("farts@farts.com")
-    hashed_pcf = Denial.get_hashed_email("holden@pigscanfly.ca")
-    hashed_gmail = Denial.get_hashed_email("holden.karau@gmail.com")
-    exclude_emails = [hashed_farts, hashed_pcf, hashed_gmail]
+    # Exclude test emails using the base analytics view
+    exclude_emails = BaseAnalyticsView.get_excluded_hashed_emails()
 
     # Get all denials with procedures that aren't empty or None
     denials_with_procedures = (
