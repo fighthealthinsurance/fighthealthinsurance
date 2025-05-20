@@ -431,7 +431,9 @@ class OngoingChatWebSocketTest(APITestCase):
         # Should receive an error response
         response = await communicator.receive_json_from(timeout=5)
         self.assertIn("error", response)
-        self.assertEqual(response["error"], "User not authenticated.")
+        self.assertEqual(
+            response["error"], "Session key is required for anonymous users."
+        )
 
         # Disconnect
         await communicator.disconnect()

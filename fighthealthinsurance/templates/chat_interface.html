@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}FightHealthInsurance Chat{% endblock %}
+
+{% block content %}
+<div id="chat-interface-root"></div>
+<script src="{% static 'js/dist/chat_interface.bundle.js' %}"></script>
+{% endblock %}

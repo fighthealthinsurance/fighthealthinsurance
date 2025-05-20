@@ -34,6 +34,7 @@ from fighthealthinsurance.models import (
     GenericQuestionGeneration,
     PriorAuthRequest,
     ProposedPriorAuth,
+    OngoingChat,
 )
 from fhi_users.models import (
     ProfessionalUser,
@@ -446,3 +447,35 @@ class AppealAttachmentAdmin(admin.ModelAdmin):
     search_fields = ("filename", "mime_type", "appeal__uuid")
     list_filter = ("created_at",)
     ordering = ("-created_at",)
+
+
+@admin.register(OngoingChat)
+class OngoingChatAdmin(admin.ModelAdmin):
+    """Admin configuration for OngoingChat model."""
+
+    list_display = (
+        "id",
+        "professional_user",
+        "user",
+        "is_patient",
+        "denied_item",
+        "denied_reason",
+        "created_at",
+        "updated_at",
+    )
+    search_fields = (
+        "id",
+        "denied_item",
+        "denied_reason",
+        "professional_user__user__email",
+        "user__email",
+        "session_key",
+    )
+    list_filter = (
+        "is_patient",
+        "created_at",
+        "updated_at",
+        "domain",
+    )
+    ordering = ("-updated_at",)
+    readonly_fields = ("id", "created_at", "updated_at")

@@ -98,6 +98,7 @@ class MailingListSubscriber(models.Model):
     name = models.CharField(max_length=300, default="", blank=True)
     comments = models.TextField(default="", blank=True)
     signup_date = models.DateField(auto_now_add=True)
+    phone = models.CharField(max_length=300, default="", blank=True)
 
     def __str__(self):
         return self.email
@@ -1013,19 +1014,39 @@ class ProposedPriorAuth(ExportModelOperationsMixin("ProposedPriorAuth"), models.
 
 class OngoingChat(models.Model):
     """
-    Model for storing ongoing chat sessions between professional users and LLM.
+    Model for storing ongoing chat sessions between users and LLM.
+    Can be associated with either professional users, regular users (patients),
+    or anonymous users (via session).
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     professional_user = models.ForeignKey(
-        ProfessionalUser, on_delete=models.SET_NULL, null=True
+        ProfessionalUser, on_delete=models.SET_NULL, null=True, blank=True
     )
+    user = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True, related_name="chats"
+    )
+    is_patient = models.BooleanField(default=False)
+    # For anonymous users (not logged in), track by session ID
+    session_key = models.CharField(max_length=100, null=True, blank=True, db_index=True)
     chat_history = models.JSONField(
         default=list, null=True, blank=True
     )  # JSON List of dictionaries {"role": "user", "content": message, "timestamp": timezone.now().isoformat()})
     summary_for_next_call = models.JSONField(
         null=True, blank=True
     )  # JSON List of strings
+    denied_item = models.CharField(
+        max_length=500,
+        null=True,
+        blank=True,
+        help_text="The item that was denied, extracted from chat context",
+    )
+    denied_reason = models.CharField(
+        max_length=500,
+        null=True,
+        blank=True,
+        help_text="The reason for denial, extracted from chat context",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     domain = models.ForeignKey(
@@ -1033,10 +1054,32 @@ class OngoingChat(models.Model):
     )
 
     def summarize_professional_user(self) -> str:
-        return str(self.professional_user)
+        if self.is_patient and self.user:
+            return f"a patient user (ID: {self.user.id})"
+        elif self.professional_user:
+            return str(self.professional_user)
+        else:
+            return "a user"
+
+    def summarize_user(self) -> str:
+        """Returns a description of the user - either patient, professional, or anonymous."""
+        if self.is_patient and self.user:
+            return f"a patient user (ID: {self.user.id})"
+        elif self.professional_user:
+            return f"a professional user ({self.professional_user.get_display_name()})"
+        elif self.session_key:
+            return f"an anonymous user (Session: {self.session_key[:8]})"
+        else:
+            return "a user"
 
     def __str__(self):
-        if self.professional_user:
+        if self.is_patient and self.user:
+            return f"Ongoing Chat {self.id} for patient {self.user.email}"
+        elif self.professional_user:
             return f"Ongoing Chat {self.id} for {self.professional_user.get_display_name()}"
+        elif self.session_key:
+            return (
+                f"Ongoing Chat {self.id} for anonymous session {self.session_key[:8]}"
+            )
         else:
-            return f"Ongoing Chat {self.id} (no professional user)"
+            return f"Ongoing Chat {self.id} (no associated user)"

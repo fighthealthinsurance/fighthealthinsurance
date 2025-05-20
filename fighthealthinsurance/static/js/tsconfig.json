@@ -4,16 +4,13 @@
     "noImplicitAny": true,
     "module": "es6",
     "target": "es5",
-    "jsx": "react",
+    "jsx": "react-jsx",
     "allowJs": true,
     "moduleResolution": "node",
     "allowSyntheticDefaultImports": true,
     "sourceMap": true,
+    "esModuleInterop": true
   },
-  "include": [
-    "./*.ts"
-  ], // Files to include in the compilation
-  "exclude": [
-    "node_modules"
-  ] // Exclude node_modules
+  "include": ["./*.ts", "./*.tsx"], // Files to include in the compilation
+  "exclude": ["node_modules"] // Exclude node_modules
 }

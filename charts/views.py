@@ -112,7 +112,9 @@ def incomplete_signups_csv(request):
     inactive_relations = ProfessionalDomainRelation.objects.filter(
         professional__active=False, domain__active=False
     ).select_related(
-        "professional", "professional__user", "domain",
+        "professional",
+        "professional__user",
+        "domain",
     )
 
     for relation in inactive_relations:
@@ -131,7 +133,9 @@ def incomplete_signups_csv(request):
             domain.internal_phone_number if domain.internal_phone_number else ""
         )
 
-        writer.writerow([provider_name, business_name, visible_phone, internal_phone, email])
+        writer.writerow(
+            [provider_name, business_name, visible_phone, internal_phone, email]
+        )
 
     return response
 
@@ -445,4 +449,117 @@ def users_by_day(request):
         request,
         "bokeh.html",
         {"script": script, "div": div, "df_html": df_html, "totals_html": totals_html},
+    )
+
+
+@staff_member_required
+def procedures_denied_chart(request):
+    """
+    Create a chart showing the count of each procedure that has been denied,
+    grouped together in a case-insensitive and space-insensitive way.
+    """
+    # Exclude test emails
+    hashed_farts = Denial.get_hashed_email("farts@farts.com")
+    hashed_pcf = Denial.get_hashed_email("holden@pigscanfly.ca")
+    hashed_gmail = Denial.get_hashed_email("holden.karau@gmail.com")
+    exclude_emails = [hashed_farts, hashed_pcf, hashed_gmail]
+
+    # Get all denials with procedures that aren't empty or None
+    denials_with_procedures = (
+        Denial.objects.exclude(Q(hashed_email__in=exclude_emails))
+        .exclude(Q(procedure__isnull=True) | Q(procedure=""))
+        .values_list("procedure", flat=True)
+    )
+
+    # Process procedures to normalize them (case insensitive, remove spaces)
+    procedure_counts = {}
+    for procedure in denials_with_procedures:
+        if procedure:
+            # Normalize the procedure name: lowercase and remove extra spaces
+            normalized_proc = " ".join(procedure.lower().split())
+            procedure_counts[normalized_proc] = (
+                procedure_counts.get(normalized_proc, 0) + 1
+            )
+
+    # Convert to DataFrame for visualization
+    df = pd.DataFrame(
+        {
+            "procedure": list(procedure_counts.keys()),
+            "count": list(procedure_counts.values()),
+        }
+    )
+
+    if df.empty:
+        return HttpResponse("No procedure data available.", content_type="text/plain")
+
+    # Sort by count in descending order
+    df = df.sort_values("count", ascending=False)
+
+    # Limit to top 15 procedures for the chart and aggregate the rest
+    top_n = 15
+    if len(df) > top_n:
+        top_df = df.iloc[:top_n].copy()
+        other_count = df.iloc[top_n:]["count"].sum()
+        top_df = pd.concat(
+            [
+                top_df,
+                pd.DataFrame(
+                    {"procedure": ["Other Procedures"], "count": [other_count]}
+                ),
+            ]
+        )
+        chart_df = top_df
+    else:
+        chart_df = df
+
+    # Create a Bokeh figure
+    p = figure(
+        title="Most Commonly Denied Procedures",
+        x_range=chart_df["procedure"].tolist(),
+        height=500,
+        width=800,
+        toolbar_location="right",
+        tools="hover,pan,box_zoom,reset,save",
+        tooltips=[("Procedure", "@procedure"), ("Count", "@count")],
+    )
+
+    # Create bar plot
+    source = ColumnDataSource(chart_df)
+    p.vbar(
+        x="procedure",
+        top="count",
+        width=0.8,
+        source=source,
+        color="firebrick",
+        line_color="white",
+    )
+
+    # Customize the chart appearance
+    p.xaxis.major_label_orientation = 3.14 / 4  # Rotate x-axis labels 45 degrees
+    p.xgrid.grid_line_color = None
+    p.y_range.start = 0
+    p.xaxis.axis_label = "Procedures"
+    p.yaxis.axis_label = "Number of Denials"
+
+    # Generate Bokeh components
+    script, div = components(p)
+
+    # Generate HTML table for full data (not just what's in the chart)
+    df_html = df.to_html(classes=["table", "table-striped", "table-hover"], index=False)
+
+    # Calculate total number of procedures
+    total_procedures = df["count"].sum()
+    total_unique_procedures = len(df)
+    totals_html = f"<p>Total denials with procedures: {total_procedures}</p><p>Total unique procedures: {total_unique_procedures}</p>"
+
+    return render(
+        request,
+        "bokeh.html",
+        {
+            "script": script,
+            "div": div,
+            "df_html": df_html,
+            "totals_html": totals_html,
+            "title": "Denied Procedures Analysis",
+        },
     )
