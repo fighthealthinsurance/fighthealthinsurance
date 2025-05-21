@@ -1,9 +1,14 @@
 import datetime
+import json
+from typing import Any, Dict, Set
 
 from django.http import HttpResponse
 from django.views import View, generic
 from django.db import transaction
 from loguru import logger
+from django.shortcuts import redirect, render, get_object_or_404
+from django.http import StreamingHttpResponse
+
 
 from fighthealthinsurance import common_view_logic
 from fighthealthinsurance import forms as core_forms
@@ -14,11 +19,13 @@ from fighthealthinsurance.models import (
     ProfessionalUser,
     UserDomain,
     ProfessionalDomainRelation,
+    PubMedMiniArticle,
 )
 from fighthealthinsurance.followup_emails import (
     ThankyouEmailSender,
     FollowUpEmailSender,
 )
+from fighthealthinsurance.pubmed_tools import PubMedTools
 
 
 class ScheduleFollowUps(View):
@@ -163,8 +170,7 @@ class FollowUpFaxSenderView(generic.FormView):
         return HttpResponse(str(sent))
 
 
-@method_decorator(staff_member_required, name="dispatch")
-class PubMedPreloadView(generic.FormView, BaseAnalyticsView):
+class PubMedPreloadView(generic.FormView):
     """
     A view for preloading PubMed searches for medications, conditions, and their combinations.
 
@@ -239,7 +245,7 @@ class PubMedPreloadView(generic.FormView, BaseAnalyticsView):
             A dictionary with search results and metadata
         """
         pubmed_tools = PubMedTools()
-        start_time = datetime.now()
+        start_time = datetime.datetime.now()
 
         # Collect unique PMIDs across all year filters
         all_pmids: Set[str] = set()
@@ -266,7 +272,7 @@ class PubMedPreloadView(generic.FormView, BaseAnalyticsView):
 
             # Get article details for the first few PMIDs
             articles = []
-            for pmid in pmids_list[:5]:  # Limit to first 5 for efficiency
+            for pmid in pmids_list[:10]:  # Limit to first 10 for efficiency
                 mini_article = await PubMedMiniArticle.objects.filter(
                     pmid=pmid
                 ).afirst()
@@ -280,7 +286,7 @@ class PubMedPreloadView(generic.FormView, BaseAnalyticsView):
                         }
                     )
 
-            end_time = datetime.now()
+            end_time = datetime.datetime.now()
             duration = (end_time - start_time).total_seconds()
 
             return {
@@ -297,7 +303,7 @@ class PubMedPreloadView(generic.FormView, BaseAnalyticsView):
             }
 
         except Exception as e:
-            end_time = datetime.now()
+            end_time = datetime.datetime.now()
             duration = (end_time - start_time).total_seconds()
 
             return {
