@@ -141,14 +141,30 @@
             resultsContainer.classList.remove('d-none');
             searchingMessage.classList.remove('d-none');
 
-            // Create FormData and send request
+            // Create FormData from the form
             const formData = new FormData(form);
 
-            // Set up EventSource for Server-Sent Events
-            const eventSource = new EventSource(form.action || window.location.href);
+            // Build URL with form data as query parameters
+            const baseUrl = form.action || window.location.href;
+            const searchParams = new URLSearchParams();
+
+            // Add form fields to the URL parameters
+            for (const [key, value] of formData.entries()) {
+                searchParams.append(key, value);
+            }
+
+            // Create the URL with parameters
+            const sseUrl = `${baseUrl}?${searchParams.toString()}`;
+
+            // Set up EventSource for Server-Sent Events with the constructed URL
+            const eventSource = new EventSource(sseUrl);
 
             eventSource.onmessage = function(event) {
+                console.log('Received event:', event);
+                console.log('Received event data:', event.data);
+                console.log("Trying to parse event data...");
                 const data = JSON.parse(event.data);
+                console.log('Parsed data:', data);
 
                 if (data.status === 'started') {
                     // Initial setup
@@ -178,9 +194,11 @@
                     searchingMessage.classList.add('d-none');
                     eventSource.close();
                 }
+                console.log("Processed event");
             };
 
             eventSource.onerror = function() {
+                console.error('Error receiving search results');
                 progressText.textContent = 'Error receiving search results.';
                 eventSource.close();
             };

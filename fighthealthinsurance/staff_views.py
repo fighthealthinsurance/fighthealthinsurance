@@ -1,3 +1,4 @@
+import asyncio
 import datetime
 import json
 from typing import Any, Dict, Set
@@ -192,7 +193,31 @@ class PubMedPreloadView(generic.FormView):
         )
         return context
 
+    def get(self, request, *args, **kwargs):
+        """
+        Handle GET requests, which will be used by EventSource.
+
+        If medications or conditions parameters are present in the query string,
+        treat it as a form submission for SSE streaming.
+        """
+        if "medications" in request.GET or "conditions" in request.GET:
+            # Create a form instance with GET data
+            form = self.form_class(request.GET)
+            if form.is_valid():
+                logger.debug("Form is valid, processing PubMed search...")
+                return self.form_valid(form)
+            else:
+                logger.debug("Form is invalid")
+                return self.form_invalid(form)
+        else:
+            # No medications or conditions in query string, show the form
+            logger.debug("No medications or conditions in query string, showing form.")
+
+        # Standard GET request - show the form
+        return super().get(request, *args, **kwargs)
+
     def form_valid(self, form):
+        logger.debug("Form is valid, processing PubMed search...")
         medications = form.cleaned_data.get("medications", [])
         conditions = form.cleaned_data.get("conditions", [])
 
@@ -303,6 +328,9 @@ class PubMedPreloadView(generic.FormView):
             }
 
         except Exception as e:
+            logger.opt(exception=True).error(
+                f"Error performing PubMed search for term '{term}': {str(e)}"
+            )
             end_time = datetime.datetime.now()
             duration = (end_time - start_time).total_seconds()
 
@@ -317,23 +345,25 @@ class PubMedPreloadView(generic.FormView):
 
     def _stream_pubmed_search_results(self, search_terms):
         """
-        Generator function that streams PubMed search results as they complete.
+        Query pubmed for the search terms
 
         Args:
             search_terms: List of dictionaries with term and type keys
 
         Yields:
-            Server-sent event formatted data for each completed search
+            Async Generator of server-sent event formatted data for each completed search
         """
-        import asyncio
+        logger.debug("Generating PubMed search results...")
 
         # Create async coroutines
         async def get_results():
+            logger.debug("Starting PubMed search...")
             # Start all searches concurrently
             tasks = [
                 self._perform_pubmed_search(term["term"], term["type"])
                 for term in search_terms
             ]
+            logger.debug(f"Total searches to perform: {len(tasks)}")
 
             # Initial response
             yield f"data: {json.dumps({'status': 'started', 'total': len(tasks)})}\n\n"
@@ -350,16 +380,4 @@ class PubMedPreloadView(generic.FormView):
             # Final message
             yield f"data: {json.dumps({'status': 'completed', 'total': len(tasks)})}\n\n"
 
-        # Use Django's async_to_sync to handle the async generator
-        from asgiref.sync import async_to_sync
-
-        async def run_async_generator():
-            async for item in get_results():
-                yield item
-
-        # Convert the async generator to a sync one
-        sync_generator = async_to_sync(run_async_generator)()
-
-        # Yield each item from the sync generator
-        for item in sync_generator:
-            yield item
+        return get_results()
