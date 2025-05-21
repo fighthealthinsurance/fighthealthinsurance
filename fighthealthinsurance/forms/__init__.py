@@ -238,3 +238,7 @@ class FollowUpForm(forms.Form):
 # New form for activating pro users
 class ActivateProForm(forms.Form):
     phonenumber = forms.CharField(required=True)
+
+
+# Import PubMed preload form
+from .pubmed_form import PubMedPreloadForm

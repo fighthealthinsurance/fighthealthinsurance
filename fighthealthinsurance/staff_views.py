@@ -7,7 +7,7 @@ from loguru import logger
 
 from fighthealthinsurance import common_view_logic
 from fighthealthinsurance import forms as core_forms
-from fighthealthinsurance.forms import FollowUpTestForm
+from fighthealthinsurance.forms import FollowUpTestForm, PubMedPreloadForm
 from fighthealthinsurance.models import (
     Denial,
     FollowUpSched,
@@ -161,3 +161,199 @@ class FollowUpFaxSenderView(generic.FormView):
             sent = helper.blocking_dosend_target(email=field)
 
         return HttpResponse(str(sent))
+
+
+@method_decorator(staff_member_required, name="dispatch")
+class PubMedPreloadView(generic.FormView, BaseAnalyticsView):
+    """
+    A view for preloading PubMed searches for medications, conditions, and their combinations.
+
+    This view allows staff members to enter lists of medications and conditions,
+    and performs PubMed searches for each item individually and for each medication+condition pair.
+    Results are streamed back to the client as they become available.
+    """
+
+    template_name = "pubmed_preload.html"
+    form_class = PubMedPreloadForm
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["title"] = "PubMed Pre-Population Tool"
+        context["heading"] = "PubMed Pre-Population Tool"
+        context["description"] = (
+            "This tool searches PubMed for medications, conditions, and their combinations "
+            "and caches the results for faster appeal generation."
+        )
+        return context
+
+    def form_valid(self, form):
+        medications = form.cleaned_data.get("medications", [])
+        conditions = form.cleaned_data.get("conditions", [])
+
+        if not medications and not conditions:
+            return render(
+                self.request,
+                self.template_name,
+                {
+                    "form": form,
+                    "error": "Please enter at least one medication or condition.",
+                    **self.get_context_data(),
+                },
+            )
+
+        # Generate search combinations
+        search_terms = []
+
+        # Add individual medications
+        for med in medications:
+            search_terms.append({"term": med, "type": "medication"})
+
+        # Add individual conditions
+        for cond in conditions:
+            search_terms.append({"term": cond, "type": "condition"})
+
+        # Add medication + condition pairs
+        for med in medications:
+            for cond in conditions:
+                search_terms.append(
+                    {"term": f"{med} {cond}", "type": "medication+condition"}
+                )
+
+        # Return a streaming response that sends results as they come in
+        return StreamingHttpResponse(
+            self._stream_pubmed_search_results(search_terms),
+            content_type="text/event-stream",
+        )
+
+    async def _perform_pubmed_search(
+        self, term: str, search_type: str
+    ) -> Dict[str, Any]:
+        """
+        Perform a PubMed search for a given term and type.
+
+        Args:
+            term: The search term to query
+            search_type: The type of search (medication, condition, or combination)
+
+        Returns:
+            A dictionary with search results and metadata
+        """
+        pubmed_tools = PubMedTools()
+        start_time = datetime.now()
+
+        # Collect unique PMIDs across all year filters
+        all_pmids: Set[str] = set()
+        recent_pmids = None
+        all_time_pmids = None
+
+        try:
+            # Search for recent articles (2024+)
+            recent_pmids = await pubmed_tools.find_pubmed_article_ids_for_query(
+                term, since="2024", timeout=30.0
+            )
+            if recent_pmids:
+                all_pmids.update(recent_pmids)
+
+            # Search for all-time articles
+            all_time_pmids = await pubmed_tools.find_pubmed_article_ids_for_query(
+                term, timeout=30.0
+            )
+            if all_time_pmids:
+                all_pmids.update(all_time_pmids)
+
+            # Convert to list and limit to first 10 for display
+            pmids_list = list(all_pmids)[:10]
+
+            # Get article details for the first few PMIDs
+            articles = []
+            for pmid in pmids_list[:5]:  # Limit to first 5 for efficiency
+                mini_article = await PubMedMiniArticle.objects.filter(
+                    pmid=pmid
+                ).afirst()
+                if mini_article:
+                    articles.append(
+                        {
+                            "pmid": mini_article.pmid,
+                            "title": mini_article.title,
+                            "url": mini_article.article_url
+                            or f"https://pubmed.ncbi.nlm.nih.gov/{mini_article.pmid}/",
+                        }
+                    )
+
+            end_time = datetime.now()
+            duration = (end_time - start_time).total_seconds()
+
+            return {
+                "term": term,
+                "type": search_type,
+                "status": "success",
+                "recent_count": len(recent_pmids) if recent_pmids else 0,
+                "all_time_count": len(all_time_pmids) if all_time_pmids else 0,
+                "unique_count": len(all_pmids),
+                "pmids": pmids_list,
+                "articles": articles,
+                "duration": duration,
+                "timestamp": end_time.isoformat(),
+            }
+
+        except Exception as e:
+            end_time = datetime.now()
+            duration = (end_time - start_time).total_seconds()
+
+            return {
+                "term": term,
+                "type": search_type,
+                "status": "error",
+                "error": str(e),
+                "duration": duration,
+                "timestamp": end_time.isoformat(),
+            }
+
+    def _stream_pubmed_search_results(self, search_terms):
+        """
+        Generator function that streams PubMed search results as they complete.
+
+        Args:
+            search_terms: List of dictionaries with term and type keys
+
+        Yields:
+            Server-sent event formatted data for each completed search
+        """
+        import asyncio
+
+        # Create async coroutines
+        async def get_results():
+            # Start all searches concurrently
+            tasks = [
+                self._perform_pubmed_search(term["term"], term["type"])
+                for term in search_terms
+            ]
+
+            # Initial response
+            yield f"data: {json.dumps({'status': 'started', 'total': len(tasks)})}\n\n"
+
+            # Process results as they come in
+            completed = 0
+            for task in asyncio.as_completed(tasks):
+                result = await task
+                completed += 1
+
+                # Send event with result data
+                yield f"data: {json.dumps({'result': result, 'completed': completed, 'total': len(tasks)})}\n\n"
+
+            # Final message
+            yield f"data: {json.dumps({'status': 'completed', 'total': len(tasks)})}\n\n"
+
+        # Use Django's async_to_sync to handle the async generator
+        from asgiref.sync import async_to_sync
+
+        async def run_async_generator():
+            async for item in get_results():
+                yield item
+
+        # Convert the async generator to a sync one
+        sync_generator = async_to_sync(run_async_generator)()
+
+        # Yield each item from the sync generator
+        for item in sync_generator:
+            yield item

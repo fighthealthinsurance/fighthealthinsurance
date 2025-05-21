@@ -88,6 +88,11 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         staff_member_required(staff_views.EnableBetaForDomainView.as_view()),
         name="enable_beta",
     ),
+    path(
+        "timbit/help/pubmed_preload",
+        staff_member_required(staff_views.PubMedPreloadView.as_view()),
+        name="pubmed_preload",
+    ),
     # Authentication
     path("v0/auth/", include("fhi_users.urls")),
     # stripe integration (TODO webhooks go here)
