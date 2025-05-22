@@ -1083,3 +1083,26 @@ class OngoingChat(models.Model):
             )
         else:
             return f"Ongoing Chat {self.id} (no associated user)"
+
+
+class ChatLeads(ExportModelOperationsMixin("ChatLeads"), models.Model):  # type: ignore
+    """
+    Stores lead data from trial chat users who have not created a full account.
+    Used to track trial chat usage and for follow-up marketing.
+    """
+
+    name = models.CharField(max_length=255)
+    email = models.EmailField()
+    phone = models.CharField(max_length=32)
+    company = models.CharField(max_length=255)
+    consent_to_contact = models.BooleanField()  # Required
+    agreed_to_terms = models.BooleanField()  # Required
+    session_id = models.CharField(max_length=255, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Chat Lead"
+        verbose_name_plural = "Chat Leads"
+
+    def __str__(self):
+        return f"Chat Lead: {self.name} ({self.email})"

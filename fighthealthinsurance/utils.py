@@ -273,10 +273,10 @@ async def fire_and_forget_in_new_threadpool(task: Coroutine) -> None:
 
 
 async def best_within_timelimit(
-    tasks: Sequence[Awaitable[Optional[T]]],
-    score_fn: Callable[[Optional[T], Awaitable[Optional[T]]], float],
+    tasks: Sequence[Awaitable[T]],
+    score_fn: Callable[[T, Awaitable[T]], float],
     timeout: float,
-) -> Optional[T]:
+) -> T:
     """
     Runs a list of async tasks concurrently.
     Returns the best result (per score_fn) that completes before timeout.
@@ -294,15 +294,15 @@ async def best_within_timelimit(
         return None
 
     # Create task objects with Future results and wrap them
-    original_to_task: Dict[asyncio.Task[Optional[T]], Awaitable[Optional[T]]] = {}
-    wrapped_tasks: List[asyncio.Task[Optional[T]]] = []
+    original_to_task: Dict[asyncio.Task[T], Awaitable[T]] = {}
+    wrapped_tasks: List[asyncio.Task[T]] = []
 
     for task in tasks:
         # Cast the awaitable to a coroutine to satisfy mypy
-        coroutine: Coroutine[Any, Any, Optional[T]] = cast(
-            Coroutine[Any, Any, Optional[T]], task
+        coroutine: Coroutine[Any, Any, T] = cast(
+            Coroutine[Any, Any, T], task
         )
-        wrapped: asyncio.Task[Optional[T]] = asyncio.create_task(coroutine)
+        wrapped: asyncio.Task[T] = asyncio.create_task(coroutine)
         wrapped_tasks.append(wrapped)
         original_to_task[wrapped] = task
 
@@ -314,7 +314,7 @@ async def best_within_timelimit(
     asyncio.create_task(cancel_tasks(list(pending)))
 
     # Find the best result from completed tasks
-    best_result: Optional[T] = None
+    best_result: T
     best_score = float("-inf")  # Start with negative infinity for comparison
 
     for task in done:
@@ -335,8 +335,8 @@ async def best_within_timelimit(
 
 
 async def best_within_timelimit_static(
-    task_scores: Dict[Awaitable[Optional[T]], float], timeout: float
-) -> Optional[T]:
+    task_scores: Dict[Awaitable[T], float], timeout: float
+) -> T:
     """
     A simplified version of best_within_timelimit where scores are provided in advance.
 
@@ -347,13 +347,14 @@ async def best_within_timelimit_static(
     Returns:
         The result from the highest-scored task that completes within the timeout
     """
+    # Should not happen :)
     if not task_scores:
         return None
 
     # Extract tasks and create a static scoring function
-    tasks: Sequence[Awaitable[Optional[T]]] = list(task_scores.keys())
+    tasks: Sequence[Awaitable[T]] = list(task_scores.keys())
 
-    def static_score_fn(result: Optional[T], task: Awaitable[Optional[T]]) -> float:
+    def static_score_fn(result: T, task: Awaitable[T]) -> float:
         return task_scores.get(task, float("-inf"))
 
     # Delegate to the main implementation

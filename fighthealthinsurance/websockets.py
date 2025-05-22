@@ -16,6 +16,7 @@ from fighthealthinsurance.models import (
     ProposedPriorAuth,
     OngoingChat,
     ProfessionalUser,
+    ChatLeads,
 )
 from fighthealthinsurance.generate_prior_auth import prior_auth_generator
 from .chat_interface import ChatInterface
@@ -336,8 +337,19 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                 # Anonymous user with session key
                 professional_user = None
                 self.chat_id = chat_id
+
+                # Check if this is a trial chat (verify session_id exists in ChatLeads)
+                if session_key:
+                    try:
+                        self.chat_id = await ChatLeads.objects.aget(session_id=session_key)
+                        # This is a trial professional chat with a valid ChatLead entry
+                        logger.info(
+                            f"Trial professional chat for session {session_key}"
+                        )
+                    except ChatLeads.DoesNotExist:
+                        logger.info(f"Anonymous chat for session {session_key}")
             elif is_patient:
-                # Patient user (authenticated)
+                # Patient user (authenticated) -- not yet supported.
                 professional_user = None
                 self.chat_id = chat_id
             else:
@@ -443,10 +455,21 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
         if session_key:
             # Anonymous user
             logger.info(f"Creating new anonymous chat for session {session_key[:8]}")
+
+            # Check if this is a trial professional chat
+            is_trial_professional = False
+            try:
+                await ChatLeads.objects.aget(session_id=session_key)
+                is_trial_professional = True
+            except ChatLeads.DoesNotExist:
+                # Regular anonymous chat
+                pass
+
             return await OngoingChat.objects.acreate(
                 session_key=session_key,
                 chat_history=[],
                 summary_for_next_call=[],
+                is_patient=not is_trial_professional,  # Not a patient if it's a trial professional
             )
         elif is_patient and user and user.is_authenticated:
             # Patient user
