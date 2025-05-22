@@ -21,7 +21,7 @@ spec:
   template:
     metadata:
       labels:
-        group: fight-health-insurance-webbackend-batch
+        group: fight-health-insurance-prod-webbackend-batch
         special: web-primary-pod
     spec:
       containers:
@@ -48,7 +48,7 @@ spec:
   template:
     metadata:
       labels:
-        group: fight-health-insurance-webbackend-batch
+        group: fight-health-insurance-prod-webbackend-batch
         special: web-primary-pod
     spec:
       containers:
@@ -71,17 +71,17 @@ metadata:
   name: web
   namespace: totallylegitco
   labels:
-    app: fight-health-insurance
+    app: fight-health-insurance-prod
 spec:
   replicas: 3
   selector:
     matchLabels:
-      app: fight-health-insurance
+      app: fight-health-insurance-prod
   template:
     metadata:
       labels:
-        app: fight-health-insurance
-        group: fight-health-insurance-webbackend
+        app: fight-health-insurance-prod
+        group: fight-health-insurance-prod-webbackend
     spec:
       topologySpreadConstraints:
       - maxSkew: 2
@@ -89,7 +89,7 @@ spec:
         whenUnsatisfiable: ScheduleAnyway
         labelSelector:
           matchLabels:
-            app: fight-health-insurance
+            app: fight-health-insurance-prod
       containers:
         - image: ${FHI_BASE}:${FHI_VERSION}
           name: totallylegitco
@@ -139,7 +139,7 @@ spec:
     protocol: TCP
     targetPort: web
   selector:
-    group: fight-health-insurance-webbackend
+    group: fight-health-insurance-prod-webbackend
   sessionAffinity: None
   type: ClusterIP
 ---
