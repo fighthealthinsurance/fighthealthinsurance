@@ -1,0 +1,12 @@
+{
+  "devDependencies": {
+    "glob": "^11.0.2",
+    "ts-loader": "^9.5.2",
+    "webpack": "^5.99.9",
+    "webpack-cli": "^6.0.1"
+  },
+  "scripts": {
+    "build": "webpack",
+    "watch": "webpack --watch"
+  }
+}
