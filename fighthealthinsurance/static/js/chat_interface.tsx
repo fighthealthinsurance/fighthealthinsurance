@@ -511,79 +511,130 @@ const ChatInterface: React.FC = () => {
     const isUser = message.role === "user";
 
     return (
-      <Paper
+      <Flex
         key={index}
-        shadow="xs"
-        p="md"
-        style={{
-          backgroundColor: isUser ? "#f0f9ff" : "#f9fafb",
-          marginBottom: 10,
-          width: "100%",
-          marginLeft: isUser ? "auto" : 0,
-          marginRight: isUser ? 0 : "auto",
-        }}
+        justify="center"
+        style={{ width: '100%', marginBottom: 10 }}
       >
-        <Flex align="center" gap="xs">
-          {!isUser && (
-            <Image
-              src="/static/images/better-logo.png"
-              width={24}
-              height={24}
-              alt="FHI Logo"
-            />
-          )}
-          <MantineText fw={500} size="sm" c={isUser ? "blue" : "dark"}>
-            {isUser ? "You" : "FightHealthInsurance Assistant"}
-          </MantineText>
-        </Flex>{" "}
-        <Box mt="xs">
-          {message.status === "typing" ? (
-            <TypingAnimation />
-          ) : (
-            <ReactMarkdown>{message.content}</ReactMarkdown>
-          )}
-        </Box>
-      </Paper>
+        <Paper
+          shadow="xs"
+          p="md"
+          ta="left"
+          style={{
+            backgroundColor: isUser ? "#f0f9ff" : "#f9fafb",
+            borderRadius: 18,
+            width: '95%',
+            boxSizing: 'border-box',
+          }}
+        >
+          <Box style={{ 
+              padding: '20px', 
+              margin: '8px 0', 
+              backgroundColor: isUser ? "#f0f9ff" : "#ffffff", 
+              borderRadius: '8px' 
+            }}>
+            <Flex gap="xs" style={{ width: '90%', padding: '0 10px' }}>
+              {!isUser && (
+                <Image
+                  src="/static/images/better-logo.png"
+                  width={24}
+                  height={24}
+                  alt="FHI Logo"
+                />
+              )}
+              <MantineText fw={500} size="sm" c={isUser ? "blue" : "dark"}>
+                {isUser ? "You" : "FightHealthInsurance Assistant"}
+              </MantineText>
+            </Flex>
+            <Box mt="xs" style={{ width: '90%', padding: '0 10px' }}>
+              {message.status === "typing" ? (
+                  <TypingAnimation />
+              ) : (
+                  <ReactMarkdown>{message.content}</ReactMarkdown>
+              )}
+            </Box>
+          </Box>
+        </Paper>
+      </Flex>
     );
   };
 
   return (
-    <Container fluid size="md" px={0}>
-      <Paper
-        shadow="md"
-        p="md"
-        withBorder
-        style={{
-          height: "calc(100vh - 150px)",
-          display: "flex",
-          flexDirection: "column",
-        }}
-      >
-        <Title order={2} size="xl" fw={700} mb="md">
+    <Container
+      size="lg"
+      px="md"
+      py={0}
+      style={{
+        minHeight: '100vh',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'flex-start',
+        background: '#f4f6fb',
+      }}
+    >
+      {/* Title, subtitle, and button above the chat container */}
+      <Box style={{ width: '100%', maxWidth: 800, margin: '0 auto', textAlign: 'center', marginBottom: 16 }}>
+        <Title order={2} size="sm" fw={700} mb="xs">
           Fight Health Insurance Chat
         </Title>
+        <MantineText size="md" fw={500} c="dimmed" mb={4}>
+          This is a chat interface. Use the text box below to talk to the assistant.
+        </MantineText>
+        <Button
+          color="lime"
+          variant="light"
+          radius="sm"
+          fw={500}
+          style={{
+            background: '#e6f4c2',
+            color: '#5a6b1b',
+            border: 'none',
+            borderRadius: 3,
+            fontWeight: 500,
+            fontSize: 14,
+            paddingTop: 7,
+            paddingBottom: 7,
+            paddingLeft: 14,
+            paddingRight: 14,
+            boxShadow: 'none',
+            transition: 'background 0.2s',
+          }}
+          onClick={() => {
+            localStorage.removeItem("fhi_user_info");
+            window.location.href = "/chat-consent";
+          }}
+          leftSection={<IconUser size={13} />}
+        >
+          Update Personal Info
+        </Button>
+        {state.error && (
+          <MantineText c="red" size="sm" mt="xs">
+            {state.error}
+          </MantineText>
+        )}
+      </Box>
 
-        <Flex justify="space-between" align="center" mb="md">
-          <Box>
-            {state.error && (
-              <MantineText c="red" size="sm">
-                {state.error}
-              </MantineText>
-            )}
-          </Box>
-          <Button
-            variant="subtle"
-            size="xs"
-            onClick={() => {
-              // Clear user info from local storage and redirect to consent form
-              localStorage.removeItem("fhi_user_info");
-              window.location.href = "/chat-consent";
-            }}
-            leftSection={<IconUser size={14} />}
-          >
-            Update Personal Info
-          </Button>
-        </Flex>
+      <Paper
+        shadow="lg"
+        p="xl"
+        withBorder
+        style={{
+          height: "min(700px, 80vh)",
+          minHeight: 500,
+          display: "flex",
+          flexDirection: "column",
+          maxWidth: 800,
+          width: '100%',
+          margin: '0 auto',
+          borderRadius: 24,
+          background: '#fff',
+          boxShadow: '0 4px 32px rgba(0,0,0,0.07)',
+        }}
+      >
+
+
+
 
         <ScrollArea
           flex={1}
@@ -628,83 +679,110 @@ const ChatInterface: React.FC = () => {
         <Box p="xs" style={{ width: "100%", marginTop: "auto" }}>
           <Paper
             radius="lg"
-            p="xs"
+            p="sm"
             shadow="sm"
             withBorder
-            style={{ width: "100%" }}
+            style={{ width: '100%', background: '#f8fafc', borderRadius: 16 }}
           >
-            <Flex align="flex-end" style={{ width: "100%" }}>
-              <Tooltip label="Upload PDF" position="top">
-                <FileButton
-                  onChange={handleFileUpload}
-                  accept="application/pdf"
-                  disabled={state.isLoading || state.isProcessingFile}
-                >
-                  {(props) => (
-                    <ActionIcon
-                      {...props}
-                      size="lg"
-                      variant="light"
-                      radius="xl"
-                      color="gray"
-                      loading={state.isProcessingFile}
-                      disabled={state.isLoading || state.isProcessingFile}
-                      mr="xs"
-                    >
-                      <IconPaperclip size={18} />
-                    </ActionIcon>
-                  )}
-                </FileButton>
-              </Tooltip>
-
-              <ScrollArea.Autosize mah={200} style={{ flex: 1, width: "100%" }}>
-                <Textarea
-                  placeholder={
-                    state.isLoading
-                      ? "Assistant is typing..."
-                      : "Type your message..."
-                  }
-                  value={state.input}
-                  onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
-                    setState({ ...state, input: e.target.value })
-                  }
-                  onKeyDown={(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
-                      e.preventDefault();
-                      handleSendMessage();
-                    }
-                  }}
-                  minRows={3}
-                  maxRows={10}
-                  disabled={state.isLoading || state.isProcessingFile}
-                  styles={{
-                    input: {
-                      width: "100%",
-                    },
-                    root: {
-                      flex: 1,
-                      width: "100%",
-                    },
-                  }}
-                />
-              </ScrollArea.Autosize>
-
-              <ActionIcon
-                onClick={handleSendMessage}
-                size="lg"
-                radius="xl"
-                color="blue"
-                variant="filled"
-                disabled={
-                  !state.input.trim() ||
-                  state.isLoading ||
-                  state.isProcessingFile
+            {/* Two-line input: first line is textarea, second line is icons */}
+            <Box style={{ width: '100%', position: 'relative' }}>
+              <Textarea
+                placeholder={
+                  state.isLoading
+                    ? "Assistant is typing..."
+                    : "Type your message..."
                 }
-                ml="xs"
+                value={state.input}
+                onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
+                  setState({ ...state, input: e.target.value })
+                }
+                onKeyDown={(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSendMessage();
+                  }
+                }}
+                minRows={2}
+                maxRows={2}
+                disabled={state.isLoading || state.isProcessingFile}
+                styles={{
+                  input: {
+                    width: '100%',
+                    minWidth: 0,
+                    background: '#fff',
+                    borderRadius: 10,
+                    border: '1px solid #e3e8f0',
+                    paddingRight: 44, // space for send button inside
+                    paddingLeft: 44, // space for paperclip inside
+                    paddingBottom: 32, // space for buttons row inside
+                    resize: 'none',
+                  },
+                  root: {
+                    position: 'relative',
+                  },
+                }}
+              />
+              {/* Button row inside textarea, absolutely positioned at the bottom */}
+              <Box
+                style={{
+                  position: 'absolute',
+                  left: 0,
+                  right: 0,
+                  bottom: 6,
+                  display: 'flex',
+                  flexDirection: 'row',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  pointerEvents: 'none', // allow textarea to be focused/clicked
+                  paddingLeft: 8,
+                  paddingRight: 8,
+                }}
               >
-                <IconSend size={18} />
-              </ActionIcon>
-            </Flex>
+                <Box style={{ pointerEvents: 'auto' }}>
+                  <Tooltip label="Upload PDF" position="top">
+                    <FileButton
+                      onChange={handleFileUpload}
+                      accept="application/pdf"
+                      disabled={state.isLoading || state.isProcessingFile}
+                    >
+                      {(props) => (
+                        <ActionIcon
+                          {...props}
+                          size="md"
+                          variant="light"
+                          radius="xl"
+                          color="gray"
+                          loading={state.isProcessingFile}
+                          disabled={state.isLoading || state.isProcessingFile}
+                          aria-label="Upload PDF"
+                          style={{ boxShadow: 'none' }}
+                        >
+                          <IconPaperclip size={18} />
+                        </ActionIcon>
+                      )}
+                    </FileButton>
+                  </Tooltip>
+                </Box>
+                <Box style={{ pointerEvents: 'auto' }}>
+                  <ActionIcon
+                    onClick={handleSendMessage}
+                    size="md"
+                    radius="xl"
+                    color="blue"
+                    variant="filled"
+                    disabled={
+                      !state.input.trim() ||
+                      state.isLoading ||
+                      state.isProcessingFile
+                    }
+                    aria-label="Send message"
+                    style={{ boxShadow: 'none' }}
+                  >
+                    <IconSend size={18} />
+                  </ActionIcon>
+                </Box>
+              </Box>
+            </Box>
           </Paper>
         </Box>
       </Paper>

@@ -161,3 +161,6 @@ a.tr
 
 # tracking the requirements hashes
 .requirements_checksum
+
+# Node.js dependencies
+node_modules/
