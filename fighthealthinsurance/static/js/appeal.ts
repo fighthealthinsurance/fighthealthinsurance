@@ -72,19 +72,30 @@ function printAppeal() {
   const completedAppealText =
     (document.getElementById("id_completed_appeal_text") as HTMLTextAreaElement)
       ?.value || "";
-  childWindow.document.open();
-  childWindow.document.write("<html><head></head><body>");
-  childWindow.document.write(completedAppealText.replace(/\n/gi, "<br>"));
-  childWindow.document.write("</body></html>");
-  // Wait 1 second for chrome.
-  setTimeout(function () {
-    console.log("Executed after 1 second");
-  }, 1000);
-  // Does not seem to work on chrome still? But user can print from the window themselves.
-  childWindow.print();
-  console.log("Done!");
-  //    childWindow.document.close();
-  //    childWindow.close();
+
+  if (childWindow) {
+    childWindow.document.open();
+    childWindow.document.write("<html><head></head><body>");
+    childWindow.document.write(completedAppealText.replace(/\n/gi, "<br>"));
+    childWindow.document.write("</body></html>");
+    // Wait 1 second for chrome.
+    setTimeout(function () {
+      console.log("Executed after 1 second");
+      if (childWindow && typeof childWindow.print === "function") {
+        childWindow.print();
+      }
+    }, 1000);
+    console.log("Done!");
+    //    childWindow.document.close();
+    //    childWindow.close();
+  } else {
+    console.error(
+      "Failed to open print window. It might have been blocked by a popup blocker.",
+    );
+    alert(
+      "Failed to open print window. Please check your popup blocker settings.",
+    );
+  }
 }
 
 function setupAppeal() {

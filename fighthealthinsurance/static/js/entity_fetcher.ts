@@ -10,7 +10,9 @@ function processResponseChunk(chunk: string): void {
 
 function done(): void {
   console.log("Moving to the next step :)");
-  submitButton.click();
+  if (submitButton) {
+    submitButton.click();
+  }
 }
 
 function connectWebSocket(
@@ -84,3 +86,37 @@ export function doQuery(
 
 // Make it available
 (window as any).doQuery = doQuery;
+
+document.addEventListener("DOMContentLoaded", () => {
+  const inputElement = document.getElementById(
+    "entity_search",
+  ) as HTMLInputElement | null;
+  const resultsElement = document.getElementById(
+    "search_results",
+  ) as HTMLElement | null;
+  const submitButton = document.getElementById(
+    "submit_button",
+  ) as HTMLButtonElement | null;
+
+  if (submitButton) {
+    submitButton.disabled = true;
+  }
+
+  if (inputElement && resultsElement) {
+    inputElement.addEventListener("input", () => {
+      if (inputElement.value.length > 0) {
+        submitButton!.disabled = false;
+      } else {
+        submitButton!.disabled = true;
+      }
+    });
+
+    resultsElement.addEventListener("click", (event) => {
+      const target = event.target as HTMLElement;
+      if (target.tagName === "LI") {
+        inputElement.value = target.innerText;
+        submitButton!.disabled = false;
+      }
+    });
+  }
+});

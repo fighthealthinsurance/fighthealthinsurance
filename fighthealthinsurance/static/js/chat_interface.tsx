@@ -29,6 +29,32 @@ import {
 import { IconPaperclip, IconSend, IconUser, IconArrowRight } from "./icons";
 import { recognize } from "./scrub_ocr";
 
+// Add to top of file or separate theme file
+const THEME = {
+  colors: {
+    background: '#f4f6fb',
+    buttonBackground: '#e6f4c2',
+    buttonText: '#5a6b1b',
+  },
+  spacing: {
+    headerMargin: 16,
+  },
+  borderRadius: {
+    small: 3,
+    medium: 'xl', // Changed from 30 to 'xl' for very rounded edges
+    large: 24,
+    extraLarge: 'xl', // Stays 'xl' for circular icons
+    buttonDefault: '7px', // Added for default button border radius
+  },
+  buttonSharedStyles: { // Added for common button styles
+    background: '#e6f4c2', // Corresponds to colors.buttonBackground
+    color: '#5a6b1b',    // Corresponds to colors.buttonText
+    border: 'none',
+    boxShadow: 'none',
+    transition: 'background 0.2s',
+  },
+} as const;
+
 // Define types for our chat messages
 interface ChatMessage {
   role: "user" | "assistant";
@@ -511,51 +537,43 @@ const ChatInterface: React.FC = () => {
     const isUser = message.role === "user";
 
     return (
-      <Flex
+      <Paper
         key={index}
-        justify="center"
-        style={{ width: '100%', marginBottom: 10 }}
+        shadow="xs"
+        style={{
+          backgroundColor: isUser ? "#f0f9ff" : "#f9fafb",
+          borderRadius: 12,
+          maxWidth: '85%',
+          marginLeft: isUser ? 'auto' : 0,
+          marginRight: isUser ? 0 : 'auto',
+          paddingTop: 7, // Added padding
+          paddingBottom: 7, // Added padding
+          paddingLeft: 14, // Added padding
+          paddingRight: 14, // Added padding
+          marginTop: 5, // Added margin for better spacing
+        }}
       >
-        <Paper
-          shadow="xs"
-          p="md"
-          ta="left"
-          style={{
-            backgroundColor: isUser ? "#f0f9ff" : "#f9fafb",
-            borderRadius: 18,
-            width: '95%',
-            boxSizing: 'border-box',
-          }}
-        >
-          <Box style={{ 
-              padding: '20px', 
-              margin: '8px 0', 
-              backgroundColor: isUser ? "#f0f9ff" : "#ffffff", 
-              borderRadius: '8px' 
-            }}>
-            <Flex gap="xs" style={{ width: '90%', padding: '0 10px' }}>
-              {!isUser && (
-                <Image
-                  src="/static/images/better-logo.png"
-                  width={24}
-                  height={24}
-                  alt="FHI Logo"
-                />
-              )}
-              <MantineText fw={500} size="sm" c={isUser ? "blue" : "dark"}>
-                {isUser ? "You" : "FightHealthInsurance Assistant"}
-              </MantineText>
-            </Flex>
-            <Box mt="xs" style={{ width: '90%', padding: '0 10px' }}>
-              {message.status === "typing" ? (
-                  <TypingAnimation />
-              ) : (
-                  <ReactMarkdown>{message.content}</ReactMarkdown>
-              )}
-            </Box>
+        <Flex gap="xs" align="flex-start">
+          {!isUser && (
+            <Image
+              src="/static/images/better-logo.png"
+              width={24}
+              height={24}
+              alt="FHI Logo"
+              />
+          )}
+          <Box flex={1}>
+            <MantineText fw={500} size="sm" c={isUser ? "blue" : "dark"} mb="xs">
+              {isUser ? "You" : "FightHealthInsurance Assistant"}
+            </MantineText>
+            {message.status === "typing" ? (
+              <TypingAnimation />
+            ) : (
+              <ReactMarkdown>{message.content}</ReactMarkdown>
+            )}
           </Box>
-        </Paper>
-      </Flex>
+        </Flex>
+      </Paper>
     );
   };
 
@@ -574,8 +592,12 @@ const ChatInterface: React.FC = () => {
       }}
     >
       {/* Title, subtitle, and button above the chat container */}
-      <Box style={{ width: '100%', maxWidth: 800, margin: '0 auto', textAlign: 'center', marginBottom: 16 }}>
-        <Title order={2} size="sm" fw={700} mb="xs">
+      <Box style={{ width: '100%', maxWidth: 800, margin: '0 auto', textAlign: 'center', marginBottom: THEME.spacing.headerMargin }}>
+        <Title
+          order={3}
+          size="24px"
+          style={{ paddingTop: '20px', paddingBottom: '10px' }}
+        >
           Fight Health Insurance Chat
         </Title>
         <MantineText size="md" fw={500} c="dimmed" mb={4}>
@@ -584,21 +606,16 @@ const ChatInterface: React.FC = () => {
         <Button
           color="lime"
           variant="light"
-          radius="sm"
           fw={500}
           style={{
-            background: '#e6f4c2',
-            color: '#5a6b1b',
-            border: 'none',
-            borderRadius: 3,
+            ...THEME.buttonSharedStyles,
+            borderRadius: THEME.borderRadius.buttonDefault,
             fontWeight: 500,
             fontSize: 14,
             paddingTop: 7,
             paddingBottom: 7,
             paddingLeft: 14,
             paddingRight: 14,
-            boxShadow: 'none',
-            transition: 'background 0.2s',
           }}
           onClick={() => {
             localStorage.removeItem("fhi_user_info");
@@ -617,7 +634,7 @@ const ChatInterface: React.FC = () => {
 
       <Paper
         shadow="lg"
-        p="xl"
+        p="xl" // Ensures overall padding for the chat content area
         withBorder
         style={{
           height: "min(700px, 80vh)",
@@ -632,16 +649,12 @@ const ChatInterface: React.FC = () => {
           boxShadow: '0 4px 32px rgba(0,0,0,0.07)',
         }}
       >
-
-
-
-
         <ScrollArea
           flex={1}
-          mb="md"
+          mb="md" // Ensures margin between message list and input area
           style={{ display: "flex", flexDirection: "column" }}
         >
-          <Box p="xs">
+          <Box style={{ marginBottom: 10, marginTop: 10 }}> 
             {state.messages.length === 0 ? (
               <MantineText ta="center" c="dimmed" mt="xl">
                 No messages yet. Start a conversation!
@@ -653,8 +666,7 @@ const ChatInterface: React.FC = () => {
             {state.isLoading && (
               <Paper
                 shadow="xs"
-                p="md"
-                style={{ backgroundColor: "#f9fafb", marginBottom: 10 }}
+                style={{ backgroundColor: "#f9fafb", marginBottom: 10, padding: 10, borderRadius: 12 }}
               >
                 <Flex align="center" gap="xs">
                   <Image
@@ -712,9 +724,9 @@ const ChatInterface: React.FC = () => {
                     background: '#fff',
                     borderRadius: 10,
                     border: '1px solid #e3e8f0',
-                    paddingRight: 44, // space for send button inside
-                    paddingLeft: 44, // space for paperclip inside
-                    paddingBottom: 32, // space for buttons row inside
+                    paddingRight: 12, // Adjusted for more text space
+                    paddingLeft: 12, // Adjusted for more text space
+                    paddingBottom: 40, // Increased for better button spacing
                     resize: 'none',
                   },
                   root: {
@@ -749,13 +761,13 @@ const ChatInterface: React.FC = () => {
                         <ActionIcon
                           {...props}
                           size="md"
-                          variant="light"
-                          radius="xl"
-                          color="gray"
                           loading={state.isProcessingFile}
                           disabled={state.isLoading || state.isProcessingFile}
                           aria-label="Upload PDF"
-                          style={{ boxShadow: 'none' }}
+                          style={{
+                            ...THEME.buttonSharedStyles,
+                            borderRadius: THEME.borderRadius.buttonDefault,
+                          }}
                         >
                           <IconPaperclip size={18} />
                         </ActionIcon>
@@ -767,16 +779,16 @@ const ChatInterface: React.FC = () => {
                   <ActionIcon
                     onClick={handleSendMessage}
                     size="md"
-                    radius="xl"
-                    color="blue"
-                    variant="filled"
                     disabled={
                       !state.input.trim() ||
                       state.isLoading ||
                       state.isProcessingFile
                     }
                     aria-label="Send message"
-                    style={{ boxShadow: 'none' }}
+                    style={{
+                      ...THEME.buttonSharedStyles,
+                      borderRadius: THEME.borderRadius.buttonDefault,
+                    }}
                   >
                     <IconSend size={18} />
                   </ActionIcon>

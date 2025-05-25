@@ -37,7 +37,8 @@ function setupScrub(): void {
     if (node.id.startsWith("store_") || node.id.startsWith("email")) {
       node.addEventListener("change", storeLocal);
       if (node.value == "") {
-        node.value = window.localStorage.getItem(node.id);
+        const storedValue = window.localStorage.getItem(node.id);
+        node.value = storedValue !== null ? storedValue : ""; // Ensure string assignment
       }
     }
   }
@@ -67,6 +68,39 @@ function setupScrub(): void {
     form.denial_text.addEventListener("input", hideErrorMessages);
   } else {
     console.log("Missing form?!?");
+  }
+}
+
+function getScrubbedValue(id: string): string {
+  const element = document.getElementById(id) as HTMLInputElement | null;
+  let value: string | null = null;
+
+  if (element) {
+    value = element.value;
+  }
+
+  // Attempt to retrieve from localStorage if field is empty or element not found
+  if (value === "" || value === null || value === undefined) {
+    const storedValue = localStorage.getItem(id);
+    return storedValue !== null ? storedValue : ""; // Provide default empty string if null
+  }
+  return value; // value is guaranteed to be a string here if not empty or null initially
+}
+
+function storeNodeInLocalStorage(
+  node: HTMLInputElement | HTMLTextAreaElement,
+): void {
+  if (node.value && node.id) {
+    window.localStorage.setItem(node.id, node.value);
+  }
+}
+
+function retrieveFromLocalStorage(node: HTMLInputElement): void {
+  const storedValue = window.localStorage.getItem(node.id);
+  if (storedValue !== null) {
+    node.value = storedValue;
+  } else {
+    node.value = ""; // Default to empty string if not found
   }
 }
 
