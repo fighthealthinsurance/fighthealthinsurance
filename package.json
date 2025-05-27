@@ -1,9 +1,26 @@
 {
+  "name": "fighthealthinsurance-frontend",
+  "version": "1.0.0",
+  "description": "Frontend build setup for Fight Health Insurance",
   "devDependencies": {
+    "babel-loader": "^9.1.0",
+    "@babel/core": "^7.20.0",
+    "@babel/preset-env": "^7.20.0",
+    "@babel/preset-react": "^7.18.0",
+    "@babel/preset-typescript": "^7.20.0",
+    "css-loader": "^6.7.0",
     "glob": "^11.0.2",
+    "style-loader": "^3.3.0",
     "ts-loader": "^9.5.2",
+    "typescript": "^5.0.0",
     "webpack": "^5.99.9",
-    "webpack-cli": "^6.0.1"
+    "webpack-cli": "^6.0.1",
+    "@types/react": "^18.0.0",
+    "@types/react-dom": "^18.0.0"
+  },
+  "dependencies": {
+    "react": "^18.0.0",
+    "react-dom": "^18.0.0"
   },
   "scripts": {
     "build": "webpack",

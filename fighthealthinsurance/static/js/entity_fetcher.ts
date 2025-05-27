@@ -104,10 +104,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
   if (inputElement && resultsElement) {
     inputElement.addEventListener("input", () => {
-      if (inputElement.value.length > 0) {
-        submitButton!.disabled = false;
-      } else {
-        submitButton!.disabled = true;
+      if (submitButton) {
+        if (inputElement.value.length > 0) {
+          submitButton.disabled = false;
+        } else {
+          submitButton.disabled = true;
+        }
       }
     });
 
@@ -115,7 +117,9 @@ document.addEventListener("DOMContentLoaded", () => {
       const target = event.target as HTMLElement;
       if (target.tagName === "LI") {
         inputElement.value = target.innerText;
-        submitButton!.disabled = false;
+        if (submitButton) {
+          submitButton.disabled = false;
+        }
       }
     });
   }

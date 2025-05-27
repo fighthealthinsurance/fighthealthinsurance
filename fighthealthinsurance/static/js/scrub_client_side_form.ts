@@ -105,23 +105,25 @@ export function validateScrubForm(event: Event): void {
   }
 }
 
+// Shared ID array for DRY principle
+const FORM_FIELD_IDS = [
+  "fname",
+  "lname",
+  "dob",
+  "email_address",
+  "subscriber_id",
+  "group_id",
+  "plan_name",
+  "insurance_company",
+  "claim_id",
+  "date_of_service",
+  "denial_reason",
+  "denial_text",
+  "notes",
+];
+
 function storeInLocalStorage(): void {
-  const ids = [
-    "fname",
-    "lname",
-    "dob",
-    "email_address",
-    "subscriber_id",
-    "group_id",
-    "plan_name",
-    "insurance_company",
-    "claim_id",
-    "date_of_service",
-    "denial_reason",
-    "denial_text",
-    "notes",
-  ];
-  ids.forEach((id) => {
+  FORM_FIELD_IDS.forEach((id) => {
     const element = document.getElementById(
       id,
     ) as HTMLInputElement | HTMLTextAreaElement | null;
@@ -132,22 +134,7 @@ function storeInLocalStorage(): void {
 }
 
 function retrieveFromLocalStorage(): void {
-  const ids = [
-    "fname",
-    "lname",
-    "dob",
-    "email_address",
-    "subscriber_id",
-    "group_id",
-    "plan_name",
-    "insurance_company",
-    "claim_id",
-    "date_of_service",
-    "denial_reason",
-    "denial_text",
-    "notes",
-  ];
-  ids.forEach((id) => {
+  FORM_FIELD_IDS.forEach((id) => {
     const element = document.getElementById(
       id,
     ) as HTMLInputElement | HTMLTextAreaElement | null;
@@ -180,7 +167,7 @@ function validateAndStore(): boolean {
   const denialTextLabel = document.getElementById("denial_text_label");
 
   if (emailElement && emailLabel) {
-    if (emailElement.value === "" || !emailElement.value.includes("@")) {
+    if (emailElement.value === "" || !emailElement.validity.valid) {
       emailLabel.style.color = "red";
       isValid = false;
     } else {

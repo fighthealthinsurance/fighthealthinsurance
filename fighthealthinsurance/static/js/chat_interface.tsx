@@ -43,12 +43,12 @@ const THEME = {
     small: 3,
     medium: 'xl', // Changed from 30 to 'xl' for very rounded edges
     large: 24,
-    extraLarge: 'xl', // Stays 'xl' for circular icons
+    extraLarge: 'xl', 
     buttonDefault: '7px', // Added for default button border radius
   },
   buttonSharedStyles: { // Added for common button styles
-    background: '#e6f4c2', // Corresponds to colors.buttonBackground
-    color: '#5a6b1b',    // Corresponds to colors.buttonText
+    background: '#a5c422', // Corresponds to colors.buttonBackground
+    color: "#ffffff",
     border: 'none',
     boxShadow: 'none',
     transition: 'background 0.2s',
@@ -595,7 +595,7 @@ const ChatInterface: React.FC = () => {
       <Box style={{ width: '100%', maxWidth: 800, margin: '0 auto', textAlign: 'center', marginBottom: THEME.spacing.headerMargin }}>
         <Title
           order={3}
-          size="24px"
+          size="28px"
           style={{ paddingTop: '20px', paddingBottom: '10px' }}
         >
           Fight Health Insurance Chat
@@ -604,8 +604,6 @@ const ChatInterface: React.FC = () => {
           This is a chat interface. Use the text box below to talk to the assistant.
         </MantineText>
         <Button
-          color="lime"
-          variant="light"
           fw={500}
           style={{
             ...THEME.buttonSharedStyles,
@@ -634,10 +632,11 @@ const ChatInterface: React.FC = () => {
 
       <Paper
         shadow="lg"
-        p="xl" // Ensures overall padding for the chat content area
+        p="xl"
         withBorder
         style={{
-          height: "min(700px, 80vh)",
+          height: "80vh", // Fixed height for containment
+          maxHeight: "80vh",
           minHeight: 500,
           display: "flex",
           flexDirection: "column",
@@ -647,13 +646,20 @@ const ChatInterface: React.FC = () => {
           borderRadius: 24,
           background: '#fff',
           boxShadow: '0 4px 32px rgba(0,0,0,0.07)',
+          overflow: 'hidden', // Prevent children from overflowing
         }}
       >
+        {/* Message list area */}
         <ScrollArea
-          flex={1}
-          mb="md" // Ensures margin between message list and input area
-          style={{ display: "flex", flexDirection: "column" }}
+          style={{
+            flex: 1,
+            minHeight: 0,
+            overflowY: 'auto',
+            display: 'flex',
+            flexDirection: 'column',
+          }}
         >
+          {/* Messages container with padding and margin for spacing */}
           <Box style={{ marginBottom: 10, marginTop: 10 }}> 
             {state.messages.length === 0 ? (
               <MantineText ta="center" c="dimmed" mt="xl">
@@ -688,7 +694,7 @@ const ChatInterface: React.FC = () => {
           </Box>
         </ScrollArea>
 
-        <Box p="xs" style={{ width: "100%", marginTop: "auto" }}>
+        <Box p="xs" style={{ width: "100%", marginTop: "10px" }}>
           <Paper
             radius="lg"
             p="sm"
@@ -697,7 +703,7 @@ const ChatInterface: React.FC = () => {
             style={{ width: '100%', background: '#f8fafc', borderRadius: 16 }}
           >
             {/* Two-line input: first line is textarea, second line is icons */}
-            <Box style={{ width: '100%', position: 'relative' }}>
+            <Box style={{ width: '100%', position: 'relative'}}>
               <Textarea
                 placeholder={
                   state.isLoading
@@ -728,6 +734,7 @@ const ChatInterface: React.FC = () => {
                     paddingLeft: 12, // Adjusted for more text space
                     paddingBottom: 40, // Increased for better button spacing
                     resize: 'none',
+                    marginBottom: 10, marginTop: 10,
                   },
                   root: {
                     position: 'relative',
@@ -740,7 +747,7 @@ const ChatInterface: React.FC = () => {
                   position: 'absolute',
                   left: 0,
                   right: 0,
-                  bottom: 6,
+                  bottom: 20,
                   display: 'flex',
                   flexDirection: 'row',
                   justifyContent: 'space-between',
