@@ -220,7 +220,7 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
         This is run when the websocket disconnects to avoid blocking the chat flow.
         """
         try:
-            chat = await OngoingChat.objects.aget(id=chat_id)
+            chat: OngoingChat = await OngoingChat.objects.aget(id=chat_id)
 
             # Only process this if we don't already have denied item information
             if not chat.denied_item or not chat.denied_reason:
@@ -252,9 +252,8 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                 # Get the analysis from the model
                 response_text, _ = await model.generate_chat_response(
                     f"{history_text}\n{analysis_prompt}",
-                    is_professional=chat.professional_user is not None,
-                    is_logged_in=chat.user is not None
-                    or chat.professional_user is not None,
+                    is_professional=await sync_to_async(chat.is_professional_user)(),
+                    is_logged_in=await sync_to_async(chat.is_logged_in_user)(),
                 )
 
                 if response_text:
@@ -336,22 +335,21 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
             if not is_authenticated:
                 # Anonymous user with session key
                 professional_user = None
-                self.chat_id = chat_id
 
                 # Check if this is a trial chat (verify session_id exists in ChatLeads)
                 if session_key:
                     try:
-                        self.chat_id = await ChatLeads.objects.aget(session_id=session_key)
+                        chat_lead = await ChatLeads.objects.aget(session_id=session_key)
                         # This is a trial professional chat with a valid ChatLead entry
                         logger.info(
                             f"Trial professional chat for session {session_key}"
                         )
                     except ChatLeads.DoesNotExist:
+                        chat_lead = None
                         logger.info(f"Anonymous chat for session {session_key}")
             elif is_patient:
                 # Patient user (authenticated) -- not yet supported.
                 professional_user = None
-                self.chat_id = chat_id
             else:
                 # Professional user
                 professional_user = await sync_to_async(self._get_professional_user)(
@@ -364,11 +362,10 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                     )
                     professional_user = None
                     is_patient = True
-                self.chat_id = chat_id
-
             chat = await self._get_or_create_chat(
                 user, professional_user, is_patient, chat_id, session_key
             )
+            self.chat_id = chat.id
             if (
                 not hasattr(self, "chat_interface")
                 or self.chat_interface is None

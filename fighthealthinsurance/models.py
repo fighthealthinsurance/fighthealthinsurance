@@ -1084,6 +1084,12 @@ class OngoingChat(models.Model):
         else:
             return f"Ongoing Chat {self.id} (no associated user)"
 
+    def is_professional_user(self):
+        return not self.is_patient
+
+    def is_logged_in_user(self):
+        return self.user is not None
+
 
 class ChatLeads(ExportModelOperationsMixin("ChatLeads"), models.Model):  # type: ignore
     """

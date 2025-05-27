@@ -290,8 +290,9 @@ async def best_within_timelimit(
     Returns:
         The best result according to score_fn, or None if no tasks complete in time
     """
+    # Should not happen :)
     if not tasks:
-        return None
+        return None  # type: ignore[return-value]
 
     # Create task objects with Future results and wrap them
     original_to_task: Dict[asyncio.Task[T], Awaitable[T]] = {}
@@ -299,9 +300,7 @@ async def best_within_timelimit(
 
     for task in tasks:
         # Cast the awaitable to a coroutine to satisfy mypy
-        coroutine: Coroutine[Any, Any, T] = cast(
-            Coroutine[Any, Any, T], task
-        )
+        coroutine: Coroutine[Any, Any, T] = cast(Coroutine[Any, Any, T], task)
         wrapped: asyncio.Task[T] = asyncio.create_task(coroutine)
         wrapped_tasks.append(wrapped)
         original_to_task[wrapped] = task
@@ -339,26 +338,82 @@ async def best_within_timelimit_static(
 ) -> T:
     """
     A simplified version of best_within_timelimit where scores are provided in advance.
+    Returns early if the highest-scored task finishes before the time limit.
+    If the highest-scored task doesn't finish in time, returns the best task completed so far,
+    or if none have completed, waits for the next available task.
 
     Args:
         task_scores: Dictionary mapping awaitable tasks to their static scores
         timeout: Maximum time to wait (seconds)
 
     Returns:
-        The result from the highest-scored task that completes within the timeout
+        - The result from a highest-scored task if one completes within timeout
+        - Otherwise, the result from the best task that completed within timeout
+        - If no tasks completed within the timeout, the result from the first task to complete
     """
     # Should not happen :)
     if not task_scores:
-        return None
+        return None  # type: ignore[return-value]
 
-    # Extract tasks and create a static scoring function
-    tasks: Sequence[Awaitable[T]] = list(task_scores.keys())
+    # Find all tasks with the maximum score
+    max_score = max(task_scores.values())
+    best_tasks = [task for task, score in task_scores.items() if score == max_score]
 
-    def static_score_fn(result: T, task: Awaitable[T]) -> float:
-        return task_scores.get(task, float("-inf"))
+    # Create task objects with Future results and wrap them
+    original_to_task: Dict[asyncio.Task[T], Awaitable[T]] = {}
+    task_to_score: Dict[Awaitable[T], float] = task_scores
+    wrapped_tasks: List[asyncio.Task[T]] = []
+    best_task_set = set(best_tasks)
 
-    # Delegate to the main implementation
-    return await best_within_timelimit(tasks, static_score_fn, timeout)
+    # Create the wrapped tasks
+    for task, score in task_scores.items():
+        coroutine: Coroutine[Any, Any, T] = cast(Coroutine[Any, Any, T], task)
+        wrapped: asyncio.Task[T] = asyncio.create_task(coroutine)
+        wrapped_tasks.append(wrapped)
+        original_to_task[wrapped] = task
+
+    best_result_so_far = None
+    best_score_so_far = float("-inf")
+
+    # Wait for tasks to complete as they finish
+    for future in asyncio.as_completed(wrapped_tasks, timeout=timeout):
+        try:
+            result = await future
+            task = original_to_task[future]
+            score = task_to_score[task]
+
+            # Also track the best result seen so far
+            if score > best_score_so_far:
+                best_score_so_far = score
+                best_result_so_far = result
+
+            # If this is one of our best tasks, return immediately
+            if task in best_task_set:
+                # We don't explicitily cancel since cancel can be blocking depend on GC
+                return result
+
+        except Exception as e:
+            logger.opt(exception=True).warning(
+                f"Task error in best_within_timelimit_static: {e}"
+            )
+            continue
+
+    # If we got here, timeout occurred or all tasks finished but none of the best ones succeeded
+
+    # Return the best result we've seen so far
+    if best_result_so_far is not None:
+        return best_result_so_far
+
+    # Ok grab the first completed, note: we could (in theory) still have multiple complete
+    done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+    for t in done:
+        score = task_to_score[task]
+
+        # Also track the best result seen so far
+        if score > best_score_so_far:
+            best_score_so_far = score
+            best_result_so_far = result
+    return best_result_so_far
 
 
 # Possible future TODO: Add a grace period after required to finish some optional tasks

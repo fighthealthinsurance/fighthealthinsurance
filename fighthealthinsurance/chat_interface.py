@@ -18,7 +18,13 @@ from fhi_users.models import User, ProfessionalUser
 
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.ml.ml_models import RemoteModelLike
-from fighthealthinsurance.models import OngoingChat, Denial, Appeal, PriorAuthRequest, ChatLeads
+from fighthealthinsurance.models import (
+    OngoingChat,
+    Denial,
+    Appeal,
+    PriorAuthRequest,
+    ChatLeads,
+)
 from fighthealthinsurance.pubmed_tools import PubMedTools
 from fighthealthinsurance import settings
 from fighthealthinsurance.prompt_templates import get_intro_template
@@ -88,20 +94,26 @@ class ChatInterface:
             return None, None
         chat = self.chat
         history = history_for_llm
-        short_history = history_for_llm[-2:]  # Only use the last two messages in history
-        full_awaitable: Awaitable[Tuple[Optional[str], Optional[str]]] = model_backend.generate_chat_response(
-            current_message_for_llm,
-            previous_context_summary=previous_context_summary,
-            history=history,
-            is_professional=not self.is_patient,
-            is_logged_in=is_logged_in,
+        short_history = history_for_llm[
+            -2:
+        ]  # Only use the last two messages in history
+        full_awaitable: Awaitable[Tuple[Optional[str], Optional[str]]] = (
+            model_backend.generate_chat_response(
+                current_message_for_llm,
+                previous_context_summary=previous_context_summary,
+                history=history,
+                is_professional=not self.is_patient,
+                is_logged_in=is_logged_in,
+            )
         )
-        short_awaitable: Awaitable[Tuple[Optional[str], Optional[str]]] = model_backend.generate_chat_response(
-            current_message_for_llm,
-            previous_context_summary=previous_context_summary,
-            history=short_history,
-            is_professional=not self.is_patient,
-            is_logged_in=is_logged_in,
+        short_awaitable: Awaitable[Tuple[Optional[str], Optional[str]]] = (
+            model_backend.generate_chat_response(
+                current_message_for_llm,
+                previous_context_summary=previous_context_summary,
+                history=short_history,
+                is_professional=not self.is_patient,
+                is_logged_in=is_logged_in,
+            )
         )
         # Possible calls
         calls: Dict[Awaitable[Tuple[Optional[str], Optional[str]]], float] = {
@@ -221,7 +233,7 @@ class ChatInterface:
                         f"Invalid JSON data {e} in create_or_update_appeal token: {json_data}"
                     )
                     await self.send_error_message(
-                        f"Error processing appeal data: Invalid JSON format {e}"
+                        f"Error processing appeal data: Invalid JSON format {e} -- {json_data}"
                     )
                 except Exception as e:
                     logger.opt(exception=True).warning(
@@ -519,9 +531,10 @@ class ChatInterface:
 
         is_trial_professional = False
 
-        is_trial_professional = await ChatLeads.objects.filter(
-            session_id=chat.session_key
-        ).aexists() and not await ProfessionalUser.objects.filter(user=user).aexists()
+        is_trial_professional = (
+            await ChatLeads.objects.filter(session_id=chat.session_key).aexists()
+            and not await ProfessionalUser.objects.filter(user=user).aexists()
+        )
         if is_new_chat:
             # If this is a trial professional user, add a banner message to the chat history
             if is_trial_professional:
@@ -549,7 +562,7 @@ class ChatInterface:
         final_context_part = None
 
         if is_trial_professional:
-            await asyncio.sleep(0.05) # Half a second delay for trial users.
+            await asyncio.sleep(0.05)  # Half a second delay for trial users.
 
         for model_backend in models:
             try:
@@ -558,7 +571,7 @@ class ChatInterface:
                     llm_input_message,
                     current_llm_context,
                     history_for_llm,  # Pass current history
-                    is_logged_in = not is_trial_professional,
+                    is_logged_in=not is_trial_professional,
                 )
 
                 if response_text and response_text.strip():
