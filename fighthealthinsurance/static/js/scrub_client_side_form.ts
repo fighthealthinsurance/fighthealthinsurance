@@ -20,7 +20,7 @@ function showHiddenMessage(name: string): void {
 export function hideErrorMessages(event: Event): void {
   const form = document.getElementById(
     "fuck_health_insurance_form",
-  ) as HTMLFormElement | null; // Added | null
+  ) as HTMLFormElement | null; 
   if (form == null) {
     return;
   }
@@ -46,11 +46,8 @@ export function hideErrorMessages(event: Event): void {
   }
 }
 export function validateScrubForm(event: Event): void {
-  const form = event.target as HTMLFormElement | null; // Added | null
-  if (!form) {
-    event.preventDefault(); // Prevent submission if form is not found
-    return;
-  }
+  // Listener is bound to the <form>, so currentTarget is always the form
+  const form = event.currentTarget as HTMLFormElement;
   if (
     !form.privacy.checked ||
     !form.personalonly.checked ||

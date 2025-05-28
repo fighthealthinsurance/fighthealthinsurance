@@ -9,7 +9,6 @@ import {
   Paper,
   Text as MantineText,
   ScrollArea,
-  Loader,
   Group as MantineGroup,
   MantineProvider,
   Title,
@@ -18,18 +17,11 @@ import {
   ActionIcon,
   FileButton,
   Tooltip,
-  TextInput,
-  Checkbox,
-  Stack,
-  Anchor,
-  Card,
-  Stepper,
 } from "@mantine/core";
 
-import { IconPaperclip, IconSend, IconUser, IconArrowRight } from "./icons";
+import { IconPaperclip, IconSend, IconUser } from "./icons";
 import { recognize } from "./scrub_ocr";
 
-// Add to top of file or separate theme file
 const THEME = {
   colors: {
     background: '#f4f6fb',
@@ -551,6 +543,7 @@ const ChatInterface: React.FC = () => {
           paddingLeft: 14, // Added padding
           paddingRight: 14, // Added padding
           marginTop: 5, // Added margin for better spacing
+          marginBottom: 5, // Added margin for better spacing
         }}
       >
         <Flex gap="xs" align="flex-start">
@@ -702,106 +695,114 @@ const ChatInterface: React.FC = () => {
             withBorder
             style={{ width: '100%', background: '#f8fafc', borderRadius: 16 }}
           >
-            {/* Two-line input: first line is textarea, second line is icons */}
-            <Box style={{ width: '100%', position: 'relative'}}>
-              <Textarea
-                placeholder={
-                  state.isLoading
-                    ? "Assistant is typing..."
-                    : "Type your message..."
-                }
-                value={state.input}
-                onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
-                  setState({ ...state, input: e.target.value })
-                }
-                onKeyDown={(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    handleSendMessage();
-                  }
-                }}
-                minRows={2}
-                maxRows={2}
-                disabled={state.isLoading || state.isProcessingFile}
-                styles={{
-                  input: {
-                    width: '100%',
-                    minWidth: 0,
-                    background: '#fff',
-                    borderRadius: 10,
-                    border: '1px solid #e3e8f0',
-                    paddingRight: 12, // Adjusted for more text space
-                    paddingLeft: 12, // Adjusted for more text space
-                    paddingBottom: 40, // Increased for better button spacing
-                    resize: 'none',
-                    marginBottom: 10, marginTop: 10,
-                  },
-                  root: {
-                    position: 'relative',
-                  },
-                }}
-              />
-              {/* Button row inside textarea, absolutely positioned at the bottom */}
-              <Box
-                style={{
-                  position: 'absolute',
-                  left: 0,
-                  right: 0,
-                  bottom: 20,
-                  display: 'flex',
-                  flexDirection: 'row',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  pointerEvents: 'none', // allow textarea to be focused/clicked
-                  paddingLeft: 8,
-                  paddingRight: 8,
-                }}
-              >
-                <Box style={{ pointerEvents: 'auto' }}>
-                  <Tooltip label="Upload PDF" position="top">
-                    <FileButton
-                      onChange={handleFileUpload}
-                      accept="application/pdf"
-                      disabled={state.isLoading || state.isProcessingFile}
-                    >
-                      {(props) => (
-                        <ActionIcon
-                          {...props}
-                          size="md"
-                          loading={state.isProcessingFile}
-                          disabled={state.isLoading || state.isProcessingFile}
-                          aria-label="Upload PDF"
-                          style={{
-                            ...THEME.buttonSharedStyles,
-                            borderRadius: THEME.borderRadius.buttonDefault,
+            {/* Two-line input: first line is textarea, second line is icons (now below, not absolutely positioned) */}
+            <Flex direction="column" gap={8} style={{ width: '100%' }}>
+              <Box style={{ position: 'relative', width: '100%' }}>
+                <Flex align="flex-end" style={{ background: '#fff', border: '1px solid #e3e8f0', borderRadius: 10, padding: 4, marginTop: 10 }}>
+                  {/* Textarea with paperclip inside bottom left and send inside bottom right */}
+                  <Box style={{ position: 'relative', flex: 1, width: '100%'}}>
+                    {state.isLoading ? (
+                      <Textarea
+                        style={{ width: '100%' }}
+                        value={""}
+                        placeholder={"Assistant is typing..."}
+                        disabled
+                        styles={{
+                          input: {
+                            border: 'none',
+                            boxShadow: 'none',
+                            background: 'transparent',
+                            resize: 'none',
+                            verticalAlign: 'top',
+                          },
+                          root: {
+                            flex: 1,
+                          },
+                        }}
+                      />
+                    ) : (
+                      <>
+                        <Textarea
+                          placeholder={"Type your message..."}
+                          value={state.input}
+                          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
+                            setState({ ...state, input: e.target.value })
+                          }
+                          onKeyDown={(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+                            if (e.key === "Enter" && !e.shiftKey) {
+                              e.preventDefault();
+                              handleSendMessage();
+                            }
                           }}
-                        >
-                          <IconPaperclip size={18} />
-                        </ActionIcon>
-                      )}
-                    </FileButton>
-                  </Tooltip>
-                </Box>
-                <Box style={{ pointerEvents: 'auto' }}>
-                  <ActionIcon
-                    onClick={handleSendMessage}
-                    size="md"
-                    disabled={
-                      !state.input.trim() ||
-                      state.isLoading ||
-                      state.isProcessingFile
-                    }
-                    aria-label="Send message"
-                    style={{
-                      ...THEME.buttonSharedStyles,
-                      borderRadius: THEME.borderRadius.buttonDefault,
-                    }}
-                  >
-                    <IconSend size={18} />
-                  </ActionIcon>
-                </Box>
+                          minRows={3}
+                          maxRows={3}
+                          autosize={false}
+                          disabled={state.isProcessingFile}
+                          styles={{
+                            input: {
+                              width: '100%',
+                              border: 'none',
+                              boxShadow: 'none',
+                              background: 'transparent',
+                              paddingBottom: 40,
+                              resize: 'none',
+                              verticalAlign: 'top',
+                            },
+                            root: {
+                              flex: 1,
+                            },
+                          }}
+                        />
+                        {/* Paperclip inside bottom left */}
+                        <Box style={{ position: 'absolute', left: 8, bottom: 8, zIndex: 2 }}>
+                          <Tooltip label="Upload PDF" position="top">
+                            <FileButton
+                              onChange={handleFileUpload}
+                              accept="application/pdf"
+                              disabled={state.isProcessingFile}
+                            >
+                              {(props) => (
+                                <ActionIcon
+                                  {...props}
+                                  size="md"
+                                  loading={state.isProcessingFile}
+                                  disabled={state.isProcessingFile}
+                                  aria-label="Upload PDF"
+                                  style={{
+                                    ...THEME.buttonSharedStyles,
+                                    borderRadius: THEME.borderRadius.buttonDefault,
+                                  }}
+                                >
+                                  <IconPaperclip size={18} />
+                                </ActionIcon>
+                              )}
+                            </FileButton>
+                          </Tooltip>
+                        </Box>
+                        {/* Send button inside bottom right */}
+                        <Box style={{ position: 'absolute', right: 8, bottom: 8, zIndex: 2 }}>
+                          <Tooltip label="Send message" position="top">
+                            <ActionIcon
+                              onClick={handleSendMessage}
+                              size="md"
+                              disabled={!state.input.trim() || state.isProcessingFile}
+                              aria-label="Send message"
+                              style={{
+                                ...THEME.buttonSharedStyles,
+                                borderRadius: THEME.borderRadius.buttonDefault,
+                              }}
+                            >
+                              <IconSend size={18} />
+                            </ActionIcon>
+                          </Tooltip>
+                        </Box>
+                        
+                      </>
+                    )}
+                  </Box>
+                </Flex>
               </Box>
-            </Box>
+            </Flex>
           </Paper>
         </Box>
       </Paper>
