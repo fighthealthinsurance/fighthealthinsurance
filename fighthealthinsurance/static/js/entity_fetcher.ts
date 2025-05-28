@@ -1,8 +1,8 @@
 declare const $: any;
+import * as Sentry from '@sentry/browser';
 
-// DOM Elements
-const loadingText = document.getElementById("waiting-msg");
-const submitButton = document.getElementById("next");
+// DOM Elements for WebSocket auto-advance
+const nextButton = document.getElementById("next");
 
 function processResponseChunk(chunk: string): void {
   console.log("Waiting...");
@@ -10,7 +10,13 @@ function processResponseChunk(chunk: string): void {
 
 function done(): void {
   console.log("Moving to the next step :)");
-  submitButton.click();
+  if (nextButton) {
+    (nextButton as HTMLButtonElement).click();
+  } else {
+    const warningMsg = 'entity_fetcher.ts:done() - nextButton (id "next") not found; cannot auto-click to proceed.';
+    console.warn(warningMsg);
+    Sentry.captureMessage(warningMsg, 'warning');
+  }
 }
 
 function connectWebSocket(
@@ -82,5 +88,47 @@ export function doQuery(
   );
 }
 
-// Make it available
+// Expose for invocation
 (window as any).doQuery = doQuery;
+
+// Wire up entity search enabling/disabling
+document.addEventListener("DOMContentLoaded", () => {
+  const inputElement = document.getElementById("entity_search") as HTMLInputElement | null;
+  const resultsElement = document.getElementById("search_results") as HTMLElement | null;
+  const searchSubmitButton = document.getElementById("submit_button") as HTMLButtonElement | null;
+
+  if (!searchSubmitButton) {
+    const warningMsg = 'entity_fetcher.ts:DOMContentLoaded - searchSubmitButton (id "submit_button") not found; cannot enable/disable next step control.';
+    console.warn(warningMsg);
+    Sentry.captureMessage(warningMsg, 'warning');
+  } else {
+    // disable initial state
+    searchSubmitButton.disabled = true;
+  }
+
+  if (inputElement && resultsElement) {
+    inputElement.addEventListener("input", () => {
+      if (searchSubmitButton) {
+        searchSubmitButton.disabled = inputElement.value.length === 0;
+      } else {
+        const warn = 'entity_fetcher.ts:DOMContentLoaded input handler - searchSubmitButton missing';
+        console.warn(warn);
+        Sentry.captureMessage(warn, 'warning');
+      }
+    });
+
+    resultsElement.addEventListener("click", (event) => {
+      const target = event.target as HTMLElement;
+      if (target.tagName === "LI") {
+        inputElement.value = target.innerText;
+        if (searchSubmitButton) {
+          searchSubmitButton.disabled = false;
+        } else {
+          const warn = 'entity_fetcher.ts:DOMContentLoaded results click handler - searchSubmitButton missing';
+          console.warn(warn);
+          Sentry.captureMessage(warn, 'warning');
+        }
+      }
+    });
+  }
+});
