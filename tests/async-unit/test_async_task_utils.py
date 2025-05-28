@@ -188,6 +188,147 @@ class TestAsyncTaskUtils(unittest.TestCase):
         result = await best_within_timelimit_static({}, timeout=0.1)
         assert result is None
 
+    @pytest.mark.asyncio
+    async def test_best_within_timelimit_static_early_return_best_task(self):
+        """Test that best_within_timelimit_static returns early when a best task finishes"""
+        # Create three tasks with different scores and completion times
+        task_fast_low = self.async_task_with_delay("fast_low", 0.1)
+        task_medium_best = self.async_task_with_delay("medium_best", 0.2)
+        task_slow_medium = self.async_task_with_delay("slow_medium", 0.4)
+
+        task_scores = {
+            task_fast_low: 1.0,
+            task_medium_best: 3.0,  # Best score
+            task_slow_medium: 2.0,
+        }
+
+        start_time = time.time()
+        result = await best_within_timelimit_static(task_scores, timeout=1.0)
+        elapsed_time = time.time() - start_time
+
+        # Should return medium_best as soon as it's ready (around 0.2s)
+        # Without waiting for slow_medium
+        assert result == "medium_best"
+        assert elapsed_time < 0.3  # Allow small overhead
+
+    @pytest.mark.asyncio
+    async def test_best_within_timelimit_static_equal_max_scores(self):
+        """Test handling multiple tasks with the same max score (return first to finish)"""
+        # Two tasks with equal best score but different completion times
+        task_fast_best = self.async_task_with_delay("fast_best", 0.1)
+        task_slow_best = self.async_task_with_delay("slow_best", 0.3)
+        task_medium_low = self.async_task_with_delay("medium_low", 0.2)
+
+        task_scores = {
+            task_fast_best: 3.0,  # Tied for best
+            task_slow_best: 3.0,  # Tied for best
+            task_medium_low: 1.0,
+        }
+
+        result = await best_within_timelimit_static(task_scores, timeout=0.5)
+
+        # Should return the first best task to finish (fast_best)
+        assert result == "fast_best"
+
+    @pytest.mark.asyncio
+    async def test_best_within_timelimit_static_best_task_timeout(self):
+        """Test that function returns best completed task when best task times out"""
+        # Best task is too slow, medium task should be returned
+        task_fast_low = self.async_task_with_delay("fast_low", 0.1)
+        task_medium = self.async_task_with_delay("medium", 0.2)
+        task_slow_best = self.async_task_with_delay("slow_best", 0.5)
+
+        task_scores = {
+            task_fast_low: 1.0,
+            task_medium: 2.0,
+            task_slow_best: 3.0,  # Best score but too slow
+        }
+
+        result = await best_within_timelimit_static(task_scores, timeout=0.3)
+
+        # Should return the best task that completed within timeout
+        assert result == "medium"
+
+    @pytest.mark.asyncio
+    async def test_best_within_timelimit_static_all_tasks_fail(self):
+        """Test when all tasks fail with exceptions"""
+        # Create tasks that all fail
+        task1 = self.async_task_that_fails(0.1)
+        task2 = self.async_task_that_fails(0.2)
+
+        task_scores = {
+            task1: 1.0,
+            task2: 2.0,
+        }
+
+        # Should handle all failures gracefully
+        result = await best_within_timelimit_static(task_scores, timeout=0.3)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_best_within_timelimit_static_best_task_fails(self):
+        """Test when the highest-scored task fails"""
+        # Best task fails, should return next best
+        task_ok = self.async_task_with_delay("ok_result", 0.1)
+        task_fail = self.async_task_that_fails(0.2)
+
+        task_scores = {
+            task_ok: 1.0,
+            task_fail: 2.0,  # Higher score but fails
+        }
+
+        result = await best_within_timelimit_static(task_scores, timeout=0.3)
+        assert result == "ok_result"
+
+    @pytest.mark.asyncio
+    async def test_best_within_timelimit_static_all_timeout_with_next_completion(self):
+        """Test when all tasks time out initially but we wait for next completion"""
+        # All tasks exceed initial timeout but one completes soon after
+        task_slow = self.async_task_with_delay("slow", 0.4)
+        task_very_slow = self.async_task_with_delay("very_slow", 0.6)
+
+        task_scores = {
+            task_slow: 1.0,
+            task_very_slow: 2.0,
+        }
+
+        # With timeout of 0.3, both exceed initial timeout but we should get slow task
+        # with extended timeout of 0.5
+        result = await best_within_timelimit_static(
+            task_scores, timeout=0.3, extended_timeout=0.5
+        )
+        assert result == "slow"
+
+    @pytest.mark.asyncio
+    async def test_best_within_timelimit_static_extended_timeout_parameter(self):
+        """Test the configurable extended_timeout parameter"""
+        # Create tasks with different completion times
+        task_medium = self.async_task_with_delay(
+            "medium", 0.4
+        )  # Completes after initial timeout
+        task_slow = self.async_task_with_delay(
+            "slow", 0.8
+        )  # Only completes with extended timeout
+
+        task_scores = {
+            task_medium: 1.0,
+            task_slow: 2.0,  # Higher score but takes longer
+        }
+
+        # With initial timeout of 0.2 and extended timeout of 0.3,
+        # we should get "medium" because "slow" won't complete in time
+        result = await best_within_timelimit_static(
+            task_scores, timeout=0.2, extended_timeout=0.3
+        )
+        assert result == "medium"
+
+        # With initial timeout of 0.2 but extended timeout of 1.0,
+        # we should get "slow" because it has time to complete
+        result = await best_within_timelimit_static(
+            task_scores, timeout=0.2, extended_timeout=1.0
+        )
+        assert result == "slow"
+
     # Tests for execute_critical_optional_fireandforget
     @pytest.mark.asyncio
     async def test_execute_critical_optional_fireandforget_basic(self):
