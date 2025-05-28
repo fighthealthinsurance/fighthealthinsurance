@@ -44,7 +44,7 @@ function done(): void {
     retries = retries + 1;
     doQuery(my_backend_url, my_data);
   } else {
-    clearTimeout(timeoutHandle);
+    clearTimeout(timeoutHandle!);
     hideLoading();
   }
 }

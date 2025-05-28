@@ -37,7 +37,8 @@ function setupScrub(): void {
     if (node.id.startsWith("store_") || node.id.startsWith("email")) {
       node.addEventListener("change", storeLocal);
       if (node.value == "") {
-        node.value = window.localStorage.getItem(node.id);
+        const storedValue = window.localStorage.getItem(node.id);
+        node.value = storedValue !== null ? storedValue : ""; // Ensure string assignment
       }
     }
   }

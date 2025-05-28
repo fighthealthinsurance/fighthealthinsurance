@@ -20,6 +20,7 @@
   "author": "",
   "license": "Apache-2.0",
   "dependencies": {
+    "@sentry/browser": "^8.17.0",
     "@emotion/react": "^11.14.0",
     "@mantine/core": "^8.0.1",
     "@mantine/hooks": "^8.0.1",
