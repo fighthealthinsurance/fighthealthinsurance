@@ -356,7 +356,7 @@ async def best_within_timelimit_static(
     """
     # Should not happen :)
     if not task_scores:
-        return cast(T, None)  # Safe cast since caller must handle None case
+        raise ValueError("No tasks provided for best_within_timelimit_static")
 
     # Find all tasks with the maximum score
     max_score = max(task_scores.values())

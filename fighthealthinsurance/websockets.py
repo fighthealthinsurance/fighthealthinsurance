@@ -338,15 +338,14 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
 
                 # Check if this is a trial chat (verify session_id exists in ChatLeads)
                 if session_key:
-                    try:
-                        chat_lead = await ChatLeads.objects.aget(session_id=session_key)
-                        # This is a trial professional chat with a valid ChatLead entry
-                        logger.info(
-                            f"Trial professional chat for session {session_key}"
-                        )
-                    except ChatLeads.DoesNotExist:
-                        chat_lead = None
-                        logger.info(f"Anonymous chat for session {session_key}")
+                    if await ChatLeads.objects.filter(session_id=session_key).aexists():
+                        is_patient = False
+                    # This is a trial professional chat with a valid ChatLead entry
+                    logger.info(
+                        f"Trial professional chat for session {session_key}"
+                    )
+                else:
+                    is_patient = True  # Default to patient if we can't find the chat lead & non-auth
             elif is_patient:
                 # Patient user (authenticated) -- not yet supported.
                 professional_user = None

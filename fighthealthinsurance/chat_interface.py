@@ -28,7 +28,7 @@ from fighthealthinsurance.models import (
 from fighthealthinsurance.pubmed_tools import PubMedTools
 from fighthealthinsurance import settings
 from fighthealthinsurance.prompt_templates import get_intro_template
-from fighthealthinsurance.utils import as_available_nested, best_within_timelimit_static
+from fighthealthinsurance.utils import best_within_timelimit_static
 
 
 class ChatInterface:
@@ -562,7 +562,7 @@ class ChatInterface:
         final_context_part = None
 
         if is_trial_professional:
-            await asyncio.sleep(0.05)  # Half a second delay for trial users.
+            await asyncio.sleep(0.5)  # Half a second delay for trial users.
 
         for model_backend in models:
             try:
