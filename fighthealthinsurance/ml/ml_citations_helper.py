@@ -194,14 +194,18 @@ class MLCitationsHelper:
                 logger.debug(
                     f"Generating best generic citations for {procedure}/{diagnosis} w/ {partial_awaitables}"
                 )
-                result = (
-                    await best_within_timelimit(
-                        partial_awaitables,
-                        score_fn=cls.make_score_fn(),
-                        timeout=timeout,
+                result = []
+                try:
+                    result = (
+                        await best_within_timelimit(
+                            partial_awaitables,
+                            score_fn=cls.make_score_fn(),
+                            timeout=timeout,
+                        )
+                        or []
                     )
-                    or []
-                )
+                except:
+                    result = []
 
                 # If we have citations, cache them for future use
                 if result:

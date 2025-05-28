@@ -14,14 +14,21 @@ from typing import (
     Any,
     Union,
 )  # Added Any, Union
-from fhi_users.models import User  # Import the correct User model
+from fhi_users.models import User, ProfessionalUser
 
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.ml.ml_models import RemoteModelLike
-from fighthealthinsurance.models import OngoingChat, Denial, Appeal, PriorAuthRequest
+from fighthealthinsurance.models import (
+    OngoingChat,
+    Denial,
+    Appeal,
+    PriorAuthRequest,
+    ChatLeads,
+)
 from fighthealthinsurance.pubmed_tools import PubMedTools
 from fighthealthinsurance import settings
 from fighthealthinsurance.prompt_templates import get_intro_template
+from fighthealthinsurance.utils import best_within_timelimit_static
 
 
 class ChatInterface:
@@ -77,6 +84,7 @@ class ChatInterface:
         previous_context_summary: Optional[str],
         history_for_llm: List[Dict[str, str]],
         depth: int = 0,
+        is_logged_in: bool = True,
     ) -> Tuple[Optional[str], Optional[str]]:
         """
         Calls the LLM, handles PubMed query requests if present and returns the response.
@@ -85,12 +93,36 @@ class ChatInterface:
         if depth > 2:
             return None, None
         chat = self.chat
-        response_text, context_part = await model_backend.generate_chat_response(
-            current_message_for_llm,
-            previous_context_summary=previous_context_summary,
-            history=history_for_llm,
-            is_professional=not self.is_patient,
-            is_logged_in=self.user is not None,
+        history = history_for_llm
+        short_history = history_for_llm[
+            -2:
+        ]  # Only use the last two messages in history
+        full_awaitable: Awaitable[Tuple[Optional[str], Optional[str]]] = (
+            model_backend.generate_chat_response(
+                current_message_for_llm,
+                previous_context_summary=previous_context_summary,
+                history=history,
+                is_professional=not self.is_patient,
+                is_logged_in=is_logged_in,
+            )
+        )
+        short_awaitable: Awaitable[Tuple[Optional[str], Optional[str]]] = (
+            model_backend.generate_chat_response(
+                current_message_for_llm,
+                previous_context_summary=previous_context_summary,
+                history=short_history,
+                is_professional=not self.is_patient,
+                is_logged_in=is_logged_in,
+            )
+        )
+        # Possible calls
+        calls: Dict[Awaitable[Tuple[Optional[str], Optional[str]]], float] = {
+            full_awaitable: 100.0,
+            short_awaitable: 50.0,
+        }
+        response_text, context_part = await best_within_timelimit_static(
+            calls,
+            timeout=40.0,
         )
 
         pubmed_context_str = ""
@@ -201,7 +233,7 @@ class ChatInterface:
                         f"Invalid JSON data {e} in create_or_update_appeal token: {json_data}"
                     )
                     await self.send_error_message(
-                        f"Error processing appeal data: Invalid JSON format {e}"
+                        f"Error processing appeal data: Invalid JSON format {e} -- {json_data}"
                     )
                 except Exception as e:
                     logger.opt(exception=True).warning(
@@ -373,6 +405,7 @@ class ChatInterface:
                                 previous_context_summary,
                                 history_for_llm,
                                 depth=depth + 1,
+                                is_logged_in=is_logged_in,
                             )
                         )
                         if cleaned_response and additional_response_text:
@@ -413,7 +446,6 @@ class ChatInterface:
         """
         chat = self.chat
         # Handle chat ↔ appeal/prior auth linking if requested
-        from fighthealthinsurance.models import Appeal, PriorAuthRequest
 
         link_message = None
         user_facing_message = None
@@ -497,7 +529,26 @@ class ChatInterface:
         is_new_chat = not bool(chat.chat_history)
         llm_input_message = user_message
 
+        is_trial_professional = False
+
+        is_trial_professional = (
+            await ChatLeads.objects.filter(session_id=chat.session_key).aexists()
+            and not await ProfessionalUser.objects.filter(user=user).aexists()
+        )
         if is_new_chat:
+            # If this is a trial professional user, add a banner message to the chat history
+            if is_trial_professional:
+                trial_banner = {
+                    "role": "system",
+                    "content": "⚠️ You're using a free trial version. Responses may be slower, and features like linked appeals and prior auths require a full professional account.\n\nWant full access? [Create a free account →](/signup)",
+                    "timestamp": timezone.now().isoformat(),
+                }
+
+                # We don't add the trial banner to the history since it needs to go user -> agent -> user.
+
+                # Send the trial banner to the client
+                await self.send_json_message_func(trial_banner)
+
             user_info_str = await self._get_user_info()
             template = get_intro_template(chat.is_patient)
             llm_input_message = template.format(
@@ -510,6 +561,9 @@ class ChatInterface:
         final_response_text = None
         final_context_part = None
 
+        if is_trial_professional:
+            await asyncio.sleep(0.5)  # Half a second delay for trial users.
+
         for model_backend in models:
             try:
                 response_text, context_part = await self._call_llm_with_actions(
@@ -517,6 +571,7 @@ class ChatInterface:
                     llm_input_message,
                     current_llm_context,
                     history_for_llm,  # Pass current history
+                    is_logged_in=not is_trial_professional,
                 )
 
                 if response_text and response_text.strip():
@@ -534,13 +589,42 @@ class ChatInterface:
             if not chat.chat_history:
                 chat.chat_history = []
 
-            chat.chat_history.append(
-                {
-                    "role": "user",
-                    "content": user_message,  # Original user message
-                    "timestamp": timezone.now().isoformat(),
-                }
-            )
+            # Check for duplicate messages - don't add the same user message twice in a row
+            is_duplicate = False
+            if chat.chat_history and len(chat.chat_history) > 0:
+                last_message = chat.chat_history[-1]
+                if (
+                    last_message.get("role") == "user"
+                    and last_message.get("content") == user_message
+                ):
+                    is_duplicate = True
+                    logger.info(
+                        f"Duplicate message detected in chat {chat.id}, not adding to history again"
+                    )
+
+            # Check for messages that should be merged - if the last message is from the user and there's been no response
+            should_merge = False
+            merged_message = user_message
+            if not is_duplicate and chat.chat_history and len(chat.chat_history) > 0:
+                last_message = chat.chat_history[-1]
+                if last_message.get("role") == "user":
+                    # User sent two messages in a row with no assistant response in between
+                    # Merge them together
+                    should_merge = True
+                    merged_message = f"{last_message.get('content')} {user_message}"
+                    logger.info(f"Merging consecutive user messages in chat {chat.id}")
+                    # Remove the last message since we're merging it
+                    chat.chat_history = chat.chat_history[:-1]
+
+            # Add the user message to history (unless it's a duplicate)
+            if not is_duplicate:
+                chat.chat_history.append(
+                    {
+                        "role": "user",
+                        "content": merged_message if should_merge else user_message,
+                        "timestamp": timezone.now().isoformat(),
+                    }
+                )
 
             if final_context_part:
                 if not chat.summary_for_next_call:

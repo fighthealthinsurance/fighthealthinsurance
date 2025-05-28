@@ -5,6 +5,7 @@ from django.urls import path
 from django.conf import settings
 
 from fighthealthinsurance import rest_views
+from fighthealthinsurance import chat_lead_views
 
 from rest_framework import routers
 
@@ -24,6 +25,7 @@ router.register(
 )
 
 router.register(r"chats", rest_views.ChatViewSet, basename="chats")
+router.register(r"chat-leads", chat_lead_views.ChatLeadsViewSet, basename="chat-leads")
 
 
 router.register(
