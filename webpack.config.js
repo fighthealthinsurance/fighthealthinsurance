@@ -19,6 +19,8 @@ try {
 }
 
 module.exports = {
+  // Set context to project root so modules resolve from root-level node_modules
+  context: __dirname,
   mode: 'development',
   entry: entries,
   output: {
@@ -26,7 +28,13 @@ module.exports = {
     filename: '[name].bundle.js',
   },
   resolve: {
+    // Ensure webpack looks in root node_modules
+    modules: [path.resolve(__dirname, 'node_modules'), 'node_modules'],
     extensions: ['.tsx', '.ts', '.js'],
+    // Explicit alias so @sentry/browser resolves to root node_modules
+    alias: {
+      '@sentry/browser': path.resolve(__dirname, 'node_modules', '@sentry', 'browser'),
+    },
   },
   module: {
     rules: [

@@ -1,3 +1,4 @@
+declare const $: any;
 import * as Sentry from '@sentry/browser';
 
 // DOM Elements for WebSocket auto-advance
