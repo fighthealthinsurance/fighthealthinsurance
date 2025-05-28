@@ -28,12 +28,14 @@ module.exports = {
     filename: '[name].bundle.js',
   },
   resolve: {
-    // Ensure webpack looks in root node_modules
-    modules: [path.resolve(__dirname, 'node_modules'), 'node_modules'],
+    // Ensure webpack looks in static/js/node_modules first
+    modules: [
+      path.resolve(__dirname, 'fighthealthinsurance', 'static', 'js', 'node_modules'),
+      'node_modules'
+    ],
     extensions: ['.tsx', '.ts', '.js'],
-    // Explicit alias so @sentry/browser resolves to root node_modules
     alias: {
-      '@sentry/browser': path.resolve(__dirname, 'node_modules', '@sentry', 'browser'),
+      '@sentry/browser': require.resolve('@sentry/browser'),
     },
   },
   module: {
