@@ -85,6 +85,7 @@ class ChatInterface:
         history_for_llm: List[Dict[str, str]],
         depth: int = 0,
         is_logged_in: bool = True,
+        is_professional: bool = True,
     ) -> Tuple[Optional[str], Optional[str]]:
         """
         Calls the LLM, handles PubMed query requests if present and returns the response.
@@ -406,6 +407,7 @@ class ChatInterface:
                                 history_for_llm,
                                 depth=depth + 1,
                                 is_logged_in=is_logged_in,
+                                is_professional=is_professional,
                             )
                         )
                         if cleaned_response and additional_response_text:
@@ -535,6 +537,7 @@ class ChatInterface:
             await ChatLeads.objects.filter(session_id=chat.session_key).aexists()
             and not await ProfessionalUser.objects.filter(user=user).aexists()
         )
+        is_patient = self.is_patient
         if is_new_chat:
             # If this is a trial professional user, add a banner message to the chat history
             if is_trial_professional:
@@ -571,7 +574,7 @@ class ChatInterface:
                     llm_input_message,
                     current_llm_context,
                     history_for_llm,  # Pass current history
-                    is_logged_in=not is_trial_professional,
+                    is_logged_in=(not is_trial_professional) and not is_patient,
                 )
 
                 if response_text and response_text.strip():
