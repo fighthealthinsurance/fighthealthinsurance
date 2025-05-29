@@ -17,6 +17,7 @@ from fighthealthinsurance.models import (
     OngoingChat,
     ProfessionalUser,
     ChatLeads,
+    Denial
 )
 from fighthealthinsurance.generate_prior_auth import prior_auth_generator
 from .chat_interface import ChatInterface
@@ -306,6 +307,7 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
         is_patient = data.get(
             "is_patient", False
         )  # New parameter to identify patient users
+        email = data.get("email", None)  # Email for patient users so we can delete data
         session_key = data.get("session_key", None)  # Session key for anonymous users
 
         logger.debug(
@@ -341,9 +343,7 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                     if await ChatLeads.objects.filter(session_id=session_key).aexists():
                         is_patient = False
                     # This is a trial professional chat with a valid ChatLead entry
-                    logger.info(
-                        f"Trial professional chat for session {session_key}"
-                    )
+                    logger.info(f"Trial professional chat for session {session_key}")
                 else:
                     is_patient = True  # Default to patient if we can't find the chat lead & non-auth
             elif is_patient:
@@ -362,7 +362,8 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                     professional_user = None
                     is_patient = True
             chat = await self._get_or_create_chat(
-                user, professional_user, is_patient, chat_id, session_key
+                user, professional_user, is_patient, chat_id, session_key,
+                email=email
             )
             self.chat_id = chat.id
             if (
@@ -416,6 +417,7 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
         is_patient=False,
         chat_id=None,
         session_key=None,
+        email=None,  # Email for patient users so we can handle data deletion later
     ):
         """Get an existing chat or create a new one."""
         if chat_id:
@@ -475,6 +477,7 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                 is_patient=True,
                 chat_history=[],
                 summary_for_next_call=[],
+                hashed_email=Denial.get_hashed_email(email) if email else None,
             )
         else:
             # Professional user
