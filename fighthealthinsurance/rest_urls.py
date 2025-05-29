@@ -45,6 +45,11 @@ router.register(
     rest_views.MailingListSubscriberViewSet,
     basename="subscribe",
 )
+router.register(
+    r"demo_request",
+    rest_views.DemoRequestsViewSet,
+    basename="demorequest",
+)
 router.register(r"prior-auth", rest_views.PriorAuthViewSet, basename="prior-auth")
 router.register(
     r"prior-auth/(?P<prior_auth_id>[^/.]+)/proposals",

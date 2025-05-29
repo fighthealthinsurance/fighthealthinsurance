@@ -104,6 +104,20 @@ class MailingListSubscriber(models.Model):
         return self.email
 
 
+class DemoRequests(models.Model):
+    id = models.AutoField(primary_key=True)
+    email = models.EmailField()
+    name = models.CharField(max_length=300, default="", blank=True)
+    company = models.CharField(max_length=300, default="", blank=True)
+    role = models.CharField(max_length=300, default="", blank=True)
+    source = models.CharField(max_length=300, default="", blank=True)
+    signup_date = models.DateField(auto_now_add=True)
+    phone = models.CharField(max_length=300, default="", blank=True)
+
+    def __str__(self):
+        return self.email
+
+
 class FollowUpType(models.Model):
     id = models.AutoField(primary_key=True)
     name = models.CharField(max_length=300, default="")
