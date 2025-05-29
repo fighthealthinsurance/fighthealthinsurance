@@ -19,7 +19,7 @@ import {
   Tooltip,
 } from "@mantine/core";
 
-import { IconPaperclip, IconSend, IconUser } from "./icons";
+import { IconPaperclip, IconSend, IconUser, IconRefresh } from "./icons";
 import { recognize } from "./scrub_ocr";
 
 const THEME = {
@@ -35,7 +35,7 @@ const THEME = {
     small: 3,
     medium: 'xl', // Changed from 30 to 'xl' for very rounded edges
     large: 24,
-    extraLarge: 'xl', 
+    extraLarge: 'xl',
     buttonDefault: '7px', // Added for default button border radius
   },
   buttonSharedStyles: { // Added for common button styles
@@ -268,23 +268,10 @@ const ChatInterface: React.FC = () => {
 
   // Initialize chat interface on load
   useEffect(() => {
-    const userInfo = getUserInfo();
-
-    // Add a welcome message from the assistant
+    // Add a welcome message from the assistant if no messages exist
     if (state.messages.length === 0) {
-      const welcomeMessage: ChatMessage = {
-        role: "assistant",
-        content: userInfo
-          ? `Welcome to Fight Health Insurance, ${userInfo.firstName}! I'm here to help you with your health insurance questions and appeals. Feel free to ask me anything or upload relevant documents using the paperclip icon.`
-          : "Welcome to Fight Health Insurance! I'm here to help you with your health insurance questions and appeals. Feel free to ask me anything or upload relevant documents using the paperclip icon.",
-        timestamp: new Date().toISOString(),
-        status: "done",
-      };
-
-      setState((prev) => ({
-        ...prev,
-        messages: [welcomeMessage],
-      }));
+      // Use startNewChat to initialize chat with welcome message
+      startNewChat(false); // false means don't close websocket
     }
   }, [state.messages.length]);
 
@@ -300,6 +287,7 @@ const ChatInterface: React.FC = () => {
   // Connect to the WebSocket when the component mounts
   useEffect(() => {
     const connectWebSocket = () => {
+      console.log("Connecting to WebSocket...");
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
       const wsUrl = `${protocol}//${window.location.host}/ws/ongoing-chat/`;
 
@@ -308,14 +296,27 @@ const ChatInterface: React.FC = () => {
         console.log("WebSocket connected");
         wsRef.current = ws;
 
+        // Get user info for potential email data
+        const userInfo = getUserInfo();
+        const messageData = {
+          session_key: getSessionKey(),
+          email: userInfo?.email, // Send email if available
+          is_patient: true, // Indicate this is a patient session
+        };
+
         // If we have a chat ID, request the chat history
         if (state.chatId) {
+          console.log("Replaying chat history for chat ID:", state.chatId);
           ws.send(
             JSON.stringify({
+              ...messageData,
               chat_id: state.chatId,
               replay: true,
             }),
           );
+        } else {
+          // If we don't have a chat ID no replay is needed
+          console.log("Waiting for user input to start new chat");
         }
       };
 
@@ -357,9 +358,11 @@ const ChatInterface: React.FC = () => {
             ...prev,
             messages: processedMessages,
           }));
-        } else if (data.chat_id && !state.chatId) {
-          // Save the chat ID for future use
+        } else if (data.chat_id) {
+          // Always update the chat ID when received from server
+          // This handles both new chats and reconnecting to existing ones
           localStorage.setItem("fhi_chat_id", data.chat_id);
+          console.log("Setting chat ID:", data.chat_id);
           setState((prev) => ({
             ...prev,
             chatId: data.chat_id,
@@ -465,6 +468,7 @@ const ChatInterface: React.FC = () => {
             content: scrubbedContent, // Use scrubbed content
             is_patient: true,
             session_key: getSessionKey(),
+            email: userInfo?.email, // Include email for server-side processing
             is_document: true,
             document_name: file.name,
           };
@@ -522,6 +526,55 @@ const ChatInterface: React.FC = () => {
     };
 
     wsRef.current.send(JSON.stringify(messageToSend));
+  };
+
+  // Handle starting a new chat
+  const startNewChat = (resetWebSocket: boolean = true) => {
+    console.log("Starting new chat...");
+    // Always clear the chat ID from localStorage when starting a new chat
+    if (resetWebSocket) {
+      console.log("Resetting chat ID in localStorage");
+      localStorage.removeItem("fhi_chat_id");
+    } else {
+      console.log("Keeping existing chat ID in localStorage");
+    }
+
+    let chatId = localStorage.getItem("fhi_chat_id");
+
+    // Reset the chat state
+    setState({
+      messages: [],
+      isLoading: false,
+      input: "",
+      chatId: chatId, // Reset chat ID
+      error: null,
+      isProcessingFile: false,
+    });
+
+    // Handle WebSocket for a new chat
+    if (resetWebSocket) {
+      // If we're requesting a complete reset, close and reconnect WebSocket
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        // Close existing WebSocket - it will reconnect via useEffect
+        wsRef.current.close();
+      }
+    }
+
+    // Add welcome message again
+    const userInfo = getUserInfo();
+    const welcomeMessage: ChatMessage = {
+      role: "assistant",
+      content: userInfo
+        ? `Welcome to Fight Health Insurance, ${userInfo.firstName}! I'm here to help you with your health insurance questions and appeals. Feel free to ask me anything or upload relevant documents using the paperclip icon.`
+        : "Welcome to Fight Health Insurance! I'm here to help you with your health insurance questions and appeals. Feel free to ask me anything or upload relevant documents using the paperclip icon.",
+      timestamp: new Date().toISOString(),
+      status: "done",
+    };
+
+    setState((prev) => ({
+      ...prev,
+      messages: [welcomeMessage],
+    }));
   };
 
   // Render each chat message
@@ -596,26 +649,45 @@ const ChatInterface: React.FC = () => {
         <MantineText size="md" fw={500} c="dimmed" mb={4}>
           This is a chat interface. Use the text box below to talk to the assistant.
         </MantineText>
-        <Button
-          fw={500}
-          style={{
-            ...THEME.buttonSharedStyles,
-            borderRadius: THEME.borderRadius.buttonDefault,
-            fontWeight: 500,
-            fontSize: 14,
-            paddingTop: 7,
-            paddingBottom: 7,
-            paddingLeft: 14,
-            paddingRight: 14,
-          }}
-          onClick={() => {
-            localStorage.removeItem("fhi_user_info");
-            window.location.href = "/chat-consent";
-          }}
-          leftSection={<IconUser size={13} />}
-        >
-          Update Personal Info
-        </Button>
+        <MantineGroup gap="md" justify="center">
+          <Button
+            fw={500}
+            style={{
+              ...THEME.buttonSharedStyles,
+              borderRadius: THEME.borderRadius.buttonDefault,
+              fontWeight: 500,
+              fontSize: 14,
+              paddingTop: 7,
+              paddingBottom: 7,
+              paddingLeft: 14,
+              paddingRight: 14,
+            }}
+            onClick={() => startNewChat(true)}
+            leftSection={<IconRefresh size={13} />}
+          >
+            New Chat
+          </Button>
+          <Button
+            fw={500}
+            style={{
+              ...THEME.buttonSharedStyles,
+              borderRadius: THEME.borderRadius.buttonDefault,
+              fontWeight: 500,
+              fontSize: 14,
+              paddingTop: 7,
+              paddingBottom: 7,
+              paddingLeft: 14,
+              paddingRight: 14,
+            }}
+            onClick={() => {
+              localStorage.removeItem("fhi_user_info");
+              window.location.href = "/chat-consent";
+            }}
+            leftSection={<IconUser size={13} />}
+          >
+            Update Personal Info
+          </Button>
+        </MantineGroup>
         {state.error && (
           <MantineText c="red" size="sm" mt="xs">
             {state.error}
@@ -653,7 +725,7 @@ const ChatInterface: React.FC = () => {
           }}
         >
           {/* Messages container with padding and margin for spacing */}
-          <Box style={{ marginBottom: 10, marginTop: 10 }}> 
+          <Box style={{ marginBottom: 10, marginTop: 10 }}>
             {state.messages.length === 0 ? (
               <MantineText ta="center" c="dimmed" mt="xl">
                 No messages yet. Start a conversation!
@@ -796,7 +868,7 @@ const ChatInterface: React.FC = () => {
                             </ActionIcon>
                           </Tooltip>
                         </Box>
-                        
+
                       </>
                     )}
                   </Box>

@@ -1052,6 +1052,29 @@ class OngoingChat(models.Model):
     domain = models.ForeignKey(
         UserDomain, null=True, on_delete=models.SET_NULL, blank=True
     )
+    # Hashed email for the user, used for anonymization and privacy
+    hashed_email = models.CharField(
+        max_length=300, null=True, blank=True, help_text="Hashed email of the user"
+    )
+
+    @staticmethod
+    def find_chats_by_email(email: str):
+        """
+        Find all chats associated with an email address.
+        Used for data deletion requests and privacy compliance.
+        """
+        if not email:
+            return OngoingChat.objects.none()
+
+        # Hash the email for lookup
+        hashed_email = Denial.get_hashed_email(email)
+
+        # Look for chats with matching hashed email
+        return OngoingChat.objects.filter(
+            Q(hashed_email=hashed_email)
+            | Q(user__email=email)
+            | Q(professional_user__user__email=email)
+        )
 
     def summarize_professional_user(self) -> str:
         if self.is_patient and self.user:
