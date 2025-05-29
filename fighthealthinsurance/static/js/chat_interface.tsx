@@ -362,6 +362,7 @@ const ChatInterface: React.FC = () => {
           // Always update the chat ID when received from server
           // This handles both new chats and reconnecting to existing ones
           localStorage.setItem("fhi_chat_id", data.chat_id);
+          console.log("Setting chat ID:", data.chat_id);
           setState((prev) => ({
             ...prev,
             chatId: data.chat_id,
@@ -534,14 +535,18 @@ const ChatInterface: React.FC = () => {
     if (resetWebSocket) {
       console.log("Resetting chat ID in localStorage");
       localStorage.removeItem("fhi_chat_id");
+    } else {
+      console.log("Keeping existing chat ID in localStorage");
     }
+
+    let chatId = localStorage.getItem("fhi_chat_id");
 
     // Reset the chat state
     setState({
       messages: [],
       isLoading: false,
       input: "",
-      chatId: null, // Reset chat ID
+      chatId: chatId, // Reset chat ID
       error: null,
       isProcessingFile: false,
     });
