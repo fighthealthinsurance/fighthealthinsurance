@@ -467,6 +467,7 @@ const ChatInterface: React.FC = () => {
             content: scrubbedContent, // Use scrubbed content
             is_patient: true,
             session_key: getSessionKey(),
+            email: userInfo?.email, // Include email for server-side processing
             is_document: true,
             document_name: file.name,
           };
