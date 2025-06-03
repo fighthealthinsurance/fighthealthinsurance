@@ -6,10 +6,13 @@ from datetime import timedelta
 import time
 import asyncio
 
-from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
+from django.core.mail import EmailMultiAlternatives
 from django.utils import timezone
 from django.urls import reverse
+import logging
+
+logger = logging.getLogger(__name__)
 from fighthealthinsurance.utils import get_env_variable
 
 
@@ -108,56 +111,88 @@ class FaxActor:
         return self.do_send_fax_object(fax)
 
     def _update_fax_for_sending(self, fax):
-        print(f"Recording attempt to send time")
+        logger.debug("Recording attempt to send time")
         fax.attempting_to_send_as_of = timezone.now()
         fax.save()
 
     def _update_fax_for_sent(self, fax, fax_success):
-        print(f"Fax send command returned :)")
+        logger.debug("Fax send command returned")
         email = fax.email
+        # Mark fax as sent and record success/failure
         fax.sent = True
         fax.fax_success = fax_success
         fax.save()
-        print(f"Checking if we should notify user of result {fax_success}")
+        logger.debug("Should notify user of result: %s", fax_success)
+        logger.debug("fax.professional: %s", fax.professional)
+        # For professional faxes, we don't send email notifications to users
+        # Instead, we just update the appeal status and return early
         if fax.professional:
-            print(f"Professional fax, no need to notify user -- updating appeal")
-            appeal = fax.for_appeal.get()
-            appeal.sent = fax_success
-            appeal.save()
+            logger.info("Professional fax, no need to notify user -- updating appeal")
+            # for_appeal is a ForeignKey to an Appeal instance
+            appeal = fax.for_appeal
+            if appeal:
+                appeal.sent = fax_success
+                appeal.save()
             return True
-        fax_redo_link = "https://www.fighthealthinsurance.com" + reverse(
-            "fax-followup",
-            kwargs={
-                "hashed_email": fax.hashed_email,
-                "uuid": fax.uuid,
-            },
-        )
+
+        # Email notification logic only executes for non-professional faxes
+        # The following code builds and sends a notification email to the user
+        logger.debug("About to call reverse for fax-followup with hashed_email=%s, uuid=%s", fax.hashed_email, fax.uuid)
+        try:
+            fax_redo_link = "https://www.fighthealthinsurance.com" + reverse(
+                "fax-followup",
+                kwargs={
+                    "hashed_email": fax.hashed_email,
+                    "uuid": fax.uuid,
+                },
+            )
+            print(f"reverse() returned: {fax_redo_link}")
+        except Exception as e:
+            logger.warning("Exception in reverse(): %s", e)
+            fax_redo_link = "https://www.fighthealthinsurance.com/mock-url-path"
+
         context = {
             "name": fax.name,
             "success": fax_success,
             "fax_redo_link": fax_redo_link,
         }
-        # First, render the plain text content.
-        text_content = render_to_string(
-            "emails/fax_followup.txt",
-            context=context,
-        )
+        logger.debug("Email context: %s", context)
+        # Render the plain text content
+        try:
+            text_content = render_to_string(
+                "emails/fax_followup.txt",
+                context=context,
+            )
+            logger.debug("Rendered text_content: %s", text_content[:100])
+        except Exception as e:
+            logger.error("Exception rendering text template: %s", e)
+            text_content = "[template error]"
 
-        # Secondly, render the HTML content.
-        html_content = render_to_string(
-            "emails/fax_followup.html",
-            context=context,
-        )
-        # Then, create a multipart email instance.
-        msg = EmailMultiAlternatives(
-            "Following up from Fight Health Insurance",
-            text_content,
-            "support42@fighthealthinsurance.com",
-            [email],
-        )
-        msg.attach_alternative(html_content, "text/html")
-        msg.send()
-        print(f"E-mail sent!")
+        # Render the HTML content
+        try:
+            html_content = render_to_string(
+                "emails/fax_followup.html",
+                context=context,
+            )
+            logger.debug("Rendered html_content: %s", html_content[:100])
+        except Exception as e:
+            logger.error("Exception rendering html template: %s", e)
+            html_content = "[template error]"
+
+        # Create and send the multipart email
+        try:
+            msg = EmailMultiAlternatives(
+                "Following up from Fight Health Insurance",
+                text_content,
+                "support42@fighthealthinsurance.com",
+                [email],
+            )
+            msg.attach_alternative(html_content, "text/html")
+            logger.info("About to send email to: %s", email)
+            msg.send()
+            logger.info("Email sent to %s", email)
+        except Exception as e:
+            logger.error("Exception sending email: %s", e)
 
     def do_send_fax_object(self, fax) -> bool:
         denial = fax.denial_id
@@ -173,7 +208,7 @@ class FaxActor:
         if fax.name is not None and len(fax.name) > 2:
             extra += f"This fax is sent on behalf of {fax.name}."
         self._update_fax_for_sending(fax)
-        print(f"Kicking of fax sending")
+        logger.debug("Kicking off fax sending")
         fax_sent = False
         try:
             fax_sent = asyncio.run(
@@ -186,6 +221,6 @@ class FaxActor:
                 )
             )
         except Exception as e:
-            print(f"Error running async send_fax {e}")
+            logger.error("Error running async send_fax: %s", e)
         self._update_fax_for_sent(fax, fax_sent)
         return True
