@@ -10,6 +10,7 @@ from fighthealthinsurance import forms as core_forms
 from fighthealthinsurance.models import (
     Appeal,
     DenialTypes,
+    DemoRequests,
     MailingListSubscriber,
     ProposedAppeal,
     AppealAttachment,
@@ -408,6 +409,13 @@ class MailingListSubscriberSerializer(serializers.ModelSerializer):
     class Meta:
         model = MailingListSubscriber
         fields = ["email", "name"]
+
+
+# Demo request
+class DemoRequestsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DemoRequests
+        fields = ["email", "name", "company", "role", "source", "phone"]
 
 
 class SendToUserSerializer(serializers.Serializer):
