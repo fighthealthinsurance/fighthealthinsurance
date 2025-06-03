@@ -31,6 +31,7 @@ from fighthealthinsurance import common_view_logic
 from fighthealthinsurance.models import (
     MailingListSubscriber,
     SecondaryAppealProfessionalRelation,
+    DemoRequests,
 )
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance import rest_serializers as serializers
@@ -1037,6 +1038,28 @@ class MailingListSubscriberViewSet(viewsets.ViewSet, CreateMixin, DeleteMixin):
     def perform_delete(self, request: Request, serializer):
         email = serializer.validated_data["email"]
         MailingListSubscriber.objects.filter(email=email).delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class DemoRequestsViewSet(viewsets.ViewSet, CreateMixin, DeleteMixin):
+    serializer_class = serializers.DemoRequestsSerializer
+
+    @extend_schema(responses=serializers.StatusResponseSerializer)
+    def create(self, request: Request) -> Response:
+        return super().create(request)
+
+    @extend_schema(responses=serializers.StatusResponseSerializer)
+    def perform_create(self, request: Request, serializer) -> Response:
+        serializer.save()
+        return Response(
+            serializers.StatusResponseSerializer({"status": "subscribed"}).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    @extend_schema(responses=serializers.StatusResponseSerializer)
+    def perform_delete(self, request: Request, serializer):
+        email = serializer.validated_data["email"]
+        DemoRequests.objects.filter(email=email).delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
