@@ -7,7 +7,7 @@ pytest-cov
 pytest-django
 pytest-xdist
 isort==4.3.21
-mypy
+mypy==1.15.0
 easyocr
 daphne
 pytest-asyncio
