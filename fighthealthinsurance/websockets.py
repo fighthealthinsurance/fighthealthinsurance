@@ -440,10 +440,21 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
         if chat_id:
             # Chat ids should be secure they're random UUIDs.
             try:
-                chat = await OngoingChat.objects.aget(id=chat_id)
+                chat = (
+                    await OngoingChat.objects.prefetch_related()
+                    .select_related()
+                    .aget(id=chat_id)
+                )
+                # But let's also check session key and user just to be safe.
+                if chat.session_key and session_key != chat.session_key:
+                    raise OngoingChat.DoesNotExist("Session key mismatch")
+                if chat.user and chat.user != user:
+                    raise OngoingChat.DoesNotExist("User mismatch")
                 return chat
             except OngoingChat.DoesNotExist as e:
-                logger.warning(f"Chat with id {chat_id} not found. Creating new chat.", e)
+                logger.warning(
+                    f"Chat with id {chat_id} not found. Creating new chat.", e
+                )
                 pass  # Fall through to create a new one
 
         # Create a new chat
