@@ -303,7 +303,7 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
         # Get the required data -- note the message should be sent as "content"
         # but we also accept "message" for backward compatibility.
         message = data.get("message", data.get("content", None))
-        chat_id = data.get("chat_id", None)
+        chat_id = data.get("chat_id", self.chat_id)
         replay_requested = data.get("replay", False)
         iterate_on_appeal = data.get("iterate_on_appeal")
         iterate_on_prior_auth = data.get("iterate_on_prior_auth")
@@ -438,32 +438,23 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
     ):
         """Get an existing chat or create a new one."""
         if chat_id:
+            # Chat ids should be secure they're random UUIDs.
             try:
-                # If chat_id is provided, try to find the chat
-                if is_patient and user and user.is_authenticated:
-                    # For patient users, look up by user
-                    return (
-                        await OngoingChat.objects.prefetch_related()
-                        .select_related()
-                        .aget(id=chat_id, user=user, is_patient=True)
-                    )
-                elif session_key:
-                    # For anonymous users, look up by session_key
-                    return (
-                        await OngoingChat.objects.prefetch_related()
-                        .select_related()
-                        .aget(id=chat_id, session_key=session_key)
-                    )
-                else:
-                    # For professional users, look up by professional_user
-                    return (
-                        await OngoingChat.objects.prefetch_related()
-                        .select_related()
-                        .aget(id=chat_id, professional_user=professional_user)
-                    )
-            except OngoingChat.DoesNotExist:
-                # Fall through to create a new chat
-                logger.warning(f"Chat with id {chat_id} not found. Creating new chat.")
+                chat = (
+                    await OngoingChat.objects.prefetch_related()
+                    .select_related()
+                    .aget(id=chat_id)
+                )
+                # But let's also check session key and user just to be safe.
+                if chat.session_key and session_key != chat.session_key:
+                    raise OngoingChat.DoesNotExist("Session key mismatch")
+                if chat.user and chat.user != user:
+                    raise OngoingChat.DoesNotExist("User mismatch")
+                return chat
+            except OngoingChat.DoesNotExist as e:
+                logger.warning(
+                    f"Chat with id {chat_id} not found. Creating new chat.", e
+                )
                 pass  # Fall through to create a new one
 
         # Create a new chat
