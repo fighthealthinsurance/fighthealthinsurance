@@ -304,13 +304,16 @@ const ChatInterface: React.FC = () => {
           is_patient: true, // Indicate this is a patient session
         };
 
-        // If we have a chat ID, request the chat history
-        if (state.chatId) {
-          console.log("Replaying chat history for chat ID:", state.chatId);
+        // If we have a chat ID, request the chat history we explicitily refresh from local storage
+        // so reconnect does not capture the old state.
+        let chatId = localStorage.getItem("fhi_chat_id");
+
+        if (chatId) {
+          console.log("Replaying chat history for chat ID:", chatId);
           ws.send(
             JSON.stringify({
               ...messageData,
-              chat_id: state.chatId,
+              chat_id: chatId,
               replay: true,
             }),
           );
@@ -541,6 +544,7 @@ const ChatInterface: React.FC = () => {
 
     let chatId = localStorage.getItem("fhi_chat_id");
 
+    console.log("Reseting the chat state");
     // Reset the chat state
     setState({
       messages: [],
