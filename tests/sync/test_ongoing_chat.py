@@ -25,6 +25,89 @@ else:
 
 
 class OngoingChatWebSocketTest(APITestCase):
+
+    async def test_analyze_denied_items_guardrails(self):
+        """Test _analyze_denied_items stores denied_item and denied_reason independently and applies guardrails."""
+        await self.asyncSetUp()
+        mock_model = MockChatModel()
+        from fighthealthinsurance.ml.ml_router import ml_router
+        original_get_chat_backends = ml_router.get_chat_backends
+        ml_router.get_chat_backends = lambda use_external=False: [mock_model]
+
+        try:
+            consumer = OngoingChatConsumer()
+            user = await sync_to_async(User.objects.create_user)(
+                username="denieduser", password="testpass", email="denied@example.com"
+            )
+
+            # Case 1: Both denied_item and denied_reason are empty/unclear (patient)
+            chat1 = await sync_to_async(OngoingChat.objects.create)(
+                is_patient=True,
+                user=user,
+                chat_history=[{"role": "user", "content": "I have a question about insurance coverage."}],
+                summary_for_next_call=[],
+            )
+            mock_model.set_next_response('{"denied_item": null, "denied_reason": null}', "")
+            await consumer._analyze_denied_items(str(chat1.id))
+            refreshed1 = await sync_to_async(OngoingChat.objects.get)(id=str(chat1.id))
+            self.assertIsNone(refreshed1.denied_item)
+            self.assertIsNone(refreshed1.denied_reason)
+
+            # Case 2: Only denied_item is clear (patient)
+            chat2 = await sync_to_async(OngoingChat.objects.create)(
+                is_patient=True,
+                user=user,
+                chat_history=[{"role": "user", "content": "My doctor ordered an MRI scan but it wasn't covered."}],
+                summary_for_next_call=[],
+            )
+            mock_model.set_next_response('{"denied_item": "MRI scan", "denied_reason": null}', "")
+            await consumer._analyze_denied_items(str(chat2.id))
+            refreshed2 = await sync_to_async(OngoingChat.objects.get)(id=str(chat2.id))
+            self.assertEqual(refreshed2.denied_item, "MRI scan")
+            self.assertIsNone(refreshed2.denied_reason)
+
+            # Case 3: Only denied_reason is clear (patient)
+            chat3 = await sync_to_async(OngoingChat.objects.create)(
+                is_patient=True,
+                user=user,
+                chat_history=[{"role": "user", "content": "Insurance said my procedure wasn't needed."}],
+                summary_for_next_call=[],
+            )
+            mock_model.set_next_response('{"denied_item": null, "denied_reason": "Lack of medical necessity"}', "")
+            await consumer._analyze_denied_items(str(chat3.id))
+            refreshed3 = await sync_to_async(OngoingChat.objects.get)(id=str(chat3.id))
+            self.assertIsNone(refreshed3.denied_item)
+            self.assertEqual(refreshed3.denied_reason, "Lack of medical necessity")
+
+            # Case 4: Both are clear (patient)
+            chat4 = await sync_to_async(OngoingChat.objects.create)(
+                is_patient=True,
+                user=user,
+                chat_history=[{"role": "user", "content": "My back pain MRI was denied as not medically necessary."}],
+                summary_for_next_call=[],
+            )
+            mock_model.set_next_response('{"denied_item": "MRI scan", "denied_reason": "Lack of medical necessity"}', "")
+            await consumer._analyze_denied_items(str(chat4.id))
+            refreshed4 = await sync_to_async(OngoingChat.objects.get)(id=str(chat4.id))
+            self.assertEqual(refreshed4.denied_item, "MRI scan")
+            self.assertEqual(refreshed4.denied_reason, "Lack of medical necessity")
+
+            # Case 5: Unclear/generic values (should not store) (patient)
+            chat5 = await sync_to_async(OngoingChat.objects.create)(
+                is_patient=True,
+                user=user,
+                chat_history=[{"role": "user", "content": "I'm not sure what to do about my claim."}],
+                summary_for_next_call=[],
+            )
+            mock_model.set_next_response('{"denied_item": "unknown", "denied_reason": "unclear"}', "")
+            await consumer._analyze_denied_items(str(chat5.id))
+            refreshed5 = await sync_to_async(OngoingChat.objects.get)(id=str(chat5.id))
+            self.assertIsNone(refreshed5.denied_item)
+            self.assertIsNone(refreshed5.denied_reason)
+
+        finally:
+            ml_router.get_chat_backends = original_get_chat_backends
+        await self.asyncTearDown()
     """Test the WebSocket endpoints for ongoing chat."""
 
     async def asyncSetUp(self):
