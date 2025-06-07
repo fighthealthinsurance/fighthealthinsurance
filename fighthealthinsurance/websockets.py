@@ -222,6 +222,7 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
         """
         Analyzes the chat history to identify denied items and reasons.
         This is run when the websocket disconnects to avoid blocking the chat flow.
+        Adds logging for the prompt and guardrails to avoid storing unclear denials.
         """
         try:
             chat: OngoingChat = await OngoingChat.objects.aget(id=chat_id)
@@ -253,9 +254,12 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                     "If you cannot determine either field, respond with null for that field."
                 )
 
+                full_prompt = f"{history_text}\n{analysis_prompt}"
+                logger.info(f"Prompt for denied item extraction (chat {chat_id}):\n{full_prompt}")
+
                 # Get the analysis from the model
                 response_text, _ = await model.generate_chat_response(
-                    f"{history_text}\n{analysis_prompt}",
+                    full_prompt,
                     is_professional=await sync_to_async(chat.is_professional_user)(),
                     is_logged_in=await sync_to_async(chat.is_logged_in_user)(),
                 )
@@ -269,16 +273,34 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                             denied_item = analysis_data.get("denied_item")
                             denied_reason = analysis_data.get("denied_reason")
 
-                            # Update the chat record
-                            if denied_item:
-                                chat.denied_item = denied_item
-                            if denied_reason:
-                                chat.denied_reason = denied_reason
+                            logger.info(f"[DEBUG] chat_id={chat_id} denied_item={denied_item!r} denied_reason={denied_reason!r} (raw analysis_data={analysis_data!r})")
 
-                            await chat.asave()
-                            logger.info(
-                                f"Updated chat {chat_id} with denied item: {denied_item}, reason: {denied_reason}"
-                            )
+                            # Guardrails: Only store if both are non-empty, not null, and not generic/unclear
+                            def is_clear(val):
+                                if not val:
+                                    return False
+                                val_str = str(val).strip().lower()
+
+                                unclear_phrases = [
+                                    "not clear", "unknown", "unclear", "n/a", "none", "null", "", "no denial", "could not determine"
+                                ]
+                                return val_str not in unclear_phrases
+
+                            updated = False
+                            if is_clear(denied_item):
+                                chat.denied_item = denied_item
+                                updated = True
+                                logger.info(f"Updated chat {chat_id} with denied item: {denied_item}")
+                            if is_clear(denied_reason):
+                                chat.denied_reason = denied_reason
+                                updated = True
+                                logger.info(f"Updated chat {chat_id} with denied reason: {denied_reason}")
+                            if updated:
+                                await chat.asave()
+                            else:
+                                logger.info(
+                                    f"Did not store denied item or reason for chat {chat_id} due to unclear or missing values."
+                                )
                         except json.JSONDecodeError:
                             logger.warning(
                                 f"Could not parse JSON from analysis response: {response_text}"
