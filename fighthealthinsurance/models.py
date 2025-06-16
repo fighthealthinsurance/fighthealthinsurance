@@ -1142,6 +1142,7 @@ class ChatLeads(ExportModelOperationsMixin("ChatLeads"), models.Model):  # type:
     agreed_to_terms = models.BooleanField()  # Required
     session_id = models.CharField(max_length=255, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    drug = models.CharField(max_length=255, null=True, blank=True)
 
     class Meta:
         verbose_name = "Chat Lead"
