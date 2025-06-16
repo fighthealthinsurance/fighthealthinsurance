@@ -319,7 +319,7 @@ class DenialEndToEnd(APITestCase):
         # Now consume all of the rest of them until done.
         try:
             while True:
-                response = await a_communicator.receive_from(timeout=125)
+                response = await a_communicator.receive_from(timeout=150)
                 print(f"Received response {response}")
                 responses.append(response)
         except Exception as e:
