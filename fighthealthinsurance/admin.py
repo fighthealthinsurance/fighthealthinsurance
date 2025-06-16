@@ -54,7 +54,7 @@ class ChatLeadsAdmin(admin.ModelAdmin):
         "company",
         "email",
     )
-    search_fields = ("company")
+    search_fields = ("company", "name")
     ordering = ("-created_at",)
 
 

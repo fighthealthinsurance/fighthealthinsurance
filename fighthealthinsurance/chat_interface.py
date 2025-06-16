@@ -537,13 +537,16 @@ class ChatInterface:
         try:
             if await ChatLeads.objects.filter(session_id=chat.session_key).aexists():
                 lead = await ChatLeads.objects.filter(session_id=chat.session_key).afirst()
-                if not lead.drug or lead.drug == "":
+                drug = None
+                if lead:
+                    drug = lead.drug
+                if not drug or drug == "":
                     # If the lead is not linked to a drug, they are a trial professional
                     if not await ProfessionalUser.objects.filter(user=user).aexists():
                         is_trial_professional = True
                 else:
                     logger.debug(
-                        f"User is a lead with a drug {lead.drug} -- not a trial professional"
+                        f"User is a lead with a drug {drug} -- not a trial professional"
                     )
         except Exception as e:
             logger.warning(
