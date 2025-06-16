@@ -533,10 +533,27 @@ class ChatInterface:
 
         is_trial_professional = False
 
-        is_trial_professional = (
-            await ChatLeads.objects.filter(session_id=chat.session_key).aexists()
-            and not await ProfessionalUser.objects.filter(user=user).aexists()
-        )
+        # Check if the user is a trial professional
+        try:
+            if await ChatLeads.objects.filter(session_id=chat.session_key).aexists():
+                lead = await ChatLeads.objects.filter(session_id=chat.session_key).afirst()
+                drug = None
+                if lead:
+                    drug = lead.drug
+                if not drug or drug == "":
+                    # If the lead is not linked to a drug, they are a trial professional
+                    if not await ProfessionalUser.objects.filter(user=user).aexists():
+                        is_trial_professional = True
+                else:
+                    logger.debug(
+                        f"User is a lead with a drug {drug} -- not a trial professional"
+                    )
+        except Exception as e:
+            logger.warning(
+                f"Error checking if user is a trial professional: {e}"
+            )
+            is_trial_professional = True
+
         is_patient = self.is_patient
         if is_new_chat:
             # If this is a trial professional user, add a banner message to the chat history
