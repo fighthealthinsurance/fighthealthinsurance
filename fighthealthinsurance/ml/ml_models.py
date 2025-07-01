@@ -1732,6 +1732,7 @@ class NewRemoteInternal(RemoteFullOpenLike):
             self.url = f"http://{self.host}:{self.port}/v1"
         else:
             logger.debug(f"Error setting up remote health {self.host}:{self.port}")
+        self.backup_url = None
         if self.secondary_host is not None:
             self.backup_url = f"http://{self.secondary_host}:{self.secondary_port}/v1"
         super().__init__(
