@@ -6,6 +6,7 @@ from .auth_forms import (
     TOTPForm,
     FinishPasswordResetForm,
     RequestPasswordResetForm,
+    EmailOnlyLoginForm,
 )
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
@@ -505,3 +506,12 @@ class ChangePasswordSerializer(serializers.Serializer):
 
     current_password = serializers.CharField(write_only=True, required=True)
     new_password = serializers.CharField(write_only=True, required=True)
+
+
+class EmailOnlyLoginFormSerializer(FormSerializer):
+    """
+    Handles email-only login form data for user authentication.
+    """
+
+    class Meta(object):
+        form = EmailOnlyLoginForm

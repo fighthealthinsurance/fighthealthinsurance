@@ -246,7 +246,7 @@ class ProfessionalUser(models.Model):
                 domain_opt = domains.first()
                 if domain_opt:
                     if domain_opt.office_fax:
-                        return domain_opt.office_fax # type: ignore
+                        return domain_opt.office_fax  # type: ignore
         return None
 
     def get_full_name(self):
