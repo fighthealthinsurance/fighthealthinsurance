@@ -1,7 +1,7 @@
 ARG RAY_VERSION
 
-FROM rayproject/ray:${RAY_VERSION}-aarch64 as base-arm64
+FROM rayproject/ray:${RAY_VERSION}-py312-aarch64 as base-arm64
 
-FROM rayproject/ray:${RAY_VERSION} as base-amd64
+FROM rayproject/ray:${RAY_VERSION}-py312 as base-amd64
 
 FROM base-${TARGETARCH}
