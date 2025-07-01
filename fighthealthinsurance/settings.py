@@ -129,7 +129,6 @@ class Base(Configuration):
         "compressor_toolkit",
         "django_extensions",
         "django_tables2",
-        "django_nose",
         "static_thumbnails",
         "memoize",
         "django_recaptcha",
