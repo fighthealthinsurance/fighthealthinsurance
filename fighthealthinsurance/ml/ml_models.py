@@ -479,6 +479,7 @@ class RemoteOpenLike(RemoteModel):
         backup_api_base=None,
         expensive=False,
         max_len=4096 * 8,
+        dual_mode: bool = False,
     ):
         self.api_base = api_base
         self.token = token
@@ -498,6 +499,7 @@ class RemoteOpenLike(RemoteModel):
         )
         self.backup_api_base = backup_api_base
         self._expensive = expensive
+        self.dual_mode = dual_mode
 
     def get_system_prompts(self, prompt_type: str, prof_pov=False) -> list[str]:
         """
@@ -1017,21 +1019,71 @@ class RemoteOpenLike(RemoteModel):
         try:
             for system_prompt in system_prompts:
                 # Call the actual inference method
-                raw_response = await self.__timeout_infer(
-                    system_prompt=system_prompt,
-                    prompt=prompt,
-                    patient_context=patient_context,
-                    plan_context=plan_context,
-                    pubmed_context=pubmed_context,
-                    ml_citations_context=ml_citations_context,
-                    temperature=temperature,
-                    history=history,
-                    model=self.model,
-                )
+                raw_response = None
+                if self.dual_mode and self.backup_api_base:
+                    # In dual mode, run primary and backup concurrently and return the first result
+                    primary_task = asyncio.create_task(
+                        self.__timeout_infer(
+                            system_prompt=system_prompt,
+                            prompt=prompt,
+                            patient_context=patient_context,
+                            plan_context=plan_context,
+                            pubmed_context=pubmed_context,
+                            ml_citations_context=ml_citations_context,
+                            temperature=temperature,
+                            history=history,
+                            model=self.model,
+                        )
+                    )
+
+                    backup_task = asyncio.create_task(
+                        self.__timeout_infer(
+                            system_prompt=system_prompt,
+                            prompt=prompt,
+                            patient_context=patient_context,
+                            plan_context=plan_context,
+                            pubmed_context=pubmed_context,
+                            ml_citations_context=ml_citations_context,
+                            temperature=temperature,
+                            history=history,
+                            model=self.model,
+                            api_base=self.backup_api_base,
+                        )
+                    )
+
+                    # Wait for the first task to complete
+                    done, pending = await asyncio.wait(
+                        [primary_task, backup_task], return_when=asyncio.FIRST_COMPLETED
+                    )
+
+                    # Get the result from the completed task
+                    for task in done:
+                        result = await task
+                        if result and result[0]:
+                            raw_response = result
+                            break
+                    # If the first result was not valid grab the pending task.
+                    for task in pending:
+                        result = await task
+                        if result and result[0]:
+                            raw_response = result
+                            break
+                else:
+                    raw_response = await self.__timeout_infer(
+                        system_prompt=system_prompt,
+                        prompt=prompt,
+                        patient_context=patient_context,
+                        plan_context=plan_context,
+                        pubmed_context=pubmed_context,
+                        ml_citations_context=ml_citations_context,
+                        temperature=temperature,
+                        history=history,
+                        model=self.model,
+                    )
                 if raw_response and raw_response[0]:
                     return raw_response
 
-                # Try backup API if primary failed
+                # Try backup API if primary failed (even in dual mode)
                 if self.backup_api_base:
                     backup_response = await self.__timeout_infer(
                         system_prompt=system_prompt,
@@ -1285,6 +1337,7 @@ class RemoteFullOpenLike(RemoteOpenLike):
         expensive=False,
         backup_api_base=None,
         max_len=None,
+        dual_mode: bool = False,
     ):
         systems = {
             "full_patient": [
@@ -1385,6 +1438,7 @@ class RemoteFullOpenLike(RemoteOpenLike):
             expensive=expensive,
             backup_api_base=backup_api_base,
             max_len=max_len,
+            dual_mode=dual_mode,
         )
 
     async def get_appeal_questions(
@@ -1624,7 +1678,7 @@ class RemoteFullOpenLike(RemoteOpenLike):
 
 
 class RemoteHealthInsurance(RemoteFullOpenLike):
-    def __init__(self, model: str):
+    def __init__(self, model: str, dual_mode: bool = False):
         self.port = os.getenv("HEALTH_BACKEND_PORT", "80")
         self.host = os.getenv("HEALTH_BACKEND_HOST")
         self.backup_port = os.getenv("HEALTH_BACKUP_BACKEND_PORT", self.port)
@@ -1639,7 +1693,11 @@ class RemoteHealthInsurance(RemoteFullOpenLike):
         self.backup_url = f"http://{self.backup_host}:{self.backup_port}/v1"
         logger.debug(f"Setting backup to {self.backup_url}")
         super().__init__(
-            self.url, token="", backup_api_base=self.backup_url, model=model
+            self.url,
+            token="",
+            backup_api_base=self.backup_url,
+            model=model,
+            dual_mode=dual_mode,
         )
 
     @property
@@ -1662,9 +1720,11 @@ class RemoteHealthInsurance(RemoteFullOpenLike):
 
 
 class NewRemoteInternal(RemoteFullOpenLike):
-    def __init__(self, model: str):
+    def __init__(self, model: str, dual_mode: bool = False):
         self.port = os.getenv("NEW_HEALTH_BACKEND_PORT", "80")
         self.host = os.getenv("NEW_HEALTH_BACKEND_HOST")
+        self.secondary_port = os.getenv("SECONDARY_NEW_HEALTH_BACKEND_PORT", "80")
+        self.secondary_host = os.getenv("SECONDARY_NEW_HEALTH_BACKEND_HOST")
         if self.host is None:
             raise Exception("Can not construct New FHI backend without a host")
         self.url = None
@@ -1672,7 +1732,16 @@ class NewRemoteInternal(RemoteFullOpenLike):
             self.url = f"http://{self.host}:{self.port}/v1"
         else:
             logger.debug(f"Error setting up remote health {self.host}:{self.port}")
-        super().__init__(self.url, token="", model=model, max_len=4096 * 20)
+        if self.secondary_host is not None:
+            self.backup_url = f"http://{self.secondary_host}:{self.secondary_port}/v1"
+        super().__init__(
+            self.url,
+            backup_api_base=self.backup_url,
+            token="",
+            model=model,
+            max_len=4096 * 20,
+            dual_mode=dual_mode,
+        )
 
     @property
     def external(self):
@@ -1704,12 +1773,12 @@ class NewRemoteInternal(RemoteFullOpenLike):
 class RemotePerplexity(RemoteFullOpenLike):
     """Use RemotePerplexity for denial magic calls a service"""
 
-    def __init__(self, model: str):
+    def __init__(self, model: str, dual_mode: bool = False):
         api_base = "https://api.perplexity.ai"
         token = os.getenv("PERPLEXITY_API")
         if token is None or len(token) < 1:
             raise Exception("No token found for perplexity")
-        super().__init__(api_base, token, model=model)
+        super().__init__(api_base, token, model=model, dual_mode=dual_mode)
 
     @property
     def supports_system(self):
@@ -1734,12 +1803,12 @@ class RemotePerplexity(RemoteFullOpenLike):
 class DeepInfra(RemoteFullOpenLike):
     """Use DeepInfra."""
 
-    def __init__(self, model: str):
+    def __init__(self, model: str, dual_mode: bool = False):
         api_base = "https://api.deepinfra.com/v1/openai"
         token = os.getenv("DEEPINFRA_API")
         if token is None or len(token) < 1:
             raise Exception("No token found for deepinfra")
-        super().__init__(api_base, token, model=model)
+        super().__init__(api_base, token, model=model, dual_mode=dual_mode)
 
     @property
     def supports_system(self):
