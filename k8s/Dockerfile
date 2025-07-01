@@ -1,6 +1,6 @@
-FROM python:3.11.10-bullseye as base-arm64
+FROM python:3.12.11-bookworm as base-arm64
 
-FROM python:3.11.10-bullseye as base-amd64
+FROM python:3.12.11-bookworm as base-amd64
 
 FROM base-${TARGETARCH}
 

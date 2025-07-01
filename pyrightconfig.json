@@ -1,9 +1,15 @@
 {
   "include": ["**/*.py"],
-  "exclude": ["**/migrations/**"],
+  "exclude": ["**/migrations/",
+  "**/.*",
+  "**/*.py[cod]",
+  "**/__pycache__/",
+  "**/node_modules/",
+  "**/*.sqlite3*",
+  ],
   "typeCheckingMode": "strict",
   "useLibraryCodeForTypes": true,
   "reportMissingTypeStubs": false,
-  "pythonVersion": "3.10",
+  "pythonVersion": "3.12",
   "pythonPlatform": "Linux"
 }

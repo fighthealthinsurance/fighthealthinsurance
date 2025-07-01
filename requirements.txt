@@ -8,6 +8,7 @@ black
 bokeh
 numpy
 channels
+chardet
 django>=5.0.0
 django-cms
 djangocms-attributes-field
