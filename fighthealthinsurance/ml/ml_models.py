@@ -1678,7 +1678,7 @@ class RemoteFullOpenLike(RemoteOpenLike):
 
 
 class RemoteHealthInsurance(RemoteFullOpenLike):
-    def __init__(self, model: str, dual_mode: bool = False):
+    def __init__(self, model: str, dual_mode: bool = True):
         self.port = os.getenv("HEALTH_BACKEND_PORT", "80")
         self.host = os.getenv("HEALTH_BACKEND_HOST")
         self.backup_port = os.getenv("HEALTH_BACKUP_BACKEND_PORT", self.port)
@@ -1720,7 +1720,7 @@ class RemoteHealthInsurance(RemoteFullOpenLike):
 
 
 class NewRemoteInternal(RemoteFullOpenLike):
-    def __init__(self, model: str, dual_mode: bool = False):
+    def __init__(self, model: str, dual_mode: bool = True):
         self.port = os.getenv("NEW_HEALTH_BACKEND_PORT", "80")
         self.host = os.getenv("NEW_HEALTH_BACKEND_HOST")
         self.secondary_port = os.getenv("SECONDARY_NEW_HEALTH_BACKEND_PORT", "80")
