@@ -12,7 +12,12 @@ from django.contrib.auth import get_user_model
 # See https://github.com/typeddjango/django-stubs/issues/599
 from typing import TYPE_CHECKING, Optional
 
-from fhi_users.models import ProfessionalDomainRelation, UserDomain, PatientUser
+from fhi_users.models import (
+    ProfessionalDomainRelation,
+    UserDomain,
+    PatientUser,
+    ProfessionalUser,
+)
 
 from rest_framework.serializers import ValidationError
 
@@ -278,3 +283,163 @@ def generic_validate_phone_number(value: str) -> str:
     if cleaned_number.startswith("1") and len(cleaned_number) > 11:
         cleaned_number = cleaned_number[1:]
     return cleaned_number
+
+def get_user_by_email(email: str) -> Optional[User]:
+    """
+    Get user by email address only (new email-only authentication).
+    Returns the active user with this email, or None if not found/ambiguous.
+    """
+    if not email:
+        return None
+
+    try:
+        # Try to get a single active user with this email
+        return User.objects.get(email=email, is_active=True)
+    except User.DoesNotExist:
+        return None
+    except User.MultipleObjectsReturned:
+        # Multiple users with same email - this is a conflict that needs resolution
+        logger.warning(f"Multiple active users found with email {email}")
+        return None
+
+
+def get_user_by_email_or_legacy_username(
+    email: str, domain: Optional[str] = None, phone: Optional[str] = None
+) -> Optional[User]:
+    """
+    Get user by email (preferred) or fall back to legacy domain-scoped username.
+    This function supports both new email-only auth and legacy domain+email auth during migration.
+    """
+    # First try email-only lookup
+    user = get_user_by_email(email)
+    if user:
+        return user
+
+    # Fall back to legacy domain-scoped lookup if domain/phone provided
+    if domain or phone:
+        try:
+            domain_id = resolve_domain_id(domain_name=domain, phone_number=phone)
+            legacy_username = combine_domain_and_username(email, domain_id=domain_id)
+            return User.objects.get(username=legacy_username, is_active=True)
+        except (User.DoesNotExist, UserDomain.DoesNotExist, Exception):
+            pass
+
+    return None
+
+
+def authenticate_email_only(email: str, password: str) -> Optional[User]:
+    """
+    Authenticate user using email and password only (no domain required).
+    Returns authenticated user or None.
+    """
+    user = get_user_by_email(email)
+    if user and user.check_password(password):
+        return user
+    return None
+
+
+def get_primary_domain_for_user(user: User) -> Optional[UserDomain]:
+    """
+    Get the primary domain for a user.
+    For professionals, returns their first active domain.
+    For patients, returns their associated domain.
+    """
+    try:
+        # Try professional first
+        professional = ProfessionalUser.objects.get(user=user)
+        active_relations = ProfessionalDomainRelation.objects.filter(
+            professional=professional, active_domain_relation=True
+        ).order_by(
+            "-admin"
+        )  # Admins first
+
+        if active_relations.exists():
+            return active_relations.first().domain
+
+    except ProfessionalUser.DoesNotExist:
+        pass
+
+    try:
+        # Try patient
+        patient = PatientUser.objects.get(user=user)
+        from fhi_users.models import PatientDomainRelation
+
+        patient_relations = PatientDomainRelation.objects.filter(patient=patient)
+        if patient_relations.exists():
+            return patient_relations.first().domain
+
+    except PatientUser.DoesNotExist:
+        pass
+
+    # Fall back to extracting from username if it's still in old format
+    if "🐼" in user.username:
+        domain_id = user.username.split("🐼")[-1]
+        try:
+            return UserDomain.objects.get(id=domain_id)
+        except UserDomain.DoesNotExist:
+            pass
+
+    return None
+
+
+def create_user_email_only(
+    email: str,
+    password: str,
+    first_name: str,
+    last_name: str,
+    phone_number: Optional[str] = None,
+    domain: Optional[UserDomain] = None,
+) -> User:
+    """
+    Create a new user with email-only username (no domain scoping).
+
+    Args:
+        email: The user's email address (will be used as username)
+        password: The user's password
+        first_name: The user's first name
+        last_name: The user's last name
+        phone_number: Optional phone number for domain inference
+        domain: Optional explicit domain assignment
+
+    Returns:
+        The newly created User object
+    """
+    if not validate_password(password):
+        raise Exception(
+            "Password is not valid: must be at least 8 characters and cannot be entirely numeric"
+        )
+
+    # Check if user already exists
+    if User.objects.filter(username=email).exists():
+        raise Exception(f"User with email {email} already exists")
+
+    if User.objects.filter(email=email).exists():
+        raise Exception(f"User with email {email} already exists")
+
+    try:
+        user = User.objects.create_user(
+            username=email,  # Username is now just the email
+            email=email,
+            password=password,
+            first_name=first_name,
+            last_name=last_name,
+            is_active=False,  # Require email verification
+        )
+        logger.info(f"Created new user with email-only username: {email}")
+
+        # Store phone number in UserContactInfo if provided
+        if phone_number:
+            from fhi_users.models import UserContactInfo
+
+            UserContactInfo.objects.create(
+                user=user, phone_number=normalize_phone_number(phone_number)
+            )
+
+        return user
+
+    except Exception as e:
+        logger.opt(exception=True).error(f"Failed to create user {email}: {str(e)}")
+        raise
+
+
+# ...existing code...
