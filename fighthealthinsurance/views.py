@@ -196,35 +196,27 @@ class BlogPostView(generic.TemplateView):
         # Load blog metadata directly from MDX file frontmatter
         static_dir = settings.STATICFILES_DIRS[0]
         mdx_path = os.path.join(static_dir, 'blog', f'{slug}.mdx')
-        
-        post_info: BlogPostMetadata = {}
+        # Use a plain dict for dynamic frontmatter parsing to avoid mypy TypedDict key errors
+        post_info: dict[str, str] = {}
         try:
             with open(mdx_path, "r", encoding="utf-8") as f:
                 content = f.read()
-            
-            # Parse frontmatter
+
+            # Simple frontmatter parsing
             if content.startswith('---'):
                 parts = content.split('---', 2)
                 if len(parts) >= 3:
-                    frontmatter_text = parts[1].strip()
-                    # Simple YAML parsing for frontmatter
-                    for line in frontmatter_text.split('\n'):
-                        line = line.strip()
+                    fm_text = parts[1].strip()
+                    for line in fm_text.split('\n'):
                         if ':' in line:
-                            key, value = line.split(':', 1)
-                            key = key.strip()
-                            value = value.strip().strip('"\'')
-                            post_info[key] = value
-                    
-                    # Generate excerpt from content if not provided
+                            key, val = line.split(':', 1)
+                            post_info[key.strip()] = val.strip().strip('"\'')
+                    # Excerpt fallback
                     if not post_info.get("description"):
-                        markdown_content = parts[2].strip()
-                        # Get first paragraph as excerpt
-                        first_paragraph = markdown_content.split('\n\n')[0]
-                        # Remove markdown formatting for excerpt
-                        excerpt = first_paragraph.replace('#', '').replace('*', '').replace('**', '').strip()
+                        body = parts[2].strip()
+                        first_para = body.split('\n\n')[0]
+                        excerpt = first_para.replace('#', '').replace('*', '').strip()
                         post_info["description"] = excerpt[:200] + "..." if len(excerpt) > 200 else excerpt
-                    
         except (FileNotFoundError, IndexError) as e:
             logger.warning(f"Could not load MDX file {mdx_path}: {e}")
             post_info = {}
@@ -232,13 +224,11 @@ class BlogPostView(generic.TemplateView):
             logger.error(f"Unexpected error loading blog post metadata: {e}")
             post_info = {}
 
-        context.update(
-            {
-                "slug": slug,
-                "post_title": post_info.get("title"),
-                "post_excerpt": post_info.get("description"),
-            }
-        )
+        context.update({
+            "slug": slug,
+            "post_title": post_info.get("title"),
+            "post_excerpt": post_info.get("description"),
+        })
         return context
 
 
