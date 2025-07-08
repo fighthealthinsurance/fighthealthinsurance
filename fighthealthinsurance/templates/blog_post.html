@@ -1,0 +1,13 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}
+{{ post_title|default:"Blog Post" }} - Fight Health Insurance
+{% endblock title %}
+{% block metadescription %}{{ post_excerpt|default:"Read insights and strategies for fighting health insurance denials." }}{% endblock metadescription %}
+{% block content %}
+<div id="blog-post-root" data-slug="{{ slug }}">
+    <!-- React component will be mounted here -->
+</div>
+
+<script src="{% static 'js/dist/blog_post.bundle.js' %}"></script>
+{% endblock content %}

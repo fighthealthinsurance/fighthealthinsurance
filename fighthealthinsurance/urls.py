@@ -170,6 +170,16 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         name="other-resources",
     ),
     path(
+        "blog/",
+        cache_control(public=True)(cache_page(60 * 60 * 2)(views.BlogView.as_view())),
+        name="blog",
+    ),
+    path(
+        "blog/<slug:slug>/",
+        cache_control(public=True)(cache_page(60 * 60 * 2)(views.BlogPostView.as_view())),
+        name="blog-post",
+    ),
+    path(
         "pro_version", csrf_exempt(views.ProVersionView.as_view()), name="pro_version"
     ),
     path(

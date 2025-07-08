@@ -151,6 +151,7 @@ external_storage
 external_data
 external_data_b
 localish_data
+blog_drafts/
 # misc
 downloaded_files/
 test.db.sqlite3

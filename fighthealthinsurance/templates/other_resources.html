@@ -4,40 +4,104 @@ Other Resources
 {% endblock title %}
 {% block metadescription %}Fight Health Insurance is a generative AI tool to help you fight your health insurance denial. This is a list of other resources to help you fight for a fair outcome with your health insurance provider.{% endblock metadescription %}
 {% block content %}
+<style>
+/* FHI button style for this page */
+.fhi-btn {
+    background: #a5c422;
+    color: #fff;
+    border: none;
+    border-radius: 7px;
+    padding: 0.375rem 0.75rem;
+    text-decoration: none;
+    font-weight: 500;
+    font-size: 1rem;
+    box-shadow: none;
+    transition: background 0.2s;
+    display: inline-block;
+}
+.fhi-btn:hover, .fhi-btn:focus {
+    background: #8eb31d;
+    color: #fff;
+    text-decoration: none;
+}
+.fhi-btn[aria-disabled="true"] {
+    opacity: 0.7;
+    pointer-events: none;
+}
+.text-fhi-green {
+    color: #a5c422 !important;
+}
+</style>
 <div class="container mt-5">
+
     <h2 style="margin-top: 10vh;">Other Resources</h2>
+    
+    <div class="row">
+        <div class="col-12">
+            <p class="lead mb-4">
+                There are many other resources for fighting for a fair outcome with your health insurance provider.
+            </p>
+            <div class="mb-4">
+                <button type="button" class="fhi-btn me-2" aria-disabled="true" disabled>FAQ</button>
+                <form action="{% url 'blog' %}" method="get" style="display:inline;">
+                    <button type="submit" class="fhi-btn">Blog</button>
+                </form>
+            </div>
+        </div>
+    </div>
 
-    <p>
-        There are many other resources for fighting for a fair outcome with your health insurance provider.
-        <br><br>
+    <div class="row">
+        <div class="col-lg-6 mb-4">
+            <h4 class="text-fhi-green mb-3">Government Resources</h4>
+            <h6>State & Local Advocates</h6>
+            <ul class="mb-3">
+                <li>Many states offer health insurance advocates to help navigate appeals</li>
+                <li>Example: <a class="link" href="https://cahealthadvocates.org/appeals/">CA Health Advocates</a> for California residents</li>
+            </ul>
 
-        Depending on where you live there may be help from the state or federal level. Sometimes these are called
-        advocates, like California's <a class="link" href="https://cahealthadvocates.org/appeals/">CA Health Advocates</a>.
-        Additionally, many states have some form of assistance in
-        navigating Medicare <a class="link" href="https://www.shiphelp.org/">and you can find out about them through State Health Insurance Assistance Programs</a>.
-        The federal government has some
-        <a class="link" href="https://www.healthcare.gov/appeal-insurance-company-decision/">general information on healthcare.gov</a>
-        , and <a class="link" href="https://marketplace.cms.gov/technical-assistance-resources/how-to-appeal-a-decision.pdf">cms.gov</a>.
-        <br><br>
+            <h6>Medicare Assistance</h6>
+            <ul class="mb-3">
+                <li><a class="link" href="https://www.shiphelp.org/">State Health Insurance Assistance Programs (SHIP)</a> - free Medicare counseling</li>
+            </ul>
 
-        Many groups focused on advocacy or support for folks with specific conditions or diagnoses can also have
-        information, such as
-        <a class="link" href="https://www.jdrf.org/">diabetes</a>,
-        <a class="link" href="https://www.cancersupportcommunity.org/blog/how-to-file-health-insurance-appeal-denied-claim">cancer</a>,
-        <a class="link"
-            href="https://www.nationalmssociety.org/Living-Well-With-MS/Work-and-Home/Insurance-and-Financial-Information/Health-Insurance/Appeals">
-            MS
-        </a>,
-        and more. These resources, when up to date, can be wonderful since
-        they tend to be created by people in a similar position to the one you are in.
-        <br><br>
+            <h6>Federal Resources</h6>
+            <ul class="mb-3">
+                <li><a class="link" href="https://www.healthcare.gov/appeal-insurance-company-decision/">Healthcare.gov</a> - general appeal information</li>
+                <li><a class="link" href="https://marketplace.cms.gov/technical-assistance-resources/how-to-appeal-a-decision.pdf">CMS.gov</a> - detailed appeal guidance</li>
+            </ul>
+        </div>
 
-        There are also general-purpose websites like this one,
-        <a href="https://www.webmd.com/health-insurance/how-and-when-to-appeal-insurance-claims" class="link">WebMD</a>,
-        and more. To be direct here, the general purpose
-        websites (us included) may not be as useful if you have a very specific concern. We want to do our best though
-        and are <a href="{% url 'share_denial' %}" class="link">collecting denials</a> so that we can try and have the best of both
-        worlds.
-    </p>
+        <div class="col-lg-6 mb-4">
+            <h4 class="text-fhi-green mb-3">Condition-Specific Resources</h4>
+            <p class="small text-muted mb-3">
+                Organizations focused on specific conditions often provide the most relevant and detailed guidance.
+            </p>
+            <ul class="mb-3">
+                <li><a class="link" href="https://www.jdrf.org/">JDRF</a> - Diabetes resources and advocacy</li>
+                <li><a class="link" href="https://www.cancersupportcommunity.org/blog/how-to-file-health-insurance-appeal-denied-claim">Cancer Support Community</a> - Cancer-related appeals</li>
+                <li><a class="link" href="https://www.nationalmssociety.org/Living-Well-With-MS/Work-and-Home/Insurance-and-Financial-Information/Health-Insurance/Appeals">National MS Society</a> - Multiple Sclerosis resources</li>
+            </ul>
+            <p class="small">
+                <em>These resources are often created by people in similar situations and can provide highly relevant guidance.</em>
+            </p>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-12">
+            <h4 class="text-fhi-green mb-3">General Resources</h4>
+            <p class="mb-3">
+                While general-purpose websites may not be as specific to your situation, they can provide helpful overviews:
+            </p>
+            <ul class="mb-4">
+                <li><a href="https://www.webmd.com/health-insurance/how-and-when-to-appeal-insurance-claims" class="link">WebMD</a> - General appeal guidance</li>
+                <li>Fight Health Insurance (this site) - AI-powered appeal assistance</li>
+            </ul>
+            
+            <div class="alert alert-info">
+                <strong>Help Us Improve:</strong> We're <a href="{% url 'share_denial' %}" class="link">collecting denials</a> to better understand common issues and provide more targeted assistance.
+            </div>
+        </div>
+    </div>
 </div>
 {% endblock content %}
