@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
-import matter from 'gray-matter';
 
 interface BlogPostProps {
   slug: string;
@@ -26,18 +25,29 @@ const BlogPost: React.FC<BlogPostProps> = ({ slug }) => {
         }
         const mdxContent = await response.text();
         
-        // Use a proper frontmatter parser
-        const { data: frontmatter, content } = matter(mdxContent);
-        
-        setMetadata(frontmatter);
-        
-        // Remove the H1 title from content since we'll show it from frontmatter
-        let processedContent = content.replace(/^# .*$/m, '').trim();
-        
-  // Use marked to convert markdown to HTML, then sanitize with DOMPurify
+        // Manual frontmatter parsing to avoid Buffer in browser
+        const fm: Record<string,string> = {};
+        let contentBody = mdxContent;
+        if (mdxContent.startsWith('---')) {
+          const parts = mdxContent.split('---', 3);
+          const fmText = parts[1].trim();
+          contentBody = parts[2] || '';
+          fmText.split('\n').forEach(line => {
+            const idx = line.indexOf(':');
+            if (idx > 0) {
+              const key = line.slice(0, idx).trim();
+              let val = line.slice(idx + 1).trim().replace(/^['"]|['"]$/g, '');
+              fm[key] = val;
+            }
+          });
+        }
+        setMetadata(fm);
+        // Remove the H1 title from content body
+        const processedContent = contentBody.replace(/^# .*$/m, '').trim();
+        // Convert markdown to HTML and sanitize
   const rawHtml = await marked.parse(processedContent);
-  const safeHtml = DOMPurify.sanitize(rawHtml);
-  setContent(safeHtml);
+        const safeHtml = DOMPurify.sanitize(rawHtml);
+        setContent(safeHtml);
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : 'Unknown error';
         setError(`Failed to load blog post: ${errorMessage}`);
