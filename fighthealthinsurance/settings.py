@@ -94,6 +94,11 @@ class Base(Configuration):
     SENTRY_ENDPOINT = os.getenv("SENTRY_ENDPOINT")
     # Application definition
 
+    # Ensure Django finds static/blog/ for .mdx blog posts
+    STATICFILES_DIRS = [
+        os.path.join(BASE_DIR, "fighthealthinsurance/static"),
+    ]
+
     SITE_ID = 1
 
     TEMPLATE_CONTEXT_PROCESSORS = [
