@@ -30,13 +30,31 @@ module.exports = {
       path.resolve(__dirname, 'node_modules'),
       'node_modules'
     ],
-    extensions: ['.tsx', '.ts', '.js'],
+    extensions: ['.tsx', '.ts', '.js', '.mdx'],
     alias: {
       '@sentry/browser': require.resolve('@sentry/browser'),
     },
   },
   module: {
     rules: [
+      {
+        test: /\.mdx?$/,
+        use: [
+          {
+            loader: 'babel-loader',
+            options: {
+              presets: ['@babel/preset-react']
+            }
+          },
+          {
+            loader: '@mdx-js/loader',
+            options: {
+              remarkPlugins: [require('remark-gfm')],
+              rehypePlugins: [require('rehype-highlight')]
+            }
+          }
+        ]
+      },
       {
         test: /\.(ts|tsx)$/,
         use: {

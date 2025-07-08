@@ -1,0 +1,16 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}
+Blog - Fight Health Insurance
+{% endblock title %}
+{% block metadescription %}Read insights, tips, and strategies for fighting health insurance denials. Expert advice to help you navigate the appeals process successfully.{% endblock metadescription %}
+{% block content %}
+<div id="blog-root">
+    <!-- React component will be mounted here -->
+</div>
+
+<script>
+    window.blogSlugs = {{ blog_slugs|safe }};
+</script>
+<script src="{% static 'js/dist/blog.bundle.js' %}"></script>
+{% endblock content %}

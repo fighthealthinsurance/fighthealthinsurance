@@ -4,6 +4,7 @@ import json
 import stripe
 from stripe import error as stripe_error
 import typing
+from typing import TypedDict
 from loguru import logger
 from PIL import Image
 import json
@@ -40,6 +41,19 @@ from django.template import loader
 from django.http import HttpResponseForbidden
 
 from django.contrib.auth import get_user_model
+
+
+class BlogPostMetadata(TypedDict, total=False):
+    """Type definition for blog post metadata from frontmatter."""
+    slug: str
+    title: str
+    date: str
+    author: str
+    description: str
+    excerpt: str
+    tags: list[str]
+    readTime: str
+
 
 if typing.TYPE_CHECKING:
     from django.contrib.auth.models import User
@@ -145,6 +159,76 @@ class AboutView(generic.TemplateView):
 
 class OtherResourcesView(generic.TemplateView):
     template_name = "other_resources.html"
+
+
+class BlogView(generic.TemplateView):
+    template_name = "blog.html"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        mdx_slugs = []
+        try:
+            # TODO: Load slugs from a cached index or database table for performance and security.
+            static_dir = settings.STATICFILES_DIRS[0]
+            blog_dir = os.path.join(static_dir, 'blog')
+            files = os.listdir(blog_dir)
+            # Only allow safe filenames (alphanumeric, dash, underscore)
+            def is_safe_slug(s):
+                return all(c.isalnum() or c in ('-', '_') for c in s)
+            mdx_slugs = [os.path.splitext(f)[0] for f in files if f.endswith('.mdx') and is_safe_slug(os.path.splitext(f)[0])]
+        except (FileNotFoundError, IndexError) as e:
+            logger.warning(f"Could not find blog directory or STATICFILES_DIRS is not set: {e}")
+            mdx_slugs = []
+        except Exception as e:
+            logger.error(f"Unexpected error loading blog slugs: {e}")
+            mdx_slugs = []
+        context['blog_slugs'] = json.dumps(mdx_slugs)
+        return context
+
+
+class BlogPostView(generic.TemplateView):
+    template_name = "blog_post.html"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        slug = kwargs.get("slug", "")
+
+        # Load blog metadata from blog_posts.json
+        blog_json_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "static", "blog_posts.json"
+        )
+        post_info: BlogPostMetadata = {}
+        try:
+            with open(blog_json_path, "r", encoding="utf-8") as f:
+                posts = json.load(f)
+            
+            if not isinstance(posts, list):
+                logger.error(f"Invalid blog metadata format in {blog_json_path}: expected list")
+                post_info = {}
+            else:
+                for post in posts:
+                    if post.get("slug") == slug:
+                        post_info = post
+                        break
+                else:
+                    logger.info(f"Blog post not found for slug: {slug}")
+                    
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            logger.warning(f"Could not load blog metadata from {blog_json_path}: {e}")
+            post_info = {}
+        except Exception as e:
+            logger.error(f"Unexpected error loading blog metadata: {e}")
+            post_info = {}
+
+        context.update(
+            {
+                "slug": slug,
+                "post_title": post_info.get("title"),
+                "post_excerpt": post_info.get("excerpt"),
+            }
+        )
+        return context
 
 
 class ScanView(generic.TemplateView):

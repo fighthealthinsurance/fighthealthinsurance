@@ -20,17 +20,20 @@
   "author": "",
   "license": "Apache-2.0",
   "dependencies": {
-    "@sentry/browser": "^8.17.0",
     "@emotion/react": "^11.14.0",
     "@mantine/core": "^8.0.1",
     "@mantine/hooks": "^8.0.1",
+    "@mdx-js/loader": "^3.1.0",
+    "@mdx-js/react": "^3.1.0",
     "@pdfme/generator": "^1.1.9",
+    "@sentry/browser": "^8.17.0",
     "@tensorflow-models/coco-ssd": "^2.2.2",
     "@tensorflow/tfjs": "^4.2.0",
     "@types/lodash.clonedeep": "^4.5.9",
     "@types/react": "^19.1.4",
     "@types/react-dom": "^19.1.5",
     "async-memoize-one": "1.1.2",
+    "glob": "^11.0.3",
     "jspdf": "^2.5.1",
     "lodash.clonedeep": "^4.5.0",
     "npm-watch": "^0.11.0",
@@ -39,20 +42,29 @@
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-markdown": "^10.1.0",
+    "rehype-highlight": "^7.0.2",
+    "remark-gfm": "^4.0.1",
     "source-map-loader": "^4.0.1",
-    "tesseract.js": "^5.0.3"
+    "tesseract.js": "^5.0.3",
+    "marked": "^12.0.0",
+    "dompurify": "^3.0.8",
+    "gray-matter": "^4.0.3"
   },
   "devDependencies": {
+    "@babel/core": "^7.28.0",
+    "@babel/preset-react": "^7.27.1",
     "@types/assert": "^1.5.11",
     "@types/bcrypt": "^5.0.2",
     "@types/concat-stream": "^2.0.3",
     "@types/lodash": "^4.17.13",
     "@types/qs": "^6.9.17",
     "@types/uuid": "^10.0.0",
+    "babel-loader": "^10.0.0",
     "prettier": "3.5.3",
     "ts-loader": "^9.5.1",
     "typescript": "^5.6.3",
     "webpack": "^5.76.1",
-    "webpack-cli": "^5.0.1"
+    "webpack-cli": "^5.0.1",
+    "@types/dompurify": "^3.0.4"
   }
 }

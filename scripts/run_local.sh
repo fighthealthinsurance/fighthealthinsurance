@@ -50,6 +50,7 @@ check_python_environment() {
 	python min_version.py
 }
 
+
 set -ex
 
 check_python_environment
@@ -58,21 +59,20 @@ check_python_environment
 
 # Are we sort of connected to the backend?
 if kubectl get service -n totallylegitco vllm-health-svc; then
-   export HEALTH_BACKEND_PORT=4280
-   export HEALTH_BACKEND_HOST=localhost
-   kubectl port-forward -n totallylegitco service/vllm-health-svc 4280:80 &
+  export HEALTH_BACKEND_PORT=4280
+  export HEALTH_BACKEND_HOST=localhost
+  kubectl port-forward -n totallylegitco service/vllm-health-svc 4280:80 &
 else
-   echo 'No connection to kube vllm health svc'
+  echo 'No connection to kube vllm health svc'
 fi
 
 if kubectl get service -n totallylegitco vllm-health-svc-slipstream; then
-   export NEW_HEALTH_BACKEND_PORT=4281
-   export NEW_HEALTH_BACKEND_HOST=localhost
-   kubectl port-forward -n totallylegitco service/vllm-health-svc-slipstream 4281:80 &
+  export NEW_HEALTH_BACKEND_PORT=4281
+  export NEW_HEALTH_BACKEND_HOST=localhost
+  kubectl port-forward -n totallylegitco service/vllm-health-svc-slipstream 4281:80 &
 else
-   echo 'No connection to _new_ kube vllm health svc'
+  echo 'No connection to _new_ kube vllm health svc'
 fi
-
 
 python manage.py migrate
 python manage.py loaddata initial
@@ -86,6 +86,12 @@ python manage.py ensure_adminuser --username admin --password admin
 python manage.py make_user  --username "test@test.com" --domain testfarts1 --password farts12345678 --email "test@test.com" --visible-phone-number 42 --is-provider true --first-name TestFarts
 python manage.py make_user  --username "test-patient@test.com" --domain testfarts1 --password farts12345678 --email "test-patient@test.com" --visible-phone-number 42 --is-provider false
 
-# RECAPTCHA_TESTING=true OAUTHLIB_RELAX_TOKEN_SCOPE=1 python manage.py runserver_plus --cert-file cert.pem --key-file key.pem
+# If --devserver is passed, use Django's dev server for hot-reloading templates
+if [[ "$1" == "--devserver" ]]; then
+  shift
+  RECAPTCHA_TESTING=true OAUTHLIB_RELAX_TOKEN_SCOPE=1 python manage.py runserver_plus --cert-file cert.pem --key-file key.pem "$@"
+  exit 0
+fi
 
-RECAPTCHA_TESTING=true OAUTHLIB_RELAX_TOKEN_SCOPE=1 uvicorn fighthealthinsurance.asgi:application --reload --reload-dir fighthealthinsurance --reload-exclude "*.pyc,__pycache__/*,*.pyo,*~,#*#,.#*,node_modules,static,.tox/*,*sqlite*,./tox/**" --access-log --log-config conf/uvlog_config.yaml --port 8000 --ssl-keyfile key.pem --ssl-certfile cert.pem $@
+# Default: use Uvicorn
+RECAPTCHA_TESTING=true OAUTHLIB_RELAX_TOKEN_SCOPE=1 uvicorn fighthealthinsurance.asgi:application --reload --reload-dir fighthealthinsurance --reload-exclude "*.pyc,__pycache__/*,*.pyo,*~,#*#,.#*,node_modules,static,.tox/*,*sqlite*,./tox/**" --access-log --log-config conf/uvlog_config.yaml --port 8000 --ssl-keyfile key.pem --ssl-certfile cert.pem "$@"
