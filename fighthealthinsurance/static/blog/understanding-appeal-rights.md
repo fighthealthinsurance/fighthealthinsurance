@@ -9,6 +9,8 @@ readTime: "5 min read"
 ---
 When your health insurance company denies a claim, it can feel overwhelming and frustrating. However, you have important rights when it comes to appealing these decisions. Understanding these rights is the first step toward fighting back effectively.
 
+![Llama Shielding Denaisl Illustration](/static/images/llama-shield-denials.png)
+
 ## Your Fundamental Rights
 
 Every health insurance plan, whether through your employer or purchased individually, must provide you with certain appeal rights:

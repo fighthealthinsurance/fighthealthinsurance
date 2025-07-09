@@ -26,6 +26,8 @@ from django.views.decorators.cache import cache_control, cache_page
 from django.views.decorators.csrf import csrf_exempt
 from django.views.generic.base import RedirectView
 from django.contrib.staticfiles.storage import staticfiles_storage
+from django.conf import settings
+from django.conf.urls.static import static
 
 from fighthealthinsurance import views
 from fighthealthinsurance import fax_views
@@ -180,6 +182,16 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         name="blog-post",
     ),
     path(
+        "faq/",
+        cache_control(public=True)(cache_page(60 * 60 * 2)(views.FAQView.as_view())),
+        name="faq",
+    ),
+    path(
+        "faq/medicaid/",
+        cache_control(public=True)(cache_page(60 * 60 * 2)(views.MedicaidFAQView.as_view())),
+        name="medicaid-faq",
+    ),
+    path(
         "pro_version", csrf_exempt(views.ProVersionView.as_view()), name="pro_version"
     ),
     path(
@@ -275,3 +287,9 @@ else:
 
 
 urlpatterns += staticfiles_urlpatterns()
+
+# Serve static files in development
+if settings.DEBUG:
+    # Serve files from STATICFILES_DIRS in development
+    urlpatterns += static(settings.STATIC_URL, document_root=settings.STATICFILES_DIRS[0])
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

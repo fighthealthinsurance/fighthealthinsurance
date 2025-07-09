@@ -34,7 +34,7 @@ Other Resources
 </style>
 <div class="container mt-5">
 
-    <h2 style="margin-top: 10vh;">Other Resources</h2>
+    <h2 style="margin-top: 10vh;">Resources</h2>
     
     <div class="row">
         <div class="col-12">
@@ -42,7 +42,9 @@ Other Resources
                 There are many other resources for fighting for a fair outcome with your health insurance provider.
             </p>
             <div class="mb-4">
-                <button type="button" class="fhi-btn me-2" aria-disabled="true" disabled>FAQ</button>
+                <form action="{% url 'faq' %}" method="get" style="display:inline;">
+                    <button type="submit" class="fhi-btn me-2">FAQ</button>
+                </form>
                 <form action="{% url 'blog' %}" method="get" style="display:inline;">
                     <button type="submit" class="fhi-btn">Blog</button>
                 </form>

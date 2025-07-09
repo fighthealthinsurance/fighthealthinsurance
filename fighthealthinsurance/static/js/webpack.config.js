@@ -30,7 +30,7 @@ module.exports = {
       path.resolve(__dirname, 'node_modules'),
       'node_modules'
     ],
-    extensions: ['.tsx', '.ts', '.js', '.mdx'],
+  extensions: ['.tsx', '.ts', '.js', '.md'],
     alias: {
       '@sentry/browser': require.resolve('@sentry/browser'),
     },
