@@ -24,7 +24,6 @@ from django.contrib.auth.decorators import login_required
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.generic.edit import FormView
 from django.views.generic.base import TemplateView
-from django.views.generic.list import ListView
 
 from django_encrypted_filefield.crypt import Cryptographer
 
@@ -32,12 +31,7 @@ from fighthealthinsurance import common_view_logic
 from fighthealthinsurance import forms as core_forms
 from fighthealthinsurance.chat_forms import UserConsentForm
 from fighthealthinsurance import models
-from fighthealthinsurance import followup_emails
-from fighthealthinsurance.stripe_utils import get_or_create_price
 
-from fhi_users import emails as fhi_emails
-from fhi_users.models import UserDomain, ProfessionalUser
-from fhi_users.auth.auth_utils import resolve_domain_id
 from fighthealthinsurance.models import StripeRecoveryInfo
 
 from django.template import loader

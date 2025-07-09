@@ -17,7 +17,7 @@ renderer.heading = (text: string, level: number, raw: string) => {
   } else {
     slug = raw
       .toLowerCase()
-      .replace(/[^\u0000-\u007F\w\s-]/g, '') // remove non-ascii
+      .replace(/[^\x00-\x7F\w\s-]/g, '') // remove non-ascii
       .trim()
       .replace(/[\s]+/g, '-') // spaces to dashes
       .replace(/-+/g, '-');
@@ -34,15 +34,19 @@ marked.setOptions({
 
 interface BlogPostProps {
   slug: string;
+  type?: 'blog' | 'faq';
 }
 
-const BlogPost: React.FC<BlogPostProps> = ({ slug }) => {
+const BlogPost: React.FC<BlogPostProps> = ({ slug, type = 'blog' }) => {
   const [content, setContent] = useState<string>('');
   const [metadata, setMetadata] = useState<Record<string, string>>({});
   const [authorHtml, setAuthorHtml] = useState<string>('');
   const [leadingContent, setLeadingContent] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>('');
+  
+  // Use prop-based detection for FAQ vs blog
+  const isFAQ = type === 'faq';
 
   useEffect(() => {
     // Add custom styles for MDX content
@@ -140,8 +144,7 @@ const BlogPost: React.FC<BlogPostProps> = ({ slug }) => {
     // Load static Markdown content for blog/FAQ posts
     const loadPost = async () => {
       try {
-        // Determine if we're in a FAQ context by checking the parent container
-        const isFAQ = document.getElementById('faq-post-root') !== null;
+        // Use the already computed isFAQ boolean
         const baseUrl = isFAQ ? '/static/faq' : '/static/blog';
         // This is a simplified version - in reality you'd use MD loader
         const response = await fetch(`${baseUrl}/${slug}.md`);
@@ -274,7 +277,6 @@ const BlogPost: React.FC<BlogPostProps> = ({ slug }) => {
   }
 
   if (error) {
-    const isFAQ = document.getElementById('faq-post-root') !== null;
     const backUrl = isFAQ ? '/faq/' : '/blog/';
     const backText = isFAQ ? 'Back to FAQ' : 'Back to Blog';
     const contentType = isFAQ ? 'FAQ content' : 'blog post';
@@ -296,8 +298,8 @@ const BlogPost: React.FC<BlogPostProps> = ({ slug }) => {
         <nav aria-label="breadcrumb" className="mb-4">
           <ol className="breadcrumb">
             <li className="breadcrumb-item">
-              <a href={document.getElementById('faq-post-root') ? '/faq/' : '/blog/'} style={{color: '#a5c422'}}>
-                {document.getElementById('faq-post-root') ? 'FAQ' : 'Blog'}
+              <a href={isFAQ ? '/faq/' : '/blog/'} style={{color: '#a5c422'}}>
+                {isFAQ ? 'FAQ' : 'Blog'}
               </a>
             </li>
             <li className="breadcrumb-item active" aria-current="page">
@@ -312,7 +314,7 @@ const BlogPost: React.FC<BlogPostProps> = ({ slug }) => {
           </h1>
           
           <div style={{ color: '#6c757d', marginBottom: '2rem' }} className="author-line">
-            {authorHtml && <div dangerouslySetInnerHTML={{ __html: `By ${authorHtml}` }} />}
+             {authorHtml && <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(`By ${authorHtml}`) }} />}
             {metadata.date && (
               <div>
                 {(() => {
@@ -332,7 +334,7 @@ const BlogPost: React.FC<BlogPostProps> = ({ slug }) => {
             )}
           </div>
           
-          {leadingContent && <div dangerouslySetInnerHTML={{ __html: leadingContent }} />}
+          {leadingContent && <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(leadingContent) }} />}
 
           {/*
             Double-sanitize HTML at render time for defense-in-depth.
@@ -384,10 +386,13 @@ document.addEventListener('DOMContentLoaded', () => {
   const container = blogContainer || faqContainer;
   
   if (container) {
+    // Determine type based on container
+    const type = faqContainer ? 'faq' : 'blog';
+    
     // Get slug from URL or data attribute
     const slug = container.dataset.slug || window.location.pathname.split('/').pop();
     const root = createRoot(container);
-    root.render(<BlogPost slug={slug || ''} />);
+    root.render(<BlogPost slug={slug || ''} type={type} />);
   }
 });
 

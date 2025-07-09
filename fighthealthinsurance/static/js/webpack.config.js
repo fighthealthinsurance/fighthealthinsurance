@@ -38,7 +38,7 @@ module.exports = {
   module: {
     rules: [
       {
-        test: /\.mdx?$/,
+        test: /\.md?$/,
         use: [
           {
             loader: 'babel-loader',
@@ -47,7 +47,7 @@ module.exports = {
             }
           },
           {
-            loader: '@mdx-js/loader',
+            loader: '@md-js/loader',
             options: {
               remarkPlugins: [require('remark-gfm')],
               rehypePlugins: [require('rehype-highlight')]
