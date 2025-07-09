@@ -87,10 +87,18 @@ python manage.py make_user  --username "test@test.com" --domain testfarts1 --pas
 python manage.py make_user  --username "test-patient@test.com" --domain testfarts1 --password farts12345678 --email "test-patient@test.com" --visible-phone-number 42 --is-provider false
 
 # If --devserver is passed, use Django's dev server for hot-reloading templates
+# But prevent it in CI/production environments
 if [[ "$1" == "--devserver" ]]; then
-  shift
-  RECAPTCHA_TESTING=true OAUTHLIB_RELAX_TOKEN_SCOPE=1 python manage.py runserver_plus --cert-file cert.pem --key-file key.pem "$@"
-  exit 0
+  # Check if we're in CI or production environment
+  if [[ -n "$CI" || -n "$GITHUB_ACTIONS" || -n "$JENKINS_URL" || "$DJANGO_CONFIGURATION" == "Prod" || "$FORCE_UVICORN" == "true" ]]; then
+    echo "WARNING: --devserver flag is not allowed in CI/production environments"
+    echo "Using Uvicorn instead for proper websocket support"
+    shift  # Remove the --devserver flag
+  else
+    shift
+    RECAPTCHA_TESTING=true OAUTHLIB_RELAX_TOKEN_SCOPE=1 python manage.py runserver_plus --cert-file cert.pem --key-file key.pem "$@"
+    exit 0
+  fi
 fi
 
 # Default: use Uvicorn

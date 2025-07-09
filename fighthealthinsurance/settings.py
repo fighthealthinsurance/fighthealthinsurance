@@ -204,6 +204,7 @@ class Base(Configuration):
     ]
 
     WSGI_APPLICATION = "fighthealthinsurance.wsgi.application"
+    ASGI_APPLICATION = "fighthealthinsurance.asgi.application"
 
     # Database
     # https://docs.djangoproject.com/en/5.0/ref/settings/#databases
