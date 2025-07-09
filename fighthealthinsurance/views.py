@@ -1,4 +1,5 @@
 import os
+import re
 
 import json
 import stripe
@@ -192,6 +193,19 @@ class BlogPostView(generic.TemplateView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         slug = kwargs.get("slug", "")
+        # Validate slug 
+        static_dir = settings.STATICFILES_DIRS[0]
+        if not re.match(r'^[a-zA-Z0-9_-]+$', slug):
+            logger.warning(f"Invalid slug format: {slug}")
+            context.update({"slug": slug, "post_title": None, "post_excerpt": None})
+            return context
+
+        mdx_dir = os.path.join(static_dir, 'blog')
+        mdx_path = os.path.join(mdx_dir, f"{slug}.mdx")
+        if not os.path.abspath(mdx_path).startswith(os.path.abspath(mdx_dir)):
+            logger.warning(f"Attempted path traversal with slug: {slug}")
+            context.update({"slug": slug, "post_title": None, "post_excerpt": None})
+            return context
 
         # Load blog metadata from blog_posts.json
         blog_json_path = os.path.join(
@@ -202,7 +216,7 @@ class BlogPostView(generic.TemplateView):
         try:
             with open(blog_json_path, "r", encoding="utf-8") as f:
                 posts = json.load(f)
-            
+
             if not isinstance(posts, list):
                 logger.error(f"Invalid blog metadata format in {blog_json_path}: expected list")
                 post_info = {}
@@ -213,21 +227,25 @@ class BlogPostView(generic.TemplateView):
                         break
                 else:
                     logger.info(f"Blog post not found for slug: {slug}")
-                    
+
         except (FileNotFoundError, json.JSONDecodeError) as e:
             logger.warning(f"Could not load blog metadata from {blog_json_path}: {e}")
+            post_info = {}
+        except PermissionError as e:
+            logger.error(f"Permission denied accessing blog metadata file {blog_json_path}: {e}")
+            post_info = {}
+        except UnicodeDecodeError as e:
+            logger.error(f"Invalid file encoding for blog metadata file {blog_json_path}: {e}")
             post_info = {}
         except Exception as e:
             logger.error(f"Unexpected error loading blog metadata: {e}")
             post_info = {}
 
-        context.update(
-            {
-                "slug": slug,
-                "post_title": post_info.get("title"),
-                "post_excerpt": post_info.get("excerpt"),
-            }
-        )
+        context.update({
+            "slug": slug,
+            "post_title": post_info.get("title"),
+            "post_excerpt": post_info.get("excerpt"),
+        })
         return context
 
 

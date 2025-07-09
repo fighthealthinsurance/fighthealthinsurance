@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
-import matter from 'gray-matter';
 
 interface BlogPostProps {
   slug: string;
@@ -26,18 +25,47 @@ const BlogPost: React.FC<BlogPostProps> = ({ slug }) => {
         }
         const mdxContent = await response.text();
         
-        // Use a proper frontmatter parser
-        const { data: frontmatter, content } = matter(mdxContent);
-        
-        setMetadata(frontmatter);
-        
-        // Remove the H1 title from content since we'll show it from frontmatter
-        let processedContent = content.replace(/^# .*$/m, '').trim();
-        
-  // Use marked to convert markdown to HTML, then sanitize with DOMPurify
+        // Manual frontmatter parsing with validation
+        const fm: Record<string, string> = {};
+        let contentBody = mdxContent;
+        if (mdxContent.startsWith('---\n')) {
+          const endIndex = mdxContent.indexOf('\n---\n', 4);
+          if (endIndex !== -1) {
+            const fmText = mdxContent.slice(4, endIndex).trim();
+            contentBody = mdxContent.slice(endIndex + 5);
+            fmText.split('\n').forEach(line => {
+              const trimmedLine = line.trim();
+              if (!trimmedLine || trimmedLine.startsWith('#')) return;
+
+              const colonIndex = trimmedLine.indexOf(':');
+              if (colonIndex > 0 && colonIndex < trimmedLine.length - 1) {
+                const key = trimmedLine.slice(0, colonIndex).trim();
+                let value = trimmedLine.slice(colonIndex + 1).trim().replace(/^(['"])(.*)\1$/, '$2');
+
+                // Validate key contains only valid characters
+                if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(key)) {
+                  const msg = `Invalid frontmatter key: ${key}`;
+                  if (process.env.NODE_ENV === 'development') throw new Error(msg);
+                  console.warn(msg);
+                  return;
+                }
+
+                fm[key] = value;
+              } else {
+                const msg = `Malformed frontmatter line: ${line}`;
+                if (process.env.NODE_ENV === 'development') throw new Error(msg);
+                console.warn(msg);
+              }
+            });
+          }
+        }
+        setMetadata(fm);
+        // Remove the H1 title from content body
+        const processedContent = contentBody.replace(/^# .*$/m, '').trim();
+        // Convert markdown to HTML and sanitize
   const rawHtml = await marked.parse(processedContent);
-  const safeHtml = DOMPurify.sanitize(rawHtml);
-  setContent(safeHtml);
+        const safeHtml = DOMPurify.sanitize(rawHtml);
+        setContent(safeHtml);
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : 'Unknown error';
         setError(`Failed to load blog post: ${errorMessage}`);
