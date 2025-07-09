@@ -1,25 +1,153 @@
 import React, { useState, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
-import { marked } from 'marked';
+import { marked, Renderer } from 'marked';
 import DOMPurify from 'dompurify';
+
+// Add custom renderer to generate heading ids for quick navigation links
+const renderer = new Renderer();
+// Override heading to include slugger for generating IDs and support explicit ID syntax
+renderer.heading = (text: string, level: number, raw: string) => {
+  // Check for explicit ID in markdown like {#custom-id}
+  const explicitIdMatch = raw.match(/(.+?)\s*\{#([\w-]+)\}$/);
+  let slug: string;
+  let headingText: string = text;
+  if (explicitIdMatch) {
+    headingText = explicitIdMatch[1].trim();
+    slug = explicitIdMatch[2];
+  } else {
+    slug = raw
+      .toLowerCase()
+      .replace(/[^\x00-\x7F\w\s-]/g, '') // remove non-ascii
+      .trim()
+      .replace(/[\s]+/g, '-') // spaces to dashes
+      .replace(/-+/g, '-');
+  }
+  return `<h${level} id="${slug}">${headingText}</h${level}>`;
+};
+
+// Configure marked to properly handle links and headings
+marked.setOptions({
+  gfm: true,
+  breaks: true,
+  renderer
+});
 
 interface BlogPostProps {
   slug: string;
+  type?: 'blog' | 'faq';
 }
 
-const BlogPost: React.FC<BlogPostProps> = ({ slug }) => {
+const BlogPost: React.FC<BlogPostProps> = ({ slug, type = 'blog' }) => {
   const [content, setContent] = useState<string>('');
   const [metadata, setMetadata] = useState<Record<string, string>>({});
+  const [authorHtml, setAuthorHtml] = useState<string>('');
+  const [leadingContent, setLeadingContent] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>('');
+  
+  // Use prop-based detection for FAQ vs blog
+  const isFAQ = type === 'faq';
 
   useEffect(() => {
-    // For now, we'll load static content. In a full implementation,
-    // this would dynamically import and render the MDX
+    // Add custom styles for MDX content
+    const styleId = 'mdx-content-styles';
+    if (!document.getElementById(styleId)) {
+      const style = document.createElement('style');
+      style.id = styleId;
+      style.textContent = `
+        .mdx-content h1 {
+          font-size: 2rem;
+          font-weight: 600;
+          margin-top: 2rem;
+          margin-bottom: 1rem;
+          color: #333;
+        }
+        .mdx-content h2 {
+          font-size: 1.5rem;
+          font-weight: 600;
+          margin-top: 1.75rem;
+          margin-bottom: 0.75rem;
+          color: #333;
+        }
+        .mdx-content h3 {
+          font-size: 1.25rem;
+          font-weight: 600;
+          margin-top: 1.5rem;
+          margin-bottom: 0.5rem;
+          color: #333;
+        }
+        .mdx-content h4 {
+          font-size: 1.125rem;
+          font-weight: 600;
+          margin-top: 1.25rem;
+          margin-bottom: 0.5rem;
+          color: #333;
+        }
+        .mdx-content h5 {
+          font-size: 1rem;
+          font-weight: 600;
+          margin-top: 1rem;
+          margin-bottom: 0.5rem;
+          color: #333;
+        }
+        .mdx-content h6 {
+          font-size: 0.875rem;
+          font-weight: 600;
+          margin-top: 1rem;
+          margin-bottom: 0.5rem;
+          color: #333;
+        }
+        .mdx-content p {
+          margin-bottom: 1rem;
+        }
+        .mdx-content ul, .mdx-content ol {
+          margin-bottom: 1rem;
+        }
+        .mdx-content li {
+          margin-bottom: 0.25rem;
+        }
+        .mdx-content a {
+          color: #a5c422;
+          text-decoration: underline;
+        }
+        .mdx-content a:hover {
+          color: #8eb31d;
+          text-decoration: underline;
+        }
+        .mdx-content img {
+          max-width: 100%;
+          height: auto;
+          border-radius: 4px;
+          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+          margin: 1rem 0;
+        }
+        .mdx-content a[href^="#"]:before {
+          content: "";
+          margin-right: 0.25rem;
+        }
+        .mdx-content a[href^="#"]:hover {
+          text-decoration: none;
+          color: #8eb31d;
+        }
+        .author-line a {
+          color: #a5c422;
+          text-decoration: underline;
+        }
+        .author-line a:hover {
+          color: #8eb31d;
+          text-decoration: underline;
+        }
+      `;
+      document.head.appendChild(style);
+    }
+
+    // Load static Markdown content for blog/FAQ posts
     const loadPost = async () => {
       try {
-        // This is a simplified version - in reality you'd use MDX loader
-        const response = await fetch(`/static/blog/${slug}.mdx`);
+        // Use the already computed isFAQ boolean
+        const baseUrl = isFAQ ? '/static/faq' : '/static/blog';
+        // This is a simplified version - in reality you'd use MD loader
+        const response = await fetch(`${baseUrl}/${slug}.md`);
         if (!response.ok) {
           throw new Error('Post not found');
         }
@@ -60,16 +188,70 @@ const BlogPost: React.FC<BlogPostProps> = ({ slug }) => {
           }
         }
         setMetadata(fm);
+        if (fm.author) {
+            const rawAuthorHtml = await marked.parseInline(fm.author);
+            const safeAuthorHtml = DOMPurify.sanitize(rawAuthorHtml);
+            setAuthorHtml(safeAuthorHtml);
+        }
+
+        // Separate leading HTML from main markdown content
+        let mainContent = contentBody;
+        // Regex to find a block of HTML at the start of the string.
+        // It looks for a string that starts with a tag, and is followed by a separator.
+        const separator = '\n---\n';
+        const contentParts = contentBody.split(separator);
+        
+        if (contentParts.length > 1) {
+            const potentialLeadingContent = contentParts[0].trim();
+            // A simple check to see if it's likely HTML
+            if (potentialLeadingContent.startsWith('<') && potentialLeadingContent.endsWith('>')) {
+                setLeadingContent(DOMPurify.sanitize(potentialLeadingContent));
+                mainContent = contentParts.slice(1).join(separator);
+            }
+        }
+
         // Remove the H1 title from content body
-        const processedContent = contentBody.replace(/^# .*$/m, '').trim();
+        let processedContent = mainContent.replace(/^# .*$/m, '').trim();
+        
+        // Handle JSX-style image tags before markdown processing
+        processedContent = processedContent.replace(
+          /<img\s+([^>]*)\s*\/>/g,
+          (match: string, attributes: string) => {
+            // Convert JSX-style attributes to regular HTML
+            let htmlAttributes = attributes
+              // Handle style={{...}} JSX objects
+              .replace(/style=\{\{([^}]+)\}\}/g, (_styleMatch: string, styleContent: string) => {
+                // Convert JavaScript object notation to CSS
+                const cssStyle = styleContent
+                  .split(',')
+                  .map((prop: string) => prop.trim())
+                  .map((prop: string) => {
+                    const [key, value] = prop.split(':').map((p: string) => p.trim());
+                    // Convert camelCase to kebab-case
+                    const cssKey = key.replace(/([A-Z])/g, '-$1').toLowerCase();
+                    // Remove quotes from value
+                    const cssValue = value.replace(/^['"]|['"]$/g, '');
+                    return `${cssKey}: ${cssValue}`;
+                  })
+                  .join('; ');
+                return `style="${cssStyle}"`;
+              })
+              // Fix image paths from /static/img/ to /static/images/
+              .replace(/src="\/static\/img\//g, 'src="/static/images/');
+            
+            return `<img ${htmlAttributes} />`;
+          }
+        );
+        
         // Convert markdown to HTML and sanitize
-  const rawHtml = await marked.parse(processedContent);
+        const rawHtml = await marked.parse(processedContent);
         const safeHtml = DOMPurify.sanitize(rawHtml);
+        
         setContent(safeHtml);
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : 'Unknown error';
-        setError(`Failed to load blog post: ${errorMessage}`);
-        console.error('Error loading post:', {
+        setError(`Failed to load content: ${errorMessage}`);
+        console.error('Error loading content:', {
           slug,
           error: err,
           timestamp: new Date().toISOString()
@@ -95,12 +277,16 @@ const BlogPost: React.FC<BlogPostProps> = ({ slug }) => {
   }
 
   if (error) {
+    const backUrl = isFAQ ? '/faq/' : '/blog/';
+    const backText = isFAQ ? 'Back to FAQ' : 'Back to Blog';
+    const contentType = isFAQ ? 'FAQ content' : 'blog post';
+    
     return (
       <div className="container mt-5">
         <div className="alert alert-danger">
-          <h4>Post Not Found</h4>
-          <p>The blog post you're looking for doesn't exist.</p>
-          <a href="/blog/" className="btn btn-success">Back to Blog</a>
+          <h4>Content Not Found</h4>
+          <p>The {contentType} you're looking for doesn't exist.</p>
+          <a href={backUrl} className="btn btn-success">{backText}</a>
         </div>
       </div>
     );
@@ -112,7 +298,9 @@ const BlogPost: React.FC<BlogPostProps> = ({ slug }) => {
         <nav aria-label="breadcrumb" className="mb-4">
           <ol className="breadcrumb">
             <li className="breadcrumb-item">
-              <a href="/blog/" style={{color: '#a5c422'}}>Blog</a>
+              <a href={isFAQ ? '/faq/' : '/blog/'} style={{color: '#a5c422'}}>
+                {isFAQ ? 'FAQ' : 'Blog'}
+              </a>
             </li>
             <li className="breadcrumb-item active" aria-current="page">
               {metadata.title || slug.replace(/-/g, ' ')}
@@ -121,12 +309,12 @@ const BlogPost: React.FC<BlogPostProps> = ({ slug }) => {
         </nav>
         
         <div>
-          <h1 style={{ fontSize: '2.5rem', fontWeight: 'bold', marginBottom: '1rem' }}>
+          <h1 style={{ fontSize: '2rem', fontWeight: 'bold', marginBottom: '1rem' }}>
             {metadata.title || slug.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
           </h1>
           
-          <div style={{ color: '#6c757d', marginBottom: '2rem' }}>
-            {metadata.author && <div>By {metadata.author}</div>}
+          <div style={{ color: '#6c757d', marginBottom: '2rem' }} className="author-line">
+             {authorHtml && <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(`By ${authorHtml}`) }} />}
             {metadata.date && (
               <div>
                 {(() => {
@@ -146,13 +334,22 @@ const BlogPost: React.FC<BlogPostProps> = ({ slug }) => {
             )}
           </div>
           
+          {leadingContent && <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(leadingContent) }} />}
+
           {/*
             Double-sanitize HTML at render time for defense-in-depth.
             Even though content is sanitized before setContent, we sanitize again here
             to protect against any future changes or missed edge cases in the pipeline.
             This is a best practice for robust XSS protection.
           */}
-          <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(content) }} />
+          <div 
+            dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(content) }} 
+            className="mdx-content"
+            style={{
+              fontSize: '1rem',
+              lineHeight: '1.6'
+            }}
+          />
           
           <hr style={{ margin: '3rem 0' }} />
           
@@ -184,12 +381,18 @@ const BlogPost: React.FC<BlogPostProps> = ({ slug }) => {
 
 // Initialize the component when the DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
-  const container = document.getElementById('blog-post-root');
+  const blogContainer = document.getElementById('blog-post-root');
+  const faqContainer = document.getElementById('faq-post-root');
+  const container = blogContainer || faqContainer;
+  
   if (container) {
+    // Determine type based on container
+    const type = faqContainer ? 'faq' : 'blog';
+    
     // Get slug from URL or data attribute
     const slug = container.dataset.slug || window.location.pathname.split('/').pop();
     const root = createRoot(container);
-    root.render(<BlogPost slug={slug || ''} />);
+    root.render(<BlogPost slug={slug || ''} type={type} />);
   }
 });
 

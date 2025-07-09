@@ -1,0 +1,20 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}
+{{ faq_title|default:"FAQ" }} - Fight Health Insurance
+{% endblock title %}
+{% block metadescription %}{{ faq_excerpt|default:"Frequently asked questions about health insurance and fighting denials." }}{% endblock metadescription %}
+{% block extra_style %}
+
+{% endblock extra_style %}
+{% block content %}
+<section id="contact">
+    <div class="container">        
+        <div id="faq-post-root" data-slug="{{ slug }}">
+            <!-- React component will be mounted here -->
+        </div>
+    </div>
+</section>
+
+<script src="{% static 'js/dist/blog_post.bundle.js' %}"></script>
+{% endblock content %}

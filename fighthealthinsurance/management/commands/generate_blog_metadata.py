@@ -6,7 +6,7 @@ from django.core.management.base import BaseCommand
 from django.conf import settings
 
 class Command(BaseCommand):
-    help = 'Scan static/blog/ for .mdx files and extract frontmatter metadata to blog_posts.json.'
+    help = 'Scan static/blog/ for .md files and extract frontmatter metadata to blog_posts.json.'
 
     FRONTMATTER_RE = re.compile(r'^---\s*([\s\S]+?)\s*---', re.MULTILINE)
 
@@ -25,7 +25,7 @@ class Command(BaseCommand):
         posts = []
         try:
             for fname in os.listdir(static_dir):
-                if fname.endswith('.mdx'):
+                if fname.endswith('.md'):
                     path = os.path.join(static_dir, fname)
                     try:
                         with open(path, 'r', encoding='utf-8') as f:
