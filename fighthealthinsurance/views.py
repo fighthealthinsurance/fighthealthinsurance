@@ -23,6 +23,7 @@ from django.http import HttpResponseRedirect
 from django.contrib.auth.decorators import login_required
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.generic.edit import FormView
+from django.views.generic.base import TemplateView
 
 from django_encrypted_filefield.crypt import Cryptographer
 
@@ -30,12 +31,7 @@ from fighthealthinsurance import common_view_logic
 from fighthealthinsurance import forms as core_forms
 from fighthealthinsurance.chat_forms import UserConsentForm
 from fighthealthinsurance import models
-from fighthealthinsurance import followup_emails
-from fighthealthinsurance.stripe_utils import get_or_create_price
 
-from fhi_users import emails as fhi_emails
-from fhi_users.models import UserDomain, ProfessionalUser
-from fhi_users.auth.auth_utils import resolve_domain_id
 from fighthealthinsurance.models import StripeRecoveryInfo
 
 from django.template import loader
@@ -97,11 +93,11 @@ class FollowUpView(generic.FormView):
         return render(self.request, "followup_thankyou.html")
 
 
-class ProVersionThankYouView(generic.TemplateView):
+class ProVersionThankYouView(TemplateView):
     template_name = "professional_thankyou.html"
 
 
-class BRB(generic.TemplateView):
+class BRB(TemplateView):
     template_name = "brb.html"
 
     def get(self, request, *args, **kwargs):
@@ -176,7 +172,7 @@ class BlogView(generic.TemplateView):
             # Only allow safe filenames (alphanumeric, dash, underscore)
             def is_safe_slug(s):
                 return all(c.isalnum() or c in ('-', '_') for c in s)
-            mdx_slugs = [os.path.splitext(f)[0] for f in files if f.endswith('.mdx') and is_safe_slug(os.path.splitext(f)[0])]
+            mdx_slugs = [os.path.splitext(f)[0] for f in files if f.endswith('.md') and is_safe_slug(os.path.splitext(f)[0])]
         except (FileNotFoundError, IndexError) as e:
             logger.warning(f"Could not find blog directory or STATICFILES_DIRS is not set: {e}")
             mdx_slugs = []
@@ -201,7 +197,7 @@ class BlogPostView(generic.TemplateView):
             return context
 
         mdx_dir = os.path.join(static_dir, 'blog')
-        mdx_path = os.path.join(mdx_dir, f"{slug}.mdx")
+        mdx_path = os.path.join(mdx_dir, f"{slug}.md")
         if not os.path.abspath(mdx_path).startswith(os.path.abspath(mdx_dir)):
             logger.warning(f"Attempted path traversal with slug: {slug}")
             context.update({"slug": slug, "post_title": None, "post_excerpt": None})
@@ -282,6 +278,43 @@ class ContactView(generic.TemplateView):
 
     def get_context_data(self, **kwargs):
         return {"title": "Contact Us"}
+
+
+class FAQView(generic.TemplateView):
+    template_name = "faq.html"
+
+    def get_context_data(self, **kwargs):
+        return {"title": "Frequently Asked Questions"}
+
+
+class MedicaidFAQView(generic.TemplateView):
+    template_name = "faq_post.html"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        slug = "medicaid-work-requirements-faq"
+        
+        # Validate slug and load FAQ content from static file
+        static_dir = settings.STATICFILES_DIRS[0]
+        if not re.match(r'^[a-zA-Z0-9_-]+$', slug):
+            logger.warning(f"Invalid slug format: {slug}")
+            context.update({"slug": slug, "faq_title": None, "faq_excerpt": None})
+            return context
+
+        faq_dir = os.path.join(static_dir, 'faq')
+        faq_path = os.path.join(faq_dir, f"{slug}.md")
+        if not os.path.abspath(faq_path).startswith(os.path.abspath(faq_dir)):
+            logger.warning(f"Attempted path traversal with slug: {slug}")
+            context.update({"slug": slug, "faq_title": None, "faq_excerpt": None})
+            return context
+        
+        context.update({
+            "title": "Medicaid Work Requirements FAQ",
+            "slug": slug,
+            "faq_title": "Medicaid Work Requirements FAQ",
+            "faq_excerpt": "Frequently asked questions about Medicaid work requirements and how they may affect your healthcare coverage eligibility.",
+        })
+        return context
 
 
 class ShareDenialView(View):

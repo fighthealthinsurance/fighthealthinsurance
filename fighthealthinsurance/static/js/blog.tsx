@@ -30,7 +30,7 @@ const BlogIndex: React.FC = () => {
         // Fetch all posts in parallel
         const postPromises = knownSlugs.map(async (slug) => {
           try {
-            const response = await fetch(`/static/blog/${slug}.mdx`);
+            const response = await fetch(`/static/blog/${slug}.md`);
             if (!response.ok) return null;
             const mdxContent = await response.text();
 
