@@ -25,21 +25,39 @@ const BlogPost: React.FC<BlogPostProps> = ({ slug }) => {
         }
         const mdxContent = await response.text();
         
-        // Manual frontmatter parsing to avoid Buffer in browser
-        const fm: Record<string,string> = {};
+        // Manual frontmatter parsing with validation
+        const fm: Record<string, string> = {};
         let contentBody = mdxContent;
-        if (mdxContent.startsWith('---')) {
-          const parts = mdxContent.split('---', 3);
-          const fmText = parts[1].trim();
-          contentBody = parts[2] || '';
-          fmText.split('\n').forEach(line => {
-            const idx = line.indexOf(':');
-            if (idx > 0) {
-              const key = line.slice(0, idx).trim();
-              let val = line.slice(idx + 1).trim().replace(/^['"]|['"]$/g, '');
-              fm[key] = val;
-            }
-          });
+        if (mdxContent.startsWith('---\n')) {
+          const endIndex = mdxContent.indexOf('\n---\n', 4);
+          if (endIndex !== -1) {
+            const fmText = mdxContent.slice(4, endIndex).trim();
+            contentBody = mdxContent.slice(endIndex + 5);
+            fmText.split('\n').forEach(line => {
+              const trimmedLine = line.trim();
+              if (!trimmedLine || trimmedLine.startsWith('#')) return;
+
+              const colonIndex = trimmedLine.indexOf(':');
+              if (colonIndex > 0 && colonIndex < trimmedLine.length - 1) {
+                const key = trimmedLine.slice(0, colonIndex).trim();
+                let value = trimmedLine.slice(colonIndex + 1).trim().replace(/^(['"])(.*)\1$/, '$2');
+
+                // Validate key contains only valid characters
+                if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(key)) {
+                  const msg = `Invalid frontmatter key: ${key}`;
+                  if (process.env.NODE_ENV === 'development') throw new Error(msg);
+                  console.warn(msg);
+                  return;
+                }
+
+                fm[key] = value;
+              } else {
+                const msg = `Malformed frontmatter line: ${line}`;
+                if (process.env.NODE_ENV === 'development') throw new Error(msg);
+                console.warn(msg);
+              }
+            });
+          }
         }
         setMetadata(fm);
         // Remove the H1 title from content body

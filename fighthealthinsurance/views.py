@@ -1,4 +1,5 @@
 import os
+import re
 
 import json
 import stripe
@@ -192,42 +193,58 @@ class BlogPostView(generic.TemplateView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         slug = kwargs.get("slug", "")
-
-        # Load blog metadata directly from MDX file frontmatter
+        # Validate slug 
         static_dir = settings.STATICFILES_DIRS[0]
-        mdx_path = os.path.join(static_dir, 'blog', f'{slug}.mdx')
-        # Use a plain dict for dynamic frontmatter parsing to avoid mypy TypedDict key errors
-        post_info: dict[str, str] = {}
-        try:
-            with open(mdx_path, "r", encoding="utf-8") as f:
-                content = f.read()
+        if not re.match(r'^[a-zA-Z0-9_-]+$', slug):
+            logger.warning(f"Invalid slug format: {slug}")
+            context.update({"slug": slug, "post_title": None, "post_excerpt": None})
+            return context
 
-            # Simple frontmatter parsing
-            if content.startswith('---'):
-                parts = content.split('---', 2)
-                if len(parts) >= 3:
-                    fm_text = parts[1].strip()
-                    for line in fm_text.split('\n'):
-                        if ':' in line:
-                            key, val = line.split(':', 1)
-                            post_info[key.strip()] = val.strip().strip('"\'')
-                    # Excerpt fallback
-                    if not post_info.get("description"):
-                        body = parts[2].strip()
-                        first_para = body.split('\n\n')[0]
-                        excerpt = first_para.replace('#', '').replace('*', '').strip()
-                        post_info["description"] = excerpt[:200] + "..." if len(excerpt) > 200 else excerpt
-        except (FileNotFoundError, IndexError) as e:
-            logger.warning(f"Could not load MDX file {mdx_path}: {e}")
+        mdx_dir = os.path.join(static_dir, 'blog')
+        mdx_path = os.path.join(mdx_dir, f"{slug}.mdx")
+        if not os.path.abspath(mdx_path).startswith(os.path.abspath(mdx_dir)):
+            logger.warning(f"Attempted path traversal with slug: {slug}")
+            context.update({"slug": slug, "post_title": None, "post_excerpt": None})
+            return context
+
+        # Load blog metadata from blog_posts.json
+        blog_json_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "static", "blog_posts.json"
+        )
+        post_info: BlogPostMetadata = {}
+        try:
+            with open(blog_json_path, "r", encoding="utf-8") as f:
+                posts = json.load(f)
+
+            if not isinstance(posts, list):
+                logger.error(f"Invalid blog metadata format in {blog_json_path}: expected list")
+                post_info = {}
+            else:
+                for post in posts:
+                    if post.get("slug") == slug:
+                        post_info = post
+                        break
+                else:
+                    logger.info(f"Blog post not found for slug: {slug}")
+
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            logger.warning(f"Could not load blog metadata from {blog_json_path}: {e}")
+            post_info = {}
+        except PermissionError as e:
+            logger.error(f"Permission denied accessing blog metadata file {blog_json_path}: {e}")
+            post_info = {}
+        except UnicodeDecodeError as e:
+            logger.error(f"Invalid file encoding for blog metadata file {blog_json_path}: {e}")
             post_info = {}
         except Exception as e:
-            logger.error(f"Unexpected error loading blog post metadata: {e}")
+            logger.error(f"Unexpected error loading blog metadata: {e}")
             post_info = {}
 
         context.update({
             "slug": slug,
             "post_title": post_info.get("title"),
-            "post_excerpt": post_info.get("description"),
+            "post_excerpt": post_info.get("excerpt"),
         })
         return context
 
