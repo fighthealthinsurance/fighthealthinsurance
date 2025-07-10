@@ -20,32 +20,41 @@ interface BlogPost {
 const BlogIndex: React.FC = () => {
   const [posts, setPosts] = useState<BlogPost[]>([]);
   const [loading, setLoading] = useState(true);
+  const [failedSlugs, setFailedSlugs] = useState<string[]>([]);
 
   useEffect(() => {
     const loadPosts = async () => {
       try {
         // Get list of available blog posts from the data embedded in the HTML
         const knownSlugs = window.blogSlugs || [];
+        const currentFailedSlugs: string[] = [];
 
         // Fetch all posts in parallel
         const postPromises = knownSlugs.map(async (slug) => {
           try {
             const response = await fetch(`/static/blog/${slug}.md`);
-            if (!response.ok) return null;
-            const mdxContent = await response.text();
+            if (!response.ok) {
+                console.warn(`Failed to load post ${slug}: HTTP ${response.status}`);
+                currentFailedSlugs.push(slug);
+                return null;
+            }
+            const mdContent = await response.text();
 
             // Parse frontmatter
             let frontmatter: Record<string, string> = {};
-            if (mdxContent.startsWith('---')) {
-              const frontmatterEnd = mdxContent.indexOf('\n---', 3);
+            if (mdContent.startsWith('---\n')) {
+              const frontmatterEnd = mdContent.indexOf('\n---\n', 4);
               if (frontmatterEnd !== -1) {
-                const frontmatterText = mdxContent.slice(3, frontmatterEnd).trim();
+                const frontmatterText = mdContent.slice(4, frontmatterEnd).trim();
                 // Simple YAML parsing
                 frontmatterText.split('\n').forEach(line => {
-                  const colonIndex = line.indexOf(':');
-                  if (colonIndex > 0) {
-                    const key = line.slice(0, colonIndex).trim();
-                    let value = line.slice(colonIndex + 1).trim().replace(/^['"]|['"]$/g, '');
+                  const trimmedLine = line.trim();
+                  if (!trimmedLine || trimmedLine.startsWith('#')) return;
+                  
+                  const colonIndex = trimmedLine.indexOf(':');
+                  if (colonIndex > 0 && colonIndex < trimmedLine.length - 1) {
+                    const key = trimmedLine.slice(0, colonIndex).trim();
+                    let value = trimmedLine.slice(colonIndex + 1).trim().replace(/^(['"])(.*)\1$/, '$2');
                     frontmatter[key] = value;
                   }
                 });
@@ -55,7 +64,7 @@ const BlogIndex: React.FC = () => {
             // Extract excerpt from description or first paragraph
             let excerpt = frontmatter.description || '';
             if (!excerpt) {
-              const content = mdxContent.slice(mdxContent.indexOf('\n---', 3) + 4).trim();
+              const content = mdContent.slice(mdContent.indexOf('\n---\n', 4) + 5).trim();
               const firstParagraph = content.split('\n\n')[0];
               excerpt = firstParagraph.replace(/[#*`]/g, '').substring(0, 150) + '...';
             }
@@ -70,6 +79,7 @@ const BlogIndex: React.FC = () => {
             } as BlogPost;
           } catch (err) {
             console.warn(`Failed to load post ${slug}:`, err);
+            currentFailedSlugs.push(slug);
             return null;
           }
         });
@@ -80,6 +90,7 @@ const BlogIndex: React.FC = () => {
         posts.sort((a, b) => b.date.localeCompare(a.date));
 
         setPosts(posts);
+        setFailedSlugs(currentFailedSlugs);
       } catch (err) {
         console.error('Error loading posts:', err);
       } finally {
@@ -101,6 +112,12 @@ const BlogIndex: React.FC = () => {
         Insights, tips, and strategies for fighting health insurance denials.
       </p>
       
+      {failedSlugs.length > 0 && (
+        <div className="alert alert-warning" role="alert">
+          <strong>Warning:</strong> Some blog posts could not be loaded: {failedSlugs.join(', ')}. This might be a deployment issue.
+        </div>
+      )}
+
       <div className="row">
         {posts.map(post => (
           <div key={post.id} className="col-md-6 mb-4">
