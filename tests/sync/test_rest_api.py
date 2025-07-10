@@ -242,8 +242,12 @@ class DenialEndToEnd(APITestCase):
         try:
             while True:
                 response = await seb_communicator.receive_from()
-        except:
-            pass
+        except asyncio.CancelledError:
+            print("seb_communicator.receive_from() was cancelled.")
+        except asyncio.TimeoutError:
+            print("seb_communicator.receive_from() timed out.")
+        except Exception as e:
+            print(f"seb_communicator.receive_from() failed with unexpected error: {e}")
         finally:
             try:
                 await seb_communicator.disconnect()

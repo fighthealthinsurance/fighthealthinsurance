@@ -514,7 +514,7 @@ async def execute_critical_optional_fireandforget(
             if required_tasks_finished >= len(required):
                 logger.debug("All done with required tasks")
                 break
-    except asyncio.TimeoutError as e:
+    except asyncio.TimeoutError:
         logger.opt(exception=True).error(f"Timed out waiting for required tasks?")
     except asyncio.CancelledError:
         logger.debug("Task execution was cancelled")
