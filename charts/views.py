@@ -7,7 +7,7 @@ from django.db.models import Count, Q
 from django.utils import timezone
 from datetime import timedelta
 from fighthealthinsurance.models import Denial, InterestedProfessional
-from fhi_users.models import ProfessionalUser, UserDomain, ProfessionalDomainRelation
+from fhi_users.models import ProfessionalDomainRelation
 from bokeh.plotting import figure
 from bokeh.embed import components
 from bokeh.models import ColumnDataSource

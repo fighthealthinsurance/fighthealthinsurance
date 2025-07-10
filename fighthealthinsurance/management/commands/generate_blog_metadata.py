@@ -36,21 +36,44 @@ class Command(BaseCommand):
                     m = self.FRONTMATTER_RE.match(content)
                     if m:
                         try:
-                            frontmatter = yaml.safe_load(m.group(1))
+                            frontmatter = yaml.safe_load(m.group(1)) or {}
                         except Exception as e:
                             self.stderr.write(self.style.ERROR(f"Failed to parse frontmatter in {fname}: {e}"))
                             continue
+                        
+                        content_after_frontmatter = content[m.end():].strip()
                         slug = os.path.splitext(fname)[0]
-                        post = {'slug': slug}
-                        if isinstance(frontmatter, dict):
-                            post.update(frontmatter)
+
+                        # Generate excerpt from description or first paragraph
+                        excerpt = frontmatter.get('description', '')
+                        if not excerpt:
+                            first_paragraph = content_after_frontmatter.split('\n\n')[0]
+                            # Basic cleanup of markdown for a cleaner excerpt
+                            excerpt = re.sub(r'[#*`]', '', first_paragraph)
+                            if len(excerpt) > 150:
+                                excerpt = excerpt[:150] + '...'
+                        
+                        post = {
+                            'slug': slug,
+                            'title': frontmatter.get('title', slug.replace('-', ' ').title()),
+                            'date': frontmatter.get('date', ''),
+                            'author': frontmatter.get('author', ''),
+                            'description': frontmatter.get('description', ''),
+                            'excerpt': excerpt,
+                            'tags': frontmatter.get('tags', []),
+                            'readTime': frontmatter.get('readTime', '5 min read'),
+                        }
                         posts.append(post)
         except Exception as e:
             self.stderr.write(self.style.ERROR(f"Error listing files in {static_dir}: {e}"))
             return
+        
+        # Sort posts by date (newest first)
+        posts.sort(key=lambda x: x.get('date', ''), reverse=True)
+
         try:
             with open(output_path, 'w', encoding='utf-8') as out:
-                json.dump(posts, out, indent=2)
+                json.dump(posts, out, indent=2, ensure_ascii=False)
             self.stdout.write(self.style.SUCCESS(f'Wrote metadata for {len(posts)} posts to {output_path}'))
         except Exception as e:
             self.stderr.write(self.style.ERROR(f"Failed to write output file {output_path}: {e}"))

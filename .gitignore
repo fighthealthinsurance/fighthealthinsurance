@@ -165,3 +165,6 @@ a.tr
 
 # Node.js dependencies
 node_modules/
+
+# Generated blog metadata
+fighthealthinsurance/static/blog_posts.json
