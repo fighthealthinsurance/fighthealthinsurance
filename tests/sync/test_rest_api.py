@@ -182,24 +182,6 @@ class DenialEndToEnd(APITestCase):
     @pytest.mark.asyncio
     # Testing end to end for professional user
     async def test_denial_end_to_end(self):
-
-        try:
-            # Wrap the entire test in a timeout to prevent hanging
-            await asyncio.wait_for(self._run_test_denial_end_to_end(), timeout=60)
-        except asyncio.TimeoutError:
-            print("Test timed out after 60 seconds - this is expected for SQLite tests")
-            pass
-        except asyncio.exceptions.CancelledError:
-            print("Test was cancelled - this is expected for SQLite tests")
-            pass
-        except Exception as e:
-            print(f"Test failed with error: {e}")
-            # Re-raise the exception if it's not a cancellation/timeout
-            if not isinstance(e, (asyncio.CancelledError, asyncio.TimeoutError)):
-                raise
-
-    async def _run_test_denial_end_to_end(self):
-
         login_result = await sync_to_async(self.client.login)(
             username=self.username, password=self.password
         )
@@ -263,7 +245,11 @@ class DenialEndToEnd(APITestCase):
         except:
             pass
         finally:
-            await seb_communicator.disconnect()
+            try:
+                await seb_communicator.disconnect()
+            except Exception as e:
+                print(f"seb_communicator.disconnect() failed: {e}")
+                # Do not raise, just log and continue
         await asyncio.sleep(5)  # Give a second for the fire and forget pubmed to run
         # Set health history before next steps
         health_history_url = reverse("healthhistory-list")
