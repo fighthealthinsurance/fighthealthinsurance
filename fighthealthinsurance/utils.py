@@ -1,6 +1,8 @@
+
 from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
 from django.conf import settings
+from django.db import connections, connection
 
 import time
 import random
@@ -23,14 +25,11 @@ from typing import (
     Awaitable,
     Callable,
     Any,
-    Generic,
     Dict,
     Tuple,
     Coroutine,
     Sequence,
-    Union,
     cast,
-    AsyncGenerator,
 )
 from uuid import UUID
 from subprocess import CalledProcessError
@@ -248,8 +247,32 @@ async def fire_and_forget_in_new_threadpool(task: Coroutine) -> None:
 
     The coroutine is executed in a fire-and-forget manner; any exceptions are logged,
     and the function does not wait for completion or return a result.
+
+    For SQLite databases, runs synchronously to avoid concurrent write issues.
     """
+    # Check if we're using SQLite - if so, run synchronously to avoid locking issues
+    if connection.vendor == 'sqlite':
+        logger.debug(f"SQLite detected, running task synchronously: {task}")
+        try:
+            # Create a shielded task to prevent cancellation from parent tasks
+            # This ensures fire-and-forget tasks complete even if websocket disconnects
+            shielded_task = asyncio.shield(asyncio.create_task(task))
+            await shielded_task
+        except asyncio.CancelledError:
+            # If the shield is cancelled, just log and continue
+            logger.debug(f"SQLite task was cancelled but will continue in background: {task}")
+        except Exception as e:
+            logger.opt(exception=True).warning(
+                f"Exception in SQLite sync task: {e}"
+            )
+        # No need to close connection in sync path - Django will handle it
+        logger.debug(f"SQLite task finished: {task}")
+        return
+    
+    # For production databases (PostgreSQL, etc.), use the normal async approach
+
     logger.debug(f"Starting fire and forget task {task}")
+
 
     def run_async_task() -> None:
         loop = asyncio.new_event_loop()
@@ -262,6 +285,10 @@ async def fire_and_forget_in_new_threadpool(task: Coroutine) -> None:
             )
         finally:
             loop.close()
+            try:
+                connections.close_all()
+            except Exception as e:
+                logger.warning(f"Error closing DB connections in fire_and_forget: {e}")
             logger.debug(f"Task {task} finished")
 
     # Create and start a thread that will run the task in its own loop
@@ -477,14 +504,24 @@ async def execute_critical_optional_fireandforget(
         for task in asyncio.as_completed(all_tasks, timeout=timeout):
             if task in required_set:
                 required_tasks_finished += 1
-            result: T = await task
-            # Yield each result immediately for streaming
-            yield result
+            try:
+                result: T = await task
+                # Yield each result immediately for streaming
+                yield result
+            except asyncio.CancelledError:
+                logger.debug("Task was cancelled, skipping result")
+                continue
             if required_tasks_finished >= len(required):
                 logger.debug("All done with required tasks")
                 break
     except asyncio.TimeoutError as e:
         logger.opt(exception=True).error(f"Timed out waiting for required tasks?")
+    except asyncio.CancelledError:
+        logger.debug("Task execution was cancelled")
+        # Cancel any remaining tasks
+        for task in all_tasks:
+            if not task.done():
+                task.cancel()
     except Exception as e:
         logger.opt(exception=True).error(f"Error executing required tasks {e}")
 
