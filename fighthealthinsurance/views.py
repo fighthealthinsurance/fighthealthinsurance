@@ -8,8 +8,6 @@ import typing
 from typing import TypedDict
 from loguru import logger
 from PIL import Image
-import json
-
 
 from django import forms
 from django.conf import settings
@@ -163,23 +161,24 @@ class BlogView(generic.TemplateView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        mdx_slugs = []
+        blog_posts_path = os.path.join(settings.BASE_DIR, 'fighthealthinsurance', 'static', 'blog_posts.json')
+        slugs = []
         try:
-            # TODO: Load slugs from a cached index or database table for performance and security.
-            static_dir = settings.STATICFILES_DIRS[0]
-            blog_dir = os.path.join(static_dir, 'blog')
-            files = os.listdir(blog_dir)
-            # Only allow safe filenames (alphanumeric, dash, underscore)
-            def is_safe_slug(s):
-                return all(c.isalnum() or c in ('-', '_') for c in s)
-            mdx_slugs = [os.path.splitext(f)[0] for f in files if f.endswith('.md') and is_safe_slug(os.path.splitext(f)[0])]
-        except (FileNotFoundError, IndexError) as e:
-            logger.warning(f"Could not find blog directory or STATICFILES_DIRS is not set: {e}")
-            mdx_slugs = []
+            with open(blog_posts_path, 'r', encoding='utf-8') as f:
+                posts = json.load(f)
+            # Extract slugs from the loaded posts
+            slugs = [post.get('slug') for post in posts if post.get('slug')]
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            logger.error(f"Could not load or parse blog_posts.json: {e}")
+            # Optionally, you could run the management command here as a fallback
+            # from django.core.management import call_command
+            # call_command('generate_blog_metadata')
+            # and then try to load the file again.
+            # For now, we'll just log the error and return an empty list.
         except Exception as e:
-            logger.error(f"Unexpected error loading blog slugs: {e}")
-            mdx_slugs = []
-        context['blog_slugs'] = json.dumps(mdx_slugs)
+            logger.error(f"An unexpected error occurred while loading blog posts: {e}")
+        
+        context['blog_slugs'] = json.dumps(slugs)
         return context
 
 

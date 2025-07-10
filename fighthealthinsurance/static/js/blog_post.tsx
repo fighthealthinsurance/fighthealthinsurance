@@ -49,83 +49,83 @@ const BlogPost: React.FC<BlogPostProps> = ({ slug, type = 'blog' }) => {
   const isFAQ = type === 'faq';
 
   useEffect(() => {
-    // Add custom styles for MDX content
-    const styleId = 'mdx-content-styles';
+    // Add custom styles for MD content
+    const styleId = 'md-content-styles';
     if (!document.getElementById(styleId)) {
       const style = document.createElement('style');
       style.id = styleId;
       style.textContent = `
-        .mdx-content h1 {
+        .md-content h1 {
           font-size: 2rem;
           font-weight: 600;
           margin-top: 2rem;
           margin-bottom: 1rem;
           color: #333;
         }
-        .mdx-content h2 {
+        .md-content h2 {
           font-size: 1.5rem;
           font-weight: 600;
           margin-top: 1.75rem;
           margin-bottom: 0.75rem;
           color: #333;
         }
-        .mdx-content h3 {
+        .md-content h3 {
           font-size: 1.25rem;
           font-weight: 600;
           margin-top: 1.5rem;
           margin-bottom: 0.5rem;
           color: #333;
         }
-        .mdx-content h4 {
+        .md-content h4 {
           font-size: 1.125rem;
           font-weight: 600;
           margin-top: 1.25rem;
           margin-bottom: 0.5rem;
           color: #333;
         }
-        .mdx-content h5 {
+        .md-content h5 {
           font-size: 1rem;
           font-weight: 600;
           margin-top: 1rem;
           margin-bottom: 0.5rem;
           color: #333;
         }
-        .mdx-content h6 {
+        .md-content h6 {
           font-size: 0.875rem;
           font-weight: 600;
           margin-top: 1rem;
           margin-bottom: 0.5rem;
           color: #333;
         }
-        .mdx-content p {
+        .md-content p {
           margin-bottom: 1rem;
         }
-        .mdx-content ul, .mdx-content ol {
+        .md-content ul, .md-content ol {
           margin-bottom: 1rem;
         }
-        .mdx-content li {
+        .md-content li {
           margin-bottom: 0.25rem;
         }
-        .mdx-content a {
+        .md-content a {
           color: #a5c422;
           text-decoration: underline;
         }
-        .mdx-content a:hover {
+        .md-content a:hover {
           color: #8eb31d;
           text-decoration: underline;
         }
-        .mdx-content img {
+        .md-content img {
           max-width: 100%;
           height: auto;
           border-radius: 4px;
           box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
           margin: 1rem 0;
         }
-        .mdx-content a[href^="#"]:before {
+        .md-content a[href^="#"]:before {
           content: "";
           margin-right: 0.25rem;
         }
-        .mdx-content a[href^="#"]:hover {
+        .md-content a[href^="#"]:hover {
           text-decoration: none;
           color: #8eb31d;
         }
@@ -151,16 +151,16 @@ const BlogPost: React.FC<BlogPostProps> = ({ slug, type = 'blog' }) => {
         if (!response.ok) {
           throw new Error('Post not found');
         }
-        const mdxContent = await response.text();
+        const mdContent = await response.text();
         
         // Manual frontmatter parsing with validation
         const fm: Record<string, string> = {};
-        let contentBody = mdxContent;
-        if (mdxContent.startsWith('---\n')) {
-          const endIndex = mdxContent.indexOf('\n---\n', 4);
+        let contentBody = mdContent;
+        if (mdContent.startsWith('---\n')) {
+          const endIndex = mdContent.indexOf('\n---\n', 4);
           if (endIndex !== -1) {
-            const fmText = mdxContent.slice(4, endIndex).trim();
-            contentBody = mdxContent.slice(endIndex + 5);
+            const fmText = mdContent.slice(4, endIndex).trim();
+            contentBody = mdContent.slice(endIndex + 5);
             fmText.split('\n').forEach(line => {
               const trimmedLine = line.trim();
               if (!trimmedLine || trimmedLine.startsWith('#')) return;
@@ -344,7 +344,7 @@ const BlogPost: React.FC<BlogPostProps> = ({ slug, type = 'blog' }) => {
           */}
           <div 
             dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(content) }} 
-            className="mdx-content"
+            className="md-content"
             style={{
               fontSize: '1rem',
               lineHeight: '1.6'
