@@ -36,6 +36,8 @@ RUN mkdir -p /external_data
 # Remember to update the combined ray docker file for these copies
 ADD --chown=www-data:www-data static /opt/fighthealthinsurance/static
 ADD --chown=www-data:www-data fighthealthinsurance /opt/fighthealthinsurance/fighthealthinsurance
+# We need to copy the generated blog posts file since it's not in git.
+COPY --chown=www-data:www-data fighthealthinsurance/static/blog_posts.json /opt/fighthealthinsurance/fighthealthinsurance/static/blog_posts.json
 ADD --chown=www-data:www-data fhi_users /opt/fighthealthinsurance/fhi_users
 ADD --chown=www-data:www-data charts /opt/fighthealthinsurance/charts
 COPY --chown=www-data:www-data scripts/start-server.sh /opt/fighthealthinsurance/
