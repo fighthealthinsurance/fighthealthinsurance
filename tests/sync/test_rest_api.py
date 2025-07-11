@@ -11,6 +11,7 @@ import typing
 
 import hashlib
 import json
+import sys
 
 from django.urls import reverse
 from django.contrib.auth import get_user_model
@@ -245,16 +246,17 @@ class DenialEndToEnd(APITestCase):
         except asyncio.CancelledError as cancel_err:
             exc_type, exc_value, exc_tb = sys.exc_info()
             print("seb_communicator.receive_from() was cancelled.")
-            # Try to inspect the cause if available (Python 3.11+ has 'add_note', but we use __cause__ for broad compatibility)
             cause = getattr(cancel_err, '__cause__', None)
             if cause:
                 print(f"CancelledError cause: {repr(cause)}")
-                # Optionally, fail the test if the cause is not a normal websocket disconnect
+                # Fail the test if the cause is not a normal timeout
                 if not isinstance(cause, asyncio.TimeoutError):
                     print("Test failed due to CancelledError with non-timeout cause.")
                     raise
+                else:
+                    print("CancelledError due to TimeoutError; test will not fail.")
             else:
-                print("No specific cause for CancelledError; likely a normal cancellation.")
+                print("No specific cause for CancelledError; likely a normal cancellation. Test will not fail.")
         except asyncio.TimeoutError:
             print("seb_communicator.receive_from() timed out.")
         except Exception as e:
