@@ -238,15 +238,15 @@ class DenialEndToEnd(APITestCase):
             }
         )
         # We should receive at least one frame.
-        response = await seb_communicator.receive_from()
+        response = await seb_communicator.receive_from(timeout=30)
         # Now consume all of the rest of them until done.
         try:
             while True:
-                response = await seb_communicator.receive_from()
+                response = await seb_communicator.receive_from(timeout=10)
         except asyncio.CancelledError as cancel_err:
             exc_type, exc_value, exc_tb = sys.exc_info()
             print("seb_communicator.receive_from() was cancelled.")
-            cause = getattr(cancel_err, '__cause__', None)
+            cause = getattr(cancel_err, "__cause__", None)
             if cause:
                 print(f"CancelledError cause: {repr(cause)}")
                 # Fail the test if the cause is not a normal timeout
@@ -256,7 +256,9 @@ class DenialEndToEnd(APITestCase):
                 else:
                     print("CancelledError due to TimeoutError; test will not fail.")
             else:
-                print("No specific cause for CancelledError; likely a normal cancellation. Test will not fail.")
+                print(
+                    "No specific cause for CancelledError; likely a normal cancellation. Test will not fail."
+                )
         except asyncio.TimeoutError:
             print("seb_communicator.receive_from() timed out.")
         except Exception as e:
