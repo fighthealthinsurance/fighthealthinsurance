@@ -242,8 +242,19 @@ class DenialEndToEnd(APITestCase):
         try:
             while True:
                 response = await seb_communicator.receive_from()
-        except asyncio.CancelledError:
+        except asyncio.CancelledError as cancel_err:
+            exc_type, exc_value, exc_tb = sys.exc_info()
             print("seb_communicator.receive_from() was cancelled.")
+            # Try to inspect the cause if available (Python 3.11+ has 'add_note', but we use __cause__ for broad compatibility)
+            cause = getattr(cancel_err, '__cause__', None)
+            if cause:
+                print(f"CancelledError cause: {repr(cause)}")
+                # Optionally, fail the test if the cause is not a normal websocket disconnect
+                if not isinstance(cause, asyncio.TimeoutError):
+                    print("Test failed due to CancelledError with non-timeout cause.")
+                    raise
+            else:
+                print("No specific cause for CancelledError; likely a normal cancellation.")
         except asyncio.TimeoutError:
             print("seb_communicator.receive_from() timed out.")
         except Exception as e:

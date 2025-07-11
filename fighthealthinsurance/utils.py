@@ -509,7 +509,13 @@ async def execute_critical_optional_fireandforget(
                 # Yield each result immediately for streaming
                 yield result
             except asyncio.CancelledError:
-                logger.debug("Task was cancelled, skipping result")
+                # Check if the task was cancelled due to an exception
+                if task.cancelled():
+                    logger.debug("Task was explicitly cancelled (likely safe to ignore).")
+                elif task.exception() is not None:
+                    logger.error(f"Task was cancelled due to exception: {task.exception()}")
+                else:
+                    logger.debug("Task was cancelled, skipping result")
                 continue
             if required_tasks_finished >= len(required):
                 logger.debug("All done with required tasks")
