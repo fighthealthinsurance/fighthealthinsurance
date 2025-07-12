@@ -37,13 +37,16 @@ RUN mkdir -p /external_data
 ADD --chown=www-data:www-data static /opt/fighthealthinsurance/static
 ADD --chown=www-data:www-data fighthealthinsurance /opt/fighthealthinsurance/fighthealthinsurance
 # We need to copy the generated blog posts file since it's not in git.
-COPY --chown=www-data:www-data fighthealthinsurance/static/blog_posts.json /opt/fighthealthinsurance/fighthealthinsurance/static/blog_posts.json
+# COPY --chown=www-data:www-data fighthealthinsurance/static/blog_posts.json /opt/fighthealthinsurance/fighthealthinsurance/static/blog_posts.json
 ADD --chown=www-data:www-data fhi_users /opt/fighthealthinsurance/fhi_users
 ADD --chown=www-data:www-data charts /opt/fighthealthinsurance/charts
 COPY --chown=www-data:www-data scripts/start-server.sh /opt/fighthealthinsurance/
 COPY --chown=www-data:www-data *.py /opt/fighthealthinsurance/
 ADD --chown=www-data:www-data conf /opt/fighthealthinsurance/conf
 WORKDIR /opt/fighthealthinsurance/
+# Generate the blog metadata inside the container now that all of the files
+# are in the correct locations.
+RUN ./manage.py generate_blog_metadata || echo "Warning: Failed to generate blog metadata. Continuing build without it."
 RUN sudo -u www-data HOME=$(pwd) python initial.py
 RUN mkdir -p ~www-data
 RUN chown -R www-data ~www-data
