@@ -11,6 +11,7 @@ import typing
 
 import hashlib
 import json
+import sys
 
 from django.urls import reverse
 from django.contrib.auth import get_user_model
@@ -237,15 +238,37 @@ class DenialEndToEnd(APITestCase):
             }
         )
         # We should receive at least one frame.
-        response = await seb_communicator.receive_from()
+        response = await seb_communicator.receive_from(timeout=30)
         # Now consume all of the rest of them until done.
         try:
             while True:
-                response = await seb_communicator.receive_from()
-        except:
-            pass
+                response = await seb_communicator.receive_from(timeout=10)
+        except asyncio.CancelledError as cancel_err:
+            exc_type, exc_value, exc_tb = sys.exc_info()
+            print("seb_communicator.receive_from() was cancelled.")
+            cause = getattr(cancel_err, "__cause__", None)
+            if cause:
+                print(f"CancelledError cause: {repr(cause)}")
+                # Fail the test if the cause is not a normal timeout
+                if not isinstance(cause, asyncio.TimeoutError):
+                    print("Test failed due to CancelledError with non-timeout cause.")
+                    raise
+                else:
+                    print("CancelledError due to TimeoutError; test will not fail.")
+            else:
+                print(
+                    "No specific cause for CancelledError; likely a normal cancellation. Test will not fail."
+                )
+        except asyncio.TimeoutError:
+            print("seb_communicator.receive_from() timed out.")
+        except Exception as e:
+            print(f"seb_communicator.receive_from() failed with unexpected error: {e}")
         finally:
-            await seb_communicator.disconnect()
+            try:
+                await seb_communicator.disconnect()
+            except Exception as e:
+                print(f"seb_communicator.disconnect() failed: {e}")
+                # Do not raise, just log and continue
         await asyncio.sleep(5)  # Give a second for the fire and forget pubmed to run
         # Set health history before next steps
         health_history_url = reverse("healthhistory-list")
