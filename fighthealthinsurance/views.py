@@ -36,6 +36,7 @@ from django.template import loader
 from django.http import HttpResponseForbidden
 
 from django.contrib.auth import get_user_model
+from django.contrib.staticfiles.storage import staticfiles_storage
 
 
 class BlogPostMetadata(TypedDict, total=False):
@@ -161,9 +162,10 @@ class BlogView(generic.TemplateView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        blog_posts_path = os.path.join(settings.BASE_DIR, 'fighthealthinsurance', 'static', 'blog_posts.json')
         slugs = []
         try:
+            # Find the path to the blog posts JSON using the staticfiles storage.
+            blog_posts_path = staticfiles_storage.path('blog_posts.json')
             with open(blog_posts_path, 'r', encoding='utf-8') as f:
                 posts = json.load(f)
             # Extract slugs from the loaded posts
@@ -188,25 +190,24 @@ class BlogPostView(generic.TemplateView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         slug = kwargs.get("slug", "")
-        # Validate slug 
-        static_dir = settings.STATICFILES_DIRS[0]
+        # Validate slug format
         if not re.match(r'^[a-zA-Z0-9_-]+$', slug):
             logger.warning(f"Invalid slug format: {slug}")
             context.update({"slug": slug, "post_title": None, "post_excerpt": None})
             return context
 
-        mdx_dir = os.path.join(static_dir, 'blog')
-        mdx_path = os.path.join(mdx_dir, f"{slug}.md")
-        if not os.path.abspath(mdx_path).startswith(os.path.abspath(mdx_dir)):
-            logger.warning(f"Attempted path traversal with slug: {slug}")
+        try:
+            # Securely find the path to the blog post markdown file.
+            # staticfiles_storage.path() will handle finding the file and prevent
+            # path traversal attacks. It raises an error if the file is not found.
+            mdx_path = staticfiles_storage.path(f"blog/{slug}.md")
+        except Exception:
+            logger.warning(f"Blog post markdown file not found for slug: {slug}")
             context.update({"slug": slug, "post_title": None, "post_excerpt": None})
             return context
 
         # Load blog metadata from blog_posts.json
-        blog_json_path = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)),
-            "static", "blog_posts.json"
-        )
+        blog_json_path = staticfiles_storage.path('blog_posts.json')
         post_info: BlogPostMetadata = {}
         try:
             with open(blog_json_path, "r", encoding="utf-8") as f:
@@ -294,25 +295,24 @@ class MedicaidFAQView(generic.TemplateView):
         slug = "medicaid-work-requirements-faq"
         
         # Validate slug and load FAQ content from static file
-        static_dir = settings.STATICFILES_DIRS[0]
         if not re.match(r'^[a-zA-Z0-9_-]+$', slug):
             logger.warning(f"Invalid slug format: {slug}")
             context.update({"slug": slug, "faq_title": None, "faq_excerpt": None})
             return context
 
-        faq_dir = os.path.join(static_dir, 'faq')
-        faq_path = os.path.join(faq_dir, f"{slug}.md")
-        if not os.path.abspath(faq_path).startswith(os.path.abspath(faq_dir)):
-            logger.warning(f"Attempted path traversal with slug: {slug}")
+        try:
+            # Securely find the path to the FAQ markdown file.
+            staticfiles_storage.path(f"faq/{slug}.md")
+            context.update({
+                "title": "Medicaid Work Requirements FAQ",
+                "slug": slug,
+                "faq_title": "Medicaid Work Requirements FAQ",
+                "faq_excerpt": "Frequently asked questions about Medicaid work requirements and how they may affect your healthcare coverage eligibility.",
+            })
+        except Exception:
+            logger.warning(f"FAQ markdown file not found for slug: {slug}")
             context.update({"slug": slug, "faq_title": None, "faq_excerpt": None})
-            return context
         
-        context.update({
-            "title": "Medicaid Work Requirements FAQ",
-            "slug": slug,
-            "faq_title": "Medicaid Work Requirements FAQ",
-            "faq_excerpt": "Frequently asked questions about Medicaid work requirements and how they may affect your healthcare coverage eligibility.",
-        })
         return context
 
 
@@ -815,9 +815,6 @@ class CompletePaymentView(View):
             )
             return HttpResponse(status=500)
 
-    def post(self, request):
-        try:
-            return self.do_post(request)
         except Exception as e:
             logger.opt(exception=True).error("Error processing payment completion")
             return HttpResponse(status=500)
