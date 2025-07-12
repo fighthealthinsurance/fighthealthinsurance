@@ -815,6 +815,9 @@ class CompletePaymentView(View):
             )
             return HttpResponse(status=500)
 
+    def post(self, request):
+        try:
+            return self.do_post(request)
         except Exception as e:
             logger.opt(exception=True).error("Error processing payment completion")
             return HttpResponse(status=500)
