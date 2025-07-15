@@ -118,10 +118,10 @@ const BlogIndex: React.FC = () => {
         </div>
       )}
 
-      <div className="row">
+      <div className="row" style={{flexWrap: 'wrap'}}>
         {posts.map(post => (
-          <div key={post.id} className="col-md-6 mb-4">
-            <div className="card h-100">
+          <div key={post.id} className="col-12 col-md-6 col-lg-4 mb-4" style={{paddingTop: '0.5rem', paddingBottom: '0.5rem'}}>
+            <div className="card h-100" style={{maxWidth: '400px', margin: '0 auto'}}>
               <div className="card-body">
                 <h5 className="card-title" style={{color: '#a5c422'}}>{post.title}</h5>
                 <p className="card-text text-muted small mb-2">
@@ -139,8 +139,8 @@ const BlogIndex: React.FC = () => {
                     return post.date;
                   })()}
                 </p>
-                <p className="card-text">{post.excerpt}</p>
-                <a href={`/blog/${post.slug}/`} className="btn" style={{backgroundColor: '#a5c422', color: 'white', border: 'none'}}>
+                <p className="card-text flex-grow-1">{post.excerpt}</p>
+                <a href={`/blog/${post.slug}/`} className="btn mt-auto" style={{backgroundColor: '#a5c422', color: 'white', border: 'none', alignSelf: 'flex-start'}}>
                   Read More
                 </a>
               </div>
@@ -151,8 +151,8 @@ const BlogIndex: React.FC = () => {
       
       <div className="text-center mt-5">
         <p className="text-muted">
-          More posts coming soon! Have a suggestion for a topic? 
-          <a href="/contact/" className="link"> Let us know</a>.
+          More posts coming soon! Have a suggestion for a topic?{' '}
+          <a href="/contact/" className="link">Let us know</a>.
         </p>
       </div>
     </div>
