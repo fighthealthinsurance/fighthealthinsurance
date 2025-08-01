@@ -57,8 +57,14 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
             logger.opt(exception=True).debug(f"Error sending back appeals: {e}")
             raise e
         finally:
-            await asyncio.sleep(1)
-            await self.close()
+            logger.debug("Yielding before closing connection")
+            await asyncio.sleep(0.1)
+            try:
+                logger.debug("Closing connection...")
+                await self.close()
+                logger.debug("Closed")
+            except Exception:
+                logger.debug("Error closing connection")
         logger.debug("All sent")
 
 
@@ -89,9 +95,14 @@ class StreamingEntityBackend(AsyncWebsocketConsumer):
             logger.opt(exception=True).debug(f"Error sending back entity: {e}")
             raise e
         finally:
-            await asyncio.sleep(1)
-            await self.close()
-            logger.debug("Closed connection")
+            logger.debug("Yielding before closing connection")
+            await asyncio.sleep(0.1)
+            try:
+                logger.debug("Prepairing to close connection")
+                await self.close()
+                logger.debug("Closed connection")
+            except Exception:
+                logger.debug("Error closing connection")
 
 
 class PriorAuthConsumer(AsyncWebsocketConsumer):

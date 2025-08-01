@@ -244,8 +244,6 @@ class DenialEndToEnd(APITestCase):
                 response = await seb_communicator.receive_from()
         except:
             pass
-        finally:
-            await seb_communicator.disconnect()
         await asyncio.sleep(5)  # Give a second for the fire and forget pubmed to run
         # Set health history before next steps
         health_history_url = reverse("healthhistory-list")
@@ -325,8 +323,6 @@ class DenialEndToEnd(APITestCase):
         except Exception as e:
             print(f"Error {e}")
             pass
-        finally:
-            await a_communicator.disconnect()
         print(f"Received responses {responses}")
         responses = list(filter(lambda x: len(x) > 4, responses))
         # It's a streaming response with one per new line
