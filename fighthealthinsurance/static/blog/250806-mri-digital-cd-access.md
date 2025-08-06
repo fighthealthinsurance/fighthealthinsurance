@@ -6,8 +6,9 @@ author: "Fight Health Insurance Team"
 description: "Guide to getting imaging records without losing your mind. Learn why imaging records are so hard to access, what the law says, and how to get your scans fast."
 tags: ["imaging", "records", "HIPAA", "Cures Act", "patient-rights"]
 readTime: "7 min read"
----
 
+---
+<img src="/static/images/cd_llama.png" alt="Llama opening a CD" style="width: 50%; height: auto; display: block; margin: 20px auto;">
 ## 1. A Too‑Familiar Story
 
 Patient A: “Because the imaging was handled by a third party…”  
