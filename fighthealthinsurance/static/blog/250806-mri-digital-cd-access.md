@@ -49,7 +49,7 @@ Hospitals often contract with third‑party image‑management vendors (cloud PA
 4. **Escalate if blown off.** Ask for the Privacy Officer; then file with your State Dept. of Health and the Office for Civil Rights (OCR).
 5. **Document everything.** Names, dates, fees. Paper trails turn into leverage—and reimbursement—if you need to file a complaint.
 
-> **Grab‑and‑Go Letter:** Download our pre‑filled HIPAA request template (link).
+> **Grab‑and‑Go Letter:** Download our pre‑filled HIPAA request template.
 
 ## 6. Signs of Progress 🎉
 
