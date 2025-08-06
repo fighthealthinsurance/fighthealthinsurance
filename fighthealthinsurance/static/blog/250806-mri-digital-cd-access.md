@@ -53,7 +53,7 @@ Hospitals often contract with third‑party image‑management vendors (cloud PA
 
 ## 6. Signs of Progress 🎉
 
-Patients want instant digital access—96 % said so in a 2023 JAMA survey. (radiologybusiness.com)
+Patients want instant digital access—96% said so in a 2023 JAMA survey. (radiologybusiness.com)
 
 Health systems are slowly delivering:
 - PocketHealth roll‑outs replace CDs entirely at Imaging Partners and StL Diagnostic Imaging. (imagingpartners.com, pockethealth.com)
