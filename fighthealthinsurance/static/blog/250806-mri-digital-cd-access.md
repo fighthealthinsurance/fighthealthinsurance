@@ -71,6 +71,6 @@ These examples prove it can be done—so hold your provider to that standard.
 
 Got a records horror story—or a success tip we missed? Drop it in the comments so others can learn.
 
-Need help appealing a denied imaging bill? Check our MRI/CT prior‑auth survival guide (link).
+Need help appealing a denied imaging bill? Check our MRI/CT prior‑auth survival guide.
 
 *It’s 2025. Your scans should travel at the speed of email, not snail‑mail CDs. Let’s make that the norm.*
