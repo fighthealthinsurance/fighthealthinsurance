@@ -536,7 +536,9 @@ class ChatInterface:
         # Check if the user is a trial professional
         try:
             if await ChatLeads.objects.filter(session_id=chat.session_key).aexists():
-                lead = await ChatLeads.objects.filter(session_id=chat.session_key).afirst()
+                lead = await ChatLeads.objects.filter(
+                    session_id=chat.session_key
+                ).afirst()
                 drug = None
                 if lead:
                     drug = lead.drug
@@ -549,9 +551,7 @@ class ChatInterface:
                         f"User is a lead with a drug {drug} -- not a trial professional"
                     )
         except Exception as e:
-            logger.warning(
-                f"Error checking if user is a trial professional: {e}"
-            )
+            logger.warning(f"Error checking if user is a trial professional: {e}")
             is_trial_professional = True
 
         is_patient = self.is_patient
