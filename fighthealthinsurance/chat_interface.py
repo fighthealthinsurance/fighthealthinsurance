@@ -130,9 +130,7 @@ class ChatInterface:
         pubmed_query_terms_regex = (
             r"[\[\*]{0,4}pubmed[ _]?query:{0,1}\s*(.*?)\s*[\*\]]{0,4}"
         )
-        medicaid_info_lookup_regex = (
-            r"\*\*medicaid_info(\{.*\})\*\*"
-        )
+        medicaid_info_lookup_regex = r"\*\*medicaid_info\s*(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})\s*\*\*"
 
         if not response_text:
             logger.debug("Got empty response from LLM")
@@ -333,60 +331,48 @@ class ChatInterface:
 
         # Handle Medicaid info lookup
         try:
+            medicaid_info_lookup_regex = r"\*\*medicaid_info\s*(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})\s*\*\*"
             medicaid_info_match = re.search(
-                medicaid_info_lookup_regex, response_text, re.DOTALL | re.MULTILINE
+                medicaid_info_lookup_regex, response_text, flags=re.DOTALL | re.IGNORECASE
             )
             if medicaid_info_match:
-                # If we match on a tool call, remove the tool call from the result we give to the user.
-                if medicaid_info_match:
-                    cleaned_response = response_text.replace(medicaid_info_match.group(0), "").strip()
-
+                cleaned_response = response_text.replace(medicaid_info_match.group(0), "").strip()
                 json_data = medicaid_info_match.group(1).strip()
                 try:
                     medicaid_info_data = json.loads(json_data)
+
                     await self.send_status_message(
-                        cleaned_response + "Processing Medicaid info lookup data..."
+                        (cleaned_response + "\n\n").strip() + "Processing Medicaid info lookup data..."
                     )
 
-                    # Call the Medicare API to get the info
-                    from fighthealthinsurance.medicaid_api import get_medicare_info
-
-                    medicaid_info = await get_medicaid_info(medicaid_info_data)
+                    from fighthealthinsurance.medicaid_api import get_medicaid_info
+                    medicaid_info = get_medicaid_info(medicaid_info_data)
 
                     if medicaid_info:
-                        await self.send_status_message(
-                            "Medicaid info lookup completed successfully."
+                        await self.send_status_message("Medicaid info lookup completed successfully.")
+                        additional_response_text, additional_context_part = await self._call_llm_with_actions(
+                            model_backend,
+                            medicaid_info,  # pass markdown back into the LLM
+                            previous_context_summary,
+                            history_for_llm,
+                            depth=depth + 1,
+                            is_logged_in=is_logged_in,
+                            is_professional=is_professional,
                         )
-                        additional_response_text, additional_context_part = (
-                            await self._call_llm_with_actions(
-                                model_backend,
-                                medicaid_info,
-                                previous_context_summary,
-                                history_for_llm,
-                                depth=depth + 1,
-                                is_logged_in=is_logged_in,
-                                is_professional=is_professional,
-                            )
-                        )
-                        response_text = cleaned_response + additional_response_text
+                        response_text = (cleaned_response + "\n\n" + additional_response_text).strip()
                     else:
-                        await self.send_status_message(
-                            "No Medicaid info found for the provided data."
-                        )
+                        await self.send_status_message("No Medicaid info found for the provided data.")
+
                 except json.JSONDecodeError:
-                    logger.warning(
-                        f"Invalid JSON data in medicaid_info token: {json_data}"
-                    )
-                    await self.send_status_message(
-                        "Error processing Medicaid info data: Invalid JSON format."
-                    )
+                    logger.warning(f"Invalid JSON data in medicaid_info token: {json_data}")
+                    await self.send_status_message("Error processing Medicaid info data: Invalid JSON format.")
                 except Exception as e:
-                    logger.opt(exception=True).warning(
-                        f"Error processing Medicaid info data: {e}"
-                    )
-                    await self.send_status_message(
-                        f"Error processing Medicaid info data: {str(e)}"
-                    )
+                    logger.opt(exception=True).warning(f"Error processing Medicaid info data: {e}")
+                    await self.send_status_message(f"Error processing Medicaid info data: {str(e)}")
+        except Exception as e:
+            logger.opt(exception=True).warning(f"Error in Medicaid lookup block: {e}")
+            await self.send_status_message(f"Error in Medicaid lookup block: {str(e)}")
+
 
         # Handle pubmed
         try:
@@ -647,6 +633,53 @@ class ChatInterface:
 
         if is_trial_professional:
             await asyncio.sleep(0.5)  # Half a second delay for trial users.
+
+        # Auto-detect Medicaid queries and pull data
+        medicaid_keywords = ['medicaid', 'medicare', 'alabama', 'alaska', 'arizona', 'arkansas', 'california', 'colorado', 'connecticut', 'delaware', 'florida', 'georgia', 'hawaii', 'idaho', 'illinois', 'indiana', 'iowa', 'kansas', 'kentucky', 'louisiana', 'maine', 'maryland', 'massachusetts', 'michigan', 'minnesota', 'mississippi', 'missouri', 'montana', 'nebraska', 'nevada', 'new hampshire', 'new jersey', 'new mexico', 'new york', 'north carolina', 'north dakota', 'ohio', 'oklahoma', 'oregon', 'pennsylvania', 'rhode island', 'south carolina', 'south dakota', 'tennessee', 'texas', 'utah', 'vermont', 'virginia', 'washington', 'west virginia', 'wisconsin', 'wyoming']
+
+        user_message_lower = user_message.lower()
+        is_medicaid_query = any(keyword in user_message_lower for keyword in medicaid_keywords)
+
+        if is_medicaid_query:
+            # Extract state from message (simple approach)
+            detected_state = None
+            for state in ['alabama', 'alaska', 'arizona', 'arkansas', 'california', 'colorado', 'connecticut', 'delaware', 'florida', 'georgia', 'hawaii', 'idaho', 'illinois', 'indiana', 'iowa', 'kansas', 'kentucky', 'louisiana', 'maine', 'maryland', 'massachusetts', 'michigan', 'minnesota', 'mississippi', 'missouri', 'montana', 'nebraska', 'nevada', 'new hampshire', 'new jersey', 'new mexico', 'new york', 'north carolina', 'north dakota', 'ohio', 'oklahoma', 'oregon', 'pennsylvania', 'rhode island', 'south carolina', 'south dakota', 'tennessee', 'texas', 'utah', 'vermont', 'virginia', 'washington', 'west virginia', 'wisconsin', 'wyoming']:
+                if state in user_message_lower:
+                    detected_state = state.title()
+                    break
+            
+            # Check if it's a general Medicaid question without a state
+            if not detected_state:
+                # Look for general Medicaid keywords to confirm it's a Medicaid question
+                general_medicaid_keywords = ['medicaid', 'medicare', 'health insurance', 'healthcare', 'insurance']
+                is_general_medicaid = any(keyword in user_message_lower for keyword in general_medicaid_keywords)
+                
+                if is_general_medicaid:
+                    await self.send_message_to_client("I'd be happy to help you with Medicaid information! To provide you with the most relevant resources and contact details, could you please let me know which state you're in? Medicaid programs vary by state, so this will help me give you the most accurate information.")
+                    return
+                else:
+                    # Not a Medicaid question, continue with normal processing
+                    pass
+            else:
+                # State was detected, pull Medicaid data and add it to the LLM input
+                try:
+                    from fighthealthinsurance.medicaid_api import get_medicaid_info
+                    
+                    medicaid_data = get_medicaid_info({
+                        "state": detected_state,
+                        "topic": "",  # No specific topic filter
+                        "limit": 5
+                    })
+                    
+                    if medicaid_data:
+                        # Add Medicaid data to the LLM input instead of sending separately
+                        llm_input_message = f"{llm_input_message}\n\nHere's the Medicaid data I found for {detected_state}:\n{medicaid_data}\n\nPlease use this information to help answer the user's question about Medicaid in {detected_state}."
+                    else:
+                        llm_input_message = f"{llm_input_message}\n\nNote: I couldn't find specific Medicaid data for {detected_state}, but I can help with general guidance."
+                        
+                except Exception as e:
+                    logger.warning(f"Error fetching Medicaid data: {e}")
+                    llm_input_message = f"{llm_input_message}\n\nNote: I had trouble accessing the Medicaid database, but I can still help with general information."
 
         for model_backend in models:
             try:
