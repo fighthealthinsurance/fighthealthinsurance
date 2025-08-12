@@ -34,8 +34,8 @@ def _explode_scraped_faq(df: pd.DataFrame) -> pd.DataFrame:
 
 def get_medicaid_info(query: Dict[str, Any]) -> str:
     """
-    query example: {"state":"Alabama","topic":"","limit":5}
-    Returns a focused string with key contact info and resources.
+    query example: {"state":"Ohio","topic":"","limit":5}
+    Returns a clean, professional format with key contact info.
     """
     state = (query.get("state") or "").strip()
     limit = int(query.get("limit") or 5)
@@ -71,14 +71,35 @@ def get_medicaid_info(query: Dict[str, Any]) -> str:
     # Get the first few rows with contact info
     contact_info = df[available_cols].drop_duplicates().head(limit)
     
-    # Format as a simple, readable response
-    result = [f"**Medicaid Resources for {state}:**"]
+    # Format as clean markdown
+    result = []
     
     for idx, row in contact_info.iterrows():
-        result.append("")
-        for col in available_cols:
-            if pd.notna(row[col]) and str(row[col]).strip():
-                col_name = col.replace("_", " ").title()
-                result.append(f"**{col_name}:** {row[col]}")
-    
+        # Agency name
+        if "agency" in available_cols and pd.notna(row["agency"]) and str(row["agency"]).strip():
+            result.append(f"**{row['agency']}:**")
+        
+        # Main phone
+        if "agency_phone" in available_cols and pd.notna(row["agency_phone"]) and str(row["agency_phone"]).strip():
+            phone = str(row["agency_phone"]).strip()
+            result.append(f"**Main Phone:** {phone}")
+        
+        # Website (after main phone)
+        if "agency_website" in available_cols and pd.notna(row["agency_website"]) and str(row["agency_website"]).strip():
+            website = str(row["agency_website"]).strip()
+            result.append(f"**Website:** {website}")
+        
+        # Add spacing before legal section
+        result.append("")  # Empty line
+        
+        # Legal helpline section
+        if "helpline" in available_cols and pd.notna(row["helpline"]) and str(row["helpline"]).strip():
+            result.append(f"**Legal Resources:**")
+            result.append(f"{row['helpline']}")
+        
+        # Helpline contact
+        if "helpline_contact" in available_cols and pd.notna(row["helpline_contact"]) and str(row["helpline_contact"]).strip():
+            phone = str(row["helpline_contact"]).strip()
+            result.append(f"**Phone:** {phone}")
+
     return "\n".join(result)
