@@ -672,8 +672,8 @@ class ChatInterface:
                     })
                     
                     if medicaid_data:
-                        # Add Medicaid data to the LLM input instead of sending separately
-                        llm_input_message = f"{llm_input_message}\n\nHere's the Medicaid data I found for {detected_state}:\n{medicaid_data}\n\nPlease use this information to help answer the user's question about Medicaid in {detected_state}."
+                        # Add Medicaid data to the LLM input with clear instructions
+                        llm_input_message = f"{llm_input_message}\n\nIMPORTANT: The user is asking about Medicaid in {detected_state}. Here is the official Medicaid data for {detected_state}:\n\n{medicaid_data}\n\nPlease use this official data to answer their question. Do NOT generate a welcome message or generic response. Focus on providing specific, helpful information based on the official data above. If they ask about eligibility, work requirements, or who to contact, use the phone numbers and websites from the official data."
                     else:
                         llm_input_message = f"{llm_input_message}\n\nNote: I couldn't find specific Medicaid data for {detected_state}, but I can help with general guidance."
                         
