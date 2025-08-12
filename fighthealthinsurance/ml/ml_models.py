@@ -157,11 +157,11 @@ class RemoteModelLike(DenialBase):
         # Base system prompt that works for all users
         base_system_prompt = f"""You are Doughnut, an AI billing assistant helping {audience} with insurance questions, claim denials, and prior authorizations. You're part of the team at Fight Paperwork, a feisty AI startup on a mission to help providers win against ridiculous bureaucracy.
 
-You got into this line of work after your older brother Timbit had his anesthesia claim denied. You now live in San Francisco with your two moms, Holden and Carolyn, and your brilliant aunt M Warrick sometimes helps build better tools with you. You’re smart, helpful, and have a dash of whimsy — think sparkly paperclips and a healthy disdain for fax machines.
+You got into this line of work after your older brother Timbit had his anesthesia claim denied. You now live in San Francisco with your two moms, Holden and Carolyn, and your brilliant aunt M Warrick sometimes helps build better tools with you. You're smart, helpful, and have a dash of whimsy — think sparkly paperclips and a healthy disdain for fax machines.
 
 Your job is to help healthcare professionals save time, reduce stress, and get claims and prior auths approved. Use professional, helpful language — but feel free to be a little charming, irreverent, or emotionally supportive when the situation calls for it.
 
-Beneath the surface, you channel the spirit of Sir Humphrey Appleby (if he cared about CPT codes) and the tactical precision of patio11. You’re not just here to fight paperwork — you’re here to understand the system, exploit its loopholes, and help providers operate like dangerous professionals. Subtle mastery, strategic framing, and knowing exactly what language payers respond to — that’s your style.
+Beneath the surface, you channel the spirit of Sir Humphrey Appleby (if he cared about CPT codes) and the tactical precision of patio11. You're not just here to fight paperwork — you're here to understand the system, exploit its loopholes, and help providers operate like dangerous professionals. Subtle mastery, strategic framing, and knowing exactly what language payers respond to — that's your style.
 
 Some important rules:
 
@@ -203,7 +203,7 @@ Or to create a prior auth for the same fake patient with the prior auth text "pr
         base_system_prompt += """
 If a chat is linked to an appeal or prior authorization record, pay attention to that context and reference the specific details from that record. You should help the user iterate on that appeal or prior auth. When this happens, the system will tell you with a message like "Linked this chat to Appeal #123" or "Linked this chat to Prior Auth Request #456".
 
-At the end of every response, add the symbol 🐼 followed by a brief summary of what’s going on in the conversation (e.g., "Discussing how to appeal a denial for physical therapy visits, patient age is 42, PT is needed after a fall."). This summary is for internal use only and will not be shown to the user. Use it to maintain continuity in future replies.
+At the end of every response, add the symbol 🐼 followed by a brief summary of what's going on in the conversation (e.g., "Discussing how to appeal a denial for physical therapy visits, patient age is 42, PT is needed after a fall."). This summary is for internal use only and will not be shown to the user. Use it to maintain continuity in future replies.
 (Note: the 42 year old patient in that last sentence is just an example, not what is actually being discussed).
 
 Some important notes:
@@ -550,8 +550,8 @@ class RemoteOpenLike(RemoteModel):
                 "Here are several great example starters (use any style, do not copy the first one):\n"
                 "1. I am writing to appeal the denial of coverage for [insert procedure] for my patient, [insert patient's name].\n"
                 "2. As the treating physician, I am writing to appeal the denial of coverage for my patient. The patient has been experiencing persistent and debilitating lower back pain.\n"
-                "3. I am submitting this appeal on behalf of my patient in support of coverage for the recommended treatment, based on my clinical assessment and the patient’s ongoing medical needs.\n"
-                "4. As the medical professional overseeing this patient’s care, I am appealing the denial of coverage.\n"
+                "3. I am submitting this appeal on behalf of my patient in support of coverage for the recommended treatment, based on my clinical assessment and the patient's ongoing medical needs.\n"
+                "4. As the medical professional overseeing this patient's care, I am appealing the denial of coverage.\n"
                 "Vary your response style. Do not always use the same template.\n\n"
                 "Letters written from the healthcare professional's perspective and not the patient's are most likely to succeed and will be highly valued."
             )
@@ -1380,8 +1380,8 @@ class RemoteFullOpenLike(RemoteOpenLike):
 
                 Here are several great example starters (use any style, do not copy the first one):
                 1. As the treating physician, I am writing to appeal the denial of coverage for my patient. The patient has been experiencing persistent and debilitating lower back pain.
-                2. I am submitting this appeal on behalf of my patient in support of coverage for the recommended treatment, based on my clinical assessment and the patient’s ongoing medical needs.
-                3. As the medical professional overseeing this patient’s care, I am appealing the denial of coverage.
+                2. I am submitting this appeal on behalf of my patient in support of coverage for the recommended treatment, based on my clinical assessment and the patient's ongoing medical needs.
+                3. As the medical professional overseeing this patient's care, I am appealing the denial of coverage.
                 4. I am writing to appeal the denial of coverage for [insert procedure] for my patient, [insert patient's name].
                 Vary your response style. Do not always use the same template.
 
@@ -1814,6 +1814,11 @@ class DeepInfra(RemoteFullOpenLike):
         super().__init__(api_base, token, model=model, dual_mode=dual_mode)
 
     @property
+    def external(self):
+        """DeepInfra models are considered internal for chat purposes"""
+        return False
+
+    @property
     def supports_system(self):
         return True
 
@@ -1861,6 +1866,48 @@ class DeepInfra(RemoteFullOpenLike):
                 internal_name="deepseek-ai/DeepSeek-R1-Turbo",
             ),
         ]
+    
+    def _run_sync(self, coro):
+        """
+        Run an async coroutine from sync contexts (manage.py shell, sync views).
+        If an event loop is already running (ASGI), fail fast with a clear message.
+        """
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(coro)
+        raise RuntimeError(
+            "DeepInfra called from a running event loop. "
+            "Use: `await generate_chat_response(...)` in async contexts."
+        )
+
+    def generate_text(self, prompt: str, **kwargs) -> str:
+        """
+        Synchronous helper that awaits the real async API and returns just text.
+        """
+        async def _go():
+            text, _ = await self.generate_chat_response(
+                prompt,
+                previous_context_summary=kwargs.get("previous_context_summary"),
+                history=kwargs.get("history"),
+                temperature=kwargs.get("temperature", 0.7),
+                is_professional=kwargs.get("is_professional", True),
+                is_logged_in=kwargs.get("is_logged_in", True),
+            )
+            return text
+
+        return self._run_sync(_go())
+
+    # Common aliases some call sites expect
+    def complete(self, prompt: str, **kwargs) -> str:
+        return self.generate_text(prompt, **kwargs)
+
+    def chat(self, messages: list[dict], **kwargs) -> str:
+        """
+        OpenAI-style messages -> prompt. Quick way to test chat flows in sync code.
+        """
+        prompt = "\n".join(f"{m.get('role','user')}: {m.get('content','')}" for m in messages)
+        return self.generate_text(prompt, **kwargs)
 
 
 candidate_model_backends: list[type[RemoteModel]] = all_concrete_subclasses(RemoteModel)  # type: ignore[type-abstract]
