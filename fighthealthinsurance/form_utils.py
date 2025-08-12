@@ -48,5 +48,4 @@ def magic_combined_form(
             # For existing fields, append initial value if not None
             elif field.initial is not None:
                 combined_form.fields[field_name].initial += field.initial
-
     return combined_form
