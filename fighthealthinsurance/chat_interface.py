@@ -641,7 +641,22 @@ class ChatInterface:
         is_medicaid_query = any(keyword in user_message_lower for keyword in medicaid_keywords)
 
         if is_medicaid_query:
-            # Extract state from message (simple approach)
+            # Check for work requirements questions FIRST (before state detection)
+            work_requirement_keywords = ['work requirements', 'work requirement', 'working', 'employment', 'job', '80 hours', 'work rule']
+            is_work_requirement_question = any(keyword in user_message_lower for keyword in work_requirement_keywords)
+            
+            # If it's a work requirements question, answer it directly without needing a state
+            if is_work_requirement_question:
+                work_requirements_response = """**Medicaid Work Requirements - Federal Policy Overview**
+
+New federal rules require many adults (ages 19-64) to complete at least 80 hours per month of work, job training, school, or community service to keep Medicaid coverage. These requirements go into effect by December 31, 2026.
+
+**For detailed information and state-specific details, visit:** [Medicaid Work Requirements FAQ](https://fighthealthinsurance.com/faq/medicaid/)"""
+                
+                await self.send_message_to_client(work_requirements_response)
+                return
+            
+            # Extract state from message (simple approach) - only if NOT a work requirements question
             detected_state = None
             for state in ['alabama', 'alaska', 'arizona', 'arkansas', 'california', 'colorado', 'connecticut', 'delaware', 'florida', 'georgia', 'hawaii', 'idaho', 'illinois', 'indiana', 'iowa', 'kansas', 'kentucky', 'louisiana', 'maine', 'maryland', 'massachusetts', 'michigan', 'minnesota', 'mississippi', 'missouri', 'montana', 'nebraska', 'nevada', 'new hampshire', 'new jersey', 'new mexico', 'new york', 'north carolina', 'north dakota', 'ohio', 'oklahoma', 'oregon', 'pennsylvania', 'rhode island', 'south carolina', 'south dakota', 'tennessee', 'texas', 'utah', 'vermont', 'virginia', 'washington', 'west virginia', 'wisconsin', 'wyoming']:
                 if state in user_message_lower:
@@ -672,10 +687,10 @@ class ChatInterface:
                     })
                     
                     if medicaid_data:
-                        # Force the LLM to use the Medicaid data but present it naturally
+                        # Regular Medicaid question - use the existing LLM approach
                         llm_input_message = f"""The user is asking about Medicaid in {detected_state}. 
 
-IMPORTANT: Use the following official Medicaid data to answer their question, but present it in a natural, helpful way.
+IMPORTANT: Use ONLY the following official Medicaid data to answer their question. Do NOT be conversational or use "you" language.
 
 OFFICIAL MEDICAID DATA FOR {detected_state.upper()}:
 {medicaid_data}
@@ -683,11 +698,13 @@ OFFICIAL MEDICAID DATA FOR {detected_state.upper()}:
 USER'S QUESTION: {user_message}
 
 INSTRUCTIONS: 
-1. Answer the user's question about Medicaid in {detected_state}
-2. Present the contact information and resources in a helpful, conversational way
-3. Explain what each resource is for (e.g., "You can call the main agency at [phone] for general questions, or contact the legal helpline at [phone] if you need help with appeals or denials")
-4. Do NOT just list the data - make it useful and conversational
-5. Do not generate welcome messages or generic responses"""
+1. Start with "**Medicaid Resources for {detected_state}**"
+2. List the contact information directly from the data
+3. Explain what each resource is for in factual terms
+4. Use "The agency phone is..." not "You can call..."
+5. Use "The website provides..." not "You can visit..."
+6. Do not restate phone numbers and end with a direct question about what specific help they need
+7. NO conversational language, NO "you" references"""
                     else:
                         llm_input_message = f"{llm_input_message}\n\nNote: I couldn't find specific Medicaid data for {detected_state}, but I can help with general guidance."
                         
