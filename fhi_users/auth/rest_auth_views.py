@@ -1554,9 +1554,12 @@ class VerifyEmailViewSet(ViewSet, SerializerMixin):
                 serializers.StatusResponseSerializer({"status": "success"}).data
             )
         except VerificationToken.DoesNotExist as e:
+            # Token doesn't exist - generate a new one and resend email
+            logger.info(f"Invalid token for user {user.pk}, generating new verification email")
+            send_verification_email(request, user)
             return Response(
                 common_serializers.ErrorSerializer(
-                    {"error": "Invalid activation link"}
+                    {"error": "Invalid activation link - a new verification email has been sent"}
                 ).data,
                 status=status.HTTP_400_BAD_REQUEST,
             )

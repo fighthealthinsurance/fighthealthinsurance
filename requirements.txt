@@ -62,12 +62,12 @@ PyPDF2
 pyright
 pytesseract # We either need easyocr + opencv-python OR pytesseract + tesseract (so alt is easyocr>=1.7.0 opencv-python)
 python-decouple==3.8
-python-Levenshtein
+python-Levenshtein  # Stable Levenshtein distance implementation
 pytz
 pyyaml
-RapidFuzz==2.15.1 # See https://github.com/mindee/doctr/issues/1186
-ray==2.43.0
-ray[client]==2.43.0
+RapidFuzz>=3.9.0 # Updated for compatibility with Levenshtein
+ray>=2.45.0
+ray[client]>=2.45.0
 requests
 sentry-sdk[django]
 setuptools>=58

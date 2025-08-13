@@ -1,4 +1,5 @@
 from django.contrib import admin
+from django.utils import timezone
 from fighthealthinsurance.models import (
     Denial,
     InterestedProfessional,
@@ -42,6 +43,7 @@ from fhi_users.models import (
     PatientUser,
     UserDomain,
     ProfessionalDomainRelation,
+    VerificationToken,
 )
 from django.contrib.auth.admin import UserAdmin
 
@@ -105,7 +107,22 @@ class UserDomainAdmin(admin.ModelAdmin):
 class ProfessionalUserAdmin(admin.ModelAdmin):
     """User domains"""
 
-    list_display = ("id", "user", "user__first_name", "user__email")
+    list_display = ("id", "user", "user__first_name", "user__email", "email_verified")
+    search_fields = ("user__email", "user__username", "user__first_name", "user__last_name")
+    list_filter = ("active",)
+    
+    def email_verified(self, obj):
+        """Display email verification status for the user."""
+        try:
+            from fhi_users.models import ExtraUserProperties
+            extra_props = ExtraUserProperties.objects.get(user=obj.user)
+            return extra_props.email_verified
+        except ExtraUserProperties.DoesNotExist:
+            return False
+        except Exception:
+            return False
+    email_verified.boolean = True
+    email_verified.short_description = "Email Verified"
 
 
 @admin.register(ProfessionalDomainRelation)
