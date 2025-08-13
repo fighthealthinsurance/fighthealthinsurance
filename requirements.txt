@@ -9,7 +9,7 @@ bokeh
 numpy
 channels
 chardet
-django>=5.0.0
+django>=4.2.0,<5.0
 django-cms
 djangocms-attributes-field
 django_compressor
