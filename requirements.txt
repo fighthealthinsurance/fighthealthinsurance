@@ -66,8 +66,8 @@ python-Levenshtein
 pytz
 pyyaml
 RapidFuzz==2.15.1 # See https://github.com/mindee/doctr/issues/1186
-ray==2.43.0
-ray[client]==2.43.0
+ray==2.48.0
+ray[client]==2.48.0
 requests
 sentry-sdk[django]
 setuptools>=58
