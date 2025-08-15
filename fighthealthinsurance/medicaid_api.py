@@ -5,7 +5,7 @@ import pandas as pd
 
 # Look for data/ next to the repo root
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
-DEFAULT_FILE = "medicaid_state_resources.csv"
+DEFAULT_FILE = "medicaid_resources.csv"
 
 def _explode_scraped_faq(df: pd.DataFrame) -> pd.DataFrame:
     if "scraped_faq" not in df.columns:
@@ -34,12 +34,39 @@ def _explode_scraped_faq(df: pd.DataFrame) -> pd.DataFrame:
 
 def get_medicaid_info(query: Dict[str, Any]) -> str:
     """
-    query example: {"state":"Ohio","topic":"","limit":5}
+    query example: {"state":"StateName","topic":"","limit":5}
     Returns a clean, professional format with key contact info.
     """
     state = (query.get("state") or "").strip()
+    topic = (query.get("topic") or "").strip().lower()
     limit = int(query.get("limit") or 5)
-
+    
+    # Convert state abbreviation to full name if needed
+    state_lower = state.lower()
+    
+    # Normalize state name to title case and handle abbreviations
+    state_abbrev_map = {
+        'ca': 'California', 'oh': 'Ohio', 'ny': 'New York', 'tx': 'Texas',
+        'fl': 'Florida', 'pa': 'Pennsylvania', 'il': 'Illinois', 'mi': 'Michigan',
+        'ga': 'Georgia', 'nc': 'North Carolina', 'nj': 'New Jersey', 'va': 'Virginia',
+        'wa': 'Washington', 'az': 'Arizona', 'ma': 'Massachusetts', 'tn': 'Tennessee',
+        'in': 'Indiana', 'mo': 'Missouri', 'md': 'Maryland', 'wi': 'Wisconsin',
+        'co': 'Colorado', 'mn': 'Minnesota', 'sc': 'South Carolina', 'al': 'Alabama',
+        'la': 'Louisiana', 'ky': 'Kentucky', 'or': 'Oregon', 'ok': 'Oklahoma',
+        'ct': 'Connecticut', 'ut': 'Utah', 'ia': 'Iowa', 'nv': 'Nevada',
+        'ar': 'Arkansas', 'ms': 'Mississippi', 'ks': 'Kansas', 'nm': 'New Mexico',
+        'ne': 'Nebraska', 'wv': 'West Virginia', 'id': 'Idaho', 'hi': 'Hawaii',
+        'nh': 'New Hampshire', 'me': 'Maine', 'ri': 'Rhode Island', 'mt': 'Montana',
+        'de': 'Delaware', 'sd': 'South Dakota', 'nd': 'North Dakota', 'ak': 'Alaska',
+        'vt': 'Vermont', 'wy': 'Wyoming'
+    }
+    
+    if state_lower in state_abbrev_map:
+        state = state_abbrev_map[state_lower]
+    else:
+        # Try to match as full state name (title case)
+        state = state.title()
+    
     # Pick the CSV
     file_path = DATA_DIR / DEFAULT_FILE
     if not file_path.exists():
@@ -71,35 +98,31 @@ def get_medicaid_info(query: Dict[str, Any]) -> str:
     # Get the first few rows with contact info
     contact_info = df[available_cols].drop_duplicates().head(limit)
     
-    # Format as clean markdown
+    # Format in clean, simple style matching work requirements format
     result = []
     
     for idx, row in contact_info.iterrows():
-        # Agency name
+        # Main Medicaid Agency Section
         if "agency" in available_cols and pd.notna(row["agency"]) and str(row["agency"]).strip():
-            result.append(f"**{row['agency']}:**")
+            result.append(f"{row['agency']}")
         
-        # Main phone
+        # Contact Information
         if "agency_phone" in available_cols and pd.notna(row["agency_phone"]) and str(row["agency_phone"]).strip():
             phone = str(row["agency_phone"]).strip()
-            result.append(f"**Main Phone:** {phone}")
+            result.append(f"Phone: {phone}")
         
-        # Website (after main phone)
         if "agency_website" in available_cols and pd.notna(row["agency_website"]) and str(row["agency_website"]).strip():
             website = str(row["agency_website"]).strip()
-            result.append(f"**Website:** {website}")
+            result.append(f"Website: {website}")
         
         # Add spacing before legal section
-        result.append("")  # Empty line
-        
-        # Legal helpline section
         if "helpline" in available_cols and pd.notna(row["helpline"]) and str(row["helpline"]).strip():
-            result.append(f"**Legal Resources:**")
+            result.append("")  # Empty line for spacing
+            result.append("Legal Resources:")
             result.append(f"{row['helpline']}")
-        
-        # Helpline contact
-        if "helpline_contact" in available_cols and pd.notna(row["helpline_contact"]) and str(row["helpline_contact"]).strip():
-            phone = str(row["helpline_contact"]).strip()
-            result.append(f"**Phone:** {phone}")
+            
+            if "helpline_contact" in available_cols and pd.notna(row["helpline_contact"]) and str(row["helpline_contact"]).strip():
+                phone = str(row["helpline_contact"]).strip()
+                result.append(f"Phone: {phone}")
 
     return "\n".join(result)
