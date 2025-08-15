@@ -4,6 +4,7 @@ asyncssh
 asyncstdlib
 argon2-cffi
 beautifulsoup4==4.12.3
+feedparser
 black
 bokeh
 numpy
