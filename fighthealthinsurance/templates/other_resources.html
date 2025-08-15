@@ -31,6 +31,48 @@ Other Resources
 .text-fhi-green {
     color: #a5c422 !important;
 }
+
+/* Simple RSS styling */
+.rss-section {
+    background: #f8f9fa;
+    border-radius: 8px;
+    padding: 20px;
+    margin: 20px 0;
+    border-left: 4px solid #a5c422;
+}
+
+.rss-feed {
+    margin-bottom: 20px;
+}
+
+.rss-feed:last-child {
+    margin-bottom: 0;
+}
+
+.rss-feed h5 {
+    font-size: 1.1rem;
+    margin-bottom: 8px;
+}
+
+.rss-article {
+    padding: 8px 0;
+    border-bottom: 1px solid #e9ecef;
+}
+
+.rss-article:last-child {
+    border-bottom: none;
+}
+
+.rss-article a {
+    color: #333;
+    text-decoration: none;
+    font-weight: 500;
+}
+
+.rss-article a:hover {
+    color: #a5c422;
+    text-decoration: underline;
+}
 </style>
 <div class="container mt-5">
 
@@ -99,7 +141,48 @@ Other Resources
                 <li><a href="https://www.webmd.com/health-insurance/how-and-when-to-appeal-insurance-claims" class="link">WebMD</a> - General appeal guidance</li>
                 <li>Fight Health Insurance (this site) - AI-powered appeal assistance</li>
             </ul>
+        </div>
+    </div>
+
+    <!-- Simple RSS Section -->
+    <div class="row">
+        <div class="col-12">
+            <h4 class="text-fhi-green mb-3">Latest Health Policy News</h4>
+            <p class="mb-3">Stay informed with the latest health policy news from KFF Health News:</p>
             
+            <div class="rss-section">
+                {% for feed_key, feed_data in rss_feeds.items %}
+                <div class="rss-feed">
+                    <h5 class="text-fhi-green">{{ feed_data.name }}</h5>
+                    <p class="small text-muted mb-2">{{ feed_data.description }}</p>
+                    
+                    {% if feed_data.articles %}
+                        {% for article in feed_data.articles %}
+                        <div class="rss-article">
+                            <a href="{{ article.url }}" target="_blank" rel="noopener noreferrer">
+                                {{ article.title }}
+                            </a>
+                            <span class="text-muted small ms-2">{{ article.formatted_date }}</span>
+                            <span class="text-muted small ms-1">(opens in new window)</span>
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        <p class="text-muted small">No recent articles available</p>
+                    {% endif %}
+                </div>
+                {% endfor %}
+                
+                <div class="mt-3 pt-3 border-top">
+                    <p class="small text-muted mb-0">
+                        <em>RSS feeds provided by <a href="https://kffhealthnews.org/" target="_blank" rel="noopener noreferrer" class="link">KFF Health News</a></em>
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-12">
             <div class="alert alert-info">
                 <strong>Help Us Improve:</strong> We're <a href="{% url 'share_denial' %}" class="link">collecting denials</a> to better understand common issues and provide more targeted assistance.
             </div>
