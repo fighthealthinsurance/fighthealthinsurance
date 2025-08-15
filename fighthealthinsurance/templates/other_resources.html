@@ -159,7 +159,7 @@ Other Resources
                     {% if feed_data.articles %}
                         {% for article in feed_data.articles %}
                         <div class="rss-article">
-                            <a href="{{ article.url }}" target="_blank">
+                            <a href="{{ article.url }}" target="_blank" rel="noopener noreferrer">
                                 {{ article.title }}
                             </a>
                             <span class="text-muted small ms-2">{{ article.formatted_date }}</span>
@@ -174,7 +174,7 @@ Other Resources
                 
                 <div class="mt-3 pt-3 border-top">
                     <p class="small text-muted mb-0">
-                        <em>RSS feeds provided by <a href="https://kffhealthnews.org/" target="_blank" class="link">KFF Health News</a></em>
+                        <em>RSS feeds provided by <a href="https://kffhealthnews.org/" target="_blank" rel="noopener noreferrer" class="link">KFF Health News</a></em>
                     </p>
                 </div>
             </div>

@@ -171,17 +171,17 @@ class OtherResourcesView(generic.TemplateView):
             kff_feeds = {
                 'insurance': {
                     'name': 'KFF Health News - Insurance',
-                    'url': 'http://kffhealthnews.org/topics/insurance/feed/',
+                    'url': 'https://kffhealthnews.org/topics/insurance/feed/',
                     'description': 'Insurance-related health policy news'
                 },
                 'uninsured': {
                     'name': 'KFF Health News - Uninsured', 
-                    'url': 'http://kffhealthnews.org/topics/uninsured/feed/',
+                    'url': 'https://kffhealthnews.org/topics/uninsured/feed/',
                     'description': 'News about uninsured populations and coverage'
                 },
                 'health-industry': {
                     'name': 'KFF Health News - Health Industry',
-                    'url': 'http://kffhealthnews.org/topics/health-industry/feed/',
+                    'url': 'https://kffhealthnews.org/topics/health-industry/feed/',
                     'description': 'Health industry news and analysis'
                 }
             }
