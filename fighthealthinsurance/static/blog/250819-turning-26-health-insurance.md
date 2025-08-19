@@ -8,13 +8,13 @@ tags: ["young-adults", "marketplace", "enrollment", "coverage-transition"]
 readTime: "5 min read"
 ---
 
-Turning 26 means getting kicked off your parent's health insurance plans. If your parents get insurance through the ACA marketplace, you can stay [covered](https://www.healthcare.gov/turning-26/) through December 31. If your parents are on their employer's insurance plan, you should check their specific rules — some plans end coverage at the end of your birthday month and others end on the day you turn 26.
+Turning 26 means getting kicked off your parents' health insurance plans. If your parents get insurance through the ACA marketplace, you can stay [covered](https://www.healthcare.gov/turning-26/) through December 31. If your parents are on their employer's insurance plan, you should check their specific rules — some plans end coverage at the end of your birthday month and others end on the day you turn 26.
 
 Nearly one in seven 26-year-olds go uninsured. The consequences can be expensive: an unexpected ER visit can cost [thousands](https://www.npr.org/2019/03/13/702975393/why-an-er-visit-can-cost-so-much-even-for-those-with-health-insurance) of dollars. And [several](https://workforce.equifax.com/all-blogs/-/post/what-do-individual-healthcare-mandates-look-like-in-your-state) states — Massachusetts, California, New Jersey, Rhode Island, Vermont and DC — require you to have insurance or you might face a tax penalty.
 
 If you don't have coverage through work, you'll [need](https://kffhealthnews.org/news/article/insurance-cliff-age-26-young-adults-chaos/) to find a new plan to avoid being uninsured. That means navigating a complicated and costly health insurance market.
 
-<img src="/static/images/26-health-insurance2.png" alt="Health Insurance Next Steps at 26" style="width: 60%; height: auto; display: block; margin: 20px auto;">
+![Health Insurance Next Steps at 26](/static/images/26-health-insurance2.png)
 
 ### What to Know
 
@@ -30,7 +30,7 @@ If your income is low, Medicaid could provide free or low-cost coverage. Rules v
 ### How to Sign Up
 
 ##### Don't Miss Your Enrollment Window
-Losing coverage triggers a 60-day window to enroll in a Marketplace plan through HealthCare.gov or your state's exchange. Licensed navigators and other assisters can help you through options. You can find them at [HealthCare.gov/localhelp](http://HealthCare.gov/localhelp) or by calling 1-800-318-2596.
+Losing coverage triggers a Special Enrollment Period: you generally have up to 60 days before and 60 days after your coverage ends to enroll in a Marketplace plan through HealthCare.gov or your state's exchange. Licensed navigators and other assisters can help you review options. You can find them at [Find Local Help](https://localhelp.healthcare.gov) or by calling 1-800-318-2596.
 
 ##### Shop Around and Compare Plans
 Make sure your new plan's network includes your preferred providers and covers your medications at an affordable rate.
@@ -46,8 +46,8 @@ Turning 26 doesn't have to mean going without health insurance. While losing you
 
 #### References
 
-- [HealthCare.gov - Turning 26](https://www.healthcare.gov/turning-26/)
-- [NPR - Why An ER Visit Can Cost So Much, Even For Those With Health Insurance](https://www.npr.org/2019/03/13/702975393/why-an-er-visit-can-cost-so-much-even-for-those-with-health-insurance)
-- [Equifax - What Do Individual Healthcare Mandates Look Like in Your State](https://workforce.equifax.com/all-blogs/-/post/what-do-individual-healthcare-mandates-look-like-in-your-state)
-- [KFF Health News - Insurance Cliff at Age 26 Young Adults Chaos](https://kffhealthnews.org/news/article/insurance-cliff-age-26-young-adults-chaos/)
-- [HealthCare.gov - Local Help](http://HealthCare.gov/localhelp)
+- [HealthCare.gov — Turning 26](https://www.healthcare.gov/turning-26/)
+- [NPR — Why an ER Visit Can Cost So Much, Even for Those With Health Insurance](https://www.npr.org/2019/03/13/702975393/why-an-er-visit-can-cost-so-much-even-for-those-with-health-insurance)
+- [Equifax — What Do Individual Healthcare Mandates Look Like in Your State](https://workforce.equifax.com/all-blogs/-/post/what-do-individual-healthcare-mandates-look-like-in-your-state)
+- [KFF Health News — Insurance Cliff at Age 26 Leaves Young Adults in Chaos](https://kffhealthnews.org/news/article/insurance-cliff-age-26-young-adults-chaos/)
+- [HealthCare.gov — Find Local Help](https://localhelp.healthcare.gov)
