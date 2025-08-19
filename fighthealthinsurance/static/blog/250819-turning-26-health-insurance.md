@@ -1,6 +1,6 @@
 ---
 title: "Turning 26? You Might Need To Find Your Own Health Insurance"
-slug: "turning-26-health-insurance"
+slug: "250819-turning-26-health-insurance"
 date: "2025-08-19"
 author: "[Henry Wu](https://www.linkedin.com/in/henrycwu) | Contributing Policy Analyst"
 description: "Losing your parents' health insurance coverage is stressful. Here's what to know."
@@ -16,36 +16,38 @@ If you don't have coverage through work, you'll [need](https://kffhealthnews.org
 
 <img src="/static/images/26-health-insurance2.png" alt="Health Insurance Next Steps at 26" style="width: 60%; height: auto; display: block; margin: 20px auto;">
 
-## Here's What to Know
+### What to Know
 
-### Figure Out When Your Coverage Ends
+##### Figure Out When Your Coverage Ends
 Your parents' plan might end on your birthday or at the end of that month (some may continue coverage if you are a full time student). Call the insurer to confirm. Knowing the exact date prevents gaps in coverage.
 
-### Check If You Can Get Covered Through School or Work
+##### Check If You Can Get Covered Through School or Work
 If you're starting a new job, ask about health benefits and when they begin. Some graduate school or educational programs also offer coverage.
 
-### Check If You Are Medicaid Eligible
+##### Check If You Are Medicaid Eligible
 If your income is low, Medicaid could provide free or low-cost coverage. Rules vary by state, and in most states you can apply year-round.
 
-## Here's How to Sign Up
+### How to Sign Up
 
-### Don't Miss Your Enrollment Window
+##### Don't Miss Your Enrollment Window
 Losing coverage triggers a 60-day window to enroll in a Marketplace plan through HealthCare.gov or your state's exchange. Licensed navigators and other assisters can help you through options. You can find them at [HealthCare.gov/localhelp](http://HealthCare.gov/localhelp) or by calling 1-800-318-2596.
 
-### Shop Around and Compare Plans
+##### Shop Around and Compare Plans
 Make sure your new plan's network includes your preferred providers and covers your medications at an affordable rate.
 
-### Look Beyond the Premium
+##### Look Beyond the Premium
 Premiums are what you pay per month, but you should also check deductibles (what you need to pay before insurance kicks in), copays (fixed amounts per visit), coinsurance (the percentage you pay for a service), and out-of-pocket maximums (the most you can pay in a year), especially if you have prescriptions or other health needs.
+
+### The Bottom Line
+
+Turning 26 doesn't have to mean going without health insurance. While losing your parents' coverage can feel overwhelming, you have options and resources available to help you navigate this transition. The key is planning ahead, understanding your timeline, and taking action within your enrollment window. Whether through employer coverage, the marketplace, or Medicaid, staying insured protects both your health and your financial future. Don't wait until the last minute — start exploring your options today.
 
 ---
 
-## References
+#### References
 
 - [HealthCare.gov - Turning 26](https://www.healthcare.gov/turning-26/)
 - [NPR - Why An ER Visit Can Cost So Much, Even For Those With Health Insurance](https://www.npr.org/2019/03/13/702975393/why-an-er-visit-can-cost-so-much-even-for-those-with-health-insurance)
 - [Equifax - What Do Individual Healthcare Mandates Look Like in Your State](https://workforce.equifax.com/all-blogs/-/post/what-do-individual-healthcare-mandates-look-like-in-your-state)
 - [KFF Health News - Insurance Cliff at Age 26 Young Adults Chaos](https://kffhealthnews.org/news/article/insurance-cliff-age-26-young-adults-chaos/)
 - [HealthCare.gov - Local Help](http://HealthCare.gov/localhelp)
-
-*Need help understanding your health insurance options? Use our tools to find the right plan for your needs.*
