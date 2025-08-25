@@ -178,7 +178,9 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
     ),
     path(
         "blog/<slug:slug>/",
-        cache_control(public=True)(cache_page(60 * 60 * 2)(views.BlogPostView.as_view())),
+        cache_control(public=True)(
+            cache_page(60 * 60 * 2)(views.BlogPostView.as_view())
+        ),
         name="blog-post",
     ),
     path(
@@ -188,7 +190,9 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
     ),
     path(
         "faq/medicaid/",
-        cache_control(public=True)(cache_page(60 * 60 * 2)(views.MedicaidFAQView.as_view())),
+        cache_control(public=True)(
+            cache_page(60 * 60 * 2)(views.MedicaidFAQView.as_view())
+        ),
         name="medicaid-faq",
     ),
     path(
@@ -292,6 +296,8 @@ urlpatterns += staticfiles_urlpatterns()
 if settings.DEBUG:
     # Serve files from STATICFILES_DIRS in development
     if settings.STATIC_URL:
-        urlpatterns += static(settings.STATIC_URL, document_root=settings.STATICFILES_DIRS[0])
+        urlpatterns += static(
+            settings.STATIC_URL, document_root=settings.STATICFILES_DIRS[0]
+        )
     if settings.MEDIA_URL:
         urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
