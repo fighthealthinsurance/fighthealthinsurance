@@ -480,7 +480,7 @@ def get_medicaid_info(query: Dict[str, Any]) -> str:
     query example: {"state":"StateName","topic":"","limit":5}
     Returns a clean, professional format with key contact info.
     """
-    state = (query.get("state") or "").strip()
+    state = (query.get("state") or query.get("State") or "").strip()
     topic = (query.get("topic") or "").strip().lower()
     limit = int(query.get("limit") or 5)
 
@@ -577,12 +577,13 @@ def get_medicaid_info(query: Dict[str, Any]) -> str:
         "agency_website",
     ]
     available_cols = [col for col in important_cols if col in df.columns]
+    misc_cols = [col for col in df.columns if col not in important_cols]
 
     if not available_cols:
         return f"Medicaid data found for {state}, but no contact information available."
 
     # Get the first few rows with contact info
-    contact_info = df[available_cols].drop_duplicates().head(limit)
+    contact_info = df[available_cols].drop_duplicates()
 
     # Format in clean, simple style matching work requirements format
     result = []
@@ -630,5 +631,10 @@ def get_medicaid_info(query: Dict[str, Any]) -> str:
             ):
                 phone = str(row["helpline_contact"]).strip()
                 result.append(f"Phone: {phone}")
+        result.append("")
+        result.append("***MISC info (less important)***")
+        for col in misc_cols:
+            if col in row and row[col]:
+                result.append(row[col])
 
     return "\n".join(result)
