@@ -331,11 +331,7 @@ class ChatInterface:
             await self.send_status_message(f"Error processing special tokens: {str(e)}")
 
         # Handle Medicaid info lookup first (before PubMed)
-        medicaid_tool_processed = False
         try:
-            logger.debug(
-                f"Looking for Medicaid tool calls in response: {response_text[:500]}..."
-            )
             # Find ALL matches but only process the FIRST one to avoid multiple calls
             medicaid_info_matches = list(
                 re.finditer(
@@ -353,7 +349,6 @@ class ChatInterface:
                         f"Found {len(medicaid_info_matches)} Medicaid tool calls, processing only the first one"
                     )
 
-                medicaid_tool_processed = True
                 logger.debug(
                     f"Medicaid tool call detected: {medicaid_info_match.group(0)}"
                 )
@@ -390,11 +385,31 @@ class ChatInterface:
                         )
                         # Add brief intro and conclusion to the tool data
                         state_name = medicaid_info_data.get("state", "the state")
-                        response_text = f"Here's the official Medicaid information for {state_name}:\n\n{medicaid_info}\n\nLet me know if you need help with anything specific about Medicaid!"
+                        medicaid_info_text = f"Here's the official Medicaid information for {state_name}:\n\n{medicaid_info}\n\n -- use it to answer the question {current_message_for_llm}"
+                        # Pass that info to the model
+                        additional_response_text, additional_context_part = (
+                            await self._call_llm_with_actions(
+                                model_backend,
+                                medicaid_info_text,
+                                previous_context_summary,
+                                history_for_llm,
+                                depth=depth+1,
+                                is_logged_in=is_logged_in,
+                                is_professional=is_professional))
                         # Log the response for debugging
                         logger.debug(
-                            f"Final response_text with intro/conclusion: {response_text[:200]}..."
+                            f"Medicaid with intro/conclusion: {medicaid_info[:200]}..."
                         )
+                        if cleaned_response and additional_response_text:
+                            cleaned_response += additional_response_text
+                        elif additional_response_text:
+                            cleaned_response = additional_response_text
+                        context_part = (
+                            context_part + additional_context_part
+                            if context_part and additional_context_part
+                            else additional_context_part
+                        )
+                        response_text = cleaned_response
                     else:
                         await self.send_status_message(
                             "No Medicaid info found for the provided data."
@@ -526,18 +541,9 @@ class ChatInterface:
             await self.send_status_message(
                 "Error while processing PubMed query. Continuing with the original response."
             )
-        # Note: Medicaid tool processing moved to earlier in the function
-
         context = (
             context_part + pubmed_context_str if context_part else pubmed_context_str
         )
-        # Add a marker if Medicaid tool was processed to prevent fallback interference
-        if (
-            medicaid_tool_processed
-            and response_text
-            and "MEDICAID_PROCESSED" not in response_text
-        ):
-            response_text = response_text + " MEDICAID_PROCESSED"
         return response_text, context
 
     async def handle_chat_message(
@@ -787,20 +793,6 @@ class ChatInterface:
                 logger.opt(exception=True).debug(
                     f"Error with model {model_name} during chat generation: {e}"
                 )
-
-        # Check if Medicaid tool was already processed and clean up the response
-        if final_response_text and "MEDICAID_PROCESSED" in final_response_text:
-            final_response_text = final_response_text.replace(
-                " MEDICAID_PROCESSED", ""
-            ).strip()
-            logger.debug("Medicaid tool was processed, skipping fallback logic")
-        else:
-            logger.debug(
-                f"Medicaid query detected: {is_medicaid_query}, State detected: {detected_state}"
-            )
-            logger.debug(
-                f"Final response contains Medicaid data: {'medicaid' in final_response_text.lower() if final_response_text else False}"
-            )
 
         if final_response_text:
             if not chat.chat_history:
