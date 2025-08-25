@@ -393,9 +393,11 @@ class ChatInterface:
                                 medicaid_info_text,
                                 previous_context_summary,
                                 history_for_llm,
-                                depth=depth+1,
+                                depth=depth + 1,
                                 is_logged_in=is_logged_in,
-                                is_professional=is_professional))
+                                is_professional=is_professional,
+                            )
+                        )
                         # Log the response for debugging
                         logger.debug(
                             f"Medicaid with intro/conclusion: {medicaid_info[:200]}..."

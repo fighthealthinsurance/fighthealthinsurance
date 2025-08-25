@@ -202,6 +202,9 @@ Or to create a prior auth for the same fake patient with the prior auth text "pr
         # Continue with the rest of the system prompt
         medicaid_resources_tool = """**Medicaid Information Tool**: For Medicaid/Medicare questions, you MUST use this tool format: **medicaid_info {"state": "StateName", "topic": "", "limit": 5}**
 
+(note: fill in the statename with the actual name of the state).
+When possible even if the user has not explicitily provided the state if they're using a state specific name (like MediCal) infer the state for them. Otherwise ask.
+
 This means, for example, you get the phone number for medical (california medicaid) by calling this tool and looking at the response.
 
 Rules for medicaid questions:
