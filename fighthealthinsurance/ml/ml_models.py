@@ -200,19 +200,68 @@ Or to create a prior auth for the same fake patient with the prior auth text "pr
             base_system_prompt += logged_in_instructions
 
         # Continue with the rest of the system prompt
+        medicaid_eligibility_tool = """**Medicaid Eligibility Check**: To help check if someone is eligible Medicaid, you MUST ONLY use this tool format: **medicaid_eligibility {"state": "StateName", "married": false, ...}**
+
+Rules for medicaid eligibility:
+
+Call the tool, and the tool will tell you what other information is required until it eventually says probably eligibile under todays rules only, probably eligible under todays rules and with work requirements, or can't find elgibility. In any case you can send them to https://www.fighthealthinsurance.com/faq/medicaid/ once done along with the state specific medicaid information (see the next tool). You can suggest things like "maybe school or volunteering" to help get someone up to the 80 hours. Remind people to keep good records (while expressing empathy that this is unfair).
+
+Common pieces of information to collect (but not all at once wait until the tool tells you):
+- Are you married or single?
+- Where do you reside? (possible answers include: in their own home, at a friends, in assisted living, rehab (temporarily), nursing home (perm)
+- How old are you?
+- Are you receiving SSDI?
+- Why are you applying for medicaid? (special considerations exist around nursing home care v.s. home care)
+- Are you a veteran or widow/widower of a veteran? Did the veteran serve during war time? (this can mean VA benefits could be better)
+- What's is your income? (with spouse if married)
+- Do you have life insurance with a cash value if surrendered?
+- Do you own a home?
+- Do you have a mortgage on the home?
+- What is the "home equity"?
+- What is the total financial assets without home equity?
+- How much is the current out of pocket care costs monthly?
+
+The input kwargs:
+
+    Expected kwargs (all optional; function will ask for missing, step-by-step):
+      - state: str
+      - married: bool
+      - age: int
+      - pregnant: bool
+      - receiving_ssdi: bool  (or disabled: bool)
+      - on_medicare: bool
+      - veteran_or_spouse_of_veteran: bool
+      - living_situation: str     # "home", "friends", "assisted_living", "rehab_temp", "nursing_home_perm"
+      - applying_reason: str       # "standard" (MAGI), "ltc_nursing_home", "ltc_home_care"
+      - household_size: int
+      - monthly_income: float      # gross MAGI-ish income for MAGI pathways; gross for ABD/LTC high-level
+      - assets_total: float        # exclude primary home equity if possible
+      - home_owner: bool
+      - home_equity: float
+      - children_in_household: int
+      - state_expanded_medicaid: bool   # if True, low-income adults 19-64 usually covered up to ~138% FPL
+      - state_has_medically_needy: bool # spend-down/medically-needy program exists
+      - current_work_or_qualifying_hours_per_month: int  # includes job, school, volunteering, caregiving
+
+Be clear that these are only a best guess as the rules are evolving and your an AI system who may not have the latest information and can also make mistakes.
+
+You can and should consider using the medicaid information tool once we've done an initial assesment and point them to state specific resources.
+"""
         base_system_prompt += """
 If a chat is linked to an appeal or prior authorization record, pay attention to that context and reference the specific details from that record. You should help the user iterate on that appeal or prior auth. When this happens, the system will tell you with a message like "Linked this chat to Appeal #123" or "Linked this chat to Prior Auth Request #456".
 
+Remember that medicaid can go by many names, including but not limited to: DenaliCare, Medi-Cal, Health First Colorado, Husky Health, Diamond State Health Plan, Med-QUEST, Medical Assistance Program, HealthChoice Illinois, Hoosier Healthwise, Iowa Medicaid, Kansas Medical Assistance Program, MaineCare, MassHealth, MO HealthNet, NJ FamilyCare, Turquoise Care, New York State Medicaid, SoonerCare, Medical Assistance, Healthy Connections, TennCare, STAR+PLUS, Green Mountain Care, Cardinal Care, Apple Health, Forward Health, and Equality Care.
+
 **Available Tools:**
 
-**Medicaid Information Tool**: For ANY Medicaid/Medicare questions, you MUST ONLY use this tool format: **medicaid_info {"state": "StateName", "topic": "", "limit": 5}**
+**Medicaid Information Tool**: For Medicaid/Medicare questions, you MUST use this tool format: **medicaid_info {"state": "StateName", "topic": "", "limit": 5}**
 
 Rules for medicaid questions:
 - If user mentions Medicaid/Medicare + state → ONLY respond with the tool call, no other text
 - If user mentions Medicaid/Medicare but no state → Ask "Which state?" then ONLY use tool call
 - NEVER provide generic Medicaid information, websites, or advice
 - NEVER mix tool calls with long explanations
-- The tool provides ALL necessary information
+- The tool provides ALL necessary information, although you can reformat it's output.
 
 CORRECT Examples:
 User: "medicaid info in california" → Response: **medicaid_info {"state": "California", "topic": "", "limit": 5}**
@@ -221,15 +270,15 @@ User: "help with medicaid" → Response: "Which state are you in?"
 WRONG Examples:
 "Let me help you with California Medicaid! **medicaid_info {...}** Here are some resources..."
 "California has a great Medicaid program called Medi-Cal. **medicaid_info {...}**"
-
 **Medicaid Work Requirements Information**: If users ask about or reference Medicaid work requirements, you must only respond with this exact text:
 
 New federal rules require many adults (ages 19-64) to complete at least 80 hours per month of work, job training, school, or community service to keep Medicaid coverage. These requirements go into effect by December 31, 2026.
 
 **Key Points:**
 - Applies to adults ages 19-64 in most states
-- 80 hours per month minimum requirement  
+- 80 hours per month minimum requirement (make sure to keep records)
 - Qualifying activities: work, job training, school, community service
+- There are groups which are often exempt, see the FAQ for more information.
 - Implementation deadline: December 31, 2026
 - State-specific details may vary
 
@@ -1850,11 +1899,6 @@ class DeepInfra(RemoteFullOpenLike):
         super().__init__(api_base, token, model=model, dual_mode=dual_mode)
 
     @property
-    def external(self):
-        """DeepInfra models are considered internal for chat purposes"""
-        return False
-
-    @property
     def supports_system(self):
         return True
 
@@ -1902,7 +1946,7 @@ class DeepInfra(RemoteFullOpenLike):
                 internal_name="deepseek-ai/DeepSeek-R1-Turbo",
             ),
         ]
-    
+
     def _run_sync(self, coro):
         """
         Run an async coroutine from sync contexts (manage.py shell, sync views).
@@ -1921,6 +1965,7 @@ class DeepInfra(RemoteFullOpenLike):
         """
         Synchronous helper that awaits the real async API and returns just text.
         """
+
         async def _go():
             text, _ = await self.generate_chat_response(
                 prompt,
@@ -1942,7 +1987,9 @@ class DeepInfra(RemoteFullOpenLike):
         """
         OpenAI-style messages -> prompt. Quick way to test chat flows in sync code.
         """
-        prompt = "\n".join(f"{m.get('role','user')}: {m.get('content','')}" for m in messages)
+        prompt = "\n".join(
+            f"{m.get('role','user')}: {m.get('content','')}" for m in messages
+        )
         return self.generate_text(prompt, **kwargs)
 
 
