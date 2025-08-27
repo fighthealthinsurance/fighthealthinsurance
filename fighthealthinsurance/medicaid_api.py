@@ -1,9 +1,9 @@
 from pathlib import Path
 from typing import Any, Dict, Tuple, List, Optional, Sequence
-import json, re
+import json
+import re
 import pandas as pd
 import difflib
-import re
 
 # Look for data/ next to the repo root
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
@@ -470,7 +470,7 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
             eligible_medicare = True
         else:
             eligible_medicare = False
-            alternatives.append(
+            alts.append(
                 "You may be eligible to buy Part-A medicare even if you don't qualify for premium-free part A."
             )
 
@@ -497,23 +497,9 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
                     "About how much are your countable financial assets (not including your primary home)?"
                 )
 
-    # If we’re missing core info, stop early and suggest next questions.
-    core_needed = any(
-        x is None
-        for x in (
-            state,
-            age,
-            married,
-            household_size,
-            monthly_income,
-            medically_needy,
-            pregnant,
-            kids,
-            receiving_ssdi,
-            on_medicare,
-        )
-    )
-    if core_needed:
+    # mypy isn't smart enough to infer the types with a loop :/
+    if (state is None or age is None or married is None or household_size is None or monthly_income is None
+        or pregnant is None or kids is None or receiving_ssdi is None or on_medicare is None):
         return (eligible_2025, eligible_2026, eligible_medicare, alts, missing)
 
     # ---- with core info present, evaluate categories ----
@@ -564,6 +550,7 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
                     "Ask about medically-needy/spend-down Medicaid in your state."
                 )
     elif applying_reason in ("ltc_nursing_home", "ltc_home_care"):
+        # For LTC we need some extra info
         need_fields = []
         if assets_total is None:
             need_fields.append("assets_total")
@@ -587,6 +574,7 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
             if "home_equity" in need_fields:
                 missing.append("If you own a home, about how much equity is in it?")
             return (
+                False,
                 False,
                 False,
                 [
@@ -829,7 +817,7 @@ def get_medicaid_info(query: Dict[str, Any]) -> str:
         "ak": "Alaska",
         "vt": "Vermont",
         "wy": "Wyoming",
-        "dc": "District of Colombia",
+        "dc": "District of Columbia",
     }
 
     if state_short in state_abbrev_map:
