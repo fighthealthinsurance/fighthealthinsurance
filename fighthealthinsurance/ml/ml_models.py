@@ -1974,46 +1974,5 @@ class DeepInfra(RemoteFullOpenLike):
             ),
         ]
 
-    def _run_sync(self, coro):
-        """
-        Run an async coroutine from sync contexts (manage.py shell, sync views).
-        If an event loop is already running (ASGI), fail fast with a clear message.
-        """
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            return asyncio.run(coro)
-        raise RuntimeError(
-            "DeepInfra called from a running event loop. "
-            "Use: `await generate_chat_response(...)` in async contexts."
-        )
-
-    def _generate_text_sync(self, prompt: str, **kwargs) -> Optional[str]:
-        """
-        Synchronous helper that awaits the real async API and returns just text.
-        """
-
-        async def _go():
-            text, _ = await self.generate_chat_response(
-                prompt,
-                previous_context_summary=kwargs.get("previous_context_summary"),
-                history=kwargs.get("history"),
-                temperature=kwargs.get("temperature", 0.7),
-                is_professional=kwargs.get("is_professional", True),
-                is_logged_in=kwargs.get("is_logged_in", True),
-            )
-            return text
-
-        return self._run_sync(_go())
-
-    def chat(self, messages: list[dict], **kwargs) -> str:
-        """
-        OpenAI-style messages -> prompt. Quick way to test chat flows in sync code.
-        """
-        prompt = "\n".join(
-            f"{m.get('role','user')}: {m.get('content','')}" for m in messages
-        )
-        return self.generate_text(prompt, **kwargs)
-
 
 candidate_model_backends: list[type[RemoteModel]] = all_concrete_subclasses(RemoteModel)  # type: ignore[type-abstract]
