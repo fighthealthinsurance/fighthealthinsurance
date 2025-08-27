@@ -43,6 +43,7 @@ from django.contrib.staticfiles.storage import staticfiles_storage
 
 class BlogPostMetadata(TypedDict, total=False):
     """Type definition for blog post metadata from frontmatter."""
+
     slug: str
     title: str
     date: str
@@ -249,11 +250,11 @@ class BlogView(generic.TemplateView):
         slugs = []
         try:
             # Find the path to the blog posts JSON using the staticfiles storage.
-            blog_posts_path = staticfiles_storage.path('blog_posts.json')
-            with open(blog_posts_path, 'r', encoding='utf-8') as f:
+            blog_posts_path = staticfiles_storage.path("blog_posts.json")
+            with open(blog_posts_path, "r", encoding="utf-8") as f:
                 posts = json.load(f)
             # Extract slugs from the loaded posts
-            slugs = [post.get('slug') for post in posts if post.get('slug')]
+            slugs = [post.get("slug") for post in posts if post.get("slug")]
         except (FileNotFoundError, json.JSONDecodeError) as e:
             logger.error(f"Could not load or parse blog_posts.json: {e}")
             # Optionally, you could run the management command here as a fallback
@@ -263,8 +264,8 @@ class BlogView(generic.TemplateView):
             # For now, we'll just log the error and return an empty list.
         except Exception as e:
             logger.error(f"An unexpected error occurred while loading blog posts: {e}")
-        
-        context['blog_slugs'] = json.dumps(slugs)
+
+        context["blog_slugs"] = json.dumps(slugs)
         return context
 
 
@@ -275,7 +276,7 @@ class BlogPostView(generic.TemplateView):
         context = super().get_context_data(**kwargs)
         slug = kwargs.get("slug", "")
         # Validate slug format
-        if not re.match(r'^[a-zA-Z0-9_-]+$', slug):
+        if not re.match(r"^[a-zA-Z0-9_-]+$", slug):
             logger.warning(f"Invalid slug format: {slug}")
             context.update({"slug": slug, "post_title": None, "post_excerpt": None})
             return context
@@ -291,14 +292,16 @@ class BlogPostView(generic.TemplateView):
             return context
 
         # Load blog metadata from blog_posts.json
-        blog_json_path = staticfiles_storage.path('blog_posts.json')
+        blog_json_path = staticfiles_storage.path("blog_posts.json")
         post_info: BlogPostMetadata = {}
         try:
             with open(blog_json_path, "r", encoding="utf-8") as f:
                 posts = json.load(f)
 
             if not isinstance(posts, list):
-                logger.error(f"Invalid blog metadata format in {blog_json_path}: expected list")
+                logger.error(
+                    f"Invalid blog metadata format in {blog_json_path}: expected list"
+                )
                 post_info = {}
             else:
                 for post in posts:
@@ -312,20 +315,26 @@ class BlogPostView(generic.TemplateView):
             logger.warning(f"Could not load blog metadata from {blog_json_path}: {e}")
             post_info = {}
         except PermissionError as e:
-            logger.error(f"Permission denied accessing blog metadata file {blog_json_path}: {e}")
+            logger.error(
+                f"Permission denied accessing blog metadata file {blog_json_path}: {e}"
+            )
             post_info = {}
         except UnicodeDecodeError as e:
-            logger.error(f"Invalid file encoding for blog metadata file {blog_json_path}: {e}")
+            logger.error(
+                f"Invalid file encoding for blog metadata file {blog_json_path}: {e}"
+            )
             post_info = {}
         except Exception as e:
             logger.error(f"Unexpected error loading blog metadata: {e}")
             post_info = {}
 
-        context.update({
-            "slug": slug,
-            "post_title": post_info.get("title"),
-            "post_excerpt": post_info.get("excerpt"),
-        })
+        context.update(
+            {
+                "slug": slug,
+                "post_title": post_info.get("title"),
+                "post_excerpt": post_info.get("excerpt"),
+            }
+        )
         return context
 
 
@@ -377,9 +386,9 @@ class MedicaidFAQView(generic.TemplateView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         slug = "medicaid-work-requirements-faq"
-        
+
         # Validate slug and load FAQ content from static file
-        if not re.match(r'^[a-zA-Z0-9_-]+$', slug):
+        if not re.match(r"^[a-zA-Z0-9_-]+$", slug):
             logger.warning(f"Invalid slug format: {slug}")
             context.update({"slug": slug, "faq_title": None, "faq_excerpt": None})
             return context
@@ -387,16 +396,18 @@ class MedicaidFAQView(generic.TemplateView):
         try:
             # Securely find the path to the FAQ markdown file.
             staticfiles_storage.path(f"faq/{slug}.md")
-            context.update({
-                "title": "Medicaid Work Requirements FAQ",
-                "slug": slug,
-                "faq_title": "Medicaid Work Requirements FAQ",
-                "faq_excerpt": "Frequently asked questions about Medicaid work requirements and how they may affect your healthcare coverage eligibility.",
-            })
+            context.update(
+                {
+                    "title": "Medicaid Work Requirements FAQ",
+                    "slug": slug,
+                    "faq_title": "Medicaid Work Requirements FAQ",
+                    "faq_excerpt": "Frequently asked questions about Medicaid work requirements and how they may affect your healthcare coverage eligibility.",
+                }
+            )
         except Exception:
             logger.warning(f"FAQ markdown file not found for slug: {slug}")
             context.update({"slug": slug, "faq_title": None, "faq_excerpt": None})
-        
+
         return context
 
 

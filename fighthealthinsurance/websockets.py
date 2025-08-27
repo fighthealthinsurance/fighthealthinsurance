@@ -266,7 +266,9 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                 )
 
                 full_prompt = f"{history_text}\n{analysis_prompt}"
-                logger.info(f"Prompt for denied item extraction (chat {chat_id}):\n{full_prompt}")
+                logger.info(
+                    f"Prompt for denied item extraction (chat {chat_id}):\n{full_prompt}"
+                )
 
                 # Get the analysis from the model
                 response_text, _ = await model.generate_chat_response(
@@ -284,7 +286,9 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                             denied_item = analysis_data.get("denied_item")
                             denied_reason = analysis_data.get("denied_reason")
 
-                            logger.info(f"[DEBUG] chat_id={chat_id} denied_item={denied_item!r} denied_reason={denied_reason!r} (raw analysis_data={analysis_data!r})")
+                            logger.info(
+                                f"[DEBUG] chat_id={chat_id} denied_item={denied_item!r} denied_reason={denied_reason!r} (raw analysis_data={analysis_data!r})"
+                            )
 
                             # Guardrails: Only store if both are non-empty, not null, and not generic/unclear
                             def is_clear(val):
@@ -293,7 +297,15 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                                 val_str = str(val).strip().lower()
 
                                 unclear_phrases = [
-                                    "not clear", "unknown", "unclear", "n/a", "none", "null", "", "no denial", "could not determine"
+                                    "not clear",
+                                    "unknown",
+                                    "unclear",
+                                    "n/a",
+                                    "none",
+                                    "null",
+                                    "",
+                                    "no denial",
+                                    "could not determine",
                                 ]
                                 return val_str not in unclear_phrases
 
@@ -301,11 +313,15 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                             if is_clear(denied_item):
                                 chat.denied_item = denied_item
                                 updated = True
-                                logger.info(f"Updated chat {chat_id} with denied item: {denied_item}")
+                                logger.info(
+                                    f"Updated chat {chat_id} with denied item: {denied_item}"
+                                )
                             if is_clear(denied_reason):
                                 chat.denied_reason = denied_reason
                                 updated = True
-                                logger.info(f"Updated chat {chat_id} with denied reason: {denied_reason}")
+                                logger.info(
+                                    f"Updated chat {chat_id} with denied reason: {denied_reason}"
+                                )
                             if updated:
                                 await chat.asave()
                             else:
