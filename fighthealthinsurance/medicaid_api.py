@@ -541,23 +541,24 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
             missing.append(
                 "We need your countable assets to check ABD rules (approx, excluding your primary home)."
             )
-        asset_limit = ABD_ASSET_LIMIT_MARRIED if married else ABD_ASSET_LIMIT_SINGLE
-        assets_ok = assets_total <= asset_limit
-        income_ok_2025 = pfpl_2025 <= 100.0
-        eligible_2025 = assets_ok and (income_ok_2025 or medically_needy)
-        if not eligible_2025:
-            if on_medicare:
-                alts.append(
-                    "Medicare Savings Programs (QMB/SLMB/QI) can help pay Part A/B premiums and cost-sharing."
-                )
-            if medically_needy:
-                alts.append(
-                    "Medically-needy/spend-down Medicaid may help if medical bills are high."
-                )
-            else:
-                alts.append(
-                    "Ask about medically-needy/spend-down Medicaid in your state."
-                )
+        else:
+            asset_limit = ABD_ASSET_LIMIT_MARRIED if married else ABD_ASSET_LIMIT_SINGLE
+            assets_ok = assets_total <= asset_limit
+            income_ok_2025 = pfpl_2025 <= 100.0
+            eligible_2025 = assets_ok and (income_ok_2025 or medically_needy)
+            if not eligible_2025:
+                if on_medicare:
+                    alts.append(
+                        "Medicare Savings Programs (QMB/SLMB/QI) can help pay Part A/B premiums and cost-sharing."
+                    )
+                if medically_needy:
+                    alts.append(
+                        "Medically-needy/spend-down Medicaid may help if medical bills are high."
+                    )
+                else:
+                    alts.append(
+                        "Ask about medically-needy/spend-down Medicaid in your state."
+                    )
     elif applying_reason in ("ltc_nursing_home", "ltc_home_care"):
         # For LTC we need some extra info
         need_fields = []
@@ -593,7 +594,14 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
             )
 
         asset_limit = ABD_ASSET_LIMIT_MARRIED if married else ABD_ASSET_LIMIT_SINGLE
-        assets_ok = assets_total <= asset_limit
+
+        assets_ok = False
+        if not assets_total:
+            missing.append("What are you total assets excluding home equity?")
+        elif assets_total <= asset_limit:
+            assets_ok = False
+        else:
+            assets_ok = True
         home_ok = True
         if home_owner:
             home_ok = (home_equity or 0.0) <= HOME_EQUITY_CAP_DEFAULT

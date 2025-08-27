@@ -357,15 +357,21 @@ class ChatInterface:
                     # Remove ALL Medicaid tool calls from the response, not just the first one
                 cleaned_response = response_text
                 loaded = None
-                for match in medicaid_eligibility_matches:
-                    cleaned_response = cleaned_response.replace(match.group(0), "")
+                for ematch in medicaid_eligibility_matches:
+                    cleaned_response = cleaned_response.replace(ematch.group(0), "")
                     if loaded is None:
                         try:
-                            loaded = json.loads(match.group(1).strip())
+                            loaded = json.loads(ematch.group(1).strip())
                         except Exception as e:
                             pass
                 cleaned_response = cleaned_response.strip()
                 await self.send_status_message(cleaned_response)
+                if loaded is None:
+                    loaded = {}
+                if not isinstance(loaded, dict):
+                    raise TypeError(
+                        f"Expected dict, got {type(loaded).__name__} while loading tool call params."
+                    )
 
                 try:
                     from fighthealthinsurance.medicaid_api import is_eligible
@@ -541,13 +547,13 @@ class ChatInterface:
         # Handle pubmed
         try:
             # Extract the PubMedQuery terms using regex
-            match = re.search(
+            pmatch: Optional[re.Match[str]] = re.search(
                 pubmed_query_terms_regex, response_text, flags=re.IGNORECASE
             )
             # If we match on a tool call, remove the tool call from the result we give to the user.
-            if match:
-                pubmed_query_terms = match.group(1).strip()
-                cleaned_response = response_text.replace(match.group(0), "").strip()
+            if pmatch:
+                pubmed_query_terms = pmatch.group(1).strip()
+                cleaned_response = response_text.replace(pmatch.group(0), "").strip()
                 if "your search terms" in pubmed_query_terms:
                     logger.debug(f"Got bad PubMed Query {pubmed_query_terms}")
                     return cleaned_response, context_part
