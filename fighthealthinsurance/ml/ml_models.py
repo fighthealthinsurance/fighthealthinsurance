@@ -1988,7 +1988,7 @@ class DeepInfra(RemoteFullOpenLike):
             "Use: `await generate_chat_response(...)` in async contexts."
         )
 
-    def generate_text(self, prompt: str, **kwargs) -> str:
+    def _generate_text_sync(self, prompt: str, **kwargs) -> Optional[str]:
         """
         Synchronous helper that awaits the real async API and returns just text.
         """
@@ -2005,10 +2005,6 @@ class DeepInfra(RemoteFullOpenLike):
             return text
 
         return self._run_sync(_go())
-
-    # Common aliases some call sites expect
-    def complete(self, prompt: str, **kwargs) -> str:
-        return self.generate_text(prompt, **kwargs)
 
     def chat(self, messages: list[dict], **kwargs) -> str:
         """
