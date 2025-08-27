@@ -498,8 +498,17 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
                 )
 
     # mypy isn't smart enough to infer the types with a loop :/
-    if (state is None or age is None or married is None or household_size is None or monthly_income is None
-        or pregnant is None or kids is None or receiving_ssdi is None or on_medicare is None):
+    if (
+        state is None
+        or age is None
+        or married is None
+        or household_size is None
+        or monthly_income is None
+        or pregnant is None
+        or kids is None
+        or receiving_ssdi is None
+        or on_medicare is None
+    ):
         return (eligible_2025, eligible_2026, eligible_medicare, alts, missing)
 
     # ---- with core info present, evaluate categories ----
