@@ -2,6 +2,8 @@ from pathlib import Path
 from typing import Any, Dict, Tuple, List, Optional, Sequence
 import json, re
 import pandas as pd
+import difflib
+import re
 
 # Look for data/ next to the repo root
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
@@ -38,10 +40,202 @@ def _explode_scraped_faq(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def is_eligible(**kwargs) -> Tuple[bool, bool, List[str], List[str]]:
+# Canonical full-name -> 2-letter abbreviation (lowercase)
+_STATE_MAP = {
+    "alabama": "al",
+    "alaska": "ak",
+    "arizona": "az",
+    "arkansas": "ar",
+    "california": "ca",
+    "colorado": "co",
+    "connecticut": "ct",
+    "delaware": "de",
+    "district of columbia": "dc",
+    "washington dc": "dc",
+    "dc": "dc",
+    "florida": "fl",
+    "georgia": "ga",
+    "hawaii": "hi",
+    "idaho": "id",
+    "illinois": "il",
+    "indiana": "in",
+    "iowa": "ia",
+    "kansas": "ks",
+    "kentucky": "ky",
+    "louisiana": "la",
+    "maine": "me",
+    "maryland": "md",
+    "massachusetts": "ma",
+    "michigan": "mi",
+    "minnesota": "mn",
+    "mississippi": "ms",
+    "missouri": "mo",
+    "montana": "mt",
+    "nebraska": "ne",
+    "nevada": "nv",
+    "new hampshire": "nh",
+    "new jersey": "nj",
+    "new mexico": "nm",
+    "new york": "ny",
+    "north carolina": "nc",
+    "north dakota": "nd",
+    "ohio": "oh",
+    "oklahoma": "ok",
+    "oregon": "or",
+    "pennsylvania": "pa",
+    "rhode island": "ri",
+    "south carolina": "sc",
+    "south dakota": "sd",
+    "tennessee": "tn",
+    "texas": "tx",
+    "utah": "ut",
+    "vermont": "vt",
+    "virginia": "va",
+    "washington": "wa",
+    "west virginia": "wv",
+    "wisconsin": "wi",
+    "wyoming": "wy",
+}
+
+# Helpful aliases/variants -> canonical full name
+_ALIASES = {
+    # DC variants
+    "d.c.": "district of columbia",
+    "wash dc": "washington dc",
+    "wash. dc": "washington dc",
+    "washington, dc": "washington dc",
+    "w dc": "washington dc",
+    # Abbrev-name shorthands & common variants
+    "mass": "massachusetts",
+    "penna": "pennsylvania",
+    "penna.": "pennsylvania",
+    "penn": "pennsylvania",
+    "wash": "washington",
+    "wash.": "washington",
+    "calif": "california",
+    "calif.": "california",
+    "cal": "california",
+    "ore": "oregon",
+    "ore.": "oregon",
+    "no dakota": "north dakota",
+    "n dakota": "north dakota",
+    "so dakota": "south dakota",
+    "s dakota": "south dakota",
+    "no carolina": "north carolina",
+    "n carolina": "north carolina",
+    "so carolina": "south carolina",
+    "s carolina": "south carolina",
+    # Directional punctuated forms
+    "n. carolina": "north carolina",
+    "s. carolina": "south carolina",
+    "n. dakota": "north dakota",
+    "s. dakota": "south dakota",
+    # “state of …” forms
+    "state of california": "california",
+    "state of new york": "new york",
+    "state of washington": "washington",
+}
+
+# Add 2-letter codes themselves as valid keys (so "CA"→"ca")
+for full, abbr in list(_STATE_MAP.items()):
+    _ALIASES[abbr] = full
+
+# Precompute candidate keys (full names + aliases)
+_CANDIDATE_KEYS = set(_STATE_MAP.keys()) | set(_ALIASES.keys())
+
+
+def _clean_token(s: str) -> str:
+    """Lower, trim, collapse spaces, remove most punctuation except spaces."""
+    s = s.strip().lower()
+    # replace common separators with spaces
+    s = re.sub(r"[,_/]+", " ", s)
+    # remove periods
+    s = s.replace(".", "")
+    # collapse whitespace
+    s = re.sub(r"\s+", " ", s)
+    # normalize things like 'st of' -> 'state of'
+    if s.startswith("state of "):
+        return s
+    return s
+
+
+def _canonicalize(s: str) -> str:
+    """Map aliases to canonical full names where possible."""
+    if s in _ALIASES:
+        return _ALIASES[s]
+    return s
+
+
+def _normalize_state(
+    state: Optional[str], *, fuzzy: bool = True, cutoff: float = 0.84
+) -> Optional[str]:
+    """Normalize a US state (full name, alias, or 2-letter code) to lowercase 2-letter code.
+
+    Args:
+        state: State input (any case). Handles punctuation, spaces, and common variants.
+        fuzzy: If True, use difflib to match close misspellings/variants.
+        cutoff: Similarity threshold (0..1). Higher is stricter.
+
+    Returns:
+        Two-letter lowercase postal abbreviation.
+
+    Raises:
+        ValueError: If the input cannot be confidently mapped.
     """
-    Perform an approximate eligibility check for Medicaid based on the provided parameters.
-    Returns a tuple of (2025 eligibility, 2026 eligibility, alternatives, missing_info).
+    if state is None:
+        return None
+    if not isinstance(state, str):
+        raise ValueError(f"State must be a string, got {type(state).__name__}")
+
+    # Special case since our LLM sometimes uses the example too literally.
+    if state == "StateName" or state == "statename" or state == "unknown":
+        return None
+
+    raw = state
+    s = _clean_token(state)
+
+    # Exact short-circuit: if already a 2-letter valid code (any case/punct)
+    if len(s) == 2 and s in {v for v in _STATE_MAP.values()}:
+        return s
+
+    # Try alias/canonical exact match
+    s = _canonicalize(s)
+    if s in _STATE_MAP:
+        return _STATE_MAP[s]
+
+    # Try to expand common “state of X”
+    if s.startswith("state of "):
+        candidate = s[len("state of ") :]
+        candidate = _canonicalize(candidate)
+        if candidate in _STATE_MAP:
+            return _STATE_MAP[candidate]
+
+    if not fuzzy:
+        raise ValueError(f"Unknown state: {raw}")
+
+    # Fuzzy search across candidate keys
+    # We compare against cleaned candidate keys; if alias matched, map to canonical.
+    matches = difflib.get_close_matches(s, _CANDIDATE_KEYS, n=3, cutoff=cutoff)
+    for m in matches:
+        # Map alias->canonical full name, then to abbr
+        canon = _canonicalize(m)
+        if canon in _STATE_MAP:
+            return _STATE_MAP[canon]
+
+    # Extra: attempt fuzzy on full names only (avoids weird alias bias)
+    full_name_matches = difflib.get_close_matches(
+        s, list(_STATE_MAP.keys()), n=1, cutoff=cutoff
+    )
+    if full_name_matches:
+        return _STATE_MAP[full_name_matches[0]]
+
+    raise ValueError(f"Unknown state: {raw}")
+
+
+def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
+    """
+    Perform an approximate eligibility check for Medicaid / Medicare based on the provided parameters.
+    Returns a tuple of (2025 eligibility, 2026 eligibility, medicare, alternatives, missing_info).
 
     IMPORTANT: This uses simplified heuristics. Medicaid rules vary by state and change often.
     Treat results as a best guess only and confirm with state resources.
@@ -68,8 +262,10 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, List[str], List[str]]:
       - home_owner: bool
       - home_equity: float
       - children_in_household: int
-      - state_expanded_medicaid: bool
-      - state_has_medically_needy: bool
+      - als: bool
+      - esrd: bool
+      - ssdi_length: int # how many months have they been receiving ssdi
+      - on_medicaid_past: bool
 
       # 2026 federal work requirement (ALWAYS ASSUMED TRUE):
       - work_req_exempt_2026: Optional[bool]  # if caller knows the person is exempt from work rules
@@ -87,7 +283,7 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, List[str], List[str]]:
         If weekly detail is provided, we also require at least 8 of 12 weeks to meet or exceed 80.
 
     Returns:
-      (eligible_2025: bool, eligible_2026: bool, alternatives: List[str], missing_info: List[str])
+      (eligible_2025: bool, eligible_2026: bool, eligible_medicare: bool, alternatives: List[str], missing_info: List[str])
     """
 
     # ---- helpers ----
@@ -149,11 +345,12 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, List[str], List[str]]:
     MIN_WEEKS_MEETING_80 = 8  # allow some variance if average is met
 
     # ---- extract inputs ----
-    state = kwargs.get("state")
+    state = _normalize_state(kwargs.get("state"))
     married = get_bool("married")
     age = get_int("age")
     pregnant = get_bool("pregnant")
     receiving_ssdi = get_bool("receiving_ssdi") or get_bool("disabled")
+    ssdi_length = get_int("ssdi_length")
     on_medicare = get_bool("on_medicare")
     veteran = get_bool("veteran_or_spouse_of_veteran")
     living_situation = kwargs.get("living_situation")
@@ -164,8 +361,45 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, List[str], List[str]]:
     home_owner = get_bool("home_owner")
     home_equity = get_float("home_equity")
     kids = get_int("children_in_household")
-    expanded = get_bool("state_expanded_medicaid")
-    medically_needy = get_bool("state_has_medically_needy")
+    medically_needy = state in [
+        "ar",
+        "ca",
+        "ct",
+        "dc",
+        "fl",
+        "ga",
+        "hi",
+        "il",
+        "ia",
+        "ks",
+        "ky",
+        "la",
+        "me",
+        "md",
+        "ma",
+        "mi",
+        "mn",
+        "mo",
+        "mt",
+        "ne",
+        "nh",
+        "nj",
+        "ny",
+        "nc",
+        "nd",
+        "pa",
+        "ri",
+        "ut",
+        "vt",
+        "va",
+        "wa",
+        "wv",
+        "wi",
+    ]
+    als = get_bool("als")
+    esrd = get_bool("esrd")
+    years_worked = get_int("years_worked")
+    on_medicaid_past = get_bool("on_medicaid_past")
 
     # 2026 work requirement inputs
     work_req_exempt_2026 = get_bool("work_req_exempt_2026")
@@ -178,13 +412,18 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, List[str], List[str]]:
     alts: List[str] = []
     eligible_2025 = False
     eligible_2026 = False
+    eligible_medicare = False
 
     # ---- prioritize missing info for stepwise questioning ----
     if not state:
         missing.append("What state do you live in?")
     if age is None:
         missing.append("How old are you?")
-    if married is None:
+    # No federal minimum marriage age law exists Oo. We could _probably_ go with 16 though but
+    # for now lets do 10 since asking is not terrible and some states do allow it.
+    if age is not None and age < 10 and married is None:
+        married = False
+    if age is not None and married is None and age > 10:
         missing.append("Are you married or single?")
     if household_size is None:
         missing.append(
@@ -195,14 +434,8 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, List[str], List[str]]:
             "About how much is your household's monthly income before taxes?"
         )
 
-    if expanded is None:
-        missing.append("Do you know if your state expanded Medicaid under the ACA?")
-    if medically_needy is None:
-        missing.append(
-            "Does your state offer a medically-needy/spend-down Medicaid program (if known)?"
-        )
-
-    if pregnant is None:
+    # https://en.wikipedia.org/wiki/Lina_Medina :/
+    if age and age > 4 and pregnant is None:
         missing.append("Are you currently pregnant?")
     if kids is None:
         missing.append("How many children (under 19) live in your household?")
@@ -211,8 +444,35 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, List[str], List[str]]:
         missing.append(
             "Are you receiving SSDI or otherwise considered disabled for benefits?"
         )
-    if on_medicare is None:
+    if age is not None and age < 65:
+        if receiving_ssdi is not None and receiving_ssdi and ssdi_length is None:
+            missing.append("How long have you been receiving SSDI?")
+        if (ssdi_length is None or ssdi_length < 24) and esrd is None:
+            missing.append("Are you in end stage renal failure?")
+        if esrd is not None and als is None:
+            missing.append("Do you have ALS?")
+    if (
+        (age is not None and age > 65)
+        or (esrd is not None and esrd)
+        or (als is not None and als)
+        and on_medicare is None
+    ):
         missing.append("Are you currently on Medicare?")
+        if years_worked is None:
+            missing.append(
+                "How many years did you (or spouse or ex-spouse) work and pay medicare taxes?"
+            )
+        elif years_worked > 10:
+            eligible_medicare = True
+        elif on_medicaid_past is None:
+            missing.append("Were you on medicaid previously?")
+        elif on_medicaid_past or esrd or als or receiving_ssdi:
+            eligible_medicare = True
+        else:
+            eligible_medicare = False
+            alternatives.append(
+                "You may be eligible to buy Part-A medicare even if you don't qualify for premium-free part A."
+            )
 
     # LTC pathways
     if applying_reason in ("ltc_nursing_home", "ltc_home_care"):
@@ -246,7 +506,6 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, List[str], List[str]]:
             married,
             household_size,
             monthly_income,
-            expanded,
             medically_needy,
             pregnant,
             kids,
@@ -255,16 +514,7 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, List[str], List[str]]:
         )
     )
     if core_needed:
-        alts.extend(
-            [
-                "If not eligible, consider ACA marketplace plans with income-based subsidies.",
-                "Children may qualify for CHIP even if adults don't.",
-                "If disabled or on Medicare, ask about Medicare Savings Programs (QMB/SLMB/QI).",
-                "If high medical bills, medically-needy/spend-down Medicaid (if your state offers it) can sometimes help.",
-                "If you're a veteran or spouse, VA benefits might be better.",
-            ]
-        )
-        return (False, False, alts, missing)
+        return (eligible_2025, eligible_2026, eligible_medicare, alts, missing)
 
     # ---- with core info present, evaluate categories ----
     pfpl_2025 = pct_fpl(monthly_income, household_size, 2025)
@@ -287,18 +537,14 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, List[str], List[str]]:
             alts.append(
                 "CHIP: Children may still qualify for CHIP at higher incomes than Medicaid."
             )
+        # skip work overlay for children
+        work_req_exempt_2026 = True
     elif is_preg:
         eligible_2025 = pfpl_2025 <= THRESH_PREG
     elif is_abd_age or is_abd_disability or on_medicare:
         if assets_total is None:
             missing.append(
                 "We need your countable assets to check ABD rules (approx, excluding your primary home)."
-            )
-            return (
-                False,
-                False,
-                ["Consider Medicare Savings Programs (QMB/SLMB/QI) if on Medicare."],
-                missing,
             )
         asset_limit = ABD_ASSET_LIMIT_MARRIED if married else ABD_ASSET_LIMIT_SINGLE
         assets_ok = assets_total <= asset_limit
@@ -373,6 +619,51 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, List[str], List[str]]:
                 "Medically-needy/spend-down Medicaid may help if bills are very high."
             )
     elif is_adult_magi:
+        expanded_states = [  # Note: this is based of off KFF Aug 26 2025
+            "al",
+            "ak",
+            "az",
+            "ar",
+            "ca",
+            "co",
+            "ct",
+            "de",
+            "hi",
+            "id",
+            "il",
+            "in",
+            "ia",
+            "ks",
+            "ky",
+            "la",
+            "me",
+            "md",
+            "mi",
+            "mn",
+            "mo",
+            "mt",
+            "ne",
+            "nv",
+            "nh",
+            "nj",
+            "nm",
+            "ny",
+            "nc",
+            "oh",
+            "ok",
+            "or",
+            "pa",
+            "ri",
+            "sd",
+            "ut",
+            "vt",
+            "va",
+            "wa",
+            "wv",
+            "wi",
+            "dc",
+        ]
+        expanded = state in expanded_states
         if expanded:
             eligible_2025 = pfpl_2025 <= THRESH_ADULT_MAGI
         else:
@@ -388,11 +679,10 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, List[str], List[str]]:
         alts.append("Consider ACA marketplace plans with subsidies.")
         if kids and kids > 0:
             alts.append("Children may qualify for CHIP.")
-        return (False, False, alts, missing)
 
     # ---- 2026 eligibility = 2025 base eligibility + federal work overlay ----
     # Exemptions (if caller knows): pregnancy, SSDI/disabled, Medicare are treated as exempt by default.
-    presumed_exempt = is_preg or is_abd_disability or bool(on_medicare)
+    presumed_exempt = is_preg or is_abd_disability or bool(on_medicare) or is_child
     exempt = (work_req_exempt_2026 is True) or presumed_exempt
 
     if not eligible_2025:
@@ -417,7 +707,7 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, List[str], List[str]]:
             # Ask for hours if we can't compute
             if avg_wk is None:
                 missing.append(
-                    "For 2026, about how many qualifying hours per WEEK did you average over the last 12 weeks?"
+                    "For 2026, about how many qualifying hours per WEEK do you think you will average over each 12 weeks?"
                 )
                 missing.append(
                     "If easier, share your total qualifying hours over the last 3 months."
@@ -470,6 +760,7 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, List[str], List[str]]:
     return (
         bool(eligible_2025),
         bool(eligible_2026),
+        bool(eligible_medicare),
         list(dict.fromkeys(alts)),
         missing,
     )
@@ -480,12 +771,11 @@ def get_medicaid_info(query: Dict[str, Any]) -> str:
     query example: {"state":"StateName","topic":"","limit":5}
     Returns a clean, professional format with key contact info.
     """
-    state = (query.get("state") or query.get("State") or "").strip()
+    state_short = _normalize_state(
+        (query.get("state") or query.get("State") or "").strip()
+    )
     topic = (query.get("topic") or "").strip().lower()
     limit = int(query.get("limit") or 5)
-
-    # Convert state abbreviation to full name if needed
-    state_lower = state.lower()
 
     # Normalize state name to title case and handle abbreviations
     state_abbrev_map = {
@@ -539,10 +829,11 @@ def get_medicaid_info(query: Dict[str, Any]) -> str:
         "ak": "Alaska",
         "vt": "Vermont",
         "wy": "Wyoming",
+        "dc": "District of Colombia",
     }
 
-    if state_lower in state_abbrev_map:
-        state = state_abbrev_map[state_lower]
+    if state_short in state_abbrev_map:
+        state = state_abbrev_map[state_short]
     else:
         # Try to match as full state name (title case)
         state = state.title()
