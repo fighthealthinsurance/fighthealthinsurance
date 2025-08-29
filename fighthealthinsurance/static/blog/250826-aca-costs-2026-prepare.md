@@ -1,9 +1,15 @@
 ---
-title: "ACA Health Insurance Will Cost More in 2026 — Some Tips on How to Prepare"
+title: "ACA Health Insurance ### References
+- [ACA Health Insurance Premiums May Rise Sharply in 2026](https://www.npr.org/sections/shots-health-news/2025/07/18/nx-s1-5471281/aca-health-insurance-premiums-obamacare-bbb-kff)
+- [How Much and Why ACA Marketplace Premiums Are Going Up in 2026](https://www.healthsystemtracker.org/brief/how-much-and-why-aca-marketplace-premiums-are-going-up-in-2026/#Distribution%20of%20proposed%202026%20rate%20changes%20among%20312%20ACA%20Marketplace%20insurers)
+- [Enhanced Premium Tax Credits for ACA Health Plans](https://www.commonwealthfund.org/publications/explainer/2025/feb/enhanced-premium-tax-credits-aca-health-plans)
+- [HHS Poverty Guidelines for 2025](https://aspe.hhs.gov/sites/default/files/documents/dd73d4f00d8a819d10b2fdb70d254f7b/detailed-guidelines-2025.pdf)
+- [Find Local Help](http://HealthCare.gov/localhelp)
+- [Insurers' Preliminary Rate Filings Anticipate Biggest Increases in ACA Marketplace Premiums Since 2018](https://www.kff.org/affordable-care-act/press-release/insurers-preliminary-rate-filings-anticipate-biggest-increases-in-aca-marketplace-premiums-since-2018/)ost More in 2026 — Some Tips on How to Prepare"
 slug: "250828-aca-costs-2026-prepare"
 date: "2025-08-28"
 author: "FHI Team"
-description: "Average monthly out-of-pocket premiums could rise by more than 75% in 2026 if enhanced tax credits expire. Here’s what you can do now to limit the hit."
+description: "Average monthly costs could rise by more than 75% for enrollees in ACA health insurance plans. Here’s what you can do now to limit the hit."
 tags: ["aca", "marketplace", "health-insurance", "premiums", "subsidies"]
 readTime: "4 min read"
 ---
