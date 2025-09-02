@@ -11,6 +11,8 @@ GLP-1 drugs like Ozempic, Wegovy, Zepbound, and others are well-known for their 
 
 The insurance landscape for GLP-1s is confusing — one doctor [called](https://www.washingtonpost.com/business/2025/05/24/weight-loss-drugs-insurance-coverage/) it "absolutely insane." If your insurance recently denied your prescription, you're not alone. Here's what's happening, what's changing, and steps you can take to improve your chances of approval.
 
+![GLP-1 insurance coverage challenges and what you can do about denials](/static/images/glp1-maze.png)
+
 ## The Landscape of GLP-1 Coverage
 
 Doctors report that coverage decisions for GLP-1s are changing month-to-month, leaving patients caught in the middle. You [might](https://www.washingtonpost.com/business/2025/05/24/weight-loss-drugs-insurance-coverage/) qualify one year and be denied the next. In some cases, plans that covered Zepbound last year now only cover Wegovy, or vice versa, based on deals between insurance companies and drugmakers. 
