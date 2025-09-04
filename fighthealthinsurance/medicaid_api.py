@@ -339,10 +339,12 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
     ABD_ASSET_LIMIT_MARRIED = 3000.0
     HOME_EQUITY_CAP_DEFAULT = 750000.0
 
-    # Federal work requirement knobs
-    WORK_REQ_WEEKLY_HOURS = 80.0
-    REQUIRED_WEEKS = 12
-    MIN_WEEKS_MEETING_80 = 8  # allow some variance if average is met
+    # Federal work requirement knobs: 80 hours per month over 3-month lookback
+    WORK_REQ_MONTHLY_HOURS = 80.0  # required qualifying hours per month
+    # Note: this is a little fuzzy at renewal some states _could_ look at one month back
+    # but they could also do three. Yaaay.
+    REQUIRED_MONTHS = 3  # lookback period in months
+    MIN_MONTHS_MEETING = 3  # require meeting monthly hours in at least this many months
 
     # ---- extract inputs ----
     state = _normalize_state(kwargs.get("state"))
@@ -406,6 +408,8 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
     weekly_hours = get_seq_of_floats("qualifying_hours_weekly_last_12")
     avg_weekly_hours = get_float("avg_weekly_qualifying_hours_last_3mo")
     total_hours_3mo = get_float("total_qualifying_hours_last_3mo")
+    if total_hours_3mo is None and avg_weekly_hours is not None:
+        total_hours_3mo = avg_weekly_hours * 4 * 3
 
     # ---- track outputs ----
     missing: List[str] = []
@@ -606,7 +610,9 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
         if home_owner:
             home_ok = (home_equity or 0.0) <= HOME_EQUITY_CAP_DEFAULT
         income_ok_2025 = monthly_income <= LTC_INCOME_CAP_2025
+        income_ok_2026 = monthly_income <= LTC_INCOME_CAP_2026
         eligible_2025 = assets_ok and home_ok and income_ok_2025
+        eligible_2026 = assets_ok and home_ok and income_ok_2026
         if not income_ok_2025:
             alts.append(
                 "Ask about a Qualified Income Trust (Miller trust) if income is just over the LTC cap."
@@ -697,44 +703,47 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
         if exempt:
             eligible_2026 = True
         else:
-            # We need a 12-week lookback assessment.
-            def compute_avg_weekly_from_inputs() -> Optional[float]:
-                if weekly_hours and len(weekly_hours) >= REQUIRED_WEEKS:
-                    return sum(weekly_hours[:REQUIRED_WEEKS]) / REQUIRED_WEEKS
-                if avg_weekly_hours is not None:
-                    return float(avg_weekly_hours)
+            # We need a 3-month lookback assessment for 80 hours per month
+            def compute_monthly_sums() -> Optional[List[float]]:
+                # Derive monthly totals from weekly data if available
+                if weekly_hours and len(weekly_hours) >= 12:
+                    # Group into 3 months of 4 weeks each
+                    return [
+                        sum(weekly_hours[i * 4 : (i + 1) * 4]) for i in range(REQUIRED_MONTHS)
+                    ]
                 if total_hours_3mo is not None:
-                    # 3 months ≈ 12 weeks
-                    return float(total_hours_3mo) / REQUIRED_WEEKS
+                    # Average monthly hours from total
+                    avg_monthly = float(total_hours_3mo) / REQUIRED_MONTHS
+                    return [avg_monthly] * REQUIRED_MONTHS
                 return None
 
-            avg_wk = compute_avg_weekly_from_inputs()
+            monthly_data = compute_monthly_sums()
             # Ask for hours if we can't compute
-            if avg_wk is None:
+            if monthly_data is None:
                 missing.append(
-                    "For 2026, about how many qualifying hours per WEEK do you think you will average over each 12 weeks?"
+                    "For 2026, about how many qualifying hours per MONTH do you think you will average over the last 3 months?"
                 )
                 missing.append(
                     "If easier, share your total qualifying hours over the last 3 months."
                 )
                 missing.append(
-                    "If you can, provide your hours for each of the last 12 weeks."
+                    "If you can, provide your hours for each of the last 3 months."
                 )
                 eligible_2026 = False  # unknown until we get this
             else:
-                meets_avg = avg_wk >= WORK_REQ_WEEKLY_HOURS
-                meets_weeks_rule = True
-                if weekly_hours and len(weekly_hours) >= REQUIRED_WEEKS:
-                    weeks_meeting = sum(
-                        1
-                        for h in weekly_hours[:REQUIRED_WEEKS]
-                        if h >= WORK_REQ_WEEKLY_HOURS
-                    )
-                    meets_weeks_rule = weeks_meeting >= MIN_WEEKS_MEETING_80
-                eligible_2026 = bool(meets_avg and meets_weeks_rule)
+                # Check monthly requirement
+                avg_monthly = sum(monthly_data) / REQUIRED_MONTHS
+                months_meeting = sum(
+                    1 for m in monthly_data if m >= WORK_REQ_MONTHLY_HOURS
+                )
+                meets_rule = (
+                    avg_monthly >= WORK_REQ_MONTHLY_HOURS
+                    and months_meeting >= MIN_MONTHS_MEETING
+                )
+                eligible_2026 = bool(meets_rule)
                 if not eligible_2026:
                     alts.append(
-                        "For 2026, try to reach ~80 hrs/week on average via job, school, or volunteering."
+                        "For 2026, try to reach ~80 hrs/month each month via job, school, or volunteering."
                     )
                     alts.append(
                         "Keep good records (pay stubs, schedules, volunteer logs)—we know this is frustrating."
