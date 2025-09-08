@@ -1358,6 +1358,10 @@ class RemoteFullOpenLike(RemoteOpenLike):
         backup_api_base=None,
         max_len=None,
         dual_mode: bool = False,
+        # Optional generation parameters
+        top_p: Optional[float] = None,
+        top_k: Optional[int] = None,
+        repetition_penalty: Optional[float] = None,
     ):
         systems = {
             "full_patient": [
@@ -1459,6 +1463,9 @@ class RemoteFullOpenLike(RemoteOpenLike):
             backup_api_base=backup_api_base,
             max_len=max_len,
             dual_mode=dual_mode,
+            top_p=top_p,
+            top_k=top_k,
+            repetition_penalty=repetition_penalty,
         )
 
     async def get_appeal_questions(
