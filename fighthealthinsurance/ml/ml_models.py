@@ -480,6 +480,10 @@ class RemoteOpenLike(RemoteModel):
         expensive=False,
         max_len=4096 * 8,
         dual_mode: bool = False,
+        # Optional generation parameters - only included in API calls if set
+        top_p: Optional[float] = None,
+        top_k: Optional[int] = None,
+        repetition_penalty: Optional[float] = None,
     ):
         self.api_base = api_base
         self.token = token
@@ -500,6 +504,10 @@ class RemoteOpenLike(RemoteModel):
         self.backup_api_base = backup_api_base
         self._expensive = expensive
         self.dual_mode = dual_mode
+        # Store optional generation parameters
+        self.top_p = top_p
+        self.top_k = top_k
+        self.repetition_penalty = repetition_penalty
 
     def get_system_prompts(self, prompt_type: str, prof_pov=False) -> list[str]:
         """
@@ -1238,14 +1246,27 @@ class RemoteOpenLike(RemoteModel):
                             }
                         )
                 logger.debug(f"Using messages: {messages}")
+
+                               # Build JSON payload with base parameters
+                json_payload = {
+                    "model": model,
+                    "messages": messages,
+                    "temperature": temperature,
+                }
+
+                # Add optional generation parameters if they are configured
+                if self.top_p is not None:
+                    json_payload["top_p"] = self.top_p
+                if self.top_k is not None:
+                    json_payload["top_k"] = self.top_k
+                if self.repetition_penalty is not None:
+                    json_payload["repetition_penalty"] = self.repetition_penalty
+                
+                headers = {"Authorization": f"Bearer {self.token}"} if self.token else {}
                 async with s.post(
                     url,
-                    headers={"Authorization": f"Bearer {self.token}"},
-                    json={
-                        "model": model,
-                        "messages": messages,
-                        "temperature": temperature,
-                    },
+                    headers=headers,
+                    json=json_payload,
                 ) as response:
                     json_result = await response.json()
                     if "object" in json_result and json_result["object"] != "error":
@@ -1338,6 +1359,10 @@ class RemoteFullOpenLike(RemoteOpenLike):
         backup_api_base=None,
         max_len=None,
         dual_mode: bool = False,
+        # Optional generation parameters
+        top_p: Optional[float] = None,
+        top_k: Optional[int] = None,
+        repetition_penalty: Optional[float] = None,
     ):
         systems = {
             "full_patient": [
@@ -1439,6 +1464,9 @@ class RemoteFullOpenLike(RemoteOpenLike):
             backup_api_base=backup_api_base,
             max_len=max_len,
             dual_mode=dual_mode,
+            top_p=top_p,
+            top_k=top_k,
+            repetition_penalty=repetition_penalty,
         )
 
     async def get_appeal_questions(
@@ -1742,6 +1770,10 @@ class NewRemoteInternal(RemoteFullOpenLike):
             model=model,
             max_len=4096 * 20,
             dual_mode=dual_mode,
+            # Configure generation parameters for NewRemoteInternal
+            top_p=0.9,
+            top_k=0,
+            repetition_penalty=1.15,
         )
 
     @property
@@ -1764,10 +1796,10 @@ class NewRemoteInternal(RemoteFullOpenLike):
     def models(cls) -> List[ModelDescription]:
         model_name = os.getenv(
             "NEW_HEALTH_BACKEND_MODEL",
-            "/models/fhi-2025-may-0.3-float16-q8-vllm-compressed",
+            "/models/fhi-2025-sep-q8-vllm-compressed",
         )
         return [
-            ModelDescription(cost=2, name="fhi-2025-may", internal_name=model_name),
+            ModelDescription(cost=2, name="fhi-2025-sep", internal_name=model_name),
         ]
 
 
