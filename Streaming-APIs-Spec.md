@@ -226,13 +226,20 @@ Two modes:
       ]
     },
     {
-      "anyOf": [
-        { "required": ["session_key"] },
-        { "required": ["is_patient", "email"] },
-        { "required": [] }
-      ]
-    }
-  ],
+   "allOf": [
+     {
+       "oneOf": [
+         { "required": ["message"] },
+         { "required": ["content"] }
+       ]
+     },
+     {
+       "anyOf": [
+         { "required": ["session_key"] },
+         { "required": ["is_patient", "email"] }
+       ]
+     }
+   ],
   "properties": {
     "message": { "type": "string", "description": "Chat content; alias: content" },
     "content": { "type": "string", "description": "Alias for message" },
