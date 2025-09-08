@@ -7,12 +7,14 @@ This document specifies the caller-facing behavior, inputs, outputs, and JSON Sc
 
 ## Transport & Conventions
 
-- **Protocol:** WebSocket (text frames).
+- **Protocol:** WebSocket (text frames) over WSS.
 - **Framing:**
-  - Some streams use **newline keep‑alives** (`"\n"` frames). Treat blank/`"\n"` frames as **non-data**.
-  - Data frames are **JSON strings**. For `StreamingAppealsBackend` and `StreamingEntityBackend`, the server sometimes sends raw newlines between JSON frames.
+  - Each data message is exactly one WebSocket text frame containing a single JSON value (object or string).
+  - Heartbeats: the server may send standalone newline-only frames ("\\n") as keep-alives; treat them as non-data.
+  - The server will not batch multiple JSON payloads in a single frame and will not interleave raw newlines inside data frames.
 - **Encoding:** UTF-8 JSON.
-- **Backpressure:** The server yields periodically (`asyncio.sleep(0)`/`sleep(1)`). Clients should **read promptly**.
+- **Transport security:** Clients must use WSS (TLS 1.2+) only.
+- **Backpressure:** If the client cannot keep up with reads, the server may shed load by reducing send rate or closing the socket after a grace period.
 - **Closure:**
   - `StreamingAppealsBackend`, `StreamingEntityBackend`, `PriorAuthConsumer` close **automatically** when done.
   - `OngoingChatConsumer` remains open for multi-turn use; closes on client disconnect or server error.
