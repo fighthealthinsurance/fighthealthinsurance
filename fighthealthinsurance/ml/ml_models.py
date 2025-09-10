@@ -1796,7 +1796,7 @@ class NewRemoteInternal(RemoteFullOpenLike):
     def models(cls) -> List[ModelDescription]:
         model_name = os.getenv(
             "NEW_HEALTH_BACKEND_MODEL",
-            "/models/fhi-2025-sep-q8-vllm-compressed",
+            "/app/model",
         )
         return [
             ModelDescription(cost=2, name="fhi-2025-sep", internal_name=model_name),
