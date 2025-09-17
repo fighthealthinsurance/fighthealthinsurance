@@ -10,6 +10,8 @@ readTime: "5 min read"
 
 When that dreaded insurance denial letter shows up, it's easy to think: "That's it. Game over." But the truth is far more hopeful. Let's bust some of the most common myths about health insurance denials.
 
+<img src="/static/images/fhi-myth-reality.png" alt="Myth vs Reality: Health Insurance Denials" style="width: 60%; height: auto; display: block; margin: 20px auto;">
+
 ## Myth #1: A denial is the end of the road
 
 **Reality**: A denial is just the beginning of the appeals process. Many people never challenge their denial — but those who do often win. In fact, [prior authorization denials](https://www.ama-assn.org/practice-management/prior-authorization/ama-prior-authorization-physician-survey) in Medicare Advantage get overturned more than 80% of the time when appealed (AMA, 2022). Even in ACA marketplace plans, [appeal success rates](https://www.kff.org/private-insurance/issue-brief/claims-denials-and-appeals-in-aca-marketplace-plans/) can range from 40–75% depending on the case and the level of review (KFF, 2023).
