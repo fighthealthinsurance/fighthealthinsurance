@@ -53,3 +53,10 @@ class ChangePasswordForm(forms.Form):
 class FinishPasswordResetForm(forms.Form):
     token = forms.CharField(required=True)
     new_password = forms.CharField(required=True)
+
+
+class EmailOnlyLoginForm(forms.Form):
+    """Email-only login form for the new authentication system."""
+
+    email = forms.EmailField(required=True)
+    password = forms.CharField(required=True)
