@@ -25,6 +25,7 @@ import time
 from dj_easy_log import load_loguru
 from corsheaders.defaults import default_methods
 from fighthealthinsurance.utils import get_env_variable
+from stopit import ThreadingTimeout as Timeout
 
 os.environ.setdefault(
     "DJANGO_SETTINGS_MODULE",
