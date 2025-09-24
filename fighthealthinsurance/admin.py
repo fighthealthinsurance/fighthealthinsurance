@@ -35,7 +35,7 @@ from fighthealthinsurance.models import (
     PriorAuthRequest,
     ProposedPriorAuth,
     OngoingChat,
-    ChatLeads
+    ChatLeads,
 )
 from fhi_users.models import (
     ProfessionalUser,
@@ -44,6 +44,7 @@ from fhi_users.models import (
     ProfessionalDomainRelation,
 )
 from django.contrib.auth.admin import UserAdmin
+
 
 @admin.register(ChatLeads)
 class ChatLeadsAdmin(admin.ModelAdmin):
