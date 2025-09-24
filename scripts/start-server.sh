@@ -35,6 +35,6 @@ HOME=$(pwd)
 export HOME
 PYTHONUNBUFFERED=1
 export PYTHONUNBUFFERED
-sudo -E -u www-data uvicorn fighthealthinsurance.asgi:application --host 0.0.0.0 --port 8010 --workers 2 --proxy-headers --access-log  --log-config conf/uvlog_config.yaml 2>&1 | grep -v kube-probe  | grep -v kube-proxy &
+sudo -E -u www-data uvicorn fighthealthinsurance.asgi:application --host 0.0.0.0 --port 8010 --workers 2 --proxy-headers --access-log --use-colors --log-config conf/uvlog_config.yaml 2>&1 | grep -v kube-probe  | grep -v kube-proxy &
 sleep 2
 nginx -g "daemon off;" 2>&1 |grep -v kube-proxy |grep -v kube-probe
