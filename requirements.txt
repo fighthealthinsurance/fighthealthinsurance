@@ -55,6 +55,7 @@ nest_asyncio
 packaging>=20.0
 pandoc
 paramiko
+pycairo==1.26.1  # Pin to version with reliable pre-built wheels
 Pillow
 pyarrow
 pymupdf
