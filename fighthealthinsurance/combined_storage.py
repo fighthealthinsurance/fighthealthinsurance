@@ -61,8 +61,6 @@ class CombinedStorage(Storage):
         l: Optional[str] = None
         last_error: Optional[BaseException] = None
         error_list: List[BaseException] = []
-        # Require at least one backend to write.
-        success = False
         for backend in self.backends:
             try:
                 with Timeout(6.0) as _timeout_ctx:
@@ -73,12 +71,11 @@ class CombinedStorage(Storage):
                         )
                     else:
                         backend.save(name=name, content=content, max_length=max_length)
-                    success = True
             except Exception as e:
                 logger.error(f"Error saving {e} to {backend}")
                 error_list.append(e)
                 last_error = e
-        if not success and l is None:
+        if l is None:
             raise Exception(
                 f"Failed to save to any backend w/ errors {error_list} -- last error {last_error}"
             )
