@@ -23,8 +23,4 @@ COPY fighthealthinsurance ./fhi/fighthealthinsurance
 COPY fhi_users ./fhi/fhi_users
 COPY  charts ./fhi/charts
 COPY setup.py ./fhi/setup.py
-COPY manage.py ./fhi/manage.py
 RUN $HOME/anaconda3/bin/pip install -e ./fhi/
-WORKDIR /home/ray/fhi
-# Generate the blog metadata now that all files are in place
-RUN ./manage.py generate_blog_metadata || echo "Warning: Failed to generate blog metadata. Continuing build without it."
