@@ -893,7 +893,7 @@ def get_medicaid_info(query: Dict[str, Any]) -> str:
     # Format in clean, simple style matching work requirements format
     result = []
 
-    for idx, row in contact_info.iterrows():
+    for _, row in contact_info.iterrows():
         # Main Medicaid Agency Section
         if (
             "agency" in available_cols
