@@ -242,7 +242,7 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
 
     Federal work/community engagement requirement:
       - Effective 12/31/2025 (i.e., for 2026 eligibility and onward), assume a federal requirement
-        of 80 qualifying hours PER WEEK with a 3-month lookback (12 weeks).
+        of 80 qualifying hours PER MONTH with a 3-month lookback (12 weeks).
       - Qualifying hours may include work, school, volunteering, or caregiving.
       - Some people may be exempt (pregnant, disabled/SSDI/medically frail, etc.). If unsure, we ask.
 
@@ -279,7 +279,7 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
       - Pregnant: <= 200% FPL (often higher).
       - ABD & LTC: asset limits approx $2k single / $3k married; LTC income cap ~ $3,000/mo;
         home equity must be below a default cap (use $750k if unknown). Medically-needy may help.
-      - 2026 work overlay: requires >=80 qualifying hours per week on average across the last 12 weeks.
+      - 2026 work overlay: requires >=80 qualifying hours per month on average across the last 12 weeks.
         If weekly detail is provided, we also require at least 8 of 12 weeks to meet or exceed 80.
 
     Returns:
@@ -459,8 +459,7 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
         (age is not None and age > 65)
         or (esrd is not None and esrd)
         or (als is not None and als)
-        and on_medicare is None
-    ):
+    ) and on_medicare is None:
         missing.append("Are you currently on Medicare?")
         if years_worked is None:
             missing.append(
@@ -603,9 +602,9 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
         if not assets_total:
             missing.append("What are you total assets excluding home equity?")
         elif assets_total <= asset_limit:
-            assets_ok = False
-        else:
             assets_ok = True
+        else:
+            assets_ok = False
         home_ok = True
         if home_owner:
             home_ok = (home_equity or 0.0) <= HOME_EQUITY_CAP_DEFAULT
@@ -709,7 +708,8 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
                 if weekly_hours and len(weekly_hours) >= 12:
                     # Group into 3 months of 4 weeks each
                     return [
-                        sum(weekly_hours[i * 4 : (i + 1) * 4]) for i in range(REQUIRED_MONTHS)
+                        sum(weekly_hours[i * 4 : (i + 1) * 4])
+                        for i in range(REQUIRED_MONTHS)
                     ]
                 if total_hours_3mo is not None:
                     # Average monthly hours from total
@@ -850,7 +850,7 @@ def get_medicaid_info(query: Dict[str, Any]) -> str:
         state = state_abbrev_map[state_short]
     else:
         # Try to match as full state name (title case)
-        state = state.title()
+        state = state_short
 
     # Pick the CSV
     file_path = DATA_DIR / DEFAULT_FILE
