@@ -63,7 +63,7 @@ class CombinedStorage(Storage):
         error_list: List[BaseException] = []
         for backend in self.backends:
             try:
-                with Timeout(4.0) as _timeout_ctx:
+                with Timeout(6.0) as _timeout_ctx:
                     # Only overwrite l if we have not yet saved but always try and save.
                     if l is None:
                         l = backend.save(
@@ -89,7 +89,7 @@ class CombinedStorage(Storage):
                 with Timeout(2.0) as _timeout_ctx:
                     return backend.url(name)
             except Exception as e:
-                logger.error(f"Error saving {e} to {backend}")
+                logger.error(f"Error getting URL {e} from {backend}")
         if last_error is not None:
             raise last_error
         else:
