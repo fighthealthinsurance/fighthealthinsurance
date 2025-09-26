@@ -53,7 +53,7 @@ module.exports = async (env, argv) => {
             }
           },
           {
-            loader: '@md-js/loader',
+            loader: '@mdx-js/loader',
             options: {
               remarkPlugins: [remarkGfm],
               rehypePlugins: [rehypeHighlight]
