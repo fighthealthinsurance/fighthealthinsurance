@@ -41,19 +41,31 @@ class Command(BaseCommand):
                     try:
                         with open(path, "r", encoding="utf-8") as f:
                             content = f.read()
-                    except Exception as e:
+                    except OSError as e:
                         self.stderr.write(
                             self.style.ERROR(f"Failed to read {path}: {e}")
+                        )
+                        continue
+                    except Exception as e:
+                        self.stderr.write(
+                            self.style.ERROR(f"Other error on read {path}: {e}")
                         )
                         continue
                     m = self.FRONTMATTER_RE.match(content)
                     if m:
                         try:
                             frontmatter = yaml.safe_load(m.group(1)) or {}
-                        except Exception as e:
+                        except yaml.YAMLError as e:
                             self.stderr.write(
                                 self.style.ERROR(
                                     f"Failed to parse frontmatter in {fname}: {e}"
+                                )
+                            )
+                            continue
+                        except Exception as e:
+                            self.stderr.write(
+                                self.style.ERROR(
+                                    f"Unexpected error to while parsing {fname}: {e}"
                                 )
                             )
                             continue
@@ -100,7 +112,13 @@ class Command(BaseCommand):
                     f"Wrote metadata for {len(posts)} posts to {output_path}"
                 )
             )
-        except Exception as e:
+        except OSError as e:
             self.stderr.write(
                 self.style.ERROR(f"Failed to write output file {output_path}: {e}")
+            )
+        except Exception as e:
+            self.stderr.write(
+                self.style.ERROR(
+                    f"Unexpected error while writing output file {output_path}: {e}"
+                )
             )
