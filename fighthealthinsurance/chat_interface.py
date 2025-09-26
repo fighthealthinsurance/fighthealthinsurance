@@ -59,7 +59,8 @@ class ChatInterface:
 
     async def send_status_message(self, message: str):
         """Sends a status message to the client."""
-        logger.debug(f"Updating status to {message}")
+        # Status message shouldn't have PII or PHI just status
+        logger.debug(f"Updating status message to {message}")
         await self.send_json_message_func(
             {"status": message, "chat_id": str(self.chat.id)}
         )
@@ -127,7 +128,9 @@ class ChatInterface:
             timeout=40.0,
         )
 
-        logger.debug(f"Using best result {response_text}")
+        response_text = response_text or ""
+
+        logger.debug(f"Using best result {response_text:.20}...")
 
         pubmed_context_str = ""
         pubmed_query_terms_regex = (
@@ -377,12 +380,12 @@ class ChatInterface:
                     from fighthealthinsurance.medicaid_api import is_eligible
 
                     await self.send_status_message(
-                        "Processing medicaid elgibility data"
+                        "Processing Medicaid elgibility data"
                     )
                     (eligible_2025, eligible_2026, medicare, alternatives, missing) = (
                         is_eligible(**loaded)
                     )
-                    info_text = f"We're helping figure out if someone is likely eligible for medicaid. Be clear this is an approximation and they'll need to confirm with the state to be sure."
+                    info_text = "We're helping figure out if someone is likely eligible for Medicaid. Be clear this is an approximation and they'll need to confirm with the state to be sure."
                     if len(missing) > 0:
                         info_text += f"To figure out if their eligible we have {missing} questions to ask."
                     else:
@@ -431,7 +434,9 @@ class ChatInterface:
                     )
                     response_text = f"Something went wrong trying to figure out eligibility. Please contact your state for more info."
         except Exception as e:
-            logger.opt(exception=True).debug(f"Error in medicaid eligibility tool call")
+            logger.opt(exception=True).debug(
+                f"Error in medicaid eligibility tool call {e}"
+            )
 
         # Handle Medicaid info lookup first (before PubMed)
         try:
