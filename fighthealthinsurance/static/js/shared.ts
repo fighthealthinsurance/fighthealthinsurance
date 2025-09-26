@@ -23,7 +23,7 @@ const node_module_path = "/static/js/node_modules/";
 
 // pdf.js
 pdfjsLib.GlobalWorkerOptions.workerSrc =
-  node_module_path + "pdfjs-dist/build/pdf.worker.min.js";
+  node_module_path + "pdfjs-dist/build/pdf.worker.min.mjs";
 
 export {
   storeLocal,
