@@ -59,8 +59,7 @@ class ChatInterface:
 
     async def send_status_message(self, message: str):
         """Sends a status message to the client."""
-        # Status message shouldn't have PII or PHI just status
-        logger.debug(f"Updating status message to {message}")
+        logger.debug(f"Updating status message.")
         await self.send_json_message_func(
             {"status": message, "chat_id": str(self.chat.id)}
         )
@@ -93,13 +92,10 @@ class ChatInterface:
         Calls the LLM, handles PubMed query requests if present and returns the response.
         Also processes special tokens for creating or updating Appeals and PriorAuthRequests.
         """
-        if depth > 2:
+        if depth > 3:
             return None, None
         chat = self.chat
         history = history_for_llm
-        short_history = history_for_llm[
-            -10:
-        ]  # Only use the last ten messages in short history
         full_awaitable: Awaitable[Tuple[Optional[str], Optional[str]]] = (
             model_backend.generate_chat_response(
                 current_message_for_llm,
@@ -109,23 +105,28 @@ class ChatInterface:
                 is_logged_in=is_logged_in,
             )
         )
-        short_awaitable: Awaitable[Tuple[Optional[str], Optional[str]]] = (
-            model_backend.generate_chat_response(
-                current_message_for_llm,
-                previous_context_summary=previous_context_summary,
-                history=short_history,
-                is_professional=not self.is_patient,
-                is_logged_in=is_logged_in,
-            )
-        )
         # Possible calls
         calls: Dict[Awaitable[Tuple[Optional[str], Optional[str]]], float] = {
             full_awaitable: 100.0,
-            short_awaitable: 50.0,
         }
+        # Only add the short history version if we have long history.
+        if len(history) > 20:
+            short_history = history_for_llm[
+                -20:
+            ]  # Only use the last ten messages in short history
+            short_awaitable: Awaitable[Tuple[Optional[str], Optional[str]]] = (
+                model_backend.generate_chat_response(
+                    current_message_for_llm,
+                    previous_context_summary=previous_context_summary,
+                    history=short_history,
+                    is_professional=not self.is_patient,
+                    is_logged_in=is_logged_in,
+                )
+            )
+            calls[short_awaitable: 1.0]
         response_text, context_part = await best_within_timelimit_static(
             calls,
-            timeout=40.0,
+            timeout=60.0,
         )
 
         response_text = response_text or ""
@@ -350,7 +351,7 @@ class ChatInterface:
                 )
             )
             if medicaid_eligibility_matches:
-                logger.debug("Medicare eligibility check.")
+                logger.debug("Medicaid eligibility check.")
                 # Only process the first match
                 medicaid_eligibility_match = medicaid_eligibility_matches[0]
                 if len(medicaid_eligibility_matches) > 1:
@@ -368,7 +369,8 @@ class ChatInterface:
                         except Exception as e:
                             pass
                 cleaned_response = cleaned_response.strip()
-                await self.send_status_message(cleaned_response)
+                if len(cleaned_response) > 1:
+                    await self.send_status_message(f"Looking up medicaid eligibility, please wait. Remaining information: {cleaned_response}")
                 if loaded is None:
                     loaded = {}
                 if not isinstance(loaded, dict):
@@ -412,10 +414,10 @@ class ChatInterface:
                     history_for_llm += [{"role": "agent", "content": response_text}]
                     additional_response_text, additional_context_part = (
                         await self._call_llm_with_actions(
-                            model_backend,
-                            info_text + action_text,
-                            "",
-                            history_for_llm,
+                            model_backend=model_backend,
+                            current_message_for_llm = info_text + action_text,
+                            previous_context_summary = "Medicaid eligibility investigation",
+                            history_for_llm = history_for_llm,
                             depth=depth + 1,
                             is_logged_in=is_logged_in,
                             is_professional=is_professional,
