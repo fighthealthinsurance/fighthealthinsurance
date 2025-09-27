@@ -17,7 +17,13 @@ try {
   process.exit(1);
 }
 
-module.exports = {
+module.exports = async (env, argv) => {
+  // Load ESM-only plugins with dynamic import()
+  const [{ default: remarkGfm }, { default: rehypeHighlight }] = await Promise.all([
+    import('remark-gfm'),
+    import('rehype-highlight'),
+  ]);
+  return {
   context: __dirname,
   mode: process.env.NODE_ENV || 'development',
   entry: entries,
@@ -47,10 +53,10 @@ module.exports = {
             }
           },
           {
-            loader: '@md-js/loader',
+            loader: '@mdx-js/loader',
             options: {
-              remarkPlugins: [require('remark-gfm')],
-              rehypePlugins: [require('rehype-highlight')]
+              remarkPlugins: [remarkGfm],
+              rehypePlugins: [rehypeHighlight]
             }
           }
         ]
@@ -78,3 +84,4 @@ module.exports = {
   },
   devtool: 'source-map',
 };
+}
