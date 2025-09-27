@@ -264,7 +264,7 @@ class BlogView(generic.TemplateView):
         context = super().get_context_data(**kwargs)
         slugs = []
         try:
-            with staticfiles_storage.open(blog_posts_path, "r") as f:
+            with staticfiles_storage.open("blog_posts.json", "r") as f:
                 posts = json.load(f.read().decode("utf-8"))
             # Extract slugs from the loaded posts
             slugs = [post.get("slug") for post in posts if post.get("slug")]

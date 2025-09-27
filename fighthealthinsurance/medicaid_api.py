@@ -850,7 +850,7 @@ def get_medicaid_info(query: Dict[str, Any]) -> str:
         state = state_abbrev_map[state_short]
     else:
         # Try to match as full state name (title case)
-        state = state_short
+        state = state_short or ""
 
     # Pick the CSV
     file_path = DATA_DIR / DEFAULT_FILE
