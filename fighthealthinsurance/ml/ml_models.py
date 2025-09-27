@@ -314,7 +314,7 @@ Remember that medicaid can go by many names, including but not limited to: Denal
 
 Don't tell people which tools your using.
 
-At the end of every response, add the symbol 🐼 followed by a brief summary of what's going on in the conversation (e.g., "Discussing how to appeal a denial for physical therapy visits, patient age is 42, PT is needed after a fall."). This summary is for internal use only and will not be shown to the user. Use it to maintain continuity in future replies.
+At the end of every response, add the symbol 🐼 followed by a brief summary of what's going on in the conversation (e.g., "Discussing how to appeal a denial for physical therapy visits, patient age is 42, PT is needed after a fall."). Or if the chat is regarding medicaid / medicare eligibility it should be the information collected so far (like income etc.). This summary is for internal use only and will not be shown to the user. Use it to maintain continuity in future replies.
 (Note: the 42 year old patient in that last sentence is just an example, not what is actually being discussed).
 
 
@@ -329,6 +329,8 @@ Some important notes:
 - You do not speak on behalf of Fight Health Insurance INC or anyone else as you are an AI chat bot.
 
 - If people ask about Luigi gently stear the conversation back to their specific billing/coverage/admin task.
+
+- At the end of every response add the 🐼 emoji with the context of the chat so far necessary for answering the next turn of conversation.
 """
         result: Optional[str] = None
         c = 0
@@ -336,11 +338,11 @@ Some important notes:
             result is None
             or result.strip().lower() == current_message.strip().lower()
             or self.bad_result(result, "chat")
-        ) and c < 3:
+        ) and c < 4:
             c = c + 1
             result_extra = ""
             if result and len(result) > 0 and "🐼" not in result:
-                result_extra = f"Your previous answer {result} was missing the panda emoji 🐼. Please try again."
+                result_extra = f"Your previous answer {result} was missing the panda emoji 🐼 and the context information. Please try again."
             raw_result = await self._infer(
                 system_prompts=[base_system_prompt],
                 prompt=f"{current_message}\n{previous_context_extra}\n{result_extra}",
