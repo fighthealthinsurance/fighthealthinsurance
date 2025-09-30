@@ -10,7 +10,7 @@ readTime: "6 min read"
 
 Approximately [60% of Americans under 65 have health plans through their employers](https://www.kff.org/health-costs/health-policy-101-employer-sponsored-health-insurance/?entry=table-of-contents-introduction), with [35 million on "self-insured" plans](https://www.dol.gov/sites/dolgov/files/EBSA/researchers/statistics/retirement-bulletins/annual-report-on-self-insured-group-health-plans-2024.pdf). If you work at a large company there is a good chance at least some of the health plans offered to you may be self-insured. Self-insured plans are set up following the [Employee Retirement Income Security Act (ERISA)](https://www.dol.gov/general/topic/health-plans/erisa) and subject to Department of Labor oversight so you can take a look for those keywords in your summary plan description. These self-insured plans have been increasing in popularity, but most companies' core business is not running a health plan.
 
-![ERISA PSA](/static/images/blog/erisa-psa2.png)
+![ERISA PSA](/static/images/erisa-psa2.png)
 
 ## The Role of Third Party Administrators
 
