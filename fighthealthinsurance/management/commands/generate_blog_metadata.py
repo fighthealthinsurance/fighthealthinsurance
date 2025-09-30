@@ -65,7 +65,7 @@ class Command(BaseCommand):
                         except Exception as e:
                             self.stderr.write(
                                 self.style.ERROR(
-                                    f"Unexpected error to while parsing {fname}: {e}"
+                                    f"Unexpected error while parsing {fname}: {e}"
                                 )
                             )
                             continue
