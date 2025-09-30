@@ -76,7 +76,7 @@ const recognizePDF = async function (
       canvas.height = viewport.height;
       canvas.width = viewport.width;
 
-	await page.render({ canvasContext: context, viewport, canvas }).promise;
+      await page.render({ canvasContext: context, viewport, canvas }).promise;
 
       const imageData = canvas.toDataURL("image/png");
       const ocrResult = await worker.recognize(imageData);

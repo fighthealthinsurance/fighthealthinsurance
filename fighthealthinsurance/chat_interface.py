@@ -382,7 +382,7 @@ class ChatInterface:
                     from fighthealthinsurance.medicaid_api import is_eligible
 
                     await self.send_status_message(
-                        "Processing Medicaid elgibility data"
+                        "Processing Medicaid eligibility data"
                     )
                     (eligible_2025, eligible_2026, medicare, alternatives, missing) = (
                         is_eligible(**loaded)
@@ -432,7 +432,7 @@ class ChatInterface:
                         context_part = additional_context_part
                 except:
                     logger.opt(exception=True).debug(
-                        f"Error parsing params for mediciaid eligibility tool."
+                        f"Error parsing params for medicaid eligibility tool."
                     )
                     response_text = f"Something went wrong trying to figure out eligibility. Please contact your state for more info."
         except Exception as e:
