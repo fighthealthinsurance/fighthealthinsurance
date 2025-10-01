@@ -7,7 +7,7 @@ import Tesseract from "tesseract.js";
 async function getTesseractWorkerRaw(): Promise<Tesseract.Worker> {
   console.log("Loading tesseract worker.");
   const worker = await Tesseract.createWorker("eng", 1, {
-    corePath: node_module_path + "/tesseract.js-core/tesseract-core.wasm.js",
+    corePath: node_module_path + "/tesseract.js-core",
     workerPath: node_module_path + "/tesseract.js/dist/worker.min.js",
     logger: function (m) {
       console.log(m);
@@ -76,7 +76,7 @@ const recognizePDF = async function (
       canvas.height = viewport.height;
       canvas.width = viewport.width;
 
-      await page.render({ canvasContext: context, viewport }).promise;
+      await page.render({ canvasContext: context, viewport, canvas }).promise;
 
       const imageData = canvas.toDataURL("image/png");
       const ocrResult = await worker.recognize(imageData);
