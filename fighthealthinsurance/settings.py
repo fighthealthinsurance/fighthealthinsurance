@@ -510,6 +510,7 @@ class Test(Dev):
 
 
 class TestSync(Dev):
+    EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"
     DEBUG = True
     DATABASES = {
         "default": {
@@ -521,6 +522,7 @@ class TestSync(Dev):
 
 
 class TestActor(Dev):
+    EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"
     DEBUG = True
     # We _may_ use "real" files for actor tests since we have seperate processes for actors.
     dt = str(int(time.time()))
