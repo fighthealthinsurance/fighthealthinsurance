@@ -1330,6 +1330,80 @@ class RestLoginView(ViewSet, SerializerMixin):
         )
 
 
+class EmailOnlyLoginView(ViewSet, SerializerMixin):
+    """Email-only login view for the new authentication system."""
+
+    serializer_class = serializers.EmailOnlyLoginFormSerializer
+
+    @extend_schema(responses=serializers.StatusResponseSerializer)
+    @action(detail=False, methods=["post"])
+    def login(self, request: Request) -> Response:
+        """
+        Authenticate user with email and password only (no domain required).
+        The domain will be resolved automatically based on the user's profile.
+        """
+        serializer = self.deserialize(request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        email: str = data.get("email")
+        password: str = data.get("password")
+
+        # Try email-only authentication first
+        user = auth_utils.authenticate_email_only(email, password)
+
+        if not user:
+            # Fall back to legacy authentication if needed during migration
+            user = auth_utils.get_user_by_email_or_legacy_username(email)
+            if user and not user.check_password(password):
+                user = None
+
+        if user:
+            if not user.is_active:
+                send_verification_email(request, user)
+                return Response(
+                    common_serializers.ErrorSerializer(
+                        {"error": "User is inactive -- please verify your e-mail"}
+                    ).data,
+                    status=status.HTTP_401_UNAUTHORIZED,
+                )
+
+            # Resolve domain for session
+            domain = auth_utils.get_primary_domain_for_user(user)
+            if domain:
+                request.session["domain_id"] = domain.id
+                logger.info(
+                    f"User {user.username} logged in, setting domain id to {domain.id}"
+                )
+
+                # Check if domain is active and paid
+                if (
+                    not domain.active
+                    and not domain.stripe_subscription_id
+                    and not domain.stripe_customer_id
+                ):
+                    return Response(
+                        common_serializers.NotPaidErrorSerializer().data,
+                        status=status.HTTP_401_UNAUTHORIZED,
+                    )
+            else:
+                logger.warning(
+                    f"User {user.username} logged in but no domain could be resolved"
+                )
+
+            login(request, user)
+            return Response(
+                serializers.StatusResponseSerializer({"status": "success"}).data
+            )
+
+        return Response(
+            common_serializers.ErrorSerializer(
+                {"error": "Invalid email or password"}
+            ).data,
+            status=status.HTTP_401_UNAUTHORIZED,
+        )
+
+
 class PatientUserViewSet(ViewSet, CreateMixin):
     """Create a new patient user."""
 
