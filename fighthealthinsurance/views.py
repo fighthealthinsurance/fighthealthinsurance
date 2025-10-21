@@ -3,7 +3,6 @@ import re
 
 import json
 import stripe
-from stripe import error as stripe_error
 import typing
 from typing import TypedDict
 from loguru import logger
@@ -896,7 +895,7 @@ class StripeWebhookView(View):
         except ValueError as e:
             logger.error(f"Invalid payload: {e}")
             return HttpResponse(status=401)
-        except stripe_error.SignatureVerificationError as e:  # type: ignore
+        except stripe.SignatureVerificationError as e:  # type: ignore
             logger.error(f"Invalid signature: {e}")
             return HttpResponse(status=403)
 
