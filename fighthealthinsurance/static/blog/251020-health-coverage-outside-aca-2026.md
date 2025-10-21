@@ -106,7 +106,7 @@ The [enhanced premium tax credits](https://www.kff.org/private-insurance/issue-b
 [CVS/Aetna will withdraw from ACA marketplaces in 2026](https://www.ajmc.com/view/aetna-to-exit-aca-marketplace-in-2026), affecting about 1 million enrollees in 17 states. Fewer insurers could mean higher prices and fewer choices.
 
 ### 4. Expanded Access to Catastrophic Plans
-[CMS announced that consumers will gain expanded access](https://www.cms.gov/) to ACA-compliant catastrophic plans in 2026. These are high-deductible options aimed at younger, healthier consumers.
+[CMS announced that consumers will gain expanded access](https://www.cms.gov/newsroom/fact-sheets/expanding-access-health-insurance-consumers-gain-access-catastrophic-health-insurance-plans-2026) to ACA-compliant catastrophic plans in 2026. These are high-deductible options aimed at younger, healthier consumers.
 
 ### 5. Short-Term Plans Loosening
 Federal agencies are easing enforcement of strict duration limits, and some states are explicitly permitting longer policies. This may make short-term coverage more common again.
