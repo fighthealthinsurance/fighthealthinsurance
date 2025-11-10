@@ -53,6 +53,15 @@ readTime: "X min read"
 - Only add markdown formatting (headers, links) and proper structure
 - Maintain exact wording, punctuation, and paragraph breaks
 
+### Images
+- **Location**: Images should be placed in `/fighthealthinsurance/static/images/`
+- **Placement**: Typically added after the opening paragraph(s), before the main content
+- **Format Options**:
+  - Simple markdown: `![Alt text](/static/images/filename.png)`
+  - Styled HTML (for size control): `<img src="/static/images/filename.png" alt="Alt text" style="width: 60%; height: auto; display: block; margin: 20px auto;">`
+- **Alt Text**: Always include descriptive alt text for accessibility
+- **Common Sizes**: 50-60% width for most blog images, centered with auto margins
+
 ## References Section (When Links Are Present)
 
 If the blog post contains any inline links, include a `### References` section at the end with all linked sources:
