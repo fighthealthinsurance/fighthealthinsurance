@@ -85,6 +85,13 @@ jobs:
 
     name: Run the sync test suite (Python ${{ matrix.python }}, Django ${{ matrix.django }})
     steps:
+      - name: Free up disk space
+        run: |
+          sudo rm -rf ~/.rustup
+          sudo docker image prune -a -f
+          sudo apt-get clean
+          df -h
+
       - uses: actions/checkout@v4
 
       - name: Setup node
@@ -139,6 +146,13 @@ jobs:
             django: '50'
     name: Run the sync actor test suite (Python ${{ matrix.python }}, Django ${{ matrix.django }})
     steps:
+      - name: Free up disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost ~/.rustup
+          sudo docker image prune -a -f
+          sudo apt-get clean
+          df -h
+
       - uses: actions/checkout@v4
 
       - name: Setup node
@@ -268,6 +282,13 @@ jobs:
 
     name: Run the async test suite (Python ${{ matrix.python }}, Django ${{ matrix.django }})
     steps:
+      - name: Free up disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost ~/.rustup
+          sudo docker image prune -a -f
+          sudo apt-get clean
+          df -h
+
       - uses: actions/checkout@v4
 
       - name: Setup node
