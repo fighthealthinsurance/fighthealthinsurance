@@ -166,10 +166,10 @@ class MLRouter(object):
             List of RemoteModelLike models suitable for chat tasks
         """
         models = []
-        if "fhi-2025-may" in self.models_by_name:
-            models += self.models_by_name["fhi-2025-may"]
-            models += self.models_by_name["fhi-2025-may"]
-            models += self.models_by_name["fhi-2025-may"]
+        # Prioritize FHI models by adding them 3 times (for weighting)
+        fhi_models = [name for name in self.models_by_name.keys() if name.startswith("fhi-")]
+        if fhi_models:
+            models += self.models_by_name[fhi_models[0]] * 3
         models += self.internal_models_by_cost[:3]
         return models
 

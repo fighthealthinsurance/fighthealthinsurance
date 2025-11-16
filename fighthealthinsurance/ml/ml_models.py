@@ -1762,12 +1762,14 @@ class NewRemoteInternal(RemoteFullOpenLike):
 
     @classmethod
     def models(cls) -> List[ModelDescription]:
-        model_name = os.getenv(
+        model_path = os.getenv(
             "NEW_HEALTH_BACKEND_MODEL",
-            "/models/fhi-2025-may-0.3-float16-q8-vllm-compressed",
+            "/models/fhi-2025-sep-q8-vllm-compressed",
         )
+        # Extract a friendly name from the model path
+        model_name = model_path.split("/")[-1] if "/" in model_path else model_path
         return [
-            ModelDescription(cost=2, name="fhi-2025-may", internal_name=model_name),
+            ModelDescription(cost=2, name=model_name, internal_name=model_path),
         ]
 
 
