@@ -130,6 +130,10 @@ class ChatInterface:
         pubmed_query_terms_regex = (
             r"[\[\*]{0,4}pubmed[ _]?query:{0,1}\s*(.*?)\s*[\*\]]{0,4}"
         )
+        medicaid_info_lookup_regex = (
+            r"\*\*medicaid_info(\{.*\})\*\*"
+        )
+
         if not response_text:
             logger.debug("Got empty response from LLM")
             return None, None
@@ -144,6 +148,7 @@ class ChatInterface:
         # Use relative links
         domain = ""
 
+        # Process if this is linked to an appeal or prior auth
         try:
             # Process create_or_update_appeal token
             appeal_match = re.search(
@@ -326,11 +331,70 @@ class ChatInterface:
             logger.opt(exception=True).warning(f"Error processing special tokens: {e}")
             await self.send_status_message(f"Error processing special tokens: {str(e)}")
 
+        # Handle Medicaid info lookup
+        try:
+            medicaid_info_match = re.search(
+                medicaid_info_lookup_regex, response_text, re.DOTALL | re.MULTILINE
+            )
+            if medicaid_info_match:
+                # If we match on a tool call, remove the tool call from the result we give to the user.
+                if medicaid_info_match:
+                    cleaned_response = response_text.replace(medicaid_info_match.group(0), "").strip()
+
+                json_data = medicaid_info_match.group(1).strip()
+                try:
+                    medicaid_info_data = json.loads(json_data)
+                    await self.send_status_message(
+                        cleaned_response + "Processing Medicaid info lookup data..."
+                    )
+
+                    # Call the Medicare API to get the info
+                    from fighthealthinsurance.medicaid_api import get_medicare_info
+
+                    medicaid_info = await get_medicaid_info(medicaid_info_data)
+
+                    if medicaid_info:
+                        await self.send_status_message(
+                            "Medicaid info lookup completed successfully."
+                        )
+                        additional_response_text, additional_context_part = (
+                            await self._call_llm_with_actions(
+                                model_backend,
+                                medicaid_info,
+                                previous_context_summary,
+                                history_for_llm,
+                                depth=depth + 1,
+                                is_logged_in=is_logged_in,
+                                is_professional=is_professional,
+                            )
+                        )
+                        response_text = cleaned_response + additional_response_text
+                    else:
+                        await self.send_status_message(
+                            "No Medicaid info found for the provided data."
+                        )
+                except json.JSONDecodeError:
+                    logger.warning(
+                        f"Invalid JSON data in medicaid_info token: {json_data}"
+                    )
+                    await self.send_status_message(
+                        "Error processing Medicaid info data: Invalid JSON format."
+                    )
+                except Exception as e:
+                    logger.opt(exception=True).warning(
+                        f"Error processing Medicaid info data: {e}"
+                    )
+                    await self.send_status_message(
+                        f"Error processing Medicaid info data: {str(e)}"
+                    )
+
+        # Handle pubmed
         try:
             # Extract the PubMedQuery terms using regex
             match = re.search(
                 pubmed_query_terms_regex, response_text, flags=re.IGNORECASE
             )
+            # If we match on a tool call, remove the tool call from the result we give to the user.
             if match:
                 pubmed_query_terms = match.group(1).strip()
                 cleaned_response = response_text.replace(match.group(0), "").strip()
