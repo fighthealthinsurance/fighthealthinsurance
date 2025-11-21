@@ -594,6 +594,7 @@ class RemoteOpenLike(RemoteModel):
         expensive=False,
         max_len=4096 * 8,
         dual_mode: bool = False,
+        backup_model=None,
     ):
         self.api_base = api_base
         self.token = token
@@ -601,6 +602,7 @@ class RemoteOpenLike(RemoteModel):
         self.system_prompts_map = system_prompts_map
         self.max_len = max_len or 4096 * 8
         self._timeout = 120
+        self.backup_model = backup_model or model
         self.invalid_diag_procedure_regex = re.compile(
             r"(not (available|provided|specified|applicable)|unknown|as per reviewer)",
             re.IGNORECASE,
@@ -1146,7 +1148,7 @@ class RemoteOpenLike(RemoteModel):
                             ml_citations_context=ml_citations_context,
                             temperature=temperature,
                             history=history,
-                            model=self.model,
+                            model=self.backup_model,
                         )
                     )
 
@@ -1368,6 +1370,10 @@ class RemoteOpenLike(RemoteModel):
                         logger.debug(
                             f"***WARNING*** Response {response} on {self} looks _bad_"
                         )
+        except aiohttp.client_exceptions.ContentTypeError:
+            logger.debug(f"Unexpected content type response (often missing model) on {api_base}")
+        except aiohttp.client_exceptions.ClientConnectorError:
+            logger.debug(f"Network error calling {api_base}")
         except Exception as e:
             logger.debug(f"Error {e} {traceback.format_exc()} calling {api_base}")
             await asyncio.sleep(1)
@@ -1452,6 +1458,7 @@ class RemoteFullOpenLike(RemoteOpenLike):
         backup_api_base=None,
         max_len=None,
         dual_mode: bool = False,
+        backup_model=None,
     ):
         systems = {
             "full_patient": [
@@ -1553,6 +1560,7 @@ class RemoteFullOpenLike(RemoteOpenLike):
             backup_api_base=backup_api_base,
             max_len=max_len,
             dual_mode=dual_mode,
+            backup_model=backup_model,
         )
 
     async def get_appeal_questions(
@@ -1811,6 +1819,7 @@ class RemoteHealthInsurance(RemoteFullOpenLike):
             token="",
             backup_api_base=self.backup_url,
             model=model,
+            backup_model=os.getenv("HEALTH_BACKUP_BACKEND_MODEL", model),
             dual_mode=dual_mode,
         )
 
@@ -1825,17 +1834,6 @@ class RemoteHealthInsurance(RemoteFullOpenLike):
         )
         return [
             ModelDescription(cost=1, name="fhi", internal_name=model_name),
-            ModelDescription(cost=2, name="fhi", internal_name="/" + model_name),
-            ModelDescription(
-                cost=10,
-                name="fhi",
-                internal_name=os.getenv("HEALTH_BACKUP_BACKEND_MODEL", model_name),
-            ),
-            ModelDescription(
-                cost=11,
-                name="fhi",
-                internal_name="/" + os.getenv("HEALTH_BACKUP_BACKEND_MODEL", model_name),
-            ),
         ]
 
 
