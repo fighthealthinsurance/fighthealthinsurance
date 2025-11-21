@@ -1174,16 +1174,22 @@ class RemoteOpenLike(RemoteModel):
 
                     # Get the result from the completed task
                     for task in done:
-                        result = await task
-                        if result and result[0]:
-                            raw_response = result
-                            break
+                        try:
+                            result = await task
+                            if result and result[0]:
+                                raw_response = result
+                                break
+                        except:
+                            pass
                     # If the first result was not valid grab the pending task.
                     for task in pending:
-                        result = await task
-                        if result and result[0]:
-                            raw_response = result
-                            break
+                        try:
+                            result = await task
+                            if result and result[0]:
+                                raw_response = result
+                                break
+                        except:
+                            pass
                 else:
                     raw_response = await self.__timeout_infer(
                         system_prompt=system_prompt,
@@ -1208,7 +1214,7 @@ class RemoteOpenLike(RemoteModel):
                         plan_context=plan_context,
                         pubmed_context=pubmed_context,
                         temperature=temperature,
-                        model=self.model,
+                        model=self.backup_model,
                         api_base=self.backup_api_base,
                     )
                     return backup_response
