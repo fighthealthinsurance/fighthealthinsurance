@@ -1825,10 +1825,16 @@ class RemoteHealthInsurance(RemoteFullOpenLike):
         )
         return [
             ModelDescription(cost=1, name="fhi", internal_name=model_name),
+            ModelDescription(cost=2, name="fhi", internal_name="/" + model_name),
             ModelDescription(
                 cost=10,
                 name="fhi",
                 internal_name=os.getenv("HEALTH_BACKUP_BACKEND_MODEL", model_name),
+            ),
+            ModelDescription(
+                cost=11,
+                name="fhi",
+                internal_name="/" + os.getenv("HEALTH_BACKUP_BACKEND_MODEL", model_name),
             ),
         ]
 
