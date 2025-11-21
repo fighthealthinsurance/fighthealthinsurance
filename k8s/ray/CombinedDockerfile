@@ -4,9 +4,11 @@ ARG MYORG
 
 FROM ${MYORG}/fhi-ray:${RAY_VERSION}
 
+USER root
 # install some tools
-RUN sudo apt-get update && sudo apt-get upgrade -y && sudo apt-get install vim emacs libssl-dev python3-opencv libgl1 tesseract-ocr nano nfs-common iputils-ping hylafax-client build-essential pandoc texlive postgresql libpq-dev libcairo2-dev libgirepository1.0-dev python3-dev pkg-config -y
-RUN sudo apt-get install -y libmariadb-dev-compat
+RUN apt-get update && apt-get upgrade -y && apt-get install vim emacs libssl-dev python3-opencv libgl1 tesseract-ocr nano nfs-common iputils-ping hylafax-client build-essential pandoc texlive postgresql libpq-dev libcairo2-dev libgirepository1.0-dev python3-dev pkg-config -y
+RUN apt-get install -y libmariadb-dev-compat
+USER ray
 
 # Copy hylafax settings
 RUN mkdir -p /etc/hylafax
