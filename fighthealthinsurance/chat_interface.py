@@ -123,7 +123,7 @@ class ChatInterface:
                     is_logged_in=is_logged_in,
                 )
             )
-            calls[short_awaitable: 1.0]
+            calls[short_awaitable] = 1.0
         response_text, context_part = await best_within_timelimit_static(
             calls,
             timeout=60.0,
