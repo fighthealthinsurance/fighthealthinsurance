@@ -113,7 +113,7 @@ class ChatInterface:
         if len(history) > 20:
             short_history = history_for_llm[
                 -20:
-            ]  # Only use the last ten messages in short history
+            ]  # Only use the last twenty messages in short history
             short_awaitable: Awaitable[Tuple[Optional[str], Optional[str]]] = (
                 model_backend.generate_chat_response(
                     current_message_for_llm,
