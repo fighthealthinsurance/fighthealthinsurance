@@ -680,6 +680,10 @@ class AppealGenerator(object):
         prof_pov = denial.professional_to_finish
         plan_context = denial.plan_context
         backup_calls: List[Any] = []
+        # Find any FHI model dynamically
+        fhi_model_names = [name for name in ml_router.models_by_name.keys() if name.startswith("fhi-")]
+        fhi_model_name = fhi_model_names[0] if fhi_model_names else "fhi"
+        
         calls = [
             {
                 "model_name": "fhi",
@@ -692,7 +696,7 @@ class AppealGenerator(object):
                 "prof_pov": prof_pov,
             },
             {
-                "model_name": "fhi-2025-may",
+                "model_name": fhi_model_name,
                 "prompt": open_prompt,
                 "patient_context": medical_context,
                 "plan_context": plan_context,

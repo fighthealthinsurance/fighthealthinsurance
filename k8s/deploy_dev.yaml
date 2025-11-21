@@ -26,10 +26,6 @@ spec:
       containers:
         - image: ${FHI_BASE}:${FHI_VERSION}
           name: totallylegitco
-          resources:
-            requests:
-              memory: 32G
-              cpu: 2
           envFrom:
           - secretRef:
               name: fight-health-insurance-secret-dev
