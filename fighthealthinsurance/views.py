@@ -280,7 +280,7 @@ class BlogView(generic.TemplateView):
             # For now, we'll just log the error and return an empty list.
         except Exception as e:
             logger.error(f"An unexpected error occurred while loading blog posts: {e}")
-            raise e
+            raise
 
         context["blog_slugs"] = json.dumps(slugs)
         return context
