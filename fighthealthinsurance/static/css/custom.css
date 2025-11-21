@@ -207,7 +207,7 @@ a.link:hover::after {
 
 .row {
     display: flex;
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
 }
 
 .row.no-gutters {
