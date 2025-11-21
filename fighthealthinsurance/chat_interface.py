@@ -59,6 +59,7 @@ class ChatInterface:
 
     async def send_status_message(self, message: str):
         """Sends a status message to the client."""
+        logger.debug(f"Updating status message.")
         await self.send_json_message_func(
             {"status": message, "chat_id": str(self.chat.id)}
         )
@@ -91,13 +92,10 @@ class ChatInterface:
         Calls the LLM, handles PubMed query requests if present and returns the response.
         Also processes special tokens for creating or updating Appeals and PriorAuthRequests.
         """
-        if depth > 2:
+        if depth > 3:
             return None, None
         chat = self.chat
         history = history_for_llm
-        short_history = history_for_llm[
-            -2:
-        ]  # Only use the last two messages in history
         full_awaitable: Awaitable[Tuple[Optional[str], Optional[str]]] = (
             model_backend.generate_chat_response(
                 current_message_for_llm,
@@ -107,29 +105,45 @@ class ChatInterface:
                 is_logged_in=is_logged_in,
             )
         )
-        short_awaitable: Awaitable[Tuple[Optional[str], Optional[str]]] = (
-            model_backend.generate_chat_response(
-                current_message_for_llm,
-                previous_context_summary=previous_context_summary,
-                history=short_history,
-                is_professional=not self.is_patient,
-                is_logged_in=is_logged_in,
-            )
-        )
         # Possible calls
         calls: Dict[Awaitable[Tuple[Optional[str], Optional[str]]], float] = {
             full_awaitable: 100.0,
-            short_awaitable: 50.0,
         }
+        # Only add the short history version if we have long history.
+        if len(history) > 20:
+            short_history = history_for_llm[
+                -20:
+            ]  # Only use the last twenty messages in short history
+            short_awaitable: Awaitable[Tuple[Optional[str], Optional[str]]] = (
+                model_backend.generate_chat_response(
+                    current_message_for_llm,
+                    previous_context_summary=previous_context_summary,
+                    history=short_history,
+                    is_professional=not self.is_patient,
+                    is_logged_in=is_logged_in,
+                )
+            )
+            calls[short_awaitable] = 1.0
         response_text, context_part = await best_within_timelimit_static(
             calls,
-            timeout=40.0,
+            timeout=60.0,
         )
+
+        response_text = response_text or ""
+
+        logger.debug(f"Using best result {response_text:.20}...")
 
         pubmed_context_str = ""
         pubmed_query_terms_regex = (
             r"[\[\*]{0,4}pubmed[ _]?query:{0,1}\s*(.*?)\s*[\*\]]{0,4}"
         )
+        # Updated regex to match both formats: **medicaid_info {JSON}** and medicaid_info {JSON}
+        medicaid_info_lookup_regex = r"(?:\*\*)?medicaid_info\s*(\{[^}]*\})\s*(?:\*\*)?"
+        # Medicaid eligibility info
+        medicaid_eligibility_regex = (
+            r".*?(?:\*\*)?medicaid_eligibility\s*(\{[^}]*\})\s*(?:\*\*)?"
+        )
+
         if not response_text:
             logger.debug("Got empty response from LLM")
             return None, None
@@ -144,6 +158,7 @@ class ChatInterface:
         # Use relative links
         domain = ""
 
+        # Process if this is linked to an appeal or prior auth
         try:
             # Process create_or_update_appeal token
             appeal_match = re.search(
@@ -326,14 +341,226 @@ class ChatInterface:
             logger.opt(exception=True).warning(f"Error processing special tokens: {e}")
             await self.send_status_message(f"Error processing special tokens: {str(e)}")
 
+        # Handle Medicaid elgibility lookup
+        try:
+            medicaid_eligibility_matches = list(
+                re.finditer(
+                    medicaid_eligibility_regex,
+                    response_text,
+                    flags=re.DOTALL | re.IGNORECASE,
+                )
+            )
+            if medicaid_eligibility_matches:
+                logger.debug("Medicaid eligibility check.")
+                # Only process the first match
+                medicaid_eligibility_match = medicaid_eligibility_matches[0]
+                if len(medicaid_eligibility_matches) > 1:
+                    logger.warning(
+                        f"Found {len(medicaid_eligibility_matches)} Medicaid eligibility tool calls, processing only the first one"
+                    )
+                    # Remove ALL Medicaid tool calls from the response, not just the first one
+                cleaned_response = response_text
+                loaded = None
+                for ematch in medicaid_eligibility_matches:
+                    cleaned_response = cleaned_response.replace(ematch.group(0), "")
+                    if loaded is None:
+                        try:
+                            loaded = json.loads(ematch.group(1).strip())
+                        except Exception as e:
+                            pass
+                cleaned_response = cleaned_response.strip()
+                if len(cleaned_response) > 1:
+                    await self.send_status_message(f"Looking up medicaid eligibility, please wait. Remaining information: {cleaned_response}")
+                if loaded is None:
+                    loaded = {}
+                if not isinstance(loaded, dict):
+                    raise TypeError(
+                        f"Expected dict, got {type(loaded).__name__} while loading tool call params."
+                    )
+
+                try:
+                    from fighthealthinsurance.medicaid_api import is_eligible
+
+                    await self.send_status_message(
+                        "Processing Medicaid eligibility data"
+                    )
+                    (eligible_2025, eligible_2026, medicare, alternatives, missing) = (
+                        is_eligible(**loaded)
+                    )
+                    info_text = "We're helping figure out if someone is likely eligible for Medicaid. Be clear this is an approximation and they'll need to confirm with the state to be sure."
+                    if len(missing) > 0:
+                        info_text += f"To figure out if their eligible we have {missing} questions to ask."
+                    else:
+                        if eligible_2025:
+                            info_text += "Our data so far suggests they could be eligible for medicaid under the 2025 rules."
+                        else:
+                            info_text += "Our data so far suggests they may not be eligible for medicaid under the 2025 rules."
+                        if eligible_2026:
+                            info_text += "Our data so far suggests they could be eligible for medicaid under the 2026 rules."
+                        else:
+                            info_text += "Our data so far suggests they may not be eligible for medicaid under the 2026 rules."
+                        if medicare:
+                            info_text += (
+                                "Our data suggests they may be eligible for medicare."
+                            )
+                    if len(alternatives) > 0:
+                        info_text += f"Some possible alternative suggestions to help are {alternatives}."
+                    action_text = "Use this info to ask the user any follow up questions or deliver the news of our determiniation and alternatives. Always be careful to indicate that this is an approximation and they should contact the state to know for sure (you can use the state tool call to get more info to provide to the user). Remember to use the panda emoji and context."
+                    await self.send_status_message("Formatting response...")
+                    # Ok history for LLM should now include the user message
+                    history_for_llm += [
+                        {"role": "user", "content": current_message_for_llm}
+                    ]
+                    history_for_llm += [{"role": "agent", "content": response_text}]
+                    additional_response_text, additional_context_part = (
+                        await self._call_llm_with_actions(
+                            model_backend=model_backend,
+                            current_message_for_llm = info_text + action_text,
+                            previous_context_summary = "Medicaid eligibility investigation",
+                            history_for_llm = history_for_llm,
+                            depth=depth + 1,
+                            is_logged_in=is_logged_in,
+                            is_professional=is_professional,
+                        )
+                    )
+                    if additional_response_text and len(additional_response_text) > 1:
+                        response_text = additional_response_text
+                    if context_part:
+                        if additional_context_part:
+                            context_part += additional_context_part
+                    else:
+                        context_part = additional_context_part
+                except:
+                    logger.opt(exception=True).debug(
+                        f"Error parsing params for medicaid eligibility tool."
+                    )
+                    response_text = f"Something went wrong trying to figure out eligibility. Please contact your state for more info."
+        except Exception as e:
+            logger.opt(exception=True).debug(
+                f"Error in medicaid eligibility tool call {e}"
+            )
+
+        # Handle Medicaid info lookup first (before PubMed)
+        try:
+            # Find ALL matches but only process the FIRST one to avoid multiple calls
+            medicaid_info_matches = list(
+                re.finditer(
+                    medicaid_info_lookup_regex,
+                    response_text,
+                    flags=re.DOTALL | re.IGNORECASE,
+                )
+            )
+
+            if medicaid_info_matches:
+                # Only process the first match
+                medicaid_info_match = medicaid_info_matches[0]
+                if len(medicaid_info_matches) > 1:
+                    logger.warning(
+                        f"Found {len(medicaid_info_matches)} Medicaid tool calls, processing only the first one"
+                    )
+
+                logger.debug(
+                    f"Medicaid tool call detected: {medicaid_info_match.group(0)}"
+                )
+
+                # Remove ALL Medicaid tool calls from the response, not just the first one
+                cleaned_response = response_text
+                for match in medicaid_info_matches:
+                    cleaned_response = cleaned_response.replace(match.group(0), "")
+                cleaned_response = cleaned_response.strip()
+
+                json_data = medicaid_info_match.group(1).strip()
+                logger.debug(f"Extracted JSON data: {json_data}")
+                logger.debug(
+                    f"Cleaned response after removing tool calls: {cleaned_response[:200]}..."
+                )
+                try:
+                    medicaid_info_data = json.loads(json_data)
+                    logger.debug(f"Parsed JSON data: {medicaid_info_data}")
+
+                    await self.send_status_message(
+                        "Processing Medicaid info lookup data..."
+                    )
+
+                    from fighthealthinsurance.medicaid_api import get_medicaid_info
+
+                    medicaid_info = get_medicaid_info(medicaid_info_data)
+                    logger.debug(
+                        f"Got Medicaid info response: {medicaid_info[:200] if medicaid_info else 'None'}..."
+                    )
+
+                    if medicaid_info:
+                        await self.send_status_message(
+                            "Medicaid info lookup completed successfully."
+                        )
+                        # Add brief intro and conclusion to the tool data
+                        state_name = medicaid_info_data.get("state", "the state")
+                        medicaid_info_text = f"Here's the official Medicaid information for {state_name}:\n\n{medicaid_info}\n\n -- use it to answer the question {current_message_for_llm}"
+                        # Pass that info to the model
+                        # Ok history for LLM should now include the user message
+                        history_for_llm += [
+                            {"role": "user", "content": current_message_for_llm}
+                        ]
+                        history_for_llm += [{"role": "agent", "content": response_text}]
+                        additional_response_text, additional_context_part = (
+                            await self._call_llm_with_actions(
+                                model_backend,
+                                medicaid_info_text,
+                                "",
+                                history_for_llm,
+                                depth=depth + 1,
+                                is_logged_in=is_logged_in,
+                                is_professional=is_professional,
+                            )
+                        )
+                        # Log the response for debugging
+                        logger.debug(
+                            f"Medicaid with intro/conclusion: {medicaid_info[:200]}..."
+                        )
+                        if cleaned_response and additional_response_text:
+                            cleaned_response += additional_response_text
+                        elif additional_response_text:
+                            cleaned_response = additional_response_text
+                        context_part = (
+                            context_part + additional_context_part
+                            if context_part and additional_context_part
+                            else additional_context_part
+                        )
+                        response_text = cleaned_response
+                    else:
+                        await self.send_status_message(
+                            "No Medicaid info found for the provided data."
+                        )
+                        response_text = "I couldn't find Medicaid information for the requested state. Please check the state name and try again."
+
+                except json.JSONDecodeError:
+                    logger.warning(
+                        f"Invalid JSON data in medicaid_info token: {json_data}"
+                    )
+                    await self.send_status_message(
+                        "Error processing Medicaid info data: Invalid JSON format."
+                    )
+                except Exception as e:
+                    logger.opt(exception=True).warning(
+                        f"Error processing Medicaid info data: {e}"
+                    )
+                    await self.send_status_message(
+                        f"Error processing Medicaid info data: {str(e)}"
+                    )
+        except Exception as e:
+            logger.opt(exception=True).warning(f"Error in Medicaid lookup block: {e}")
+            await self.send_status_message(f"Error in Medicaid lookup block: {str(e)}")
+
+        # Handle pubmed
         try:
             # Extract the PubMedQuery terms using regex
-            match = re.search(
+            pmatch: Optional[re.Match[str]] = re.search(
                 pubmed_query_terms_regex, response_text, flags=re.IGNORECASE
             )
-            if match:
-                pubmed_query_terms = match.group(1).strip()
-                cleaned_response = response_text.replace(match.group(0), "").strip()
+            # If we match on a tool call, remove the tool call from the result we give to the user.
+            if pmatch:
+                pubmed_query_terms = pmatch.group(1).strip()
+                cleaned_response = response_text.replace(pmatch.group(0), "").strip()
                 if "your search terms" in pubmed_query_terms:
                     logger.debug(f"Got bad PubMed Query {pubmed_query_terms}")
                     return cleaned_response, context_part
@@ -434,6 +661,7 @@ class ChatInterface:
         context = (
             context_part + pubmed_context_str if context_part else pubmed_context_str
         )
+        logger.debug(f"Return with context {context}.")
         return response_text, context
 
     async def handle_chat_message(
@@ -583,6 +811,11 @@ class ChatInterface:
 
         if is_trial_professional:
             await asyncio.sleep(0.5)  # Half a second delay for trial users.
+
+        # Note: Medicaid queries are now handled through the tool calling system
+        # The model can call the medicaid_info tool when needed using the format:
+        # **medicaid_info {"state": "StateName", "topic": "", "limit": 5}**
+        # (The double asterisks around the entire tool call are required)
 
         for model_backend in models:
             try:
