@@ -83,6 +83,11 @@ else
   echo "backup not reachable."
 fi
 
+if ping -c1 -W1 scrump >/dev/null 2>&1; then
+  echo "alpha reachable"
+  export ALPHA_HEALTH_BACKEND_HOST=scrumpt
+fi
+
 python manage.py migrate
 python manage.py loaddata initial
 python manage.py loaddata followup
