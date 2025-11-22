@@ -76,7 +76,7 @@ fi
 
 if ping -c1 -W1 10.69.200.180 >/dev/null 2>&1; then
   echo "backup reachable"
-  export HEALTH_BACKUP_BACKEND_PORT=8080
+  export HEALTH_BACKUP_BACKEND_PORT=8000
   export HEALTH_BACKUP_BACKEND_HOST=10.69.200.180
 else
   echo "backup not reachable."
