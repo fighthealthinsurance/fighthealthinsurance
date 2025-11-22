@@ -1909,8 +1909,6 @@ class AlphaRemoteInternal(RemoteFullOpenLike):
         else:
             logger.debug(f"Error setting up remote health {self.host}:{self.port}")
         self.backup_url = None
-        if self.secondary_host is not None:
-            self.backup_url = f"http://{self.secondary_host}:{self.secondary_port}/v1"
         super().__init__(
             self.url,
             backup_api_base=self.backup_url,
