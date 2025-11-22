@@ -1807,10 +1807,10 @@ class RemoteFullOpenLike(RemoteOpenLike):
 
 class RemoteHealthInsurance(RemoteFullOpenLike):
     def __init__(self, model: str, dual_mode: bool = True):
-        self.port = os.getenv("HEALTH_BACKEND_PORT", "80")
-        self.host = os.getenv("HEALTH_BACKEND_HOST")
-        self.backup_port = os.getenv("HEALTH_BACKUP_BACKEND_PORT", self.port)
-        self.backup_host = os.getenv("HEALTH_BACKUP_BACKEND_HOST", self.host)
+        self.backup_port = os.getenv("HEALTH_BACKEND_PORT", "80")
+        self.backup_host = os.getenv("HEALTH_BACKEND_HOST")
+        self.port = os.getenv("HEALTH_BACKUP_BACKEND_PORT", self.backup_port)
+        self.host = os.getenv("HEALTH_BACKUP_BACKEND_HOST", self.backup_host)
         if self.host is None and self.backup_host is None:
             raise Exception("Can not construct FHI backend without a host")
         self.url = None
