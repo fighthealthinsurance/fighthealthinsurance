@@ -31,9 +31,7 @@ from fighthealthinsurance.prompt_templates import get_intro_template
 from fighthealthinsurance.utils import best_within_timelimit
 
 # Tool call regexes
-pubmed_query_terms_regex = (
-    r"[\[\*]{0,4}pubmed[ _]?query:{0,1}\s*(.*?)\s*[\*\]]{0,4}"
-)
+pubmed_query_terms_regex = r"[\[\*]{0,4}pubmed[ _]?query:{0,1}\s*(.*?)\s*[\*\]]{0,4}"
 # Updated regex to match both formats: **medicaid_info {JSON}** and medicaid_info {JSON}
 medicaid_info_lookup_regex = r"(?:\*\*)?medicaid_info\s*(\{[^}]*\})\s*(?:\*\*)?"
 # Medicaid eligibility info
@@ -54,7 +52,6 @@ tools_regex = [
     create_or_update_appeal_regex,
     create_or_update_prior_auth_regex,
 ]
-
 
 
 class ChatInterface:
@@ -143,7 +140,7 @@ class ChatInterface:
         # Possible calls
         calls: List[Awaitable[Tuple[Optional[str], Optional[str]]]] = [
             full_awaitable_a,
-            full_awaitable_b
+            full_awaitable_b,
         ]
         # Only add the short history version if we have long history.
         if len(history) > 20:
@@ -160,6 +157,7 @@ class ChatInterface:
                 )
             )
             calls.append(short_awaitable)
+
         def score_fn(result, original_task):
             score = 0
             if original_task == full_awaitable_a or original_task == full_awaitable_b:
@@ -405,7 +403,9 @@ class ChatInterface:
                             pass
                 cleaned_response = cleaned_response.strip()
                 if len(cleaned_response) > 1:
-                    await self.send_status_message(f"Looking up medicaid eligibility, please wait. Remaining information: {cleaned_response}")
+                    await self.send_status_message(
+                        f"Looking up medicaid eligibility, please wait. Remaining information: {cleaned_response}"
+                    )
                 if loaded is None:
                     loaded = {}
                 if not isinstance(loaded, dict):
@@ -450,9 +450,9 @@ class ChatInterface:
                     additional_response_text, additional_context_part = (
                         await self._call_llm_with_actions(
                             model_backend=model_backend,
-                            current_message_for_llm = info_text + action_text,
-                            previous_context_summary = "Medicaid eligibility investigation",
-                            history_for_llm = history_for_llm,
+                            current_message_for_llm=info_text + action_text,
+                            previous_context_summary="Medicaid eligibility investigation",
+                            history_for_llm=history_for_llm,
                             depth=depth + 1,
                             is_logged_in=is_logged_in,
                             is_professional=is_professional,

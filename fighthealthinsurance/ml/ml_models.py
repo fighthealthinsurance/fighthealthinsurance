@@ -1377,7 +1377,9 @@ class RemoteOpenLike(RemoteModel):
                             f"***WARNING*** Response {response} on {self} looks _bad_"
                         )
         except aiohttp.client_exceptions.ContentTypeError:
-            logger.debug(f"Unexpected content type response (often missing model) on {api_base}")
+            logger.debug(
+                f"Unexpected content type response (often missing model) on {api_base}"
+            )
         except aiohttp.client_exceptions.ClientConnectorError:
             logger.debug(f"Network error calling {api_base}")
         except Exception as e:
@@ -1941,6 +1943,7 @@ class AlphaRemoteInternal(RemoteFullOpenLike):
         return [
             ModelDescription(cost=3, name=model_name, internal_name=model_path),
         ]
+
 
 class RemotePerplexity(RemoteFullOpenLike):
     """Use RemotePerplexity for denial magic calls a service"""

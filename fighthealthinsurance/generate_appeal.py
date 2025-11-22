@@ -682,7 +682,9 @@ class AppealGenerator(object):
         plan_context = denial.plan_context
         backup_calls: List[Any] = []
         # Find any FHI model dynamically
-        fhi_model_names = [name for name in ml_router.models_by_name.keys() if name.startswith("fhi-")]
+        fhi_model_names = [
+            name for name in ml_router.models_by_name.keys() if name.startswith("fhi-")
+        ]
 
         # Call all fhi based models.
         calls = [
@@ -695,7 +697,8 @@ class AppealGenerator(object):
                 "pubmed_context": pubmed_context,
                 "ml_citations_context": ml_citations_context,
                 "prof_pov": prof_pov,
-            } for model_name in fhi_model_names
+            }
+            for model_name in fhi_model_names
         ]
 
         if denial.use_external:
@@ -757,7 +760,8 @@ class AppealGenerator(object):
                         "pubmed_context": pubmed_context,
                         "ml_citations_context": ml_citations_context,
                         "prof_pov": prof_pov,
-                    } for model_name in fhi_model_names
+                    }
+                    for model_name in fhi_model_names
                 ]
             )
             if denial.use_external:
