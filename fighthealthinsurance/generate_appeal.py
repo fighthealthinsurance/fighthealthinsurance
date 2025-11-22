@@ -601,7 +601,8 @@ class AppealGenerator(object):
                         prof_pov=prof_pov,
                     )
                     logger.debug(f"Got back {result} for {model_name} on {model}")
-                    return result
+                    if result is not None:
+                        return result
                 except Exception as e:
                     logger.debug(f"Backend {model} failed {e}")
             logger.debug(f"All backends for {model_name} failed")
