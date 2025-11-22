@@ -683,11 +683,11 @@ class AppealGenerator(object):
         backup_calls: List[Any] = []
         # Find any FHI model dynamically
         fhi_model_names = [name for name in ml_router.models_by_name.keys() if name.startswith("fhi-")]
-        fhi_model_name = fhi_model_names[0] if fhi_model_names else "fhi"
-        
+
+        # Call all fhi based models.
         calls = [
             {
-                "model_name": "fhi",
+                "model_name": model_name,
                 "prompt": open_prompt,
                 "patient_context": medical_context,
                 "plan_context": plan_context,
@@ -695,17 +695,7 @@ class AppealGenerator(object):
                 "pubmed_context": pubmed_context,
                 "ml_citations_context": ml_citations_context,
                 "prof_pov": prof_pov,
-            },
-            {
-                "model_name": fhi_model_name,
-                "prompt": open_prompt,
-                "patient_context": medical_context,
-                "plan_context": plan_context,
-                "infer_type": "full",
-                "pubmed_context": pubmed_context,
-                "ml_citations_context": ml_citations_context,
-                "prof_pov": prof_pov,
-            },
+            } for model_name in fhi_model_names
         ]
 
         if denial.use_external:
@@ -759,7 +749,7 @@ class AppealGenerator(object):
             calls.extend(
                 [
                     {
-                        "model_name": "fhi",
+                        "model_name": model_name,
                         "prompt": open_medically_necessary_prompt,
                         "patient_context": medical_context,
                         "infer_type": "medically_necessary",
@@ -767,7 +757,7 @@ class AppealGenerator(object):
                         "pubmed_context": pubmed_context,
                         "ml_citations_context": ml_citations_context,
                         "prof_pov": prof_pov,
-                    },
+                    } for model_name in fhi_model_names
                 ]
             )
             if denial.use_external:
