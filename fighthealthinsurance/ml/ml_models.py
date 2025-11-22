@@ -601,7 +601,7 @@ class RemoteOpenLike(RemoteModel):
         self.model = model
         self.system_prompts_map = system_prompts_map
         self.max_len = max_len or 4096 * 8
-        self._timeout = 120
+        self._timeout = 600
         self.backup_model = backup_model or model
         self.invalid_diag_procedure_regex = re.compile(
             r"(not (available|provided|specified|applicable)|unknown|as per reviewer)",
