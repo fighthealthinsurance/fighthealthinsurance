@@ -85,7 +85,7 @@ fi
 
 if ping -c1 -W1 scrump >/dev/null 2>&1; then
   echo "alpha reachable"
-  export ALPHA_HEALTH_BACKEND_HOST=scrumpt
+  export ALPHA_HEALTH_BACKEND_HOST=scrump
 fi
 
 python manage.py migrate
