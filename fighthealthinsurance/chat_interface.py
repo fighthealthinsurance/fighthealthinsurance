@@ -158,7 +158,7 @@ class ChatInterface:
             if result is None:
                 return 0
             # We want a non-empty context
-            if result[1] and len(result[0]) > 5:
+            if result[1] and len(result[1]) > 5:
                 score += 10
             if result[0] and len(result[0]) > 5:
                 score += 100
