@@ -310,8 +310,12 @@ async def best_within_timelimit(
         wrapped_tasks, timeout=timeout, return_when=asyncio.ALL_COMPLETED
     )
 
+    # If nothing is done in the length of normal timeout we try again but short
+    # circuit on first.
     if done is None or len(done) == 0:
-        done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+        done, pending = await asyncio.wait(
+            pending, timeout=timeout * 2, return_when=asyncio.FIRST_COMPLETED
+        )
 
     asyncio.create_task(cancel_tasks(list(pending)))
 

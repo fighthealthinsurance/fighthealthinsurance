@@ -1698,9 +1698,9 @@ class AppealsBackendHelper:
             for k, v in subs.items():
                 if v and v != "" and v != "UNKNOWN":
                     # Handle the {{}}
-                    content.replace("{{" + k + "}}", "{" + k + "}")
+                    content = content.replace("{{" + k + "}}", "{" + k + "}")
                     if "{" in k:
-                        content.replace("{" + k + "}", k)
+                        content = content.replace("{" + k + "}", k)
                     content = content.replace(k, str(v))
             appeal["content"] = content
             return appeal
