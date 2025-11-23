@@ -844,7 +844,9 @@ class AppealGenerator(object):
             map(lambda appeal: executor.submit(random_delay, appeal), initial_appeals)
         )
         appeals: Iterator[str] = as_available_nested(generated_text_futures)
-        initial_appeals_itr: Iterator[str] = as_available_nested(delayed_initial_appeals)
+        initial_appeals_itr: Iterator[str] = as_available_nested(
+            delayed_initial_appeals
+        )
         logger.debug(f"Appeals itr starting with {appeals}")
         # Check and make sure we have some AI powered results
         try:

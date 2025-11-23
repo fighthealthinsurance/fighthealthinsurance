@@ -866,9 +866,7 @@ class ChatInterface:
                 final_context_part = context_part
         except Exception as e:
             await asyncio.sleep(0.1)
-            logger.opt(exception=True).debug(
-                f"Error with model on chat {models}"
-            )
+            logger.opt(exception=True).debug(f"Error with model on chat {models}")
 
         if final_response_text:
             if not chat.chat_history:

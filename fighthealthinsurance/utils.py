@@ -311,10 +311,7 @@ async def best_within_timelimit(
     )
 
     if done is None or len(done) == 0:
-        done, pending = await asyncio.wait(
-            pending,
-            return_when=asyncio.FIRST_COMPLETED
-        )
+        done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
 
     asyncio.create_task(cancel_tasks(list(pending)))
 
