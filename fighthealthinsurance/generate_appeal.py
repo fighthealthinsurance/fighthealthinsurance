@@ -600,7 +600,7 @@ class AppealGenerator(object):
                         ml_citations_context=ml_citations_context,
                         prof_pov=prof_pov,
                     )
-                    logger.debug(f"Got back {result} for {model_name} on {model}")
+
                     if result is not None:
                         return result
                 except Exception as e:
@@ -662,9 +662,6 @@ class AppealGenerator(object):
                         prof_pov=prof_pov,
                     )
                 ]
-            logger.debug(
-                f"Infered {results} for {model}-{infer_type} using {prompt} w/ {patient_context}"
-            )
             return results
 
         medical_context = ""
@@ -680,7 +677,6 @@ class AppealGenerator(object):
             medical_context += denial.health_history
         prof_pov = denial.professional_to_finish
         plan_context = denial.plan_context
-        backup_calls: List[Any] = []
         # Find any FHI model dynamically
         fhi_model_names = [
             name for name in ml_router.models_by_name.keys() if name.startswith("fhi-")
@@ -688,6 +684,20 @@ class AppealGenerator(object):
 
         # Call all fhi based models.
         calls = [
+            {
+                "model_name": model_name,
+                "prompt": open_prompt,
+                "patient_context": medical_context,
+                "plan_context": plan_context,
+                "infer_type": "full",
+                "pubmed_context": pubmed_context,
+                "ml_citations_context": ml_citations_context,
+                "prof_pov": prof_pov,
+            }
+            for model_name in fhi_model_names
+        ]
+        # And call them in backup mode too
+        backup_calls = [
             {
                 "model_name": model_name,
                 "prompt": open_prompt,
@@ -833,20 +843,20 @@ class AppealGenerator(object):
         delayed_initial_appeals: List[Future[Iterator[str]]] = list(
             map(lambda appeal: executor.submit(random_delay, appeal), initial_appeals)
         )
-        core_futures: List[Future[Iterator[str]]] = (
-            delayed_initial_appeals + generated_text_futures
-        )
-        appeals: Iterator[str] = as_available_nested(core_futures)
+        appeals: Iterator[str] = as_available_nested(generated_text_futures)
+        initial_appeals: Iterator[str] = as_available_nested(delayed_initial_appeals)
         logger.debug(f"Appeals itr starting with {appeals}")
         # Check and make sure we have some AI powered results
         try:
             logger.debug(f"Getting first {appeals}")
-            appeals = itertools.chain([appeals.__next__()], appeals)
+            first = appeals.__next__()
+            appeals = itertools.chain([first], appeals)
             logger.debug(f"First pulled off {appeals}")
         except StopIteration:
             logger.warning(
                 f"Adding backup calls {backup_calls} first group not success."
             )
             appeals = as_available_nested(make_async_model_calls(backup_calls))
+        appeals = itertools.chain(appeals, initial_appeals)
         logger.debug(f"Sending back {appeals}")
         return appeals

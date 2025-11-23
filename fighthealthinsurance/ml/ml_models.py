@@ -914,10 +914,9 @@ class RemoteOpenLike(RemoteModel):
             if self.bad_result(result, infer_type):
                 return []
 
-        logger.debug(f"Checking if professional")
-
         # If professional_to_finish then check if the result is a professional response | One retry
         if prof_pov or pa:
+            logger.debug(f"Checking if professional")
             c = 0
             last_okish = result
             while not self.check_is_ok(result, infer_type, prof_pov) and c < 5:
@@ -940,15 +939,23 @@ class RemoteOpenLike(RemoteModel):
                     )
             else:
                 logger.debug(f"Result {result} is professional")
+        else:
+            logger.debug(
+                f"Result {result} is for patient voice so no need to check professional."
+            )
+
+        cleaned = CleanerUtils.note_remover(
+            CleanerUtils.url_fixer(
+                CleanerUtils.tla_fixer(result), input_urls=input_urls
+            )
+        )
+
+        logger.debug(f"Cleaned {cleaned}!")
 
         return [
             (
                 infer_type,
-                CleanerUtils.note_remover(
-                    CleanerUtils.url_fixer(
-                        CleanerUtils.tla_fixer(result), input_urls=input_urls
-                    )
-                ),
+                cleaned,
             )
         ]
 
@@ -1148,7 +1155,7 @@ class RemoteOpenLike(RemoteModel):
                             ml_citations_context=ml_citations_context,
                             temperature=temperature,
                             history=history,
-                            model=self.backup_model,
+                            model=self.model,
                         )
                     )
 
@@ -1162,7 +1169,7 @@ class RemoteOpenLike(RemoteModel):
                             ml_citations_context=ml_citations_context,
                             temperature=temperature,
                             history=history,
-                            model=self.model,
+                            model=self.backup_model,
                             api_base=self.backup_api_base,
                         )
                     )
@@ -1371,10 +1378,10 @@ class RemoteOpenLike(RemoteModel):
                 ) as response:
                     json_result = await response.json()
                     if "object" in json_result and json_result["object"] != "error":
-                        logger.debug(f"Response on {self} Looks ok")
+                        logger.debug(f"Response {json_result} on {self} Looks ok")
                     else:
                         logger.debug(
-                            f"***WARNING*** Response {response} on {self} looks _bad_"
+                            f"***WARNING*** Response {response} on {self} looks _bad_ with {model}"
                         )
         except aiohttp.client_exceptions.ContentTypeError:
             logger.debug(
@@ -1388,7 +1395,9 @@ class RemoteOpenLike(RemoteModel):
             return None
         try:
             if "choices" not in json_result:
-                logger.debug(f"Response {json_result} missing key result.")
+                logger.debug(
+                    f"Response {json_result} from {api_base} missing key result."
+                )
                 return None
 
             # Extract message content
@@ -1963,9 +1972,9 @@ class RemotePerplexity(RemoteFullOpenLike):
     def models(cls) -> List[ModelDescription]:
         return [
             ModelDescription(
-                cost=350,
+                cost=100,
                 name="sonar-reasoning",
-                internal_name="sonar-reasoning",
+                internal_name="sonar",
             ),
             ModelDescription(
                 cost=300,
