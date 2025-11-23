@@ -20,19 +20,19 @@ Fight Your Health Insurance Denial: Edit and send in your appeal
 		  If we saved you time or money, consider supporting us. It helps keep this tool free for everyone!
 		</p>
 		<div class="pwyw-options">
-		    <a href="javascript:void(0)" class="pwyw-option pwyw-free" onclick="alert('Thank you for using our free service! Continue below.')">
+		    <a href="javascript:void(0)" class="pwyw-option pwyw-free" onclick="handleAppealDonation(event, '0')">
 			<div class="pwyw-amount">$0</div>
 			<div class="pwyw-label">I need this free</div>
 		    </a>
-		    <a href="https://buy.stripe.com/5kA03r2ZwbgebyE7ss" class="pwyw-option" target="_blank" rel="noopener noreferrer">
+		    <a href="#" class="pwyw-option" onclick="handleAppealDonation(event, '10')">
 			<div class="pwyw-amount">$10</div>
 			<div class="pwyw-label">Cover an SF coffee</div>
 		    </a>
-		    <a href="https://buy.stripe.com/5kA03r2ZwbgebyE7ss" class="pwyw-option" target="_blank" rel="noopener noreferrer">
+		    <a href="#" class="pwyw-option" onclick="handleAppealDonation(event, '25')">
 			<div class="pwyw-amount">$25</div>
 			<div class="pwyw-label">Help another appeal</div>
 		    </a>
-		    <a href="https://buy.stripe.com/5kA03r2ZwbgebyE7ss" class="pwyw-option" target="_blank" rel="noopener noreferrer">
+		    <a href="#" class="pwyw-option" onclick="handleCustomAppealDonation(event)">
 			<div class="pwyw-amount">Custom</div>
 			<div class="pwyw-label">Choose your amount</div>
 		    </a>
@@ -41,6 +41,48 @@ Fight Your Health Insurance Denial: Edit and send in your appeal
 	</div>
     </div>
 </section>
+
+<script>
+function handleAppealDonation(event, amount) {
+    event.preventDefault();
+    
+    fetch("{% url 'pwyw_donation' %}", {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            amount: amount,
+            cancel_url: window.location.pathname
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'success') {
+            if (data.checkout_url) {
+                window.location.href = data.checkout_url;
+            } else if (data.message) {
+                alert(data.message);
+            }
+        } else if (data.error) {
+            alert('Error: ' + data.error);
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('An error occurred. Please try again.');
+    });
+}
+
+function handleCustomAppealDonation(event) {
+    event.preventDefault();
+    
+    const amount = prompt('Enter your donation amount (in USD):');
+    if (amount && amount.trim()) {
+        handleAppealDonation(event, amount.trim());
+    }
+}
+</script>
 
 <div class="container" style="margin-top: 30px;">
 Huzzah! We have a <b>draft</b> appeal for you to edit below:
@@ -68,7 +110,7 @@ Huzzah! We have a <b>draft</b> appeal for you to edit below:
   {{appeal_info_extracted}}
 </p>
 <p>
-  We can try and send the fax for you for a small fee if you want, but know you can send it in other ways.
+  We can try and send the fax for you (pay what you want) if you want, but know you can send it in other ways.
 </p>
 <p>
   Note: Faxing your appeal with us does temporarily store the full filled in appeal on our servers (and potentially fax partners). Your e-mail will also be stored temporarily.
@@ -78,7 +120,7 @@ Huzzah! We have a <b>draft</b> appeal for you to edit below:
   {% csrf_token %}
   {{ fax_form }}
   <button id="fax_appeal">
-    Fax Appeal for $5
+    Fax Appeal (Pay What You Want)
   </button>
 </form>
 <!--
@@ -103,19 +145,19 @@ or:
 		  If we saved you time or money, consider supporting us. It helps keep this tool free for everyone!
 		</p>
 		<div class="pwyw-options">
-		    <a href="javascript:void(0)" class="pwyw-option pwyw-free" onclick="alert('Thank you for using our free service! We hope your appeal is successful.')">
+		    <a href="javascript:void(0)" class="pwyw-option pwyw-free" onclick="handleAppealDonation(event, '0')">
 			<div class="pwyw-amount">$0</div>
 			<div class="pwyw-label">I need this free</div>
 		    </a>
-		    <a href="https://buy.stripe.com/5kA03r2ZwbgebyE7ss" class="pwyw-option" target="_blank" rel="noopener noreferrer">
+		    <a href="#" class="pwyw-option" onclick="handleAppealDonation(event, '10')">
 			<div class="pwyw-amount">$10</div>
 			<div class="pwyw-label">Cover an SF coffee</div>
 		    </a>
-		    <a href="https://buy.stripe.com/5kA03r2ZwbgebyE7ss" class="pwyw-option" target="_blank" rel="noopener noreferrer">
+		    <a href="#" class="pwyw-option" onclick="handleAppealDonation(event, '25')">
 			<div class="pwyw-amount">$25</div>
 			<div class="pwyw-label">Help another appeal</div>
 		    </a>
-		    <a href="https://buy.stripe.com/5kA03r2ZwbgebyE7ss" class="pwyw-option" target="_blank" rel="noopener noreferrer">
+		    <a href="#" class="pwyw-option" onclick="handleCustomAppealDonation(event)">
 			<div class="pwyw-amount">Custom</div>
 			<div class="pwyw-label">Choose your amount</div>
 		    </a>

@@ -53,15 +53,15 @@
 <div class="pwyw-amount">$0</div>
 <div class="pwyw-label">I need this free</div>
     </a>
-    <a href="https://buy.stripe.com/5kA03r2ZwbgebyE7ss" class="pwyw-option" target="_blank" rel="noopener noreferrer">
+    <a href="#" class="pwyw-option" data-amount="10" onclick="handleDonation(event, '10')">
 <div class="pwyw-amount">$10</div>
 <div class="pwyw-label">Cover an SF coffee</div>
     </a>
-    <a href="https://buy.stripe.com/5kA03r2ZwbgebyE7ss" class="pwyw-option" target="_blank" rel="noopener noreferrer">
+    <a href="#" class="pwyw-option" data-amount="25" onclick="handleDonation(event, '25')">
 <div class="pwyw-amount">$25</div>
 <div class="pwyw-label">Help another appeal</div>
     </a>
-    <a href="https://buy.stripe.com/5kA03r2ZwbgebyE7ss" class="pwyw-option" target="_blank" rel="noopener noreferrer">
+    <a href="#" class="pwyw-option" data-amount="custom" onclick="handleCustomDonation(event)">
 <div class="pwyw-amount">Custom</div>
 <div class="pwyw-label">Choose your amount</div>
     </a>
@@ -70,6 +70,48 @@
 </div>
     </div>
 </section>
+
+<script>
+function handleDonation(event, amount) {
+    event.preventDefault();
+    
+    fetch("{% url 'pwyw_donation' %}", {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            amount: amount,
+            cancel_url: window.location.pathname
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'success') {
+            if (data.checkout_url) {
+                window.location.href = data.checkout_url;
+            } else if (data.message) {
+                alert(data.message);
+            }
+        } else if (data.error) {
+            alert('Error: ' + data.error);
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('An error occurred. Please try again.');
+    });
+}
+
+function handleCustomDonation(event) {
+    event.preventDefault();
+    
+    const amount = prompt('Enter your donation amount (in USD):');
+    if (amount && amount.trim()) {
+        handleDonation(event, amount.trim());
+    }
+}
+</script>
 
 <!-- How It Works -->
 <section id="how-it-works">

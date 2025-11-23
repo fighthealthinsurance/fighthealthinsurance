@@ -16,7 +16,7 @@ from django.shortcuts import redirect, render, get_object_or_404
 from django.urls import reverse
 from django.utils.safestring import mark_safe
 from django.views import View, generic
-from django.http import HttpRequest, HttpResponseBase, HttpResponse
+from django.http import HttpRequest, HttpResponseBase, HttpResponse, JsonResponse
 from django.core.exceptions import SuspiciousOperation
 from django.http import HttpResponseRedirect
 from django.contrib.auth.decorators import login_required
@@ -30,6 +30,7 @@ from fighthealthinsurance import common_view_logic
 from fighthealthinsurance import forms as core_forms
 from fighthealthinsurance.chat_forms import UserConsentForm
 from fighthealthinsurance import models
+from fighthealthinsurance.stripe_utils import get_or_create_price
 
 from fighthealthinsurance.models import StripeRecoveryInfo
 
@@ -1068,3 +1069,76 @@ class ChatUserConsentView(FormView):
 
         # Continue with normal form rendering
         return super().get(request, *args, **kwargs)
+
+
+class PWYWDonationView(View):
+    """
+    View for handling Pay What You Want donations.
+    Creates a Stripe checkout session for the specified amount.
+    """
+
+    def post(self, request):
+        try:
+            data = json.loads(request.body)
+            amount_str = data.get("amount", "0")
+            
+            # Handle $0 donations - just return success
+            if amount_str == "0":
+                return JsonResponse({
+                    "status": "success",
+                    "message": "Thank you for using Fight Health Insurance! We're glad to help.",
+                    "redirect_url": request.GET.get("redirect_url", "/")
+                })
+            
+            # Parse amount (remove $ and convert to cents)
+            amount_str = amount_str.replace("$", "").strip()
+            try:
+                amount = int(float(amount_str) * 100)  # Convert to cents
+            except ValueError:
+                return JsonResponse({"error": "Invalid amount"}, status=400)
+            
+            if amount <= 0:
+                return JsonResponse({"error": "Amount must be greater than 0"}, status=400)
+            
+            # Create Stripe checkout session
+            stripe.api_key = settings.STRIPE_API_SECRET_KEY
+            
+            (product_id, price_id) = get_or_create_price(
+                product_name="Pay What You Want Donation",
+                amount=amount,
+                currency="usd",
+                recurring=False,
+            )
+            
+            items = [
+                {
+                    "price": price_id,
+                    "quantity": 1,
+                }
+            ]
+            
+            stripe_recovery_info = StripeRecoveryInfo.objects.create(items=items)
+            metadata = {
+                "payment_type": "donation",
+                "recovery_info_id": stripe_recovery_info.id,
+            }
+            
+            success_url = request.build_absolute_uri("/stripe/finish") + "?session_id={CHECKOUT_SESSION_ID}"
+            cancel_url = request.build_absolute_uri(data.get("cancel_url", "/"))
+            
+            checkout = stripe.checkout.Session.create(
+                line_items=items,
+                mode="payment",
+                success_url=success_url,
+                cancel_url=cancel_url,
+                metadata=metadata,
+            )
+            
+            return JsonResponse({
+                "status": "success",
+                "checkout_url": checkout.url
+            })
+            
+        except Exception as e:
+            logger.opt(exception=True).error("Error creating PWYW donation checkout")
+            return JsonResponse({"error": str(e)}, status=500)

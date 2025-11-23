@@ -66,13 +66,32 @@ class StageFaxView(generic.FormView):
         )
         stripe.api_key = settings.STRIPE_API_SECRET_KEY
 
+        # Get the custom amount from form, default to $0
+        fax_amount = form_data.get("fax_amount", 0)
+        if fax_amount is None:
+            fax_amount = 0
+        amount_cents = int(float(fax_amount) * 100)  # Convert to cents
+
         # Check if the product already exists
         (product_id, price_id) = get_or_create_price(
-            product_name="Appeal Fax -- New",
-            amount=500,
+            product_name="Appeal Fax -- PWYW",
+            amount=amount_cents,
             currency="usd",
             recurring=False,
         )
+        
+        # If amount is $0, skip Stripe and go directly to send fax
+        if amount_cents == 0:
+            return redirect(
+                reverse(
+                    "sendfaxview",
+                    kwargs={
+                        "uuid": staged.uuid,
+                        "hashed_email": staged.hashed_email,
+                    },
+                )
+            )
+        
         items = [
             {
                 "price": price_id,

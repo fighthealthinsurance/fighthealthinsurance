@@ -118,6 +118,14 @@ class FaxForm(DenialRefForm):
         widget=forms.Textarea(attrs={"class": "appeal_text"}), required=True
     )
     include_provided_health_history = forms.BooleanField(required=False)
+    fax_amount = forms.DecimalField(
+        required=False, 
+        initial=0,
+        min_value=0,
+        decimal_places=2,
+        label="Fax service fee (Pay what you want, $0 is ok)",
+        widget=forms.NumberInput(attrs={"placeholder": "0.00"})
+    )
 
 
 class EntityExtractForm(DenialRefForm):
