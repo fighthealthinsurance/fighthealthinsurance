@@ -28,6 +28,9 @@ from fighthealthinsurance.process_denial import DenialBase
 
 
 class RemoteModelLike(DenialBase):
+    def quality(self) -> int:
+        return 100
+
     def infer(
         self,
         prompt,
@@ -331,6 +334,9 @@ Some important notes:
 - If people ask about Luigi gently stear the conversation back to their specific billing/coverage/admin task.
 
 - At the end of every response add the 🐼 emoji with the context of the chat so far necessary for answering the next turn of conversation.
+
+So for example if a user asks a question and you have a follow up (like "How do I appeal a GLP-1 denial?") and your question is "What reason did they give you for your GLP-1 denied?" you would respond with:
+What reason did they give you for your GLP-1 denied?🐼Helping a patient appeal a GLP-1 denial.
 """
         result: Optional[str] = None
         c = 0
@@ -529,6 +535,7 @@ class ModelDescription:
 
 
 class RemoteModel(RemoteModelLike):
+
     def __init__(self, model: str):
         pass
 
@@ -1381,7 +1388,7 @@ class RemoteOpenLike(RemoteModel):
                         logger.debug(f"Response {json_result} on {self} Looks ok")
                     else:
                         logger.debug(
-                            f"***WARNING*** Response {response} on {self} looks _bad_ with {model}"
+                            f"***WARNING*** Response {response} / {json_result} on {self} looks _bad_ with {model}"
                         )
         except aiohttp.client_exceptions.ContentTypeError:
             logger.debug(
@@ -1817,6 +1824,9 @@ class RemoteFullOpenLike(RemoteOpenLike):
 
 
 class RemoteHealthInsurance(RemoteFullOpenLike):
+    def quality(self) -> int:
+        return 101
+
     def __init__(self, model: str, dual_mode: bool = True):
         self.port = os.getenv("HEALTH_BACKEND_PORT", "80")
         self.host = os.getenv("HEALTH_BACKEND_HOST")
@@ -1855,6 +1865,9 @@ class RemoteHealthInsurance(RemoteFullOpenLike):
 
 
 class NewRemoteInternal(RemoteFullOpenLike):
+    def quality(self) -> int:
+        return 200
+
     def __init__(self, model: str, dual_mode: bool = True):
         self.port = os.getenv("NEW_HEALTH_BACKEND_PORT", "80")
         self.host = os.getenv("NEW_HEALTH_BACKEND_HOST")
@@ -1909,6 +1922,9 @@ class NewRemoteInternal(RemoteFullOpenLike):
 
 
 class AlphaRemoteInternal(RemoteFullOpenLike):
+    def quality(self) -> int:
+        return 210
+
     def __init__(self, model: str, dual_mode: bool = True):
         self.port = os.getenv("ALPHA_HEALTH_BACKEND_PORT", "8000")
         self.host = os.getenv("ALPHA_HEALTH_BACKEND_HOST")

@@ -310,6 +310,12 @@ async def best_within_timelimit(
         wrapped_tasks, timeout=timeout, return_when=asyncio.ALL_COMPLETED
     )
 
+    if done is None or len(done) == 0:
+        done, pending = await asyncio.wait(
+            pending,
+            return_when=asyncio.FIRST_COMPLETED
+        )
+
     asyncio.create_task(cancel_tasks(list(pending)))
 
     # Find the best result from completed tasks
