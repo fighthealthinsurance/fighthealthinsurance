@@ -148,7 +148,7 @@ class ChatInterface:
                     )
                 )
                 calls.append(short_awaitable)
-                call_scores[call] = model_backend.quality()
+                call_scores[short_awaitable] = model_backend.quality()
 
         def score_fn(result, original_task):
             score = 0
