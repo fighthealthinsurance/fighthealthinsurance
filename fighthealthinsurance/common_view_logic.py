@@ -1583,15 +1583,12 @@ class AppealsBackendHelper:
         # Extract the professional_to_finish parameter from the input, default to False
         professional_to_finish = parameters.get("professional_to_finish", False)
 
-        # Initial yield of newline.
-        yield "\n"
-
         if denial_id is None:
             raise Exception("Missing denial id")
         if semi_sekret is None:
             raise Exception("Missing sekret")
 
-        # Get the current info
+        # Get the current info (e.g. denial).
         await asyncio.sleep(0)
         denial_query = Denial.objects.filter(
             denial_id=denial_id, semi_sekret=semi_sekret, hashed_email=hashed_email
@@ -1603,6 +1600,124 @@ class AppealsBackendHelper:
             "primary_professional__user",
         )
         denial = await denial_query.aget()
+
+        # Initial yield of newline.
+        yield "\n"
+        # Helper format methods
+        async def format_response(response: dict[str, str]) -> str:
+            """
+            Serializes a response dictionary to a JSON string with a trailing newline.
+
+            Args:
+                response: A dictionary containing string keys and values to serialize.
+
+            Returns:
+                A JSON-formatted string representation of the response, ending with a newline.
+            """
+            return json.dumps(response) + "\n"
+
+        async def sub_in_appeals(appeal: dict[str, str]) -> dict[str, str]:
+            """
+            Performs dynamic substitution of denial and appeal-related fields into an appeal template.
+
+            Replaces placeholders in the appeal's content with actual values from the associated denial, such as insurance company, claim ID, diagnosis, procedure, patient and professional names, and other context-specific information. Returns the appeal dictionary with the substituted content.
+            """
+            await asyncio.sleep(0)
+            content = appeal["content"]
+            insurance_company = "{insurance_company}"
+            if (
+                denial.insurance_company is not None
+                and denial.insurance_company != ""
+                and denial.insurance_company != "UNKNOWN"
+            ):
+                insurance_company = denial.insurance_company
+            claim_id = "{claim_id}"
+            if (
+                denial.claim_id is not None
+                and denial.claim_id != ""
+                and denial.claim_id != "UNKNOWN"
+                and denial.claim_id != insurance_company
+            ):
+                claim_id = denial.claim_id
+            diagnosis = "{diagnosis}"
+            if (
+                denial.diagnosis is not None
+                and denial.diagnosis != ""
+                and denial.diagnosis != "UNKNOWN"
+            ):
+                diagnosis = denial.diagnosis
+            procedure = "{procedure}"
+            if (
+                denial.procedure is not None
+                and denial.procedure != ""
+                and denial.procedure != "UNKNOWN"
+            ):
+                procedure = denial.procedure
+            # Substitutes for common terms
+            subs = {
+                "Esteemed Members of the Appeals Committee": insurance_company,
+                "[insurance_company]": insurance_company,
+                "{insurance_company}": insurance_company,
+                "insurance_company": insurance_company,
+                "{{insurance_company}}": insurance_company,
+                "[Insurance Company Name]": insurance_company,
+                "[Insurance Company]": insurance_company,
+                "[Insert Date]": denial.date or "{date}",
+                "[Health Plan]": insurance_company,
+                "[Reference Number from Denial Letter]": claim_id,
+                "Dear Insurance Company": f"Dear {insurance_company}",
+                "Dear Health Plan": f"Dear {insurance_company}",
+                "Dear Sir/Madam": f"Dear {insurance_company}",
+                "[Claim ID]": claim_id,
+                "{claim_id}": claim_id,
+                "[Diagnosis]": diagnosis,
+                "[Procedure]": procedure,
+                "{diagnosis}": diagnosis,
+                "{procedure}": procedure,
+            }
+            try:
+                if (
+                    denial.professional_to_finish
+                    and denial.primary_professional is not None
+                ):
+                    subs["[Your Name]"] = denial.primary_professional.get_full_name()
+                if denial.patient_user is not None:
+                    subs["[Patient Name]"] = denial.patient_user.get_legal_name()
+                    subs["[patient name]"] = denial.patient_user.get_legal_name()
+                if denial and denial.primary_professional is not None:
+                    subs["[Professional Name]"] = (
+                        denial.primary_professional.get_full_name()
+                    )
+                if denial.domain:
+                    subs["[Professional Address]"] = denial.domain.get_address()
+            except:
+                logger.opt(exception=True).error(
+                    f"Error fetching info for denial sub {denial.denial_id}"
+                )
+            for k, v in subs.items():
+                if v and v != "" and v != "UNKNOWN":
+                    # Handle the {{}}
+                    content.replace("{{" + k + "}}", "{" + k + "}")
+                    if "{" in k:
+                        content.replace("{" + k + "}", k)
+                    content = content.replace(k, str(v))
+            appeal["content"] = content
+            return appeal
+
+        # If we've had a timeout on the initial call and we're on round 2
+        # we should fetch the existing appeals from the previous round if present.
+        existing_appeals = ProposedAppeal.objects.filter(for_denial=denial).all()
+        # Yield the existing appeals first
+        old = 0
+        async for appeal in existing_appeals:
+            old = old + 1
+            if appeal.appeal_text is not None:
+                logger.debug(f"Found existing appeal {appeal}, yielding")
+                existing_appeal_dict = await sub_in_appeals(
+                    {"id": str(appeal.id), "content": appeal.appeal_text}
+                )
+                yield await format_response(existing_appeal_dict)
+
 
         non_ai_appeals: List[str] = list(
             map(
@@ -1700,12 +1815,12 @@ class AppealsBackendHelper:
         # Get PubMed context
         logger.debug("Looking up the pubmed context")
         pubmed_context_awaitable = asyncio.wait_for(
-            cls.pmt.find_context_for_denial(denial), timeout=30
+            cls.pmt.find_context_for_denial(denial), timeout=40
         )
 
         ml_citation_context_awaitable = asyncio.wait_for(
             MLCitationsHelper.generate_citations_for_denial(denial, speculative=False),
-            timeout=35,
+            timeout=40,
         )
 
         # If we're getting "late" into our number of retries skip additional ctx.
@@ -1761,110 +1876,6 @@ class AppealsBackendHelper:
             logger.debug(f"Saved {appeal_text} after {passed} seconds")
             return {"id": id, "content": appeal_text}
 
-        async def sub_in_appeals(appeal: dict[str, str]) -> dict[str, str]:
-            """
-            Performs dynamic substitution of denial and appeal-related fields into an appeal template.
-
-            Replaces placeholders in the appeal's content with actual values from the associated denial, such as insurance company, claim ID, diagnosis, procedure, patient and professional names, and other context-specific information. Returns the appeal dictionary with the substituted content.
-            """
-            await asyncio.sleep(0)
-            content = appeal["content"]
-            insurance_company = "{insurance_company}"
-            if (
-                denial.insurance_company is not None
-                and denial.insurance_company != ""
-                and denial.insurance_company != "UNKNOWN"
-            ):
-                insurance_company = denial.insurance_company
-            claim_id = "{claim_id}"
-            if (
-                denial.claim_id is not None
-                and denial.claim_id != ""
-                and denial.claim_id != "UNKNOWN"
-                and denial.claim_id != insurance_company
-            ):
-                claim_id = denial.claim_id
-            diagnosis = "{diagnosis}"
-            if (
-                denial.diagnosis is not None
-                and denial.diagnosis != ""
-                and denial.diagnosis != "UNKNOWN"
-            ):
-                diagnosis = denial.diagnosis
-            procedure = "{procedure}"
-            if (
-                denial.procedure is not None
-                and denial.procedure != ""
-                and denial.procedure != "UNKNOWN"
-            ):
-                procedure = denial.procedure
-            # Substitutes for common terms
-            subs = {
-                "Esteemed Members of the Appeals Committee": insurance_company,
-                "[insurance_company]": insurance_company,
-                "{insurance_company}": insurance_company,
-                "insurance_company": insurance_company,
-                "{{insurance_company}}": insurance_company,
-                "[Insurance Company Name]": insurance_company,
-                "[Insurance Company]": insurance_company,
-                "[Insert Date]": denial.date or "{date}",
-                "[Health Plan]": insurance_company,
-                "[Reference Number from Denial Letter]": claim_id,
-                "Dear Insurance Company": f"Dear {insurance_company}",
-                "Dear Health Plan": f"Dear {insurance_company}",
-                "Dear Sir/Madam": f"Dear {insurance_company}",
-                "[Claim ID]": claim_id,
-                "{claim_id}": claim_id,
-                "[Diagnosis]": diagnosis,
-                "[Procedure]": procedure,
-                "{diagnosis}": diagnosis,
-                "{procedure}": procedure,
-            }
-            try:
-                if (
-                    denial.professional_to_finish
-                    and denial.primary_professional is not None
-                ):
-                    subs["[Your Name]"] = denial.primary_professional.get_full_name()
-                if denial.patient_user is not None:
-                    subs["[Patient Name]"] = denial.patient_user.get_legal_name()
-                    subs["[patient name]"] = denial.patient_user.get_legal_name()
-                if denial and denial.primary_professional is not None:
-                    subs["[Professional Name]"] = (
-                        denial.primary_professional.get_full_name()
-                    )
-                if denial.domain:
-                    subs["[Professional Address]"] = denial.domain.get_address()
-            except:
-                logger.opt(exception=True).error(
-                    f"Error fetching info for denial sub {denial.denial_id}"
-                )
-            for k, v in subs.items():
-                if v and v != "" and v != "UNKNOWN":
-                    # Handle the {{}}
-                    content.replace("{{" + k + "}}", "{" + k + "}")
-                    if "{" in k:
-                        content.replace("{" + k + "}", k)
-                    content = content.replace(k, str(v))
-            appeal["content"] = content
-            return appeal
-
-        async def format_response(response: dict[str, str]) -> str:
-            """
-            Serializes a response dictionary to a JSON string with a trailing newline.
-
-            Args:
-                response: A dictionary containing string keys and values to serialize.
-
-            Returns:
-                A JSON-formatted string representation of the response, ending with a newline.
-            """
-            return json.dumps(response) + "\n"
-
-        # If we've had a timeout on the initial call and we're on round 2
-        # we should fetch the existing appeals from the previous round if present.
-        existing_appeals = ProposedAppeal.objects.filter(for_denial=denial).all()
-
         appeals: Iterator[str] = await sync_to_async(appealGenerator.make_appeals)(
             denial,
             AppealTemplateGenerator(prefaces, main, footer),
@@ -1890,18 +1901,12 @@ class AppealsBackendHelper:
             appeals_json
         )
 
-        # Yield the existing appeals first
-        async for appeal in existing_appeals:
-            if appeal.appeal_text is not None:
-                logger.debug(f"Found existing appeal {appeal}, yielding")
-                existing_appeal_dict = await sub_in_appeals(
-                    {"id": str(appeal.id), "content": appeal.appeal_text}
-                )
-                yield await format_response(existing_appeal_dict)
-
+        new = 0
         async for i in interleaved:
-            logger.debug(f"Yielding {i}")
+            new = new + 1
+            logger.debug(f"Yielding new appeal: {i}")
             yield i
+        logger.debug(f"All appeals sent {new} and {old}")
 
 
 class StripeWebhookHelper:

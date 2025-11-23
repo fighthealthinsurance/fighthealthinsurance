@@ -805,6 +805,7 @@ class AppealGenerator(object):
                         pass
                     # It's either full or a reason to plug into a template
                     if k == "full":
+                        logger.debug(f"Bubbling up full response {text}")
                         yield text
                     else:
                         yield template_generator.generate(text)
@@ -826,7 +827,7 @@ class AppealGenerator(object):
         # we want to add some randomization to the initial appeals so they are
         # not always appearing in the first position.
         def random_delay(appeal) -> Iterator[str]:
-            time.sleep(random.randint(0, 20))
+            time.sleep(random.randint(0, 25))
             return iter([appeal])
 
         delayed_initial_appeals: List[Future[Iterator[str]]] = list(
@@ -843,7 +844,7 @@ class AppealGenerator(object):
             appeals = itertools.chain([appeals.__next__()], appeals)
             logger.debug(f"First pulled off {appeals}")
         except StopIteration:
-            logger.warning(f"Adding backup calls {backup_calls}")
+            logger.warning(f"Adding backup calls {backup_calls} first group not success.")
             appeals = as_available_nested(make_async_model_calls(backup_calls))
         logger.debug(f"Sending back {appeals}")
         return appeals
