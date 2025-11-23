@@ -272,3 +272,317 @@ a.link:hover::after {
 	margin: 10px 0;
     }
 }
+
+/* Landing Page Updates */
+
+/* PWYW Badge */
+.pwyw-badge {
+    background: rgba(165, 196, 34, 0.95);
+    color: #fff;
+    font-size: 18px;
+    font-weight: 600;
+    padding: 12px 24px;
+    border-radius: 25px;
+    margin: 20px auto;
+    display: inline-block;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+    text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+/* Hero Body Text */
+.hero-body-text {
+    background: rgba(0, 0, 0, 0.6);
+    color: #fff;
+    font-size: 16px;
+    line-height: 1.8;
+    padding: 20px 30px;
+    border-radius: 10px;
+    margin: 20px auto;
+    max-width: 700px;
+    text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+/* CTA Containers */
+.cta-container {
+    margin: 30px 0 15px 0;
+    display: flex;
+    gap: 15px;
+    justify-content: center;
+    flex-wrap: wrap;
+}
+
+.secondary-cta-container {
+    margin: 10px 0 20px 0;
+    display: flex;
+    justify-content: center;
+}
+
+/* Primary CTA Button */
+.section-btn.btn-primary {
+    background-image: linear-gradient(to right, #ADD100 0%, #7B920A 51%, #ADD100 100%);
+    font-size: 18px;
+    font-weight: 600;
+    padding: 16px 40px;
+    min-width: 220px;
+}
+
+/* Secondary CTA Button */
+.section-btn-secondary.btn-secondary {
+    background: transparent;
+    border: 2px solid #ADD100;
+    color: #fff;
+    font-size: 16px;
+    font-weight: 500;
+    padding: 14px 30px;
+    border-radius: 4px;
+    transition: all 0.3s;
+    text-decoration: none;
+    display: inline-block;
+    min-width: 180px;
+    text-align: center;
+}
+
+.section-btn-secondary.btn-secondary:hover {
+    background: #ADD100;
+    color: #fff;
+}
+
+/* Small CTA Button */
+.section-btn-small {
+    background: rgba(255, 255, 255, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.5);
+    color: #fff;
+    font-size: 14px;
+    padding: 10px 24px;
+    border-radius: 4px;
+    transition: all 0.3s;
+    text-decoration: none;
+    display: inline-block;
+}
+
+.section-btn-small:hover {
+    background: rgba(255, 255, 255, 0.3);
+    color: #fff;
+}
+
+/* PWYW Panel */
+#pwyw-panel {
+    padding: 60px 0;
+    background: #f9f9f9;
+}
+
+#pwyw-panel h3 {
+    color: #333;
+    margin-bottom: 10px;
+}
+
+.pwyw-description {
+    color: #666;
+    font-size: 16px;
+    margin-bottom: 30px;
+}
+
+.pwyw-options {
+    display: flex;
+    justify-content: center;
+    gap: 20px;
+    flex-wrap: wrap;
+}
+
+.pwyw-option {
+    background: #fff;
+    border: 2px solid #e0e0e0;
+    border-radius: 10px;
+    padding: 25px 20px;
+    text-align: center;
+    min-width: 140px;
+    transition: all 0.3s;
+    text-decoration: none;
+    color: #333;
+    cursor: pointer;
+}
+
+.pwyw-option:hover {
+    border-color: #a5c422;
+    transform: translateY(-5px);
+    box-shadow: 0 5px 15px rgba(165, 196, 34, 0.3);
+    color: #333;
+}
+
+.pwyw-option.pwyw-free {
+    border-color: #a5c422;
+    background: #f0f8e8;
+}
+
+.pwyw-amount {
+    font-size: 32px;
+    font-weight: 700;
+    color: #a5c422;
+    margin-bottom: 8px;
+}
+
+.pwyw-label {
+    font-size: 14px;
+    color: #666;
+    font-weight: 500;
+}
+
+/* How It Works Section */
+#how-it-works {
+    padding: 60px 0;
+    background: #fff;
+}
+
+.section-title-alt {
+    color: #333;
+    margin-bottom: 40px;
+}
+
+.how-it-works-steps {
+    display: flex;
+    justify-content: center;
+    gap: 30px;
+    flex-wrap: wrap;
+    margin-bottom: 30px;
+}
+
+.step-card {
+    background: #f9f9f9;
+    border-radius: 10px;
+    padding: 30px 20px;
+    text-align: center;
+    max-width: 280px;
+    flex: 1;
+    min-width: 220px;
+}
+
+.step-icon {
+    font-size: 48px;
+    margin-bottom: 15px;
+}
+
+.step-card h4 {
+    color: #333;
+    font-size: 18px;
+    margin-bottom: 10px;
+}
+
+.step-card p {
+    color: #666;
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+.how-it-works-footer {
+    color: #333;
+    font-size: 16px;
+    margin-top: 20px;
+}
+
+/* Trust Section */
+#trust-section {
+    padding: 40px 0;
+    background: #f0f8e8;
+}
+
+.trust-bullets {
+    display: flex;
+    justify-content: space-around;
+    gap: 30px;
+    flex-wrap: wrap;
+}
+
+.trust-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 15px;
+    color: #333;
+}
+
+.trust-icon {
+    font-size: 24px;
+}
+
+.trust-text {
+    font-weight: 500;
+}
+
+/* Mobile Responsive */
+@media only screen and (max-width: 768px) {
+    .pwyw-badge {
+        font-size: 16px;
+        padding: 10px 20px;
+    }
+
+    .hero-body-text {
+        font-size: 14px;
+        padding: 15px 20px;
+    }
+
+    .cta-container {
+        flex-direction: column;
+        align-items: center;
+    }
+
+    .section-btn.btn-primary,
+    .section-btn-secondary.btn-secondary {
+        width: 90%;
+        max-width: 300px;
+    }
+
+    .pwyw-options {
+        flex-direction: column;
+        align-items: center;
+    }
+
+    .pwyw-option {
+        width: 90%;
+        max-width: 300px;
+    }
+
+    .how-it-works-steps {
+        flex-direction: column;
+        align-items: center;
+    }
+
+    .step-card {
+        max-width: 90%;
+    }
+
+    .trust-bullets {
+        flex-direction: column;
+        align-items: center;
+    }
+
+    .trust-item {
+        width: 100%;
+        justify-content: center;
+    }
+}
+
+/* Appeal Page PWYW Panels */
+#pwyw-panel-appeal,
+#pwyw-panel-appeal-bottom {
+    padding: 40px 0;
+    background: #f9f9f9;
+    border-top: 1px solid #e0e0e0;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+#pwyw-panel-appeal {
+    background: #f0f8e8;
+}
+
+#pwyw-panel-appeal h3,
+#pwyw-panel-appeal-bottom h3 {
+    color: #333;
+    margin-bottom: 10px;
+}
+
+#pwyw-panel-appeal .pwyw-description,
+#pwyw-panel-appeal-bottom .pwyw-description {
+    color: #666;
+    font-size: 15px;
+    margin-bottom: 25px;
+}

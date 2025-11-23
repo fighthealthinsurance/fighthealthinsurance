@@ -9,65 +9,148 @@
 <!-- HOME -->
 <section id="home" class="slider" data-stellar-background-ratio="0.5">
     <div class="row">
-	<div class="item item-first">
-	    <div class="caption d-flex flex-column align-items-center justify-content-center">
-		<div class="col-md-offset-1 col-md-10">
-		    <h3>Make your health insurance company cry too</h3>
-		    <h1>Fight Health Insurance</h1>
-		    <br>
-		    We'll help with writing your appeal to fight the health insurance denial.
-			While an appeal is not always the first step in the appeal process, we'll guide you through options to fight back against health insurance denials.
-			Most health plans are required to offer internal and external appeals and while they often make it confusing, we can help.
-		    <br>
-		    <div class="pro-version-text">
-		      <a class="link" href="{% url 'pro_version' %}">If you're a <b>healthcare professional</b> (or related), sign up for updates on our pro-version.</a><br>
-		      You can also <a class="link" href="https://buy.stripe.com/5kA03r2ZwbgebyE7ss" target="_blank" rel="noopener noreferrer">support our development if you want (not required).</a>
-		    </div>
-		    <br>
-		    <a href="{% url 'scan' %}" class="section-btn btn btn-default smoothScroll" id="scanlink">
-		      Generate a Health Insurance Appeal with AI
-		    </a>
-		    <a href="{% url 'chat' %}" class="section-btn btn btn-default smoothScroll" id="chatlink">
-		      Chat
-		    </a>
-			<br>
-		    <a href="{% url 'pro_version' %}" class="section-btn btn btn-default smoothScroll" id="professional">
-		      Professionals Click Here
-		    </a>
-		    <a href="https://buy.stripe.com/5kA03r2ZwbgebyE7ss" class="section-btn btn btn-default smoothScroll" id="support-our-dev-button" target="_blank" rel="noopener noreferrer">
-		      Support our Development (optional)
-		    </a>
-		</div>
-	    </div>
-	</div>
+<div class="item item-first">
+    <div class="caption d-flex flex-column align-items-center justify-content-center">
+<div class="col-md-offset-1 col-md-10">
+    <h3>Make your health insurance company cry too</h3>
+    <h1>Fight Health Insurance</h1>
+    <div class="pwyw-badge">
+      Pay what you want — $0 if that's what you can do.
+    </div>
+    <div class="hero-body-text">
+      Generate your appeal in minutes. Free for everyone. If we save you time or money, toss a few bucks our way (optional).
+    </div>
+    <div class="cta-container">
+      <a href="{% url 'scan' %}" class="section-btn btn-primary" id="scanlink">
+        Generate an Appeal
+      </a>
+      <a href="{% url 'chat' %}" class="section-btn-secondary btn-secondary" id="chatlink">
+        Chat w/ Doughnut
+      </a>
+    </div>
+    <div class="secondary-cta-container">
+      <a href="{% url 'pro_version' %}" class="section-btn-small" id="professional">
+        Professionals Click Here
+      </a>
+    </div>
+</div>
+    </div>
+</div>
+    </div>
+</section>
+
+<!-- PWYW Panel -->
+<section id="pwyw-panel">
+    <div class="container">
+<div class="row justify-content-center">
+    <div class="col-md-8">
+<h3 class="text-center">Pay What You Want (Optional)</h3>
+<p class="text-center pwyw-description">
+  Your support helps keep this tool free for everyone. Choose an amount that works for you, or use it free!
+</p>
+<div class="pwyw-options">
+    <a href="{% url 'scan' %}" class="pwyw-option pwyw-free">
+<div class="pwyw-amount">$0</div>
+<div class="pwyw-label">I need this free</div>
+    </a>
+    <a href="https://buy.stripe.com/5kA03r2ZwbgebyE7ss" class="pwyw-option" target="_blank" rel="noopener noreferrer">
+<div class="pwyw-amount">$10</div>
+<div class="pwyw-label">Cover an SF coffee</div>
+    </a>
+    <a href="https://buy.stripe.com/5kA03r2ZwbgebyE7ss" class="pwyw-option" target="_blank" rel="noopener noreferrer">
+<div class="pwyw-amount">$25</div>
+<div class="pwyw-label">Help another appeal</div>
+    </a>
+    <a href="https://buy.stripe.com/5kA03r2ZwbgebyE7ss" class="pwyw-option" target="_blank" rel="noopener noreferrer">
+<div class="pwyw-amount">Custom</div>
+<div class="pwyw-label">Choose your amount</div>
+    </a>
+</div>
+    </div>
+</div>
+    </div>
+</section>
+
+<!-- How It Works -->
+<section id="how-it-works">
+    <div class="container">
+<div class="row justify-content-center">
+    <div class="col-md-10">
+<h2 class="text-center section-title-alt">How It Works</h2>
+<div class="how-it-works-steps">
+    <div class="step-card">
+<div class="step-icon">📄</div>
+<h4>1. Upload denial letter</h4>
+<p>Snap a photo or upload your insurance denial letter</p>
+    </div>
+    <div class="step-card">
+<div class="step-icon">🤖</div>
+<h4>2. We draft appeal(s) with AI</h4>
+<p>Our AI generates personalized appeal letters for you</p>
+    </div>
+    <div class="step-card">
+<div class="step-icon">🎉</div>
+<h4>3. You submit &amp; win</h4>
+<p>Review, edit, and submit your appeal with our guidance</p>
+    </div>
+</div>
+<p class="text-center how-it-works-footer">
+  <strong>Free to use. Pay what you want if it helps.</strong>
+</p>
+    </div>
+</div>
+    </div>
+</section>
+
+<!-- Trust Bullets -->
+<section id="trust-section">
+    <div class="container">
+<div class="row justify-content-center">
+    <div class="col-md-8">
+<div class="trust-bullets">
+    <div class="trust-item">
+      <span class="trust-icon">🔒</span>
+      <span class="trust-text">Private by default (OCR on-device option)</span>
+    </div>
+    <div class="trust-item">
+      <span class="trust-icon">💚</span>
+      <span class="trust-text">Free; pay what you can to keep it alive</span>
+    </div>
+    <div class="trust-item">
+      <span class="trust-icon">⚡</span>
+      <span class="trust-text">Generate appeals in minutes, not hours</span>
+    </div>
+</div>
+    </div>
+</div>
     </div>
 </section>
 
 <section id="about">
     <div class="container">
-	<div class="row">
+<div class="row">
 
-	    <div class="col-md-6 col-sm-6">
-		<div class="about-info">
-		    <h2>Hi Friends!</h2>
-		    <div>
-			  Navigating the insurance appeal process methodically is essential. The first step involves scanning your denial letter. This can be done through optical character recognition (OCR) either on <a class="link" href='{% url "scan" %}'>your device/phone (recommended for increased privacy)</a> or on <a class="link" href='{% url "server_side_ocr" %}'>our servers (more accurate)</a>. OCR makes the text understandable to machines, allowing our generative AI model able to produce potential appeals for you to choose from.
+    <div class="col-md-6 col-sm-6">
+<div class="about-info">
+    <h2>Hi Friends!</h2>
+    <div>
+  Navigating the insurance appeal process methodically is essential. The first step involves scanning your denial letter. This can be done through optical character recognition (OCR) either on <a class="link" href='{% url "scan" %}'>your device/phone (recommended for increased privacy)</a> or on <a class="link" href='{% url "server_side_ocr" %}'>our servers (more accurate)</a>. OCR makes the text understandable to machines, allowing our generative AI model able to produce potential appeals for you to choose from.
 <p>
-			<h4>Steps to Overturn Insurance Denial</h4>
-			<ul>
-			  <li>Gather all necessary documents related to the denied claim.</li>
-			  <li>Thoroughly review the denial letter to understand the reasons provided by the insurance company.</li>
-			  <li>Compile pertinent medical records, recommendations, and any additional documentation that supports your case.</li>
-			  <li>Draft a comprehensive appeal letter, addressing each point of denial with factual and supportive evidence. <b>This is the step where we can help the most!</b></li>
-			  <li>Submit the appeal letter along with the compiled documents to the insurance company.</li>
-			  <li>Follow up with the insurance company regularly to track the status of your appeal. They are typically required to respond within reasonable timeframes, but sometimes do not meet that requirement.</li>
-			</ul>
+<h4>Steps to Overturn Insurance Denial</h4>
+<ul>
+  <li>Gather all necessary documents related to the denied claim.</li>
+  <li>Thoroughly review the denial letter to understand the reasons provided by the insurance company.</li>
+  <li>Compile pertinent medical records, recommendations, and any additional documentation that supports your case.</li>
+  <li>Draft a comprehensive appeal letter, addressing each point of denial with factual and supportive evidence. <b>This is the step where we can help the most!</b></li>
+  <li>Submit the appeal letter along with the compiled documents to the insurance company.</li>
+  <li>Follow up with the insurance company regularly to track the status of your appeal. They are typically required to respond within reasonable timeframes, but sometimes do not meet that requirement.</li>
+</ul>
 </p>
-		    </div>
-		</div>
-	    </div>
+    </div>
+</div>
+    </div>
 
-	</div>
+</div>
     </div>
 </section>
 
