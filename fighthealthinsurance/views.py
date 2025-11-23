@@ -1086,8 +1086,7 @@ class PWYWDonationView(View):
             if amount_str == "0":
                 return JsonResponse({
                     "status": "success",
-                    "message": "Thank you for using Fight Health Insurance! We're glad to help.",
-                    "redirect_url": request.GET.get("redirect_url", "/")
+                    "message": "Thank you for using Fight Health Insurance! We're glad to help."
                 })
             
             # Parse amount (remove $ and convert to cents)
