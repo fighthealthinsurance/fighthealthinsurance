@@ -4,7 +4,7 @@ from loguru import logger
 import asyncio
 from django.utils import timezone
 from asgiref.sync import sync_to_async
-from typing import Optional
+from typing import AsyncIterator, Optional
 import re
 from fighthealthinsurance.ml.ml_router import ml_router
 
@@ -38,14 +38,19 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
         pass
 
     async def receive(self, text_data):
+        logger.debug("Waiting for message....")
         data = json.loads(text_data)
         logger.debug("Starting generation of appeals...")
-        aitr = common_view_logic.AppealsBackendHelper.generate_appeals(data)
+        aitr: AsyncIterator[str] = (
+            common_view_logic.AppealsBackendHelper.generate_appeals(data)
+        )
         # We do a try/except here to log since the WS framework swallow exceptions sometimes
         try:
             await asyncio.sleep(1)
             await self.send("\n")
+            count = 0
             async for record in aitr:
+                count = count + 1
                 await asyncio.sleep(0)
                 await self.send("\n")
                 await asyncio.sleep(0)
@@ -53,6 +58,7 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
                 await self.send(record)
                 await asyncio.sleep(0)
                 await self.send("\n")
+            logger.debug(f"All records, {count} in total, sent.")
         except Exception as e:
             logger.opt(exception=True).debug(f"Error sending back appeals: {e}")
             raise e

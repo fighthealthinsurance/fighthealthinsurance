@@ -129,7 +129,7 @@ function connectWebSocket(
         console.error("Max retries reached. Closing connection.");
         done();
       }
-    }, 95000); // 95 seconds timeout
+    }, 240000); // 240 seconds timeout
   };
 
   const startWebSocket = () => {

@@ -76,7 +76,7 @@ class MLRouter(object):
             return self.cheapest("meta-llama/Llama-4-Scout-17B-16E-Instruct")
 
         # Fall back to any available models
-        return self.all_models_by_cost[:3] if self.all_models_by_cost else []
+        return self.all_models_by_cost[:6] if self.all_models_by_cost else []
 
     def full_qa_backends(self, use_external=False) -> list[RemoteModelLike]:
         """
@@ -154,7 +154,7 @@ class MLRouter(object):
         """
         Return models for generating prior authorizations.
         """
-        return self.internal_models_by_cost[:2]
+        return self.internal_models_by_cost[:3]
 
     def get_chat_backends(self, use_external=False) -> list[RemoteModelLike]:
         """

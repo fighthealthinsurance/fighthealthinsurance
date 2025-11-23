@@ -103,7 +103,7 @@ class ChatInterface:
 
     async def _call_llm_with_actions(
         self,
-        model_backend: RemoteModelLike,
+        model_backends: List[RemoteModelLike],
         current_message_for_llm: str,
         previous_context_summary: Optional[str],
         history_for_llm: List[Dict[str, str]],
@@ -119,63 +119,63 @@ class ChatInterface:
             return None, None
         chat = self.chat
         history = history_for_llm
-        full_awaitable_a: Awaitable[Tuple[Optional[str], Optional[str]]] = (
-            model_backend.generate_chat_response(
+        full_calls: List[Awaitable[Tuple[Optional[str], Optional[str]]]] = []
+        call_scores: Dict[Awaitable[Tuple[Optional[str], Optional[str]]], int] = {}
+        for model_backend in model_backends:
+            call = model_backend.generate_chat_response(
                 current_message_for_llm,
                 previous_context_summary=previous_context_summary,
                 history=history,
                 is_professional=not self.is_patient,
                 is_logged_in=is_logged_in,
             )
-        )
-        full_awaitable_b: Awaitable[Tuple[Optional[str], Optional[str]]] = (
-            model_backend.generate_chat_response(
-                current_message_for_llm,
-                previous_context_summary=previous_context_summary,
-                history=history,
-                is_professional=not self.is_patient,
-                is_logged_in=is_logged_in,
-            )
-        )
-        # Possible calls
-        calls: List[Awaitable[Tuple[Optional[str], Optional[str]]]] = [
-            full_awaitable_a,
-            full_awaitable_b,
-        ]
+            full_calls.append(call)
+            call_scores[call] = model_backend.quality() * 20
         # Only add the short history version if we have long history.
+        calls = full_calls
         if len(history) > 20:
             short_history = history_for_llm[
                 -20:
             ]  # Only use the last twenty messages in short history
-            short_awaitable: Awaitable[Tuple[Optional[str], Optional[str]]] = (
-                model_backend.generate_chat_response(
-                    current_message_for_llm,
-                    previous_context_summary=previous_context_summary,
-                    history=short_history,
-                    is_professional=not self.is_patient,
-                    is_logged_in=is_logged_in,
+            for model_backend in model_backends[:2]:
+                short_awaitable: Awaitable[Tuple[Optional[str], Optional[str]]] = (
+                    model_backend.generate_chat_response(
+                        current_message_for_llm,
+                        previous_context_summary=previous_context_summary,
+                        history=short_history,
+                        is_professional=not self.is_patient,
+                        is_logged_in=is_logged_in,
+                    )
                 )
-            )
-            calls.append(short_awaitable)
+                calls.append(short_awaitable)
+                call_scores[short_awaitable] = model_backend.quality()
 
         def score_fn(result, original_task):
             score = 0
-            if original_task == full_awaitable_a or original_task == full_awaitable_b:
+            if original_task in full_calls:
                 score += 100
+            bad_chat_re = r"(The user is a|The assistant is|is helping a patient with their|I hope this message finds you well|It is a conversation between a patient and an assistant)"
+            if result is None:
+                return 0
             # We want a non-empty context
-            if result[1] is not None:
+            if result[1] and len(result[1]) > 5:
                 score += 10
-            if result[0] is not None:
+            if result[0] and len(result[0]) > 5:
                 score += 100
-            for r in tools_regex:
-                if re.match(r, result[0]):
-                    score += 100
+                if re.match(bad_chat_re, result[0]):
+                    score -= 50
+                for r in tools_regex:
+                    if re.match(r, result[0]):
+                        score += 100
+            if result[1] and result[0]:
+                score += call_scores[original_task]
+            logger.debug(f"Scored {result} as {score}")
             return score
 
         response_text, context_part = await best_within_timelimit(
             calls,
             score_fn,
-            timeout=80.0,
+            timeout=30.0,
         )
 
         response_text = response_text or ""
@@ -449,7 +449,7 @@ class ChatInterface:
                     history_for_llm += [{"role": "agent", "content": response_text}]
                     additional_response_text, additional_context_part = (
                         await self._call_llm_with_actions(
-                            model_backend=model_backend,
+                            model_backends,
                             current_message_for_llm=info_text + action_text,
                             previous_context_summary="Medicaid eligibility investigation",
                             history_for_llm=history_for_llm,
@@ -539,7 +539,7 @@ class ChatInterface:
                         history_for_llm += [{"role": "agent", "content": response_text}]
                         additional_response_text, additional_context_part = (
                             await self._call_llm_with_actions(
-                                model_backend,
+                                model_backends,
                                 medicaid_info_text,
                                 "",
                                 history_for_llm,
@@ -663,7 +663,7 @@ class ChatInterface:
                         )
                         additional_response_text, additional_context_part = (
                             await self._call_llm_with_actions(
-                                model_backend,
+                                model_backends,
                                 pubmed_context_str,
                                 previous_context_summary,
                                 history_for_llm,
@@ -852,26 +852,21 @@ class ChatInterface:
         # **medicaid_info {"state": "StateName", "topic": "", "limit": 5}**
         # (The double asterisks around the entire tool call are required)
 
-        for model_backend in models:
-            try:
-                response_text, context_part = await self._call_llm_with_actions(
-                    model_backend,
-                    llm_input_message,
-                    current_llm_context,
-                    history_for_llm,  # Pass current history
-                    is_logged_in=(not is_trial_professional) and not is_patient,
-                )
+        try:
+            response_text, context_part = await self._call_llm_with_actions(
+                models,
+                llm_input_message,
+                current_llm_context,
+                history_for_llm,  # Pass current history
+                is_logged_in=(not is_trial_professional) and not is_patient,
+            )
 
-                if response_text and response_text.strip():
-                    final_response_text = response_text.strip()
-                    final_context_part = context_part
-                    break
-            except Exception as e:
-                await asyncio.sleep(0.1)
-                model_name = getattr(model_backend, "model_name", "Unknown Model")
-                logger.opt(exception=True).debug(
-                    f"Error with model {model_name} during chat generation: {e}"
-                )
+            if response_text and response_text.strip():
+                final_response_text = response_text.strip()
+                final_context_part = context_part
+        except Exception as e:
+            await asyncio.sleep(0.1)
+            logger.opt(exception=True).debug(f"Error with model on chat {models}")
 
         if final_response_text:
             if not chat.chat_history:

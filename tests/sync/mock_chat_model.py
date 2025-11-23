@@ -13,6 +13,9 @@ class MockChatModel:
             str({"summary": "Standard mock response context."}),
         )
 
+    def quality(self):
+        return 100
+
     def set_next_response(self, response_text: str, context_summary: str):
         """
         Set the next response that the mock model will return.
