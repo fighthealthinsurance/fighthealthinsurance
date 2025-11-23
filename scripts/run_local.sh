@@ -74,6 +74,20 @@ else
   echo 'No connection to _new_ kube vllm health svc'
 fi
 
+if ping -c1 -W1 10.69.200.180 >/dev/null 2>&1; then
+  echo "backup reachable"
+  export HEALTH_BACKUP_BACKEND_PORT=8000
+  export HEALTH_BACKUP_BACKEND_HOST=10.69.200.180
+  export HEALTH_BACKUP_BACKEND_MODEL="/TotallyLegitCo/fighthealthinsurance_model_v0.5"
+else
+  echo "backup not reachable."
+fi
+
+if ping -c1 -W1 scrump >/dev/null 2>&1; then
+  echo "alpha reachable"
+  export ALPHA_HEALTH_BACKEND_HOST=scrumpt
+fi
+
 python manage.py migrate
 python manage.py loaddata initial
 python manage.py loaddata followup

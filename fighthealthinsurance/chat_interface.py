@@ -28,7 +28,30 @@ from fighthealthinsurance.models import (
 from fighthealthinsurance.pubmed_tools import PubMedTools
 from fighthealthinsurance import settings
 from fighthealthinsurance.prompt_templates import get_intro_template
-from fighthealthinsurance.utils import best_within_timelimit_static
+from fighthealthinsurance.utils import best_within_timelimit
+
+# Tool call regexes
+pubmed_query_terms_regex = r"[\[\*]{0,4}pubmed[ _]?query:{0,1}\s*(.*?)\s*[\*\]]{0,4}"
+# Updated regex to match both formats: **medicaid_info {JSON}** and medicaid_info {JSON}
+medicaid_info_lookup_regex = r"(?:\*\*)?medicaid_info\s*(\{[^}]*\})\s*(?:\*\*)?"
+# Medicaid eligibility info
+medicaid_eligibility_regex = (
+    r".*?(?:\*\*)?medicaid_eligibility\s*(\{[^}]*\})\s*(?:\*\*)?"
+)
+# Process the special tokens for Appeals and PriorAuthRequests
+create_or_update_appeal_regex = (
+    r"^\s*\*{0,4}create_or_update_appeal\*{0,4}\s*(\{.*\})\s*$"
+)
+create_or_update_prior_auth_regex = (
+    r"^\s*\*{0,4}create_or_update_prior_auth\*{0,4}\s*(\{.*\})\s*$"
+)
+tools_regex = [
+    pubmed_query_terms_regex,
+    medicaid_info_lookup_regex,
+    medicaid_eligibility_regex,
+    create_or_update_appeal_regex,
+    create_or_update_prior_auth_regex,
+]
 
 
 class ChatInterface:
@@ -96,7 +119,16 @@ class ChatInterface:
             return None, None
         chat = self.chat
         history = history_for_llm
-        full_awaitable: Awaitable[Tuple[Optional[str], Optional[str]]] = (
+        full_awaitable_a: Awaitable[Tuple[Optional[str], Optional[str]]] = (
+            model_backend.generate_chat_response(
+                current_message_for_llm,
+                previous_context_summary=previous_context_summary,
+                history=history,
+                is_professional=not self.is_patient,
+                is_logged_in=is_logged_in,
+            )
+        )
+        full_awaitable_b: Awaitable[Tuple[Optional[str], Optional[str]]] = (
             model_backend.generate_chat_response(
                 current_message_for_llm,
                 previous_context_summary=previous_context_summary,
@@ -106,9 +138,10 @@ class ChatInterface:
             )
         )
         # Possible calls
-        calls: Dict[Awaitable[Tuple[Optional[str], Optional[str]]], float] = {
-            full_awaitable: 100.0,
-        }
+        calls: List[Awaitable[Tuple[Optional[str], Optional[str]]]] = [
+            full_awaitable_a,
+            full_awaitable_b,
+        ]
         # Only add the short history version if we have long history.
         if len(history) > 20:
             short_history = history_for_llm[
@@ -123,10 +156,26 @@ class ChatInterface:
                     is_logged_in=is_logged_in,
                 )
             )
-            calls[short_awaitable] = 1.0
-        response_text, context_part = await best_within_timelimit_static(
+            calls.append(short_awaitable)
+
+        def score_fn(result, original_task):
+            score = 0
+            if original_task == full_awaitable_a or original_task == full_awaitable_b:
+                score += 100
+            # We want a non-empty context
+            if result[1] is not None:
+                score += 10
+            if result[0] is not None:
+                score += 100
+            for r in tools_regex:
+                if re.match(r, result[0]):
+                    score += 100
+            return score
+
+        response_text, context_part = await best_within_timelimit(
             calls,
-            timeout=60.0,
+            score_fn,
+            timeout=80.0,
         )
 
         response_text = response_text or ""
@@ -134,27 +183,11 @@ class ChatInterface:
         logger.debug(f"Using best result {response_text:.20}...")
 
         pubmed_context_str = ""
-        pubmed_query_terms_regex = (
-            r"[\[\*]{0,4}pubmed[ _]?query:{0,1}\s*(.*?)\s*[\*\]]{0,4}"
-        )
-        # Updated regex to match both formats: **medicaid_info {JSON}** and medicaid_info {JSON}
-        medicaid_info_lookup_regex = r"(?:\*\*)?medicaid_info\s*(\{[^}]*\})\s*(?:\*\*)?"
-        # Medicaid eligibility info
-        medicaid_eligibility_regex = (
-            r".*?(?:\*\*)?medicaid_eligibility\s*(\{[^}]*\})\s*(?:\*\*)?"
-        )
 
         if not response_text:
             logger.debug("Got empty response from LLM")
             return None, None
 
-        # Process the special tokens for Appeals and PriorAuthRequests
-        create_or_update_appeal_regex = (
-            r"^\s*\*{0,4}create_or_update_appeal\*{0,4}\s*(\{.*\})\s*$"
-        )
-        create_or_update_prior_auth_regex = (
-            r"^\s*\*{0,4}create_or_update_prior_auth\*{0,4}\s*(\{.*\})\s*$"
-        )
         # Use relative links
         domain = ""
 
@@ -370,7 +403,9 @@ class ChatInterface:
                             pass
                 cleaned_response = cleaned_response.strip()
                 if len(cleaned_response) > 1:
-                    await self.send_status_message(f"Looking up medicaid eligibility, please wait. Remaining information: {cleaned_response}")
+                    await self.send_status_message(
+                        f"Looking up medicaid eligibility, please wait. Remaining information: {cleaned_response}"
+                    )
                 if loaded is None:
                     loaded = {}
                 if not isinstance(loaded, dict):
@@ -415,9 +450,9 @@ class ChatInterface:
                     additional_response_text, additional_context_part = (
                         await self._call_llm_with_actions(
                             model_backend=model_backend,
-                            current_message_for_llm = info_text + action_text,
-                            previous_context_summary = "Medicaid eligibility investigation",
-                            history_for_llm = history_for_llm,
+                            current_message_for_llm=info_text + action_text,
+                            previous_context_summary="Medicaid eligibility investigation",
+                            history_for_llm=history_for_llm,
                             depth=depth + 1,
                             is_logged_in=is_logged_in,
                             is_professional=is_professional,

@@ -1377,7 +1377,9 @@ class RemoteOpenLike(RemoteModel):
                             f"***WARNING*** Response {response} on {self} looks _bad_"
                         )
         except aiohttp.client_exceptions.ContentTypeError:
-            logger.debug(f"Unexpected content type response (often missing model) on {api_base}")
+            logger.debug(
+                f"Unexpected content type response (often missing model) on {api_base}"
+            )
         except aiohttp.client_exceptions.ClientConnectorError:
             logger.debug(f"Network error calling {api_base}")
         except Exception as e:
@@ -1839,7 +1841,7 @@ class RemoteHealthInsurance(RemoteFullOpenLike):
             "HEALTH_BACKEND_MODEL", "TotallyLegitCo/fighthealthinsurance_model_v0.5"
         )
         return [
-            ModelDescription(cost=1, name="fhi", internal_name=model_name),
+            ModelDescription(cost=1, name="fhi-legacy", internal_name=model_name),
         ]
 
 
@@ -1888,12 +1890,58 @@ class NewRemoteInternal(RemoteFullOpenLike):
     def models(cls) -> List[ModelDescription]:
         model_path = os.getenv(
             "NEW_HEALTH_BACKEND_MODEL",
-            "/models/fhi-2025-sep-q8-vllm-compressed",
+            "/models/fhi-2025-may-0.3-float16-q8-vllm-compressed",
         )
         # Extract a friendly name from the model path
         model_name = model_path.split("/")[-1] if "/" in model_path else model_path
         return [
             ModelDescription(cost=2, name=model_name, internal_name=model_path),
+        ]
+
+
+class AlphaRemoteInternal(RemoteFullOpenLike):
+    def __init__(self, model: str, dual_mode: bool = True):
+        self.port = os.getenv("ALPHA_HEALTH_BACKEND_PORT", "8000")
+        self.host = os.getenv("ALPHA_HEALTH_BACKEND_HOST")
+        if self.host is None:
+            raise Exception("Can not construct New FHI backend without a host")
+        self.url = None
+        if self.port is not None and self.host is not None:
+            self.url = f"http://{self.host}:{self.port}/v1"
+        else:
+            logger.debug(f"Error setting up remote health {self.host}:{self.port}")
+        self.backup_url = None
+        super().__init__(
+            self.url,
+            backup_api_base=self.backup_url,
+            token="",
+            model=model,
+            max_len=4096 * 30,
+            dual_mode=dual_mode,
+        )
+
+    @property
+    def external(self):
+        return False
+
+    @property
+    def slow(self):
+        return False
+
+    @property
+    def supports_system(self):
+        return True
+
+    @classmethod
+    def models(cls) -> List[ModelDescription]:
+        model_path = os.getenv(
+            "ALPHA_HEALTH_BACKEND_MODEL",
+            "/models/fhi-2025-sep-q8-vllm-compressed",
+        )
+        # Extract a friendly name from the model path
+        model_name = model_path.split("/")[-1] if "/" in model_path else model_path
+        return [
+            ModelDescription(cost=3, name=model_name, internal_name=model_path),
         ]
 
 

@@ -565,7 +565,7 @@ class Prod(Base):
     STRIPE_LIVE_MODE = True
 
     @property
-    def SECRET_KEY(self): # type: ignore
+    def SECRET_KEY(self):  # type: ignore
         return os.getenv("SECRET_KEY", "")
 
     @property
@@ -577,7 +577,7 @@ class Prod(Base):
         return os.getenv("STRIPE_LIVE_PUBLISHABLE_KEY", "")
 
     @property
-    def DATABASES(self): # type: ignore
+    def DATABASES(self):  # type: ignore
         mysql_engine = "django_prometheus.db.backends.mysql"
         postgres_engine = "django_prometheus.db.backends.postgresql"
         return {

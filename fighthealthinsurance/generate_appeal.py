@@ -601,7 +601,8 @@ class AppealGenerator(object):
                         prof_pov=prof_pov,
                     )
                     logger.debug(f"Got back {result} for {model_name} on {model}")
-                    return result
+                    if result is not None:
+                        return result
                 except Exception as e:
                     logger.debug(f"Backend {model} failed {e}")
             logger.debug(f"All backends for {model_name} failed")
@@ -681,12 +682,14 @@ class AppealGenerator(object):
         plan_context = denial.plan_context
         backup_calls: List[Any] = []
         # Find any FHI model dynamically
-        fhi_model_names = [name for name in ml_router.models_by_name.keys() if name.startswith("fhi-")]
-        fhi_model_name = fhi_model_names[0] if fhi_model_names else "fhi"
-        
+        fhi_model_names = [
+            name for name in ml_router.models_by_name.keys() if name.startswith("fhi-")
+        ]
+
+        # Call all fhi based models.
         calls = [
             {
-                "model_name": "fhi",
+                "model_name": model_name,
                 "prompt": open_prompt,
                 "patient_context": medical_context,
                 "plan_context": plan_context,
@@ -694,17 +697,8 @@ class AppealGenerator(object):
                 "pubmed_context": pubmed_context,
                 "ml_citations_context": ml_citations_context,
                 "prof_pov": prof_pov,
-            },
-            {
-                "model_name": fhi_model_name,
-                "prompt": open_prompt,
-                "patient_context": medical_context,
-                "plan_context": plan_context,
-                "infer_type": "full",
-                "pubmed_context": pubmed_context,
-                "ml_citations_context": ml_citations_context,
-                "prof_pov": prof_pov,
-            },
+            }
+            for model_name in fhi_model_names
         ]
 
         if denial.use_external:
@@ -758,7 +752,7 @@ class AppealGenerator(object):
             calls.extend(
                 [
                     {
-                        "model_name": "fhi",
+                        "model_name": model_name,
                         "prompt": open_medically_necessary_prompt,
                         "patient_context": medical_context,
                         "infer_type": "medically_necessary",
@@ -766,7 +760,8 @@ class AppealGenerator(object):
                         "pubmed_context": pubmed_context,
                         "ml_citations_context": ml_citations_context,
                         "prof_pov": prof_pov,
-                    },
+                    }
+                    for model_name in fhi_model_names
                 ]
             )
             if denial.use_external:
