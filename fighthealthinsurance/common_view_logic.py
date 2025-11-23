@@ -1603,6 +1603,7 @@ class AppealsBackendHelper:
 
         # Initial yield of newline.
         yield "\n"
+
         # Helper format methods
         async def format_response(response: dict[str, str]) -> str:
             """
@@ -1717,7 +1718,6 @@ class AppealsBackendHelper:
                     {"id": str(appeal.id), "content": appeal.appeal_text}
                 )
                 yield await format_response(existing_appeal_dict)
-
 
         non_ai_appeals: List[str] = list(
             map(

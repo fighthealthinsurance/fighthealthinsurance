@@ -844,7 +844,9 @@ class AppealGenerator(object):
             appeals = itertools.chain([appeals.__next__()], appeals)
             logger.debug(f"First pulled off {appeals}")
         except StopIteration:
-            logger.warning(f"Adding backup calls {backup_calls} first group not success.")
+            logger.warning(
+                f"Adding backup calls {backup_calls} first group not success."
+            )
             appeals = as_available_nested(make_async_model_calls(backup_calls))
         logger.debug(f"Sending back {appeals}")
         return appeals
