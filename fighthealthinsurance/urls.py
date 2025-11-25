@@ -60,6 +60,11 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         csrf_exempt(views.CompletePaymentView.as_view()),
         name="complete_payment",
     ),
+    path(
+        "v0/pwyw/checkout",
+        views.create_pwyw_checkout,
+        name="pwyw_checkout",
+    ),
     re_path("timbit/sentry-debug/(?P<path>.+)", trigger_error, name="fake_fetch_url"),
     path("timbit/charts/", include(("charts.urls", "charts"), namespace="charts")),
     path("timbit/admin/", admin.site.urls),

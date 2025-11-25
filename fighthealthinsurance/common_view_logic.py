@@ -1181,15 +1181,20 @@ class DenialCreatorHelper:
         logger.debug(
             f"Collecting tasks for {denial_id} with {len(optional_awaitables)} optional and {len(required_awaitables)} required tasks."
         )
-        async for item in execute_critical_optional_fireandforget(
-            optional=optional_awaitables,
-            required=required_awaitables,
-            fire_and_forget=[],
-            done_record=("Extraction complete", None),
-            timeout=75,
-        ):
-            if item:
-                yield item[0]
+        try:
+            async for item in execute_critical_optional_fireandforget(
+                optional=optional_awaitables,
+                required=required_awaitables,
+                fire_and_forget=[],
+                done_record=("Extraction complete", None),
+                timeout=75,
+            ):
+                if item:
+                    yield item[0]
+        except Exception as e:
+            logger.opt(exception=True).debug(
+                f"Error during extraction for denial {denial_id}: {e}"
+            )
 
     @classmethod
     async def build_speculative_context(cls, denial_id: int) -> None:

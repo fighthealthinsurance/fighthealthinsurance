@@ -66,10 +66,21 @@ class StageFaxView(generic.FormView):
         )
         stripe.api_key = settings.STRIPE_API_SECRET_KEY
 
+        # Get fax amount from form (PWYW)
+        fax_amount = int(form_data.get("fax_amount", 0))
+
+        if fax_amount == 0:
+            # Free fax - send immediately
+            common_view_logic.SendFaxHelper.remote_send_fax(
+                uuid=staged.uuid,
+                hashed_email=staged.hashed_email,
+            )
+            return render(self.request, "fax_thankyou.html")
+
         # Check if the product already exists
         (product_id, price_id) = get_or_create_price(
-            product_name="Appeal Fax -- New",
-            amount=500,
+            product_name=f"Appeal Fax - ${fax_amount}",
+            amount=fax_amount * 100,  # Convert to cents
             currency="usd",
             recurring=False,
         )

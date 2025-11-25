@@ -1,7 +1,6 @@
 (function(){
   function initPWYWForms(){
     document.querySelectorAll('.pwyw-form').forEach(form => {
-      const stripeLink = form.getAttribute('data-stripe-link');
       const submitBtn = form.querySelector('[data-pwyw-submit]');
       const thanks = form.querySelector('.pwyw-thanks');
       const customRadio = form.querySelector('input[type=radio][value=custom]');
@@ -21,7 +20,7 @@
         if(customRadio) customRadio.checked = true;
       });
 
-      submitBtn.addEventListener('click', () => {
+      submitBtn.addEventListener('click', async () => {
         const amt = currentAmount();
         if(amt <= 0){
           // Free usage path
@@ -32,15 +31,39 @@
           submitBtn.blur();
           return;
         }
-        // For now redirect to single Stripe link (generic pay-what-you-want)
+
+        // Create Stripe checkout session via backend
         try {
-          window.open(stripeLink, '_blank','noopener');
-          if(thanks){
-            thanks.hidden = false;
-            thanks.textContent = 'Thank you! You can keep generating appeals.';
+          submitBtn.disabled = true;
+          submitBtn.textContent = 'Processing...';
+
+          const response = await fetch('/v0/pwyw/checkout', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ amount: amt })
+          });
+
+          const data = await response.json();
+
+          if(data.success && data.url){
+            window.location.href = data.url;
+          } else if(data.success && data.message){
+            if(thanks){
+              thanks.hidden = false;
+              thanks.textContent = data.message;
+            }
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Support (optional)';
+          } else {
+            throw new Error(data.error || 'Unknown error');
           }
         } catch(e){
-          console.error('Stripe redirect error', e);
+          console.error('PWYW checkout error', e);
+          alert('Sorry, there was an error processing your donation. Please try again.');
+          submitBtn.disabled = false;
+          submitBtn.textContent = 'Support (optional)';
         }
       });
     });
