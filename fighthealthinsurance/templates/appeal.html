@@ -59,7 +59,7 @@ Huzzah! We have a <b>draft</b> appeal for you to edit bellow:
     <label><input type="radio" name="fax_pwyw" value="5">$5 <small>Original price</small></label>
     <label><input type="radio" name="fax_pwyw" value="10">$10 <small>Keep lights on</small></label>
     <label><input type="radio" name="fax_pwyw" value="custom">Custom
-      <input type="number" min="1" step="1" class="fax-custom-input" placeholder="Amount" aria-label="Custom fax amount">
+      <input type="number" min="1" max="1000" step="1" class="fax-custom-input" name="fax_amount_custom" placeholder="Amount" aria-label="Custom fax amount">
     </label>
   </div>
   <input type="hidden" name="fax_amount" value="0">

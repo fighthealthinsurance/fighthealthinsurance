@@ -4,6 +4,7 @@ from typing import *
 import json
 
 from django.conf import settings
+from django.http import HttpResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.views import View, generic
@@ -66,8 +67,34 @@ class StageFaxView(generic.FormView):
         )
         stripe.api_key = settings.STRIPE_API_SECRET_KEY
 
-        # Get fax amount from form (PWYW)
-        fax_amount = int(form_data.get("fax_amount", 0))
+        # Get fax amount from form (PWYW) with validation
+        # Check both fax_amount (set by JS) and fax_amount_custom (fallback if JS disabled)
+        fax_amount_raw = form_data.get("fax_amount", 0)
+        fax_pwyw_selection = self.request.POST.get("fax_pwyw", "0")
+        
+        # Fallback: if custom is selected but fax_amount is 0, use fax_amount_custom
+        if fax_pwyw_selection == "custom" and str(fax_amount_raw) == "0":
+            fax_amount_raw = form_data.get("fax_amount_custom", 0)
+            logger.info("Using fax_amount_custom fallback (JavaScript may be disabled)")
+        
+        try:
+            fax_amount = int(fax_amount_raw)
+        except (ValueError, TypeError):
+            logger.warning(
+                f"Invalid fax_amount received: {fax_amount_raw} (not a valid integer)"
+            )
+            form.add_error(
+                "fax_amount",
+                "Invalid fax amount. Please enter a number between 0 and 1000.",
+            )
+            return self.form_invalid(form)
+        
+        if not (0 <= fax_amount <= 1000):
+            logger.warning(
+                f"Invalid fax_amount received: {fax_amount} (out of valid range 0-1000)"
+            )
+            form.add_error("fax_amount", "Fax amount must be between 0 and 1000.")
+            return self.form_invalid(form)
 
         if fax_amount == 0:
             # Free fax - send immediately

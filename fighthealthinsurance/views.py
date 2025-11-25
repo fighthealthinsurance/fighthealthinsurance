@@ -1110,6 +1110,11 @@ def create_pwyw_checkout(request):
             mode="payment",
             success_url=request.build_absolute_uri("/") + "?donation=success",
             cancel_url=request.build_absolute_uri("/"),
+            metadata={
+                "payment_type": "donation",
+                "donation_type": "pwyw",
+                "source": "checkout",
+            },
         )
 
         return HttpResponse(
