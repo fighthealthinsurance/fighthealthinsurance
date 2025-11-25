@@ -93,6 +93,9 @@ spec:
       containers:
         - image: ${FHI_BASE}:${FHI_VERSION}
           name: totallylegitco
+          env:
+          - name: BRB
+            value: BRB
           envFrom:
           - secretRef:
               name: fight-health-insurance-secret

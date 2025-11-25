@@ -256,7 +256,7 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
 # Don't break people already in the flow but "drain" the people by replacing scan & index w/ BRB view.
 if os.getenv("BRB") == "BRB":
     urlpatterns += [
-        path(r"", views.BRB.as_view(), name="brb"),
+        path(r"", views.BRB.as_view(), name="root"),
     ]
 else:
     urlpatterns += [
@@ -266,7 +266,10 @@ else:
                 cache_page(60 * 60 * 2)(views.IndexView.as_view())
             ),
             name="root",
-        ),
+        )]
+
+# For people in flow
+urlpatterns += [
         path(
             "scan",
             sensitive_post_parameters("email")(views.InitialProcessView.as_view()),
