@@ -1910,8 +1910,8 @@ class AppealsBackendHelper:
 
         new = 0
         async for i in interleaved:
-            new = new + 1
-            logger.debug(f"Yielding new appeal: {i}")
+            if i and len(i) > 10:
+                new = new + 1
             yield i
         logger.debug(f"All appeals sent {new} and {old}")
 
