@@ -1,0 +1,30 @@
+<div class="pwyw-panel" aria-labelledby="pwyw-heading">
+  <h5 id="pwyw-heading" class="pwyw-title">Pay what you want (optional)</h5>
+  <p class="pwyw-subcopy">Free for everyone. $0 totally fine. If we save you time or money, you can toss a few bucks our way.</p>
+  <form class="pwyw-form" onsubmit="return false" data-stripe-link="https://buy.stripe.com/5kA03r2ZwbgebyE7ss">
+    <div class="pwyw-options">
+      <label class="pwyw-option">
+        <input type="radio" name="pwyw_amount" value="0" checked>
+        <span>$0 <small>I need this free</small></span>
+      </label>
+      <label class="pwyw-option">
+        <input type="radio" name="pwyw_amount" value="10">
+        <span>$10 <small>Cover an SF coffee</small></span>
+      </label>
+      <label class="pwyw-option">
+        <input type="radio" name="pwyw_amount" value="25">
+        <span>$25 <small>Help another appeal</small></span>
+      </label>
+      <label class="pwyw-option custom">
+        <span class="custom-wrapper">
+          <input type="radio" name="pwyw_amount" value="custom" aria-label="Custom amount">
+          <input type="number" min="1" step="1" class="pwyw-custom-input" placeholder="Custom" aria-label="Enter custom amount">
+        </span>
+      </label>
+    </div>
+    <div class="pwyw-actions">
+      <button type="button" class="btn-green pwyw-submit" data-pwyw-submit>Support (optional)</button>
+      <span class="pwyw-thanks" aria-live="polite" hidden>Thanks! You can generate your appeal any time.</span>
+    </div>
+  </form>
+</div>
