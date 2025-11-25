@@ -271,31 +271,33 @@ else:
                 cache_page(60 * 60 * 2)(views.IndexView.as_view())
             ),
             name="root",
-        )]
+        )
+    ]
 
 # For people in flow
 urlpatterns += [
-        path(
-            "scan",
-            sensitive_post_parameters("email")(views.InitialProcessView.as_view()),
-            name="scan",
-        ),
-        path(
-            "chat",
-            sensitive_post_parameters()(views.chat_interface_view),
-            name="chat",
-        ),
-        path(
-            "chat/",
-            sensitive_post_parameters()(views.chat_interface_view),
-            name="chat-alt",
-        ),
-        path(
-            "chat-consent",
-            sensitive_post_parameters()(views.ChatUserConsentView.as_view()),
-            name="chat_consent",
-        ),
-    ]
+    path(
+        "scan",
+        sensitive_post_parameters("email")(views.InitialProcessView.as_view()),
+        name="scan",
+    ),
+    path(
+        "chat",
+        sensitive_post_parameters()(views.chat_interface_view),
+        name="chat",
+    ),
+    path(
+        "chat/",
+        sensitive_post_parameters()(views.chat_interface_view),
+        name="chat-alt",
+    ),
+    path(
+        "chat-consent",
+        sensitive_post_parameters()(views.ChatUserConsentView.as_view()),
+        name="chat_consent",
+    ),
+    path("cookies/", include("cookie_consent.urls")),
+]
 
 
 urlpatterns += staticfiles_urlpatterns()

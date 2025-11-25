@@ -71,12 +71,12 @@ class StageFaxView(generic.FormView):
         # Check both fax_amount (set by JS) and fax_amount_custom (fallback if JS disabled)
         fax_amount_raw = form_data.get("fax_amount", 0)
         fax_pwyw_selection = self.request.POST.get("fax_pwyw", "0")
-        
+
         # Fallback: if custom is selected but fax_amount is 0, use fax_amount_custom
         if fax_pwyw_selection == "custom" and str(fax_amount_raw) == "0":
             fax_amount_raw = form_data.get("fax_amount_custom", 0)
             logger.info("Using fax_amount_custom fallback (JavaScript may be disabled)")
-        
+
         try:
             fax_amount = int(fax_amount_raw)
         except (ValueError, TypeError):
@@ -88,7 +88,7 @@ class StageFaxView(generic.FormView):
                 "Invalid fax amount. Please enter a number between 0 and 1000.",
             )
             return self.form_invalid(form)
-        
+
         if not (0 <= fax_amount <= 1000):
             logger.warning(
                 f"Invalid fax_amount received: {fax_amount} (out of valid range 0-1000)"
