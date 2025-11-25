@@ -91,6 +91,22 @@ a.link:hover::after {
 .hero-tagline {margin-bottom: .25rem; font-weight: 500;}
 .hero-subcopy {font-size: 1.05rem; line-height: 1.5rem; margin: .75rem 0 1.25rem; color: #f3f3f3;}
 
+/* Hero Primary CTA - Large button above other CTAs */
+.hero-primary-cta {
+    font-size: 1.3rem !important;
+    font-weight: 700 !important;
+    padding: 1rem 2.5rem !important;
+    margin: 1rem 0 !important;
+    box-shadow: 0 6px 20px rgba(165, 196, 34, 0.4) !important;
+    border: none !important;
+    transform: scale(1);
+    transition: transform 0.2s ease, box-shadow 0.2s ease !important;
+}
+.hero-primary-cta:hover {
+    transform: scale(1.05);
+    box-shadow: 0 8px 28px rgba(165, 196, 34, 0.6) !important;
+}
+
 .pwyw-pill {
     display: inline-block;
     background: linear-gradient(90deg,#ADD100,#7B920A);
@@ -348,6 +364,90 @@ a.link:hover::after {
 #id_address, #id_business_name{
     width: 30em;
 }
+/* Featured In Section */
+.featured-section {
+    padding: 3rem 0;
+    background: linear-gradient(135deg, rgba(165, 196, 34, 0.05) 0%, rgba(123, 146, 10, 0.08) 100%);
+}
+.featured-title {
+    text-align: center;
+    font-size: 1.8rem;
+    font-weight: 600;
+    margin-bottom: 2rem;
+    color: #333;
+}
+.featured-row {
+    justify-content: center;
+    align-items: center;
+}
+.featured-row-highlight {
+    box-shadow: rgba(240, 46, 170, 0.4) 0px 5px, rgba(240, 46, 170, 0.3) 0px 10px, rgba(240, 46, 170, 0.2) 0px 15px, rgba(240, 46, 170, 0.1) 0px 20px, rgba(240, 46, 170, 0.05) 0px 25px;
+    border-radius: 8px;
+    padding: 1rem;
+}
+
+/* Testimonials Section */
+.testimonials-section {
+    padding: 3rem 0 4rem;
+    background: #f9f9f9;
+}
+.testimonials-title {
+    text-align: center;
+    font-size: 1.8rem;
+    font-weight: 600;
+    margin-bottom: 2.5rem;
+    color: #333;
+}
+.testimonials-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1.5rem;
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 1rem;
+}
+.testimonial-card {
+    background: #fff;
+    padding: 1.5rem;
+    border-radius: 12px;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+    border-left: 4px solid #a5c422;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.testimonial-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
+}
+.testimonial-quote {
+    font-size: 0.95rem;
+    line-height: 1.6;
+    color: #444;
+    margin-bottom: 1rem;
+    font-style: italic;
+}
+.testimonial-quote::before {
+    content: '"';
+    font-size: 2rem;
+    color: #a5c422;
+    line-height: 0;
+    margin-right: 0.25rem;
+}
+.testimonial-author {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #666;
+    text-align: right;
+}
+
+@media (max-width: 768px) {
+    .testimonials-grid {
+        grid-template-columns: 1fr;
+    }
+    .featured-section, .testimonials-section {
+        padding: 2rem 0;
+    }
+}
+
 /* Handle form stacking v.s. non-stacking on mobile v.s. desktop. */
 
 /* Form Prompts Layout */
