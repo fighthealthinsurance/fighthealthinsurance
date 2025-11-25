@@ -11,35 +11,130 @@
     <div class="row">
 	<div class="item item-first">
 	    <div class="caption d-flex flex-column align-items-center justify-content-center">
-		<div class="col-md-offset-1 col-md-10">
-		    <h3>Make your health insurance company cry too</h3>
-		    <h1>Fight Health Insurance</h1>
-		    <br>
-		    We'll help with writing your appeal to fight the health insurance denial.
-			While an appeal is not always the first step in the appeal process, we'll guide you through options to fight back against health insurance denials.
-			Most health plans are required to offer internal and external appeals and while they often make it confusing, we can help.
-		    <br>
-		    <div class="pro-version-text">
-		      <a class="link" href="{% url 'pro_version' %}">If you're a <b>healthcare professional</b> (or related), sign up for updates on our pro-version.</a><br>
-		      You can also <a class="link" href="https://buy.stripe.com/5kA03r2ZwbgebyE7ss" target="_blank" rel="noopener noreferrer">support our development if you want (not required).</a>
-		    </div>
-		    <br>
-		    <a href="{% url 'scan' %}" class="section-btn btn btn-default smoothScroll" id="scanlink">
-		      Generate a Health Insurance Appeal with AI
-		    </a>
-		    <a href="{% url 'chat' %}" class="section-btn btn btn-default smoothScroll" id="chatlink">
-		      Chat
-		    </a>
-			<br>
-		    <a href="{% url 'pro_version' %}" class="section-btn btn btn-default smoothScroll" id="professional">
-		      Professionals Click Here
-		    </a>
-		    <a href="https://buy.stripe.com/5kA03r2ZwbgebyE7ss" class="section-btn btn btn-default smoothScroll" id="support-our-dev-button" target="_blank" rel="noopener noreferrer">
-		      Support our Development (optional)
-		    </a>
+		<div class="hero-inner">
+		  <h3 class="hero-tagline">Make your health insurance company cry too</h3>
+		      <h1 class="hero-headline">Fight Health Insurance</h1>
+		      <div class="pwyw-pill">Pay what you want — $0 if that’s what you can do.</div>
+		      <p class="hero-subcopy">Generate your appeal in minutes. Free for everyone. If we save you time or money, feel free to toss a few bucks our way (totally optional).</p>		      <a href="{% url 'scan' %}" class="section-btn btn btn-default smoothScroll hero-primary-cta" id="scanlink-hero">Generate Health Insurance Appeal Now</a>		      <div class="hero-cta-group">
+		        <a href="{% url 'scan' %}" class="section-btn btn btn-default smoothScroll primary-cta" id="scanlink">Generate an Appeal</a>
+		        <a href="{% url 'chat' %}" class="btn btn-outline-green smoothScroll secondary-cta" id="chatlink">Chat</a>
+		        <a href="{% url 'pro_version' %}" class="btn btn-outline-green smoothScroll tertiary-cta" id="professional">Professionals</a>
+		      </div>
+		      <ul class="trust-bullets">
+		        <li>Private by default (on-device OCR option)</li>
+		        <li>Free; pay what you can to keep it alive</li>
+		        <li>Friendly guidance & no dark patterns</li>
+		      </ul>
+		  {% include 'partials/pwyw_panel.html' %}
+		  <div class="how-it-works-intro">How it works:</div>
+		  <section id="how-it-works" class="how-it-works">
+		        <div class="how-step">
+		          <div class="icon" aria-hidden="true">📄</div>
+		          <h6>Upload denial letter</h6>
+		          <p>Snap a pic or use on-device OCR for privacy.</p>
+		        </div>
+		        <div class="how-step">
+		          <div class="icon" aria-hidden="true">🤖</div>
+		          <h6>We draft appeals</h6>
+		          <p>AI creates multiple drafts you can edit.</p>
+		        </div>
+		        <div class="how-step">
+		          <div class="icon" aria-hidden="true">✅</div>
+		          <h6>You submit & fight back</h6>
+		          <p>Guidance + options. Free. Pay if it helps.</p>
+		        </div>
+		      </section>
+		  <div class="pro-version-text">
+		    <a class="link" href="{% url 'pro_version' %}">Healthcare professional? Get updates on our pro version.</a>
+		  </div>
 		</div>
 	    </div>
 	</div>
+    </div>
+</section>
+
+<!-- AS FEATURED IN -->
+<section id="featured" class="featured-section">
+    <div class="container">
+        <h5 class="featured-title">As Featured In</h5>
+        <div class="row no-gutters">
+            <div class="col-md-12">
+                <div class="row no-gutters featured-row">
+                    <div class="col-md-2 text-center p-2">
+                        <a href="https://www.fastcompany.com/91209422/if-your-health-insurance-denies-a-claim-this-tool-uses-ai-to-help-you-fight-back" target="_blank" rel="noopener noreferrer">
+                            <img src="{% static 'images/fastcompanylogo.png' %}" alt="Fast Company logo" class="img-fluid img-thumbnail">
+                        </a>
+                    </div>
+                    <div class="col-md-2 text-center p-2">
+                        <a href="https://www.cbsnews.com/news/health-insurance-costs-inflation-denials-luigi-mangione-united-healthcare" target="_blank" rel="noopener noreferrer">
+                            <img src="{% static 'images/cbslogo.png' %}" alt="CBS logo" class="img-fluid img-thumbnail">
+                        </a>
+                    </div>
+                    <div class="col-md-2 text-center p-2">
+                        <a href="https://www.forbes.com/sites/amyfeldman/2024/12/11/these-entrepreneurs-are-using-ai-to-fight-health-insurance-claims-denials" target="_blank" rel="noopener noreferrer">
+                            <img src="{% static 'images/forbeslogo.png' %}" alt="Forbes logo" class="img-fluid img-thumbnail">
+                        </a>
+                    </div>
+                    <div class="col-md-2 text-center p-2">
+                        <a href="https://www.wbur.org/hereandnow/2024/11/11/ai-insurance-appeals" target="_blank" rel="noopener noreferrer">
+                            <img src="{% static 'images/wbrlogo.png' %}" alt="WBUR logo" class="img-fluid img-thumbnail">
+                        </a>
+                    </div>
+                    <div class="col-md-2 text-center p-2">
+                        <a href="https://armandalegshow.com/episode/fight-health-insurance-with-ai" target="_blank" rel="noopener noreferrer">
+                            <img src="{% static 'images/armleglogo.png' %}" alt="Arm & a Leg logo" class="img-fluid img-thumbnail">
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="row no-gutters mt-3">
+            <div class="col-md-12">
+                <div class="row no-gutters justify-content-center featured-row-highlight">
+                    <div class="col-md-2 text-center p-2">
+                        <a href="https://www.newsnationnow.com/video/fighting-health-insurance-companies-with-ai-newsnation-prime/10025608" target="_blank" rel="noopener noreferrer">
+                            <img src="{% static 'images/newsnationlogo.png' %}" alt="NewsNation logo" class="img-fluid img-thumbnail">
+                        </a>
+                    </div>
+                    <div class="col-md-2 text-center p-2">
+                        <a href="https://sfstandard.com/2024/08/23/holden-karau-fight-health-insurance-appeal-claims-denials" target="_blank" rel="noopener noreferrer">
+                            <img src="{% static 'images/sflogo.png' %}" alt="SF Standard logo" class="img-fluid img-thumbnail">
+                        </a>
+                    </div>
+                    <div class="col-md-2 text-center p-2">
+                        <a href="https://www.businessinsider.com/free-health-insurance-claim-denial-appeal-project-startup-2024-12" target="_blank" rel="noopener noreferrer">
+                            <img src="{% static 'images/businessinsiderlogo.png' %}" alt="Business Insider logo" class="img-fluid img-thumbnail">
+                        </a>
+                    </div>
+                    <div class="col-md-2 text-center p-2">
+                        <a href="https://www.statnews.com/2024/12/12/artificial-intelligence-appealing-health-insurance-denials" target="_blank" rel="noopener noreferrer">
+                            <img src="{% static 'images/statlogo.png' %}" alt="STAT News logo" class="img-fluid img-thumbnail">
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- HEAR FROM OUR USERS -->
+<section id="testimonials" class="testimonials-section">
+    <div class="container">
+        <h5 class="testimonials-title">Hear from our users</h5>
+        <div class="testimonials-grid">
+            <div class="testimonial-card">
+                <div class="testimonial-quote">"You are like the David in the David v Goliath story. I’m a fan of using AI to fight the injustices of the world."</div>
+                <div class="testimonial-author">— FHI User</div>
+            </div>
+            <div class="testimonial-card">
+                <div class="testimonial-quote">"I didn’t know AI could write appeal letters. I’ve spent countless hours on the phone with insurance—only to get denied anyway. This tool is new to me, but it’s already saving time and giving me a real head start. I’m all in."</div>
+                <div class="testimonial-author">— Jessica Smith, RN.</div>
+            </div>
+            <div class="testimonial-card">
+                <div class="testimonial-quote">"It saves time, gets more approvals—and pushes back against an intentionally adversarial system."</div>
+                <div class="testimonial-author">— Dr. Paul Abramson, MD</div>
+            </div>
+        </div>
     </div>
 </section>
 
@@ -72,3 +167,7 @@
 </section>
 
 {% endblock content %}
+
+{% block scriptmagic %}
+<script src="{% static 'js/pwyw.js' %}"></script>
+{% endblock scriptmagic %}

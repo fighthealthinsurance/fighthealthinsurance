@@ -38,6 +38,8 @@ from django.http import HttpResponseForbidden
 
 from django.contrib.auth import get_user_model
 from django.contrib.staticfiles.storage import staticfiles_storage
+from django.views.decorators.http import require_http_methods
+from django.views.decorators.csrf import csrf_exempt
 
 
 class BlogPostMetadata(TypedDict, total=False):
@@ -1068,3 +1070,62 @@ class ChatUserConsentView(FormView):
 
         # Continue with normal form rendering
         return super().get(request, *args, **kwargs)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def create_pwyw_checkout(request):
+    """Create a Stripe checkout session for pay-what-you-want donations."""
+    try:
+        data = json.loads(request.body)
+        amount = int(data.get("amount", 0))
+
+        if amount <= 0:
+            return HttpResponse(
+                json.dumps(
+                    {"success": True, "message": "Free usage - no payment needed"}
+                ),
+                status=200,
+                content_type="application/json",
+            )
+
+        stripe.api_key = settings.STRIPE_API_SECRET_KEY
+
+        # Create a checkout session with the specified amount
+        checkout_session = stripe.checkout.Session.create(
+            payment_method_types=["card"],
+            line_items=[
+                {
+                    "price_data": {
+                        "currency": "usd",
+                        "unit_amount": amount * 100,  # Convert dollars to cents
+                        "product_data": {
+                            "name": "Fight Health Insurance - Pay What You Want",
+                            "description": "Support our mission to help people fight health insurance denials",
+                        },
+                    },
+                    "quantity": 1,
+                }
+            ],
+            mode="payment",
+            success_url=request.build_absolute_uri("/") + "?donation=success",
+            cancel_url=request.build_absolute_uri("/"),
+            metadata={
+                "payment_type": "donation",
+                "donation_type": "pwyw",
+                "source": "checkout",
+            },
+        )
+
+        return HttpResponse(
+            json.dumps({"success": True, "url": checkout_session.url}),
+            status=200,
+            content_type="application/json",
+        )
+    except Exception as e:
+        logger.opt(exception=e).error("Error creating PWYW checkout")
+        return HttpResponse(
+            json.dumps({"success": False, "error": str(e)}),
+            status=500,
+            content_type="application/json",
+        )

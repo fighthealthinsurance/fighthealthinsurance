@@ -64,6 +64,129 @@ a.link:hover::after {
     width: 75px;
 }
 
+/* Hero improvements */
+.hero-inner {
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
+    padding: 1.5rem 1.75rem 2.25rem;
+    border-radius: 14px;
+    background: rgba(0,0,0,0.42);
+    color: #fff;
+    max-width: 1100px; /* allow more width on desktop */
+    width: 100%;
+    margin: 0 auto; /* center horizontally */
+}
+/* Single column centered layout */
+.hero-inner {text-align:center; display:flex; flex-direction:column; align-items:center;}
+.hero-cta-group {justify-content:center;}
+.hero-cta-group a {flex:0 0 240px;}
+.trust-bullets {justify-content:center;}
+.trust-bullets li {text-align:center;}
+.pwyw-pill, .hero-subcopy, .hero-tagline, .hero-headline {margin-left:auto; margin-right:auto;}
+.hero-subcopy {text-align:center;}
+@media (max-width: 768px){
+  .hero-cta-group a {flex:1 1 auto;}
+}
+.hero-headline {margin-top: .25rem; margin-bottom: .75rem;}
+.hero-tagline {margin-bottom: .25rem; font-weight: 500;}
+.hero-subcopy {font-size: 1.05rem; line-height: 1.5rem; margin: .75rem 0 1.25rem; color: #f3f3f3;}
+
+/* Hero Primary CTA - Large button above other CTAs */
+.hero-primary-cta {
+    font-size: 1.3rem !important;
+    font-weight: 700 !important;
+    padding: 1rem 2.5rem !important;
+    margin: 1rem 0 !important;
+    box-shadow: 0 6px 20px rgba(165, 196, 34, 0.4) !important;
+    border: none !important;
+    transform: scale(1);
+    transition: transform 0.2s ease, box-shadow 0.2s ease !important;
+}
+.hero-primary-cta:hover {
+    transform: scale(1.05);
+    box-shadow: 0 8px 28px rgba(165, 196, 34, 0.6) !important;
+}
+
+.pwyw-pill {
+    display: inline-block;
+    background: linear-gradient(90deg,#ADD100,#7B920A);
+    color:#fff;
+    padding:.35rem .9rem; /* pill */
+    font-size:.85rem;
+    border-radius: 999px;
+    box-shadow:0 4px 12px rgba(0,0,0,.25);
+    margin-bottom:.75rem;
+    letter-spacing:.5px;
+}
+
+.hero-cta-group {display:flex; flex-wrap:wrap; gap:.85rem; margin: .5rem 0 1.5rem;}
+.hero-cta-group a {flex:1 1 260px; text-align:center;}
+.primary-cta {font-size:1.05rem; font-weight:600;}
+.secondary-cta, .tertiary-cta {background:transparent !important; border:2px solid #a5c422; color:#a5c422 !important; box-shadow:none;}
+.secondary-cta:hover, .tertiary-cta:hover {background:#000 !important; color:#fff !important;}
+
+/* Trust bullets */
+.trust-bullets {list-style:none; padding:0; margin:0 0 1.45rem; display:flex; flex-wrap:wrap; gap:.75rem; font-size:.82rem;}
+.trust-bullets li {background:rgba(0,0,0,0.55); color:#fff; padding:.4rem .65rem; border-radius:6px;}
+
+/* How it works strip */
+.how-it-works {display:flex; flex-wrap:wrap; gap:1rem; margin:0 0 1.4rem;}
+.how-step {flex:1 1 160px; min-width:160px; background:rgba(0,0,0,0.4); padding:.85rem .9rem; border-radius:10px; color:#fff; box-shadow:0 2px 8px rgba(0,0,0,.25);}
+.how-step .icon {font-size:1.4rem; margin-bottom:.25rem;}
+.how-step h6 {font-weight:600; margin:.15rem 0 .35rem; color:#a5c422;}
+.how-it-works-intro {font-size:.85rem; font-weight:600; margin-bottom:.4rem; color:#a5c422; letter-spacing:.5px;}
+
+/* PWYW Panel */
+.pwyw-panel {background:rgba(0,0,0,0.55); padding:1.1rem 1.3rem 1.3rem; border-radius:12px; color:#fff; margin:0 0 1.3rem; box-shadow:0 4px 14px rgba(0,0,0,.3); max-width:680px;}
+.pwyw-title {margin:0 0 .4rem; font-size:1rem; font-weight:600; color:#a5c422;}
+.pwyw-subcopy {font-size:.75rem; line-height:1.15rem; margin:0 0 .85rem; color:#e4e4e4;}
+.pwyw-options {display:flex; flex-wrap:wrap; gap:.7rem;}
+.pwyw-option {background:rgba(255,255,255,.08); padding:.6rem .75rem; border-radius:10px; display:flex; align-items:center; gap:.5rem; cursor:pointer; font-size:.82rem; flex:1 1 150px; min-width:150px; border:1px solid rgba(255,255,255,.18); position:relative;}
+.pwyw-option input[type=radio] {margin:0; accent-color:#a5c422;}
+.pwyw-option small {display:block; font-size:.6rem; opacity:.8;}
+.pwyw-option.custom {flex:1 1 165px;}
+.custom-wrapper {display:flex; align-items:center; gap:.45rem; width:100%;}
+.pwyw-custom-input {flex:1; background:#111; border:1px solid #333; color:#fff; border-radius:6px; padding:.35rem .5rem; font-size:.75rem;}
+.pwyw-actions {display:flex; align-items:center; gap:1rem; margin-top:.85rem;}
+.pwyw-submit {min-width:180px;}
+.pwyw-thanks {font-size:.7rem; color:#a5c422;}
+
+/* Outline variant for chat/pro buttons */
+.btn-outline-green {background:transparent; border:2px solid #a5c422; color:#a5c422; transition:.3s;}
+.btn-outline-green:hover {background:#000; color:#fff;}
+
+/* Appeal page reuse */
+.appeal-donate-wrapper {margin:1.25rem 0;}
+
+/* Fax PWYW modifications */
+.fax-pwyw-group {display:flex; flex-wrap:wrap; gap:.6rem; margin:.75rem 0 1rem;}
+.fax-pwyw-group label {background:#f7f7f7; padding:.5rem .75rem; border-radius:8px; border:1px solid #ddd; font-size:.75rem; flex:1 1 120px; cursor:pointer; position:relative;}
+.fax-pwyw-group input[type=radio] {margin-right:.35rem; accent-color:#a5c422;}
+.fax-custom-input {width:100%; margin-top:.4rem; padding:.35rem .5rem; font-size:.7rem; border:1px solid #ccc; border-radius:6px;}
+
+/* Mobile adjustments */
+@media (max-width: 768px) {
+  .hero-inner {padding:1rem .9rem 1.4rem;}
+  .hero-cta-group {flex-direction:column;}
+  .trust-bullets {flex-direction:column;}
+  .how-it-works {flex-direction:column;}
+  .pwyw-options {flex-direction:column;}
+  .pwyw-option {flex:1 1 auto;}
+}
+@media (min-width: 992px) {
+    .hero-cta-group a {flex:0 0 auto; min-width:240px;}
+    .pwyw-panel {margin-top: .5rem;}
+    .trust-bullets, .how-it-works {max-width:1100px;}
+    .how-step {flex:0 0 250px;}
+    .hero-inner {max-width: 1200px; width:92%;}
+}
+/* Force full-width hero background while allowing inner content to widen */
+.slider .row {width:100%; margin:0;}
+@media (min-width:1200px){
+    .hero-inner {max-width:none; width:100%; padding:2rem 4vw 2.75rem;}
+    .hero-grid {max-width:1600px; margin:0 auto;}
+}
+
 
 .section-btn, .section-btn.btn.btn-default.smoothScroll{background-image: linear-gradient(to right, #ADD100 0%, #7B920A  51%, #ADD100  100%)}
 .section-btn, .section-btn.btn.btn-default.smoothScroll {
@@ -241,6 +364,90 @@ a.link:hover::after {
 #id_address, #id_business_name{
     width: 30em;
 }
+/* Featured In Section */
+.featured-section {
+    padding: 3rem 0;
+    background: linear-gradient(135deg, rgba(165, 196, 34, 0.05) 0%, rgba(123, 146, 10, 0.08) 100%);
+}
+.featured-title {
+    text-align: center;
+    font-size: 1.8rem;
+    font-weight: 600;
+    margin-bottom: 2rem;
+    color: #333;
+}
+.featured-row {
+    justify-content: center;
+    align-items: center;
+}
+.featured-row-highlight {
+    box-shadow: rgba(240, 46, 170, 0.4) 0px 5px, rgba(240, 46, 170, 0.3) 0px 10px, rgba(240, 46, 170, 0.2) 0px 15px, rgba(240, 46, 170, 0.1) 0px 20px, rgba(240, 46, 170, 0.05) 0px 25px;
+    border-radius: 8px;
+    padding: 1rem;
+}
+
+/* Testimonials Section */
+.testimonials-section {
+    padding: 3rem 0 4rem;
+    background: #f9f9f9;
+}
+.testimonials-title {
+    text-align: center;
+    font-size: 1.8rem;
+    font-weight: 600;
+    margin-bottom: 2.5rem;
+    color: #333;
+}
+.testimonials-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1.5rem;
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 1rem;
+}
+.testimonial-card {
+    background: #fff;
+    padding: 1.5rem;
+    border-radius: 12px;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+    border-left: 4px solid #a5c422;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.testimonial-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
+}
+.testimonial-quote {
+    font-size: 0.95rem;
+    line-height: 1.6;
+    color: #444;
+    margin-bottom: 1rem;
+    font-style: italic;
+}
+.testimonial-quote::before {
+    content: '"';
+    font-size: 2rem;
+    color: #a5c422;
+    line-height: 0;
+    margin-right: 0.25rem;
+}
+.testimonial-author {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #666;
+    text-align: right;
+}
+
+@media (max-width: 768px) {
+    .testimonials-grid {
+        grid-template-columns: 1fr;
+    }
+    .featured-section, .testimonials-section {
+        padding: 2rem 0;
+    }
+}
+
 /* Handle form stacking v.s. non-stacking on mobile v.s. desktop. */
 
 /* Form Prompts Layout */

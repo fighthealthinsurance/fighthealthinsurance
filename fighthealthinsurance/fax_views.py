@@ -4,6 +4,7 @@ from typing import *
 import json
 
 from django.conf import settings
+from django.http import HttpResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.views import View, generic
@@ -66,10 +67,47 @@ class StageFaxView(generic.FormView):
         )
         stripe.api_key = settings.STRIPE_API_SECRET_KEY
 
+        # Get fax amount from form (PWYW) with validation
+        # Check both fax_amount (set by JS) and fax_amount_custom (fallback if JS disabled)
+        fax_amount_raw = form_data.get("fax_amount", 0)
+        fax_pwyw_selection = self.request.POST.get("fax_pwyw", "0")
+        
+        # Fallback: if custom is selected but fax_amount is 0, use fax_amount_custom
+        if fax_pwyw_selection == "custom" and str(fax_amount_raw) == "0":
+            fax_amount_raw = form_data.get("fax_amount_custom", 0)
+            logger.info("Using fax_amount_custom fallback (JavaScript may be disabled)")
+        
+        try:
+            fax_amount = int(fax_amount_raw)
+        except (ValueError, TypeError):
+            logger.warning(
+                f"Invalid fax_amount received: {fax_amount_raw} (not a valid integer)"
+            )
+            form.add_error(
+                "fax_amount",
+                "Invalid fax amount. Please enter a number between 0 and 1000.",
+            )
+            return self.form_invalid(form)
+        
+        if not (0 <= fax_amount <= 1000):
+            logger.warning(
+                f"Invalid fax_amount received: {fax_amount} (out of valid range 0-1000)"
+            )
+            form.add_error("fax_amount", "Fax amount must be between 0 and 1000.")
+            return self.form_invalid(form)
+
+        if fax_amount == 0:
+            # Free fax - send immediately
+            common_view_logic.SendFaxHelper.remote_send_fax(
+                uuid=staged.uuid,
+                hashed_email=staged.hashed_email,
+            )
+            return render(self.request, "fax_thankyou.html")
+
         # Check if the product already exists
         (product_id, price_id) = get_or_create_price(
-            product_name="Appeal Fax -- New",
-            amount=500,
+            product_name=f"Appeal Fax - ${fax_amount}",
+            amount=fax_amount * 100,  # Convert to cents
             currency="usd",
             recurring=False,
         )
