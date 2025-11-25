@@ -4,6 +4,7 @@
 <script type="module">
   import * as main from '{% static "js/dist/appeal.bundle.js" %}';
 </script>
+<script src="{% static 'js/pwyw.js' %}"></script>
 {% endblock scriptmagic %}
 {% block title %}
 Fight Your Health Insurance Denial: Edit and send in your appeal
@@ -16,6 +17,9 @@ Fight Your Health Insurance Denial: Edit and send in your appeal
     Pay What You Want / Support our Development (optional)
   </a>
 </p>
+<div class="appeal-donate-wrapper">
+  {% include 'partials/pwyw_panel.html' %}
+</div>
 Huzzah! We have a <b>draft</b> appeal for you to edit bellow:
 
 <form action="{% url 'share_appeal' %}" method="post" class="col-md-12 d-flex flex-column align-items-center">
@@ -50,8 +54,17 @@ Huzzah! We have a <b>draft</b> appeal for you to edit bellow:
 <form action="{% url 'stagefaxview' %}" method="post" class="col-md-12 d-flex flex-column align-items-center">
   {% csrf_token %}
   {{ fax_form }}
-  <button id="fax_appeal">
-    Fax Appeal for $5
+  <div class="fax-pwyw-group" aria-label="Fax price (optional, pay what you want)">
+    <label><input type="radio" name="fax_pwyw" value="0" checked>$0 <small>Need it free</small></label>
+    <label><input type="radio" name="fax_pwyw" value="5">$5 <small>Original price</small></label>
+    <label><input type="radio" name="fax_pwyw" value="10">$10 <small>Keep lights on</small></label>
+    <label><input type="radio" name="fax_pwyw" value="custom">Custom
+      <input type="number" min="1" step="1" class="fax-custom-input" placeholder="Amount" aria-label="Custom fax amount">
+    </label>
+  </div>
+  <input type="hidden" name="fax_amount" value="0">
+  <button id="fax_appeal" class="btn-green">
+    Fax Appeal (Pay what you want)
   </button>
 </form>
 <!--
@@ -70,6 +83,7 @@ or:
     Pay What You Want / Support our Development (optional)
   </a>
 </p>
+{% include 'partials/pwyw_panel.html' %}
 <p>
 * We'll do our best to include a summary or abstract if available from PubMed.
 </p>
