@@ -1,0 +1,110 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: fhi-pg-main-7
+  namespace: totallylegitco
+spec:
+  # Three Postgres instances spread across nodes as much as possible
+  instances: 3
+
+  #############################################################
+  # Storage
+  #############################################################
+  storage:
+    pvcTemplate:
+      accessModes:
+        - ReadWriteOnce
+      resources:
+        requests:
+          storage: 50Gi
+      storageClassName: encrypted-local-path
+      volumeMode: Filesystem
+
+  #############################################################
+  # Anti-affinity (spread pods across nodes when possible)
+  #############################################################
+  affinity:
+    enablePodAntiAffinity: true
+    podAntiAffinityType: preferred
+    topologyKey: kubernetes.io/hostname
+
+  #############################################################
+  # Monitoring
+  #############################################################
+  monitoring:
+    enablePodMonitor: false
+
+  #############################################################
+  # Superuser
+  # (this Secret must contain {username,password})
+  #############################################################
+  superuserSecret:
+    name: fhi-superuser-pg-secret
+
+  #############################################################
+  # Bootstrap with an app database + app user from your secret
+  #############################################################
+  bootstrap:
+    initdb:
+      # Name of the database your app uses
+      database: app
+      # Postgres ROLE to create
+      # Pull username + password from your Ansible-created Secret
+      owner: ziggystardust
+      secret:
+        name: fhi-internal-pg-secret
+
+  #############################################################
+  # Declarative Role Management
+  # (keeps the app user's role + password in sync)
+  #############################################################
+  managed:
+    roles:
+      - name: ziggystardust
+        ensure: present
+        login: true
+        superuser: false
+        createdb: false
+        createrole: false
+        inherit: true
+        replication: false
+        passwordSecret:
+          name: fhi-internal-pg-secret
+
+  backup:
+    barmanObjectStore:
+      destinationPath: "s3://fhi-pg-backup-second/"
+      endpointURL: "https://s3.us-west-004.backblazeb2.com"
+      s3Credentials:
+        accessKeyId:
+          name: pg-backup
+          key: PG_ACCESS_KEY_ID
+        secretAccessKey:
+          name: pg-backup
+          key: PG_ACCESS_SECRET_KEY
+
+      wal:
+        compression: bzip2
+        maxParallel: 4
+
+      data:
+        compression: bzip2
+    retentionPolicy: "30d"
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Backup
+metadata:
+  name: fhi-pg-backup-manual
+spec:
+  cluster:
+    name: fhi-pg-main-7
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: backup-example
+spec:
+  schedule: "0 0 0 * * *"
+  backupOwnerReference: self
+  cluster:
+    name: fhi-pg-main-7
