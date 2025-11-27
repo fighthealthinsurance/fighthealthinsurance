@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Send Mailing List Email</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    h1 {
+      color: #333;
+    }
+    .form-group {
+      margin-bottom: 15px;
+    }
+    label {
+      display: block;
+      margin-bottom: 5px;
+      font-weight: bold;
+    }
+    .form-control {
+      width: 100%;
+      padding: 8px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      box-sizing: border-box;
+    }
+    textarea.form-control {
+      font-family: monospace;
+    }
+    .help-text {
+      font-size: 0.85em;
+      color: #666;
+      margin-top: 3px;
+    }
+    button {
+      background-color: #007bff;
+      color: white;
+      padding: 10px 20px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 1em;
+    }
+    button:hover {
+      background-color: #0056b3;
+    }
+    .subscriber-count {
+      background-color: #f8f9fa;
+      padding: 10px;
+      border-radius: 4px;
+      margin-bottom: 20px;
+    }
+    .warning {
+      background-color: #fff3cd;
+      border: 1px solid #ffc107;
+      padding: 10px;
+      border-radius: 4px;
+      margin-bottom: 20px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Send Mailing List Email</h1>
+  
+  <div class="subscriber-count">
+    <strong>Total Subscribers:</strong> {{ subscriber_count }}
+  </div>
+  
+  <div class="warning">
+    <strong>Warning:</strong> This will send an email to all mailing list subscribers. 
+    Use the test email field to send a preview to yourself first.
+  </div>
+  
+  <form method="post">
+    {% csrf_token %}
+    
+    <div class="form-group">
+      <label for="id_subject">Subject:</label>
+      {{ form.subject }}
+      {% if form.subject.errors %}
+        <div class="error">{{ form.subject.errors }}</div>
+      {% endif %}
+    </div>
+    
+    <div class="form-group">
+      <label for="id_test_email">Test Email (optional):</label>
+      {{ form.test_email }}
+      <div class="help-text">{{ form.test_email.help_text }}</div>
+      {% if form.test_email.errors %}
+        <div class="error">{{ form.test_email.errors }}</div>
+      {% endif %}
+    </div>
+    
+    <div class="form-group">
+      <label for="id_html_content">HTML Content:</label>
+      {{ form.html_content }}
+      {% if form.html_content.errors %}
+        <div class="error">{{ form.html_content.errors }}</div>
+      {% endif %}
+    </div>
+    
+    <div class="form-group">
+      <label for="id_text_content">Text Content:</label>
+      {{ form.text_content }}
+      {% if form.text_content.errors %}
+        <div class="error">{{ form.text_content.errors }}</div>
+      {% endif %}
+    </div>
+    
+    <button type="submit">Send Email</button>
+  </form>
+</body>
+</html>

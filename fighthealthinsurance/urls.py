@@ -95,6 +95,11 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         staff_member_required(staff_views.EnableBetaForDomainView.as_view()),
         name="enable_beta",
     ),
+    path(
+        "timbit/help/send_mailing_list_mail",
+        staff_member_required(staff_views.SendMailingListMailView.as_view()),
+        name="send_mailing_list_mail",
+    ),
     # Authentication
     path("v0/auth/", include("fhi_users.urls")),
     # stripe integration (TODO webhooks go here)

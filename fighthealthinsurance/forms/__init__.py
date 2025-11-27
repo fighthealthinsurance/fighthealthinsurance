@@ -238,3 +238,45 @@ class FollowUpForm(forms.Form):
 # New form for activating pro users
 class ActivateProForm(forms.Form):
     phonenumber = forms.CharField(required=True)
+
+
+# Form for sending mailing list emails
+class SendMailingListMailForm(forms.Form):
+    subject = forms.CharField(
+        required=True,
+        max_length=200,
+        widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "Email subject"}),
+    )
+    html_content = forms.CharField(
+        required=True,
+        widget=forms.Textarea(
+            attrs={
+                "class": "form-control",
+                "rows": 15,
+                "placeholder": "HTML version of the email",
+            }
+        ),
+        label="HTML Content",
+    )
+    text_content = forms.CharField(
+        required=True,
+        widget=forms.Textarea(
+            attrs={
+                "class": "form-control",
+                "rows": 15,
+                "placeholder": "Plain text version of the email",
+            }
+        ),
+        label="Text Content",
+    )
+    test_email = forms.EmailField(
+        required=False,
+        widget=forms.EmailInput(
+            attrs={
+                "class": "form-control",
+                "placeholder": "Optional: Send test email to this address first",
+            }
+        ),
+        label="Test Email (optional)",
+        help_text="If provided, the email will only be sent to this address for testing.",
+    )

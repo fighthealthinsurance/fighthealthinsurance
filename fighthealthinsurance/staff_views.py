@@ -1,5 +1,7 @@
 import datetime
 
+from django.conf import settings
+from django.core.mail import EmailMultiAlternatives
 from django.http import HttpResponse
 from django.views import View, generic
 from django.db import transaction
@@ -11,6 +13,7 @@ from fighthealthinsurance.forms import FollowUpTestForm
 from fighthealthinsurance.models import (
     Denial,
     FollowUpSched,
+    MailingListSubscriber,
     ProfessionalUser,
     UserDomain,
     ProfessionalDomainRelation,
@@ -161,3 +164,58 @@ class FollowUpFaxSenderView(generic.FormView):
             sent = helper.blocking_dosend_target(email=field)
 
         return HttpResponse(str(sent))
+
+
+class SendMailingListMailView(generic.FormView):
+    """A view to send emails to all mailing list subscribers."""
+
+    template_name = "send_mailing_list_mail.html"
+    form_class = core_forms.SendMailingListMailForm
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["subscriber_count"] = MailingListSubscriber.objects.count()
+        return context
+
+    def form_valid(self, form):
+        subject = form.cleaned_data.get("subject")
+        html_content = form.cleaned_data.get("html_content")
+        text_content = form.cleaned_data.get("text_content")
+        test_email = form.cleaned_data.get("test_email")
+
+        sent_count = 0
+        failed_count = 0
+
+        if test_email:
+            # Send only to test email
+            recipients = [test_email]
+        else:
+            # Send to all mailing list subscribers
+            recipients = list(
+                MailingListSubscriber.objects.values_list("email", flat=True)
+            )
+
+        for email in recipients:
+            try:
+                msg = EmailMultiAlternatives(
+                    subject,
+                    text_content,
+                    settings.DEFAULT_FROM_EMAIL,
+                    to=[email],
+                )
+                msg.attach_alternative(html_content, "text/html")
+                msg.send()
+                sent_count += 1
+                logger.info(f"Sent mailing list email to {email}")
+            except Exception as e:
+                failed_count += 1
+                logger.error(f"Failed to send mailing list email to {email}: {e}")
+
+        if test_email:
+            return HttpResponse(
+                f"Test email sent successfully to {test_email}"
+            )
+        else:
+            return HttpResponse(
+                f"Mailing list email sent. Success: {sent_count}, Failed: {failed_count}"
+            )
