@@ -132,7 +132,9 @@
         <div class="container">
 
             <!-- lOGO TEXT HERE -->
-            <img src="{% static '/images/better-logo.png' %}" alt="" class="img-fluid logo">
+            <a href="{% url 'root' %}">
+                <img src="{% static '/images/better-logo.png' %}" alt="Fight Health Insurance" class="img-fluid logo">
+            </a>
 
             <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar"
                 aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -142,11 +144,8 @@
             <!-- MENU LINKS -->
             <div class="collapse navbar-collapse justify-content-end" id="navbar">
                 <ul class="nav navbar-nav navbar-right">
-                    <li class="nav-item"><a href="{% url 'root' %}" class="nav-link">Home</a></li>
-                    <li class="nav-item"><a href="{% url 'about' %}" class="nav-link">About Us</a></li>
 		            <li class="nav-item"><a href="{% url 'remove_data' %}" class="nav-link" id="removedata">Remove Your Data</a></li>
                     <li class="nav-item"><a href="{% url 'other-resources' %}" class="nav-link">Resources</a></li>
-                    <li class="nav-item"><a href="{% url 'contact' %}" class="nav-link">Contact</a></li>
 		    <li class="nav-item"><a href="{% url 'pro_version' %}" class="nav-link">Professional</a></li>
             <li class="nav-item"><a href="{% url 'chat' %}" class="nav-link">Chat</a></li>        
             <li class="nav-item appointment-btn"><a href="{% url 'scan' %}">Generate Appeal</a></li>
@@ -178,6 +177,8 @@
                     <div class="col-md-12 col-sm-12" >
                         <div class="footer-link">
                             <a href="{% url 'root' %}">Home</a>
+                            <a href="{% url 'about' %}">About Us</a>
+                            <a href="{% url 'contact' %}">Contact</a>
                             <a href="{% url 'tos' %}">Terms of Service</a>
                             <a href="{% url 'remove_data' %}">Delete your Data</a>
                             <a href="{% url 'privacy_policy' %}">Privacy Policy</a>

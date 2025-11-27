@@ -1,3 +1,9 @@
+/* Ensure header stays above hero background */
+header {
+    position: relative;
+    z-index: 1000;
+}
+
 a.link {
     color: #a5c422 !important;
     transition: all 1s !important;
@@ -267,12 +273,22 @@ a.link:hover::after {
     gap: 0.3rem !important;
     flex: 0 0 calc(50% - 0.15rem) !important;
     max-width: calc(50% - 0.15rem) !important;
+    min-width: 0 !important;
     box-sizing: border-box !important;
+    width: calc(50% - 0.15rem) !important;
 }
-@media (max-width: 768px) {
+@media (max-width: 1200px) {
     #home .hero-inner .payment-card-wrapper .pwyw-panel .pwyw-option {
         flex: 0 0 100% !important;
         max-width: 100% !important;
+        width: 100% !important;
+        min-height: 32px !important;
+    }
+}
+
+@media (min-width: 1201px) {
+    #home .hero-inner .payment-card-wrapper .pwyw-panel .pwyw-option {
+        min-height: 32px !important;
     }
 }
 #home .hero-inner .payment-card-wrapper .pwyw-panel .pwyw-option:hover {
@@ -327,15 +343,26 @@ a.link:hover::after {
 }
 
 /* How it works strip */
-.how-it-works {display:flex; flex-wrap:wrap; gap:1rem; margin:0 0 1.4rem;}
-.how-step {flex:1 1 160px; min-width:160px; background: rgba(255, 255, 255, 0.2); backdrop-filter: blur(5px); padding:.85rem .9rem; border-radius:10px; color:#fff; box-shadow:0 2px 8px rgba(0,0,0,.2); border: 1px solid rgba(255, 255, 255, 0.3);}
+.how-it-works {display:flex; flex-wrap:wrap; gap:1rem; margin:0 0 1.4rem; align-items: center;}
+.how-step {flex:1 1 160px; min-width:160px; background: rgba(255, 255, 255, 0.2); backdrop-filter: blur(5px); padding:.85rem .9rem; border-radius:10px; color:#fff; box-shadow:0 2px 8px rgba(0,0,0,.2); border: 1px solid rgba(255, 255, 255, 0.3); position: relative;}
+.how-step:not(:last-child)::after {
+    content: '→';
+    position: absolute;
+    right: -1.8rem;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 2rem;
+    color: rgba(165, 196, 34, 0.8);
+    text-shadow: 1px 1px 3px rgba(0,0,0,0.3);
+    z-index: 1;
+}
 .how-step .icon {font-size:1.4rem; margin-bottom:.25rem;}
 .how-step h6 {font-weight:700; margin:.15rem 0 .35rem; color:#fff; text-shadow: 1px 1px 3px rgba(0,0,0,0.3); font-size: 1rem;}
 .how-step p {color: #fff; font-weight: 400; text-shadow: 1px 1px 3px rgba(0,0,0,0.2); font-size: 0.95rem; line-height: 1.4;}
 .how-it-works-intro {font-size:1.8rem; font-weight:600; margin-bottom:.4rem; padding-top: 2rem; color:#fff; letter-spacing:.5px; text-shadow: 1px 1px 3px rgba(0,0,0,0.3);}
 
 /* PWYW Panel */
-.pwyw-panel {background: rgba(255, 255, 255, 0.25); backdrop-filter: blur(8px); padding:1.3rem 1.5rem 1.5rem; border-radius:12px; color:#fff; margin:0 0 1.3rem; box-shadow:0 4px 14px rgba(0,0,0,.25); max-width:680px; border: 1px solid rgba(255, 255, 255, 0.3);}
+.pwyw-panel {background: rgba(255, 255, 255, 0.25); backdrop-filter: blur(8px); padding:1.3rem 1.5rem 1.5rem; border-radius:12px; color:#fff; margin:0 0 1.3rem; box-shadow:0 4px 14px rgba(0,0,0,.25); max-width:680px; border: 1px solid rgba(255, 255, 255, 0.3); border-top: 4px solid rgba(255, 255, 255, 0.9);}
 .pwyw-title {margin:0 0 .5rem; font-size:1.15rem; font-weight:700; color:#fff; text-shadow: 1px 1px 3px rgba(0,0,0,0.3);}
 .pwyw-subcopy {font-size:0.95rem; line-height:1.5rem; margin:0 0 1rem; color:#fff; text-shadow: 1px 1px 2px rgba(0,0,0,0.2);}
 .pwyw-options {display:flex; flex-wrap:wrap; gap:.8rem;}
