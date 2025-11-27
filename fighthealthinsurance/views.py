@@ -723,8 +723,25 @@ class InitialProcessView(generic.FormView):
         cleaned_data = form.cleaned_data
         if "denial_id" in cleaned_data:
             del cleaned_data["denial_id"]
+
+        # Handle mailing list subscription
+        if cleaned_data.get("subscribe"):
+            email = cleaned_data.get("email")
+            # Get name from the POST data (it's not stored in cleaned_data for privacy)
+            fname = self.request.POST.get("fname", "")
+            lname = self.request.POST.get("lname", "")
+            name = f"{fname} {lname}".strip()
+            models.MailingListSubscriber.objects.create(
+                email=email,
+                name=name,
+                comments="From appeal flow",
+            )
+
+        # Remove subscribe from cleaned_data before passing to create_or_update_denial
+        cleaned_data.pop("subscribe", None)
+
         denial_response = common_view_logic.DenialCreatorHelper.create_or_update_denial(
-            **form.cleaned_data,
+            **cleaned_data,
         )
 
         # Store the denial ID in the session to maintain state across the multi-step form process
@@ -735,7 +752,7 @@ class InitialProcessView(generic.FormView):
         form = core_forms.HealthHistory(
             initial={
                 "denial_id": denial_response.denial_id,
-                "email": form.cleaned_data["email"],
+                "email": cleaned_data["email"],
                 "semi_sekret": denial_response.semi_sekret,
             }
         )
