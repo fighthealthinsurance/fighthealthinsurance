@@ -592,6 +592,7 @@ a.link:hover::after {
     box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
     flex-wrap: wrap;
     display: flex;
+    border-bottom: 4px solid #f02eaa;
 }
 @media (min-width: 992px) {
     .featured-row {
@@ -622,16 +623,15 @@ a.link:hover::after {
     box-shadow: none;
 }
 .featured-row-highlight {
-    background: white;
-    border: none;
-    border-radius: 12px;
-    padding: 1.5rem 1rem;
-    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
-    margin-top: 1rem;
-    flex-wrap: wrap;
     display: flex;
+    flex-wrap: wrap;
     justify-content: center;
     align-items: center;
+    background-color: rgba(255, 255, 255, 0.95);
+    padding: 1.5rem;
+    border-radius: 8px;
+    margin-bottom: 1.5rem;
+    border-bottom: 4px solid #f02eaa;
 }
 @media (min-width: 992px) {
     .featured-row-highlight {
