@@ -144,10 +144,10 @@
             <!-- MENU LINKS -->
             <div class="collapse navbar-collapse justify-content-end" id="navbar">
                 <ul class="nav navbar-nav navbar-right">
+                    <li class="nav-item"><a href="{% url 'chat' %}" class="nav-link">Chat</a></li>        
+                    <li class="nav-item"><a href="{% url 'other-resources' %}" class="nav-link">Resources/Blogs</a></li>
 		            <li class="nav-item"><a href="{% url 'remove_data' %}" class="nav-link" id="removedata">Remove Your Data</a></li>
-                    <li class="nav-item"><a href="{% url 'other-resources' %}" class="nav-link">Resources</a></li>
-		    <li class="nav-item"><a href="{% url 'pro_version' %}" class="nav-link">Professional</a></li>
-            <li class="nav-item"><a href="{% url 'chat' %}" class="nav-link">Chat</a></li>        
+        		    <li class="nav-item"><a href="{% url 'pro_version' %}" class="nav-link">Professional</a></li>
             <li class="nav-item appointment-btn"><a href="{% url 'scan' %}">Generate Appeal</a></li>
                     
                 </ul>
