@@ -14,19 +14,46 @@
 		<div class="hero-inner">
 		  <h3 class="hero-tagline">Make your health insurance company cry too</h3>
 		      <h1 class="hero-headline">Fight Health Insurance</h1>
-		      <div class="pwyw-pill">Pay what you want — $0 if that’s what you can do.</div>
-		      <p class="hero-subcopy">Generate your appeal in minutes. Free for everyone. If we save you time or money, feel free to toss a few bucks our way (totally optional).</p>		      <a href="{% url 'scan' %}" class="section-btn btn btn-default smoothScroll hero-primary-cta" id="scanlink-hero">Generate Health Insurance Appeal Now</a>		      <div class="hero-cta-group">
-		        <a href="{% url 'scan' %}" class="section-btn btn btn-default smoothScroll primary-cta" id="scanlink">Generate an Appeal</a>
-		        <a href="{% url 'chat' %}" class="btn btn-outline-green smoothScroll secondary-cta" id="chatlink">Chat</a>
-		        <a href="{% url 'pro_version' %}" class="btn btn-outline-green smoothScroll tertiary-cta" id="professional">Professionals</a>
+	      <p class="hero-subcopy">Generate your healthcare claim appeal in minutes with AI. Free for everyone.</p>
+	      <div class="hero-cta-group">
+	        <a href="{% url 'scan' %}" class="section-btn btn btn-default smoothScroll primary-cta" id="scanlink">Generate an Appeal</a>
+	      </div>
+	      <div class="hero-cta-group hero-cta-secondary">
+	        <a href="{% url 'chat' %}" class="btn btn-outline-green smoothScroll secondary-cta" id="chatlink">AI Chat</a>
+	        <a href="{% url 'pro_version' %}" class="btn btn-outline-green smoothScroll tertiary-cta" id="professional">Professionals</a>
+	      </div>
+	      <div class="value-prop-container">
+		        <div class="benefits-card">
+		          <h5 class="benefits-title">Why Fight Health Insurance?</h5>
+		          <ul class="benefits-list">
+		            <li>
+		              <span class="benefit-icon" aria-hidden="true">🔒</span>
+		              <div class="benefit-content">
+		                <strong>Private by default</strong>
+		                <p>On-device OCR keeps your medical info secure</p>
+		              </div>
+		            </li>
+		            <li>
+		              <span class="benefit-icon" aria-hidden="true">💚</span>
+		              <div class="benefit-content">
+		                <strong>Free forever</strong>
+		                <p>Pay what you can. $0 is totally fine.</p>
+		              </div>
+		            </li>
+		            <li>
+		              <span class="benefit-icon" aria-hidden="true">✨</span>
+		              <div class="benefit-content">
+		                <strong>Human-friendly design</strong>
+		                <p>No dark patterns or hidden fees. Ever.</p>
+		              </div>
+		            </li>
+		          </ul>
+		        </div>
+		        <div class="payment-card-wrapper">
+		          {% include 'partials/pwyw_panel.html' %}
+		        </div>
 		      </div>
-		      <ul class="trust-bullets">
-		        <li>Private by default (on-device OCR option)</li>
-		        <li>Free; pay what you can to keep it alive</li>
-		        <li>Friendly guidance & no dark patterns</li>
-		      </ul>
-		  {% include 'partials/pwyw_panel.html' %}
-		  <div class="how-it-works-intro">How it works:</div>
+		  <div class="how-it-works-intro">How It Works</div>
 		  <section id="how-it-works" class="how-it-works">
 		        <div class="how-step">
 		          <div class="icon" aria-hidden="true">📄</div>
@@ -44,9 +71,7 @@
 		          <p>Guidance + options. Free. Pay if it helps.</p>
 		        </div>
 		      </section>
-		  <div class="pro-version-text">
-		    <a class="link" href="{% url 'pro_version' %}">Healthcare professional? Get updates on our pro version.</a>
-		  </div>
+	</div>
 		</div>
 	    </div>
 	</div>
@@ -120,7 +145,7 @@
 <!-- HEAR FROM OUR USERS -->
 <section id="testimonials" class="testimonials-section">
     <div class="container">
-        <h5 class="testimonials-title">Hear from our users</h5>
+        <h5 class="testimonials-title">Hear From Our Users</h5>
         <div class="testimonials-grid">
             <div class="testimonial-card">
                 <div class="testimonial-quote">"You are like the David in the David v Goliath story. I’m a fan of using AI to fight the injustices of the world."</div>

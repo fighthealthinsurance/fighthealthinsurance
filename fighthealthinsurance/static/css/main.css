@@ -498,9 +498,9 @@ header span i {
     justify-content: center;
     flex-direction: column;
     text-align: center;
-    background-color: rgba(20, 20, 20, 0.2);
     height: 100%;
     color: #fff;
+    background: none;
 }
 
 .slider .item {
@@ -513,8 +513,6 @@ header span i {
 
 .slider .item-first {
     background-image: url(../images/crinkledcolors.jpg);
-    background-color: rgba(0, 0, 0, 0.2); /* Adds a dark overlay with 20% opacity */
-    background-blend-mode: overlay; /* Blends the color with the image */
 }
 
 .slider .item-first .pro-version-text a {
