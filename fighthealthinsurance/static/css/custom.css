@@ -759,3 +759,142 @@ a.link:hover::after {
 	margin: 10px 0;
     }
 }
+
+/* Social Share Buttons Panel */
+.social-share-panel {
+    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+    border-radius: 12px;
+    padding: 1.5rem;
+    margin: 2rem 0;
+    text-align: center;
+    border: 1px solid #dee2e6;
+}
+
+.social-share-title {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #333;
+    margin-bottom: 0.5rem;
+}
+
+.social-share-subcopy {
+    font-size: 0.9rem;
+    color: #666;
+    margin-bottom: 1rem;
+    max-width: 500px;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+.social-share-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    justify-content: center;
+    align-items: center;
+}
+
+.social-share-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.6rem 1rem;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    text-decoration: none;
+    transition: all 0.2s ease;
+    border: none;
+    cursor: pointer;
+}
+
+.social-share-btn svg {
+    flex-shrink: 0;
+}
+
+.social-share-btn span {
+    white-space: nowrap;
+}
+
+/* Twitter/X */
+.social-share-twitter {
+    background-color: #000;
+    color: #fff;
+}
+.social-share-twitter:hover {
+    background-color: #333;
+    color: #fff;
+    text-decoration: none;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+/* Facebook */
+.social-share-facebook {
+    background-color: #1877f2;
+    color: #fff;
+}
+.social-share-facebook:hover {
+    background-color: #166fe5;
+    color: #fff;
+    text-decoration: none;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(24, 119, 242, 0.4);
+}
+
+/* LinkedIn */
+.social-share-linkedin {
+    background-color: #0a66c2;
+    color: #fff;
+}
+.social-share-linkedin:hover {
+    background-color: #004182;
+    color: #fff;
+    text-decoration: none;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(10, 102, 194, 0.4);
+}
+
+/* Reddit */
+.social-share-reddit {
+    background-color: #ff4500;
+    color: #fff;
+}
+.social-share-reddit:hover {
+    background-color: #e03d00;
+    color: #fff;
+    text-decoration: none;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(255, 69, 0, 0.4);
+}
+
+/* Bluesky */
+.social-share-bluesky {
+    background-color: #0085ff;
+    color: #fff;
+}
+.social-share-bluesky:hover {
+    background-color: #0070d6;
+    color: #fff;
+    text-decoration: none;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 133, 255, 0.4);
+}
+
+/* Mobile responsive for social share buttons */
+@media (max-width: 576px) {
+    .social-share-buttons {
+        flex-direction: column;
+        gap: 0.5rem;
+    }
+    
+    .social-share-btn {
+        width: 100%;
+        justify-content: center;
+    }
+    
+    .social-share-panel {
+        padding: 1rem;
+        margin: 1.5rem 0;
+    }
+}
