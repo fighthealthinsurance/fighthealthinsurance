@@ -1,0 +1,76 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: fhi-pg-second
+  namespace: totallylegitco
+spec:
+  instances: 3
+  storage:
+    pvcTemplate:
+      accessModes:
+        - ReadWriteOnce
+      resources:
+        requests:
+          storage: 50Gi
+      storageClassName: encrypted-local-path
+      volumeMode: Filesystem
+  monitoring:
+    enablePodMonitor: false
+  superuserSecret:
+    name: fhi-superuser-pg-secret
+  affinity:
+    enablePodAntiAffinity: true
+  backup:
+    barmanObjectStore:
+      destinationPath: s3://fhi-pg-backup-second/
+      endpointURL: https://s3.us-west-004.backblazeb2.com
+      serverName: "recoveredCluster"
+      s3Credentials:
+        accessKeyId:
+          name: pg-backup2
+          key: PG_ACCESS_KEY_ID
+        secretAccessKey:
+          name: pg-backup2
+          key: PG_ACCESS_SECRET_KEY
+      wal:
+        compression: bzip2
+      data:
+        compression: bzip2
+  bootstrap:
+#    recovery:
+#      source: fhi-pg
+    initdb:
+      import:
+        type: monolith
+        databases:
+          - "*"
+#          - app
+        roles:
+          - "*"
+#          - ziggystardust
+#          - professor
+        source:
+          externalCluster: fhi-pg-live-rw
+  externalClusters:
+    - name: fhi-pg-live-rw
+      connectionParameters:
+        # Use the correct IP or host name for the source database
+        host: fhi-pg-rw
+        user: professor
+        dbname: postgres
+      password:
+        name: fhi-superuser-pg-secret
+        key: password
+    - name: fhi-pg
+      barmanObjectStore:
+        destinationPath: s3://fhi-pg-backup/
+        endpointURL: http://s3.us-west-004.backblazeb2.com:9000
+        s3Credentials:
+          accessKeyId:
+            name: pg-backup
+            key: PG_ACCESS_KEY_ID
+          secretAccessKey:
+            name: pg-backup
+            key: PG_ACCESS_SECRET_KEY
+        wal:
+          maxParallel: 8
