@@ -1,7 +1,8 @@
 import datetime
+import smtplib
 
 from django.conf import settings
-from django.core.mail import EmailMultiAlternatives
+from django.core.mail import EmailMultiAlternatives, get_connection
 from django.http import HttpResponse
 from django.views import View, generic
 from django.db import transaction
@@ -190,26 +191,36 @@ class SendMailingListMailView(generic.FormView):
             # Send only to test email
             recipients = [test_email]
         else:
-            # Send to all mailing list subscribers
-            recipients = list(
-                MailingListSubscriber.objects.values_list("email", flat=True)
-            )
+            # Use iterator to avoid loading all emails into memory at once
+            recipients = MailingListSubscriber.objects.values_list(
+                "email", flat=True
+            ).iterator()
 
-        for email in recipients:
-            try:
-                msg = EmailMultiAlternatives(
-                    subject,
-                    text_content,
-                    settings.DEFAULT_FROM_EMAIL,
-                    to=[email],
-                )
-                msg.attach_alternative(html_content, "text/html")
-                msg.send()
-                sent_count += 1
-                logger.info(f"Sent mailing list email to {email}")
-            except Exception as e:
-                failed_count += 1
-                logger.error(f"Failed to send mailing list email to {email}: {e}")
+        # Use connection reuse for better performance
+        connection = get_connection()
+        try:
+            connection.open()
+            for email in recipients:
+                try:
+                    msg = EmailMultiAlternatives(
+                        subject,
+                        text_content,
+                        settings.DEFAULT_FROM_EMAIL,
+                        to=[email],
+                        connection=connection,
+                    )
+                    msg.attach_alternative(html_content, "text/html")
+                    msg.send()
+                    sent_count += 1
+                    logger.info(f"Sent mailing list email to {email}")
+                except smtplib.SMTPException as e:
+                    failed_count += 1
+                    logger.error(f"SMTP error sending mailing list email to {email}: {e}")
+                except OSError as e:
+                    failed_count += 1
+                    logger.error(f"Connection error sending mailing list email to {email}: {e}")
+        finally:
+            connection.close()
 
         if test_email:
             return HttpResponse(
