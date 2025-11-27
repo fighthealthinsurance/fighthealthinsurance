@@ -90,3 +90,41 @@ class MailingListSubscriptionTest(TestCase):
                 email="nosubscribe@example.com"
             ).exists()
         )
+
+    def test_duplicate_subscription_prevention(self):
+        """Test that submitting multiple times with same email doesn't create duplicates."""
+        # Create an initial subscriber
+        MailingListSubscriber.objects.create(
+            email="existing@example.com",
+            name="Existing User",
+            comments="Previously subscribed",
+        )
+        initial_count = MailingListSubscriber.objects.count()
+
+        # Submit form data with the same email
+        response = self.client.post(
+            reverse("process"),
+            {
+                "email": "existing@example.com",
+                "denial_text": "Your claim has been denied.",
+                "pii": "on",
+                "tos": "on",
+                "privacy": "on",
+                "subscribe": "on",
+                "fname": "New",
+                "lname": "Name",
+            },
+            follow=True,
+        )
+
+        # Check that we're redirected to the next step
+        self.assertEqual(response.status_code, 200)
+
+        # Check that no new subscriber was created (duplicate prevention)
+        new_count = MailingListSubscriber.objects.count()
+        self.assertEqual(new_count, initial_count)
+
+        # Verify the original subscriber data is unchanged
+        subscriber = MailingListSubscriber.objects.get(email="existing@example.com")
+        self.assertEqual(subscriber.name, "Existing User")
+        self.assertEqual(subscriber.comments, "Previously subscribed")

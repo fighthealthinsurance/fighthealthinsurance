@@ -731,10 +731,13 @@ class InitialProcessView(generic.FormView):
             fname = self.request.POST.get("fname", "")
             lname = self.request.POST.get("lname", "")
             name = f"{fname} {lname}".strip()
-            models.MailingListSubscriber.objects.create(
+            # Use get_or_create to avoid duplicate subscriptions
+            models.MailingListSubscriber.objects.get_or_create(
                 email=email,
-                name=name,
-                comments="From appeal flow",
+                defaults={
+                    "name": name,
+                    "comments": "From appeal flow",
+                },
             )
 
         # Remove subscribe from cleaned_data before passing to create_or_update_denial
