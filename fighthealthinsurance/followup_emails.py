@@ -80,15 +80,12 @@ class FollowUpEmailSender(object):
             follow_up_sched = FollowUpSched.objects.filter(email=email).filter(
                 follow_up_sent=False
             )[0]
-            email = follow_up_sched.email
-        elif follow_up_sched is not None and email is None:
-            email = follow_up_sched.email
-        elif follow_up_sched is not None and email is not None:
-            # Both provided, use follow_up_sched and ignore email parameter
-            email = follow_up_sched.email
-        else:
+        elif follow_up_sched is None and email is None:
             # Both are None
             raise Exception("One of email and follow_up_sched must be set.")
+        # At this point follow_up_sched is guaranteed to be set
+        # Use the email from follow_up_sched to ensure consistency
+        email = follow_up_sched.email
         denial = follow_up_sched.denial_id
         selected_appeal = denial.chose_appeal()
         context = {

@@ -11,7 +11,7 @@ from fighthealthinsurance.models import Denial, FollowUpSched
 
 
 class Command(BaseCommand):
-    help = "Clear email addresses from denials 30 days after follow-up was sent for users who didn't opt in to store"
+    help = "Clear email addresses from denials 30 days after follow-up was sent for users who didn't opt in to store their data longer"
 
     def add_arguments(self, parser: CommandParser) -> None:
         parser.add_argument(
