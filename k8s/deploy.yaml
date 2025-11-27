@@ -111,7 +111,7 @@ spec:
               httpHeaders:
                 - name: Host
                   value: "www.fighthealthinsurance.com"
-              path: /
+              path: /scan
               port: 80
             periodSeconds: 180
           startupProbe:
@@ -119,7 +119,7 @@ spec:
               httpHeaders:
                 - name: Host
                   value: "www.fighthealthinsurance.com"
-              path: /
+              path: /scan
               port: 80
             periodSeconds: 10
             failureThreshold: 45
