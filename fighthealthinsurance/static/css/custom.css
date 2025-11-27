@@ -134,14 +134,14 @@ a.link:hover::after {
     background: linear-gradient(90deg,#b8dd00,#8aa20b);
 }
 
-.hero-cta-group {display:flex; flex-wrap:wrap; gap:.85rem; margin: .5rem auto 1rem; align-items: center; justify-content: center; width: 100%;}
-.hero-cta-group.hero-cta-secondary {margin-top: 0; margin-bottom: 1.5rem; display: flex !important;}
+.hero-cta-group {display: flex; flex-wrap: wrap; gap: .85rem; margin: .5rem auto 1rem; align-items: center; justify-content: center; width: 100%; box-sizing: border-box;}
+.hero-cta-group.hero-cta-secondary {margin-top: 0.5rem; margin-bottom: 1.5rem; display: flex !important;}
 .hero-cta-group a {flex:0 1 auto; text-align:center; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; height: 3.5rem; min-height: 3.5rem; max-height: 3.5rem; margin: 0; max-width: 400px;}
 .hero-cta-secondary a {flex:0 1 auto; max-width: 250px;}
 .primary-cta {font-size:1.15rem !important; font-weight:700 !important; padding: 0 1.8rem !important; box-shadow: 0 4px 16px rgba(165, 196, 34, 0.4) !important; transform: scale(1); transition: all 0.2s ease !important; line-height: 1.5 !important; margin: 0 !important;}
 .primary-cta:hover {transform: scale(1.03); box-shadow: 0 6px 24px rgba(165, 196, 34, 0.6) !important;}
 .secondary-cta, .tertiary-cta {background:rgba(255,255,255,0.15) !important; backdrop-filter: blur(5px); border:2px solid rgba(255,255,255,0.6) !important; color:#fff !important; box-shadow:0 2px 8px rgba(0,0,0,0.2) !important; font-weight: 500 !important; transition: all 0.2s ease !important; font-size:1.15rem !important; padding: 0 1.8rem !important; line-height: 1.5 !important;}
-.secondary-cta:hover, .tertiary-cta:hover {background:rgba(255,255,255,0.95) !important; color:#333 !important; border-color: #a5c422 !important;}
+.secondary-cta:hover, .tertiary-cta:hover {background:#a5c422 !important; color:#fff !important; border-color: #a5c422 !important;}
 
 /* Value Proposition Two-Column Layout */
 #home .hero-inner .value-prop-container {
@@ -353,10 +353,8 @@ a.link:hover::after {
 .btn-outline-green {background:transparent; border:2px solid #a5c422; color:#a5c422; transition:.3s;}
 .btn-outline-green:hover {background:#000; color:#fff;}
 
-/* Pro version link styling */
+/* Pro version text container */
 .pro-version-text {margin-top: 1.5rem; margin-bottom: 0.5rem; text-align: center; width: 100%;}
-.pro-link {color: #fff !important; font-weight: 600; text-decoration: underline; transition: all 0.2s; text-shadow: 1px 1px 3px rgba(0,0,0,0.3); font-size: 0.95rem;}
-.pro-link:hover {color: #a5c422 !important;}
 
 /* Appeal page reuse */
 .appeal-donate-wrapper {margin:1.25rem 0;}
