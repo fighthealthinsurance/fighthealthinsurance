@@ -99,9 +99,14 @@ class MailingListSubscriber(models.Model):
     comments = models.TextField(default="", blank=True)
     signup_date = models.DateField(auto_now_add=True)
     phone = models.CharField(max_length=300, default="", blank=True)
+    unsubscribe_token = models.CharField(max_length=100, default=sekret_gen)
 
     def __str__(self):
         return self.email
+
+    def get_unsubscribe_url(self) -> str:
+        """Generate the unsubscribe URL for this subscriber."""
+        return f"https://www.fighthealthinsurance.com/v0/unsubscribe/{self.unsubscribe_token}"
 
 
 class DemoRequests(models.Model):
