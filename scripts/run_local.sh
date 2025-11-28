@@ -88,17 +88,19 @@ if ping -c1 -W1 scrump.local.pigscanfly.ca >/dev/null 2>&1; then
   export ALPHA_HEALTH_BACKEND_HOST=scrump.local.pigscanfly.ca
 fi
 
-python manage.py migrate
-python manage.py loaddata initial
-python manage.py loaddata followup
-python manage.py loaddata plan_source
+if "$FAST" != "FAST"; then
+  python manage.py migrate
+  python manage.py loaddata initial
+  python manage.py loaddata followup
+  python manage.py loaddata plan_source
 
-# Make sure we have an admin user so folks can test the admin view
-python manage.py ensure_adminuser --username admin --password admin
+  # Make sure we have an admin user so folks can test the admin view
+  python manage.py ensure_adminuser --username admin --password admin
 
-# Make a test user with UserDomain and everything
-python manage.py make_user  --username "test@test.com" --domain testfarts1 --password farts12345678 --email "test@test.com" --visible-phone-number 42 --is-provider true --first-name TestFarts
-python manage.py make_user  --username "test-patient@test.com" --domain testfarts1 --password farts12345678 --email "test-patient@test.com" --visible-phone-number 42 --is-provider false
+  # Make a test user with UserDomain and everything
+  python manage.py make_user  --username "test@test.com" --domain testfarts1 --password farts12345678 --email "test@test.com" --visible-phone-number 42 --is-provider true --first-name TestFarts
+  python manage.py make_user  --username "test-patient@test.com" --domain testfarts1 --password farts12345678 --email "test-patient@test.com" --visible-phone-number 42 --is-provider false
+fi
 
 # If --devserver is passed, use Django's dev server for hot-reloading templates
 if [[ "$1" == "--devserver" ]]; then
