@@ -118,9 +118,7 @@ class FaxForm(DenialRefForm):
         widget=forms.Textarea(attrs={"class": "appeal_text"}), required=True
     )
     include_provided_health_history = forms.BooleanField(required=False)
-    fax_pwyw = forms.IntegerField(required=False)
-    fax_amount = forms.IntegerField(required=False)
-    fax_amount_custom = forms.IntegerField(required=False)
+    # Note: we don't have fax_pwyw etc. so we don't overload.
 
 
 class EntityExtractForm(DenialRefForm):
