@@ -740,9 +740,6 @@ class InitialProcessView(generic.FormView):
                 },
             )
 
-        # Remove subscribe from cleaned_data before passing to create_or_update_denial
-        cleaned_data.pop("subscribe", None)
-
         denial_response = common_view_logic.DenialCreatorHelper.create_or_update_denial(
             **cleaned_data,
         )

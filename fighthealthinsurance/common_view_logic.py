@@ -1051,6 +1051,7 @@ class DenialCreatorHelper:
         primary_professional: Optional[ProfessionalUser] = None,
         patient_user: Optional[PatientUser] = None,
         patient_visible: bool = False,
+        subscribe: bool = False, # Note: we don't handle this
     ):
         """
         Create or update an existing denial.
