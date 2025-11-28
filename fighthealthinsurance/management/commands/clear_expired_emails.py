@@ -31,6 +31,8 @@ class Command(BaseCommand):
         dry_run = options.get("dry_run", False)
 
         cutoff_datetime = timezone.now() - datetime.timedelta(days=days)
+        # Safety check: don't clear emails for denials created in the last 90 days
+        safety_cutoff_date = datetime.date.today() - datetime.timedelta(days=90)
 
         # Find denials that:
         # 1. Have a raw_email set (user opted in for follow-up)
@@ -65,8 +67,10 @@ class Command(BaseCommand):
 
         # Filter to only denials that have raw_email set, had old follow-ups sent,
         # and don't have recent or pending follow-ups
+        # Also exclude denials created in the last 90 days for safety
         candidates = Denial.objects.filter(
             denial_id__in=denial_ids_with_old_followups,
+            date__lt=safety_cutoff_date,  # Safety check: only clear emails for older denials
         ).exclude(
             denial_id__in=denials_with_recent_or_pending_followups,
         ).exclude(

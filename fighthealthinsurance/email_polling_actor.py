@@ -86,6 +86,8 @@ class EmailPollingActor:
             from fighthealthinsurance.models import Denial, FollowUpSched
             
             cutoff_datetime = timezone.now() - datetime.timedelta(days=30)
+            # Safety check: don't clear emails for denials created in the last 90 days
+            safety_cutoff_date = datetime.date.today() - datetime.timedelta(days=90)
             
             # Find follow-up schedules that were sent more than 30 days ago
             denial_ids_with_sent_followups = await sync_to_async(
@@ -108,8 +110,10 @@ class EmailPollingActor:
             )()
             
             # Filter to denials that should have emails cleared
+            # Also exclude denials created in the last 90 days for safety
             candidates = Denial.objects.filter(
                 denial_id__in=denial_ids_with_sent_followups,
+                date__lt=safety_cutoff_date,  # Safety check: only clear emails for older denials
             ).exclude(
                 denial_id__in=denials_with_recent_or_pending,
             ).exclude(

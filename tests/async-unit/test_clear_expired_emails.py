@@ -14,6 +14,7 @@ from fighthealthinsurance.models import Denial, FollowUpSched
 def email_test_setup(db):
     """Set up test data for email clearing tests."""
     # Create a denial with raw email that has an old follow-up sent
+    # Note: date needs to be older than 90 days for the safety check
     email1 = "old_followup@example.com"
     hashed_email1 = Denial.get_hashed_email(email1)
     denial1 = Denial.objects.create(
@@ -22,6 +23,10 @@ def email_test_setup(db):
         raw_email=email1,
         health_history="",
     )
+    # Update the date to be older than 90 days (safety check threshold)
+    old_date = datetime.date.today() - datetime.timedelta(days=100)
+    Denial.objects.filter(denial_id=denial1.denial_id).update(date=old_date)
+    denial1.refresh_from_db()
     
     # Create old follow-up that was sent 40 days ago
     old_sent_date = timezone.now() - datetime.timedelta(days=40)
@@ -140,6 +145,39 @@ class TestClearExpiredEmailsCommand:
         ).first()
         
         assert followup_sched.email == ''
+
+    def test_safety_check_90_days(self, db):
+        """Test that denials created less than 90 days ago are not cleared."""
+        # Create a denial that has an old follow-up but was created recently
+        email = "new_denial@example.com"
+        hashed_email = Denial.get_hashed_email(email)
+        denial = Denial.objects.create(
+            denial_text="Test denial created recently",
+            hashed_email=hashed_email,
+            raw_email=email,
+            health_history="",
+        )
+        # The denial is created today (less than 90 days old)
+        
+        # Create an old follow-up that was sent 40 days ago
+        old_sent_date = timezone.now() - datetime.timedelta(days=40)
+        FollowUpSched.objects.create(
+            email=email,
+            denial_id=denial,
+            follow_up_date=old_sent_date.date() - datetime.timedelta(days=1),
+            follow_up_sent=True,
+            follow_up_sent_date=old_sent_date,
+        )
+        
+        out = StringIO()
+        call_command('clear_expired_emails', stdout=out)
+        
+        # Refresh from database
+        denial.refresh_from_db()
+        
+        # Email should NOT be cleared because denial is less than 90 days old
+        assert denial.raw_email == email
+        assert "No emails to clear" in out.getvalue()
 
 
 @pytest.mark.django_db
