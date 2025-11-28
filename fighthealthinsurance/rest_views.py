@@ -1621,7 +1621,12 @@ class ChooserViewSet(viewsets.ViewSet):
         """Get or create a session key for the request."""
         if not request.session.session_key:
             request.session.create()
-        return request.session.session_key or ""
+        session_key = request.session.session_key
+        if not session_key:
+            # Generate a fallback session key if session creation failed
+            import uuid
+            session_key = f"fallback-{uuid.uuid4().hex}"
+        return session_key
 
     def _get_next_task(self, request: Request, task_type: str) -> Response:
         """

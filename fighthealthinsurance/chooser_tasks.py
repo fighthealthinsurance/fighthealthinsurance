@@ -261,7 +261,6 @@ def trigger_task_generation_sync(task_type: str, count: int = 1):
     Synchronously trigger generation of chooser tasks.
     Useful for testing or admin commands.
     """
-    import asyncio
     from asgiref.sync import async_to_sync
 
     async def run_generation():
