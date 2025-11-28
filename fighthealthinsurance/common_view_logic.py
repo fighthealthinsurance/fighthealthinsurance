@@ -36,6 +36,7 @@ from django.urls import reverse
 
 
 import uszipcode
+from fighthealthinsurance.process_denial import ProcessDenialCodes
 from fighthealthinsurance.fax_actor_ref import fax_actor_ref
 from fighthealthinsurance.form_utils import *
 from fighthealthinsurance.generate_appeal import *

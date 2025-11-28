@@ -50,14 +50,13 @@ class StageFaxView(generic.FormView):
 
             # Template expects `fax_form`, not `form`
             ctx["fax_form"] = form
+            if self.request.method == "POST" and ctx:
+                ctx.setdefault("appeal", self.request.POST.get("completed_appeal_text", ""))
+                ctx.setdefault("denial_id", self.request.POST.get("denial_id"))
+                ctx.setdefault("user_email", self.request.POST.get("email"))
+            return ctx
         except Exception:
             pass
-
-        if self.request.method == "POST":
-            ctx.setdefault("appeal", self.request.POST.get("completed_appeal_text", ""))
-            ctx.setdefault("denial_id", self.request.POST.get("denial_id"))
-            ctx.setdefault("user_email", self.request.POST.get("email"))
-        return ctx
 
     def form_valid(self, form):
         logger.debug(f"Huzzah valid form.")
