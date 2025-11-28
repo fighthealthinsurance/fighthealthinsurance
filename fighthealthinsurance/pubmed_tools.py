@@ -213,6 +213,7 @@ class PubMedTools(object):
         await PubMedQueryData.objects.acreate(
             denial_id=denial,
             articles=articles_json,
+            query=f"{denial.procedure or ''} {denial.diagnosis or ''}".strip() or "denial_articles",
         )
         logger.debug(f"Found {articles} for denial {denial}")
         return articles

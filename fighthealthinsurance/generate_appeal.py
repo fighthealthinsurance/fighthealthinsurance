@@ -410,8 +410,8 @@ class AppealGenerator(object):
                 r"\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s*\d{2,4}\b",
             ]
             range_patterns = [
-                r"\b\d{1,2}/\d{1,2}/\d{2,4}\s*[-–to]{1,3}\s*\d{1,2}/\d{1,2}/\d{2,4}\b",
-                r"\b\d{1,2}-\d{1,2}-\d{2,4}\s*[-–to]{1,3}\s*\d{1,2}-\d{1,2}-\d{2,4}\b",
+                r"\b\d{1,2}/\d{1,2}/\d{2,4}\s*(?:-|–|to)\s*\d{1,2}/\d{1,2}/\d{2,4}\b",
+                r"\b\d{1,2}-\d{1,2}-\d{2,4}\s*(?:-|–|to)\s*\d{1,2}-\d{1,2}-\d{2,4}\b",
             ]
             if any(re.search(p, r) for p in range_patterns):
                 score += 2.0

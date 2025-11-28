@@ -49,7 +49,7 @@ function updateStatusList(taskName: string): void {
     'claim id': 'Looking for the claim ID',
     'date of service': 'Looking for service date (if applicable)',
     'diagnosis': 'Looking up diagnosis',
-    'type of denial': 'Idenitifying denial type'
+    'type of denial': 'Identifying denial type (oh so many ways they try not to pay)'
   };
 
   const displayName = taskDisplayNames[taskName] || `✓ Processed ${taskName}`;
