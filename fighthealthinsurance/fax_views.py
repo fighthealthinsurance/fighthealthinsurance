@@ -42,7 +42,6 @@ class StageFaxView(generic.FormView):
     template_name = "appeal.html"
 
     def get_context_data(self, **kwargs):
-        ctx = None
         try:
             ctx = super().get_context_data(**kwargs)
             # Get the form object because it's a form view.
@@ -57,8 +56,10 @@ class StageFaxView(generic.FormView):
                 ctx.setdefault("denial_id", self.request.POST.get("denial_id"))
                 ctx.setdefault("user_email", self.request.POST.get("email"))
             return ctx
-        except Exception:
-            pass
+        except Exception as e:
+            logger.exception(f"Failed to build template context for StageFaxView: {e}")
+            # Return safe empty context to prevent template errors
+            return {"fax_form": self.get_form()}
 
     def form_valid(self, form):
         logger.debug(f"Huzzah valid form.")

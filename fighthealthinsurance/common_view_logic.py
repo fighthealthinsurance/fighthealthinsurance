@@ -572,25 +572,35 @@ class ChooseAppealHelper:
         pa.save()
         articles = None
         article_ids = None
-        try:
-            pmqd = PubMedQueryData.objects.filter(denial_id=denial_id)[0]
-            if pmqd.articles is not None:
+
+        # Try to load article IDs from PubMedQueryData
+        pmqd = PubMedQueryData.objects.filter(denial_id=denial_id).first()
+        if pmqd and pmqd.articles:
+            try:
                 article_ids = json.loads(pmqd.articles)
-        except Exception as e:
-            pass
-        try:
-            if not article_ids:
+            except json.JSONDecodeError as e:
+                logger.debug(
+                    f"Failed to parse PubMedQueryData articles JSON for denial {denial_id}: {e}"
+                )
+
+        # Fallback to denial.pubmed_ids_json if no article_ids yet
+        if not article_ids:
+            try:
                 article_ids = denial.pubmed_ids_json
-        except Exception as e:
-            logger.debug(f"Error loading articles {e}")
-            pass
-        try:
-            if article_ids:
+            except Exception as e:
+                logger.debug(
+                    f"Error loading articles from denial.pubmed_ids_json for denial {denial_id}: {e}"
+                )
+
+        # Query for articles if we have IDs
+        if article_ids:
+            try:
                 articles = PubMedArticleSummarized.objects.filter(
                     pmid__in=article_ids
                 ).distinct()
-        except Exception as e:
-            logger.debug("Error finding articles {article_ids}: {e}")
+            except Exception as e:
+                logger.debug(f"Error finding articles {article_ids}: {e}")
+
         logger.debug(f"Loaded articles {articles}...")
         return (denial.appeal_fax_number, denial.insurance_company, articles)
 
@@ -1626,12 +1636,7 @@ class AppealsBackendHelper:
         )
         denial = await denial_query.aget()
 
-        # Yield status: loaded denial
-        yield json.dumps(
-            {"type": "status", "message": "Loaded denial information"}
-        ) + "\n"
-
-        # Initial yield of newline.
+        # Initial keepalive newline so clients know we're alive.
         yield "\n"
 
         # Helper format methods
@@ -1749,7 +1754,13 @@ class AppealsBackendHelper:
                 )
                 yield await format_response(existing_appeal_dict)
 
-        # Yield status: processing templates
+        # Yield status after any previously saved appeals have been sent
+        yield json.dumps(
+            {"type": "status", "message": "Starting appeal generation..."}
+        ) + "\n"
+        yield json.dumps(
+            {"type": "status", "message": "Loaded denial information"}
+        ) + "\n"
         yield json.dumps(
             {"type": "status", "message": "Processing denial types and templates..."}
         ) + "\n"

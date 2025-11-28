@@ -42,13 +42,16 @@ class _HealthStatus:
         self._lock = threading.Lock()
         self._snapshot: HealthSnapshot = HealthSnapshot()
         self._timer: Optional[threading.Timer] = None
-        # Compute immediately at startup
-        self._refresh()
-        # Schedule background refresh
-        self._schedule_refresh()
+        self._initialized = False
 
     def get_snapshot(self) -> Dict[str, Any]:
         with self._lock:
+            # Lazy initialization: refresh and schedule on first call
+            if not self._initialized:
+                self._refresh()
+                self._schedule_refresh()
+                self._initialized = True
+
             return {
                 "alive_models": self._snapshot.alive_models,
                 "last_checked": self._snapshot.last_checked,
@@ -88,7 +91,8 @@ class _HealthStatus:
             try:
                 ok = m.model_is_ok()
             except Exception as e:
-                logger.debug(f"Error checking on model {m}")
+                logger.debug(f"Error checking on model {m}: {e}")
+                err = str(e)
             if ok:
                 alive_count += 1
             # details.append(BackendHealthDetail(name=name, ok=ok, error=err))
