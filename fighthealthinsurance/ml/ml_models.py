@@ -1359,7 +1359,6 @@ class RemoteOpenLike(RemoteModel):
         url = f"{api_base}/chat/completions"
         combined_content = None
         json_result = {}
-        r = None
         try:
             async with aiohttp.ClientSession() as s:
                 context_extra = ""
@@ -1458,7 +1457,6 @@ class RemoteOpenLike(RemoteModel):
                         "temperature": temperature,
                     },
                 ) as response:
-                    r = response
                     json_result = await response.json()
                     if "object" in json_result and json_result["object"] != "error":
                         logger.debug(f"Response {json_result} on {self} Looks ok")
@@ -1479,7 +1477,7 @@ class RemoteOpenLike(RemoteModel):
         try:
             if "choices" not in json_result:
                 logger.debug(
-                    f"Response {r} {json_result} from {url} missing key result."
+                    f"Response {json_result} from {url} missing key result."
                 )
                 return None
 
