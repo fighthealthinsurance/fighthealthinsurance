@@ -302,6 +302,11 @@ urlpatterns += [
         sensitive_post_parameters()(views.ChatUserConsentView.as_view()),
         name="chat_consent",
     ),
+    path(
+        "chooser/",
+        views.ChooserView.as_view(),
+        name="chooser",
+    ),
     path("cookies/", include("cookie_consent.urls")),
 ]
 

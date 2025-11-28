@@ -1178,3 +1178,14 @@ class UnsubscribeView(View):
                     "error": "This unsubscribe link is invalid or has already been used.",
                 },
             )
+
+
+class ChooserView(TemplateView):
+    """View for the Chooser (Best-Of Selection) interface."""
+
+    template_name = "chooser.html"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["title"] = "Help Us Improve Our Chooser"
+        return context
