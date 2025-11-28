@@ -38,7 +38,7 @@
                     <iframe 
                         src="https://www.youtube.com/embed/nzRy-eZAcSU" 
                         title="PBS NewsHour: How patients are using AI to fight back against denied insurance claims"
-                        frameborder="0" 
+                        style="border: none;"
                         allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" 
                         referrerpolicy="strict-origin-when-cross-origin" 
                         allowfullscreen>
@@ -165,30 +165,42 @@
 <section id="featured-in" class="py-5" style="background-color: #fff;">
     <div class="container">
         <h5 class="text-center mb-4" style="color: #888; text-transform: uppercase; letter-spacing: 2px;">Also Featured In</h5>
+        <style>
+            .featured-logo {
+                max-height: 50px;
+                filter: grayscale(100%);
+                opacity: 0.7;
+                transition: all 0.3s;
+            }
+            .featured-logo:hover {
+                filter: grayscale(0%);
+                opacity: 1;
+            }
+        </style>
         <div class="row justify-content-center align-items-center">
             <div class="col-6 col-md-2 text-center p-2">
                 <a href="https://www.forbes.com/sites/amyfeldman/2024/12/11/these-entrepreneurs-are-using-ai-to-fight-health-insurance-claims-denials" target="_blank" rel="noopener noreferrer">
-                    <img src="{% static 'images/forbeslogo.png' %}" alt="Forbes logo" class="img-fluid" style="max-height: 50px; filter: grayscale(100%); opacity: 0.7; transition: all 0.3s;" onmouseover="this.style.filter='grayscale(0%)'; this.style.opacity='1';" onmouseout="this.style.filter='grayscale(100%)'; this.style.opacity='0.7';">
+                    <img src="{% static 'images/forbeslogo.png' %}" alt="Forbes logo" class="img-fluid featured-logo">
                 </a>
             </div>
             <div class="col-6 col-md-2 text-center p-2">
                 <a href="https://www.cbsnews.com/news/health-insurance-costs-inflation-denials-luigi-mangione-united-healthcare" target="_blank" rel="noopener noreferrer">
-                    <img src="{% static 'images/cbslogo.png' %}" alt="CBS logo" class="img-fluid" style="max-height: 50px; filter: grayscale(100%); opacity: 0.7; transition: all 0.3s;" onmouseover="this.style.filter='grayscale(0%)'; this.style.opacity='1';" onmouseout="this.style.filter='grayscale(100%)'; this.style.opacity='0.7';">
+                    <img src="{% static 'images/cbslogo.png' %}" alt="CBS logo" class="img-fluid featured-logo">
                 </a>
             </div>
             <div class="col-6 col-md-2 text-center p-2">
                 <a href="https://www.fastcompany.com/91209422/if-your-health-insurance-denies-a-claim-this-tool-uses-ai-to-help-you-fight-back" target="_blank" rel="noopener noreferrer">
-                    <img src="{% static 'images/fastcompanylogo.png' %}" alt="Fast Company logo" class="img-fluid" style="max-height: 50px; filter: grayscale(100%); opacity: 0.7; transition: all 0.3s;" onmouseover="this.style.filter='grayscale(0%)'; this.style.opacity='1';" onmouseout="this.style.filter='grayscale(100%)'; this.style.opacity='0.7';">
+                    <img src="{% static 'images/fastcompanylogo.png' %}" alt="Fast Company logo" class="img-fluid featured-logo">
                 </a>
             </div>
             <div class="col-6 col-md-2 text-center p-2">
                 <a href="https://www.statnews.com/2024/12/12/artificial-intelligence-appealing-health-insurance-denials" target="_blank" rel="noopener noreferrer">
-                    <img src="{% static 'images/statlogo.png' %}" alt="STAT News logo" class="img-fluid" style="max-height: 50px; filter: grayscale(100%); opacity: 0.7; transition: all 0.3s;" onmouseover="this.style.filter='grayscale(0%)'; this.style.opacity='1';" onmouseout="this.style.filter='grayscale(100%)'; this.style.opacity='0.7';">
+                    <img src="{% static 'images/statlogo.png' %}" alt="STAT News logo" class="img-fluid featured-logo">
                 </a>
             </div>
             <div class="col-6 col-md-2 text-center p-2">
                 <a href="https://www.businessinsider.com/free-health-insurance-claim-denial-appeal-project-startup-2024-12" target="_blank" rel="noopener noreferrer">
-                    <img src="{% static 'images/businessinsiderlogo.png' %}" alt="Business Insider logo" class="img-fluid" style="max-height: 50px; filter: grayscale(100%); opacity: 0.7; transition: all 0.3s;" onmouseover="this.style.filter='grayscale(0%)'; this.style.opacity='1';" onmouseout="this.style.filter='grayscale(100%)'; this.style.opacity='0.7';">
+                    <img src="{% static 'images/businessinsiderlogo.png' %}" alt="Business Insider logo" class="img-fluid featured-logo">
                 </a>
             </div>
         </div>
