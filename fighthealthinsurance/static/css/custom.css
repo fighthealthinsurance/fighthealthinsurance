@@ -385,6 +385,11 @@ a.link:hover::after {
 
 /* Appeal page reuse */
 .appeal-donate-wrapper {margin:1.25rem 0;}
+.appeal-donate-wrapper .pwyw-panel {background: #fff; color: #333; border: 2px solid #ADD100;}
+.appeal-donate-wrapper .pwyw-title {color: #333; text-shadow: none;}
+.appeal-donate-wrapper .pwyw-subcopy {color: #555; text-shadow: none;}
+.appeal-donate-wrapper .pwyw-option {background: #f8f9fa; color: #333; border: 1px solid #ddd;}
+.appeal-donate-wrapper .pwyw-option small {color: #666;}
 
 /* Fax PWYW modifications */
 .fax-pwyw-group {display:flex; flex-wrap:wrap; gap:.6rem; margin:.75rem 0 1rem;}

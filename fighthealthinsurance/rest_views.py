@@ -490,7 +490,10 @@ class LiveModelsStatus(APIView):
         try:
             snapshot = health_status.get_snapshot()
             # Always succeed; return 200 with the current snapshot (even if 0)
-            return Response(snapshot, status=status.HTTP_200_OK)
+            response = Response(snapshot, status=status.HTTP_200_OK)
+            # Add cache control headers - cache for 5 minutes
+            response["Cache-Control"] = "public, max-age=300"
+            return response
         except Exception as e:
             logger.warning(f"LiveModelsStatus failed: {e}")
             # Graceful degradation: return zeros

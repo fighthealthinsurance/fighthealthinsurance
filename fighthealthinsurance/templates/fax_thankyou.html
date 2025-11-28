@@ -4,6 +4,9 @@ Thank you for using Fight Health Insurance & Our Fax Service!
 {% endblock title %}
 {% load static %}
 {% load absolute %}
+{% block scriptmagic %}
+<script src="{% static 'js/pwyw.js' %}"></script>
+{% endblock scriptmagic %}
 {% block content %}
 <section id="contact">
     <div class="container">
@@ -13,6 +16,14 @@ Thank you for using Fight Health Insurance & Our Fax Service!
       <p>
 	The dream of the <a href="https://www.youtube.com/watch?v=U4hShMEk1Ew">90s is alive in Portland</a>, Seattle, and <a href="https://amzn.to/3UvGZaD">our FaxMachine (you can get your own too!)</a>.
       </p>
+      <div class="appeal-donate-wrapper" style="background-color: #f8f9fa; padding: 1.5rem; border-radius: 8px; margin: 1.5rem auto; max-width: 680px;">
+        <p style="color: #333; text-align: center; margin-bottom: 1rem;">
+          <strong>Appreciate us?</strong> Help us keep fighting for others:
+        </p>
+        <div style="background: white; padding: 1.5rem; border-radius: 8px;">
+          {% include 'partials/pwyw_panel.html' %}
+        </div>
+      </div>
       <p>
 	<img src="{% static "images/holden_and_carolyn_walk_in_seattle.jpg" %}" alt="Picture a very 90s esque picture here" align="center" width="1088" height="732"/>
       </p>

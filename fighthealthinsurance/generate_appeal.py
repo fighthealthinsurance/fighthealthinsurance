@@ -419,6 +419,7 @@ class AppealGenerator(object):
                 score += 1.5
             # Attempt parse for common numeric formats to add bonus
             from datetime import datetime
+
             parsed = False
             for fmt in ["%m/%d/%Y", "%m/%d/%y", "%m-%d-%Y", "%m-%d-%y"]:
                 try:

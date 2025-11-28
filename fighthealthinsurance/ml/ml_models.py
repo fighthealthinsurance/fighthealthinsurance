@@ -1476,9 +1476,7 @@ class RemoteOpenLike(RemoteModel):
             return None
         try:
             if "choices" not in json_result:
-                logger.debug(
-                    f"Response {json_result} from {url} missing key result."
-                )
+                logger.debug(f"Response {json_result} from {url} missing key result.")
                 return None
 
             # Extract message content
