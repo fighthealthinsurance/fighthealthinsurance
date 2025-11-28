@@ -398,7 +398,7 @@ class DenialEndToEnd(APITestCase):
         try:
             while True:
                 response = await seb_communicator.receive_from(timeout=30)
-        except:
+        except Exception:
             pass
 
         # Now test appeal generation with status messages
