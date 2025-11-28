@@ -1,4 +1,3 @@
-perplexityai
 aiohttp
 async-timeout
 asyncssh
