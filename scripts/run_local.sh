@@ -88,7 +88,7 @@ if ping -c1 -W1 scrump.local.pigscanfly.ca >/dev/null 2>&1; then
   export ALPHA_HEALTH_BACKEND_HOST=scrump.local.pigscanfly.ca
 fi
 
-if "$FAST" != "FAST"; then
+if [ "$FAST" != "FAST" ]; then
   python manage.py migrate
   python manage.py loaddata initial
   python manage.py loaddata followup

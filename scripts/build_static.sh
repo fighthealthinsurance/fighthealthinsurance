@@ -15,7 +15,7 @@ if [ ${npm_dep_check} != 0 ]; then
 fi
 npm run build
 popd
-if "$FAST" != "FAST"; then
+if [ "$FAST" != "FAST" ]; then
   rm -rf static
   ./manage.py collectstatic
   # Generate the blog metadata so it's included in the container.
