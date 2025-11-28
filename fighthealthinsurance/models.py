@@ -99,9 +99,18 @@ class MailingListSubscriber(models.Model):
     comments = models.TextField(default="", blank=True)
     signup_date = models.DateField(auto_now_add=True)
     phone = models.CharField(max_length=300, default="", blank=True)
+    unsubscribe_token = models.CharField(max_length=100, default=sekret_gen, unique=True)
 
     def __str__(self):
         return self.email
+
+    def get_unsubscribe_url(self) -> str:
+        """Generate the unsubscribe URL for this subscriber."""
+        from django.urls import reverse
+
+        return "https://www.fighthealthinsurance.com" + reverse(
+            "unsubscribe", kwargs={"token": self.unsubscribe_token}
+        )
 
 
 class DemoRequests(models.Model):

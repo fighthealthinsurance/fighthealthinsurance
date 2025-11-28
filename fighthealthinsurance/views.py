@@ -723,8 +723,28 @@ class InitialProcessView(generic.FormView):
         cleaned_data = form.cleaned_data
         if "denial_id" in cleaned_data:
             del cleaned_data["denial_id"]
+
+        # Handle mailing list subscription
+        if cleaned_data.get("subscribe"):
+            email = cleaned_data.get("email")
+            # Get name from the POST data (it's not stored in cleaned_data for privacy)
+            fname = self.request.POST.get("fname", "")
+            lname = self.request.POST.get("lname", "")
+            name = f"{fname} {lname}".strip()
+            # Use get_or_create to avoid duplicate subscriptions
+            models.MailingListSubscriber.objects.get_or_create(
+                email=email,
+                defaults={
+                    "name": name,
+                    "comments": "From appeal flow",
+                },
+            )
+
+        # Remove subscribe from cleaned_data before passing to create_or_update_denial
+        cleaned_data.pop("subscribe", None)
+
         denial_response = common_view_logic.DenialCreatorHelper.create_or_update_denial(
-            **form.cleaned_data,
+            **cleaned_data,
         )
 
         # Store the denial ID in the session to maintain state across the multi-step form process
@@ -735,7 +755,7 @@ class InitialProcessView(generic.FormView):
         form = core_forms.HealthHistory(
             initial={
                 "denial_id": denial_response.denial_id,
-                "email": form.cleaned_data["email"],
+                "email": cleaned_data["email"],
                 "semi_sekret": denial_response.semi_sekret,
             }
         )
@@ -1129,3 +1149,32 @@ def create_pwyw_checkout(request):
             status=500,
             content_type="application/json",
         )
+
+
+class UnsubscribeView(View):
+    """View for handling mailing list unsubscribe requests."""
+
+    def get(self, request: HttpRequest, token: str) -> HttpResponseBase:
+        """Handle GET request to unsubscribe a mailing list subscriber by token."""
+        try:
+            subscriber = models.MailingListSubscriber.objects.get(unsubscribe_token=token)
+            email = subscriber.email
+            subscriber.delete()
+            return render(
+                request,
+                "unsubscribed.html",
+                context={
+                    "title": "Unsubscribed",
+                    "email": email,
+                },
+            )
+        except models.MailingListSubscriber.DoesNotExist:
+            return render(
+                request,
+                "unsubscribed.html",
+                context={
+                    "title": "Unsubscribed",
+                    "email": None,
+                    "error": "This unsubscribe link is invalid or has already been used.",
+                },
+            )
