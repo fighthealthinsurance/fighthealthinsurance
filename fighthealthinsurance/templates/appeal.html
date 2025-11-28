@@ -53,7 +53,38 @@ Huzzah! We have a <b>draft</b> appeal for you to edit bellow:
 <!-- Put this back once we write that java script. -->
 <form action="{% url 'stagefaxview' %}" method="post" class="col-md-12 d-flex flex-column align-items-center">
   {% csrf_token %}
-  {{ fax_form }}
+  <!-- Manual expansion of fax form so we can have our custom PWYW widget. -->
+  {{ fax_form.non_field_errors }}
+
+  <div>
+    {{ fax_form.name.label_tag }}
+    {{ fax_form.name }}
+    {{ fax_form.name.errors }}
+  </div>
+
+  <div>
+    {{ fax_form.insurance_company.label_tag }}
+    {{ fax_form.insurance_company }}
+    {{ fax_form.insurance_company.errors }}
+  </div>
+
+  <div>
+    {{ fax_form.fax_phone.label_tag }}
+    {{ fax_form.fax_phone }}
+    {{ fax_form.fax_phone.errors }}
+  </div>
+
+  <div>
+    {{ fax_form.completed_appeal_text.label_tag }}
+    {{ fax_form.completed_appeal_text }}
+    {{ fax_form.completed_appeal_text.errors }}
+  </div>
+
+  <div>
+    {{ fax_form.include_provided_health_history }}
+    {{ fax_form.include_provided_health_history.label_tag }}
+    {{ fax_form.include_provided_health_history.errors }}
+  </div>
   <div class="fax-pwyw-group" aria-label="Fax price (optional, pay what you want)">
     <label><input type="radio" name="fax_pwyw" value="0" checked>$0 <small>Need it free</small></label>
     <label><input type="radio" name="fax_pwyw" value="5">$5 <small>Original price</small></label>

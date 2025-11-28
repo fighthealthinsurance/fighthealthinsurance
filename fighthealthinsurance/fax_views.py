@@ -39,6 +39,7 @@ class SendFaxView(View):
 
 class StageFaxView(generic.FormView):
     form_class = core_forms.FaxForm
+    template_name = "appeal.html"
 
     def form_valid(self, form):
         form_data = form.cleaned_data
@@ -76,6 +77,8 @@ class StageFaxView(generic.FormView):
         if fax_pwyw_selection == "custom" and str(fax_amount_raw) == "0":
             fax_amount_raw = form_data.get("fax_amount_custom", 0)
             logger.info("Using fax_amount_custom fallback (JavaScript may be disabled)")
+        else:
+            fax_amount_raw = fax_pwyw_selection
 
         try:
             fax_amount = int(fax_amount_raw)
@@ -98,6 +101,7 @@ class StageFaxView(generic.FormView):
 
         if fax_amount == 0:
             # Free fax - send immediately
+            logger.debug(f"Fax amount is zero, sending directly.")
             common_view_logic.SendFaxHelper.remote_send_fax(
                 uuid=staged.uuid,
                 hashed_email=staged.hashed_email,
