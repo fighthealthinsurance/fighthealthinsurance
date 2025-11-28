@@ -3,6 +3,7 @@ from typing import Optional
 
 from django.db.models import QuerySet
 from django.urls import reverse
+from django.utils import timezone
 from fighthealthinsurance.models import FollowUpSched, InterestedProfessional
 from fighthealthinsurance.utils import send_fallback_email
 from loguru import logger
@@ -79,10 +80,13 @@ class FollowUpEmailSender(object):
             follow_up_sched = FollowUpSched.objects.filter(email=email).filter(
                 follow_up_sent=False
             )[0]
-        elif email is None and follow_up_sched is not None:
-            email = follow_up_sched.email
-        else:
+        elif follow_up_sched is None and email is None:
+            # Both are None
             raise Exception("One of email and follow_up_sched must be set.")
+        # At this point follow_up_sched is guaranteed to be set by the logic above
+        assert follow_up_sched is not None
+        # Use the email from follow_up_sched to ensure consistency
+        email = follow_up_sched.email
         denial = follow_up_sched.denial_id
         selected_appeal = denial.chose_appeal()
         context = {
@@ -106,6 +110,7 @@ class FollowUpEmailSender(object):
                 to_email=email,
             )
             follow_up_sched.follow_up_sent = True
+            follow_up_sched.follow_up_sent_date = timezone.now()
             follow_up_sched.save()
             return True
         except Exception as e:
