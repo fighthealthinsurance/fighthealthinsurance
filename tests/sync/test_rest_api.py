@@ -324,7 +324,10 @@ class DenialEndToEnd(APITestCase):
             print(f"Error {e}")
             pass
         print(f"Received responses {responses}")
-        responses = list(filter(lambda x: len(x) > 4, responses))
+        # Find just the appeals ones, quick hack look for the "content" string to avoid full parse.
+        responses = list(
+            filter(lambda x: '"content"' in x, filter(lambda x: len(x) > 4, responses))
+        )
         # It's a streaming response with one per new line
         appeal = json.loads(responses[0])
         assert appeal["content"].lstrip().startswith("Dear")
@@ -426,16 +429,20 @@ class DenialEndToEnd(APITestCase):
         try:
             while True:
                 response = await a_communicator.receive_from(timeout=150)
-                if len(response) > 4:  # Filter out keepalive
+                try:
+                    # Skip empty keep alive lines
+                    if len(response) < 2:
+                        continue
                     responses.append(response)
-                    try:
-                        parsed = json.loads(response)
-                        if parsed.get("type") == "status":
-                            status_messages.append(parsed.get("message"))
-                        elif "content" in parsed:
-                            appeal_contents.append(parsed["content"])
-                    except json.JSONDecodeError:
-                        pass  # Skip non-JSON lines
+                    parsed = json.loads(response)
+                    if parsed.get("type") == "status":
+                        status_messages.append(parsed.get("message"))
+                    elif "content" in parsed:
+                        appeal_contents.append(parsed["content"])
+                    else:
+                        print(f"Got a non-status message without content? {parsed}")
+                except json.JSONDecodeError:
+                    pass  # Skip non-JSON lines
         except Exception as e:
             print(f"Done receiving: {e}")
             pass
