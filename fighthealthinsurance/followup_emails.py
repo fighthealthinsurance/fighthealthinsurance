@@ -84,6 +84,7 @@ class FollowUpEmailSender(object):
             # Both are None
             raise Exception("One of email and follow_up_sched must be set.")
         # At this point follow_up_sched is guaranteed to be set
+        assert follow_up_sched is not None  # Type narrowing for mypy
         # Use the email from follow_up_sched to ensure consistency
         email = follow_up_sched.email
         denial = follow_up_sched.denial_id

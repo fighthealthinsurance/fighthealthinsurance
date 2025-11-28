@@ -95,11 +95,14 @@ class Command(BaseCommand):
             return
 
         # Clear the raw_email field for these denials
+        # First, capture the denial IDs before the update
+        denial_ids_to_clear = list(candidates.values_list('denial_id', flat=True))
+        
         cleared_count = candidates.update(raw_email=None)
         
         # Also clear emails from the FollowUpSched entries for these denials
         FollowUpSched.objects.filter(
-            denial_id__in=candidates.values_list('denial_id', flat=True)
+            denial_id__in=denial_ids_to_clear
         ).update(email='')
 
         self.stdout.write(
