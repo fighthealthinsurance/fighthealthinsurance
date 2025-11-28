@@ -1,8 +1,7 @@
 import datetime
-import smtplib
 
-from django.conf import settings
-from django.core.mail import EmailMultiAlternatives, get_connection
+import ray
+
 from django.http import HttpResponse
 from django.views import View, generic
 from django.db import transaction
@@ -23,6 +22,8 @@ from fighthealthinsurance.followup_emails import (
     ThankyouEmailSender,
     FollowUpEmailSender,
 )
+from fighthealthinsurance.mailing_list_actor_ref import mailing_list_actor_ref
+from fighthealthinsurance.utils import mask_email_for_logging
 
 
 class ScheduleFollowUps(View):
@@ -184,49 +185,25 @@ class SendMailingListMailView(generic.FormView):
         text_content = form.cleaned_data.get("text_content")
         test_email = form.cleaned_data.get("test_email")
 
-        sent_count = 0
-        failed_count = 0
-
-        if test_email:
-            # Send only to test email
-            recipients = [test_email]
-        else:
-            # Use iterator to avoid loading all emails into memory at once
-            recipients = MailingListSubscriber.objects.values_list(
-                "email", flat=True
-            ).iterator()
-
-        # Use connection reuse for better performance
-        connection = get_connection()
         try:
-            connection.open()
-            for email in recipients:
-                try:
-                    msg = EmailMultiAlternatives(
-                        subject,
-                        text_content,
-                        settings.DEFAULT_FROM_EMAIL,
-                        to=[email],
-                        connection=connection,
-                    )
-                    msg.attach_alternative(html_content, "text/html")
-                    msg.send()
-                    sent_count += 1
-                    logger.info(f"Sent mailing list email to {email}")
-                except smtplib.SMTPException as e:
-                    failed_count += 1
-                    logger.error(f"SMTP error sending mailing list email to {email}: {e}")
-                except OSError as e:
-                    failed_count += 1
-                    logger.error(f"Connection error sending mailing list email to {email}: {e}")
-        finally:
-            connection.close()
-
-        if test_email:
-            return HttpResponse(
-                f"Test email sent successfully to {test_email}"
+            # Use ray actor for sending emails
+            actor = mailing_list_actor_ref.get
+            future = actor.send_mailing_list_email.remote(
+                subject, html_content, text_content, test_email
             )
-        else:
+            sent_count, failed_count = ray.get(future)
+
+            if test_email:
+                masked_email = mask_email_for_logging(test_email)
+                return HttpResponse(
+                    f"Test email sent successfully to {masked_email}"
+                )
+            else:
+                return HttpResponse(
+                    f"Mailing list email sent. Success: {sent_count}, Failed: {failed_count}"
+                )
+        except Exception as e:
+            logger.opt(exception=True).error(f"Error sending mailing list email: {e}")
             return HttpResponse(
-                f"Mailing list email sent. Success: {sent_count}, Failed: {failed_count}"
+                f"Error sending mailing list email: {str(e)}", status=500
             )
