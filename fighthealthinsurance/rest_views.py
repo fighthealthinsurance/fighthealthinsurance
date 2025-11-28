@@ -5,7 +5,8 @@ from typing import Optional
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.shortcuts import get_object_or_404
-from django.db.models import Q
+from django.db.models import Q, Count
+from django.db import models
 from django.utils import timezone
 from dateutil.relativedelta import relativedelta
 from django.http import FileResponse
@@ -50,6 +51,9 @@ from fighthealthinsurance.models import (
     PriorAuthRequest,
     ProposedPriorAuth,
     OngoingChat,
+    ChooserTask,
+    ChooserCandidate,
+    ChooserVote,
 )
 from fighthealthinsurance.pubmed_tools import PubMedTools
 
@@ -1601,3 +1605,200 @@ class ProposedPriorAuthViewSet(viewsets.ReadOnlyModelViewSet):
 
         # Return proposals for this prior auth
         return ProposedPriorAuth.objects.filter(prior_auth_request=prior_auth)
+
+
+class ChooserViewSet(viewsets.ViewSet):
+    """
+    ViewSet for the Chooser (Best-Of Selection) system.
+
+    Provides endpoints for:
+    - GET /api/chooser/next/appeal - Get next appeal chooser task
+    - GET /api/chooser/next/chat - Get next chat chooser task
+    - POST /api/chooser/vote - Submit a vote for a task
+    """
+
+    def _get_session_key(self, request: Request) -> str:
+        """Get or create a session key for the request."""
+        if not request.session.session_key:
+            request.session.create()
+        return request.session.session_key or ""
+
+    def _get_next_task(self, request: Request, task_type: str) -> Response:
+        """
+        Get the next available chooser task for the given type.
+
+        Selection logic:
+        1. Prefer tasks with zero votes
+        2. If none, select tasks with the fewest total votes
+        3. Exclude tasks where this session key has already voted
+        """
+        session_key = self._get_session_key(request)
+
+        # Get tasks that this session hasn't voted on yet
+        voted_task_ids = ChooserVote.objects.filter(
+            session_key=session_key
+        ).values_list("task_id", flat=True)
+
+        # Find READY tasks of the requested type that haven't been voted on by this session
+        available_tasks = (
+            ChooserTask.objects.filter(task_type=task_type, status="READY")
+            .exclude(id__in=voted_task_ids)
+            .annotate(vote_count=Count("votes"))
+            .order_by("vote_count", "created_at")
+        )
+
+        task = available_tasks.first()
+
+        if not task:
+            return Response(
+                {"message": "No tasks available", "task_type": task_type},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Get candidates for this task
+        candidates = ChooserCandidate.objects.filter(task=task, is_active=True).order_by(
+            "candidate_index"
+        )
+
+        if not candidates.exists():
+            return Response(
+                {"message": "Task has no candidates", "task_type": task_type},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Build context from the task
+        context = {}
+        if task.context_json:
+            context = task.context_json
+        elif task.denial:
+            # Build context from linked denial
+            context = {
+                "denial_text_preview": (task.denial.denial_text or "")[:500],
+                "procedure": task.denial.procedure or "",
+                "diagnosis": task.denial.diagnosis or "",
+                "insurance_company": task.denial.insurance_company or "",
+            }
+        elif task.chat:
+            # Build context from linked chat (first user message as prompt)
+            if task.chat.chat_history:
+                for msg in task.chat.chat_history:
+                    if msg.get("role") == "user":
+                        context = {"prompt": msg.get("content", "")[:500]}
+                        break
+
+        # Serialize candidates
+        candidate_data = [
+            {
+                "id": c.id,
+                "candidate_index": c.candidate_index,
+                "kind": c.kind,
+                "model_name": c.model_name,
+                "content": c.content,
+                "metadata": c.metadata,
+            }
+            for c in candidates
+        ]
+
+        response_data = {
+            "task_id": task.id,
+            "task_type": task.task_type,
+            "context": context,
+            "candidates": candidate_data,
+        }
+
+        return Response(
+            serializers.ChooserTaskSerializer(response_data).data,
+            status=status.HTTP_200_OK,
+        )
+
+    @extend_schema(responses=serializers.ChooserTaskSerializer)
+    @action(detail=False, methods=["get"], url_path="next/appeal")
+    def next_appeal(self, request: Request) -> Response:
+        """Get the next appeal letter chooser task."""
+        return self._get_next_task(request, "appeal")
+
+    @extend_schema(responses=serializers.ChooserTaskSerializer)
+    @action(detail=False, methods=["get"], url_path="next/chat")
+    def next_chat(self, request: Request) -> Response:
+        """Get the next chat response chooser task."""
+        return self._get_next_task(request, "chat")
+
+    @extend_schema(
+        request=serializers.ChooserVoteRequestSerializer,
+        responses={
+            200: serializers.ChooserVoteResponseSerializer,
+            400: serializers.ErrorSerializer,
+            404: serializers.ErrorSerializer,
+        },
+    )
+    @action(detail=False, methods=["post"])
+    def vote(self, request: Request) -> Response:
+        """Submit a vote for a chooser task."""
+        serializer = serializers.ChooserVoteRequestSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(
+                serializers.ErrorSerializer({"error": str(serializer.errors)}).data,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        session_key = self._get_session_key(request)
+        task_id = serializer.validated_data["task_id"]
+        chosen_candidate_id = serializer.validated_data["chosen_candidate_id"]
+        presented_candidate_ids = serializer.validated_data["presented_candidate_ids"]
+
+        # Validate task exists and is in valid state
+        try:
+            task = ChooserTask.objects.get(id=task_id)
+        except ChooserTask.DoesNotExist:
+            return Response(
+                serializers.ErrorSerializer({"error": "Task not found"}).data,
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if task.status not in ["READY", "IN_USE"]:
+            return Response(
+                serializers.ErrorSerializer({"error": "Task is not available for voting"}).data,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Validate chosen candidate exists and belongs to this task
+        try:
+            chosen_candidate = ChooserCandidate.objects.get(
+                id=chosen_candidate_id, task=task
+            )
+        except ChooserCandidate.DoesNotExist:
+            return Response(
+                serializers.ErrorSerializer({"error": "Invalid candidate for this task"}).data,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Check if this session has already voted on this task
+        if ChooserVote.objects.filter(task=task, session_key=session_key).exists():
+            return Response(
+                serializers.ErrorSerializer({"error": "You have already voted on this task"}).data,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Validate that chosen_candidate_id is in presented_candidate_ids
+        if chosen_candidate_id not in presented_candidate_ids:
+            return Response(
+                serializers.ErrorSerializer(
+                    {"error": "Chosen candidate was not in the presented candidates"}
+                ).data,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Create the vote
+        vote = ChooserVote.objects.create(
+            task=task,
+            chosen_candidate=chosen_candidate,
+            presented_candidate_ids=presented_candidate_ids,
+            session_key=session_key,
+        )
+
+        return Response(
+            serializers.ChooserVoteResponseSerializer(
+                {"success": True, "message": "Vote recorded successfully", "vote_id": vote.id}
+            ).data,
+            status=status.HTTP_200_OK,
+        )

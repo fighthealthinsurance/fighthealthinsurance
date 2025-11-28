@@ -36,6 +36,9 @@ from fighthealthinsurance.models import (
     ProposedPriorAuth,
     OngoingChat,
     ChatLeads,
+    ChooserTask,
+    ChooserCandidate,
+    ChooserVote,
 )
 from fhi_users.models import (
     ProfessionalUser,
@@ -493,3 +496,58 @@ class OngoingChatAdmin(admin.ModelAdmin):
     )
     ordering = ("-updated_at",)
     readonly_fields = ("id", "created_at", "updated_at")
+
+
+@admin.register(ChooserTask)
+class ChooserTaskAdmin(admin.ModelAdmin):
+    """Admin configuration for ChooserTask model."""
+
+    list_display = (
+        "id",
+        "task_type",
+        "status",
+        "source",
+        "num_candidates_expected",
+        "num_candidates_generated",
+        "created_at",
+    )
+    search_fields = ("id", "source")
+    list_filter = ("task_type", "status", "created_at")
+    ordering = ("-created_at",)
+    readonly_fields = ("id", "created_at", "updated_at")
+
+
+@admin.register(ChooserCandidate)
+class ChooserCandidateAdmin(admin.ModelAdmin):
+    """Admin configuration for ChooserCandidate model."""
+
+    list_display = (
+        "id",
+        "task",
+        "candidate_index",
+        "kind",
+        "model_name",
+        "is_active",
+        "created_at",
+    )
+    search_fields = ("task__id", "model_name", "content")
+    list_filter = ("kind", "is_active", "created_at")
+    ordering = ("-created_at",)
+    readonly_fields = ("id", "created_at")
+
+
+@admin.register(ChooserVote)
+class ChooserVoteAdmin(admin.ModelAdmin):
+    """Admin configuration for ChooserVote model."""
+
+    list_display = (
+        "id",
+        "task",
+        "chosen_candidate",
+        "session_key",
+        "created_at",
+    )
+    search_fields = ("task__id", "session_key")
+    list_filter = ("created_at",)
+    ordering = ("-created_at",)
+    readonly_fields = ("id", "created_at")

@@ -1,0 +1,159 @@
+# Generated manually for Chooser (Best-Of Selection) System
+
+from django.db import migrations, models
+import django.db.models.deletion
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("fighthealthinsurance", "0131_mailinglistsubscriber_unsubscribe_token"),
+    ]
+
+    operations = [
+        migrations.CreateModel(
+            name="ChooserTask",
+            fields=[
+                ("id", models.AutoField(primary_key=True, serialize=False)),
+                (
+                    "task_type",
+                    models.CharField(
+                        choices=[("appeal", "Appeal Letter"), ("chat", "Chat Response")],
+                        max_length=20,
+                    ),
+                ),
+                (
+                    "status",
+                    models.CharField(
+                        choices=[
+                            ("QUEUED", "Queued"),
+                            ("READY", "Ready"),
+                            ("IN_USE", "In Use"),
+                            ("EXHAUSTED", "Exhausted"),
+                            ("DISABLED", "Disabled"),
+                        ],
+                        default="QUEUED",
+                        max_length=20,
+                    ),
+                ),
+                ("context_json", models.JSONField(blank=True, null=True)),
+                ("source", models.CharField(default="synthetic", max_length=50)),
+                ("num_candidates_expected", models.IntegerField(default=4)),
+                ("num_candidates_generated", models.IntegerField(default=0)),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+                (
+                    "denial",
+                    models.ForeignKey(
+                        blank=True,
+                        null=True,
+                        on_delete=django.db.models.deletion.SET_NULL,
+                        related_name="chooser_tasks",
+                        to="fighthealthinsurance.denial",
+                    ),
+                ),
+                (
+                    "chat",
+                    models.ForeignKey(
+                        blank=True,
+                        null=True,
+                        on_delete=django.db.models.deletion.SET_NULL,
+                        related_name="chooser_tasks",
+                        to="fighthealthinsurance.ongoingchat",
+                    ),
+                ),
+            ],
+            options={
+                "verbose_name": "Chooser Task",
+                "verbose_name_plural": "Chooser Tasks",
+            },
+        ),
+        migrations.AddIndex(
+            model_name="choosertask",
+            index=models.Index(
+                fields=["task_type", "status"], name="fighthealth_task_ty_16df57_idx"
+            ),
+        ),
+        migrations.AddIndex(
+            model_name="choosertask",
+            index=models.Index(
+                fields=["status", "created_at"], name="fighthealth_status_3e7c9e_idx"
+            ),
+        ),
+        migrations.CreateModel(
+            name="ChooserCandidate",
+            fields=[
+                ("id", models.AutoField(primary_key=True, serialize=False)),
+                ("candidate_index", models.IntegerField()),
+                (
+                    "kind",
+                    models.CharField(
+                        choices=[
+                            ("appeal_letter", "Appeal Letter"),
+                            ("chat_response", "Chat Response"),
+                        ],
+                        max_length=30,
+                    ),
+                ),
+                ("model_name", models.CharField(max_length=200)),
+                ("content", models.TextField()),
+                ("metadata", models.JSONField(blank=True, null=True)),
+                ("is_active", models.BooleanField(default=True)),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                (
+                    "task",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="candidates",
+                        to="fighthealthinsurance.choosertask",
+                    ),
+                ),
+            ],
+            options={
+                "verbose_name": "Chooser Candidate",
+                "verbose_name_plural": "Chooser Candidates",
+                "ordering": ["task", "candidate_index"],
+                "unique_together": {("task", "candidate_index")},
+            },
+        ),
+        migrations.CreateModel(
+            name="ChooserVote",
+            fields=[
+                ("id", models.AutoField(primary_key=True, serialize=False)),
+                ("presented_candidate_ids", models.JSONField()),
+                ("session_key", models.CharField(db_index=True, max_length=100)),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                (
+                    "chosen_candidate",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="votes",
+                        to="fighthealthinsurance.choosercandidate",
+                    ),
+                ),
+                (
+                    "task",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="votes",
+                        to="fighthealthinsurance.choosertask",
+                    ),
+                ),
+            ],
+            options={
+                "verbose_name": "Chooser Vote",
+                "verbose_name_plural": "Chooser Votes",
+                "unique_together": {("task", "session_key")},
+            },
+        ),
+        migrations.AddIndex(
+            model_name="chooservote",
+            index=models.Index(fields=["task"], name="fighthealth_task_id_d5f9d1_idx"),
+        ),
+        migrations.AddIndex(
+            model_name="chooservote",
+            index=models.Index(
+                fields=["session_key"], name="fighthealth_session_c8e96a_idx"
+            ),
+        ),
+    ]
