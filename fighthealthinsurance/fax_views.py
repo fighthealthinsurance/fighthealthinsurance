@@ -41,7 +41,26 @@ class StageFaxView(generic.FormView):
     form_class = core_forms.FaxForm
     template_name = "appeal.html"
 
+    def get_context_data(self, **kwargs):
+        ctx = None
+        try:
+            ctx = super().get_context_data(**kwargs)
+            # Get the form object because it's a form view.
+            form = ctx.get("form")
+
+            # Template expects `fax_form`, not `form`
+            ctx["fax_form"] = form
+        except Exception:
+            pass
+
+        if self.request.method == "POST":
+            ctx.setdefault("appeal", self.request.POST.get("completed_appeal_text", ""))
+            ctx.setdefault("denial_id", self.request.POST.get("denial_id"))
+            ctx.setdefault("user_email", self.request.POST.get("email"))
+        return ctx
+
     def form_valid(self, form):
+        logger.debug(f"Huzzah valid form.")
         form_data = form.cleaned_data
         # Get all of the articles the user wants to send
         pubmed_checkboxes = [
@@ -70,15 +89,20 @@ class StageFaxView(generic.FormView):
 
         # Get fax amount from form (PWYW) with validation
         # Check both fax_amount (set by JS) and fax_amount_custom (fallback if JS disabled)
-        fax_amount_raw = form_data.get("fax_amount", 0)
+        # ----- PWYW handling -----
         fax_pwyw_selection = self.request.POST.get("fax_pwyw", "0")
+        fax_amount_hidden = self.request.POST.get("fax_amount")
+        fax_amount_custom = self.request.POST.get("fax_amount_custom")
 
-        # Fallback: if custom is selected but fax_amount is 0, use fax_amount_custom
-        if fax_pwyw_selection == "custom" and str(fax_amount_raw) == "0":
-            fax_amount_raw = form_data.get("fax_amount_custom", 0)
-            logger.info("Using fax_amount_custom fallback (JavaScript may be disabled)")
-        else:
-            fax_amount_raw = fax_pwyw_selection
+        fax_amount_raw = fax_amount_hidden
+        if not fax_amount_raw:
+            if fax_pwyw_selection == "custom":
+                fax_amount_raw = fax_amount_custom or "0"
+                logger.info(
+                    "Using fax_amount_custom fallback (JavaScript may be disabled)"
+                )
+            else:
+                fax_amount_raw = fax_pwyw_selection or "0"
 
         try:
             fax_amount = int(fax_amount_raw)
@@ -87,7 +111,7 @@ class StageFaxView(generic.FormView):
                 f"Invalid fax_amount received: {fax_amount_raw} (not a valid integer)"
             )
             form.add_error(
-                "fax_amount",
+                None,
                 "Invalid fax amount. Please enter a number between 0 and 1000.",
             )
             return self.form_invalid(form)
@@ -96,7 +120,10 @@ class StageFaxView(generic.FormView):
             logger.warning(
                 f"Invalid fax_amount received: {fax_amount} (out of valid range 0-1000)"
             )
-            form.add_error("fax_amount", "Fax amount must be between 0 and 1000.")
+            form.add_error(
+                None,
+                "Fax amount must be between 0 and 1000.",
+            )
             return self.form_invalid(form)
 
         if fax_amount == 0:
