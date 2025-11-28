@@ -4,265 +4,85 @@
 {% block metadescription %}Learn how AI is helping patients fight back against denied health insurance claims. Featured on PBS NewsHour, Fight Health Insurance provides free AI-powered appeal letter generation to help you overturn insurance denials.{% endblock metadescription %}
 {% load compress %}
 {% load static %}
-
 {% block content %}
-<style>
-    .pbs-hero-section {
-        background-image: url('{% static "images/crinkledcolors.jpg" %}');
-        background-size: cover;
-        background-position: center;
-        min-height: 500px;
-        display: flex;
-        align-items: center;
-        padding: 60px 0;
-    }
-    .pbs-hero-inner {
-        backdrop-filter: blur(3px);
-        -webkit-backdrop-filter: blur(3px);
-        padding: 2.5rem 3rem;
-        border-radius: 14px;
-        max-width: 900px;
-        margin: 0 auto;
-        text-align: center;
-    }
-    .pbs-badge-container {
-        margin-bottom: 1.5rem;
-    }
-    .pbs-badge {
-        display: inline-block;
-        background: linear-gradient(135deg, #c4302b 0%, #ff6b6b 100%);
-        color: #fff;
-        padding: 0.6rem 1.5rem;
-        font-size: 1.1rem;
-        font-weight: 600;
-        border-radius: 50px;
-        box-shadow: 0 4px 15px rgba(196, 48, 43, 0.4);
-        letter-spacing: 0.5px;
-    }
-    .pbs-hero-title {
-        color: #fff;
-        font-size: 2.8rem;
-        font-weight: 700;
-        line-height: 1.2;
-        margin-bottom: 1rem;
-        text-shadow: 2px 2px 8px rgba(0,0,0,0.4);
-    }
-    .pbs-hero-subtitle {
-        color: #fff;
-        font-size: 1.2rem;
-        line-height: 1.6;
-        margin-bottom: 2rem;
-        text-shadow: 1px 1px 4px rgba(0,0,0,0.3);
-        opacity: 0.95;
-    }
-    .pbs-cta-btn {
-        display: inline-block;
-        background: linear-gradient(to right, #ADD100 0%, #7B920A 51%, #ADD100 100%);
-        background-size: 200% auto;
-        color: #fff !important;
-        font-size: 1.3rem;
-        font-weight: 700;
-        padding: 1rem 2.5rem;
-        border-radius: 8px;
-        text-decoration: none;
-        box-shadow: 0 6px 20px rgba(165, 196, 34, 0.4);
-        transition: all 0.3s ease;
-    }
-    .pbs-cta-btn:hover {
-        background-position: right center;
-        color: #fff !important;
-        transform: translateY(-2px);
-        box-shadow: 0 8px 28px rgba(165, 196, 34, 0.6);
-        text-decoration: none;
-    }
-    .pbs-video-section {
-        padding: 80px 0;
-        background: #fff;
-    }
-    .pbs-section-title {
-        font-size: 2.2rem;
-        font-weight: 600;
-        color: #333;
-        margin-bottom: 2rem;
-        text-align: center;
-    }
-    .pbs-video-container {
-        max-width: 800px;
-        margin: 0 auto 1.5rem;
-        border-radius: 12px;
-        overflow: hidden;
-        box-shadow: 0 8px 30px rgba(0,0,0,0.15);
-    }
-    .pbs-video-links {
-        text-align: center;
-        color: #666;
-        font-size: 0.95rem;
-    }
-    .pbs-video-links a {
-        color: #a5c422;
-        text-decoration: none;
-        font-weight: 500;
-    }
-    .pbs-video-links a:hover {
-        text-decoration: underline;
-    }
-    .pbs-quotes-section {
-        padding: 80px 0;
-        background: linear-gradient(135deg, rgba(165, 196, 34, 0.05) 0%, rgba(123, 146, 10, 0.08) 100%);
-    }
-    .pbs-quote-card {
-        background: #fff;
-        padding: 2rem;
-        border-radius: 12px;
-        box-shadow: 0 4px 20px rgba(0,0,0,0.08);
-        height: 100%;
-        border-left: 4px solid #a5c422;
-        transition: transform 0.2s ease, box-shadow 0.2s ease;
-    }
-    .pbs-quote-card:hover {
-        transform: translateY(-5px);
-        box-shadow: 0 8px 30px rgba(0,0,0,0.12);
-    }
-    .pbs-quote-icon {
-        font-size: 2.5rem;
-        color: #a5c422;
-        margin-bottom: 1rem;
-        line-height: 1;
-    }
-    .pbs-quote-text {
-        font-size: 1.05rem;
-        font-style: italic;
-        color: #555;
-        line-height: 1.7;
-        margin-bottom: 1rem;
-    }
-    .pbs-quote-author {
-        font-size: 0.9rem;
-        color: #888;
-        font-weight: 500;
-    }
-    .pbs-green-cta-section {
-        padding: 80px 0;
-        background: linear-gradient(135deg, #a5c422 0%, #7B920A 100%);
-    }
-    .pbs-green-cta-title {
-        color: #fff;
-        font-size: 2.4rem;
-        font-weight: 700;
-        margin-bottom: 1.5rem;
-        text-shadow: 1px 1px 3px rgba(0,0,0,0.2);
-    }
-    .pbs-green-cta-text {
-        color: rgba(255,255,255,0.95);
-        font-size: 1.15rem;
-        line-height: 1.6;
-        margin-bottom: 2rem;
-    }
-    .pbs-white-btn {
-        display: inline-block;
-        background: #fff;
-        color: #7B920A !important;
-        font-size: 1.2rem;
-        font-weight: 700;
-        padding: 1rem 2.5rem;
-        border-radius: 8px;
-        text-decoration: none;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.15);
-        transition: all 0.3s ease;
-    }
-    .pbs-white-btn:hover {
-        color: #5a6e06 !important;
-        transform: translateY(-2px);
-        box-shadow: 0 6px 20px rgba(0,0,0,0.2);
-        text-decoration: none;
-    }
-    .pbs-trust-section {
-        padding: 80px 0;
-        background: #f9f9f9;
-    }
-    .pbs-trust-item {
-        text-align: center;
-        padding: 1.5rem;
-    }
-    .pbs-trust-icon {
-        font-size: 3.5rem;
-        margin-bottom: 1rem;
-    }
-    .pbs-trust-title {
-        font-size: 1.2rem;
-        font-weight: 600;
-        color: #333;
-        margin-bottom: 0.75rem;
-    }
-    .pbs-trust-text {
-        font-size: 0.95rem;
-        color: #666;
-        line-height: 1.5;
-    }
-    .pbs-featured-section {
-        padding: 60px 0;
-        background: #fff;
-    }
-    .pbs-featured-title {
-        text-align: center;
-        font-size: 1rem;
-        text-transform: uppercase;
-        letter-spacing: 3px;
-        color: #888;
-        margin-bottom: 2rem;
-    }
-    .pbs-featured-logo {
-        max-height: 45px;
-        filter: grayscale(100%);
-        opacity: 0.6;
-        transition: all 0.3s ease;
-    }
-    .pbs-featured-logo:hover {
-        filter: grayscale(0%);
-        opacity: 1;
-    }
-    .pbs-final-cta-section {
-        padding: 60px 0;
-        background: #fff;
-        border-top: 1px solid #eee;
-    }
-    @media (max-width: 768px) {
-        .pbs-hero-title {
-            font-size: 2rem;
-        }
-        .pbs-hero-inner {
-            padding: 1.5rem;
-        }
-        .pbs-section-title {
-            font-size: 1.8rem;
-        }
-        .pbs-green-cta-title {
-            font-size: 1.8rem;
-        }
-    }
-</style>
 
-<!-- PBS HERO SECTION -->
-<section class="pbs-hero-section">
-    <div class="container">
-        <div class="pbs-hero-inner">
-            <div class="pbs-badge-container">
-                <span class="pbs-badge">📺 As Seen on PBS NewsHour</span>
-            </div>
-            <h1 class="pbs-hero-title">How Patients Are Using AI to Fight Back Against Denied Insurance Claims</h1>
-            <p class="pbs-hero-subtitle">
-                Featured on PBS NewsHour, Fight Health Insurance helps you generate free appeal letters using AI to overturn health insurance denials.
-            </p>
-            <a href="{% url 'scan' %}" class="pbs-cta-btn">Appeal Your Insurance Denial for Free</a>
-        </div>
+<!-- HOME / HERO - Using same structure as index.html -->
+<section id="home" class="slider" data-stellar-background-ratio="0.5">
+    <div class="row">
+	<div class="item item-first">
+	    <div class="caption d-flex flex-column align-items-center justify-content-center">
+		<div class="hero-inner">
+		  <h3 class="hero-tagline">📺 As Seen on PBS NewsHour</h3>
+		  <h1 class="hero-headline">Fight Health Insurance</h1>
+	      <p class="hero-subcopy">How patients are using AI to fight back against denied insurance claims. Generate your free appeal letter in minutes.</p>
+	      <div class="hero-cta-group">
+	        <a href="{% url 'scan' %}" class="section-btn btn btn-default smoothScroll primary-cta" id="scanlink">Appeal Your Insurance Denial for Free</a>
+	      </div>
+	      <div class="hero-cta-group hero-cta-secondary">
+	        <a href="{% url 'chat' %}" class="btn btn-outline-green smoothScroll secondary-cta" id="chatlink">AI Chat</a>
+	        <a href="{% url 'pro_version' %}" class="btn btn-outline-green smoothScroll tertiary-cta" id="professional">Professionals</a>
+	      </div>
+	      <div class="value-prop-container">
+		        <div class="benefits-card">
+		          <h5 class="benefits-title">Why Fight Health Insurance?</h5>
+		          <ul class="benefits-list">
+		            <li>
+		              <span class="benefit-icon" aria-hidden="true">🔒</span>
+		              <div class="benefit-content">
+		                <strong>Private by default</strong>
+		                <p>On-device OCR keeps your medical info secure</p>
+		              </div>
+		            </li>
+		            <li>
+		              <span class="benefit-icon" aria-hidden="true">💚</span>
+		              <div class="benefit-content">
+		                <strong>Free forever</strong>
+		                <p>Pay what you can. $0 is totally fine.</p>
+		              </div>
+		            </li>
+		            <li>
+		              <span class="benefit-icon" aria-hidden="true">✨</span>
+		              <div class="benefit-content">
+		                <strong>Human-friendly design</strong>
+		                <p>No dark patterns or hidden fees. Ever.</p>
+		              </div>
+		            </li>
+		          </ul>
+		        </div>
+		        <div class="payment-card-wrapper">
+		          {% include 'partials/pwyw_panel.html' %}
+		        </div>
+		      </div>
+		  <div class="how-it-works-intro">How It Works</div>
+		  <section id="how-it-works" class="how-it-works">
+		        <div class="how-step">
+		          <div class="icon" aria-hidden="true">📄</div>
+		          <h6>Upload denial letter</h6>
+		          <p>Snap a pic or use on-device OCR for privacy.</p>
+		        </div>
+		        <div class="how-step">
+		          <div class="icon" aria-hidden="true">🤖</div>
+		          <h6>We draft appeals</h6>
+		          <p>AI creates multiple drafts you can edit.</p>
+		        </div>
+		        <div class="how-step">
+		          <div class="icon" aria-hidden="true">✅</div>
+		          <h6>You submit & fight back</h6>
+		          <p>Guidance + options. Free. Pay if it helps.</p>
+		        </div>
+		      </section>
+	</div>
+		</div>
+	    </div>
+	</div>
     </div>
 </section>
 
-<!-- PBS VIDEO EMBED SECTION -->
-<section class="pbs-video-section">
+<!-- PBS VIDEO SECTION -->
+<section id="pbs-video" style="padding: 80px 0; background: #fff;">
     <div class="container">
-        <h2 class="pbs-section-title">Watch the PBS NewsHour Segment</h2>
-        <div class="pbs-video-container">
+        <h2 style="text-align: center; margin-bottom: 2rem; color: #333;">Watch the PBS NewsHour Segment</h2>
+        <div style="max-width: 800px; margin: 0 auto 1.5rem; border-radius: 12px; overflow: hidden; box-shadow: 0 8px 30px rgba(0,0,0,0.15);">
             <div class="ratio ratio-16x9">
                 <iframe 
                     src="https://www.youtube.com/embed/nzRy-eZAcSU" 
@@ -274,150 +94,134 @@
                 </iframe>
             </div>
         </div>
-        <p class="pbs-video-links">
+        <p style="text-align: center; color: #666; font-size: 0.95rem;">
             Also available on: 
-            <a href="https://www.pbs.org/newshour/show/how-patients-are-using-ai-to-fight-back-against-denied-insurance-claims" target="_blank" rel="noopener noreferrer">PBS.org</a> | 
-            <a href="https://video.kqed.org/video/ai-and-insurance-1763846838/" target="_blank" rel="noopener noreferrer">KQED</a>
+            <a href="https://www.pbs.org/newshour/show/how-patients-are-using-ai-to-fight-back-against-denied-insurance-claims" target="_blank" rel="noopener noreferrer" class="link">PBS.org</a> | 
+            <a href="https://video.kqed.org/video/ai-and-insurance-1763846838/" target="_blank" rel="noopener noreferrer" class="link">KQED</a>
         </p>
     </div>
 </section>
 
-<!-- QUOTES SECTION -->
-<section class="pbs-quotes-section">
+<!-- TESTIMONIALS / QUOTES - Using same structure as index.html -->
+<section id="testimonials" class="testimonials-section">
     <div class="container">
-        <h2 class="pbs-section-title">Highlights from the Segment</h2>
-        <div class="row">
-            <div class="col-lg-4 col-md-6 mb-4">
-                <div class="pbs-quote-card">
-                    <div class="pbs-quote-icon">❝</div>
-                    <p class="pbs-quote-text">
-                        "The tool uses artificial intelligence to analyze denial letters and generate personalized appeal letters for patients to submit to their insurance companies."
-                    </p>
-                    <p class="pbs-quote-author">— PBS NewsHour</p>
+        <h5 class="testimonials-title">Highlights from the PBS Segment</h5>
+        <div class="testimonials-grid">
+            <div class="testimonial-card">
+                <div class="testimonial-quote">"The tool uses artificial intelligence to analyze denial letters and generate personalized appeal letters for patients to submit to their insurance companies."</div>
+                <div class="testimonial-author">— PBS NewsHour</div>
+            </div>
+            <div class="testimonial-card">
+                <div class="testimonial-quote">"Insurance companies use AI to deny claims—now patients can use AI to fight back and level the playing field."</div>
+                <div class="testimonial-author">— PBS NewsHour</div>
+            </div>
+            <div class="testimonial-card">
+                <div class="testimonial-quote">"Many patients don't appeal their denials because the process is too complicated and time-consuming. This tool makes it accessible for everyone."</div>
+                <div class="testimonial-author">— PBS NewsHour</div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- AS FEATURED IN - Using same structure as index.html -->
+<section id="featured" class="featured-section">
+    <div class="container">
+        <h5 class="featured-title">As Featured In</h5>
+        <div class="row no-gutters">
+            <div class="col-md-12">
+                <div class="row no-gutters featured-row">
+                    <div class="col-md-2 text-center p-2">
+                        <a href="https://www.fastcompany.com/91209422/if-your-health-insurance-denies-a-claim-this-tool-uses-ai-to-help-you-fight-back" target="_blank" rel="noopener noreferrer">
+                            <img src="{% static 'images/fastcompanylogo.png' %}" alt="Fast Company logo" class="img-fluid img-thumbnail">
+                        </a>
+                    </div>
+                    <div class="col-md-2 text-center p-2">
+                        <a href="https://www.cbsnews.com/news/health-insurance-costs-inflation-denials-luigi-mangione-united-healthcare" target="_blank" rel="noopener noreferrer">
+                            <img src="{% static 'images/cbslogo.png' %}" alt="CBS logo" class="img-fluid img-thumbnail">
+                        </a>
+                    </div>
+                    <div class="col-md-2 text-center p-2">
+                        <a href="https://www.forbes.com/sites/amyfeldman/2024/12/11/these-entrepreneurs-are-using-ai-to-fight-health-insurance-claims-denials" target="_blank" rel="noopener noreferrer">
+                            <img src="{% static 'images/forbeslogo.png' %}" alt="Forbes logo" class="img-fluid img-thumbnail">
+                        </a>
+                    </div>
+                    <div class="col-md-2 text-center p-2">
+                        <a href="https://www.wbur.org/hereandnow/2024/11/11/ai-insurance-appeals" target="_blank" rel="noopener noreferrer">
+                            <img src="{% static 'images/wbrlogo.png' %}" alt="WBUR logo" class="img-fluid img-thumbnail">
+                        </a>
+                    </div>
+                    <div class="col-md-2 text-center p-2">
+                        <a href="https://armandalegshow.com/episode/fight-health-insurance-with-ai" target="_blank" rel="noopener noreferrer">
+                            <img src="{% static 'images/armleglogo.png' %}" alt="Arm & a Leg logo" class="img-fluid img-thumbnail">
+                        </a>
+                    </div>
                 </div>
             </div>
-            <div class="col-lg-4 col-md-6 mb-4">
-                <div class="pbs-quote-card">
-                    <div class="pbs-quote-icon">❝</div>
-                    <p class="pbs-quote-text">
-                        "Insurance companies use AI to deny claims—now patients can use AI to fight back and level the playing field."
-                    </p>
-                    <p class="pbs-quote-author">— PBS NewsHour</p>
-                </div>
-            </div>
-            <div class="col-lg-4 col-md-12 mb-4">
-                <div class="pbs-quote-card">
-                    <div class="pbs-quote-icon">❝</div>
-                    <p class="pbs-quote-text">
-                        "Many patients don't appeal their denials because the process is too complicated and time-consuming. This tool makes it accessible for everyone."
-                    </p>
-                    <p class="pbs-quote-author">— PBS NewsHour</p>
+        </div>
+        <div class="row no-gutters mt-3">
+            <div class="col-md-12">
+                <div class="row no-gutters justify-content-center featured-row-highlight">
+                    <div class="col-md-2 text-center p-2">
+                        <a href="https://www.newsnationnow.com/video/fighting-health-insurance-companies-with-ai-newsnation-prime/10025608" target="_blank" rel="noopener noreferrer">
+                            <img src="{% static 'images/newsnationlogo.png' %}" alt="NewsNation logo" class="img-fluid img-thumbnail">
+                        </a>
+                    </div>
+                    <div class="col-md-2 text-center p-2">
+                        <a href="https://sfstandard.com/2024/08/23/holden-karau-fight-health-insurance-appeal-claims-denials" target="_blank" rel="noopener noreferrer">
+                            <img src="{% static 'images/sflogo.png' %}" alt="SF Standard logo" class="img-fluid img-thumbnail">
+                        </a>
+                    </div>
+                    <div class="col-md-2 text-center p-2">
+                        <a href="https://www.businessinsider.com/free-health-insurance-claim-denial-appeal-project-startup-2024-12" target="_blank" rel="noopener noreferrer">
+                            <img src="{% static 'images/businessinsiderlogo.png' %}" alt="Business Insider logo" class="img-fluid img-thumbnail">
+                        </a>
+                    </div>
+                    <div class="col-md-2 text-center p-2">
+                        <a href="https://www.statnews.com/2024/12/12/artificial-intelligence-appealing-health-insurance-denials" target="_blank" rel="noopener noreferrer">
+                            <img src="{% static 'images/statlogo.png' %}" alt="STAT News logo" class="img-fluid img-thumbnail">
+                        </a>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
 </section>
 
-<!-- GREEN CTA SECTION -->
-<section class="pbs-green-cta-section">
+<!-- ABOUT SECTION -->
+<section id="about">
     <div class="container">
-        <div class="row justify-content-center">
-            <div class="col-lg-8 text-center">
-                <h2 class="pbs-green-cta-title">Ready to Fight Your Insurance Denial?</h2>
-                <p class="pbs-green-cta-text">
-                    Join thousands of patients who have used our free AI-powered tool to generate appeal letters and overturn insurance denials.
-                </p>
-                <a href="{% url 'scan' %}" class="pbs-white-btn">Appeal Your Insurance Denial for Free</a>
-                <p class="mt-3" style="color: rgba(255,255,255,0.8); font-size: 0.9rem;">No credit card required. 100% free.</p>
-            </div>
-        </div>
-    </div>
-</section>
+	<div class="row">
 
-<!-- WHY PATIENTS TRUST US SECTION -->
-<section class="pbs-trust-section">
-    <div class="container">
-        <h2 class="pbs-section-title">Why Patients Trust Us</h2>
-        <div class="row">
-            <div class="col-lg-3 col-md-6 mb-4">
-                <div class="pbs-trust-item">
-                    <div class="pbs-trust-icon">🔒</div>
-                    <h5 class="pbs-trust-title">Privacy First</h5>
-                    <p class="pbs-trust-text">On-device OCR keeps your medical information secure. Your data stays on your device.</p>
-                </div>
-            </div>
-            <div class="col-lg-3 col-md-6 mb-4">
-                <div class="pbs-trust-item">
-                    <div class="pbs-trust-icon">💚</div>
-                    <h5 class="pbs-trust-title">100% Free</h5>
-                    <p class="pbs-trust-text">Pay what you can. $0 is perfectly fine. No hidden fees or subscriptions.</p>
-                </div>
-            </div>
-            <div class="col-lg-3 col-md-6 mb-4">
-                <div class="pbs-trust-item">
-                    <div class="pbs-trust-icon">📺</div>
-                    <h5 class="pbs-trust-title">Media Trusted</h5>
-                    <p class="pbs-trust-text">Featured on PBS NewsHour, Forbes, CBS, Fast Company, and more.</p>
-                </div>
-            </div>
-            <div class="col-lg-3 col-md-6 mb-4">
-                <div class="pbs-trust-item">
-                    <div class="pbs-trust-icon">✨</div>
-                    <h5 class="pbs-trust-title">No Dark Patterns</h5>
-                    <p class="pbs-trust-text">Human-friendly design with no tricks, no upsells, and no manipulation.</p>
-                </div>
-            </div>
-        </div>
-    </div>
-</section>
+	    <div class="col-md-6 col-sm-6">
+		<div class="about-info">
+		    <h2>Ready to Fight Back?</h2>
+		    <div>
+			  As featured on PBS NewsHour, Fight Health Insurance uses AI to help you generate appeal letters when your health insurance claim is denied.
+<p>
+			<h4>It's Simple:</h4>
+			<ul>
+			  <li><strong>Upload your denial letter</strong> - take a photo or upload the document</li>
+			  <li><strong>Our AI analyzes it</strong> - we identify the denial reasons and relevant regulations</li>
+			  <li><strong>Get your appeal letter</strong> - personalized, professional, and ready to submit</li>
+			  <li><strong>Fight back</strong> - submit your appeal and track your case</li>
+			</ul>
+</p>
+<p>
+Best of all, it's completely free. Pay what you can - $0 is totally fine.
+</p>
+<p>
+<a href="{% url 'scan' %}" class="section-btn btn btn-default">Generate Your Appeal Now</a>
+</p>
+		    </div>
+		</div>
+	    </div>
 
-<!-- AS FEATURED IN SECTION -->
-<section class="pbs-featured-section">
-    <div class="container">
-        <h5 class="pbs-featured-title">Also Featured In</h5>
-        <div class="row justify-content-center align-items-center">
-            <div class="col-4 col-md-2 text-center p-3">
-                <a href="https://www.forbes.com/sites/amyfeldman/2024/12/11/these-entrepreneurs-are-using-ai-to-fight-health-insurance-claims-denials" target="_blank" rel="noopener noreferrer">
-                    <img src="{% static 'images/forbeslogo.png' %}" alt="Forbes logo" class="img-fluid pbs-featured-logo">
-                </a>
-            </div>
-            <div class="col-4 col-md-2 text-center p-3">
-                <a href="https://www.cbsnews.com/news/health-insurance-costs-inflation-denials-luigi-mangione-united-healthcare" target="_blank" rel="noopener noreferrer">
-                    <img src="{% static 'images/cbslogo.png' %}" alt="CBS logo" class="img-fluid pbs-featured-logo">
-                </a>
-            </div>
-            <div class="col-4 col-md-2 text-center p-3">
-                <a href="https://www.fastcompany.com/91209422/if-your-health-insurance-denies-a-claim-this-tool-uses-ai-to-help-you-fight-back" target="_blank" rel="noopener noreferrer">
-                    <img src="{% static 'images/fastcompanylogo.png' %}" alt="Fast Company logo" class="img-fluid pbs-featured-logo">
-                </a>
-            </div>
-            <div class="col-4 col-md-2 text-center p-3">
-                <a href="https://www.statnews.com/2024/12/12/artificial-intelligence-appealing-health-insurance-denials" target="_blank" rel="noopener noreferrer">
-                    <img src="{% static 'images/statlogo.png' %}" alt="STAT News logo" class="img-fluid pbs-featured-logo">
-                </a>
-            </div>
-            <div class="col-4 col-md-2 text-center p-3">
-                <a href="https://www.businessinsider.com/free-health-insurance-claim-denial-appeal-project-startup-2024-12" target="_blank" rel="noopener noreferrer">
-                    <img src="{% static 'images/businessinsiderlogo.png' %}" alt="Business Insider logo" class="img-fluid pbs-featured-logo">
-                </a>
-            </div>
-        </div>
-    </div>
-</section>
-
-<!-- FINAL CTA -->
-<section class="pbs-final-cta-section">
-    <div class="container">
-        <div class="row justify-content-center">
-            <div class="col-lg-8 text-center">
-                <h3 style="color: #333; margin-bottom: 1.5rem;">Start Your Appeal Today</h3>
-                <p style="color: #666; margin-bottom: 2rem; font-size: 1.1rem;">
-                    Take a picture of your denial letter and let our AI generate a personalized appeal for you. It's free, private, and takes just minutes.
-                </p>
-                <a href="{% url 'scan' %}" class="pbs-cta-btn">Appeal Your Insurance Denial for Free</a>
-            </div>
-        </div>
+	</div>
     </div>
 </section>
 
 {% endblock content %}
+
+{% block scriptmagic %}
+<script src="{% static 'js/pwyw.js' %}"></script>
+{% endblock scriptmagic %}
