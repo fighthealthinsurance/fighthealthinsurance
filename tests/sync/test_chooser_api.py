@@ -12,10 +12,9 @@ from fighthealthinsurance.models import (
     ChooserTask,
     ChooserCandidate,
     ChooserVote,
-    UserDomain,
     Denial,
 )
-from fhi_users.models import ProfessionalUser, ExtraUserProperties
+from fhi_users.models import ProfessionalUser, ExtraUserProperties, UserDomain
 
 User = get_user_model()
 
