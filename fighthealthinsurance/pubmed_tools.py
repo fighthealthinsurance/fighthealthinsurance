@@ -332,7 +332,7 @@ class PubMedTools(object):
             if len(joined_contexts) < 100:
                 logger.debug("Not much input, skpping summary step.")
                 return joined_contexts
-            r = await ml_router.summarize(
+            r: Optional[str] = await ml_router.summarize(
                 title="Combined contexts", text=joined_contexts
             )
             logger.debug("Huzzah!")
