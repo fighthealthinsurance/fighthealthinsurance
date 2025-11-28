@@ -88,7 +88,7 @@ class EmailPollingActor:
             cutoff_datetime = timezone.now() - datetime.timedelta(days=30)
             
             # Find follow-up schedules that were sent more than 30 days ago
-            sent_followups = await sync_to_async(
+            denial_ids_with_sent_followups = await sync_to_async(
                 lambda: set(
                     FollowUpSched.objects.filter(
                         follow_up_sent=True,
@@ -109,7 +109,7 @@ class EmailPollingActor:
             
             # Filter to denials that should have emails cleared
             candidates = Denial.objects.filter(
-                denial_id__in=sent_followups,
+                denial_id__in=denial_ids_with_sent_followups,
             ).exclude(
                 denial_id__in=denials_with_recent_or_pending,
             ).exclude(
@@ -126,7 +126,7 @@ class EmailPollingActor:
             if denial_ids_to_clear:
                 # Clear the raw_email field
                 cleared_count = await sync_to_async(
-                    lambda: candidates.filter(denial_id__in=denial_ids_to_clear).update(raw_email=None)
+                    lambda: Denial.objects.filter(denial_id__in=denial_ids_to_clear).update(raw_email=None)
                 )()
                 
                 # Also clear emails from FollowUpSched entries
