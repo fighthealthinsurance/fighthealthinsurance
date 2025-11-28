@@ -764,3 +764,117 @@ a.link:hover::after {
 	margin: 10px 0;
     }
 }
+
+/* Share/Tell Your Friends Panel */
+.share-panel {
+    background: rgba(255, 255, 255, 0.25);
+    backdrop-filter: blur(8px);
+    padding: 1.3rem 1.5rem 1.5rem;
+    border-radius: 12px;
+    color: #fff;
+    margin: 1.5rem 0;
+    box-shadow: 0 4px 14px rgba(0,0,0,.25);
+    max-width: 680px;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-top: 4px solid #a5c422;
+}
+.share-title {
+    margin: 0 0 .5rem;
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: #fff;
+    text-shadow: 1px 1px 3px rgba(0,0,0,0.3);
+}
+.share-subcopy {
+    font-size: 0.95rem;
+    line-height: 1.5rem;
+    margin: 0 0 1rem;
+    color: #fff;
+    text-shadow: 1px 1px 2px rgba(0,0,0,0.2);
+}
+.share-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+}
+.share-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.6rem 1rem;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    text-decoration: none;
+    transition: all 0.2s ease;
+    border: 1px solid transparent;
+}
+.share-btn svg {
+    flex-shrink: 0;
+}
+.share-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+}
+.share-btn-twitter {
+    background: #000;
+    color: #fff;
+}
+.share-btn-twitter:hover {
+    background: #333;
+    color: #fff;
+}
+.share-btn-facebook {
+    background: #1877F2;
+    color: #fff;
+}
+.share-btn-facebook:hover {
+    background: #0d65d9;
+    color: #fff;
+}
+.share-btn-linkedin {
+    background: #0A66C2;
+    color: #fff;
+}
+.share-btn-linkedin:hover {
+    background: #0854a1;
+    color: #fff;
+}
+.share-btn-email {
+    background: #a5c422;
+    color: #fff;
+}
+.share-btn-email:hover {
+    background: #8aa618;
+    color: #fff;
+}
+
+/* Share panel on non-hero pages (with colored backgrounds) */
+.container .share-panel,
+section:not(.slider) .share-panel {
+    background: #fff;
+    color: #333;
+    border: 1px solid #e0e0e0;
+    border-top: 4px solid #a5c422;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+}
+.container .share-title,
+section:not(.slider) .share-title {
+    color: #333;
+    text-shadow: none;
+}
+.container .share-subcopy,
+section:not(.slider) .share-subcopy {
+    color: #555;
+    text-shadow: none;
+}
+
+/* Mobile responsiveness for share buttons */
+@media (max-width: 768px) {
+    .share-buttons {
+        flex-direction: column;
+    }
+    .share-btn {
+        justify-content: center;
+    }
+}

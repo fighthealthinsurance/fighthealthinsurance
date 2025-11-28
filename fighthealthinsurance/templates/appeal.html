@@ -77,14 +77,16 @@ or:
 <button id="print_appeal">
   Print Appeal (self submit)
 </button>
-<div class="appeal-donate-wrapper" style="background-color: #f8f9fa; padding: 1.5rem; border-radius: 8px; margin: 1.5rem 0;">
-  <p style="color: #333; margin-bottom: 1rem;">
-    Appreciate us? You can:
-    <a href="https://buy.stripe.com/5kA03r2ZwbgebyE7ss" class="section-btn btn btn-default smoothScroll" id="support-our-dev-button" target="_blank" rel="noopener noreferrer">
-      Pay What You Want / Support our Development (optional)
-    </a>
-  </p>
-  {% include 'partials/pwyw_panel.html' %}
+<p>
+  Appreciate us? You can:
+  <a href="https://buy.stripe.com/5kA03r2ZwbgebyE7ss" class="section-btn btn btn-default smoothScroll" id="support-our-dev-button" target="_blank" rel="noopener noreferrer">
+    Pay What You Want / Support our Development (optional)
+  </a>
+</p>
+{% include 'partials/pwyw_panel.html' %}
+
+<div class="appeal-share-wrapper">
+  {% include 'partials/share_buttons.html' %}
 </div>
 <p>
 * We'll do our best to include a summary or abstract if available from PubMed.

@@ -9,7 +9,9 @@ class TestHealthStatus(TestCase):
 
     def test_snapshot_shape(self):
         snap = health_status.get_snapshot()
-        assert set(snap.keys()) == {"alive_models", "last_checked", "details"} | set(snap.keys())  # basic shape
+        assert set(snap.keys()) == {"alive_models", "last_checked", "details"} | set(
+            snap.keys()
+        )  # basic shape
 
     @mock.patch("fighthealthinsurance.ml.ml_router.ml_router")
     def test_all_down_returns_zero(self, fake_router):
@@ -24,6 +26,7 @@ class TestHealthStatus(TestCase):
 
         fake_router.all_models_by_cost = [DownBackend(), DownBackend()]
         from fighthealthinsurance.ml.health_status import _HealthStatus
+
         _HealthStatus._refresh(health_status)
         snap = health_status.get_snapshot()
         assert snap["alive_models"] == 0
@@ -52,6 +55,7 @@ class TestHealthStatus(TestCase):
 
         fake_router.all_models_by_cost = [GoodBackend(), BadBackend()]
         from fighthealthinsurance.ml.health_status import _HealthStatus
+
         _HealthStatus._refresh(health_status)
         snap = health_status.get_snapshot()
         assert snap["alive_models"] == 1

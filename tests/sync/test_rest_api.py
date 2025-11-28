@@ -449,12 +449,16 @@ class DenialEndToEnd(APITestCase):
 
         # Check for expected status messages
         status_text = " ".join(status_messages).lower()
-        assert any(keyword in status_text for keyword in ["starting", "loading", "generating", "gathering"]), \
-            f"Expected status keywords not found in: {status_messages}"
+        assert any(
+            keyword in status_text
+            for keyword in ["starting", "loading", "generating", "gathering"]
+        ), f"Expected status keywords not found in: {status_messages}"
 
         # Verify we still get appeal content
         assert len(appeal_contents) >= 1, "Should have received at least one appeal"
-        assert appeal_contents[0].lstrip().startswith("Dear"), "Appeal should start with 'Dear'"
+        assert (
+            appeal_contents[0].lstrip().startswith("Dear")
+        ), "Appeal should start with 'Dear'"
 
 
 class NotifyPatientTest(APITestCase):
