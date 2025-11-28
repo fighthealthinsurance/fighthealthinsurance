@@ -349,6 +349,113 @@ class DenialEndToEnd(APITestCase):
         print(followup_response)
         self.assertTrue(status.is_success(followup_response.status_code))
 
+    @pytest.mark.asyncio
+    async def test_appeal_generation_status_messages(self):
+        """Test that appeal generation WebSocket sends status messages."""
+        # Setup: Create a denial through the API
+        login_result = await sync_to_async(self.client.login)(
+            username=self.username, password=self.password
+        )
+        self.assertTrue(login_result)
+        url = reverse("denials-list")
+        email = "test@example.com"
+        response = await sync_to_async(self.client.post)(
+            url,
+            json.dumps(
+                {
+                    "denial_text": "Your claim has been denied because the requested treatment is experimental.",
+                    "denial_type": "1",
+                    "plan_id": "",
+                    "claim_id": "",
+                    "state": "CA",
+                    "email": email,
+                    "pii": True,
+                    "tos": True,
+                    "privacy": True,
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertTrue(status.is_success(response.status_code))
+        data = response.json()
+        denial_id = data["denial_id"]
+        semi_sekret = data["semi_sekret"]
+
+        # Run entity extraction first
+        seb_communicator = WebsocketCommunicator(
+            StreamingEntityBackend.as_asgi(), "/testws/"
+        )
+        connected, _ = await seb_communicator.connect()
+        assert connected
+        await seb_communicator.send_json_to(
+            {
+                "email": email,
+                "semi_sekret": semi_sekret,
+                "denial_id": denial_id,
+            }
+        )
+        # Consume entity extraction responses
+        try:
+            while True:
+                response = await seb_communicator.receive_from(timeout=30)
+        except:
+            pass
+
+        # Now test appeal generation with status messages
+        a_communicator = WebsocketCommunicator(
+            StreamingAppealsBackend.as_asgi(), "/testws/"
+        )
+        connected, _ = await a_communicator.connect()
+        assert connected
+        await a_communicator.send_json_to(
+            {
+                "email": email,
+                "semi_sekret": semi_sekret,
+                "medical_reason": "preventive",
+                "age": "30",
+                "in_network": True,
+                "denial_id": denial_id,
+            }
+        )
+
+        # Collect all responses
+        responses = []
+        status_messages = []
+        appeal_contents = []
+
+        try:
+            while True:
+                response = await a_communicator.receive_from(timeout=150)
+                if len(response) > 4:  # Filter out keepalive
+                    responses.append(response)
+                    try:
+                        parsed = json.loads(response)
+                        if parsed.get("type") == "status":
+                            status_messages.append(parsed.get("message"))
+                        elif "content" in parsed:
+                            appeal_contents.append(parsed["content"])
+                    except json.JSONDecodeError:
+                        pass  # Skip non-JSON lines
+        except Exception as e:
+            print(f"Done receiving: {e}")
+            pass
+
+        # Verify we received status messages
+        print(f"Status messages received: {status_messages}")
+        print(f"Appeals received: {len(appeal_contents)}")
+
+        # Assert we got at least some expected status messages
+        assert len(status_messages) > 0, "Should have received status messages"
+
+        # Check for expected status messages
+        status_text = " ".join(status_messages).lower()
+        assert any(keyword in status_text for keyword in ["starting", "loading", "generating", "gathering"]), \
+            f"Expected status keywords not found in: {status_messages}"
+
+        # Verify we still get appeal content
+        assert len(appeal_contents) >= 1, "Should have received at least one appeal"
+        assert appeal_contents[0].lstrip().startswith("Dear"), "Appeal should start with 'Dear'"
+
 
 class NotifyPatientTest(APITestCase):
     """Test the notify_patient API endpoint."""

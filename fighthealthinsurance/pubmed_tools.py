@@ -208,6 +208,11 @@ class PubMedTools(object):
         except Exception as e:
             logger.opt(exception=True).debug(f"Unexpected error {e}")
             raise e
+        articles_json = json.dumps(articles)
+        await PubMedQueryData.objects.acreate(
+            denial_id=denial.denial_id,
+            articles=articles_json,
+        )
         logger.debug(f"Found {articles}")
         return articles
 

@@ -238,6 +238,9 @@ class AppealAssemblyHelper:
         company_fax_number: str = "415-840-7591",
         pubmed_ids_parsed: Optional[List[str]] = None,
         pending: Optional[bool] = None,
+        fax_pwyw: Optional[int] = None,
+        fax_amount: Optional[int] = None,
+        fax_amount_custom: Optional[int] = None,
     ) -> Appeal:
         if denial is None:
             if denial_id is not None:
@@ -1593,6 +1596,11 @@ class AppealsBackendHelper:
         if semi_sekret is None:
             raise Exception("Missing sekret")
 
+        # Yield status: starting
+        yield json.dumps(
+            {"type": "status", "message": "Starting appeal generation..."}
+        ) + "\n"
+
         # Get the current info (e.g. denial).
         await asyncio.sleep(0)
         denial_query = Denial.objects.filter(
@@ -1605,6 +1613,11 @@ class AppealsBackendHelper:
             "primary_professional__user",
         )
         denial = await denial_query.aget()
+
+        # Yield status: loaded denial
+        yield json.dumps(
+            {"type": "status", "message": "Loaded denial information"}
+        ) + "\n"
 
         # Initial yield of newline.
         yield "\n"
@@ -1724,6 +1737,11 @@ class AppealsBackendHelper:
                 )
                 yield await format_response(existing_appeal_dict)
 
+        # Yield status: processing templates
+        yield json.dumps(
+            {"type": "status", "message": "Processing denial types and templates..."}
+        ) + "\n"
+
         non_ai_appeals: List[str] = list(
             map(
                 lambda t: t.appeal_text,
@@ -1822,6 +1840,14 @@ class AppealsBackendHelper:
 
         # If we're getting "late" into our number of retries skip additional ctx.
         if denial.gen_attempts < 3:
+            # Yield status: gathering context
+            yield json.dumps(
+                {
+                    "type": "status",
+                    "message": "Gathering medical research and citations...",
+                }
+            ) + "\n"
+
             pubmed_context_awaitable = asyncio.wait_for(
                 cls.pmt.find_context_for_denial(denial), timeout=40
             )
@@ -1882,6 +1908,11 @@ class AppealsBackendHelper:
             passed = time.time() - t
             logger.debug(f"Saved {appeal_text} after {passed} seconds")
             return {"id": id, "content": appeal_text}
+
+        # Yield status: generating appeals
+        yield json.dumps(
+            {"type": "status", "message": "Generating personalized appeals with AI..."}
+        ) + "\n"
 
         appeals: Iterator[str] = await sync_to_async(appealGenerator.make_appeals)(
             denial,

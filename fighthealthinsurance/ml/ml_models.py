@@ -1990,12 +1990,7 @@ class RemotePerplexity(RemoteFullOpenLike):
             ModelDescription(
                 cost=100,
                 name="sonar-reasoning",
-                internal_name="sonar",
-            ),
-            ModelDescription(
-                cost=300,
-                name="deepseek",
-                internal_name="r1-1776",
+                internal_name="sonar-pro",
             ),
         ]
 

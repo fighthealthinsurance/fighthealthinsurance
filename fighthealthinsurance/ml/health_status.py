@@ -79,7 +79,9 @@ class _HealthStatus:
             candidates = []
 
         for m in candidates:
-            name = getattr(m, "model", None) or getattr(m, "__class__", type(m)).__name__
+            name = (
+                getattr(m, "model", None) or getattr(m, "__class__", type(m)).__name__
+            )
             name = str(name)
             ok = False
             err: Optional[str] = None

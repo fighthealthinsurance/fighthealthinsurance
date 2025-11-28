@@ -83,9 +83,9 @@ else
   echo "backup not reachable."
 fi
 
-if ping -c1 -W1 scrump >/dev/null 2>&1; then
+if ping -c1 -W1 scrump.local.pigscanfly.ca >/dev/null 2>&1; then
   echo "alpha reachable"
-  export ALPHA_HEALTH_BACKEND_HOST=scrump
+  export ALPHA_HEALTH_BACKEND_HOST=scrump.local.pigscanfly.ca
 fi
 
 python manage.py migrate
