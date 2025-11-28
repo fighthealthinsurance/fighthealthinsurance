@@ -109,6 +109,26 @@ def send_fallback_email(subject: str, template_name: str, context, to_email: str
         pass
 
 
+def get_unsubscribe_url(email: str) -> Optional[str]:
+    """
+    Get the unsubscribe URL for a mailing list subscriber.
+
+    Args:
+        email: The email address of the subscriber
+
+    Returns:
+        The unsubscribe URL if the subscriber exists, None otherwise
+    """
+    # Import here to avoid circular imports
+    from fighthealthinsurance.models import MailingListSubscriber
+
+    try:
+        subscriber = MailingListSubscriber.objects.get(email=email)
+        return subscriber.get_unsubscribe_url()
+    except MailingListSubscriber.DoesNotExist:
+        return None
+
+
 async def cancel_tasks(tasks: List[asyncio.Task]) -> None:
     """
     Cancel a list of asyncio tasks.

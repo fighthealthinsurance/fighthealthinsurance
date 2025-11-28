@@ -1149,3 +1149,32 @@ def create_pwyw_checkout(request):
             status=500,
             content_type="application/json",
         )
+
+
+class UnsubscribeView(View):
+    """View for handling mailing list unsubscribe requests."""
+
+    def get(self, request: HttpRequest, token: str) -> HttpResponseBase:
+        """Handle GET request to unsubscribe a mailing list subscriber by token."""
+        try:
+            subscriber = models.MailingListSubscriber.objects.get(unsubscribe_token=token)
+            email = subscriber.email
+            subscriber.delete()
+            return render(
+                request,
+                "unsubscribed.html",
+                context={
+                    "title": "Unsubscribed",
+                    "email": email,
+                },
+            )
+        except models.MailingListSubscriber.DoesNotExist:
+            return render(
+                request,
+                "unsubscribed.html",
+                context={
+                    "title": "Unsubscribed",
+                    "email": None,
+                    "error": "This unsubscribe link is invalid or has already been used.",
+                },
+            )
