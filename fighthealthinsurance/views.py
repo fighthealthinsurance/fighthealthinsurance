@@ -728,6 +728,7 @@ class InitialProcessView(generic.FormView):
         if cleaned_data.get("subscribe"):
             email = cleaned_data.get("email")
             # Get name from the POST data (it's not stored in cleaned_data for privacy)
+            # Note: we need to update the frontend for this. See https://github.com/fighthealthinsurance/fighthealthinsurance/issues/516
             fname = self.request.POST.get("fname", "")
             lname = self.request.POST.get("lname", "")
             name = f"{fname} {lname}".strip()
