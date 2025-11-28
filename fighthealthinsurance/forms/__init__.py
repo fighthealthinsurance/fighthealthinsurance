@@ -73,6 +73,7 @@ class BaseDenialForm(forms.Form):
     use_external_models = forms.BooleanField(required=False)
     denial_text = forms.CharField(required=True)
     email = forms.EmailField(required=True)
+    subscribe = forms.BooleanField(required=False, initial=True)
 
 
 class DenialForm(BaseDenialForm):
