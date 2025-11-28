@@ -562,7 +562,7 @@ class ChooseAppealHelper:
     ]:
         hashed_email = Denial.get_hashed_email(email)
         # Get the current info
-        denial = Denial.objects.filter(
+        denial: Denial = Denial.objects.filter(
             denial_id=denial_id, hashed_email=hashed_email, semi_sekret=semi_sekret
         ).get()
         denial.appeal_text = appeal_text
@@ -570,16 +570,27 @@ class ChooseAppealHelper:
         pa = ProposedAppeal(appeal_text=appeal_text, for_denial=denial, chosen=True)
         pa.save()
         articles = None
+        article_ids = None
         try:
             pmqd = PubMedQueryData.objects.filter(denial_id=denial_id)[0]
             if pmqd.articles is not None:
                 article_ids = json.loads(pmqd.articles)
+        except Exception as e:
+            pass
+        try:
+            if not article_ids:
+                article_ids = denial.pubmed_ids_json
+        except Exception as e:
+            logger.debug(f"Error loading articles {e}")
+            pass
+        try:
+            if article_ids:
                 articles = PubMedArticleSummarized.objects.filter(
                     pmid__in=article_ids
                 ).distinct()
         except Exception as e:
-            logger.debug(f"Error loading pubmed data {e}")
-            pass
+            logger.debug("Error finding articles {article_ids}: {e}")
+        logger.debug(f"Loaded articles {articles}...")
         return (denial.appeal_fax_number, denial.insurance_company, articles)
 
 
@@ -1190,7 +1201,7 @@ class DenialCreatorHelper:
                 required=required_awaitables,
                 fire_and_forget=[],
                 done_record=("Extraction complete", None),
-                timeout=75,
+                timeout=90,
             ):
                 if item:
                     yield item[0]
@@ -1265,7 +1276,7 @@ class DenialCreatorHelper:
                         # Adding proper timeout handling with asyncio.wait_for
                         await asyncio.wait_for(
                             pubmed_tool.find_pubmed_articles_for_denial(
-                                denial, timeout=120.0
+                                denial, timeout=110.0
                             ),
                             timeout=120.0,  # Enforce same timeout at asyncio level
                         )
