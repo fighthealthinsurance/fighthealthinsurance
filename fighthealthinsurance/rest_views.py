@@ -485,7 +485,7 @@ class LiveModelsStatus(APIView):
     { "alive_models": int, "last_checked": epoch_seconds, "details": [{"name": str, "ok": bool, "error": Optional[str]}] }
     """
 
-    @extend_schema(responses=serializers.StatusResponseSerializer)
+    @extend_schema(responses=serializers.LiveModelsStatusSerializer)
     def get(self, request: Request) -> Response:
         try:
             snapshot = health_status.get_snapshot()

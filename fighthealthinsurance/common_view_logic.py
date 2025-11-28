@@ -239,6 +239,7 @@ class AppealAssemblyHelper:
         company_fax_number: str = "415-840-7591",
         pubmed_ids_parsed: Optional[List[str]] = None,
         pending: Optional[bool] = None,
+        # If the user is going to pay for the faxing (optional)
         fax_pwyw: Optional[int] = None,
         fax_amount: Optional[int] = None,
         fax_amount_custom: Optional[int] = None,
@@ -1051,7 +1052,7 @@ class DenialCreatorHelper:
         primary_professional: Optional[ProfessionalUser] = None,
         patient_user: Optional[PatientUser] = None,
         patient_visible: bool = False,
-        subscribe: bool = False, # Note: we don't handle this
+        subscribe: bool = False,  # Note: we don't handle this, but it's in the form so passed through.
     ):
         """
         Create or update an existing denial.

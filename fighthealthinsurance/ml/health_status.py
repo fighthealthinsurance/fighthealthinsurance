@@ -71,7 +71,6 @@ class _HealthStatus:
 
     def _refresh(self):
         """Recalculate health snapshot using cheap checks and cache it."""
-        details: List[BackendHealthDetail] = []
         alive_count = 0
 
         # Choose a small, representative set of backends
@@ -87,7 +86,6 @@ class _HealthStatus:
             )
             name = str(name)
             ok = False
-            err: Optional[str] = None
             try:
                 ok = m.model_is_ok()
             except Exception as e:
@@ -95,12 +93,11 @@ class _HealthStatus:
                 err = str(e)
             if ok:
                 alive_count += 1
-            # details.append(BackendHealthDetail(name=name, ok=ok, error=err))
 
         snapshot = HealthSnapshot(
             alive_models=alive_count,
             last_checked=time.time(),
-            details=details,
+            details=[],  # Don't bother with any details for now.
         )
 
         with self._lock:
