@@ -348,48 +348,65 @@ class AppealGenerator(object):
     async def get_procedure_and_diagnosis(
         self, denial_text=None, use_external=False
     ) -> Tuple[Optional[str], Optional[str]]:
-        prompt: Optional[str] = self.make_open_procedure_prompt(denial_text)
-        models_to_try: list[DenialBase] = [
-            self.regex_denial_processor,
-        ]
-        ml_entity_models = ml_router.entity_extract_backends(use_external)
-        models_to_try.extend(ml_entity_models)
-        procedure = None
-        diagnosis = None
-        # How many models have we tried?
-        c = 0
-        logger.debug(f"Trying to get procedure and diagnosis using {models_to_try}")
-        for model in models_to_try:
-            c = c + 1
-            logger.debug(f"Hiiii Exploring model {model}")
-            procedure_diagnosis = await model.get_procedure_and_diagnosis(denial_text)
-            if procedure_diagnosis is not None:
-                if len(procedure_diagnosis) > 1:
-                    procedure = procedure or procedure_diagnosis[0]
-                    # If it's too long then we're probably not valid
-                    if procedure is not None and len(procedure) > 200:
-                        procedure = None
-                    diagnosis = diagnosis or procedure_diagnosis[1]
-                    if diagnosis is not None and len(diagnosis) > 200:
-                        diagnosis = None
-                else:
-                    logger.debug(
-                        f"Unexpected procedure diagnosis len on {procedure_diagnosis}"
-                    )
-                if procedure is not None and diagnosis is not None:
-                    logger.debug(f"Return with procedure {procedure} and {diagnosis}")
-                    return (procedure, diagnosis)
-                elif c > 2 and (procedure is not None or diagnosis is not None):
-                    logger.debug(
-                        f"Return *fast* with procedure {procedure} and {diagnosis}"
-                    )
-                    return (procedure, diagnosis)
-                else:
-                    logger.debug(f"So far infered {procedure} and {diagnosis}")
+        # Build model list: regex first, then ML backends
+        models_to_try: list[DenialBase] = [self.regex_denial_processor]
+        models_to_try.extend(ml_router.entity_extract_backends(use_external))
+
         logger.debug(
-            f"Fell through :/ could not fully populate but got {procedure}, {diagnosis}"
+            f"Trying to get procedure and diagnosis (timed best) using {models_to_try}"
         )
-        return (procedure, diagnosis)
+
+        # Prepare awaitables from all models
+        awaitables: List[
+            Coroutine[Any, Any, Optional[Tuple[Optional[str], Optional[str]]]]
+        ] = [model.get_procedure_and_diagnosis(denial_text) for model in models_to_try]
+
+        # Scoring: prefer results that give both fields, penalize overly long values
+        def score_fn(
+            result: Optional[Tuple[Optional[str], Optional[str]]], _: Any
+        ) -> float:
+            if result is None:
+                return -1.0
+            proc, diag = result
+            score = 0.0
+
+            def is_good(s: Optional[str]) -> bool:
+                return s is not None and len(s.strip()) > 0 and len(s) <= 200
+
+            if is_good(proc):
+                score += 1.0
+            if is_good(diag):
+                score += 1.0
+            if is_good(proc) and is_good(diag):
+                score += 0.5  # bonus for both present
+
+            # Prefer shorter (but valid) strings slightly
+            total_len = (len(proc) if proc else 0) + (len(diag) if diag else 0)
+            score -= 0.001 * total_len
+            return score
+
+        try:
+            best = await best_within_timelimit(
+                awaitables, score_fn=score_fn, timeout=30
+            )
+        except Exception:
+            logger.opt(exception=True).debug(
+                "best_within_timelimit failed for get_procedure_and_diagnosis"
+            )
+            best = None
+
+        if best is None:
+            logger.debug("No model returned procedure/diagnosis within timeout")
+            return (None, None)
+
+        proc, diag = best
+        # Enforce length constraint similar to previous logic
+        if proc is not None and len(proc) > 200:
+            proc = None
+        if diag is not None and len(diag) > 200:
+            diag = None
+        logger.debug(f"Returning (procedure, diagnosis)=({proc}, {diag})")
+        return (proc, diag)
 
     def make_open_procedure_prompt(self, denial_text=None) -> Optional[str]:
         if denial_text is not None:
