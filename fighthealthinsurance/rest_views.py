@@ -330,6 +330,8 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
                 or len(serializer_data["email"]) == 0
             ):
                 serializer_data["email"] = serializer_data["patient_user"].user.email
+        # Handle subscription separately - pop from serializer data before passing
+        subscribe = serializer_data.pop("subscribe", False)
         denial_response_info = (
             common_view_logic.DenialCreatorHelper.create_or_update_denial(
                 denial=denial,
@@ -337,6 +339,17 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
                 **serializer_data,
             )
         )
+        # Handle mailing list subscription if requested
+        if subscribe and "email" in serializer_data:
+            try:
+                email = serializer_data["email"]
+                if not MailingListSubscriber.objects.filter(email=email).exists():
+                    MailingListSubscriber.objects.create(
+                        email=email,
+                        comments="Subscribed via denial form",
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to subscribe email to mailing list: {e}")
         denial = Denial.objects.get(uuid=denial_response_info.uuid)
         # Creating a pending appeal
         try:
