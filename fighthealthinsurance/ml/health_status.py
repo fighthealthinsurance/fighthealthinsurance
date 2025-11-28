@@ -73,7 +73,7 @@ class _HealthStatus:
 
         # Choose a small, representative set of backends
         try:
-            candidates = ml_router_module.ml_router.all_models_by_cost[:6]
+            candidates = ml_router_module.ml_router.all_models_by_cost
         except Exception as e:
             logger.warning(f"Could not get all_models_by_cost: {e}")
             candidates = []
@@ -86,36 +86,12 @@ class _HealthStatus:
             ok = False
             err: Optional[str] = None
             try:
-                # Health check strategy: ask the backend class for supported models
-                # and verify our target model is present. Any exception → not ok.
-                backend_cls = m.__class__
-                supported = []
-                try:
-                    supported = backend_cls.models()
-                except Exception as inner:
-                    err = str(inner)
-                    supported = []
-                target = getattr(m, "model", None)
-                internal_name = None
-                # ModelDescription.model will be set to instance; we need its configured internal name
-                # For RemoteOpenLike descendants, `model` stores the identifier string
-                if isinstance(target, str):
-                    internal_name = target
-                # Fallback: attempt attribute lookup
-                if internal_name is None and hasattr(m, "model"):
-                    try:
-                        internal_name = str(getattr(m, "model"))
-                    except Exception:
-                        internal_name = None
-                ok = False
-                if supported and internal_name:
-                    ok = any(md.internal_name == internal_name for md in supported)
+                ok = m.model_is_ok()
             except Exception as e:
-                err = str(e)
-                ok = False
+                logger.debug(f"Error checking on model {m}")
             if ok:
                 alive_count += 1
-            details.append(BackendHealthDetail(name=name, ok=ok, error=err))
+            # details.append(BackendHealthDetail(name=name, ok=ok, error=err))
 
         snapshot = HealthSnapshot(
             alive_models=alive_count,
