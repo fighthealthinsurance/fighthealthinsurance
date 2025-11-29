@@ -154,7 +154,7 @@ class ChatInterface:
             score = 0
             if original_task in full_calls:
                 score += 100
-            bad_chat_re = r"(The user is a|The assistant is|is helping a patient with their|I hope this message finds you well|It is a conversation between a patient and an assistant|Discussing how to appeal|Helping a patient appeal|the context is)"
+            bad_chat_re = r"(The user is a|The assistant is|is helping a patient with their|I hope this message finds you well|It is a conversation between a patient and an assistant|Discussing how to appeal|Helping a patient appeal|the context is|The patient was denied coverage for)"
             bad_context_re = r"(Hi|my name is doughnut)"
             if result is None:
                 return 0

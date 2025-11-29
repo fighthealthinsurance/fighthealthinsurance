@@ -329,19 +329,35 @@ async def best_within_timelimit(
     done, pending = await asyncio.wait(
         wrapped_tasks, timeout=timeout, return_when=asyncio.ALL_COMPLETED
     )
+    # Find the best result from completed tasks
+    best_result_option: Optional[T] = None
+    best_score = float("-inf")  # Start with negative infinity for comparison
+    for task in done:
+        try:
+            result = await task  # Get task result
+            original_task = original_to_task[task]
+            score = score_fn(result, original_task)
+            if score > best_score:
+                best_score = score
+                best_result_option = result
+        except Exception as e:
+            logger.opt(exception=True).warning(
+                f"Task error in best_within_timelimit: {e}"
+            )
+            continue
+
+    # Did we find a non empty best result?!?
+    if best_result_option:
+        asyncio.create_task(cancel_tasks(list(pending)))
+        return best_result_option
 
     # If nothing is done in the length of normal timeout we try again but short
     # circuit on first.
-    if done is None or len(done) == 0:
-        done, pending = await asyncio.wait(
-            pending, timeout=timeout * 2, return_when=asyncio.FIRST_COMPLETED
-        )
-
-    asyncio.create_task(cancel_tasks(list(pending)))
-
-    # Find the best result from completed tasks
-    best_result: T
-    best_score = float("-inf")  # Start with negative infinity for comparison
+    done, pending = await asyncio.wait(
+        wrapped_tasks,
+        timeout=timeout * 4,
+        return_when=asyncio.FIRST_COMPLETED
+    )
 
     for task in done:
         try:
@@ -350,14 +366,17 @@ async def best_within_timelimit(
             score = score_fn(result, original_task)
             if score > best_score:
                 best_score = score
-                best_result = result
+                best_result_option = result
         except Exception as e:
             logger.opt(exception=True).warning(
                 f"Task error in best_within_timelimit: {e}"
             )
             continue
-
-    return best_result
+    if best_result_option:
+        asyncio.create_task(cancel_tasks(list(pending)))
+        return best_result_option
+    # Ok somehow things are still _bad_
+    raise Exception("No good answers found and we waitied way past the expected time.")
 
 
 async def best_within_timelimit_static(
