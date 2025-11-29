@@ -110,4 +110,4 @@ if [[ "$1" == "--devserver" ]]; then
 fi
 
 # Default: use Uvicorn
-RECAPTCHA_TESTING=true OAUTHLIB_RELAX_TOKEN_SCOPE=1 uvicorn fighthealthinsurance.asgi:application --reload --reload-dir fighthealthinsurance --reload-exclude "*.pyc,__pycache__/*,*.pyo,*~,#*#,.#*,node_modules,static,.tox/*,*sqlite*,./tox/**,./tests/**" --access-log --log-config conf/uvlog_config.yaml --port 8000 --ssl-keyfile key.pem --ssl-certfile cert.pem "$@"
+RECAPTCHA_TESTING=true OAUTHLIB_RELAX_TOKEN_SCOPE=1 uvicorn fighthealthinsurance.asgi:application --reload --reload-dir fighthealthinsurance --reload-exclude "*.pyc,__pycache__/*,*.pyo,*~,#*#,.#*,node_modules,static,.tox/*,*sqlite*,./tox/*,./tests/*" --access-log --log-config conf/uvlog_config.yaml --port 8000 --ssl-keyfile key.pem --ssl-certfile cert.pem "$@"
