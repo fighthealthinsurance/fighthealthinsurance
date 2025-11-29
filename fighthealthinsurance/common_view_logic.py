@@ -1622,7 +1622,7 @@ class AppealsBackendHelper:
             and parameters["medical_reason"]
             and len(parameters["medical_reason"]) > 1
         ):
-            medical_reasons.append(parameters["medical_reason"])
+            medical_reasons.add(parameters["medical_reason"])
 
         if denial_id is None:
             raise Exception("Missing denial id")
