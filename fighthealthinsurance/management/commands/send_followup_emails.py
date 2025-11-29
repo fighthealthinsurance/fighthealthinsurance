@@ -32,7 +32,9 @@ class Command(BaseCommand):
         candidate_count = candidates.count()
 
         if candidate_count == 0:
-            self.stdout.write(self.style.SUCCESS("No pending follow-up emails to send."))
+            self.stdout.write(
+                self.style.SUCCESS("No pending follow-up emails to send.")
+            )
             return
 
         self.stdout.write(f"Found {candidate_count} pending follow-up emails.")

@@ -39,44 +39,49 @@ class Command(BaseCommand):
         # 2. Have had follow-up emails sent
         # 3. The follow-up was sent more than `days` ago
         # 4. User did not request more follow-up (meaning they didn't opt in to longer storage)
-        
+
         # First, find follow-up schedules that were sent more than `days` ago
         # and where the user didn't request more follow-up
         sent_followups = FollowUpSched.objects.filter(
             follow_up_sent=True,
             follow_up_sent_date__lt=cutoff_datetime,
-        ).select_related('denial_id')
+        ).select_related("denial_id")
 
         # Get the denial IDs from those follow-ups
         denial_ids_with_old_followups = set(
-            sent_followups.values_list('denial_id__denial_id', flat=True)
+            sent_followups.values_list("denial_id__denial_id", flat=True)
         )
 
         # Now find denials that:
         # 1. Have a raw_email (user opted in for initial follow-up)
         # 2. Don't have any pending or recent follow-ups (user didn't opt in for more)
         # 3. Had their follow-up sent more than `days` ago
-        
+
         # Get denials that have recent or pending follow-ups (these should NOT be cleared)
         denials_with_recent_or_pending_followups = set(
             FollowUpSched.objects.filter(
-                Q(follow_up_sent=False) |  # Pending follow-up
-                Q(follow_up_sent_date__gte=cutoff_datetime)  # Recent follow-up
-            ).values_list('denial_id__denial_id', flat=True)
+                Q(follow_up_sent=False)  # Pending follow-up
+                | Q(follow_up_sent_date__gte=cutoff_datetime)  # Recent follow-up
+            ).values_list("denial_id__denial_id", flat=True)
         )
 
         # Filter to only denials that have raw_email set, had old follow-ups sent,
         # and don't have recent or pending follow-ups
         # Also exclude denials created in the last 90 days for safety
-        candidates = Denial.objects.filter(
-            denial_id__in=denial_ids_with_old_followups,
-            date__lt=safety_cutoff_date,  # Safety check: only clear emails for older denials
-        ).exclude(
-            denial_id__in=denials_with_recent_or_pending_followups,
-        ).exclude(
-            raw_email__isnull=True,
-        ).exclude(
-            raw_email='',
+        candidates = (
+            Denial.objects.filter(
+                denial_id__in=denial_ids_with_old_followups,
+                date__lt=safety_cutoff_date,  # Safety check: only clear emails for older denials
+            )
+            .exclude(
+                denial_id__in=denials_with_recent_or_pending_followups,
+            )
+            .exclude(
+                raw_email__isnull=True,
+            )
+            .exclude(
+                raw_email="",
+            )
         )
 
         candidate_count = candidates.count()
@@ -100,15 +105,15 @@ class Command(BaseCommand):
 
         # Clear the raw_email field for these denials
         # First, capture the denial IDs before the update
-        denial_ids_to_clear = list(candidates.values_list('denial_id', flat=True))
-        
+        denial_ids_to_clear = list(candidates.values_list("denial_id", flat=True))
+
         cleared_count = candidates.update(raw_email=None)
-        
+
         # Also clear emails from the FollowUpSched entries for these denials
-        FollowUpSched.objects.filter(
-            denial_id__in=denial_ids_to_clear
-        ).update(email='')
+        FollowUpSched.objects.filter(denial_id__in=denial_ids_to_clear).update(email="")
 
         self.stdout.write(
-            self.style.SUCCESS(f"Successfully cleared emails from {cleared_count} denials.")
+            self.style.SUCCESS(
+                f"Successfully cleared emails from {cleared_count} denials."
+            )
         )

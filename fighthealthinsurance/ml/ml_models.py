@@ -12,6 +12,7 @@ from concurrent.futures import Future
 from dataclasses import dataclass
 from typing import Callable, List, Optional, Tuple, Iterable, Union
 from loguru import logger
+import requests
 
 # Import the appropriate async_timeout based on Python version
 if sys.version_info >= (3, 11):
@@ -30,6 +31,9 @@ from fighthealthinsurance.process_denial import DenialBase
 class RemoteModelLike(DenialBase):
     def quality(self) -> int:
         return 100
+
+    def model_is_ok(self):
+        return False
 
     def infer(
         self,
@@ -624,6 +628,76 @@ class RemoteOpenLike(RemoteModel):
         self._expensive = expensive
         self.dual_mode = dual_mode
 
+    def model_is_ok(self):
+        """Check that the backend supports this model, returns true if found in list.
+        Return false if not found. Logs supported models from the backend."""
+        if not self.api_base:
+            raise RuntimeError("No api_base configured for RemoteOpenLike.")
+
+        url = f"{self.api_base}/models"
+
+        headers = {}
+        if self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
+
+        try:
+            resp = requests.get(url, headers=headers, timeout=10)
+        except requests.RequestException as exc:
+            logger.debug(f"Unable to contact model backend at {url}")
+            return False
+
+        if resp.status_code != 200:
+            logger.debug(
+                f"Backend {self.api_base} returned status {resp.status_code} "
+                f"for /models request."
+            )
+            return False
+
+        try:
+            payload = resp.json()
+        except ValueError as exc:
+            logger.debug(
+                f"Backend {self.api_base} returned non-JSON response for /models."
+            )
+            return False
+
+        # Collect model IDs from a few common shapes:
+        #  - OpenAI-style: {"data": [{"id": "gpt-4"}, ...]}
+        #  - Other APIs:   {"models": [{"id": "..."}, ...]}
+        #  - Or a bare list: ["gpt-4", ...] or [{"id": "..."}]
+        model_ids: set[str] = set()
+
+        def _extract_id(m):
+            if isinstance(m, dict):
+                return m.get("id") or m.get("name") or m.get("model")
+            return str(m)
+
+        if isinstance(payload, dict):
+            if isinstance(payload.get("data"), list):
+                for m in payload["data"]:
+                    mid = _extract_id(m)
+                    if mid:
+                        model_ids.add(mid)
+            if isinstance(payload.get("models"), list):
+                for m in payload["models"]:
+                    mid = _extract_id(m)
+                    if mid:
+                        model_ids.add(mid)
+        elif isinstance(payload, list):
+            for m in payload:
+                mid = _extract_id(m)
+                if mid:
+                    model_ids.add(mid)
+
+        if self.model not in model_ids:
+            logger.debug(
+                f"Model '{self.model}' not available on backend {self.api_base}. "
+                f"Available models: {sorted(model_ids) if model_ids else 'none'}"
+            )
+            return False
+
+        return True
+
     def get_system_prompts(self, prompt_type: str, prof_pov=False) -> list[str]:
         """
         Get the appropriate system prompt based on type and audience.
@@ -957,7 +1031,7 @@ class RemoteOpenLike(RemoteModel):
             )
         )
 
-        logger.debug(f"Cleaned {cleaned}!")
+        logger.debug(f"Cleaned {cleaned} on type {infer_type}")
 
         return [
             (
@@ -1402,9 +1476,7 @@ class RemoteOpenLike(RemoteModel):
             return None
         try:
             if "choices" not in json_result:
-                logger.debug(
-                    f"Response {json_result} from {api_base} missing key result."
-                )
+                logger.debug(f"Response {json_result} from {url} missing key result.")
                 return None
 
             # Extract message content
@@ -1989,13 +2061,8 @@ class RemotePerplexity(RemoteFullOpenLike):
         return [
             ModelDescription(
                 cost=100,
-                name="sonar-reasoning",
+                name="sonar",
                 internal_name="sonar",
-            ),
-            ModelDescription(
-                cost=300,
-                name="deepseek",
-                internal_name="r1-1776",
             ),
         ]
 

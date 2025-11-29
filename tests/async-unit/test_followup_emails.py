@@ -73,39 +73,37 @@ class TestFollowUpEmailSender:
         candidates = sender.find_candidates()
         assert candidates.count() == 0
 
-    @patch('fighthealthinsurance.followup_emails.send_fallback_email')
+    @patch("fighthealthinsurance.followup_emails.send_fallback_email")
     def test_dosend_sends_email_and_updates_followup(
         self, mock_send_email, test_followup_sched
     ):
         """Test that dosend sends the email and updates the follow-up schedule."""
         sender = FollowUpEmailSender()
         result = sender.dosend(follow_up_sched=test_followup_sched)
-        
+
         assert result is True
         mock_send_email.assert_called_once()
-        
+
         # Refresh from database
         test_followup_sched.refresh_from_db()
         assert test_followup_sched.follow_up_sent is True
         assert test_followup_sched.follow_up_sent_date is not None
 
-    @patch('fighthealthinsurance.followup_emails.send_fallback_email')
-    def test_dosend_handles_email_failure(
-        self, mock_send_email, test_followup_sched
-    ):
+    @patch("fighthealthinsurance.followup_emails.send_fallback_email")
+    def test_dosend_handles_email_failure(self, mock_send_email, test_followup_sched):
         """Test that dosend handles email sending failures gracefully."""
         mock_send_email.side_effect = Exception("Email sending failed")
-        
+
         sender = FollowUpEmailSender()
         result = sender.dosend(follow_up_sched=test_followup_sched)
-        
+
         assert result is False
-        
+
         # Refresh from database - should not be marked as sent
         test_followup_sched.refresh_from_db()
         assert test_followup_sched.follow_up_sent is False
 
-    @patch('fighthealthinsurance.followup_emails.send_fallback_email')
+    @patch("fighthealthinsurance.followup_emails.send_fallback_email")
     def test_send_all_sends_to_all_candidates(self, mock_send_email, test_denial):
         """Test that send_all sends to all candidates."""
         # Create multiple follow-ups
@@ -116,14 +114,14 @@ class TestFollowUpEmailSender:
                 follow_up_date=datetime.date.today() - datetime.timedelta(days=1),
                 follow_up_sent=False,
             )
-        
+
         sender = FollowUpEmailSender()
         count = sender.send_all()
-        
+
         assert count == 3
         assert mock_send_email.call_count == 3
 
-    @patch('fighthealthinsurance.followup_emails.send_fallback_email')
+    @patch("fighthealthinsurance.followup_emails.send_fallback_email")
     def test_send_all_respects_count_limit(self, mock_send_email, test_denial):
         """Test that send_all respects the count limit."""
         # Create multiple follow-ups
@@ -134,41 +132,42 @@ class TestFollowUpEmailSender:
                 follow_up_date=datetime.date.today() - datetime.timedelta(days=1),
                 follow_up_sent=False,
             )
-        
+
         sender = FollowUpEmailSender()
         count = sender.send_all(count=2)
-        
+
         assert count == 2
         assert mock_send_email.call_count == 2
 
     def test_dosend_by_email(self, test_followup_sched):
         """Test that dosend can find follow-up by email."""
         sender = FollowUpEmailSender()
-        
-        with patch('fighthealthinsurance.followup_emails.send_fallback_email'):
+
+        with patch("fighthealthinsurance.followup_emails.send_fallback_email"):
             result = sender.dosend(email=test_followup_sched.email)
             assert result is True
 
     def test_dosend_raises_when_no_params(self):
         """Test that dosend raises when neither email nor follow_up_sched provided."""
         sender = FollowUpEmailSender()
-        
-        with pytest.raises(Exception, match="One of email and follow_up_sched must be set"):
+
+        with pytest.raises(
+            Exception, match="One of email and follow_up_sched must be set"
+        ):
             sender.dosend()
 
-    @patch('fighthealthinsurance.followup_emails.send_fallback_email')
+    @patch("fighthealthinsurance.followup_emails.send_fallback_email")
     def test_dosend_with_both_params_uses_follow_up_sched(
         self, mock_send_email, test_followup_sched
     ):
         """Test that dosend uses follow_up_sched email when both params provided."""
         sender = FollowUpEmailSender()
         result = sender.dosend(
-            follow_up_sched=test_followup_sched, 
-            email="different@example.com"
+            follow_up_sched=test_followup_sched, email="different@example.com"
         )
-        
+
         assert result is True
         # Should use the email from follow_up_sched, not the provided one
         mock_send_email.assert_called_once()
         call_kwargs = mock_send_email.call_args[1]
-        assert call_kwargs['to_email'] == test_followup_sched.email
+        assert call_kwargs["to_email"] == test_followup_sched.email

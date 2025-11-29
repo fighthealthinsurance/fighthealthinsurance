@@ -15,7 +15,9 @@ class Migration(migrations.Migration):
             model_name="mailinglistsubscriber",
             name="unsubscribe_token",
             field=models.CharField(
-                default=fighthealthinsurance.utils.sekret_gen, max_length=100, unique=True
+                default=fighthealthinsurance.utils.sekret_gen,
+                max_length=100,
+                unique=True,
             ),
         ),
     ]

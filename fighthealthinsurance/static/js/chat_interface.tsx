@@ -569,8 +569,8 @@ const ChatInterface: React.FC = () => {
     const welcomeMessage: ChatMessage = {
       role: "assistant",
       content: userInfo
-        ? `Welcome to Fight Health Insurance, ${userInfo.firstName}! I'm here to help you with your health insurance questions and appeals. Feel free to ask me anything or upload relevant documents using the paperclip icon.`
-        : "Welcome to Fight Health Insurance! I'm here to help you with your health insurance questions and appeals. Feel free to ask me anything or upload relevant documents using the paperclip icon.",
+        ? `👋 Hey ${userInfo.firstName}! I'm your AI sidekick for fighting health insurance denials.\n\n**I can help you:**\n• 💬 Answer questions about your denial or policy\n• 📄 Review denial letters (use the 📎 to upload)\n• 🎯 Guide you through the appeal process\n• ✍️ Help craft appeal arguments\n\nJust ask me anything, or upload your denial letter to get started!`
+        : "👋 Welcome! I'm your AI sidekick for fighting health insurance denials.\n\n**I can help you:**\n• 💬 Answer questions about denials and appeals\n• 📄 Review your denial letter (use the 📎 to upload)\n• 🎯 Guide you through the appeal process\n• ✍️ Help you craft persuasive arguments\n\n**Quick tips:**\n• Be specific about your situation\n• Upload any relevant documents\n• Ask follow-up questions—I'm here to help!\n\nWhat brings you here today?",
       timestamp: new Date().toISOString(),
       status: "done",
     };

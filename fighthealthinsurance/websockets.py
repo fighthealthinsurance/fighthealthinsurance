@@ -152,6 +152,7 @@ class PriorAuthConsumer(AsyncWebsocketConsumer):
             await self.send(
                 json.dumps(
                     {
+                        "type": "status",
                         "status": "generating",
                         "message": "Starting to generate prior authorization proposals",
                     }

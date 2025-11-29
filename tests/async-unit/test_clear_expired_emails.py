@@ -27,7 +27,7 @@ def email_test_setup(db):
     old_date = datetime.date.today() - datetime.timedelta(days=100)
     Denial.objects.filter(denial_id=denial1.denial_id).update(date=old_date)
     denial1.refresh_from_db()
-    
+
     # Create old follow-up that was sent 40 days ago
     old_sent_date = timezone.now() - datetime.timedelta(days=40)
     FollowUpSched.objects.create(
@@ -37,7 +37,7 @@ def email_test_setup(db):
         follow_up_sent=True,
         follow_up_sent_date=old_sent_date,
     )
-    
+
     # Create a denial with recent follow-up (should NOT be cleared)
     email2 = "recent_followup@example.com"
     hashed_email2 = Denial.get_hashed_email(email2)
@@ -47,7 +47,7 @@ def email_test_setup(db):
         raw_email=email2,
         health_history="",
     )
-    
+
     # Create recent follow-up that was sent 10 days ago
     recent_sent_date = timezone.now() - datetime.timedelta(days=10)
     FollowUpSched.objects.create(
@@ -57,7 +57,7 @@ def email_test_setup(db):
         follow_up_sent=True,
         follow_up_sent_date=recent_sent_date,
     )
-    
+
     # Create a denial with pending follow-up (should NOT be cleared)
     email3 = "pending_followup@example.com"
     hashed_email3 = Denial.get_hashed_email(email3)
@@ -67,7 +67,7 @@ def email_test_setup(db):
         raw_email=email3,
         health_history="",
     )
-    
+
     # Create pending follow-up
     FollowUpSched.objects.create(
         email=email3,
@@ -75,11 +75,11 @@ def email_test_setup(db):
         follow_up_date=datetime.date.today() + datetime.timedelta(days=5),
         follow_up_sent=False,
     )
-    
+
     return {
-        'denial_old': denial1,
-        'denial_recent': denial2,
-        'denial_pending': denial3,
+        "denial_old": denial1,
+        "denial_recent": denial2,
+        "denial_pending": denial3,
     }
 
 
@@ -90,61 +90,66 @@ class TestClearExpiredEmailsCommand:
     def test_clears_old_followup_emails(self, email_test_setup):
         """Test that command clears emails for old follow-ups."""
         out = StringIO()
-        call_command('clear_expired_emails', stdout=out)
-        
+        call_command("clear_expired_emails", stdout=out)
+
         # Refresh from database
-        email_test_setup['denial_old'].refresh_from_db()
-        email_test_setup['denial_recent'].refresh_from_db()
-        email_test_setup['denial_pending'].refresh_from_db()
-        
+        email_test_setup["denial_old"].refresh_from_db()
+        email_test_setup["denial_recent"].refresh_from_db()
+        email_test_setup["denial_pending"].refresh_from_db()
+
         # Old follow-up email should be cleared
-        assert email_test_setup['denial_old'].raw_email is None
-        
+        assert email_test_setup["denial_old"].raw_email is None
+
         # Recent and pending should NOT be cleared
-        assert email_test_setup['denial_recent'].raw_email == "recent_followup@example.com"
-        assert email_test_setup['denial_pending'].raw_email == "pending_followup@example.com"
+        assert (
+            email_test_setup["denial_recent"].raw_email == "recent_followup@example.com"
+        )
+        assert (
+            email_test_setup["denial_pending"].raw_email
+            == "pending_followup@example.com"
+        )
 
     def test_dry_run_does_not_clear_emails(self, email_test_setup):
         """Test that dry-run mode does not clear emails."""
         out = StringIO()
-        call_command('clear_expired_emails', '--dry-run', stdout=out)
-        
+        call_command("clear_expired_emails", "--dry-run", stdout=out)
+
         # Refresh from database
-        email_test_setup['denial_old'].refresh_from_db()
-        
+        email_test_setup["denial_old"].refresh_from_db()
+
         # Email should NOT be cleared in dry-run mode
-        assert email_test_setup['denial_old'].raw_email == "old_followup@example.com"
+        assert email_test_setup["denial_old"].raw_email == "old_followup@example.com"
         assert "Dry run mode" in out.getvalue()
 
     def test_custom_days_parameter(self, email_test_setup):
         """Test that custom days parameter works."""
         # With 50 days, the 40-day-old follow-up should NOT be cleared
         out = StringIO()
-        call_command('clear_expired_emails', '--days=50', stdout=out)
-        
-        email_test_setup['denial_old'].refresh_from_db()
-        
+        call_command("clear_expired_emails", "--days=50", stdout=out)
+
+        email_test_setup["denial_old"].refresh_from_db()
+
         # Should not be cleared because it's less than 50 days old
-        assert email_test_setup['denial_old'].raw_email == "old_followup@example.com"
+        assert email_test_setup["denial_old"].raw_email == "old_followup@example.com"
         assert "No emails to clear" in out.getvalue()
 
     def test_no_emails_to_clear(self, db):
         """Test message when no emails need clearing."""
         out = StringIO()
-        call_command('clear_expired_emails', stdout=out)
-        
+        call_command("clear_expired_emails", stdout=out)
+
         assert "No emails to clear" in out.getvalue()
 
     def test_clears_followup_sched_emails(self, email_test_setup):
         """Test that command also clears emails from FollowUpSched entries."""
-        call_command('clear_expired_emails')
-        
+        call_command("clear_expired_emails")
+
         # Check that the FollowUpSched email was also cleared
         followup_sched = FollowUpSched.objects.filter(
-            denial_id=email_test_setup['denial_old']
+            denial_id=email_test_setup["denial_old"]
         ).first()
-        
-        assert followup_sched.email == ''
+
+        assert followup_sched.email == ""
 
     def test_safety_check_90_days(self, db):
         """Test that denials created less than 90 days ago are not cleared."""
@@ -158,7 +163,7 @@ class TestClearExpiredEmailsCommand:
             health_history="",
         )
         # The denial is created today (less than 90 days old)
-        
+
         # Create an old follow-up that was sent 40 days ago
         old_sent_date = timezone.now() - datetime.timedelta(days=40)
         FollowUpSched.objects.create(
@@ -168,13 +173,13 @@ class TestClearExpiredEmailsCommand:
             follow_up_sent=True,
             follow_up_sent_date=old_sent_date,
         )
-        
+
         out = StringIO()
-        call_command('clear_expired_emails', stdout=out)
-        
+        call_command("clear_expired_emails", stdout=out)
+
         # Refresh from database
         denial.refresh_from_db()
-        
+
         # Email should NOT be cleared because denial is less than 90 days old
         assert denial.raw_email == email
         assert "No emails to clear" in out.getvalue()
@@ -187,11 +192,11 @@ class TestSendFollowupEmailsCommand:
     def test_no_pending_emails(self, db):
         """Test message when no pending emails."""
         out = StringIO()
-        call_command('send_followup_emails', stdout=out)
-        
+        call_command("send_followup_emails", stdout=out)
+
         assert "No pending follow-up emails" in out.getvalue()
 
-    @patch('fighthealthinsurance.followup_emails.send_fallback_email')
+    @patch("fighthealthinsurance.followup_emails.send_fallback_email")
     def test_sends_pending_emails(self, mock_send_email, db):
         """Test that command sends pending follow-up emails."""
         # Create a denial with follow-up
@@ -209,14 +214,14 @@ class TestSendFollowupEmailsCommand:
             follow_up_date=datetime.date.today() - datetime.timedelta(days=1),
             follow_up_sent=False,
         )
-        
+
         out = StringIO()
-        call_command('send_followup_emails', stdout=out)
-        
+        call_command("send_followup_emails", stdout=out)
+
         assert "Successfully sent 1 follow-up emails" in out.getvalue()
         mock_send_email.assert_called_once()
 
-    @patch('fighthealthinsurance.followup_emails.send_fallback_email')
+    @patch("fighthealthinsurance.followup_emails.send_fallback_email")
     def test_dry_run_does_not_send(self, mock_send_email, db):
         """Test that dry-run mode does not send emails."""
         # Create a denial with follow-up
@@ -234,14 +239,14 @@ class TestSendFollowupEmailsCommand:
             follow_up_date=datetime.date.today() - datetime.timedelta(days=1),
             follow_up_sent=False,
         )
-        
+
         out = StringIO()
-        call_command('send_followup_emails', '--dry-run', stdout=out)
-        
+        call_command("send_followup_emails", "--dry-run", stdout=out)
+
         assert "Dry run mode" in out.getvalue()
         mock_send_email.assert_not_called()
 
-    @patch('fighthealthinsurance.followup_emails.send_fallback_email')
+    @patch("fighthealthinsurance.followup_emails.send_fallback_email")
     def test_respects_count_limit(self, mock_send_email, db):
         """Test that count parameter limits emails sent."""
         # Create multiple follow-ups
@@ -260,9 +265,9 @@ class TestSendFollowupEmailsCommand:
                 follow_up_date=datetime.date.today() - datetime.timedelta(days=1),
                 follow_up_sent=False,
             )
-        
+
         out = StringIO()
-        call_command('send_followup_emails', '--count=2', stdout=out)
-        
+        call_command("send_followup_emails", "--count=2", stdout=out)
+
         assert "Successfully sent 2 follow-up emails" in out.getvalue()
         assert mock_send_email.call_count == 2
