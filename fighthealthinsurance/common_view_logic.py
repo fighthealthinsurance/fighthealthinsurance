@@ -739,7 +739,7 @@ class FindNextStepsHelper:
             logger.debug(f"Invalid appeal fax number {appeal_fax_number}")
 
         if include_provided_health_history_in_appeal is not None:
-            denial.include_provided_health_history = (
+            denial.include_provided_health_history_in_appeal = (
                 include_provided_health_history_in_appeal
             )
 
@@ -798,7 +798,7 @@ class FindNextStepsHelper:
         # This is unique to professional so using this for now to help specialize questions
         prof_pov = denial.professional_to_finish
         if in_network is not None:
-            denial.provider_inz_network = in_network
+            denial.provider_in_network = in_network
             # If they know about in_network they are definitely a professional
             prof_pov = True
             if "in_network" not in existing_answers:
