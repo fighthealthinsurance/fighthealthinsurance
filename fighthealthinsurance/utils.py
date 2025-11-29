@@ -69,6 +69,31 @@ def is_convertible_to_int(s):
         return False
 
 
+def mask_email_for_logging(email: Optional[str]) -> str:
+    """
+    Mask an email address for logging purposes to protect PII.
+
+    Transforms: holden.karau@gmail.com -> h*****@gmail.com
+
+    Args:
+        email: The email address to mask
+
+    Returns:
+        The masked email address with only the first letter of the local part
+        and the full domain visible
+    """
+    if email is None or not email or "@" not in email:
+        return "***invalid***"
+
+    local_part, domain = email.rsplit("@", 1)
+    if len(local_part) > 0:
+        masked_local = local_part[0] + "*****"
+    else:
+        masked_local = "*****"
+
+    return f"{masked_local}@{domain}"
+
+
 def send_fallback_email(subject: str, template_name: str, context, to_email: str):
     if to_email.endswith("-fake@fighthealthinsurance.com"):
         return

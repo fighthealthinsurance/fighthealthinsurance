@@ -1,5 +1,7 @@
 import datetime
 
+import ray
+
 from django.http import HttpResponse
 from django.views import View, generic
 from django.db import transaction
@@ -11,6 +13,7 @@ from fighthealthinsurance.forms import FollowUpTestForm
 from fighthealthinsurance.models import (
     Denial,
     FollowUpSched,
+    MailingListSubscriber,
     ProfessionalUser,
     UserDomain,
     ProfessionalDomainRelation,
@@ -19,6 +22,14 @@ from fighthealthinsurance.followup_emails import (
     ThankyouEmailSender,
     FollowUpEmailSender,
 )
+from fighthealthinsurance.mailing_list_actor_ref import mailing_list_actor_ref
+from fighthealthinsurance.utils import mask_email_for_logging
+
+
+class StaffDashboardView(generic.TemplateView):
+    """Staff dashboard with links to all staff views."""
+
+    template_name = "staff_dashboard.html"
 
 
 class ScheduleFollowUps(View):
@@ -161,3 +172,44 @@ class FollowUpFaxSenderView(generic.FormView):
             sent = helper.blocking_dosend_target(email=field)
 
         return HttpResponse(str(sent))
+
+
+class SendMailingListMailView(generic.FormView):
+    """A view to send emails to all mailing list subscribers."""
+
+    template_name = "send_mailing_list_mail.html"
+    form_class = core_forms.SendMailingListMailForm
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["subscriber_count"] = MailingListSubscriber.objects.count()
+        return context
+
+    def form_valid(self, form):
+        subject = form.cleaned_data.get("subject")
+        html_content = form.cleaned_data.get("html_content")
+        text_content = form.cleaned_data.get("text_content")
+        test_email = form.cleaned_data.get("test_email")
+
+        try:
+            # Use ray actor for sending emails
+            actor = mailing_list_actor_ref.get
+            future = actor.send_mailing_list_email.remote(
+                subject, html_content, text_content, test_email
+            )
+            sent_count, failed_count = ray.get(future)
+
+            if test_email:
+                masked_email = mask_email_for_logging(test_email)
+                return HttpResponse(
+                    f"Test email sent successfully to {masked_email}"
+                )
+            else:
+                return HttpResponse(
+                    f"Mailing list email sent. Success: {sent_count}, Failed: {failed_count}"
+                )
+        except Exception as e:
+            logger.opt(exception=True).error(f"Error sending mailing list email: {e}")
+            return HttpResponse(
+                f"Error sending mailing list email: {str(e)}", status=500
+            )
