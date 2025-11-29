@@ -906,6 +906,7 @@ class AppealGenerator(object):
                         },
                     ]
                 )
+            logger.debug(f"Looking at provided medical reasons {medical_reasons}.")
             for reason in medical_reasons:
                 logger.debug(f"Using medical necessity reason {reason}")
                 appeal = template_generator.generate(reason)

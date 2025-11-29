@@ -1615,6 +1615,14 @@ class AppealsBackendHelper:
         hashed_email = Denial.get_hashed_email(email)
         # Extract the professional_to_finish parameter from the input, default to False
         professional_to_finish = parameters.get("professional_to_finish", False)
+        # Medical reason provided?
+        medical_reasons = set()
+        if (
+            "medical_reason" in parameters
+            and parameters["medical_reason"]
+            and len(parameters["medical_reason"]) > 1
+        ):
+            medical_reasons.append(parameters["medical_reason"])
 
         if denial_id is None:
             raise Exception("Missing denial id")
@@ -1782,7 +1790,6 @@ class AppealsBackendHelper:
         prefaces = []
         main = []
         footer = []
-        medical_reasons = set()
         medical_context = set()
         plan_context = set()
         # Extract any medical context AND
@@ -1839,6 +1846,8 @@ class AppealsBackendHelper:
                     if dt.appeal_text is not None:
                         main.append(dt.appeal_text)
 
+        if denial.medical_reason_manual:
+            medical_reasons.add(denial.medical_reason_manual)
         # Add the context to the denial
         if medical_context is not None:
             qa_context = {}
