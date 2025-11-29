@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div id="chooser-root"></div>
+<script src="{% static 'js/dist/chooser.bundle.js' %}"></script>
+{% endblock %}

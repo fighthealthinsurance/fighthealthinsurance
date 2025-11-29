@@ -56,6 +56,7 @@ router.register(
     rest_views.ProposedPriorAuthViewSet,
     basename="prior-auth-proposals",
 )
+router.register(r"chooser", rest_views.ChooserViewSet, basename="chooser")
 
 urlpatterns = [
     # Non-viewset but still rest API endpoints.
