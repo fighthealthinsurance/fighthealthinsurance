@@ -103,10 +103,13 @@ export function validateScrubForm(event: Event): void {
       const lnameInput = document.getElementById(
         "store_lname",
       ) as HTMLInputElement | null;
+      // Remove name attribute and clear values to prevent sending to server
       if (fnameInput) {
+        fnameInput.removeAttribute("name");
         fnameInput.value = "";
       }
       if (lnameInput) {
+        lnameInput.removeAttribute("name");
         lnameInput.value = "";
       }
     }
