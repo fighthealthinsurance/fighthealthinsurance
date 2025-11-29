@@ -366,7 +366,7 @@ class DenialEndToEnd(APITestCase):
             url,
             json.dumps(
                 {
-                    "denial_text": "Your claim has been denied because the requested treatment is experimental.",
+                    "denial_text": "Your claim has been denied because the requested treatment is not medically necessary.",
                     "denial_type": "1",
                     "plan_id": "",
                     "claim_id": "",
