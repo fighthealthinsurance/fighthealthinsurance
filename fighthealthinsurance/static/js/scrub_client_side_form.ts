@@ -94,6 +94,25 @@ export function validateScrubForm(event: Event): void {
     rehideHiddenMessage("pii_error");
     rehideHiddenMessage("email_error");
     rehideHiddenMessage("need_denial");
+    // Only include fname and lname if user has subscribed to mailing list
+    // This ensures we don't send personal names to the server unless the user opts in
+    if (!form.subscribe.checked) {
+      const fnameInput = document.getElementById(
+        "store_fname",
+      ) as HTMLInputElement | null;
+      const lnameInput = document.getElementById(
+        "store_lname",
+      ) as HTMLInputElement | null;
+      // Remove name attribute and clear values to prevent sending to server
+      if (fnameInput) {
+        fnameInput.removeAttribute("name");
+        fnameInput.value = "";
+      }
+      if (lnameInput) {
+        lnameInput.removeAttribute("name");
+        lnameInput.value = "";
+      }
+    }
     // YOLO
     return;
   } else {
