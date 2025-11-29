@@ -58,7 +58,10 @@ class BlogSitemap(Sitemap):
                 if not isinstance(contents, str):
                     contents = contents.decode("utf-8")
                 posts = json.loads(contents)
-            return posts if isinstance(posts, list) else []
+            if not isinstance(posts, list):
+                return []
+            # Filter out posts without valid slugs
+            return [post for post in posts if post.get("slug")]
         except (FileNotFoundError, json.JSONDecodeError) as e:
             logger.warning(f"Could not load blog_posts.json for sitemap: {e}")
             return []
@@ -68,7 +71,12 @@ class BlogSitemap(Sitemap):
 
     def location(self, item: dict[str, Any]) -> str:
         """Return the URL for a blog post."""
-        slug = item.get("slug", "")
+        slug = item.get("slug")
+        if not slug:
+            # This shouldn't happen since items() filters them out,
+            # but provide a safe fallback
+            logger.warning(f"Blog post item missing slug: {item}")
+            return reverse("blog")
         return reverse("blog-post", kwargs={"slug": slug})
 
 
