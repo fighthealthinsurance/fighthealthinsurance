@@ -154,7 +154,7 @@ class ChatInterface:
             score = 0
             if original_task in full_calls:
                 score += 100
-            bad_chat_re = r"(The user is a|The assistant is|is helping a patient with their|I hope this message finds you well|It is a conversation between a patient and an assistant|Discussing how to appeal|Helping a patient appeal|the context is|The patient was denied coverage for)"
+            bad_chat_re = r"(The user is a|The assistant is|is helping a patient with their|I hope this message finds you well|It is a conversation between a patient and an assistant|Discussing how to appeal|Helping a patient appeal|the context is|The patient was denied coverage for|I understand you're seeking assistance with a Semaglutide claim denial appeal for a patient who is obese and has mild chronic kidney disease. The patient's healthcare provider has prescribed Semaglutide 2 mg subcutaneous weekly as an appropriate treatment according to the American Association of Clinical Endocrinologists (AACE) guidelines. The patient is at risk of progression to type 2 diabetes mellitus, and Semaglutide is clinically indicated for obesity treatment.|You are Doughnut|Discussing an appeal for a)"
             bad_context_re = r"(Hi|my name is doughnut)"
             if result is None:
                 return 0
@@ -172,6 +172,8 @@ class ChatInterface:
                         score += 100
             if result[1] and result[0]:
                 score += call_scores[original_task]
+            else:
+                score += call_scores[original_task] / 100
             logger.debug(f"Scored {result} as {score}")
             return score
 
