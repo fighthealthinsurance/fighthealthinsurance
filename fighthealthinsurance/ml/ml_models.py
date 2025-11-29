@@ -2054,7 +2054,7 @@ class RemotePerplexity(RemoteFullOpenLike):
 
     @property
     def supports_system(self):
-        return False
+        return True
 
     @classmethod
     def models(cls) -> List[ModelDescription]:
