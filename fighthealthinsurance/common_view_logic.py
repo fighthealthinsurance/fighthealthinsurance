@@ -25,6 +25,7 @@ import tempfile
 import os
 import uuid
 import re
+import time
 from stopit.utils import TimeoutException
 
 from django.core.files import File
