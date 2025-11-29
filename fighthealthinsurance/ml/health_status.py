@@ -88,9 +88,13 @@ class _HealthStatus:
         details: List[BackendHealthDetail] = []
         timeout_seconds = 10
         if candidates:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(candidates))) as ex:
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=min(8, len(candidates))
+            ) as ex:
                 future_map = {ex.submit(m.model_is_ok): m for m in candidates}
-                for future in concurrent.futures.as_completed(future_map, timeout=max(timeout_seconds, 12)):
+                for future in concurrent.futures.as_completed(
+                    future_map, timeout=max(timeout_seconds, 12)
+                ):
                     m = future_map[future]
                     name = (
                         getattr(m, "model", None)
@@ -101,7 +105,9 @@ class _HealthStatus:
                     err: Optional[str] = None
                     try:
                         # Per-model timeout: if call hangs beyond timeout_seconds, mark as down
-                        ok = future.result(timeout=0)  # already completed via as_completed
+                        ok = future.result(
+                            timeout=0
+                        )  # already completed via as_completed
                     except Exception as e:
                         err = str(e)
                         logger.debug(f"Health check error for {name}: {e}")

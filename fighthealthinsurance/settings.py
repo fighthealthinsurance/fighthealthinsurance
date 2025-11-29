@@ -732,6 +732,7 @@ TEST_RUNNER = "django_nose.NoseTestSuiteRunner"
 
 # Configure Loguru for test envs to avoid "closed file" spam, without hiding setup failures
 import os as _os
+
 if _os.getenv("DJANGO_CONFIGURATION") in {"Test", "TestSync", "TestActor"}:
     from loguru import logger as _logger
     import sys as _sys

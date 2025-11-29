@@ -462,7 +462,9 @@ class DenialEndToEnd(APITestCase):
         ), f"Expected status keywords not found in: {status_messages}"
 
         # Verify we still get appeal content
-        assert len(appeal_contents) >= 1, f"Should have received at least one appeal in {responses}"
+        assert (
+            len(appeal_contents) >= 1
+        ), f"Should have received at least one appeal in {responses}"
         assert (
             appeal_contents[0].lstrip().startswith("Dear")
         ), "Appeal should start with 'Dear'"
