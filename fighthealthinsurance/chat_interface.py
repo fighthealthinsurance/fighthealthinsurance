@@ -154,16 +154,19 @@ class ChatInterface:
             score = 0
             if original_task in full_calls:
                 score += 100
-            bad_chat_re = r"(The user is a|The assistant is|is helping a patient with their|I hope this message finds you well|It is a conversation between a patient and an assistant)"
+            bad_chat_re = r"(The user is a|The assistant is|is helping a patient with their|I hope this message finds you well|It is a conversation between a patient and an assistant|Discussing how to appeal|Helping a patient appeal|the context is)"
+            bad_context_re = r"(Hi|my name is doughnut)"
             if result is None:
                 return 0
             # We want a non-empty context
             if result[1] and len(result[1]) > 5:
                 score += 10
+                if re.match(bad_context_re, result[1], flags=re.IGNORE_CASE):
+                    score -= 5
             if result[0] and len(result[0]) > 5:
                 score += 100
-                if re.match(bad_chat_re, result[0]):
-                    score -= 50
+                if re.match(bad_chat_re, result[0], flags=re.IGNORE_CASE):
+                    score -= 75
                 for r in tools_regex:
                     if re.match(r, result[0]):
                         score += 100
