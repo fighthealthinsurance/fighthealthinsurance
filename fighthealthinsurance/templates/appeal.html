@@ -11,13 +11,13 @@ Fight Your Health Insurance Denial: Edit and send in your appeal
 {% endblock title %}
 
 {% block content %}
-<p>
-  Appreciate us? You can:
-  <a href="https://buy.stripe.com/5kA03r2ZwbgebyE7ss" class="section-btn btn btn-default smoothScroll" id="support-our-dev-button" target="_blank" rel="noopener noreferrer">
-    Pay What You Want / Support our Development (optional)
-  </a>
-</p>
-<div class="appeal-donate-wrapper">
+<div class="appeal-donate-wrapper" style="background-color: #f8f9fa; padding: 1.5rem; border-radius: 8px; margin: 1.5rem 0;">
+  <p style="color: #333; margin-bottom: 1rem;">
+    Appreciate us? You can:
+    <a href="https://buy.stripe.com/5kA03r2ZwbgebyE7ss" class="section-btn btn btn-default smoothScroll" id="support-our-dev-button" target="_blank" rel="noopener noreferrer">
+      Pay What You Want / Support our Development (optional)
+    </a>
+  </p>
   {% include 'partials/pwyw_panel.html' %}
 </div>
 Huzzah! We have a <b>draft</b> appeal for you to edit bellow:
@@ -53,7 +53,7 @@ Huzzah! We have a <b>draft</b> appeal for you to edit bellow:
 <!-- Put this back once we write that java script. -->
 <form action="{% url 'stagefaxview' %}" method="post" class="col-md-12 d-flex flex-column align-items-center">
   {% csrf_token %}
-  {{ fax_form }}
+  {{fax_form}}
   <div class="fax-pwyw-group" aria-label="Fax price (optional, pay what you want)">
     <label><input type="radio" name="fax_pwyw" value="0" checked>$0 <small>Need it free</small></label>
     <label><input type="radio" name="fax_pwyw" value="5">$5 <small>Original price</small></label>
@@ -84,6 +84,10 @@ or:
   </a>
 </p>
 {% include 'partials/pwyw_panel.html' %}
+
+<div class="appeal-share-wrapper">
+  {% include 'partials/share_buttons.html' %}
+</div>
 <p>
 * We'll do our best to include a summary or abstract if available from PubMed.
 </p>

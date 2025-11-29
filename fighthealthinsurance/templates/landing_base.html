@@ -28,8 +28,8 @@
 		            <li>
 		              <span class="benefit-icon" aria-hidden="true">🔒</span>
 		              <div class="benefit-content">
-		                <strong>Private by default</strong>
-		                <p>On-device OCR keeps your medical info secure</p>
+		                <strong>More Private by default</strong>
+		                <p>On-device OCR helps keep your medical info secure</p>
 		              </div>
 		            </li>
 		            <li>
@@ -71,6 +71,7 @@
 		        </div>
 		      </section>
 	</div>
+                    <div id="model-status"></div>
 		</div>
 	    </div>
 	</div>
@@ -110,6 +111,15 @@
 </section>
 {% endblock testimonials_section %}
 
+{% block share_section %}
+<!-- TELL YOUR FRIENDS -->
+<section id="share" class="share-section">
+    <div class="container">
+        {% include 'partials/share_buttons.html' %}
+    </div>
+</section>
+{% endblock share_section %}
+
 {% block about_section %}
 <section id="about">
     <div class="container">
@@ -146,4 +156,5 @@
 
 {% block scriptmagic %}
 <script src="{% static 'js/pwyw.js' %}"></script>
+<script src="{% static 'js/dist/model_status.bundle.js' %}"></script>
 {% endblock scriptmagic %}

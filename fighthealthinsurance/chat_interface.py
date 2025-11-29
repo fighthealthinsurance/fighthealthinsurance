@@ -151,24 +151,33 @@ class ChatInterface:
                 call_scores[short_awaitable] = model_backend.quality()
 
         def score_fn(result, original_task):
-            score = 0
+            score = 0.0
             if original_task in full_calls:
                 score += 100
-            bad_chat_re = r"(The user is a|The assistant is|is helping a patient with their|I hope this message finds you well|It is a conversation between a patient and an assistant)"
+            bad_chat_re = r"(The user is a|The assistant is|is helping a patient with their|I hope this message finds you well|It is a conversation between a patient and an assistant|Discussing how to appeal|Helping a patient appeal|the context is|The patient was denied coverage for|I understand you're seeking assistance with a Semaglutide claim denial appeal for a patient who is obese and has mild chronic kidney disease. The patient's healthcare provider has prescribed Semaglutide 2 mg subcutaneous weekly as an appropriate treatment according to the|The patient is at risk of progression to type 2 diabetes mellitus, and Semaglutide is clinically indicated for obesity treatment.|You are Doughnut|Discussing an appeal for a|My system prompt is)"
+            bad_context_re = (
+                r"(^Hi, |my name is doughnut|To help me understand, can you)"
+            )
             if result is None:
-                return 0
+                return float("-inf")
+            if not result[1] and not result[0]:
+                return float("-inf")
             # We want a non-empty context
             if result[1] and len(result[1]) > 5:
                 score += 10
+                if re.match(bad_context_re, result[1], flags=re.IGNORECASE):
+                    score -= 5
             if result[0] and len(result[0]) > 5:
                 score += 100
-                if re.match(bad_chat_re, result[0]):
-                    score -= 50
+                if re.match(bad_chat_re, result[0], flags=re.IGNORECASE):
+                    score -= 75
                 for r in tools_regex:
                     if re.match(r, result[0]):
                         score += 100
             if result[1] and result[0]:
                 score += call_scores[original_task]
+            else:
+                score += call_scores[original_task] / 100
             logger.debug(f"Scored {result} as {score}")
             return score
 

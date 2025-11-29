@@ -22,26 +22,36 @@ Fight Your Health Insurance Denial: Choose an Appeal
   <!-- Main Content -->
 <div id="main-content" class="generic-main-content">
   <div id="loading-more">
-    <h4>Page Loading: Health Insurance Appeals</h4>
-    <p>Thank you for submitting your health insurance denial. We are currently working to generate the necessary details for your appeal, and this process may take a few moments.</p>
-    In the meantime enjoy professor timbit (Holden and Carolyn&#39;s dog) working hard on the keyboard.
-    <img src="{% static '/images/timbit-stand-on-keyboard.jpg' %}" alt="Timbit standing on a keyboard to convey that we are working on the appeal.">
-    <h5>Why the delay?</h5>
-    <p>Generative AI models (like the ones we use) can be slow at the best of times.</p>
+    <h4>Brewing Your Appeals ☕</h4>
+    <p>We're generating your personalized health insurance appeals. This usually takes 1-3 minutes. Our AI is reading your denial, getting appropriately angry, and drafting multiple appeals for you to choose from.</p>
 
-    <h5>What to Expect:</h5>
+    <div style="text-align: center; margin: 2rem 0;">
+      <img src="{% static '/images/timbit-stand-on-keyboard.jpg' %}" alt="Timbit standing on a keyboard" style="max-width: 100%; height: auto; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);">
+      <p style="margin-top: 1rem; font-style: italic; color: #666;">Professor Timbit supervising the AI (that's Holden and Carolyn's dog)</p>
+    </div>
+
+    <h5>Why does this take time?</h5>
+    <p>Our AI needs to:</p>
     <ul>
-      <li><strong>Please Wait:</strong> Your patience is greatly appreciated. Rest assured, we (or the computers) are working diligently (unless they broke) to gather the necessary information for your appeal.</li>
+      <li>📖 Understand your specific denial</li>
+      <li>🔍 Research relevant medical literature and policy language</li>
+      <li>✍️ Craft 3 different appeal approaches tailored to your case</li>
+      <li>🎯 Make each one persuasive and professional</li>
+    </ul>
+    <p>Unlike ChatGPT or other generic AI tools, we're specialized in fighting insurance denials—which means better quality appeals, but a bit more processing time.</p>
+
+    <h5>What you'll get:</h5>
+    <ul>
+      <li><strong>3 Different Appeals:</strong> We generate multiple versions so you can pick the one that feels right for your situation</li>
+      <li><strong>Ready to Submit:</strong> Each appeal is complete and professionally formatted</li>
+      <li><strong>Fully Editable:</strong> You can customize any appeal before submitting</li>
     </ul>
 
-    <h5>When to refresh:</h5>
+    <h5>Taking longer than expected?</h5>
 	<ul>
-	<li>If this message does not go away after several minutes, you can try refreshing the web page. We will try and generate a new set of appeals.</li>
-	</ul>
-
-    <h5>What if this message never goes away?</h5>
-    <ul>
-	<li>You can try refreshing (hold down the shift key while you press refresh) if it has been a few minutes. It is also possible something is broken. If you use an ad blocker or a Javascript blocker, try turning those off as sometimes they interfere. If that still does not help, maybe our servers are broken (the two we use for model generation are called Plushy and Steve). Email us at <a href="mailto:support42@fighthealthinsurance.com">support42@fighthealthinsurance.com</a> & we will look into it.</li>
+	<li><strong>First refresh:</strong> After 3-5 minutes, try refreshing the page (hold Shift while clicking refresh). We'll generate a fresh batch of appeals.</li>
+	<li><strong>Still waiting?</strong> Check if you have ad blockers or JavaScript blockers enabled—these can interfere with the generation process.</li>
+	<li><strong>Need help?</strong> If nothing works after a few tries, our servers (lovingly named Plushy and Steve) might be taking a nap. Email us at <a href="mailto:support42@fighthealthinsurance.com">support42@fighthealthinsurance.com</a> and we'll investigate!</li>
 	</ul>
 	</div>
   </div>
@@ -63,6 +73,10 @@ Fight Your Health Insurance Denial: Choose an Appeal
 </form>
 </div>
 <div id="output-container">
+</div>
+
+<div class="appeals-share-wrapper">
+  {% include 'partials/share_buttons.html' %}
 </div>
 </div>
 

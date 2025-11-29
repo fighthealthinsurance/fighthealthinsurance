@@ -223,4 +223,22 @@ class MLRouter(object):
         return len(self.all_models_by_cost) > 0
 
 
-ml_router = MLRouter()
+# Lazy singleton - initialized on first access
+_ml_router_instance: Optional[MLRouter] = None
+
+
+def _get_ml_router() -> MLRouter:
+    """Get or create the singleton MLRouter instance (lazy initialization)."""
+    global _ml_router_instance
+    if _ml_router_instance is None:
+        _ml_router_instance = MLRouter()
+    return _ml_router_instance
+
+
+# Property-like access for backward compatibility
+class _MLRouterProxy:
+    def __getattr__(self, name):
+        return getattr(_get_ml_router(), name)
+
+
+ml_router = _MLRouterProxy()

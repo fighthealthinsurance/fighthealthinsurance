@@ -123,6 +123,7 @@ class PubMedTools(object):
         """
         pmids: List[str] = []
         articles: List[PubMedMiniArticle] = []
+        logger.debug(f"Looking up pubmed articles...")
         try:
             async with async_timeout(timeout):
                 procedure_opt = denial.procedure if denial.procedure else ""
@@ -208,7 +209,14 @@ class PubMedTools(object):
         except Exception as e:
             logger.opt(exception=True).debug(f"Unexpected error {e}")
             raise e
-        logger.debug(f"Found {articles}")
+        articles_json = json.dumps(list(map(lambda a: a.pmid, articles)))
+        await PubMedQueryData.objects.acreate(
+            denial_id=denial,
+            articles=articles_json,
+            query=f"{denial.procedure or ''} {denial.diagnosis or ''}".strip()
+            or "denial_articles",
+        )
+        logger.debug(f"Found {articles} for denial {denial}")
         return articles
 
     async def find_context_for_denial(self, denial: Denial, timeout=70.0) -> str:
@@ -238,7 +246,7 @@ class PubMedTools(object):
                 if denial.pubmed_ids_json and len(denial.pubmed_ids_json) > 0:
                     try:
                         selected_pmids = denial.pubmed_ids_json
-                        if selected_pmids:  # Check if not None and not empty
+                        if selected_pmids:  # Check if not None
                             logger.info(
                                 f"Using {len(selected_pmids)} pre-selected PubMed articles for denial {denial.denial_id}"
                             )
@@ -258,7 +266,7 @@ class PubMedTools(object):
                         self.find_pubmed_articles_for_denial(
                             denial, timeout=(timeout / 2.5)
                         ),
-                        timeout=timeout / 2.0,
+                        timeout=timeout / 1.5,
                     )
 
                     selected_pmids = list(map(lambda x: x.pmid, possible_articles))
@@ -295,6 +303,8 @@ class PubMedTools(object):
                     for pmid in missing_pmids:
                         articles.extend(await self.get_articles([pmid]))
         except asyncio.TimeoutError as e:
+            # Use aupdate instead of asave to avoid race conditions
+            logger.debug(f"Timed out saving articles so far.")
             logger.debug(
                 f"Timeout in find_context_for_denial: {e} so far got {articles}"
             )
@@ -304,8 +314,14 @@ class PubMedTools(object):
             )
             pass
         except Exception as e:
-            logger.opt(exception=True).debug("Non-timeout error -- {e}?")
-            raise e
+            logger.opt(exception=True).debug(f"Non-timeout error -- {e}?")
+            raise
+        finally:
+            if selected_pmids:
+                logger.debug(f"Writing back selected pmids {selected_pmids}")
+                await Denial.objects.filter(denial_id=denial.denial_id).aupdate(
+                    pubmed_ids_json=selected_pmids
+                )
 
         # Format the articles for context
         if articles:
@@ -316,7 +332,7 @@ class PubMedTools(object):
             if len(joined_contexts) < 100:
                 logger.debug("Not much input, skpping summary step.")
                 return joined_contexts
-            r = await ml_router.summarize(
+            r: Optional[str] = await ml_router.summarize(
                 title="Combined contexts", text=joined_contexts
             )
             logger.debug("Huzzah!")

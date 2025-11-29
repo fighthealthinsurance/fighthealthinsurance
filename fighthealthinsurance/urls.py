@@ -115,6 +115,12 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         views.FollowUpView.as_view(),
         name="followup-with-trailing-slash",
     ),
+    # Unsubscribe from mailing list
+    path(
+        "v0/unsubscribe/<slug:token>",
+        views.UnsubscribeView.as_view(),
+        name="unsubscribe",
+    ),
     # Fax follow up
     # So if there's an extra / or . at the end we ignore it.
     path(
