@@ -255,7 +255,6 @@ class DenialEndToEnd(APITestCase):
                     "email": email,
                     "semi_sekret": semi_sekret,
                     "health_history": "Sample health history",
-                    "include_provided_health_history_in_appeal": True,
                 }
             ),
             content_type="application/json",
@@ -272,6 +271,7 @@ class DenialEndToEnd(APITestCase):
                     "denial_id": denial_id,
                     "denial_type": [1, 2],
                     "diagnosis": "high risk homosexual behaviour",
+                    "include_provided_health_history_in_appeal": True,
                 }
             ),
             content_type="application/json",
