@@ -161,11 +161,11 @@ class ChatInterface:
             # We want a non-empty context
             if result[1] and len(result[1]) > 5:
                 score += 10
-                if re.match(bad_context_re, result[1], flags=re.IGNORE_CASE):
+                if re.match(bad_context_re, result[1], flags=re.IGNORECASE):
                     score -= 5
             if result[0] and len(result[0]) > 5:
                 score += 100
-                if re.match(bad_chat_re, result[0], flags=re.IGNORE_CASE):
+                if re.match(bad_chat_re, result[0], flags=re.IGNORECASE):
                     score -= 75
                 for r in tools_regex:
                     if re.match(r, result[0]):
