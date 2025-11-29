@@ -758,5 +758,5 @@ if _os.getenv("DJANGO_CONFIGURATION") in {"Test", "TestSync", "TestActor"}:
         backtrace=False,
         diagnose=False,
         catch=False,  # do not swallow unexpected sink errors
-        level="INFO",
+        level="DEBUG",
     )

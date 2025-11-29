@@ -1,6 +1,7 @@
 from unittest import mock
 from django.test import TestCase
 
+from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.ml.health_status import health_status
 
 
@@ -8,7 +9,11 @@ class TestHealthStatus(TestCase):
     """Tests for cached model health endpoint behavior."""
 
     def test_snapshot_shape(self):
+        print("Getting router...")
+        ml_router
+        print("Getting snap...")
         snap = health_status.get_snapshot()
+        print(f"Got {snap}")
         assert set(snap.keys()) == {"alive_models", "last_checked", "details"} | set(
             snap.keys()
         )  # basic shape
@@ -23,6 +28,9 @@ class TestHealthStatus(TestCase):
             @classmethod
             def models(cls):  # always raises
                 raise Exception("unreachable")
+
+            def model_is_ok(self):
+                return False
 
         fake_router.all_models_by_cost = [DownBackend(), DownBackend()]
         from fighthealthinsurance.ml.health_status import _HealthStatus
@@ -46,12 +54,18 @@ class TestHealthStatus(TestCase):
             def models(cls):
                 return [ModelDescription(cost=1, name="x", internal_name="good")]
 
+            def model_is_ok(self):
+                return True
+
         class BadBackend:
             model = "bad"
 
             @classmethod
             def models(cls):
                 raise Exception("down")
+
+            def model_is_ok(self):
+                return False
 
         fake_router.all_models_by_cost = [GoodBackend(), BadBackend()]
         from fighthealthinsurance.ml.health_status import _HealthStatus

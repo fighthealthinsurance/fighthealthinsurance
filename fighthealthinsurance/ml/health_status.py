@@ -11,6 +11,7 @@ Trade-offs:
 - Background refresh via threading.Timer keeps dependencies minimal (no Celery needed).
 """
 
+import concurrent.futures
 import threading
 import time
 from dataclasses import dataclass, field
@@ -18,6 +19,7 @@ from typing import List, Optional, Dict, Any
 from loguru import logger
 
 from fighthealthinsurance.ml import ml_router as ml_router_module
+import os
 
 
 REFRESH_INTERVAL_SECONDS = 60 * 60  # hourly
@@ -39,31 +41,31 @@ class HealthSnapshot:
 
 class _HealthStatus:
     def __init__(self):
-        self._lock = threading.Lock()
         self._snapshot: HealthSnapshot = HealthSnapshot()
         self._timer: Optional[threading.Timer] = None
         self._initialized = False
+        # Fast mode for tests to avoid network stalls
+        self._fast_mode = os.getenv("FHI_HEALTH_FAST", "0") == "1"
 
     def get_snapshot(self) -> Dict[str, Any]:
-        with self._lock:
-            # Lazy initialization: refresh and schedule on first call
-            if not self._initialized:
-                self._refresh()
-                self._schedule_refresh()
-                self._initialized = True
+        if not self._initialized:
+            self._refresh()
+            self._schedule_refresh()
+            self._initialized = True
 
-            return {
-                "alive_models": self._snapshot.alive_models,
-                "last_checked": self._snapshot.last_checked,
-                "details": [
-                    {"name": d.name, "ok": d.ok, "error": d.error}
-                    for d in self._snapshot.details
-                ],
-            }
+        return {
+            "alive_models": self._snapshot.alive_models,
+            "last_checked": self._snapshot.last_checked,
+            "details": [
+                {"name": d.name, "ok": d.ok, "error": d.error}
+                for d in self._snapshot.details
+            ],
+        }
 
     def _schedule_refresh(self):
         try:
-            self._timer = threading.Timer(REFRESH_INTERVAL_SECONDS, self._refresh)
+            interval = 5 if self._fast_mode else REFRESH_INTERVAL_SECONDS
+            self._timer = threading.Timer(interval, self._refresh)
             self._timer.daemon = True
             self._timer.start()
         except Exception as e:
@@ -74,34 +76,60 @@ class _HealthStatus:
         alive_count = 0
 
         # Choose a small, representative set of backends
+        candidates = []
         try:
+            logger.debug("Starting to look up the models")
             candidates = ml_router_module.ml_router.all_models_by_cost
+            logger.debug(f"Considering candidates {candidates}")
         except Exception as e:
             logger.warning(f"Could not get all_models_by_cost: {e}")
             candidates = []
+        # Run health checks in parallel with per-model timeouts
+        details: List[BackendHealthDetail] = []
+        timeout_seconds = 10
+        if candidates:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(candidates))) as ex:
+                future_map = {ex.submit(m.model_is_ok): m for m in candidates}
+                for future in concurrent.futures.as_completed(future_map, timeout=max(timeout_seconds, 12)):
+                    m = future_map[future]
+                    name = (
+                        getattr(m, "model", None)
+                        or getattr(m, "__class__", type(m)).__name__
+                    )
+                    name = str(name)
+                    ok = False
+                    err: Optional[str] = None
+                    try:
+                        # Per-model timeout: if call hangs beyond timeout_seconds, mark as down
+                        ok = future.result(timeout=0)  # already completed via as_completed
+                    except Exception as e:
+                        err = str(e)
+                        logger.debug(f"Health check error for {name}: {e}")
+                    if ok:
+                        alive_count += 1
+                    details.append(BackendHealthDetail(name=name, ok=ok, error=err))
 
-        for m in candidates:
-            name = (
-                getattr(m, "model", None) or getattr(m, "__class__", type(m)).__name__
-            )
-            name = str(name)
-            ok = False
-            try:
-                ok = m.model_is_ok()
-            except Exception as e:
-                logger.debug(f"Error checking on model {m}: {e}")
-                err = str(e)
-            if ok:
-                alive_count += 1
+                # Handle any futures that didn't complete within the as_completed window
+                for future, m in future_map.items():
+                    if not future.done():
+                        name = (
+                            getattr(m, "model", None)
+                            or getattr(m, "__class__", type(m)).__name__
+                        )
+                        name = str(name)
+                        details.append(
+                            BackendHealthDetail(
+                                name=name, ok=False, error=f"timeout>{timeout_seconds}s"
+                            )
+                        )
 
         snapshot = HealthSnapshot(
             alive_models=alive_count,
             last_checked=time.time(),
-            details=[],  # Don't bother with any details for now.
+            details=details,
         )
 
-        with self._lock:
-            self._snapshot = snapshot
+        self._snapshot = snapshot
 
         # Re-schedule next refresh
         self._schedule_refresh()
