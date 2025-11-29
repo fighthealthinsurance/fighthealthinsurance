@@ -5,17 +5,17 @@
 {% block content %}
 
 {% block hero_section %}
-<!-- HOME / HERO -->
+<!-- HOME -->
 <section id="home" class="slider" data-stellar-background-ratio="0.5">
     <div class="row">
 	<div class="item item-first">
 	    <div class="caption d-flex flex-column align-items-center justify-content-center">
 		<div class="hero-inner">
-		  <h3 class="hero-tagline">{% block hero_tagline %}Make your health insurance company cry too{% endblock hero_tagline %}</h3>
-		  <h1 class="hero-headline">Fight Health Insurance</h1>
-	      <p class="hero-subcopy">{% block hero_subcopy %}Generate your healthcare claim appeal in minutes with AI. Free for everyone.{% endblock hero_subcopy %}</p>
+		  <h3 class="hero-tagline">Make your health insurance company cry too</h3>
+		      <h1 class="hero-headline">Fight Health Insurance</h1>
+	      <p class="hero-subcopy">Generate your healthcare claim appeal in minutes with AI. Free for everyone.</p>
 	      <div class="hero-cta-group">
-	        <a href="{% url 'scan' %}" class="section-btn btn btn-default smoothScroll primary-cta" id="scanlink">{% block hero_cta_text %}Generate an Appeal{% endblock hero_cta_text %}</a>
+	        <a href="{% url 'scan' %}" class="section-btn btn btn-default smoothScroll primary-cta" id="scanlink">Generate an Appeal</a>
 	      </div>
 	      <div class="hero-cta-group hero-cta-secondary">
 	        <a href="{% url 'chat' %}" class="btn btn-outline-green smoothScroll secondary-cta" id="chatlink">AI Chat</a>
@@ -29,7 +29,7 @@
 		              <span class="benefit-icon" aria-hidden="true">🔒</span>
 		              <div class="benefit-content">
 		                <strong>More Private by default</strong>
-		                <p>On-device OCR helps keep your medical info secure</p>
+                <p>On-device OCR helps keep your medical info secure</p>
 		              </div>
 		            </li>
 		            <li>
@@ -90,22 +90,20 @@
 <!-- HEAR FROM OUR USERS -->
 <section id="testimonials" class="testimonials-section">
     <div class="container">
-        <h5 class="testimonials-title">{% block testimonials_title %}Hear From Our Users{% endblock testimonials_title %}</h5>
+        <h5 class="testimonials-title">Hear From Our Users</h5>
         <div class="testimonials-grid">
-            {% block testimonials_content %}
             <div class="testimonial-card">
-                <div class="testimonial-quote">"You are like the David in the David v Goliath story. I'm a fan of using AI to fight the injustices of the world."</div>
+                <div class="testimonial-quote">"You are like the David in the David v Goliath story. I’m a fan of using AI to fight the injustices of the world."</div>
                 <div class="testimonial-author">— FHI User</div>
             </div>
             <div class="testimonial-card">
-                <div class="testimonial-quote">"I didn't know AI could write appeal letters. I've spent countless hours on the phone with insurance—only to get denied anyway. This tool is new to me, but it's already saving time and giving me a real head start. I'm all in."</div>
+                <div class="testimonial-quote">"I didn’t know AI could write appeal letters. I’ve spent countless hours on the phone with insurance—only to get denied anyway. This tool is new to me, but it’s already saving time and giving me a real head start. I’m all in."</div>
                 <div class="testimonial-author">— Jessica Smith, RN.</div>
             </div>
             <div class="testimonial-card">
                 <div class="testimonial-quote">"It saves time, gets more approvals—and pushes back against an intentionally adversarial system."</div>
                 <div class="testimonial-author">— Dr. Paul Abramson, MD</div>
             </div>
-            {% endblock testimonials_content %}
         </div>
     </div>
 </section>
@@ -127,9 +125,8 @@
 
 	    <div class="col-md-6 col-sm-6">
 		<div class="about-info">
-		    <h2>{% block about_title %}Hi Friends!{% endblock about_title %}</h2>
+		    <h2>Hi Friends!</h2>
 		    <div>
-                {% block about_content %}
 			  Navigating the insurance appeal process methodically is essential. The first step involves scanning your denial letter. This can be done through optical character recognition (OCR) either on <a class="link" href='{% url "scan" %}'>your device/phone (recommended for increased privacy)</a> or on <a class="link" href='{% url "server_side_ocr" %}'>our servers (more accurate)</a>. OCR makes the text understandable to machines, allowing our generative AI model able to produce potential appeals for you to choose from.
 <p>
 			<h4>Steps to Overturn Insurance Denial</h4>
@@ -142,7 +139,6 @@
 			  <li>Follow up with the insurance company regularly to track the status of your appeal. They are typically required to respond within reasonable timeframes, but sometimes do not meet that requirement.</li>
 			</ul>
 </p>
-                {% endblock about_content %}
 		    </div>
 		</div>
 	    </div>
