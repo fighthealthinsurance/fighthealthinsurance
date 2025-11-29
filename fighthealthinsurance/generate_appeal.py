@@ -906,17 +906,13 @@ class AppealGenerator(object):
                         },
                     ]
                 )
-            if denial.medical_reason:
-                initial_appeals.append(
-                    template_generator.generate_static(denial.medical_reason)
-                )
+            for reason in medical_reasons:
+                logger.debug(f"Using medical necessity reason {reason}")
+                appeal = template_generator.generate(reason)
+                initial_appeals.append(appeal)
         else:
             # Otherwise just put in as is.
             initial_appeals.append(static_appeal)
-        for reason in medical_reasons:
-            logger.debug(f"Using reason {reason}")
-            appeal = template_generator.generate(reason)
-            initial_appeals.append(appeal)
 
         logger.debug(f"Initial appeal {initial_appeals}")
         # Executor map wants a list for each parameter.
@@ -954,20 +950,7 @@ class AppealGenerator(object):
             calls
         )
 
-        # Since we publish the results as they become available
-        # we want to add some randomization to the initial appeals so they are
-        # not always appearing in the first position.
-        def random_delay(appeal) -> Iterator[str]:
-            time.sleep(random.randint(0, 25))
-            return iter([appeal])
-
-        delayed_initial_appeals: List[Future[Iterator[str]]] = list(
-            map(lambda appeal: executor.submit(random_delay, appeal), initial_appeals)
-        )
         appeals: Iterator[str] = as_available_nested(generated_text_futures)
-        initial_appeals_itr: Iterator[str] = as_available_nested(
-            delayed_initial_appeals
-        )
         logger.debug(f"Appeals itr starting with {appeals}")
         # Check and make sure we have some AI powered results
         try:
@@ -980,6 +963,7 @@ class AppealGenerator(object):
                 f"Adding backup calls {backup_calls} first group not success."
             )
             appeals = as_available_nested(make_async_model_calls(backup_calls))
-        appeals = itertools.chain(appeals, initial_appeals_itr)
+        logger.debug(f"Adding initial appeals {initial_appeals} to back of itr.")
+        appeals = itertools.chain(appeals, initial_appeals)
         logger.debug(f"Sending back {appeals}")
         return appeals
