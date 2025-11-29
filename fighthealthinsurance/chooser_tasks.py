@@ -33,18 +33,36 @@ async def check_and_refill_task_pool():
     Check if the pool of READY tasks is below threshold and trigger generation if needed.
 
     This is the main entry point for the lazy auto-refill mechanism.
+    Uses a distributed lock to ensure only one instance runs at a time.
     """
-    for task_type in ["appeal", "chat"]:
-        ready_count = await _count_ready_tasks(task_type)
-        if ready_count < CHOOSER_MIN_READY_TASKS:
-            logger.info(
-                f"Chooser {task_type} tasks below threshold ({ready_count} < {CHOOSER_MIN_READY_TASKS}). "
-                f"Triggering generation of {CHOOSER_GENERATION_BATCH_SIZE} tasks."
-            )
-            # Fire and forget the generation tasks
-            await fire_and_forget_in_new_threadpool(
-                _generate_batch_tasks(task_type, CHOOSER_GENERATION_BATCH_SIZE)
-            )
+    from django.core.cache import cache
+    from asgiref.sync import sync_to_async
+
+    lock_key = "chooser_task_refill_lock"
+    lock_timeout = 5  # 5 seconds - non-blocking, quick return if already running
+
+    # Try to acquire the lock
+    lock_acquired = await sync_to_async(cache.add)(lock_key, "locked", lock_timeout)
+
+    if not lock_acquired:
+        logger.debug("Another instance is already refilling chooser tasks, skipping")
+        return
+
+    try:
+        for task_type in ["appeal", "chat"]:
+            ready_count = await _count_ready_tasks(task_type)
+            if ready_count < CHOOSER_MIN_READY_TASKS:
+                logger.info(
+                    f"Chooser {task_type} tasks below threshold ({ready_count} < {CHOOSER_MIN_READY_TASKS}). "
+                    f"Triggering generation of {CHOOSER_GENERATION_BATCH_SIZE} tasks."
+                )
+                # Fire and forget the generation tasks
+                await fire_and_forget_in_new_threadpool(
+                    _generate_batch_tasks(task_type, CHOOSER_GENERATION_BATCH_SIZE)
+                )
+    finally:
+        # Release the lock
+        await sync_to_async(cache.delete)(lock_key)
 
 
 async def _count_ready_tasks(task_type: str) -> int:
@@ -95,49 +113,116 @@ async def _generate_single_task(task_type: str):
         if task.num_candidates_generated >= 2:  # Minimum 2 candidates needed
             task.status = "READY"
             await sync_to_async(task.save)()
-            logger.info(f"ChooserTask {task.id} is now READY with {task.num_candidates_generated} candidates")
+            logger.info(
+                f"ChooserTask {task.id} is now READY with {task.num_candidates_generated} candidates"
+            )
         else:
             task.status = "DISABLED"
             await sync_to_async(task.save)()
-            logger.warning(f"ChooserTask {task.id} disabled - insufficient candidates generated")
+            logger.warning(
+                f"ChooserTask {task.id} disabled - insufficient candidates generated"
+            )
 
     except Exception as e:
-        logger.opt(exception=True).error(f"Error generating candidates for task {task.id}: {e}")
+        logger.opt(exception=True).error(
+            f"Error generating candidates for task {task.id}: {e}"
+        )
         task.status = "DISABLED"
         await sync_to_async(task.save)()
 
 
 async def _generate_appeal_candidates(task: ChooserTask):
-    """Generate appeal letter candidates for a task."""
+    """Generate appeal letter candidates for a task using ONLY synthetic data from ML."""
     from asgiref.sync import sync_to_async
 
-    # Get a sample denial for context (or use synthetic context)
-    sample_denial = await sync_to_async(
-        lambda: Denial.objects.filter(
-            denial_text__isnull=False,
-            procedure__isnull=False,
-            diagnosis__isnull=False,
-        ).order_by("?").first()
-    )()
+    # Generate synthetic denial scenario using ML
+    task.denial = None  # Explicitly set to None - no real denials
 
-    if sample_denial:
-        task.denial = sample_denial
+    # Use ML to generate a synthetic denial scenario
+    generation_models = ml_router.generate_text_backends()
+    if not generation_models:
+        logger.warning("No models available for generating synthetic denial scenarios")
+        # Fallback to a basic scenario
         task.context_json = {
-            "denial_text_preview": (sample_denial.denial_text or "")[:500],
-            "procedure": sample_denial.procedure or "",
-            "diagnosis": sample_denial.diagnosis or "",
-            "insurance_company": sample_denial.insurance_company or "",
+            "denial_text_preview": "Your claim has been denied.",
+            "procedure": "Medical Procedure",
+            "diagnosis": "Medical Condition",
+            "insurance_company": "Insurance Company",
         }
-    else:
-        # Use synthetic context if no denials available
-        task.context_json = {
-            "denial_text_preview": "Your claim for the requested medical procedure has been denied as not medically necessary according to our coverage guidelines.",
-            "procedure": "Physical Therapy",
-            "diagnosis": "Lower back pain",
-            "insurance_company": "Example Insurance Co",
-        }
+        await sync_to_async(task.save)()
+        return
 
-    await sync_to_async(task.save)()
+    # Use first model to generate synthetic denial scenario
+    scenario_model = generation_models[0]
+    try:
+        scenario_prompt = (
+            "Generate a realistic but completely fictional health insurance denial scenario. "
+            "Provide the following in a structured format:\n"
+            "Procedure: [a medical procedure name]\n"
+            "Diagnosis: [a medical diagnosis]\n"
+            "Insurance Company: [a fictional insurance company name]\n"
+            "Denial Reason: [1-2 sentence denial reason]\n\n"
+            "Make it varied and realistic. Use common medical procedures and diagnoses."
+        )
+
+        scenario_response = await scenario_model._infer_no_context(
+            system_prompts=[
+                "You are a system that generates realistic but fictional health insurance scenarios for training purposes."
+            ],
+            prompt=scenario_prompt,
+        )
+
+        # Parse the response to extract fields
+        context = {}
+        for line in scenario_response.split("\n"):
+            if ":" in line:
+                key, value = line.split(":", 1)
+                key = key.strip().lower().replace(" ", "_")
+                value = value.strip()
+                if key == "procedure":
+                    context["procedure"] = value
+                elif key == "diagnosis":
+                    context["diagnosis"] = value
+                elif key == "insurance_company":
+                    context["insurance_company"] = value
+                elif key == "denial_reason":
+                    context["denial_text_preview"] = value
+
+        # Ensure all required fields are present
+        if not all(
+            k in context
+            for k in [
+                "procedure",
+                "diagnosis",
+                "insurance_company",
+                "denial_text_preview",
+            ]
+        ):
+            # Fallback if parsing failed
+            context = {
+                "denial_text_preview": (
+                    scenario_response[:200]
+                    if scenario_response
+                    else "Your claim has been denied."
+                ),
+                "procedure": "Medical Procedure",
+                "diagnosis": "Medical Condition",
+                "insurance_company": "Insurance Company",
+            }
+
+        task.context_json = context
+        await sync_to_async(task.save)()
+
+    except Exception as e:
+        logger.warning(f"Error generating synthetic denial scenario: {e}")
+        # Fallback scenario
+        task.context_json = {
+            "denial_text_preview": "Your claim has been denied as not medically necessary.",
+            "procedure": "Medical Procedure",
+            "diagnosis": "Medical Condition",
+            "insurance_company": "Insurance Company",
+        }
+        await sync_to_async(task.save)()
 
     # Generate candidates using different models
     models = ml_router.generate_text_backends()
@@ -174,32 +259,57 @@ async def _generate_appeal_candidates(task: ChooserTask):
 
 
 async def _generate_chat_candidates(task: ChooserTask):
-    """Generate chat response candidates for a task."""
+    """Generate chat response candidates for a task using ONLY synthetic data from ML."""
     from asgiref.sync import sync_to_async
 
-    # Get a sample chat for context (or use synthetic context)
-    sample_chat = await sync_to_async(
-        lambda: OngoingChat.objects.filter(
-            chat_history__isnull=False,
-        ).order_by("?").first()
-    )()
+    # Generate synthetic chat prompt using ML
+    task.chat = None  # Explicitly set to None - no real chats
 
-    user_prompt = None
-    if sample_chat and sample_chat.chat_history:
-        for msg in sample_chat.chat_history:
-            if msg.get("role") == "user":
-                user_prompt = msg.get("content", "")[:500]
-                break
+    # Use ML to generate a synthetic user prompt
+    generation_models = ml_router.generate_text_backends()
+    if not generation_models:
+        logger.warning("No models available for generating synthetic chat prompts")
+        # Fallback to a basic prompt
+        task.context_json = {
+            "prompt": "My insurance denied my claim. What should I do?"
+        }
+        await sync_to_async(task.save)()
+        return
 
-    if user_prompt:
-        task.chat = sample_chat
+    # Use first model to generate synthetic user prompt
+    prompt_model = generation_models[0]
+    try:
+        prompt_generation = (
+            "Generate a realistic question that someone might ask about health insurance denials or appeals. "
+            "The question should be 1-2 sentences, sound natural, and be about a specific concern like: "
+            "getting help with an appeal, understanding a denial, what to do after rejection, etc. "
+            "Just provide the question, nothing else."
+        )
+
+        user_prompt = await prompt_model._infer_no_context(
+            system_prompts=[
+                "You are a system that generates realistic user questions about health insurance for training purposes."
+            ],
+            prompt=prompt_generation,
+        )
+
+        # Clean up the response (remove quotes, extra whitespace)
+        user_prompt = user_prompt.strip().strip('"').strip("'").strip()
+
+        # Validate it's not too long or too short
+        if len(user_prompt) < 10 or len(user_prompt) > 500:
+            user_prompt = "My insurance denied my claim. What should I do?"
+
         task.context_json = {"prompt": user_prompt}
-    else:
-        # Use synthetic context if no chats available
-        user_prompt = "My insurance denied my claim for an MRI. What should I do?"
-        task.context_json = {"prompt": user_prompt}
+        await sync_to_async(task.save)()
 
-    await sync_to_async(task.save)()
+    except Exception as e:
+        logger.warning(f"Error generating synthetic chat prompt: {e}")
+        # Fallback prompt
+        task.context_json = {
+            "prompt": "My insurance denied my claim. What should I do?"
+        }
+        await sync_to_async(task.save)()
 
     # Generate candidates using different models
     models = ml_router.get_chat_backends()

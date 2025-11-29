@@ -246,12 +246,18 @@ const ChooserInterface: React.FC = () => {
       <Container size="md" py="xl">
         <Stack gap="xl" align="center">
           <Title order={1} ta="center">
-            Help Us Improve Our Chooser
+            Help Us Improve Our AI Responses
           </Title>
           <Text size="lg" ta="center" c="dimmed">
             Help us train our AI to select the best responses by choosing your favorite
             from a set of options.
           </Text>
+          <Paper shadow="sm" p="md" radius="md" withBorder style={{ backgroundColor: "#fff3cd", borderColor: "#ffc107" }}>
+            <Text size="sm" ta="center" fw={500}>
+              ⚠️ Important: All scenarios shown are synthetic/anonymized for training purposes only.
+              No real patient data or actual insurance cases are used in this interface.
+            </Text>
+          </Paper>
           <Group gap="lg" mt="xl">
             <Button
               size="xl"
@@ -369,6 +375,13 @@ const ChooserInterface: React.FC = () => {
           <Title order={2} ta="center">
             Choose the Best {state.taskType === "appeal" ? "Appeal Letter" : "Chat Response"}
           </Title>
+
+          {/* Synthetic Data Warning */}
+          <Paper shadow="xs" p="xs" radius="md" withBorder style={{ backgroundColor: "#e7f3ff", borderColor: "#2196f3" }}>
+            <Text size="xs" ta="center" c="dimmed">
+              📋 Synthetic scenario for training purposes only
+            </Text>
+          </Paper>
 
           {/* Context Section */}
           <Paper shadow="sm" p="md" radius="md" withBorder>

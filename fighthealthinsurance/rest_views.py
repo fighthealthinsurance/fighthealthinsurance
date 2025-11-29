@@ -1654,9 +1654,17 @@ class ChooserViewSet(viewsets.ViewSet):
             request.session.create()
         session_key = request.session.session_key
         if not session_key:
-            # Generate a fallback session key if session creation failed
+            # Check if we already have a fallback session key stored
+            fallback_key = request.session.get("_fallback_session_key")
+            if fallback_key:
+                return fallback_key
+            # Generate a new fallback session key and persist it
             import uuid
-            session_key = f"fallback-{uuid.uuid4().hex}"
+
+            fallback_key = f"fallback-{uuid.uuid4().hex}"
+            request.session["_fallback_session_key"] = fallback_key
+            request.session.save()
+            session_key = fallback_key
         return session_key
 
     def _get_next_task(self, request: Request, task_type: str) -> Response:
@@ -1686,15 +1694,43 @@ class ChooserViewSet(viewsets.ViewSet):
         task = available_tasks.first()
 
         if not task:
-            return Response(
-                {"message": "No tasks available", "task_type": task_type},
-                status=status.HTTP_404_NOT_FOUND,
+            # Try to generate a single task synchronously if nothing is available
+            from asgiref.sync import async_to_sync
+            from fighthealthinsurance.chooser_tasks import (
+                _generate_batch_tasks,
+                check_and_refill_task_pool,
             )
 
+            try:
+                # Generate one task immediately for this request
+                async_to_sync(_generate_batch_tasks)(task_type, 1)
+                # Also trigger background refill asynchronously
+                from fighthealthinsurance.utils import fire_and_forget_in_new_threadpool
+                import asyncio
+
+                asyncio.create_task(
+                    fire_and_forget_in_new_threadpool(check_and_refill_task_pool())
+                )
+            except Exception as e:
+                logger.warning(f"Failed to generate task on demand: {e}")
+
+            # Try to get the task again
+            task = (
+                ChooserTask.objects.filter(task_type=task_type, status="READY")
+                .exclude(id__in=voted_task_ids)
+                .first()
+            )
+
+            if not task:
+                return Response(
+                    {"message": "No tasks available", "task_type": task_type},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
         # Get candidates for this task
-        candidates = ChooserCandidate.objects.filter(task=task, is_active=True).order_by(
-            "candidate_index"
-        )
+        candidates = ChooserCandidate.objects.filter(
+            task=task, is_active=True
+        ).order_by("candidate_index")
 
         if not candidates.exists():
             return Response(
@@ -1793,7 +1829,9 @@ class ChooserViewSet(viewsets.ViewSet):
 
         if task.status not in ["READY", "IN_USE"]:
             return Response(
-                serializers.ErrorSerializer({"error": "Task is not available for voting"}).data,
+                serializers.ErrorSerializer(
+                    {"error": "Task is not available for voting"}
+                ).data,
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -1804,14 +1842,18 @@ class ChooserViewSet(viewsets.ViewSet):
             )
         except ChooserCandidate.DoesNotExist:
             return Response(
-                serializers.ErrorSerializer({"error": "Invalid candidate for this task"}).data,
+                serializers.ErrorSerializer(
+                    {"error": "Invalid candidate for this task"}
+                ).data,
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         # Check if this session has already voted on this task
         if ChooserVote.objects.filter(task=task, session_key=session_key).exists():
             return Response(
-                serializers.ErrorSerializer({"error": "You have already voted on this task"}).data,
+                serializers.ErrorSerializer(
+                    {"error": "You have already voted on this task"}
+                ).data,
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -1834,7 +1876,11 @@ class ChooserViewSet(viewsets.ViewSet):
 
         return Response(
             serializers.ChooserVoteResponseSerializer(
-                {"success": True, "message": "Vote recorded successfully", "vote_id": vote.id}
+                {
+                    "success": True,
+                    "message": "Vote recorded successfully",
+                    "vote_id": vote.id,
+                }
             ).data,
             status=status.HTTP_200_OK,
         )
