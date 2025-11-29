@@ -41,9 +41,13 @@ echo "==> Installing public key on $FAXY_HOST for user $FAXY_USER"
 scp "$PUB_PATH" "$FAXY_HOST:/tmp/faxy_tmp_key.pub"
 
 # Append pubkey into authorized_keys for ray with sudo
-ssh "$FAXY_HOST" "sudo -S mkdir -p /home/$FAXY_USER/.ssh && sudo -S touch /home/$FAXY_USER/.ssh/authorized_keys && sudo -S chmod 700 /home/$FAXY_USER/.ssh"
+# shellcheck disable=SC2029
+ssh "$FAXY_HOST" "sudo -S mkdir -p /home/$FAXY_USER/.ssh && sudo -S touch \"/home/$FAXY_USER/.ssh/authorized_keys\" && sudo -S chmod 700 \"/home/$FAXY_USER/.ssh\""
+# shellcheck disable=SC2029
 ssh "$FAXY_HOST" "sudo -S sh -c 'cat /tmp/faxy_tmp_key.pub >> /home/$FAXY_USER/.ssh/authorized_keys'"
+# shellcheck disable=SC2029
 ssh "$FAXY_HOST" "sudo -S chmod 600 /home/$FAXY_USER/.ssh/authorized_keys"
+# shellcheck disable=SC2029
 ssh "$FAXY_HOST" "sudo -S chown -R $FAXY_USER:$FAXY_USER /home/$FAXY_USER/.ssh"
 
 # Cleanup temp

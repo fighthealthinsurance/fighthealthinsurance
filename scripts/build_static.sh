@@ -15,7 +15,9 @@ if [ ${npm_dep_check} != 0 ]; then
 fi
 npm run build
 popd
-rm -rf static
-./manage.py collectstatic
-# Generate the blog metadata so it's included in the container.
-./manage.py generate_blog_metadata || echo "Warning: Failed to generate blog metadata. Continuing build without it."
+if [ "$FAST" != "FAST" ]; then
+  rm -rf static
+  ./manage.py collectstatic
+  # Generate the blog metadata so it's included in the container.
+  ./manage.py generate_blog_metadata || echo "Warning: Failed to generate blog metadata. Continuing build without it."
+fi

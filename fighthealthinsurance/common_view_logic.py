@@ -25,6 +25,7 @@ import tempfile
 import os
 import uuid
 import re
+import time
 from stopit.utils import TimeoutException
 
 from django.core.files import File
@@ -36,6 +37,7 @@ from django.urls import reverse
 
 
 import uszipcode
+from fighthealthinsurance.process_denial import ProcessDenialCodes
 from fighthealthinsurance.fax_actor_ref import fax_actor_ref
 from fighthealthinsurance.form_utils import *
 from fighthealthinsurance.generate_appeal import *
@@ -238,6 +240,10 @@ class AppealAssemblyHelper:
         company_fax_number: str = "415-840-7591",
         pubmed_ids_parsed: Optional[List[str]] = None,
         pending: Optional[bool] = None,
+        # If the user is going to pay for the faxing (optional)
+        fax_pwyw: Optional[int] = None,
+        fax_amount: Optional[int] = None,
+        fax_amount_custom: Optional[int] = None,
     ) -> Appeal:
         if denial is None:
             if denial_id is not None:
@@ -559,7 +565,7 @@ class ChooseAppealHelper:
     ]:
         hashed_email = Denial.get_hashed_email(email)
         # Get the current info
-        denial = Denial.objects.filter(
+        denial: Denial = Denial.objects.filter(
             denial_id=denial_id, hashed_email=hashed_email, semi_sekret=semi_sekret
         ).get()
         denial.appeal_text = appeal_text
@@ -567,16 +573,37 @@ class ChooseAppealHelper:
         pa = ProposedAppeal(appeal_text=appeal_text, for_denial=denial, chosen=True)
         pa.save()
         articles = None
-        try:
-            pmqd = PubMedQueryData.objects.filter(denial_id=denial_id)[0]
-            if pmqd.articles is not None:
+        article_ids = None
+
+        # Try to load article IDs from PubMedQueryData
+        pmqd = PubMedQueryData.objects.filter(denial_id=denial_id).first()
+        if pmqd and pmqd.articles:
+            try:
                 article_ids = json.loads(pmqd.articles)
+            except json.JSONDecodeError as e:
+                logger.debug(
+                    f"Failed to parse PubMedQueryData articles JSON for denial {denial_id}: {e}"
+                )
+
+        # Fallback to denial.pubmed_ids_json if no article_ids yet
+        if not article_ids:
+            try:
+                article_ids = denial.pubmed_ids_json
+            except Exception as e:
+                logger.debug(
+                    f"Error loading articles from denial.pubmed_ids_json for denial {denial_id}: {e}"
+                )
+
+        # Query for articles if we have IDs
+        if article_ids:
+            try:
                 articles = PubMedArticleSummarized.objects.filter(
                     pmid__in=article_ids
                 ).distinct()
-        except Exception as e:
-            logger.debug(f"Error loading pubmed data {e}")
-            pass
+            except Exception as e:
+                logger.debug(f"Error finding articles {article_ids}: {e}")
+
+        logger.debug(f"Loaded articles {articles}...")
         return (denial.appeal_fax_number, denial.insurance_company, articles)
 
 
@@ -712,7 +739,7 @@ class FindNextStepsHelper:
             logger.debug(f"Invalid appeal fax number {appeal_fax_number}")
 
         if include_provided_health_history_in_appeal is not None:
-            denial.include_provided_health_history = (
+            denial.include_provided_health_history_in_appeal = (
                 include_provided_health_history_in_appeal
             )
 
@@ -771,7 +798,7 @@ class FindNextStepsHelper:
         # This is unique to professional so using this for now to help specialize questions
         prof_pov = denial.professional_to_finish
         if in_network is not None:
-            denial.provider_inz_network = in_network
+            denial.provider_in_network = in_network
             # If they know about in_network they are definitely a professional
             prof_pov = True
             if "in_network" not in existing_answers:
@@ -1026,6 +1053,7 @@ class DenialCreatorHelper:
         primary_professional: Optional[ProfessionalUser] = None,
         patient_user: Optional[PatientUser] = None,
         patient_visible: bool = False,
+        subscribe: bool = False,  # Note: we don't handle this, but it's in the form so passed through.
     ):
         """
         Create or update an existing denial.
@@ -1187,7 +1215,7 @@ class DenialCreatorHelper:
                 required=required_awaitables,
                 fire_and_forget=[],
                 done_record=("Extraction complete", None),
-                timeout=75,
+                timeout=90,
             ):
                 if item:
                     yield item[0]
@@ -1262,7 +1290,7 @@ class DenialCreatorHelper:
                         # Adding proper timeout handling with asyncio.wait_for
                         await asyncio.wait_for(
                             pubmed_tool.find_pubmed_articles_for_denial(
-                                denial, timeout=120.0
+                                denial, timeout=110.0
                             ),
                             timeout=120.0,  # Enforce same timeout at asyncio level
                         )
@@ -1587,11 +1615,24 @@ class AppealsBackendHelper:
         hashed_email = Denial.get_hashed_email(email)
         # Extract the professional_to_finish parameter from the input, default to False
         professional_to_finish = parameters.get("professional_to_finish", False)
+        # Medical reason provided?
+        medical_reasons = set()
+        if (
+            "medical_reason" in parameters
+            and parameters["medical_reason"]
+            and len(parameters["medical_reason"]) > 1
+        ):
+            medical_reasons.add(parameters["medical_reason"])
 
         if denial_id is None:
             raise Exception("Missing denial id")
         if semi_sekret is None:
             raise Exception("Missing sekret")
+
+        # Yield status: starting
+        yield json.dumps(
+            {"type": "status", "message": "Starting appeal generation..."}
+        ) + "\n"
 
         # Get the current info (e.g. denial).
         await asyncio.sleep(0)
@@ -1606,7 +1647,7 @@ class AppealsBackendHelper:
         )
         denial = await denial_query.aget()
 
-        # Initial yield of newline.
+        # Initial keepalive newline so clients know we're alive.
         yield "\n"
 
         # Helper format methods
@@ -1724,6 +1765,17 @@ class AppealsBackendHelper:
                 )
                 yield await format_response(existing_appeal_dict)
 
+        # Yield status after any previously saved appeals have been sent
+        yield json.dumps(
+            {"type": "status", "message": "Starting appeal generation..."}
+        ) + "\n"
+        yield json.dumps(
+            {"type": "status", "message": "Loaded denial information"}
+        ) + "\n"
+        yield json.dumps(
+            {"type": "status", "message": "Processing denial types and templates..."}
+        ) + "\n"
+
         non_ai_appeals: List[str] = list(
             map(
                 lambda t: t.appeal_text,
@@ -1738,7 +1790,6 @@ class AppealsBackendHelper:
         prefaces = []
         main = []
         footer = []
-        medical_reasons = set()
         medical_context = set()
         plan_context = set()
         # Extract any medical context AND
@@ -1822,6 +1873,14 @@ class AppealsBackendHelper:
 
         # If we're getting "late" into our number of retries skip additional ctx.
         if denial.gen_attempts < 3:
+            # Yield status: gathering context
+            yield json.dumps(
+                {
+                    "type": "status",
+                    "message": "Gathering medical research and citations...",
+                }
+            ) + "\n"
+
             pubmed_context_awaitable = asyncio.wait_for(
                 cls.pmt.find_context_for_denial(denial), timeout=40
             )
@@ -1882,6 +1941,11 @@ class AppealsBackendHelper:
             passed = time.time() - t
             logger.debug(f"Saved {appeal_text} after {passed} seconds")
             return {"id": id, "content": appeal_text}
+
+        # Yield status: generating appeals
+        yield json.dumps(
+            {"type": "status", "message": "Generating personalized appeals with AI..."}
+        ) + "\n"
 
         appeals: Iterator[str] = await sync_to_async(appealGenerator.make_appeals)(
             denial,

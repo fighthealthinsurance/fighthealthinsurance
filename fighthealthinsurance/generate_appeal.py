@@ -5,15 +5,15 @@ import re
 import time
 import traceback
 from concurrent.futures import Future
-from typing import Any, Coroutine, Iterator, List, Optional, Tuple
+from typing import Any, Coroutine, Iterator, List, Optional, Tuple, Callable
 from loguru import logger
 
 from fighthealthinsurance.denial_base import DenialBase
-from fighthealthinsurance.exec import *
-from fighthealthinsurance.ml.ml_models import RemoteFullOpenLike, RemoteModelLike
-from fighthealthinsurance.ml.ml_router import ml_router
-from fighthealthinsurance.process_denial import *
-from fighthealthinsurance.utils import as_available_nested, best_within_timelimit
+from .exec import executor
+from .ml.ml_models import RemoteFullOpenLike, RemoteModelLike
+from .ml.ml_router import ml_router
+from .process_denial import ProcessDenialRegex
+from .utils import as_available_nested, best_within_timelimit
 from typing_extensions import reveal_type
 from .pubmed_tools import PubMedTools
 
@@ -54,6 +54,7 @@ class AppealGenerator(object):
         model_method_name: Optional[str] = None,
         prompt_template: Optional[str] = None,
         find_in_denial=True,
+        score_fn: Optional[Callable[[Optional[str], Any], float]] = None,
     ) -> Optional[str]:
         """
         Common base function for extracting entities using regex patterns first,
@@ -70,42 +71,84 @@ class AppealGenerator(object):
         Returns:
             Extracted entity or None
         """
-        # First try regex patterns
+        # First try regex patterns directly (fast path)
         for pattern in patterns:
             match = re.search(pattern, denial_text, flags)
             if match:
                 return match.group(1).strip()
 
+        # Fallback to ML backends with parallel timed selection
+        if not model_method_name:
+            return None
+
+        models_to_try = [
+            m
+            for m in ml_router.entity_extract_backends(use_external)
+            if hasattr(m, model_method_name)
+        ]
+        if not models_to_try:
+            return None
+
         denial_lowered = denial_text.lower()
-        # If regex fails, try ML models
-        if model_method_name:
-            models_to_try = ml_router.entity_extract_backends(use_external)
-            for model in models_to_try:
-                if hasattr(model, model_method_name):
-                    c = 0
-                    method = getattr(model, model_method_name)
-                    # Gentle retry
-                    while c < 3:
-                        await asyncio.sleep(1)
-                        c = c + 1
-                        extracted: Optional[str] = await method(
-                            denial_text
-                        )  # type:ignore
-                        if extracted is not None:
-                            extracted_lowered = extracted.lower()
-                            if (
-                                "unknown" not in extracted_lowered
-                                and extracted_lowered != "false"
-                                # Since this occurs often in our training set it can be bad
-                                and "independent medical review"
-                                not in extracted_lowered
-                            ):
-                                if (
-                                    not find_in_denial
-                                    or extracted_lowered in denial_lowered
-                                ):
-                                    return extracted
-        return None
+
+        async def attempt_model(model: DenialBase) -> Optional[str]:
+            method = getattr(model, model_method_name)
+            # Retry up to 3 times gently
+            for _ in range(3):
+                try:
+                    extracted: Optional[str] = await method(denial_text)  # type: ignore
+                except Exception:
+                    logger.opt(exception=True).debug(
+                        f"Extraction call failed for {model} {model_method_name}"
+                    )
+                    extracted = None
+                if extracted is None:
+                    await asyncio.sleep(1)
+                    continue
+                lowered = extracted.lower().strip()
+                # Filter junky values
+                if (
+                    not lowered
+                    or "unknown" in lowered
+                    or lowered == "false"
+                    or "independent medical review" in lowered
+                ):
+                    await asyncio.sleep(1)
+                    continue
+                if find_in_denial and lowered not in denial_lowered:
+                    # Require presence in original text unless flag disabled
+                    await asyncio.sleep(1)
+                    continue
+                return extracted.strip()
+            return None
+
+        awaitables: List[Coroutine[Any, Any, Optional[str]]] = [
+            attempt_model(m) for m in models_to_try
+        ]
+
+        def default_score(result: Optional[str], _: Any) -> float:
+            if result is None:
+                return -1.0
+            length = len(result)
+            score = 1.0
+            if 3 <= length <= 120:
+                score += 0.5
+            score -= 0.002 * max(0, length - 120)
+            return score
+
+        use_score = score_fn or default_score
+
+        try:
+            best = await best_within_timelimit(
+                awaitables, score_fn=use_score, timeout=30
+            )
+        except Exception:
+            logger.opt(exception=True).debug(
+                "best_within_timelimit failed for entity extraction"
+            )
+            best = None
+
+        return best
 
     async def get_fax_number(
         self, denial_text=None, use_external=False
@@ -159,13 +202,31 @@ class AppealGenerator(object):
                     )
 
         # More flexible matching approach
+        # Custom scoring preferring valid 10-digit phone number-like fax values
+        def fax_score(result: Optional[str], _: Any) -> float:
+            if result is None:
+                return -1.0
+            digits = re.sub(r"\D", "", result)
+            score = 0.0
+            if len(digits) == 10:
+                score += 2.0
+            elif len(digits) >= 7:
+                score += 1.0
+            # Bonus for standard formatting
+            if re.search(r"\b\d{3}[-.\s]\d{3}[-.\s]\d{4}\b", result):
+                score += 0.5
+            # Penalty for overly long strings
+            score -= 0.01 * max(0, len(result) - 25)
+            return score
+
         return await self._extract_entity_with_regexes_and_model(
             denial_text=denial_text,
             patterns=fax_patterns,
             flags=re.IGNORECASE | re.DOTALL,
             use_external=use_external,
             model_method_name="get_fax_number",
-            find_in_denial=False,  # Since we might have -s or other formatting
+            find_in_denial=False,  # Fax number may not appear verbatim in letter text formatting
+            score_fn=fax_score,
         )
 
     def _normalize_fax_number(self, fax_number: str) -> str:
@@ -337,59 +398,115 @@ class AppealGenerator(object):
             r"[Ss]ervice(?:\s*(?:date|period))?\s*[:=]?\s*([A-Za-z]+\s+\d{1,2},?\s*\d{2,4})",
         ]
 
-        result = await self._extract_entity_with_regexes_and_model(
+        def date_score(result: Optional[str], _: Any) -> float:
+            if result is None:
+                return -1.0
+            r = result.strip()
+            score = 0.0
+            # Common single date formats
+            single_patterns = [
+                r"\b\d{1,2}/\d{1,2}/\d{2,4}\b",
+                r"\b\d{1,2}-\d{1,2}-\d{2,4}\b",
+                r"\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s*\d{2,4}\b",
+            ]
+            range_patterns = [
+                r"\b\d{1,2}/\d{1,2}/\d{2,4}\s*(?:-|–|to)\s*\d{1,2}/\d{1,2}/\d{2,4}\b",
+                r"\b\d{1,2}-\d{1,2}-\d{2,4}\s*(?:-|–|to)\s*\d{1,2}-\d{1,2}-\d{2,4}\b",
+            ]
+            if any(re.search(p, r) for p in range_patterns):
+                score += 2.0
+            if any(re.search(p, r) for p in single_patterns):
+                score += 1.5
+            # Attempt parse for common numeric formats to add bonus
+            from datetime import datetime
+
+            parsed = False
+            for fmt in ["%m/%d/%Y", "%m/%d/%y", "%m-%d-%Y", "%m-%d-%y"]:
+                try:
+                    # Only parse first token if range present
+                    token = r.split()[0]
+                    if re.match(r"\d{1,2}[-/]\d{1,2}[-/]\d{2,4}", token):
+                        datetime.strptime(token, fmt)
+                        parsed = True
+                        break
+                except Exception:
+                    pass
+            if parsed:
+                score += 0.5
+            # Penalize extreme length
+            score -= 0.01 * max(0, len(r) - 40)
+            return score
+
+        return await self._extract_entity_with_regexes_and_model(
             denial_text=denial_text,
             patterns=date_patterns,
             use_external=use_external,
             model_method_name="get_date_of_service",
+            score_fn=date_score,
         )
-        return result
 
     async def get_procedure_and_diagnosis(
         self, denial_text=None, use_external=False
     ) -> Tuple[Optional[str], Optional[str]]:
-        prompt: Optional[str] = self.make_open_procedure_prompt(denial_text)
-        models_to_try: list[DenialBase] = [
-            self.regex_denial_processor,
-        ]
-        ml_entity_models = ml_router.entity_extract_backends(use_external)
-        models_to_try.extend(ml_entity_models)
-        procedure = None
-        diagnosis = None
-        # How many models have we tried?
-        c = 0
-        logger.debug(f"Trying to get procedure and diagnosis using {models_to_try}")
-        for model in models_to_try:
-            c = c + 1
-            logger.debug(f"Hiiii Exploring model {model}")
-            procedure_diagnosis = await model.get_procedure_and_diagnosis(denial_text)
-            if procedure_diagnosis is not None:
-                if len(procedure_diagnosis) > 1:
-                    procedure = procedure or procedure_diagnosis[0]
-                    # If it's too long then we're probably not valid
-                    if procedure is not None and len(procedure) > 200:
-                        procedure = None
-                    diagnosis = diagnosis or procedure_diagnosis[1]
-                    if diagnosis is not None and len(diagnosis) > 200:
-                        diagnosis = None
-                else:
-                    logger.debug(
-                        f"Unexpected procedure diagnosis len on {procedure_diagnosis}"
-                    )
-                if procedure is not None and diagnosis is not None:
-                    logger.debug(f"Return with procedure {procedure} and {diagnosis}")
-                    return (procedure, diagnosis)
-                elif c > 2 and (procedure is not None or diagnosis is not None):
-                    logger.debug(
-                        f"Return *fast* with procedure {procedure} and {diagnosis}"
-                    )
-                    return (procedure, diagnosis)
-                else:
-                    logger.debug(f"So far infered {procedure} and {diagnosis}")
+        # Build model list: regex first, then ML backends
+        models_to_try: list[DenialBase] = [self.regex_denial_processor]
+        models_to_try.extend(ml_router.entity_extract_backends(use_external))
+
         logger.debug(
-            f"Fell through :/ could not fully populate but got {procedure}, {diagnosis}"
+            f"Trying to get procedure and diagnosis (timed best) using {models_to_try}"
         )
-        return (procedure, diagnosis)
+
+        # Prepare awaitables from all models
+        awaitables: List[
+            Coroutine[Any, Any, Optional[Tuple[Optional[str], Optional[str]]]]
+        ] = [model.get_procedure_and_diagnosis(denial_text) for model in models_to_try]
+
+        # Scoring: prefer results that give both fields, penalize overly long values
+        def score_fn(
+            result: Optional[Tuple[Optional[str], Optional[str]]], _: Any
+        ) -> float:
+            if result is None:
+                return -1.0
+            proc, diag = result
+            score = 0.0
+
+            def is_good(s: Optional[str]) -> bool:
+                return s is not None and len(s.strip()) > 0 and len(s) <= 200
+
+            if is_good(proc):
+                score += 1.0
+            if is_good(diag):
+                score += 1.0
+            if is_good(proc) and is_good(diag):
+                score += 0.5  # bonus for both present
+
+            # Prefer shorter (but valid) strings slightly
+            total_len = (len(proc) if proc else 0) + (len(diag) if diag else 0)
+            score -= 0.001 * total_len
+            return score
+
+        try:
+            best = await best_within_timelimit(
+                awaitables, score_fn=score_fn, timeout=30
+            )
+        except Exception:
+            logger.opt(exception=True).debug(
+                "best_within_timelimit failed for get_procedure_and_diagnosis"
+            )
+            best = None
+
+        if best is None:
+            logger.debug("No model returned procedure/diagnosis within timeout")
+            return (None, None)
+
+        proc, diag = best
+        # Enforce length constraint similar to previous logic
+        if proc is not None and len(proc) > 200:
+            proc = None
+        if diag is not None and len(diag) > 200:
+            diag = None
+        logger.debug(f"Returning (procedure, diagnosis)=({proc}, {diag})")
+        return (proc, diag)
 
     def make_open_procedure_prompt(self, denial_text=None) -> Optional[str]:
         if denial_text is not None:
@@ -715,7 +832,7 @@ class AppealGenerator(object):
             calls.extend(
                 [
                     {
-                        "model_name": "perplexity",
+                        "model_name": "sonar",
                         "prompt": open_prompt,
                         "patient_context": medical_context,
                         "infer_type": "full",
@@ -778,7 +895,7 @@ class AppealGenerator(object):
                 backup_calls.extend(
                     [
                         {
-                            "model_name": "perplexity",
+                            "model_name": "sonar",
                             "prompt": open_medically_necessary_prompt,
                             "patient_context": medical_context,
                             "infer_type": "medically_necessary",
@@ -789,13 +906,14 @@ class AppealGenerator(object):
                         },
                     ]
                 )
+            logger.debug(f"Looking at provided medical reasons {medical_reasons}.")
+            for reason in medical_reasons:
+                logger.debug(f"Using medical necessity reason {reason}")
+                appeal = template_generator.generate(reason)
+                initial_appeals.append(appeal)
         else:
             # Otherwise just put in as is.
             initial_appeals.append(static_appeal)
-        for reason in medical_reasons:
-            logger.debug(f"Using reason {reason}")
-            appeal = template_generator.generate(reason)
-            initial_appeals.append(appeal)
 
         logger.debug(f"Initial appeal {initial_appeals}")
         # Executor map wants a list for each parameter.
@@ -833,20 +951,7 @@ class AppealGenerator(object):
             calls
         )
 
-        # Since we publish the results as they become available
-        # we want to add some randomization to the initial appeals so they are
-        # not always appearing in the first position.
-        def random_delay(appeal) -> Iterator[str]:
-            time.sleep(random.randint(0, 25))
-            return iter([appeal])
-
-        delayed_initial_appeals: List[Future[Iterator[str]]] = list(
-            map(lambda appeal: executor.submit(random_delay, appeal), initial_appeals)
-        )
         appeals: Iterator[str] = as_available_nested(generated_text_futures)
-        initial_appeals_itr: Iterator[str] = as_available_nested(
-            delayed_initial_appeals
-        )
         logger.debug(f"Appeals itr starting with {appeals}")
         # Check and make sure we have some AI powered results
         try:
@@ -859,6 +964,7 @@ class AppealGenerator(object):
                 f"Adding backup calls {backup_calls} first group not success."
             )
             appeals = as_available_nested(make_async_model_calls(backup_calls))
-        appeals = itertools.chain(appeals, initial_appeals_itr)
+        logger.debug(f"Adding initial appeals {initial_appeals} to back of itr.")
+        appeals = itertools.chain(appeals, initial_appeals)
         logger.debug(f"Sending back {appeals}")
         return appeals

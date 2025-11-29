@@ -99,7 +99,9 @@ class MailingListSubscriber(models.Model):
     comments = models.TextField(default="", blank=True)
     signup_date = models.DateField(auto_now_add=True)
     phone = models.CharField(max_length=300, default="", blank=True)
-    unsubscribe_token = models.CharField(max_length=100, default=sekret_gen, unique=True)
+    unsubscribe_token = models.CharField(
+        max_length=100, default=sekret_gen, unique=True
+    )
 
     def __str__(self):
         return self.email

@@ -122,7 +122,7 @@ Upload your Health Insurance Denial
 			<div class="form-check">
 			<input type="checkbox" id="subscribe" name="subscribe" value="checked" checked class="form-check-input">
 				<label for="subscribe" class="form-check-label">
-					Subscribe to our mailing list for updates and news from Fight Health Insurance.
+					Subscribe to our mailing list for updates and news from Fight Health Insurance. We will store your e-mail for this option if selected.
 				</label>
 			</div>
 	    </div>
@@ -142,7 +142,7 @@ Upload your Health Insurance Denial
 	</form>
 
 	<p>
-	  * We attempt not to store the fields marked with a single asterisk (*) on our server, instead they are stored in your web browser (like a cookie). You can remove this either in your web browser or in our <a href="{% url 'privacy_policy' %}">privacy policy</a> page.
+	  * We attempt not to store the fields marked with a single asterisk (*) on our server, instead they are stored in your web browser (like a cookie). You can remove this either in your web browser or in our <a href="{% url 'privacy_policy' %}">privacy policy</a> page. If you choose to subscribe to the mailing list we will transfer your name and e-mail to the server for subscription.
 	</p>
 	<p>
 	    ** We hash your email before storing it in our database, this allows you to request removal from our database (should you wish) without us having to store your raw e-mail.
@@ -151,7 +151,7 @@ Upload your Health Insurance Denial
 		after reviewing your denial with a better template if our machine learning model does not find a good
 		model on the first pass-through. You may choose to use a different or temporary email
 	    service, like <a href="https://proton.me/">proton mail.</a> Please review our <a
-		href="{% url 'privacy_policy' %}">privacy policy</a> for more details.
+		href="{% url 'privacy_policy' %}">privacy policy</a> for more details. If you choose to subscribe to the mailing list we will transfer your name and e-mail to the server for subscription and it will be stored in a non-hashed format for the mailing list subscription.
 	</p>
     </div>
 </section>

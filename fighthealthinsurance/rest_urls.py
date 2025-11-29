@@ -65,6 +65,11 @@ urlpatterns = [
     path(
         "check_ml_backend", rest_views.CheckMlBackend.as_view(), name="check_ml_backend"
     ),
+    path(
+        "live_models_status",
+        rest_views.LiveModelsStatus.as_view(),
+        name="live_models_status",
+    ),
     # Router
     path("", include(router.urls)),
 ]
