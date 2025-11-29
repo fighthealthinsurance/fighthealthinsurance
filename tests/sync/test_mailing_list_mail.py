@@ -186,3 +186,54 @@ class TestSendMailingListMailView(TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Test email sent successfully")
+
+
+class TestStaffDashboardView(TestCase):
+    """Test the StaffDashboardView."""
+
+    fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
+
+    def setUp(self):
+        """Set up test client and users."""
+        self.client = Client()
+        self.staff_user = User.objects.create_user(
+            username="staffuser",
+            password="testpass123",
+            email="staff@example.com",
+            is_staff=True,
+        )
+        self.regular_user = User.objects.create_user(
+            username="regularuser",
+            password="testpass123",
+            email="regular@example.com",
+            is_staff=False,
+        )
+
+    def test_access_denied_for_anonymous_user(self):
+        """Test that anonymous users are redirected to login."""
+        response = self.client.get("/timbit/help/")
+        self.assertIn(response.status_code, [302, 403])
+
+    def test_access_denied_for_regular_user(self):
+        """Test that regular users are denied access."""
+        self.client.login(username="regularuser", password="testpass123")
+        response = self.client.get("/timbit/help/")
+        self.assertIn(response.status_code, [302, 403])
+
+    def test_access_granted_for_staff_user(self):
+        """Test that staff users can access the dashboard."""
+        self.client.login(username="staffuser", password="testpass123")
+        response = self.client.get("/timbit/help/")
+        self.assertEqual(response.status_code, 200)
+
+    def test_dashboard_contains_key_links(self):
+        """Test that the dashboard contains links to key staff views."""
+        self.client.login(username="staffuser", password="testpass123")
+        response = self.client.get("/timbit/help/")
+        self.assertEqual(response.status_code, 200)
+        # Check for key sections and links
+        self.assertContains(response, "Staff Dashboard")
+        self.assertContains(response, "Send Mailing List Email")
+        self.assertContains(response, "Activate Pro User")
+        self.assertContains(response, "Enable Beta Features")
+        self.assertContains(response, "Charts")

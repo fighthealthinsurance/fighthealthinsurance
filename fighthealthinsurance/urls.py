@@ -70,6 +70,11 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
     path("timbit/admin/", admin.site.urls),
     path("", include("django_prometheus.urls")),
     path(
+        "timbit/help/",
+        staff_member_required(staff_views.StaffDashboardView.as_view()),
+        name="staff_dashboard",
+    ),
+    path(
         "timbit/help/followup_sched",
         staff_member_required(staff_views.ScheduleFollowUps.as_view()),
     ),

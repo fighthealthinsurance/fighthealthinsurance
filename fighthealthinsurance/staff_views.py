@@ -26,6 +26,12 @@ from fighthealthinsurance.mailing_list_actor_ref import mailing_list_actor_ref
 from fighthealthinsurance.utils import mask_email_for_logging
 
 
+class StaffDashboardView(generic.TemplateView):
+    """Staff dashboard with links to all staff views."""
+
+    template_name = "staff_dashboard.html"
+
+
 class ScheduleFollowUps(View):
     """A view to go through and schedule any missing follow ups."""
 
