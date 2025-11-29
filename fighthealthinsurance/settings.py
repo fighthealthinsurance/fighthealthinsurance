@@ -125,6 +125,7 @@ class Base(Configuration):
         "django.contrib.messages",
         "django.contrib.staticfiles",
         "django.contrib.sites",
+        "django.contrib.sitemaps",
         "fighthealthinsurance",
         "fhi_users",
         "charts",
