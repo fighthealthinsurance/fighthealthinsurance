@@ -1694,25 +1694,19 @@ class ChooserViewSet(viewsets.ViewSet):
         task = available_tasks.first()
 
         if not task:
-            # Try to generate a single task synchronously if nothing is available
+            # Generate a single task synchronously (blocking) since nothing is available
             from asgiref.sync import async_to_sync
-            from fighthealthinsurance.chooser_tasks import (
-                _generate_batch_tasks,
-                check_and_refill_task_pool,
-            )
+            from fighthealthinsurance.chooser_tasks import _generate_single_task
 
             try:
-                # Generate one task immediately for this request
-                async_to_sync(_generate_batch_tasks)(task_type, 1)
-                # Also trigger background refill asynchronously
-                from fighthealthinsurance.utils import fire_and_forget_in_new_threadpool
-                import asyncio
-
-                asyncio.create_task(
-                    fire_and_forget_in_new_threadpool(check_and_refill_task_pool())
-                )
+                # Generate one task immediately for this request (blocking call)
+                async_to_sync(_generate_single_task)(task_type)
             except Exception as e:
                 logger.warning(f"Failed to generate task on demand: {e}")
+                return Response(
+                    {"message": "No tasks available", "task_type": task_type},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
 
             # Try to get the task again
             task = (
