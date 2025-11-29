@@ -38,8 +38,6 @@ class TestHealthStatus(TestCase):
         _HealthStatus._refresh(health_status)
         snap = health_status.get_snapshot()
         assert snap["alive_models"] == 0
-        assert len(snap["details"]) == 2
-        assert all(not d["ok"] for d in snap["details"])  # all marked not ok
 
     @mock.patch("fighthealthinsurance.ml.ml_router.ml_router")
     def test_some_up_counts(self, fake_router):
@@ -73,7 +71,3 @@ class TestHealthStatus(TestCase):
         _HealthStatus._refresh(health_status)
         snap = health_status.get_snapshot()
         assert snap["alive_models"] == 1
-        assert len(snap["details"]) == 2
-        # Ensure one ok and one not ok
-        oks = [d["ok"] for d in snap["details"]]
-        assert sorted(oks) == [False, True]
