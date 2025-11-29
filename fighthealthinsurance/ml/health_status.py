@@ -92,28 +92,28 @@ class _HealthStatus:
                 max_workers=min(8, len(candidates))
             ) as ex:
                 future_map = {ex.submit(m.model_is_ok): m for m in candidates}
-                for future in concurrent.futures.as_completed(
-                    future_map, timeout=max(timeout_seconds, 12)
-                ):
-                    m = future_map[future]
-                    name = (
-                        getattr(m, "model", None)
-                        or getattr(m, "__class__", type(m)).__name__
-                    )
-                    name = str(name)
-                    ok = False
-                    err: Optional[str] = None
-                    try:
-                        # Per-model timeout: if call hangs beyond timeout_seconds, mark as down
-                        ok = future.result(
-                            timeout=0
-                        )  # already completed via as_completed
-                    except Exception as e:
-                        err = str(e)
-                        logger.debug(f"Health check error for {name}: {e}")
-                    if ok:
-                        alive_count += 1
-                    details.append(BackendHealthDetail(name=name, ok=ok, error=err))
+                try:
+                    for future in concurrent.futures.as_completed(
+                        future_map, timeout=max(timeout_seconds, 12)
+                    ):
+                        m = future_map[future]
+                        name = (
+                            getattr(m, "model", None)
+                            or getattr(m, "__class__", type(m)).__name__
+                        )
+                        name = str(name)
+                        ok = False
+                        err: Optional[str] = None
+                        try:
+                            # This should already be ready.
+                            ok = future.result(timeout=0)
+                        except Exception as e:
+                            err = str(e)
+                            logger.debug(f"Health check error for {name}: {e}")
+                        if ok:
+                            alive_count += 1
+                except concurrent.futures.TimeoutError:
+                    logger.debug("Timed out checking backends, remaining marked as dead.")
 
                 # Handle any futures that didn't complete within the as_completed window
                 for future, m in future_map.items():
