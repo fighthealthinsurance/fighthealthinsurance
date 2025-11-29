@@ -498,6 +498,15 @@ class StatusResponseSerializer(serializers.Serializer):
     message = serializers.CharField(required=False, allow_blank=True)
 
 
+class LiveModelsStatusSerializer(serializers.Serializer):
+    alive_models = serializers.IntegerField()
+    last_checked = serializers.FloatField(allow_null=True)
+    details = serializers.ListField(
+        child=serializers.DictField(), required=False, allow_null=True
+    )
+    message = serializers.CharField(required=False)
+
+
 class ErrorSerializer(StatusResponseSerializer):
     error = serializers.CharField()
 

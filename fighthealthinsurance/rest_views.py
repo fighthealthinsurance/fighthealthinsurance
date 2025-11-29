@@ -34,6 +34,7 @@ from fighthealthinsurance.models import (
     DemoRequests,
 )
 from fighthealthinsurance.ml.ml_router import ml_router
+from fighthealthinsurance.ml.health_status import health_status
 from fighthealthinsurance import rest_serializers as serializers
 from fighthealthinsurance.rest_mixins import (
     SerializerMixin,
@@ -488,6 +489,36 @@ class CheckMlBackend(APIView):
             return Response(status=status.HTTP_204_NO_CONTENT)
 
         return Response(status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+
+class LiveModelsStatus(APIView):
+    """Return cached count of alive models/backends with last check timestamp.
+
+    Shape:
+    { "alive_models": int, "last_checked": epoch_seconds, "details": [{"name": str, "ok": bool, "error": Optional[str]}] }
+    """
+
+    @extend_schema(responses=serializers.LiveModelsStatusSerializer)
+    def get(self, request: Request) -> Response:
+        try:
+            snapshot = health_status.get_snapshot()
+            # Always succeed; return 200 with the current snapshot (even if 0)
+            response = Response(snapshot, status=status.HTTP_200_OK)
+            # Add cache control headers - cache for 5 minutes
+            response["Cache-Control"] = "public, max-age=300"
+            return response
+        except Exception as e:
+            logger.warning(f"LiveModelsStatus failed: {e}")
+            # Graceful degradation: return zeros
+            return Response(
+                {
+                    "alive_models": 0,
+                    "last_checked": None,
+                    "details": [],
+                    "message": "status temporarily unavailable",
+                },
+                status=status.HTTP_200_OK,
+            )
 
 
 class AppealViewSet(viewsets.ViewSet, SerializerMixin):

@@ -1,0 +1,73 @@
+from unittest import mock
+from django.test import TestCase
+
+from fighthealthinsurance.ml.ml_router import ml_router
+from fighthealthinsurance.ml.health_status import health_status
+
+
+class TestHealthStatus(TestCase):
+    """Tests for cached model health endpoint behavior."""
+
+    def test_snapshot_shape(self):
+        print("Getting router...")
+        ml_router
+        print("Getting snap...")
+        snap = health_status.get_snapshot()
+        print(f"Got {snap}")
+        assert set(snap.keys()) == {"alive_models", "last_checked", "details"} | set(
+            snap.keys()
+        )  # basic shape
+
+    @mock.patch("fighthealthinsurance.ml.ml_router.ml_router")
+    def test_all_down_returns_zero(self, fake_router):
+        """Simulate all backends failing their model list lookup."""
+
+        class DownBackend:
+            model = "down"
+
+            @classmethod
+            def models(cls):  # always raises
+                raise Exception("unreachable")
+
+            def model_is_ok(self):
+                return False
+
+        fake_router.all_models_by_cost = [DownBackend(), DownBackend()]
+        from fighthealthinsurance.ml.health_status import _HealthStatus
+
+        _HealthStatus._refresh(health_status)
+        snap = health_status.get_snapshot()
+        assert snap["alive_models"] == 0
+
+    @mock.patch("fighthealthinsurance.ml.ml_router.ml_router")
+    def test_some_up_counts(self, fake_router):
+        """One healthy backend, one failing backend yields count==1."""
+
+        from fighthealthinsurance.ml.ml_models import ModelDescription
+
+        class GoodBackend:
+            model = "good"
+
+            @classmethod
+            def models(cls):
+                return [ModelDescription(cost=1, name="x", internal_name="good")]
+
+            def model_is_ok(self):
+                return True
+
+        class BadBackend:
+            model = "bad"
+
+            @classmethod
+            def models(cls):
+                raise Exception("down")
+
+            def model_is_ok(self):
+                return False
+
+        fake_router.all_models_by_cost = [GoodBackend(), BadBackend()]
+        from fighthealthinsurance.ml.health_status import _HealthStatus
+
+        _HealthStatus._refresh(health_status)
+        snap = health_status.get_snapshot()
+        assert snap["alive_models"] == 1

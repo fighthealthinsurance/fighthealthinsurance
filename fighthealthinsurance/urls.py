@@ -183,6 +183,13 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         name="about",
     ),
     path(
+        "as-seen-on-pbs",
+        cache_control(public=True)(
+            cache_page(60 * 60 * 2)(views.PBSNewsHourView.as_view())
+        ),
+        name="pbs-newshour",
+    ),
+    path(
         "other-resources",
         sensitive_post_parameters("email")(views.OtherResourcesView.as_view()),
         name="other-resources",

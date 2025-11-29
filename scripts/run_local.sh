@@ -83,22 +83,24 @@ else
   echo "backup not reachable."
 fi
 
-if ping -c1 -W1 scrump >/dev/null 2>&1; then
+if ping -c1 -W1 scrump.local.pigscanfly.ca >/dev/null 2>&1; then
   echo "alpha reachable"
-  export ALPHA_HEALTH_BACKEND_HOST=scrump
+  export ALPHA_HEALTH_BACKEND_HOST=scrump.local.pigscanfly.ca
 fi
 
-python manage.py migrate
-python manage.py loaddata initial
-python manage.py loaddata followup
-python manage.py loaddata plan_source
+if [ "$FAST" != "FAST" ]; then
+  python manage.py migrate
+  python manage.py loaddata initial
+  python manage.py loaddata followup
+  python manage.py loaddata plan_source
 
-# Make sure we have an admin user so folks can test the admin view
-python manage.py ensure_adminuser --username admin --password admin
+  # Make sure we have an admin user so folks can test the admin view
+  python manage.py ensure_adminuser --username admin --password admin
 
-# Make a test user with UserDomain and everything
-python manage.py make_user  --username "test@test.com" --domain testfarts1 --password farts12345678 --email "test@test.com" --visible-phone-number 42 --is-provider true --first-name TestFarts
-python manage.py make_user  --username "test-patient@test.com" --domain testfarts1 --password farts12345678 --email "test-patient@test.com" --visible-phone-number 42 --is-provider false
+  # Make a test user with UserDomain and everything
+  python manage.py make_user  --username "test@test.com" --domain testfarts1 --password farts12345678 --email "test@test.com" --visible-phone-number 42 --is-provider true --first-name TestFarts
+  python manage.py make_user  --username "test-patient@test.com" --domain testfarts1 --password farts12345678 --email "test-patient@test.com" --visible-phone-number 42 --is-provider false
+fi
 
 # If --devserver is passed, use Django's dev server for hot-reloading templates
 if [[ "$1" == "--devserver" ]]; then
@@ -108,4 +110,4 @@ if [[ "$1" == "--devserver" ]]; then
 fi
 
 # Default: use Uvicorn
-RECAPTCHA_TESTING=true OAUTHLIB_RELAX_TOKEN_SCOPE=1 uvicorn fighthealthinsurance.asgi:application --reload --reload-dir fighthealthinsurance --reload-exclude "*.pyc,__pycache__/*,*.pyo,*~,#*#,.#*,node_modules,static,.tox/*,*sqlite*,./tox/**" --access-log --log-config conf/uvlog_config.yaml --port 8000 --ssl-keyfile key.pem --ssl-certfile cert.pem "$@"
+RECAPTCHA_TESTING=true OAUTHLIB_RELAX_TOKEN_SCOPE=1 uvicorn fighthealthinsurance.asgi:application --reload --reload-dir fighthealthinsurance --reload-exclude "*.pyc,__pycache__/*,*.pyo,*~,#*#,.#*,node_modules,static,.tox/*,*sqlite*,./tox/*,./tests/*,fhi-0.1.0/*" --access-log --log-config conf/uvlog_config.yaml --port 8000 --ssl-keyfile key.pem --ssl-certfile cert.pem "$@"

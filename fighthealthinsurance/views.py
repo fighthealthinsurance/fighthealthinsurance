@@ -157,6 +157,10 @@ class AboutView(generic.TemplateView):
     template_name = "about_us.html"
 
 
+class PBSNewsHourView(generic.TemplateView):
+    template_name = "as_seen_on_pbs.html"
+
+
 class OtherResourcesView(generic.TemplateView):
     template_name = "other_resources.html"
 
@@ -728,6 +732,7 @@ class InitialProcessView(generic.FormView):
         if cleaned_data.get("subscribe"):
             email = cleaned_data.get("email")
             # Get name from the POST data (it's not stored in cleaned_data for privacy)
+            # Note: we need to update the frontend for this. See https://github.com/fighthealthinsurance/fighthealthinsurance/issues/516
             fname = self.request.POST.get("fname", "")
             lname = self.request.POST.get("lname", "")
             name = f"{fname} {lname}".strip()
@@ -739,9 +744,6 @@ class InitialProcessView(generic.FormView):
                     "comments": "From appeal flow",
                 },
             )
-
-        # Remove subscribe from cleaned_data before passing to create_or_update_denial
-        cleaned_data.pop("subscribe", None)
 
         denial_response = common_view_logic.DenialCreatorHelper.create_or_update_denial(
             **cleaned_data,
@@ -1157,7 +1159,9 @@ class UnsubscribeView(View):
     def get(self, request: HttpRequest, token: str) -> HttpResponseBase:
         """Handle GET request to unsubscribe a mailing list subscriber by token."""
         try:
-            subscriber = models.MailingListSubscriber.objects.get(unsubscribe_token=token)
+            subscriber = models.MailingListSubscriber.objects.get(
+                unsubscribe_token=token
+            )
             email = subscriber.email
             subscriber.delete()
             return render(

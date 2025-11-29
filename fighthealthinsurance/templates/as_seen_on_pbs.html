@@ -1,0 +1,71 @@
+{% extends 'landing_base.html' %}
+{% block title %}As Seen on PBS NewsHour - Fight Health Insurance{% endblock title %}
+{% block metatitle %}As Seen on PBS NewsHour - Fight Health Insurance{% endblock metatitle %}
+{% block metadescription %}Learn how AI is helping patients fight back against denied health insurance claims. Featured on PBS NewsHour, Fight Health Insurance provides free AI-powered appeal letter generation to help you overturn insurance denials.{% endblock metadescription %}
+{% load static %}
+
+{% block hero_tagline %}📺 As Seen on PBS NewsHour{% endblock hero_tagline %}
+{% block hero_subcopy %}How patients are using AI to fight back against denied insurance claims. Generate your free appeal letter in minutes.{% endblock hero_subcopy %}
+{% block hero_cta_text %}Appeal Your Insurance Denial for Free{% endblock hero_cta_text %}
+
+{% block after_hero %}
+<!-- PBS VIDEO SECTION -->
+<section id="pbs-video" style="padding: 80px 0; background: #fff;">
+    <div class="container">
+        <h2 style="text-align: center; margin-bottom: 2rem; color: #333;">Watch the PBS NewsHour Segment</h2>
+        <div style="max-width: 800px; margin: 0 auto 1.5rem; border-radius: 12px; overflow: hidden; box-shadow: 0 8px 30px rgba(0,0,0,0.15);">
+            <div class="ratio ratio-16x9">
+                <iframe 
+                    src="https://www.youtube.com/embed/nzRy-eZAcSU" 
+                    title="PBS NewsHour: How patients are using AI to fight back against denied insurance claims"
+                    style="border: none;"
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" 
+                    referrerpolicy="strict-origin-when-cross-origin" 
+                    allowfullscreen>
+                </iframe>
+            </div>
+        </div>
+        <p style="text-align: center; color: #666; font-size: 0.95rem;">
+            Also available on: 
+            <a href="https://www.pbs.org/newshour/show/how-patients-are-using-ai-to-fight-back-against-denied-insurance-claims" target="_blank" rel="noopener noreferrer" class="link">PBS.org</a> | 
+            <a href="https://video.kqed.org/video/ai-and-insurance-1763846838/" target="_blank" rel="noopener noreferrer" class="link">KQED</a>
+        </p>
+    </div>
+</section>
+{% endblock after_hero %}
+
+{% block testimonials_title %}Highlights from the PBS Segment{% endblock testimonials_title %}
+
+{% block testimonials_content %}
+<div class="testimonial-card">
+    <div class="testimonial-quote">"The tool uses artificial intelligence to analyze denial letters and generate personalized appeal letters for patients to submit to their insurance companies."</div>
+    <div class="testimonial-author">— PBS NewsHour</div>
+</div>
+<div class="testimonial-card">
+    <div class="testimonial-quote">"Insurance companies use AI to deny claims—now patients can use AI to fight back and level the playing field."</div>
+    <div class="testimonial-author">— PBS NewsHour</div>
+</div>
+<div class="testimonial-card">
+    <div class="testimonial-quote">"Many patients don't appeal their denials because the process is too complicated and time-consuming. This tool makes it accessible for everyone."</div>
+    <div class="testimonial-author">— PBS NewsHour</div>
+</div>
+{% endblock testimonials_content %}
+
+{% block about_title %}Ready to Fight Back?{% endblock about_title %}
+
+{% block about_content %}
+As featured on PBS NewsHour, Fight Health Insurance uses AI to help you generate appeal letters when your health insurance claim is denied.
+<h4>It's Simple:</h4>
+<ul>
+  <li><strong>Upload your denial letter</strong> - take a photo or upload the document</li>
+  <li><strong>Our AI analyzes it</strong> - we identify the denial reasons and relevant regulations</li>
+  <li><strong>Get your appeal letter</strong> - personalized, professional, and ready to submit</li>
+  <li><strong>Fight back</strong> - submit your appeal and track your case</li>
+</ul>
+<p>
+Best of all, it's completely free. Pay what you can - $0 is totally fine.
+</p>
+<p>
+<a href="{% url 'scan' %}" class="section-btn btn btn-default">Generate Your Appeal Now</a>
+</p>
+{% endblock about_content %}

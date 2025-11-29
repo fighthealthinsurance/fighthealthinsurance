@@ -729,3 +729,35 @@ class Prod(Base):
 
 
 TEST_RUNNER = "django_nose.NoseTestSuiteRunner"
+
+# Configure Loguru for test envs to avoid "closed file" spam, without hiding setup failures
+import os as _os
+
+if _os.getenv("DJANGO_CONFIGURATION") in {"Test", "TestSync", "TestActor"}:
+    from loguru import logger as _logger
+    import sys as _sys
+    import logging as _logging
+
+    # Replace any existing sinks with a safe stderr sink that ignores writes after teardown
+    _logger.remove()
+
+    def _safe_stderr_sink(message: str):
+        try:
+            _sys.stderr.write(message)
+        except ValueError as e:
+            # During pytest teardown/capture, stderr can be closed; log a warning once via std logging
+            if "closed file" in str(e).lower():
+                _logging.getLogger("loguru").warning(
+                    "stderr closed; dropping loguru message during test teardown"
+                )
+            else:
+                raise
+
+    _logger.add(
+        _safe_stderr_sink,
+        enqueue=False,
+        backtrace=False,
+        diagnose=False,
+        catch=False,  # do not swallow unexpected sink errors
+        level="DEBUG",
+    )
