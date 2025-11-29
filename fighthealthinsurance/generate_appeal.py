@@ -832,7 +832,7 @@ class AppealGenerator(object):
             calls.extend(
                 [
                     {
-                        "model_name": "perplexity",
+                        "model_name": "sonar",
                         "prompt": open_prompt,
                         "patient_context": medical_context,
                         "infer_type": "full",
@@ -895,7 +895,7 @@ class AppealGenerator(object):
                 backup_calls.extend(
                     [
                         {
-                            "model_name": "perplexity",
+                            "model_name": "sonar",
                             "prompt": open_medically_necessary_prompt,
                             "patient_context": medical_context,
                             "infer_type": "medically_necessary",
