@@ -907,7 +907,9 @@ class AppealGenerator(object):
                     ]
                 )
             if denial.medical_reason:
-                initial_appeals.append(template_generator.generate_static(denial.medical_reason))
+                initial_appeals.append(
+                    template_generator.generate_static(denial.medical_reason)
+                )
         else:
             # Otherwise just put in as is.
             initial_appeals.append(static_appeal)
