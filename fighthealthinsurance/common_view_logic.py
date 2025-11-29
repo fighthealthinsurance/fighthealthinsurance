@@ -1846,8 +1846,6 @@ class AppealsBackendHelper:
                     if dt.appeal_text is not None:
                         main.append(dt.appeal_text)
 
-        if denial.medical_reason_manual:
-            medical_reasons.add(denial.medical_reason_manual)
         # Add the context to the denial
         if medical_context is not None:
             qa_context = {}
