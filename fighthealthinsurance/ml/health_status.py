@@ -94,7 +94,7 @@ class _HealthStatus:
                 future_map = {ex.submit(m.model_is_ok): m for m in candidates}
                 try:
                     for future in concurrent.futures.as_completed(
-                        future_map, timeout=max(timeout_seconds, 12)
+                        future_map, timeout=max(timeout_seconds, timeout_seconds)
                     ):
                         m = future_map[future]
                         name = (
