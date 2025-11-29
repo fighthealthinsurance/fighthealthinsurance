@@ -157,6 +157,10 @@ class AboutView(generic.TemplateView):
     template_name = "about_us.html"
 
 
+class PBSNewsHourView(generic.TemplateView):
+    template_name = "as_seen_on_pbs.html"
+
+
 class OtherResourcesView(generic.TemplateView):
     template_name = "other_resources.html"
 
