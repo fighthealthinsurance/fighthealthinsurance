@@ -96,21 +96,28 @@ export function validateScrubForm(event: Event): void {
     rehideHiddenMessage("need_denial");
     // Only include fname and lname if user has subscribed to mailing list
     // This ensures we don't send personal names to the server unless the user opts in
-    if (!form.subscribe.checked) {
+    if (form.subscribe.checked) {
+      // Get the locally stored fname/lname values
       const fnameInput = document.getElementById(
         "store_fname",
       ) as HTMLInputElement | null;
       const lnameInput = document.getElementById(
         "store_lname",
       ) as HTMLInputElement | null;
-      // Remove name attribute and clear values to prevent sending to server
-      if (fnameInput) {
-        fnameInput.removeAttribute("name");
-        fnameInput.value = "";
+      // Add hidden inputs to the form to send fname and lname to the server
+      if (fnameInput && fnameInput.value) {
+        const hiddenFname = document.createElement("input");
+        hiddenFname.type = "hidden";
+        hiddenFname.name = "fname";
+        hiddenFname.value = fnameInput.value;
+        form.appendChild(hiddenFname);
       }
-      if (lnameInput) {
-        lnameInput.removeAttribute("name");
-        lnameInput.value = "";
+      if (lnameInput && lnameInput.value) {
+        const hiddenLname = document.createElement("input");
+        hiddenLname.type = "hidden";
+        hiddenLname.name = "lname";
+        hiddenLname.value = lnameInput.value;
+        form.appendChild(hiddenLname);
       }
     }
     // YOLO
