@@ -1844,10 +1844,12 @@ class ChooserViewSet(viewsets.ViewSet):
 
         # Check if this session has already voted on this task
         if ChooserVote.objects.filter(task=task, session_key=session_key).exists():
+        from django.db import IntegrityError
+
+        # Check if this session has already voted on this task
+        if ChooserVote.objects.filter(task=task, session_key=session_key).exists():
             return Response(
-                serializers.ErrorSerializer(
-                    {"error": "You have already voted on this task"}
-                ).data,
+                serializers.ErrorSerializer({"error": "You have already voted on this task"}).data,
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -1861,12 +1863,18 @@ class ChooserViewSet(viewsets.ViewSet):
             )
 
         # Create the vote
-        vote = ChooserVote.objects.create(
-            task=task,
-            chosen_candidate=chosen_candidate,
-            presented_candidate_ids=presented_candidate_ids,
-            session_key=session_key,
-        )
+        try:
+            vote = ChooserVote.objects.create(
+                task=task,
+                chosen_candidate=chosen_candidate,
+                presented_candidate_ids=presented_candidate_ids,
+                session_key=session_key,
+            )
+        except IntegrityError:
+            return Response(
+                serializers.ErrorSerializer({"error": "You have already voted on this task"}).data,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         return Response(
             serializers.ChooserVoteResponseSerializer(
