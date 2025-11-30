@@ -30,19 +30,16 @@ describe('Blog Navigation', () => {
     // Blog posts should be rendered as clickable elements/links
     cy.get('#blog-root').should('not.be.empty');
     
-    // Wait for content to load (React component needs time to mount and fetch)
-    cy.wait(1000);
-    
-    // There should be at least one blog post link or article element
-    cy.get('#blog-root').find('a, article, [data-testid="blog-post"]').should('have.length.at.least', 1);
+    // Wait for blog post links to appear (proper assertion-based waiting)
+    cy.get('#blog-root').find('a, article, [data-testid="blog-post"]', { timeout: 10000 }).should('have.length.at.least', 1);
   });
 
   it('should navigate to a blog post when clicking on it', () => {
     cy.visit('/blog/');
     
-    // Wait for blog posts to load
+    // Wait for blog posts to load by asserting the presence of links
     cy.get('#blog-root').should('not.be.empty');
-    cy.wait(1000);
+    cy.get('#blog-root').find('a', { timeout: 10000 }).should('have.length.at.least', 1);
     
     // Click on the first blog post link
     cy.get('#blog-root').find('a').first().click();
@@ -62,29 +59,32 @@ describe('Blog Navigation', () => {
   it('should display blog post content', () => {
     cy.visit('/blog/');
     
-    // Wait for blog posts to load
+    // Wait for blog posts to load by asserting the presence of links
     cy.get('#blog-root').should('not.be.empty');
-    cy.wait(1000);
+    cy.get('#blog-root').find('a', { timeout: 10000 }).should('have.length.at.least', 1);
     
     // Click on the first blog post
     cy.get('#blog-root').find('a').first().click();
     
-    // Wait for the blog post to load
-    cy.wait(500);
-    
-    // The page should have some content - check for common blog elements
-    cy.get('body').should('contain.text', 'health').or('contain.text', 'insurance').or('contain.text', 'appeal');
+    // Wait for the blog post content to load by checking for content
+    cy.get('body', { timeout: 10000 }).should((body) => {
+      const text = body.text().toLowerCase();
+      expect(text).to.satisfy((t) => t.includes('health') || t.includes('insurance') || t.includes('appeal'));
+    });
   });
 
   it('should be able to navigate back from a blog post', () => {
     cy.visit('/blog/');
     
-    // Wait for blog posts to load
+    // Wait for blog posts to load by asserting the presence of links
     cy.get('#blog-root').should('not.be.empty');
-    cy.wait(1000);
+    cy.get('#blog-root').find('a', { timeout: 10000 }).should('have.length.at.least', 1);
     
     // Click on the first blog post
     cy.get('#blog-root').find('a').first().click();
+    
+    // Wait for the new page to load
+    cy.url().should('not.eq', Cypress.config().baseUrl + '/blog/');
     
     // Navigate back
     cy.go('back');

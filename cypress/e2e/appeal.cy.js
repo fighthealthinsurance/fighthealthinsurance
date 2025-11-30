@@ -83,16 +83,19 @@ Test-Insurance-Corp`
     // Submit the denial form
     cy.get('button#submit').click();
     
-    // Step 2: Health History page
+    // Step 2: Health History page - verify both title and URL change
     cy.title().should('include', 'Optional: Health History');
-    cy.get('button#next').click();
+    cy.url().should('include', 'combined_collected_view');
+    cy.get('button#next').should('be.visible').click();
     
-    // Step 3: Plan Documents page
+    // Step 3: Plan Documents page - verify both title and URL
     cy.title().should('include', 'Optional: Add Plan Documents');
-    cy.get('button#next').click();
+    cy.url().should('include', 'plan_documents');
+    cy.get('button#next').should('be.visible').click();
     
-    // Step 4: Categorize denial page
+    // Step 4: Categorize denial page - verify final page
     cy.title().should('include', 'Categorize Your Denial');
+    cy.url().should('include', 'categorize');
   });
 
   it('should load the denial scan page directly', () => {
