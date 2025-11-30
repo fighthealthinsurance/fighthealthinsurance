@@ -1,0 +1,87 @@
+name: Cypress E2E Tests
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+    branches:
+      - "**"
+
+jobs:
+  cypress-e2e:
+    runs-on: ubuntu-latest
+    name: Run Cypress E2E Tests
+    steps:
+      - name: Free up disk space
+        run: |
+          sudo rm -rf ~/.rustup
+          sudo docker image prune -a -f
+          sudo apt-get clean
+          df -h
+
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '20'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Install system level packages
+        run: sudo apt-get update && sudo apt-get install -y tesseract-ocr libcairo2-dev libgirepository1.0-dev pkg-config python3-dev && sudo apt-get clean
+
+      - name: Install Python dependencies
+        run: uv venv && source .venv/bin/activate && uv pip install -r requirements.txt
+
+      - name: Build npm js (needed for the e2e tests in django)
+        run: cd fighthealthinsurance/static/js && npm i && npm run build && npm cache clean --force
+
+      - name: Setup Django database
+        run: source .venv/bin/activate && python manage.py migrate
+
+      - name: Load fixtures
+        run: |
+          source .venv/bin/activate
+          python manage.py loaddata fighthealthinsurance/fixtures/initial.yaml || true
+          python manage.py loaddata fighthealthinsurance/fixtures/followup.yaml || true
+          python manage.py loaddata fighthealthinsurance/fixtures/plan_source.yaml || true
+        env:
+          DJANGO_SETTINGS_MODULE: fighthealthinsurance.settings
+          DJANGO_CONFIGURATION: TestSync
+
+      - name: Install root npm dependencies
+        run: npm install
+
+      - name: Run Cypress tests
+        uses: cypress-io/github-action@v6
+        with:
+          start: source .venv/bin/activate && python manage.py runserver 127.0.0.1:8000
+          wait-on: 'http://127.0.0.1:8000'
+          wait-on-timeout: 120
+          browser: chrome
+        env:
+          DJANGO_SETTINGS_MODULE: fighthealthinsurance.settings
+          DJANGO_CONFIGURATION: TestSync
+
+      - name: Upload Cypress screenshots on failure
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: cypress-screenshots
+          path: cypress/screenshots
+          retention-days: 7
+
+      - name: Upload Cypress videos on failure
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: cypress-videos
+          path: cypress/videos
+          retention-days: 7
