@@ -42,6 +42,27 @@ class SitemapTests(TestCase):
         self.assertNotIn("/ziggy/rest/", content)
         self.assertNotIn("/timbit/admin/", content)
 
+    def test_sitemap_uses_request_host(self):
+        """Test that the sitemap uses the request's host header for domain."""
+        # Test with localhost
+        response = self.client.get("/sitemap.xml", HTTP_HOST="localhost:8000")
+        content = response.content.decode("utf-8")
+        self.assertIn("http://localhost:8000/", content)
+
+        # Test with production domain
+        response = self.client.get(
+            "/sitemap.xml", HTTP_HOST="www.fighthealthinsurance.com"
+        )
+        content = response.content.decode("utf-8")
+        self.assertIn("http://www.fighthealthinsurance.com/", content)
+
+    def test_sitemap_has_xmlns(self):
+        """Test that the sitemap contains the proper xmlns attribute."""
+        response = self.client.get("/sitemap.xml")
+        content = response.content.decode("utf-8")
+        # Django's default sitemap.xml template includes the xmlns
+        self.assertIn('xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"', content)
+
 
 class StaticViewSitemapTests(TestCase):
     """Test the StaticViewSitemap class."""

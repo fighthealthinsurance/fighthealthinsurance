@@ -6,13 +6,19 @@ search engines discover and index the site's public pages.
 
 REST API URLs (under /ziggy/rest/) are excluded from the sitemap as they
 are not intended for direct user access.
+
+The sitemap uses the request's host header to determine the domain, so it
+will correctly serve localhost for local development and the production
+domain (www.fighthealthinsurance.com) in production.
 """
 
 import json
 from typing import Any
 
 from django.contrib.sitemaps import Sitemap
+from django.contrib.sites.requests import RequestSite
 from django.contrib.staticfiles.storage import staticfiles_storage
+from django.http import HttpRequest, HttpResponse
 from django.urls import reverse
 from loguru import logger
 
@@ -85,3 +91,50 @@ sitemaps = {
     "static": StaticViewSitemap,
     "blog": BlogSitemap,
 }
+
+
+def sitemap_view(
+    request: HttpRequest,
+    sitemaps: dict[str, type[Sitemap]] = sitemaps,
+    template_name: str = "sitemap.xml",
+    content_type: str = "application/xml",
+) -> HttpResponse:
+    """
+    Custom sitemap view that uses the request's host header for the domain.
+
+    This ensures the sitemap URLs match the serving domain (localhost for
+    local development, www.fighthealthinsurance.com in production, etc.)
+    instead of using the hardcoded SITE_ID from django.contrib.sites.
+
+    The xmlns attribute (http://www.sitemaps.org/schemas/sitemap/0.9) is
+    automatically included by Django's sitemap.xml template.
+    """
+    from django.core.paginator import EmptyPage, PageNotAnInteger
+    from django.http import Http404
+    from django.template.response import TemplateResponse
+
+    # Use RequestSite to get the domain from the request's host header
+    req_site = RequestSite(request)
+    req_protocol = request.scheme
+
+    maps = sitemaps.values()
+    page = request.GET.get("p", 1)
+
+    urls = []
+    for site_class in maps:
+        try:
+            site_instance = site_class()
+            urls.extend(
+                site_instance.get_urls(page=page, site=req_site, protocol=req_protocol)
+            )
+        except EmptyPage:
+            raise Http404("Page %s empty" % page)
+        except PageNotAnInteger:
+            raise Http404("No page '%s'" % page)
+
+    return TemplateResponse(
+        request,
+        template_name,
+        {"urlset": urls},
+        content_type=content_type,
+    )

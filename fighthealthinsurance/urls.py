@@ -18,7 +18,6 @@ from typing import List, Union
 
 from django.urls import URLPattern, URLResolver
 from django.contrib import admin
-from django.contrib.sitemaps.views import sitemap
 from django.http import HttpRequest, HttpResponseBase
 from django.contrib.admin.views.decorators import staff_member_required
 from django.contrib.staticfiles.urls import staticfiles_urlpatterns
@@ -33,7 +32,7 @@ from django.conf.urls.static import static
 from fighthealthinsurance import views
 from fighthealthinsurance import fax_views
 from fighthealthinsurance import staff_views
-from fighthealthinsurance.sitemap import sitemaps
+from fighthealthinsurance.sitemap import sitemap_view
 from django.views.decorators.debug import sensitive_post_parameters
 import os
 
@@ -270,9 +269,8 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
     path(
         "sitemap.xml",
         cache_control(public=True)(
-            cache_page(60 * 60 * 24)(sitemap)
+            cache_page(60 * 60 * 24)(sitemap_view)
         ),
-        {"sitemaps": sitemaps},
         name="django.contrib.sitemaps.views.sitemap",
     ),
     path(
