@@ -201,7 +201,7 @@ class ChooserNextTaskAPITest(APITestCase):
         self.assertEqual(data["task_id"], self.task.id)
         self.assertEqual(data["task_type"], "appeal")
         self.assertEqual(len(data["candidates"]), 2)
-        self.assertEqual(data["context"]["procedure"], "Physical Therapy")
+        self.assertEqual(data["task_context"]["procedure"], "Physical Therapy")
 
     def test_get_next_task_no_tasks_available(self):
         """Test getting next task when none are available and generation fails."""
@@ -481,11 +481,11 @@ class ChooserChatHistoryTest(APITestCase):
 
         self.assertEqual(data["task_id"], self.task.id)
         self.assertEqual(data["task_type"], "chat")
-        self.assertIn("history", data["context"])
-        self.assertEqual(len(data["context"]["history"]), 2)
-        self.assertEqual(data["context"]["history"][0]["role"], "user")
+        self.assertIn("history", data["task_context"])
+        self.assertEqual(len(data["task_context"]["history"]), 2)
+        self.assertEqual(data["task_context"]["history"][0]["role"], "user")
         self.assertEqual(
-            data["context"]["prompt"], "What documents do I need for my appeal?"
+            data["task_context"]["prompt"], "What documents do I need for my appeal?"
         )
 
 
@@ -593,7 +593,7 @@ class ChooserTaskContextTest(APITestCase):
         response = self.client.get(url)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        context = response.json()["context"]
+        context = response.json()["task_context"]
 
         self.assertEqual(context["procedure"], "Lumbar MRI")
         self.assertEqual(context["diagnosis"], "Chronic lower back pain")
@@ -625,7 +625,7 @@ class ChooserTaskContextTest(APITestCase):
         response = self.client.get(url)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        context = response.json()["context"]
+        context = response.json()["task_context"]
 
         self.assertEqual(context["prompt"], "How do I appeal a prior auth denial?")
         self.assertIn("history", context)
