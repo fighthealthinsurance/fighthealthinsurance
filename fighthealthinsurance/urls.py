@@ -71,6 +71,11 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
     path("timbit/admin/", admin.site.urls),
     path("", include("django_prometheus.urls")),
     path(
+        "timbit/help/",
+        staff_member_required(staff_views.StaffDashboardView.as_view()),
+        name="staff_dashboard",
+    ),
+    path(
         "timbit/help/followup_sched",
         staff_member_required(staff_views.ScheduleFollowUps.as_view()),
     ),
@@ -95,6 +100,11 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         "timbit/help/enable_beta",
         staff_member_required(staff_views.EnableBetaForDomainView.as_view()),
         name="enable_beta",
+    ),
+    path(
+        "timbit/help/send_mailing_list_mail",
+        staff_member_required(staff_views.SendMailingListMailView.as_view()),
+        name="send_mailing_list_mail",
     ),
     # Authentication
     path("v0/auth/", include("fhi_users.urls")),
