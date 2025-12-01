@@ -32,6 +32,7 @@ from django.conf.urls.static import static
 from fighthealthinsurance import views
 from fighthealthinsurance import fax_views
 from fighthealthinsurance import staff_views
+from fighthealthinsurance.sitemap import sitemap_view
 from django.views.decorators.debug import sensitive_post_parameters
 import os
 
@@ -264,6 +265,13 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
             cache_page(60 * 60 * 2)(views.ContactView.as_view())
         ),
         name="contact",
+    ),
+    path(
+        "sitemap.xml",
+        cache_control(public=True)(
+            cache_page(60 * 60 * 24)(sitemap_view)
+        ),
+        name="django.contrib.sitemaps.views.sitemap",
     ),
     path(
         "favicon.ico",
