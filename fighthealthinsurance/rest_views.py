@@ -6,7 +6,7 @@ from typing import Optional
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.exceptions import SuspiciousFileOperation
-from django.db import models, IntegrityError
+from django.db import IntegrityError, models
 from django.db.models import Count, Q
 from django.http import FileResponse
 from django.shortcuts import get_object_or_404
@@ -1754,7 +1754,7 @@ class ChooserViewSet(viewsets.ViewSet):
         response_data = {
             "task_id": task.id,
             "task_type": task.task_type,
-            "context": context,
+            "task_context": context,
             "candidates": candidate_data,
         }
 

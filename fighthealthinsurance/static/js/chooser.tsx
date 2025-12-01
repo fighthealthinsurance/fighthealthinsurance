@@ -38,7 +38,7 @@ interface ChooserTaskContext {
 interface ChooserTask {
   task_id: number;
   task_type: string;
-  context: ChooserTaskContext;
+  task_context: ChooserTaskContext;
   candidates: ChooserCandidate[];
 }
 
@@ -441,10 +441,10 @@ const ChooserInterface: React.FC = () => {
 	      {state.task.task_type === "chat" ? "Conversation:" : "Context:"}
 	    </Text>
 	    {state.task.task_type === "chat" ? (
-	      formatContext(state.task.context, state.task.task_type)
+	      formatContext(state.task.task_context, state.task.task_type)
 	    ) : (
 	      <Text size="sm" style={{ whiteSpace: "pre-wrap" }}>
-		{formatContext(state.task.context, state.task.task_type)}
+		{formatContext(state.task.task_context, state.task.task_type)}
 	      </Text>
 	    )}
 	  </Paper>
