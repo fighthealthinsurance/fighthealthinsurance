@@ -94,6 +94,41 @@ export function validateScrubForm(event: Event): void {
     rehideHiddenMessage("pii_error");
     rehideHiddenMessage("email_error");
     rehideHiddenMessage("need_denial");
+    // Only include fname and lname if user has subscribed to mailing list
+    // This ensures we don't send personal names to the server unless the user opts in
+    // Remove any previously added hidden inputs to prevent duplicates
+    const existingFname = form.querySelector('input[type="hidden"][name="fname"]');
+    const existingLname = form.querySelector('input[type="hidden"][name="lname"]');
+    if (existingFname) {
+      existingFname.remove();
+    }
+    if (existingLname) {
+      existingLname.remove();
+    }
+    if (form.subscribe.checked) {
+      // Get the locally stored fname/lname values
+      const fnameInput = document.getElementById(
+        "store_fname",
+      ) as HTMLInputElement | null;
+      const lnameInput = document.getElementById(
+        "store_lname",
+      ) as HTMLInputElement | null;
+      // Add hidden inputs to the form to send fname and lname to the server
+      if (fnameInput && fnameInput.value) {
+        const hiddenFname = document.createElement("input");
+        hiddenFname.type = "hidden";
+        hiddenFname.name = "fname";
+        hiddenFname.value = fnameInput.value;
+        form.appendChild(hiddenFname);
+      }
+      if (lnameInput && lnameInput.value) {
+        const hiddenLname = document.createElement("input");
+        hiddenLname.type = "hidden";
+        hiddenLname.name = "lname";
+        hiddenLname.value = lnameInput.value;
+        form.appendChild(hiddenLname);
+      }
+    }
     // YOLO
     return;
   } else {
