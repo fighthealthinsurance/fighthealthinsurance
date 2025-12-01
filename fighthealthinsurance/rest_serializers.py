@@ -843,7 +843,7 @@ class ChooserTaskSerializer(serializers.Serializer):
 
     task_id = serializers.IntegerField()
     task_type = serializers.CharField()
-    context = serializers.JSONField()
+    task_context = serializers.JSONField(required=False, allow_null=True)
     candidates = ChooserCandidateSerializer(many=True)
 
 

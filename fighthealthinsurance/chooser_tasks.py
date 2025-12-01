@@ -393,13 +393,16 @@ async def _generate_chat_candidates(task: ChooserTask):
                 "- Medicare or Medicaid eligibility\n"
                 "Just the question, nothing else."
             )
-            final_user_prompt = await prompt_model._infer_no_context(
-                system_prompts=[
-                    "Generate a natural user question about health insurance."
-                ],
-                prompt=simple_prompt,
-            )
-            final_user_prompt = final_user_prompt.strip().strip('"').strip("'").strip()
+            final_user_prompt = None
+            while not final_user_prompt:
+                final_user_prompt = await prompt_model._infer_no_context(
+                    system_prompts=[
+                        "Generate a natural user question about health insurance."
+                    ],
+                    prompt=simple_prompt,
+                )
+            if final_user_prompt:
+                final_user_prompt = final_user_prompt.strip().strip('"').strip("'").strip()
             history = []
 
         if len(final_user_prompt) < 10 or len(final_user_prompt) > 1000:
@@ -548,6 +551,8 @@ def trigger_prefill_async():
     """
     import threading
 
+    min_ready = 1
+
     def run_prefill():
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -558,17 +563,9 @@ def trigger_prefill_async():
         finally:
             loop.close()
 
-        run = False
-        for task_type in ["appeal", "chat"]:
-            ready_count = await _count_ready_tasks(task_type)
-            if ready_count < min_ready:
-                run = True
-                break
-
-        if run:
-            thread = threading.Thread(target=run_prefill)
-            thread.daemon = True
-            thread.start()
+        thread = threading.Thread(target=run_prefill)
+        thread.daemon = True
+        thread.start()
 
 
 # Utility function to manually trigger task generation (for testing/admin purposes)

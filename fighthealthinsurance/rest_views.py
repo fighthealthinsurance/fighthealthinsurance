@@ -6,7 +6,7 @@ from typing import Optional
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.exceptions import SuspiciousFileOperation
-from django.db import models
+from django.db import models, IntegrityError
 from django.db.models import Count, Q
 from django.http import FileResponse
 from django.shortcuts import get_object_or_404
@@ -1642,7 +1642,7 @@ class ChooserViewSet(viewsets.ViewSet):
             # Check if we already have a fallback session key stored
             fallback_key = request.session.get("_fallback_session_key")
             if fallback_key:
-                return fallback_key
+                return str(fallback_key)
             # Generate a new fallback session key and persist it
             import uuid
 
