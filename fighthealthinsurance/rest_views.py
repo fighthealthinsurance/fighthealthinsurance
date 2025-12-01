@@ -1722,21 +1722,6 @@ class ChooserViewSet(viewsets.ViewSet):
         context = {}
         if task.context_json:
             context = task.context_json
-        elif task.denial:
-            # Build context from linked denial
-            context = {
-                "denial_text_preview": (task.denial.denial_text or "")[:500],
-                "procedure": task.denial.procedure or "",
-                "diagnosis": task.denial.diagnosis or "",
-                "insurance_company": task.denial.insurance_company or "",
-            }
-        elif task.chat:
-            # Build context from linked chat (first user message as prompt)
-            if task.chat.chat_history:
-                for msg in task.chat.chat_history:
-                    if msg.get("role") == "user":
-                        context = {"prompt": msg.get("content", "")[:500]}
-                        break
 
         # Serialize candidates
         candidate_data = [
