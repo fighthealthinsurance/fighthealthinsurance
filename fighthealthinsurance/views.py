@@ -1,45 +1,41 @@
+import asyncio
+import json
 import os
 import re
-
-import json
-import stripe
 import typing
 from typing import TypedDict
-from loguru import logger
-from PIL import Image
-
-import asyncio
 
 from django import forms
 from django.conf import settings
-from django.shortcuts import redirect, render, get_object_or_404
+from django.contrib.auth import get_user_model
+from django.contrib.auth.decorators import login_required
+from django.contrib.staticfiles.storage import staticfiles_storage
+from django.core.exceptions import SuspiciousOperation
+from django.http import (
+    HttpRequest,
+    HttpResponse,
+    HttpResponseBase,
+    HttpResponseForbidden,
+    HttpResponseRedirect,
+)
+from django.shortcuts import get_object_or_404, redirect, render
+from django.template import loader
 from django.urls import reverse
 from django.utils.safestring import mark_safe
 from django.views import View, generic
-from django.http import HttpRequest, HttpResponseBase, HttpResponse
-from django.core.exceptions import SuspiciousOperation
-from django.http import HttpResponseRedirect
-from django.contrib.auth.decorators import login_required
-from django.views.decorators.csrf import ensure_csrf_cookie
-from django.views.generic.edit import FormView
-from django.views.generic.base import TemplateView
-
-from django_encrypted_filefield.crypt import Cryptographer
-
-from fighthealthinsurance import common_view_logic
-from fighthealthinsurance import forms as core_forms
-from fighthealthinsurance.chat_forms import UserConsentForm
-from fighthealthinsurance import models
-
-from fighthealthinsurance.models import StripeRecoveryInfo
-
-from django.template import loader
-from django.http import HttpResponseForbidden
-
-from django.contrib.auth import get_user_model
-from django.contrib.staticfiles.storage import staticfiles_storage
+from django.views.decorators.csrf import csrf_exempt, ensure_csrf_cookie
 from django.views.decorators.http import require_http_methods
-from django.views.decorators.csrf import csrf_exempt
+from django.views.generic.base import TemplateView
+from django.views.generic.edit import FormView
+
+import stripe
+from django_encrypted_filefield.crypt import Cryptographer
+from loguru import logger
+from PIL import Image
+
+from fighthealthinsurance import common_view_logic, forms as core_forms, models
+from fighthealthinsurance.chat_forms import UserConsentForm
+from fighthealthinsurance.models import StripeRecoveryInfo
 
 
 class BlogPostMetadata(TypedDict, total=False):
@@ -169,9 +165,10 @@ class OtherResourcesView(generic.TemplateView):
 
         # Fetch RSS feeds synchronously to avoid async issues
         try:
-            import requests
-            import feedparser
             from datetime import datetime
+
+            import feedparser
+            import requests
 
             # KFF Health News RSS feeds
             kff_feeds = {
@@ -1182,3 +1179,24 @@ class UnsubscribeView(View):
                     "error": "This unsubscribe link is invalid or has already been used.",
                 },
             )
+
+
+class ChooserView(TemplateView):
+    """View for the Chooser (Best-Of Selection) interface."""
+
+    template_name = "chooser.html"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["title"] = "Help Us Improve Our Chooser"
+
+        # Trigger async pre-fill of tasks so user doesn't have to wait
+        from fighthealthinsurance.chooser_tasks import trigger_prefill_async
+
+        try:
+            trigger_prefill_async()
+        except Exception as e:
+            # Don't let pre-fill errors break page load
+            pass
+
+        return context

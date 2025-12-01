@@ -824,3 +824,42 @@ class ExtractPatientFieldsResponseSerializer(serializers.Serializer):
     insurance_company = serializers.CharField(
         required=False, allow_blank=True, default=""
     )
+
+
+# Chooser Serializers
+class ChooserCandidateSerializer(serializers.Serializer):
+    """Serializer for individual chooser candidates."""
+
+    id = serializers.IntegerField(read_only=True)
+    candidate_index = serializers.IntegerField()
+    kind = serializers.CharField()
+    model_name = serializers.CharField()
+    content = serializers.CharField()
+    metadata = serializers.JSONField(required=False, allow_null=True)
+
+
+class ChooserTaskSerializer(serializers.Serializer):
+    """Serializer for chooser tasks returned by next endpoints."""
+
+    task_id = serializers.IntegerField()
+    task_type = serializers.CharField()
+    task_context = serializers.JSONField(required=False, allow_null=True)
+    candidates = ChooserCandidateSerializer(many=True)
+
+
+class ChooserVoteRequestSerializer(serializers.Serializer):
+    """Serializer for voting on a chooser task."""
+
+    task_id = serializers.IntegerField(required=True)
+    chosen_candidate_id = serializers.IntegerField(required=True)
+    presented_candidate_ids = serializers.ListField(
+        child=serializers.IntegerField(), required=True
+    )
+
+
+class ChooserVoteResponseSerializer(serializers.Serializer):
+    """Serializer for vote response."""
+
+    success = serializers.BooleanField()
+    message = serializers.CharField()
+    vote_id = serializers.IntegerField(required=False)

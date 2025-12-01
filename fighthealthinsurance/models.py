@@ -1161,3 +1161,113 @@ class ChatLeads(ExportModelOperationsMixin("ChatLeads"), models.Model):  # type:
 
     def __str__(self):
         return f"Chat Lead: {self.name} ({self.email})"
+
+
+class ChooserTask(ExportModelOperationsMixin("ChooserTask"), models.Model):  # type: ignore
+    """
+    Model for chooser tasks that present multiple synthetic candidates for users to choose from.
+    Used to collect preference data for training selector models.
+    """
+
+    TASK_TYPE_CHOICES = [
+        ("appeal", "Appeal Letter"),
+        ("chat", "Chat Response"),
+    ]
+
+    STATUS_CHOICES = [
+        ("QUEUED", "Queued"),
+        ("READY", "Ready"),
+        ("IN_USE", "In Use"),
+        ("EXHAUSTED", "Exhausted"),
+        ("DISABLED", "Disabled"),
+    ]
+
+    id = models.AutoField(primary_key=True)
+    task_type = models.CharField(max_length=20, choices=TASK_TYPE_CHOICES)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="QUEUED")
+
+    # Normalized JSON context for flexibility (contains denial summary or chat prompt)
+    context_json = models.JSONField(null=True, blank=True)
+
+    source = models.CharField(max_length=50, default="synthetic")
+    num_candidates_expected = models.IntegerField(default=4)
+    num_candidates_generated = models.IntegerField(default=0)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["task_type", "status"]),
+            models.Index(fields=["status", "created_at"]),
+        ]
+        verbose_name = "Chooser Task"
+        verbose_name_plural = "Chooser Tasks"
+
+    def __str__(self):
+        return f"ChooserTask {self.id} ({self.task_type}, {self.status})"
+
+
+class ChooserCandidate(ExportModelOperationsMixin("ChooserCandidate"), models.Model):  # type: ignore
+    """
+    Model for individual candidates within a ChooserTask.
+    Each task will have 2-4 candidates for users to choose from.
+    """
+
+    KIND_CHOICES = [
+        ("appeal_letter", "Appeal Letter"),
+        ("chat_response", "Chat Response"),
+    ]
+
+    id = models.AutoField(primary_key=True)
+    task = models.ForeignKey(
+        ChooserTask, on_delete=models.CASCADE, related_name="candidates"
+    )
+    candidate_index = models.IntegerField()  # 0, 1, 2, 3
+    kind = models.CharField(max_length=30, choices=KIND_CHOICES)
+    model_name = models.CharField(max_length=200)
+    content = models.TextField()
+    metadata = models.JSONField(null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = [["task", "candidate_index"]]
+        ordering = ["task", "candidate_index"]
+        verbose_name = "Chooser Candidate"
+        verbose_name_plural = "Chooser Candidates"
+
+    def __str__(self):
+        return f"Candidate {self.candidate_index} for Task {self.task_id}"
+
+
+class ChooserVote(ExportModelOperationsMixin("ChooserVote"), models.Model):  # type: ignore
+    """
+    Model to store user votes selecting the best candidate from a ChooserTask.
+    """
+
+    id = models.AutoField(primary_key=True)
+    task = models.ForeignKey(
+        ChooserTask, on_delete=models.CASCADE, related_name="votes"
+    )
+    chosen_candidate = models.ForeignKey(
+        ChooserCandidate, on_delete=models.CASCADE, related_name="votes"
+    )
+    presented_candidate_ids = models.JSONField()  # List of candidate IDs shown to user
+    session_key = models.CharField(max_length=100, db_index=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        # Prevent same session from voting on same task multiple times
+        unique_together = [["task", "session_key"]]
+        indexes = [
+            models.Index(fields=["task"]),
+            models.Index(fields=["session_key"]),
+        ]
+        verbose_name = "Chooser Vote"
+        verbose_name_plural = "Chooser Votes"
+
+    def __str__(self):
+        return f"Vote for Candidate {self.chosen_candidate_id} on Task {self.task_id}"
