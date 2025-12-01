@@ -62,10 +62,32 @@ jobs:
       - name: Install root npm dependencies
         run: npm install
 
+      - name: Start Django server
+        run: |
+          source .venv/bin/activate
+          python manage.py runserver 127.0.0.1:8000 &
+          sleep 5
+        env:
+          DJANGO_SETTINGS_MODULE: fighthealthinsurance.settings
+          DJANGO_CONFIGURATION: TestSync
+
+      - name: Wait for server to be ready
+        run: |
+          for i in {1..30}; do
+            if curl -s http://127.0.0.1:8000 > /dev/null 2>&1; then
+              echo "Server is ready"
+              exit 0
+            fi
+            echo "Waiting for server... attempt $i"
+            sleep 2
+          done
+          echo "Server failed to start"
+          exit 1
+
       - name: Run Cypress tests
         uses: cypress-io/github-action@v6
         with:
-          start: bash -c "source .venv/bin/activate && python manage.py runserver 127.0.0.1:8000"
+          install: false
           wait-on: 'http://127.0.0.1:8000'
           wait-on-timeout: 120
           browser: chrome
