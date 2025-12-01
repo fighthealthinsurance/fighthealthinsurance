@@ -558,9 +558,17 @@ def trigger_prefill_async():
         finally:
             loop.close()
 
-    thread = threading.Thread(target=run_prefill)
-    thread.daemon = True
-    thread.start()
+        run = False
+        for task_type in ["appeal", "chat"]:
+            ready_count = await _count_ready_tasks(task_type)
+            if ready_count < min_ready:
+                run = True
+                break
+
+        if run:
+            thread = threading.Thread(target=run_prefill)
+            thread.daemon = True
+            thread.start()
 
 
 # Utility function to manually trigger task generation (for testing/admin purposes)
