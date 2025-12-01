@@ -1,4 +1,4 @@
-from django.core.mail import EmailMultiAlternatives
+from django.core.mail import EmailMultiAlternatives, BadHeaderError
 from django.template.loader import render_to_string
 from django.conf import settings
 
@@ -40,6 +40,8 @@ import requests
 from metapub import PubMedFetcher
 from requests.exceptions import RequestException
 from markdown_strings import esc_format
+from django.core.exceptions import ValidationError, ImproperlyConfigured
+from smtplib import SMTPException
 
 from fighthealthinsurance.env_utils import *
 
@@ -95,44 +97,72 @@ def mask_email_for_logging(email: Optional[str]) -> str:
 
 
 def send_fallback_email(subject: str, template_name: str, context, to_email: str):
-    if to_email.endswith("-fake@fighthealthinsurance.com"):
-        return
-    # First, render the plain text content if present
-    text_content = render_to_string(
-        f"emails/{template_name}.txt",
-        context=context,
-    )
-
-    # Secondly, render the HTML content if present
-    html_content = render_to_string(
-        f"emails/{template_name}.html",
-        context=context,
-    )
-    # Then, create a multipart email instance.
-    msg = EmailMultiAlternatives(
-        subject,
-        text_content,
-        settings.DEFAULT_FROM_EMAIL,
-        to=[to_email],
-    )
-    logger.debug(f"Sending email to {to_email} with subject {subject}")
-
-    # Lastly, attach the HTML content to the email instance and send.
-    msg.attach_alternative(html_content, "text/html")
-    msg.send()
+    """Send an email with both text and HTML fallback."""
     try:
-        second_msg = EmailMultiAlternatives(
-            subject + " -- " + to_email,
+        if not to_email:
+            raise ValidationError("Recipient email is required.")
+        
+        if to_email.endswith("-fake@fighthealthinsurance.com"):
+            return
+
+        # First, render the plain text content if present
+        text_content = render_to_string(
+            f"emails/{template_name}.txt",
+            context=context,
+        )
+        # Secondly, render the HTML content if present
+        html_content = render_to_string(
+            f"emails/{template_name}.html",
+            context=context,
+        )
+
+        # Ensure there's at least one valid content type
+        if not text_content and not html_content:
+            raise ValidationError("Both text and HTML templates are empty.")
+
+        # Then, create a multipart email instance.
+        msg = EmailMultiAlternatives(
+            subject,
             text_content,
             settings.DEFAULT_FROM_EMAIL,
-            to=settings.BCC_EMAILS,
+            to=[to_email],
         )
-        second_msg.attach_alternative(html_content, "text/html")
-        second_msg.send()
-    except Exception as e:
-        logger.error(f"Error sending email to BCC: {e}")
-        pass
+        logger.debug(f"Sending email to {to_email} with subject {subject}")
 
+        # Lastly, attach the HTML content to the email instance and send.
+        msg.attach_alternative(html_content, "text/html")
+        msg.send()
+        
+        logger.info(f"Verification email successfully sent to {to_email}")
+        
+        try:
+            second_msg = EmailMultiAlternatives(
+                subject + " -- " + to_email,
+                text_content,
+                settings.DEFAULT_FROM_EMAIL,
+                to=settings.BCC_EMAILS,
+            )
+            second_msg.attach_alternative(html_content, "text/html")
+            second_msg.send()
+        except Exception as e:
+            logger.error(f"Error sending email to BCC: {e}")
+            raise
+
+    except BadHeaderError as e:
+        logger.error("Invalid email header detected.")
+        raise
+
+    except SMTPException as e:
+        logger.error(f"SMTP error while sending email to {to_email}: {e}")
+        raise
+
+    except ImproperlyConfigured as e:
+        logger.error(f"Email settings misconfigured: {e}")
+        raise
+
+    except Exception as e:
+        logger.error(f"Unexpected error while sending email to {to_email}: {e}", exc_info=True)
+        raise
 
 def get_unsubscribe_url(email: str) -> Optional[str]:
     """
