@@ -1,20 +1,21 @@
 """Test the Chooser (Best-Of Selection) API functionality"""
 
 import json
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from django.urls import reverse
 from django.contrib.auth import get_user_model
+from django.urls import reverse
 
 from rest_framework import status
 from rest_framework.test import APITestCase
 
+from fhi_users.models import ExtraUserProperties, ProfessionalUser, UserDomain
 from fighthealthinsurance.models import (
-    ChooserTask,
     ChooserCandidate,
+    ChooserTask,
     ChooserVote,
     Denial,
 )
-from fhi_users.models import ProfessionalUser, ExtraUserProperties, UserDomain
 
 User = get_user_model()
 
@@ -203,39 +204,48 @@ class ChooserNextTaskAPITest(APITestCase):
         self.assertEqual(data["context"]["procedure"], "Physical Therapy")
 
     def test_get_next_task_no_tasks_available(self):
-        """Test getting next task when none are available."""
+        """Test getting next task when none are available and generation fails."""
         # Delete all tasks
         ChooserTask.objects.all().delete()
 
-        url = reverse("chooser-next-appeal")
-        response = self.client.get(url)
+        # Mock the task generation to simulate failure (no models available)
+        with patch(
+            "fighthealthinsurance.chooser_tasks._generate_single_task"
+        ) as mock_generate:
+            # Make generation not create any tasks
+            mock_generate.return_value = None
 
-        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
-        self.assertIn("No tasks available", response.json()["message"])
+            url = reverse("chooser-next-appeal")
+            response = self.client.get(url)
+
+            self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+            self.assertIn("No tasks available", response.json()["message"])
 
     def test_session_exclusion(self):
         """Test that tasks already voted on are excluded."""
-        # Create a vote for this task
+        # Force session creation first
+        self.client.session.create()
+        session_key = self.client.session.session_key
+
+        # Create a vote for this task with the client's session
         ChooserVote.objects.create(
             task=self.task,
             chosen_candidate=self.candidate1,
             presented_candidate_ids=[self.candidate1.id, self.candidate2.id],
-            session_key=self.client.session.session_key or "test-session",
+            session_key=session_key,
         )
 
-        # Since we only have one task, we should get 404
-        url = reverse("chooser-next-appeal")
-        # Force session creation
-        self.client.session.create()
-        session_key = self.client.session.session_key
+        # Mock the task generation to prevent on-demand generation
+        with patch(
+            "fighthealthinsurance.chooser_tasks._generate_single_task"
+        ) as mock_generate:
+            mock_generate.return_value = None
 
-        # Create another vote with this session
-        ChooserVote.objects.filter(session_key="test-session").update(
-            session_key=session_key
-        )
+            # Since we only have one task and already voted, should get 404
+            url = reverse("chooser-next-appeal")
+            response = self.client.get(url)
 
-        response = self.client.get(url)
-        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+            self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
 
 class ChooserTaskSelectionOrderingTest(APITestCase):
@@ -421,3 +431,202 @@ class ChooserVoteAPITest(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("not in the presented", response.json()["error"])
+
+
+class ChooserChatHistoryTest(APITestCase):
+    """Test chat tasks with conversation history."""
+
+    fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
+
+    def setUp(self):
+        # Create a chat task with history
+        self.task = ChooserTask.objects.create(
+            task_type="chat",
+            status="READY",
+            context_json={
+                "prompt": "What documents do I need for my appeal?",
+                "history": [
+                    {"role": "user", "content": "My insurance denied my MRI request."},
+                    {
+                        "role": "assistant",
+                        "content": "I'm sorry to hear that. Can you tell me more about the denial reason?",
+                    },
+                ],
+            },
+        )
+        self.candidate1 = ChooserCandidate.objects.create(
+            task=self.task,
+            candidate_index=0,
+            kind="chat_response",
+            model_name="model-a",
+            content="You'll need your denial letter and medical records.",
+            metadata={"source": "synthetic", "has_history": True},
+        )
+        self.candidate2 = ChooserCandidate.objects.create(
+            task=self.task,
+            candidate_index=1,
+            kind="chat_response",
+            model_name="model-b",
+            content="The key documents include your EOB and doctor's notes.",
+            metadata={"source": "synthetic", "has_history": True},
+        )
+
+    def test_get_chat_task_with_history(self):
+        """Test getting a chat task that includes conversation history."""
+        url = reverse("chooser-next-chat")
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+
+        self.assertEqual(data["task_id"], self.task.id)
+        self.assertEqual(data["task_type"], "chat")
+        self.assertIn("history", data["context"])
+        self.assertEqual(len(data["context"]["history"]), 2)
+        self.assertEqual(data["context"]["history"][0]["role"], "user")
+        self.assertEqual(
+            data["context"]["prompt"], "What documents do I need for my appeal?"
+        )
+
+
+class ChooserSessionFallbackTest(APITestCase):
+    """Test session fallback key persistence."""
+
+    fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
+
+    def setUp(self):
+        self.task = ChooserTask.objects.create(
+            task_type="appeal",
+            status="READY",
+            context_json={"procedure": "Test"},
+        )
+        self.candidate1 = ChooserCandidate.objects.create(
+            task=self.task,
+            candidate_index=0,
+            kind="appeal_letter",
+            model_name="model-a",
+            content="Content A",
+        )
+        self.candidate2 = ChooserCandidate.objects.create(
+            task=self.task,
+            candidate_index=1,
+            kind="appeal_letter",
+            model_name="model-b",
+            content="Content B",
+        )
+
+    def test_fallback_session_key_persists(self):
+        """Test that fallback session key is persisted and reused."""
+        # Submit a vote which will create a session key
+        url = reverse("chooser-vote")
+        data = {
+            "task_id": self.task.id,
+            "chosen_candidate_id": self.candidate1.id,
+            "presented_candidate_ids": [self.candidate1.id, self.candidate2.id],
+        }
+        response1 = self.client.post(
+            url, json.dumps(data), content_type="application/json"
+        )
+        self.assertEqual(response1.status_code, status.HTTP_200_OK)
+
+        # Try to vote again - should fail because session key is persisted
+        response2 = self.client.post(
+            url, json.dumps(data), content_type="application/json"
+        )
+        self.assertEqual(response2.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("already voted", response2.json()["error"])
+
+
+class ChooserPrefillTest(APITestCase):
+    """Test the prefill functionality."""
+
+    fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
+
+    def test_trigger_prefill_async_does_not_raise(self):
+        """Test that trigger_prefill_async can be called without raising."""
+        from fighthealthinsurance.chooser_tasks import trigger_prefill_async
+
+        # Should not raise any exceptions
+        try:
+            trigger_prefill_async()
+        except Exception as e:
+            self.fail(f"trigger_prefill_async raised exception: {e}")
+
+    def test_chooser_view_triggers_prefill(self):
+        """Test that loading the chooser page triggers prefill."""
+        with patch(
+            "fighthealthinsurance.chooser_tasks.trigger_prefill_async"
+        ) as mock_prefill:
+            url = reverse("chooser")
+            response = self.client.get(url)
+
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            mock_prefill.assert_called_once()
+
+
+class ChooserTaskContextTest(APITestCase):
+    """Test task context for different task types."""
+
+    fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
+
+    def test_appeal_task_context_fields(self):
+        """Test appeal task has expected context fields."""
+        task = ChooserTask.objects.create(
+            task_type="appeal",
+            status="READY",
+            context_json={
+                "procedure": "Lumbar MRI",
+                "diagnosis": "Chronic lower back pain",
+                "insurance_company": "Test Insurance Co",
+                "denial_text_preview": "Not medically necessary",
+            },
+        )
+        ChooserCandidate.objects.create(
+            task=task,
+            candidate_index=0,
+            kind="appeal_letter",
+            model_name="model-a",
+            content="Appeal content",
+        )
+
+        url = reverse("chooser-next-appeal")
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        context = response.json()["context"]
+
+        self.assertEqual(context["procedure"], "Lumbar MRI")
+        self.assertEqual(context["diagnosis"], "Chronic lower back pain")
+        self.assertEqual(context["insurance_company"], "Test Insurance Co")
+        self.assertEqual(context["denial_text_preview"], "Not medically necessary")
+
+    def test_chat_task_context_fields(self):
+        """Test chat task has expected context fields including history."""
+        task = ChooserTask.objects.create(
+            task_type="chat",
+            status="READY",
+            context_json={
+                "prompt": "How do I appeal a prior auth denial?",
+                "history": [
+                    {"role": "user", "content": "My prior auth was denied"},
+                    {"role": "assistant", "content": "I can help with that."},
+                ],
+            },
+        )
+        ChooserCandidate.objects.create(
+            task=task,
+            candidate_index=0,
+            kind="chat_response",
+            model_name="model-a",
+            content="Chat response content",
+        )
+
+        url = reverse("chooser-next-chat")
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        context = response.json()["context"]
+
+        self.assertEqual(context["prompt"], "How do I appeal a prior auth denial?")
+        self.assertIn("history", context)
+        self.assertEqual(len(context["history"]), 2)

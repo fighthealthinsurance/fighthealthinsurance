@@ -1,77 +1,62 @@
-import typing
 import asyncio
+import json
+import typing
 from typing import Optional
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.shortcuts import get_object_or_404
-from django.db.models import Q, Count
-from django.db import models
-from django.utils import timezone
-from dateutil.relativedelta import relativedelta
-from django.http import FileResponse
 from django.core.exceptions import SuspiciousFileOperation
+from django.db import models
+from django.db.models import Count, Q
+from django.http import FileResponse
+from django.shortcuts import get_object_or_404
+from django.utils import timezone
 
-from asgiref.sync import sync_to_async, async_to_sync
-
+from asgiref.sync import async_to_sync, sync_to_async
+from dateutil.relativedelta import relativedelta
 from django_encrypted_filefield.crypt import Cryptographer
-
-from rest_framework import status
-from rest_framework import viewsets
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import OpenApiParameter, extend_schema
+from loguru import logger
+from rest_framework import status, viewsets
+from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from rest_framework.decorators import action
-from rest_framework.exceptions import ValidationError
+from stopit import ThreadingTimeout as Timeout
 
-from drf_spectacular.utils import extend_schema
-from drf_spectacular.utils import OpenApiParameter
-from drf_spectacular.types import OpenApiTypes
-
-from fighthealthinsurance import common_view_logic
-from fighthealthinsurance.models import (
-    MailingListSubscriber,
-    SecondaryAppealProfessionalRelation,
-    DemoRequests,
-)
-from fighthealthinsurance.ml.ml_router import ml_router
+from fhi_users.auth import auth_utils
+from fhi_users.models import PatientUser, ProfessionalUser, UserDomain
+from fighthealthinsurance import common_view_logic, rest_serializers as serializers
 from fighthealthinsurance.ml.health_status import health_status
-from fighthealthinsurance import rest_serializers as serializers
+from fighthealthinsurance.ml.ml_router import ml_router
+from fighthealthinsurance.models import (
+    Appeal,
+    AppealAttachment,
+    ChooserCandidate,
+    ChooserTask,
+    ChooserVote,
+    DemoRequests,
+    Denial,
+    DenialQA,
+    MailingListSubscriber,
+    OngoingChat,
+    PriorAuthRequest,
+    ProposedPriorAuth,
+    PubMedMiniArticle,
+    SecondaryAppealProfessionalRelation,
+)
+from fighthealthinsurance.pubmed_tools import PubMedTools
 from fighthealthinsurance.rest_mixins import (
-    SerializerMixin,
     CreateMixin,
     DeleteMixin,
     DeleteOnlyMixin,
-)
-from fighthealthinsurance.models import (
-    Appeal,
-    Denial,
-    DenialQA,
-    AppealAttachment,
-    PubMedMiniArticle,
-    PriorAuthRequest,
-    ProposedPriorAuth,
-    OngoingChat,
-    ChooserTask,
-    ChooserCandidate,
-    ChooserVote,
-)
-from fighthealthinsurance.pubmed_tools import PubMedTools
-
-from fhi_users.models import (
-    UserDomain,
-    PatientUser,
-    ProfessionalUser,
+    SerializerMixin,
 )
 
-from fhi_users.auth import auth_utils
-
-from stopit import ThreadingTimeout as Timeout
 from .common_view_logic import AppealAssemblyHelper
 from .utils import is_convertible_to_int
-import json
-
-from loguru import logger
 
 if typing.TYPE_CHECKING:
     from django.contrib.auth.models import User
@@ -1696,6 +1681,7 @@ class ChooserViewSet(viewsets.ViewSet):
         if not task:
             # Generate a single task synchronously (blocking) since nothing is available
             from asgiref.sync import async_to_sync
+
             from fighthealthinsurance.chooser_tasks import _generate_single_task
 
             try:
@@ -1844,12 +1830,10 @@ class ChooserViewSet(viewsets.ViewSet):
 
         # Check if this session has already voted on this task
         if ChooserVote.objects.filter(task=task, session_key=session_key).exists():
-        from django.db import IntegrityError
-
-        # Check if this session has already voted on this task
-        if ChooserVote.objects.filter(task=task, session_key=session_key).exists():
             return Response(
-                serializers.ErrorSerializer({"error": "You have already voted on this task"}).data,
+                serializers.ErrorSerializer(
+                    {"error": "You have already voted on this task"}
+                ).data,
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -1872,7 +1856,9 @@ class ChooserViewSet(viewsets.ViewSet):
             )
         except IntegrityError:
             return Response(
-                serializers.ErrorSerializer({"error": "You have already voted on this task"}).data,
+                serializers.ErrorSerializer(
+                    {"error": "You have already voted on this task"}
+                ).data,
                 status=status.HTTP_400_BAD_REQUEST,
             )
 

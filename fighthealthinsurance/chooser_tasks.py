@@ -7,20 +7,20 @@ This module provides utilities for:
 """
 
 import asyncio
-from typing import Optional, List
-from loguru import logger
+from typing import List, Optional
 
 from django.conf import settings
 
+from loguru import logger
+
+from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.models import (
-    ChooserTask,
     ChooserCandidate,
+    ChooserTask,
     Denial,
     OngoingChat,
 )
-from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.utils import fire_and_forget_in_new_threadpool
-
 
 # Configuration for auto-refill thresholds
 CHOOSER_MIN_READY_TASKS = getattr(settings, "CHOOSER_MIN_READY_TASKS", 50)
@@ -36,6 +36,7 @@ async def check_and_refill_task_pool():
     Uses a distributed lock to ensure only one instance runs at a time.
     """
     from django.core.cache import cache
+
     from asgiref.sync import sync_to_async
 
     lock_key = "chooser_task_refill_lock"
@@ -142,13 +143,8 @@ async def _generate_appeal_candidates(task: ChooserTask):
     generation_models = ml_router.generate_text_backends()
     if not generation_models:
         logger.warning("No models available for generating synthetic denial scenarios")
-        # Fallback to a basic scenario
-        task.context_json = {
-            "denial_text_preview": "Your claim has been denied.",
-            "procedure": "Medical Procedure",
-            "diagnosis": "Medical Condition",
-            "insurance_company": "Insurance Company",
-        }
+        # Cannot proceed without models - mark task as disabled
+        task.status = "DISABLED"
         await sync_to_async(task.save)()
         return
 
@@ -156,18 +152,22 @@ async def _generate_appeal_candidates(task: ChooserTask):
     scenario_model = generation_models[0]
     try:
         scenario_prompt = (
-            "Generate a realistic but completely fictional health insurance denial scenario. "
-            "Provide the following in a structured format:\n"
-            "Procedure: [a medical procedure name]\n"
-            "Diagnosis: [a medical diagnosis]\n"
-            "Insurance Company: [a fictional insurance company name]\n"
-            "Denial Reason: [1-2 sentence denial reason]\n\n"
-            "Make it varied and realistic. Use common medical procedures and diagnoses."
+            "We are building a system to help patients appeal health insurance denials. "
+            "To improve our model selection techniques, we need realistic synthetic denial scenarios. "
+            "Please generate a varied, realistic but completely fictional health insurance denial scenario.\n\n"
+            "Provide the following in EXACTLY this structured format (one field per line):\n"
+            "Procedure: [a specific real medical procedure name, e.g., MRI of lumbar spine, arthroscopic knee surgery]\n"
+            "Diagnosis: [a specific real medical diagnosis, e.g., chronic lower back pain, torn ACL]\n"
+            "Insurance Company: [a fictional but realistic-sounding insurance company name]\n"
+            "Denial Reason: [a 1-2 sentence realistic denial reason, such as 'not medically necessary', 'experimental treatment', 'out of network', etc.]\n\n"
+            "Be creative and varied. Use real medical terminology for procedures and diagnoses."
         )
 
         scenario_response = await scenario_model._infer_no_context(
             system_prompts=[
-                "You are a system that generates realistic but fictional health insurance scenarios for training purposes."
+                "You are a system that generates realistic but fictional health insurance scenarios. "
+                "These are used to improve model selection for a health insurance appeal assistance service. "
+                "Generate varied, realistic scenarios using real medical terminology."
             ],
             prompt=scenario_prompt,
         )
@@ -198,31 +198,30 @@ async def _generate_appeal_candidates(task: ChooserTask):
                 "denial_text_preview",
             ]
         ):
-            # Fallback if parsing failed
-            context = {
-                "denial_text_preview": (
-                    scenario_response[:200]
-                    if scenario_response
-                    else "Your claim has been denied."
-                ),
-                "procedure": "Medical Procedure",
-                "diagnosis": "Medical Condition",
-                "insurance_company": "Insurance Company",
-            }
+            # If parsing failed, try a simpler extraction or log warning
+            logger.warning(
+                f"Could not parse all fields from scenario response: {scenario_response[:200]}"
+            )
+            # Try to use whatever we got, filling in missing fields
+            context.setdefault("procedure", "Medical procedure")
+            context.setdefault("diagnosis", "Medical condition")
+            context.setdefault("insurance_company", "Insurance Company")
+            context.setdefault(
+                "denial_text_preview",
+                scenario_response[:200] if scenario_response else "Claim denied.",
+            )
 
         task.context_json = context
         await sync_to_async(task.save)()
 
     except Exception as e:
-        logger.warning(f"Error generating synthetic denial scenario: {e}")
-        # Fallback scenario
-        task.context_json = {
-            "denial_text_preview": "Your claim has been denied as not medically necessary.",
-            "procedure": "Medical Procedure",
-            "diagnosis": "Medical Condition",
-            "insurance_company": "Insurance Company",
-        }
+        logger.opt(exception=True).warning(
+            f"Error generating synthetic denial scenario: {e}"
+        )
+        # Cannot proceed without a valid scenario - mark task as disabled
+        task.status = "DISABLED"
         await sync_to_async(task.save)()
+        return
 
     # Generate candidates using different models
     models = ml_router.generate_text_backends()
@@ -233,6 +232,7 @@ async def _generate_appeal_candidates(task: ChooserTask):
     prompt = _build_appeal_prompt(task.context_json)
 
     candidate_index = 0
+    # First pass: try each model once
     for model in models[:CHOOSER_NUM_CANDIDATES]:
         try:
             response = await model._infer_no_context(
@@ -257,6 +257,40 @@ async def _generate_appeal_candidates(task: ChooserTask):
         except Exception as e:
             logger.warning(f"Error generating appeal candidate with model {model}: {e}")
 
+    # If we don't have enough candidates, retry with the same models
+    retry_count = 0
+    max_retries = CHOOSER_NUM_CANDIDATES * 2  # Limit total retries
+    while candidate_index < CHOOSER_NUM_CANDIDATES and retry_count < max_retries:
+        for model in models:
+            if candidate_index >= CHOOSER_NUM_CANDIDATES:
+                break
+            try:
+                response = await model._infer_no_context(
+                    system_prompts=[
+                        "You are an expert at writing health insurance appeal letters. "
+                        "Write a professional, compelling appeal letter based on the given context. "
+                        "Be creative and write a unique response different from previous attempts."
+                    ],
+                    prompt=prompt,
+                )
+                if response and len(response.strip()) > 100:
+                    await sync_to_async(ChooserCandidate.objects.create)(
+                        task=task,
+                        candidate_index=candidate_index,
+                        kind="appeal_letter",
+                        model_name=getattr(model, "name", str(model)),
+                        content=response.strip(),
+                        metadata={"source": "synthetic", "retry": True},
+                    )
+                    candidate_index += 1
+                    task.num_candidates_generated = candidate_index
+                    await sync_to_async(task.save)()
+            except Exception as e:
+                logger.warning(
+                    f"Error generating appeal candidate (retry) with model {model}: {e}"
+                )
+            retry_count += 1
+
 
 async def _generate_chat_candidates(task: ChooserTask):
     """Generate chat response candidates for a task using ONLY synthetic data from ML."""
@@ -265,51 +299,134 @@ async def _generate_chat_candidates(task: ChooserTask):
     # Generate synthetic chat prompt using ML
     task.chat = None  # Explicitly set to None - no real chats
 
-    # Use ML to generate a synthetic user prompt
+    # Use ML to generate a synthetic conversation with some back-and-forth
     generation_models = ml_router.generate_text_backends()
     if not generation_models:
         logger.warning("No models available for generating synthetic chat prompts")
-        # Fallback to a basic prompt
-        task.context_json = {
-            "prompt": "My insurance denied my claim. What should I do?"
-        }
+        # Cannot proceed without models - mark task as disabled
+        task.status = "DISABLED"
         await sync_to_async(task.save)()
         return
 
-    # Use first model to generate synthetic user prompt
+    # Use first model to generate synthetic conversation
     prompt_model = generation_models[0]
     try:
-        prompt_generation = (
-            "Generate a realistic question that someone might ask about health insurance denials or appeals. "
-            "The question should be 1-2 sentences, sound natural, and be about a specific concern like: "
-            "getting help with an appeal, understanding a denial, what to do after rejection, etc. "
-            "Just provide the question, nothing else."
+        # Generate a multi-turn conversation scenario
+        conversation_prompt = (
+            "We are building a health insurance assistance chatbot. "
+            "To improve our model selection techniques, we need realistic conversation scenarios.\n\n"
+            "Please generate a short realistic conversation between a user and an assistant about ONE of these topics:\n"
+            "- Health insurance claim denials and appeals\n"
+            "- Prior authorization requests and denials\n"
+            "- Medicare eligibility, coverage, or appeals\n"
+            "- Medicaid eligibility, enrollment, or coverage issues\n\n"
+            "The conversation should have 2-4 exchanges (user message, then assistant response, then user follow-up, etc.).\n"
+            "End with a user question that the assistant has NOT yet answered.\n\n"
+            "Format EXACTLY like this (use these exact labels):\n"
+            "USER: [first user message]\n"
+            "ASSISTANT: [assistant response]\n"
+            "USER: [follow-up question - this is the one we want candidate responses for]\n\n"
+            "Make the conversation natural and include specific details (procedures, conditions, timeframes, etc.)."
         )
 
-        user_prompt = await prompt_model._infer_no_context(
+        conversation_response = await prompt_model._infer_no_context(
             system_prompts=[
-                "You are a system that generates realistic user questions about health insurance for training purposes."
+                "You are a system that generates realistic chat conversations about health insurance, "
+                "Medicare, Medicaid, and prior authorizations for improving model selection. "
+                "Generate varied, natural-sounding conversations."
             ],
-            prompt=prompt_generation,
+            prompt=conversation_prompt,
         )
 
-        # Clean up the response (remove quotes, extra whitespace)
-        user_prompt = user_prompt.strip().strip('"').strip("'").strip()
+        # Parse the conversation into history and final prompt
+        history = []
+        final_user_prompt = None
 
-        # Validate it's not too long or too short
-        if len(user_prompt) < 10 or len(user_prompt) > 500:
-            user_prompt = "My insurance denied my claim. What should I do?"
+        lines = conversation_response.strip().split("\n")
+        current_role = None
+        current_content = []
 
-        task.context_json = {"prompt": user_prompt}
+        for line in lines:
+            line = line.strip()
+            if line.upper().startswith("USER:"):
+                # Save previous message if exists
+                if current_role and current_content:
+                    content = " ".join(current_content).strip()
+                    if current_role == "user" and content:
+                        # This might be the final user message or part of history
+                        if history and history[-1].get("role") == "assistant":
+                            final_user_prompt = content
+                        else:
+                            history.append({"role": "user", "content": content})
+                    elif current_role == "assistant" and content:
+                        history.append({"role": "assistant", "content": content})
+                        final_user_prompt = (
+                            None  # Reset since we got an assistant response
+                        )
+
+                current_role = "user"
+                current_content = [line[5:].strip()]  # Remove "USER:" prefix
+            elif line.upper().startswith("ASSISTANT:"):
+                # Save previous user message
+                if current_role == "user" and current_content:
+                    content = " ".join(current_content).strip()
+                    if content:
+                        history.append({"role": "user", "content": content})
+
+                current_role = "assistant"
+                current_content = [line[10:].strip()]  # Remove "ASSISTANT:" prefix
+            elif current_role and line:
+                current_content.append(line)
+
+        # Handle the last message
+        if current_role and current_content:
+            content = " ".join(current_content).strip()
+            if current_role == "user" and content:
+                final_user_prompt = content
+            elif current_role == "assistant" and content:
+                history.append({"role": "assistant", "content": content})
+
+        # Validate we have a usable conversation
+        if not final_user_prompt or len(final_user_prompt) < 10:
+            # Fallback: try generating a simple single question
+            logger.warning(
+                "Could not parse conversation, falling back to single question"
+            )
+            simple_prompt = (
+                "Generate a realistic 1-2 sentence question someone might ask about one of:\n"
+                "- Appealing a health insurance denial\n"
+                "- Prior authorization problems\n"
+                "- Medicare or Medicaid eligibility\n"
+                "Just the question, nothing else."
+            )
+            final_user_prompt = await prompt_model._infer_no_context(
+                system_prompts=[
+                    "Generate a natural user question about health insurance."
+                ],
+                prompt=simple_prompt,
+            )
+            final_user_prompt = final_user_prompt.strip().strip('"').strip("'").strip()
+            history = []
+
+        if len(final_user_prompt) < 10 or len(final_user_prompt) > 1000:
+            task.status = "DISABLED"
+            await sync_to_async(task.save)()
+            return
+
+        task.context_json = {
+            "prompt": final_user_prompt,
+            "history": history,
+        }
         await sync_to_async(task.save)()
 
     except Exception as e:
-        logger.warning(f"Error generating synthetic chat prompt: {e}")
-        # Fallback prompt
-        task.context_json = {
-            "prompt": "My insurance denied my claim. What should I do?"
-        }
+        logger.opt(exception=True).warning(
+            f"Error generating synthetic chat prompt: {e}"
+        )
+        # Cannot proceed without a valid prompt - mark task as disabled
+        task.status = "DISABLED"
         await sync_to_async(task.save)()
+        return
 
     # Generate candidates using different models
     models = ml_router.get_chat_backends()
@@ -317,13 +434,17 @@ async def _generate_chat_candidates(task: ChooserTask):
         logger.warning("No models available for chat candidate generation")
         return
 
+    # Extract history for the chat models
+    chat_history = task.context_json.get("history", [])
+    user_prompt = task.context_json.get("prompt", "")
+
     candidate_index = 0
     for model in models[:CHOOSER_NUM_CANDIDATES]:
         try:
             response, _ = await model.generate_chat_response(
                 current_message=user_prompt,
                 previous_context_summary=None,
-                history=[],
+                history=chat_history,
                 is_professional=True,
                 is_logged_in=True,
             )
@@ -334,13 +455,53 @@ async def _generate_chat_candidates(task: ChooserTask):
                     kind="chat_response",
                     model_name=getattr(model, "name", str(model)),
                     content=response.strip(),
-                    metadata={"source": "synthetic"},
+                    metadata={
+                        "source": "synthetic",
+                        "has_history": len(chat_history) > 0,
+                    },
                 )
                 candidate_index += 1
                 task.num_candidates_generated = candidate_index
                 await sync_to_async(task.save)()
         except Exception as e:
             logger.warning(f"Error generating chat candidate with model {model}: {e}")
+
+    # If we don't have enough candidates, retry with the same models
+    retry_count = 0
+    max_retries = CHOOSER_NUM_CANDIDATES * 2  # Limit total retries
+    while candidate_index < CHOOSER_NUM_CANDIDATES and retry_count < max_retries:
+        for model in models:
+            if candidate_index >= CHOOSER_NUM_CANDIDATES:
+                break
+            try:
+                response, _ = await model.generate_chat_response(
+                    current_message=user_prompt,
+                    previous_context_summary=None,
+                    history=chat_history,
+                    is_professional=True,
+                    is_logged_in=True,
+                )
+                if response and len(response.strip()) > 50:
+                    await sync_to_async(ChooserCandidate.objects.create)(
+                        task=task,
+                        candidate_index=candidate_index,
+                        kind="chat_response",
+                        model_name=getattr(model, "name", str(model)),
+                        content=response.strip(),
+                        metadata={
+                            "source": "synthetic",
+                            "has_history": len(chat_history) > 0,
+                            "retry": True,
+                        },
+                    )
+                    candidate_index += 1
+                    task.num_candidates_generated = candidate_index
+                    await sync_to_async(task.save)()
+            except Exception as e:
+                logger.warning(
+                    f"Error generating chat candidate (retry) with model {model}: {e}"
+                )
+            retry_count += 1
 
 
 def _build_appeal_prompt(context: dict) -> str:
@@ -363,6 +524,49 @@ def _build_appeal_prompt(context: dict) -> str:
     )
 
     return "\n".join(parts)
+
+
+async def prefill_if_needed(min_ready: int = 1):
+    """
+    Check if there are enough READY tasks and trigger generation if not.
+    This is a lightweight check intended to be called on page load.
+
+    Args:
+        min_ready: Minimum number of ready tasks required for each type.
+    """
+    from asgiref.sync import sync_to_async
+
+    for task_type in ["appeal", "chat"]:
+        ready_count = await _count_ready_tasks(task_type)
+        if ready_count < min_ready:
+            logger.info(
+                f"Chooser {task_type} tasks below minimum ({ready_count} < {min_ready}). "
+                f"Triggering generation of 1 task."
+            )
+            # Fire and forget - don't wait for completion
+            await fire_and_forget_in_new_threadpool(_generate_single_task(task_type))
+
+
+def trigger_prefill_async():
+    """
+    Trigger async pre-fill of chooser tasks.
+    Safe to call from sync context - fires and forgets in a background thread.
+    """
+    import threading
+
+    def run_prefill():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(prefill_if_needed(min_ready=1))
+        except Exception as e:
+            logger.opt(exception=True).warning(f"Error in prefill task: {e}")
+        finally:
+            loop.close()
+
+    thread = threading.Thread(target=run_prefill)
+    thread.daemon = True
+    thread.start()
 
 
 # Utility function to manually trigger task generation (for testing/admin purposes)
