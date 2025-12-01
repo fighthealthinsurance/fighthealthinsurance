@@ -563,9 +563,9 @@ def trigger_prefill_async():
         finally:
             loop.close()
 
-        thread = threading.Thread(target=run_prefill)
-        thread.daemon = True
-        thread.start()
+    thread = threading.Thread(target=run_prefill)
+    thread.daemon = True
+    thread.start()
 
 
 # Utility function to manually trigger task generation (for testing/admin purposes)
