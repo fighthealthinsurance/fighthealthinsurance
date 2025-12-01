@@ -1186,23 +1186,6 @@ class ChooserTask(ExportModelOperationsMixin("ChooserTask"), models.Model):  # t
     task_type = models.CharField(max_length=20, choices=TASK_TYPE_CHOICES)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="QUEUED")
 
-    # Context fields - can be FK to denial/chat OR normalized JSON
-    # For appeals, we can link to a denial for context
-    denial = models.ForeignKey(
-        Denial,
-        null=True,
-        blank=True,
-        on_delete=models.SET_NULL,
-        related_name="chooser_tasks",
-    )
-    # For chat, we can link to an ongoing chat session
-    chat = models.ForeignKey(
-        OngoingChat,
-        null=True,
-        blank=True,
-        on_delete=models.SET_NULL,
-        related_name="chooser_tasks",
-    )
     # Normalized JSON context for flexibility (contains denial summary or chat prompt)
     context_json = models.JSONField(null=True, blank=True)
 

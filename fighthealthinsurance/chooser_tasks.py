@@ -16,9 +16,7 @@ from loguru import logger
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.models import (
     ChooserCandidate,
-    ChooserTask,
-    Denial,
-    OngoingChat,
+    ChooserTask
 )
 from fighthealthinsurance.utils import fire_and_forget_in_new_threadpool
 
@@ -135,9 +133,6 @@ async def _generate_single_task(task_type: str):
 async def _generate_appeal_candidates(task: ChooserTask):
     """Generate appeal letter candidates for a task using ONLY synthetic data from ML."""
     from asgiref.sync import sync_to_async
-
-    # Generate synthetic denial scenario using ML
-    task.denial = None  # Explicitly set to None - no real denials
 
     # Use ML to generate a synthetic denial scenario
     generation_models = ml_router.generate_text_backends()
@@ -297,7 +292,6 @@ async def _generate_chat_candidates(task: ChooserTask):
     from asgiref.sync import sync_to_async
 
     # Generate synthetic chat prompt using ML
-    task.chat = None  # Explicitly set to None - no real chats
 
     # Use ML to generate a synthetic conversation with some back-and-forth
     generation_models = ml_router.generate_text_backends()
