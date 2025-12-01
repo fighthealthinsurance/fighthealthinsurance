@@ -1,0 +1,8 @@
+{
+  "testUser": {
+    "firstName": "Test",
+    "lastName": "User",
+    "email": "test@example.com"
+  },
+  "denialText": "Dear Test User;\nYour claim for Truvada has been denied as not medically necessary.\n\nSincerely,\nTest-Insurance-Corp"
+}

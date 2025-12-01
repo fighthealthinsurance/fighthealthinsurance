@@ -1,0 +1,19 @@
+{
+  "name": "fighthealthinsurance-cypress",
+  "version": "1.0.0",
+  "description": "Cypress end-to-end tests for Fight Health Insurance",
+  "private": true,
+  "scripts": {
+    "cy:open": "cypress open",
+    "cy:run": "cypress run",
+    "cy:run:headed": "cypress run --headed",
+    "test:e2e": "start-server-and-test 'python manage.py runserver 127.0.0.1:8000' http://127.0.0.1:8000 'cypress run'"
+  },
+  "devDependencies": {
+    "cypress": "^13.17.0",
+    "start-server-and-test": "^2.0.10"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
