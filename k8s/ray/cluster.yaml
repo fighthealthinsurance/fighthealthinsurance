@@ -37,8 +37,6 @@ spec:
             volumeMounts:
               - mountPath: /tmp/ray
                 name: log-volume
-              - name: new-uploads-longhorn-backup3
-                mountPath: /external_data
               - name: ssh-privatekey
                 readOnly: true
                 # container will see /root/.ssh/id_rsa as usual:
@@ -46,9 +44,6 @@ spec:
         volumes:
         - emptyDir: {}
           name: log-volume
-        - name: new-uploads-longhorn-backup3
-          persistentVolumeClaim:
-            claimName: new-uploads-longhorn-backup3
         - name: ssh-privatekey
           secret:
             secretName: ssh-privatekey
@@ -85,8 +80,6 @@ spec:
             volumeMounts:
             - mountPath: /tmp/ray
               name: log-volume
-            - name: new-uploads-longhorn-backup3
-              mountPath: /external_data
             - name: ssh-privatekey
               readOnly: true
               # container will see /root/.ssh/id_rsa as usual:
@@ -94,9 +87,6 @@ spec:
         volumes:
         - emptyDir: {}
           name: log-volume
-        - name: new-uploads-longhorn-backup3
-          persistentVolumeClaim:
-            claimName: new-uploads-longhorn-backup3
         - name: ssh-privatekey
           secret:
             secretName: ssh-privatekey
