@@ -1,51 +1,59 @@
 {% extends 'base.html' %}
 {% block title %}
-Some additional questions
+Additional Resources & Questions
 {% endblock title %}
 {% load compress %}
 {% load static %}
 {% block content %}
 
 <div class="generic-main-content">
-  <p>Thank you for your submission!<br>
-    Let's now update your denial with your feedback & check for additional resources.<br>
-    There are some possible next steps:<br>
-  </p>
-<table class="outside-help-options-table">
-  <tr>
-    <td><b>Your Options:</b></td>
-    <td><b>Next Steps:</b></td>
+  <!-- Progress indicator -->
+  {% include 'partials/flow_progress.html' with current_step=current_step|default:6 %}
+
+  <div style="background:#e3f2fd; padding:1rem; border-radius:4px; margin-bottom:1.5rem; border-left:4px solid #2196f3;">
+    <h4 style="margin:0 0 0.5rem 0; color:#1565c0;">Before you generate your appeal...</h4>
+    <p style="margin:0;">Here are some resources that might help with your specific situation.</p>
+  </div>
+
+<table class="outside-help-options-table" style="width:100%; border-collapse:collapse; margin-bottom:1.5rem;">
+  <tr style="background:#f5f5f5;">
+    <th style="padding:0.75rem; text-align:left; border-bottom:2px solid #ddd;">Option</th>
+    <th style="padding:0.75rem; text-align:left; border-bottom:2px solid #ddd;">How to do it</th>
   </tr>
   <tr>
-    <td>
-	    One option is to request all of the records associated with your denial. This can be very useful for complex cases.
+    <td style="padding:0.75rem; border-bottom:1px solid #eee;">
+	    Request all records associated with your denial (useful for complex cases)
     </td>
-    <td>
-      The folks at propublica have a <a href="https://www.propublica.org/article/find-out-why-health-insurance-claim-denied">guide</a> on how to request your file associated with a claim
+    <td style="padding:0.75rem; border-bottom:1px solid #eee;">
+      See ProPublica's <a href="https://www.propublica.org/article/find-out-why-health-insurance-claim-denied" target="_blank" rel="noopener">guide on requesting your claim file</a>
     </td>
   </tr>
   {% for d in outside_help_details %}
   {% autoescape off %}
   <tr>
-    <td>{{d.0}}</td>
-    <td>{{d.1}}</td>
+    <td style="padding:0.75rem; border-bottom:1px solid #eee;">{{d.0}}</td>
+    <td style="padding:0.75rem; border-bottom:1px solid #eee;">{{d.1}}</td>
   </tr>
   {% endautoescape %}
   {% endfor %}
-  <tr>
-    <td>
-      Submit a health insurance appeal
+  <tr style="background:#f9fbe7;">
+    <td style="padding:0.75rem; font-weight:bold;">
+      Generate a health insurance appeal letter
     </td>
-    <td>
-      Fill out the form bellow :)
+    <td style="padding:0.75rem;">
+      Fill out the form below and click "Generate Appeal"
     </td>
   </tr>
 </table>
-<br>
+
 {% if combined %}
-We have a few more questions for you to help us generate the appeal.
+<div style="background:#fff8e1; padding:1rem; border-radius:4px; margin-bottom:1rem; border-left:4px solid #ffc107;">
+  <p style="margin:0;"><strong>A few more questions</strong> to help us create a better appeal for your situation:</p>
+</div>
 {% else %}
-Press the button bellow to see what we can come up with for an appeal:
+<div style="background:#e8f5e9; padding:1rem; border-radius:4px; margin-bottom:1rem; border-left:4px solid #4caf50;">
+  <p style="margin:0;"><strong>Ready to generate!</strong> Click the button below to create your personalized appeal letter.</p>
+</div>
 {% endif %}
 <form action="{% url 'generate_appeal' %}" method="post">
   {% csrf_token %}
@@ -53,14 +61,18 @@ Press the button bellow to see what we can come up with for an appeal:
   <table style="width: 100%; margin: 0 auto;">
     {{ combined.as_table }}
   </table>
-  <input type="submit" text="Generate Appeal" id="submit" style="
-    background: #a5c422;
-    text-align: center;
-    color:#ffffff !important;
-    border: none;
-    border-radius: 3px;
-    padding: 10px 20px;
-    font-size: 14px;">
+  <div style="margin-top:1.5rem; display:flex; justify-content:center;">
+    <input type="submit" value="Generate My Appeal" id="submit" style="
+      background: #a5c422;
+      text-align: center;
+      color:#ffffff !important;
+      border: none;
+      border-radius: 3px;
+      padding: 12px 30px;
+      font-size: 16px;
+      cursor: pointer;
+      font-weight: bold;">
+  </div>
   </form>
 </div>
 {% endblock content %}

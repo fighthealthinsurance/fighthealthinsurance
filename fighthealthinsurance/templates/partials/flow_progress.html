@@ -1,0 +1,179 @@
+<!-- Progress indicator for the appeal flow -->
+<!-- Include with: {% include 'partials/flow_progress.html' with current_step=1 %} -->
+<!-- Steps: 1=Upload, 2=Health History, 3=Plan Docs, 4=Processing, 5=Review, 6=Questions, 7=Generate, 8=Send -->
+
+<style>
+.flow-progress {
+    margin: 1.5rem 0 2rem 0;
+    padding: 0 1rem;
+}
+
+.flow-progress-steps {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    position: relative;
+    max-width: 800px;
+    margin: 0 auto;
+}
+
+.flow-progress-step {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    position: relative;
+    z-index: 1;
+    flex: 1;
+}
+
+.flow-progress-step:first-child {
+    align-items: flex-start;
+}
+
+.flow-progress-step:last-child {
+    align-items: flex-end;
+}
+
+.flow-progress-circle {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: #e0e0e0;
+    border: 3px solid #e0e0e0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    font-weight: bold;
+    color: #666;
+    transition: all 0.3s ease;
+}
+
+.flow-progress-step.completed .flow-progress-circle {
+    background: #a5c422;
+    border-color: #a5c422;
+    color: white;
+}
+
+.flow-progress-step.active .flow-progress-circle {
+    background: white;
+    border-color: #a5c422;
+    color: #a5c422;
+    box-shadow: 0 0 0 4px rgba(165, 196, 34, 0.2);
+}
+
+.flow-progress-label {
+    font-size: 11px;
+    color: #888;
+    margin-top: 6px;
+    text-align: center;
+    max-width: 70px;
+}
+
+.flow-progress-step.completed .flow-progress-label,
+.flow-progress-step.active .flow-progress-label {
+    color: #333;
+    font-weight: 500;
+}
+
+/* Progress line */
+.flow-progress-line {
+    position: absolute;
+    top: 16px;
+    left: 16px;
+    right: 16px;
+    height: 3px;
+    background: #e0e0e0;
+    z-index: 0;
+}
+
+.flow-progress-line-fill {
+    height: 100%;
+    background: #a5c422;
+    transition: width 0.3s ease;
+}
+
+/* Mobile responsive */
+@media (max-width: 600px) {
+    .flow-progress-label {
+        display: none;
+    }
+    .flow-progress-circle {
+        width: 28px;
+        height: 28px;
+        font-size: 12px;
+    }
+    .flow-progress-line {
+        top: 14px;
+    }
+}
+
+/* Checkmark for completed steps */
+.flow-progress-step.completed .flow-progress-circle::after {
+    content: "\2713";
+}
+</style>
+
+<div class="flow-progress" role="navigation" aria-label="Appeal progress">
+    <div class="flow-progress-steps">
+        <div class="flow-progress-line">
+            <div class="flow-progress-line-fill" style="width: {% widthratio current_step 8 100 %}%;"></div>
+        </div>
+
+        <div class="flow-progress-step {% if current_step > 1 %}completed{% elif current_step == 1 %}active{% endif %}">
+            <div class="flow-progress-circle" aria-current="{% if current_step == 1 %}step{% endif %}">
+                {% if current_step > 1 %}{% else %}1{% endif %}
+            </div>
+            <div class="flow-progress-label">Upload</div>
+        </div>
+
+        <div class="flow-progress-step {% if current_step > 2 %}completed{% elif current_step == 2 %}active{% endif %}">
+            <div class="flow-progress-circle" aria-current="{% if current_step == 2 %}step{% endif %}">
+                {% if current_step > 2 %}{% else %}2{% endif %}
+            </div>
+            <div class="flow-progress-label">History</div>
+        </div>
+
+        <div class="flow-progress-step {% if current_step > 3 %}completed{% elif current_step == 3 %}active{% endif %}">
+            <div class="flow-progress-circle" aria-current="{% if current_step == 3 %}step{% endif %}">
+                {% if current_step > 3 %}{% else %}3{% endif %}
+            </div>
+            <div class="flow-progress-label">Documents</div>
+        </div>
+
+        <div class="flow-progress-step {% if current_step > 4 %}completed{% elif current_step == 4 %}active{% endif %}">
+            <div class="flow-progress-circle" aria-current="{% if current_step == 4 %}step{% endif %}">
+                {% if current_step > 4 %}{% else %}4{% endif %}
+            </div>
+            <div class="flow-progress-label">Processing</div>
+        </div>
+
+        <div class="flow-progress-step {% if current_step > 5 %}completed{% elif current_step == 5 %}active{% endif %}">
+            <div class="flow-progress-circle" aria-current="{% if current_step == 5 %}step{% endif %}">
+                {% if current_step > 5 %}{% else %}5{% endif %}
+            </div>
+            <div class="flow-progress-label">Review</div>
+        </div>
+
+        <div class="flow-progress-step {% if current_step > 6 %}completed{% elif current_step == 6 %}active{% endif %}">
+            <div class="flow-progress-circle" aria-current="{% if current_step == 6 %}step{% endif %}">
+                {% if current_step > 6 %}{% else %}6{% endif %}
+            </div>
+            <div class="flow-progress-label">Questions</div>
+        </div>
+
+        <div class="flow-progress-step {% if current_step > 7 %}completed{% elif current_step == 7 %}active{% endif %}">
+            <div class="flow-progress-circle" aria-current="{% if current_step == 7 %}step{% endif %}">
+                {% if current_step > 7 %}{% else %}7{% endif %}
+            </div>
+            <div class="flow-progress-label">Generate</div>
+        </div>
+
+        <div class="flow-progress-step {% if current_step == 8 %}active{% endif %}">
+            <div class="flow-progress-circle" aria-current="{% if current_step == 8 %}step{% endif %}">
+                8
+            </div>
+            <div class="flow-progress-label">Send</div>
+        </div>
+    </div>
+</div>

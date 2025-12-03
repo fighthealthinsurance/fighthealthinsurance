@@ -10,11 +10,15 @@ Fight Your Health Insurance Denial: Choose an Appeal
 
 {% block content %}
 
+<div class="container" style="padding-top:1rem;">
+  <!-- Progress indicator -->
+  {% include 'partials/flow_progress.html' with current_step=current_step|default:7 %}
+</div>
 
-<!-- This code is partial written by AI -->
 <!-- Loading Spinner -->
-<div id="loading-text">
-  <h1>Loading appeals (please wait) -- should go away when all appeals are generated</h1>
+<div id="loading-text" style="text-align:center; padding:1rem;">
+  <h2 style="color:#333;">Generating Your Appeals</h2>
+  <p style="color:#666;">Please wait while we create personalized appeal options for you...</p>
 </div>
 <div id="loading-spinner">
 </div>

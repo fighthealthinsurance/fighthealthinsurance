@@ -2,7 +2,7 @@
 {% load compress %}
 {% load static %}
 {% block title %}
-Optional: Wait for entity extraction to finish.
+Analyzing Your Denial
 {% endblock title %}
 
 {% block pre-roll %}
@@ -10,9 +10,33 @@ Optional: Wait for entity extraction to finish.
 {% endblock pre-roll %}
 
 {% block formexplanation %}
-<div class="waiting-msg" id="waiting-msg">
-    We are currently using machine learning to some initial processing on your documents. You can skip forward without waiting for it to finish _OR_ wait a minute for this message to go away.
+<div class="waiting-msg" id="waiting-msg" style="background:#fff3cd; padding:1.5rem; border-radius:8px; margin-bottom:1.5rem; border-left:4px solid #ffc107;">
+    <h4 style="margin:0 0 1rem 0; display:flex; align-items:center; gap:0.5rem;">
+        <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true" style="width:20px; height:20px; border-width:2px;"></span>
+        Analyzing your denial...
+    </h4>
+    <p style="margin:0 0 1rem 0;">Our AI is reading through your denial to extract key information like:</p>
+    <ul style="margin:0 0 1rem 0; padding-left:1.5rem;">
+        <li>Insurance company and plan details</li>
+        <li>Procedure and diagnosis codes</li>
+        <li>Denial type and reasons</li>
+    </ul>
+    <p style="margin:0; font-size:0.9rem; color:#666;">
+        <strong>This usually takes less than a minute.</strong> You can skip ahead if you prefer to enter this information manually.
+    </p>
 </div>
+<style>
+.spinner-border {
+    display: inline-block;
+    border: 2px solid currentColor;
+    border-right-color: transparent;
+    border-radius: 50%;
+    animation: spinner-border .75s linear infinite;
+}
+@keyframes spinner-border {
+    to { transform: rotate(360deg); }
+}
+</style>
 <script>
   // Call the typescript on load
   document.addEventListener('DOMContentLoaded', () => {

@@ -529,6 +529,7 @@ class FindNextSteps(View):
                     "outside_help_details": next_step_info.outside_help_details,
                     "combined": next_step_info.combined_form,
                     "denial_form": denial_ref_form,
+                    "current_step": 6,
                 },
             )
 
@@ -592,6 +593,7 @@ class ChooseAppeal(View):
                 "denial_id": form.cleaned_data["denial_id"],
                 "appeal_info_extract": appeal_info_extracted,
                 "fax_form": fax_form,
+                "current_step": 8,
             },
         )
 
@@ -648,6 +650,7 @@ class GenerateAppeal(View):
                 "user_email": form.cleaned_data["email"],
                 "denial_id": form.cleaned_data["denial_id"],
                 "semi_sekret": form.cleaned_data["semi_sekret"],
+                "current_step": 7,
             },
         )
 
@@ -772,6 +775,8 @@ class InitialProcessView(generic.FormView):
             context={
                 "form": form,
                 "next": reverse("hh"),
+                "current_step": 2,
+                "back_url": reverse("scan"),
             },
         )
 
@@ -828,6 +833,7 @@ class EntityExtractView(SessionRequiredMixin, generic.FormView):
             context={
                 "post_infered_form": form,
                 "upload_more": True,
+                "current_step": 5,
             },
         )
 
@@ -855,6 +861,9 @@ class PlanDocumentsView(SessionRequiredMixin, generic.FormView):
             context={
                 "form": form,
                 "next": reverse("dvc"),
+                "current_step": 3,
+                # Note: back_url not provided here as going back would lose health history data
+                # The browser's back button can still be used if needed
             },
         )
 
@@ -881,6 +890,7 @@ class DenialCollectedView(SessionRequiredMixin, generic.FormView):
             context={
                 "form": new_form,
                 "next": reverse("eev"),
+                "current_step": 4,
                 "form_context": {
                     "denial_id": form.cleaned_data["denial_id"],
                     "email": form.cleaned_data["email"],
