@@ -729,18 +729,25 @@ class InitialProcessView(generic.FormView):
         if cleaned_data.get("subscribe"):
             email = cleaned_data.get("email")
             # Get name from the POST data (it's not stored in cleaned_data for privacy)
-            # Note: we need to update the frontend for this. See https://github.com/fighthealthinsurance/fighthealthinsurance/issues/516
             fname = self.request.POST.get("fname", "")
             lname = self.request.POST.get("lname", "")
             name = f"{fname} {lname}".strip()
+            defaults = {"comments": "From appeal flow"}
+            if len(name) > 2:
+                defaults["name"] = name
             # Use get_or_create to avoid duplicate subscriptions
-            models.MailingListSubscriber.objects.get_or_create(
-                email=email,
-                defaults={
-                    "name": name,
-                    "comments": "From appeal flow",
-                },
-            )
+            try:
+                models.MailingListSubscriber.objects.get_or_create(
+                    email=email,
+                    defaults=defaults,
+                )
+            except Exception as e:
+                logger.debug(f"Error subscribing {email} to mailing list: {e}")
+                try:
+                    models.MailingListSubscriber.objects.filter(email=email).update(
+                        **defaults)
+                except Exception as e2:
+                    logger.warning(f"Error updating subscriber? {email}!?!")
 
         denial_response = common_view_logic.DenialCreatorHelper.create_or_update_denial(
             **cleaned_data,

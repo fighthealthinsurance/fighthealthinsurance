@@ -1,0 +1,103 @@
+apiVersion: ray.io/v1
+kind: RayCluster
+metadata:
+  generation: 2
+  labels:
+    app.kubernetes.io/instance: raycluster
+  name: raycluster-kuberay
+  namespace: totallylegitco
+spec:
+  headGroupSpec:
+    rayStartParams:
+      dashboard-host: 0.0.0.0
+    serviceType: ClusterIP
+    template:
+      metadata:
+        annotations: {}
+        labels:
+      spec:
+        affinity: {}
+        containers:
+          - image: ${RAY_BASE}:${FHI_VERSION}
+            env:
+              - name: RAY_gcs_server_request_timeout_seconds
+                value: "20"
+            envFrom:
+              - secretRef:
+                  name: fight-health-insurance-secret
+            imagePullPolicy: IfNotPresent
+            name: ray-head
+            resources:
+              limits:
+                cpu: "1"
+                memory: 13G
+              requests:
+                cpu: "1"
+                memory: 12G
+            volumeMounts:
+              - mountPath: /tmp/ray
+                name: log-volume
+              - name: new-uploads-longhorn-backup3
+                mountPath: /external_data
+              - name: ssh-privatekey
+                readOnly: true
+                # container will see /root/.ssh/id_rsa as usual:
+                mountPath: "/home/ray/.ssh"
+        volumes:
+        - emptyDir: {}
+          name: log-volume
+        - name: new-uploads-longhorn-backup3
+          persistentVolumeClaim:
+            claimName: new-uploads-longhorn-backup3
+        - name: ssh-privatekey
+          secret:
+            secretName: ssh-privatekey
+            defaultMode: 0755
+  workerGroupSpecs:
+  - groupName: workergroup
+    maxReplicas: 4
+    minReplicas: 1
+    rayStartParams: {}
+    replicas: 1
+    template:
+      metadata:
+        annotations: {}
+        labels:
+          app.kubernetes.io/instance: raycluster
+      spec:
+        containers:
+          - image: ${RAY_BASE}:${FHI_VERSION}
+            env:
+              - name: RAY_gcs_server_request_timeout_seconds
+                value: "20"
+            envFrom:
+              - secretRef:
+                  name: fight-health-insurance-secret
+            imagePullPolicy: IfNotPresent
+            name: ray-worker
+            resources:
+              limits:
+                cpu: "1"
+                memory: 13G
+              requests:
+                cpu: "1"
+                memory: 12G
+            volumeMounts:
+            - mountPath: /tmp/ray
+              name: log-volume
+            - name: new-uploads-longhorn-backup3
+              mountPath: /external_data
+            - name: ssh-privatekey
+              readOnly: true
+              # container will see /root/.ssh/id_rsa as usual:
+              mountPath: "/home/ray/.ssh"
+        volumes:
+        - emptyDir: {}
+          name: log-volume
+        - name: new-uploads-longhorn-backup3
+          persistentVolumeClaim:
+            claimName: new-uploads-longhorn-backup3
+        - name: ssh-privatekey
+          secret:
+            secretName: ssh-privatekey
+            defaultMode: 0755
