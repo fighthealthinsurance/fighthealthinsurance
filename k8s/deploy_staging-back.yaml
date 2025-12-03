@@ -1,0 +1,153 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: new-uploads-longhorn-backup4
+  namespace: totallylegitco
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: longhorn
+  resources:
+    requests:
+      storage: 51Gi
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: web-migrations-staging
+  namespace: totallylegitco
+spec:
+  ttlSecondsAfterFinished: 10
+  template:
+    metadata:
+      labels:
+        group: fight-health-insurance-webbackend-batch
+        special: web-primary-pod
+    spec:
+      containers:
+        - image: ${FHI_BASE}:${FHI_VERSION}
+          name: totallylegitco
+          env:
+          - name: MIGRATIONS
+            value: "1"
+          envFrom:
+          - secretRef:
+              name: fight-health-insurance-secret
+          - secretRef:
+              name: fight-health-insurance-primary-secret
+          imagePullPolicy: Always
+      restartPolicy: OnFailure
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-staging
+  namespace: totallylegitco
+  labels:
+    app: fight-health-insurance-staging
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: fight-health-insurance
+  template:
+    metadata:
+      labels:
+        app: fight-health-insurance
+        group: fight-health-insurance-webbackend-staging
+    spec:
+      topologySpreadConstraints:
+      - maxSkew: 2
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app: fight-health-insurance
+      containers:
+        - image: ${FHI_BASE}:${FHI_VERSION}
+          name: totallylegitco
+          envFrom:
+          - secretRef:
+              name: fight-health-insurance-secret
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 80
+              name: web
+          volumeMounts:
+            - name: new-uploads-longhorn-backup4
+              mountPath: /external_data
+          livenessProbe:
+            httpGet:
+              httpHeaders:
+                - name: Host
+                  value: "staging.fighthealthinsurance.com"
+              path: /
+              port: 80
+            periodSeconds: 180
+          startupProbe:
+            httpGet:
+              httpHeaders:
+                - name: Host
+                  value: "staging.fighthealthinsurance.com"
+              path: /
+              port: 80
+            periodSeconds: 10
+            failureThreshold: 45
+      volumes:
+        - name: new-uploads-longhorn-backup4
+          persistentVolumeClaim:
+            claimName: new-uploads-longhorn-backup4
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    group: fight-health-insurance
+  name: staging-web-svc
+  namespace: totallylegitco
+spec:
+  ports:
+  - name: http
+    port: 80
+    protocol: TCP
+    targetPort: web
+  selector:
+    group: fight-health-insurance-webbackend-staging
+  sessionAffinity: None
+  type: ClusterIP
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: fight-health-insurance-staging-ingress
+  namespace: totallylegitco
+  annotations:
+    nginx.org/websocket-services: staging-web-svc
+    cert-manager.io/cluster-issuer: letsencrypt
+    cert-manager.io/issue-temporary-certificate: "true"
+    acme.cert-manager.io/http01-edit-in-place: "true"
+    cert-manager.io/renew-before: 360h
+    nginx.ingress.kubernetes.io/affinity: "cookie"
+    nginx.ingress.kubernetes.io/session-cookie-name: "route"
+    nginx.ingress.kubernetes.io/session-cookie-max-age: "30000"
+    nginx.ingress.kubernetes.io/proxy-body-size: 80m
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+      - staging.fighthealthinsurance.com
+    secretName: combined-tls-secret-staging
+  rules:
+    - host: staging.fighthealthinsurance.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name:  staging-web-svc
+                port:
+                  number: 80

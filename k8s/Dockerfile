@@ -50,6 +50,7 @@ RUN ./manage.py generate_blog_metadata
 RUN sudo -u www-data HOME=$(pwd) python initial.py
 RUN mkdir -p ~www-data
 RUN chown -R www-data ~www-data
+RUN chown -R www-data /external_data
 # RUN chown -R www-data:www-data /opt/fighthealthinsurance
 # start server
 EXPOSE 80

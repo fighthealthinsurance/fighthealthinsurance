@@ -100,7 +100,7 @@ class MailingListSubscriber(models.Model):
     signup_date = models.DateField(auto_now_add=True)
     phone = models.CharField(max_length=300, default="", blank=True)
     unsubscribe_token = models.CharField(
-        max_length=100, default=sekret_gen, unique=True
+        max_length=100, default=sekret_gen, unique=False
     )
 
     def __str__(self):
