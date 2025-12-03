@@ -47,6 +47,102 @@ const THEME = {
   },
 } as const;
 
+// PWYW Component for the chat interface
+const PWYWBanner: React.FC<{ onDismiss: () => void }> = ({ onDismiss }) => {
+  const [selectedAmount, setSelectedAmount] = useState<string>("0");
+  const [customAmount, setCustomAmount] = useState<string>("");
+
+  const handleSupport = () => {
+    const amount = selectedAmount === "custom" ? customAmount : selectedAmount;
+    if (amount && parseInt(amount) > 0) {
+      // Open Stripe payment link in new tab
+      window.open(`https://buy.stripe.com/5kA03r2ZwbgebyE7ss`, '_blank', 'noopener,noreferrer');
+    }
+    onDismiss();
+  };
+
+  return (
+    <Box
+      style={{
+        background: 'linear-gradient(135deg, #f8f9fa 0%, #e8f5e9 100%)',
+        borderRadius: 12,
+        padding: '16px',
+        margin: '12px 0',
+        border: '1px solid #c8e6c9',
+      }}
+    >
+      <Flex justify="space-between" align="flex-start" mb="sm">
+        <MantineText fw={600} size="sm" c="dark">
+          Help us help others
+        </MantineText>
+        <ActionIcon
+          size="xs"
+          variant="subtle"
+          onClick={onDismiss}
+          aria-label="Dismiss"
+          style={{ color: '#666' }}
+        >
+          ✕
+        </ActionIcon>
+      </Flex>
+      <MantineText size="xs" c="dimmed" mb="sm">
+        Fight Health Insurance is free for everyone. If we've helped you, consider supporting our work so we can help more people appeal their denials.
+      </MantineText>
+      <Flex gap="xs" wrap="wrap" mb="sm">
+        {["0", "10", "25"].map((amount) => (
+          <Button
+            key={amount}
+            size="xs"
+            variant={selectedAmount === amount ? "filled" : "outline"}
+            onClick={() => setSelectedAmount(amount)}
+            style={{
+              borderColor: selectedAmount === amount ? '#a5c422' : '#ccc',
+              background: selectedAmount === amount ? '#a5c422' : 'transparent',
+              color: selectedAmount === amount ? '#fff' : '#333',
+            }}
+          >
+            ${amount}{amount === "0" ? " (free)" : ""}
+          </Button>
+        ))}
+        <input
+          type="number"
+          min="1"
+          placeholder="Custom"
+          value={customAmount}
+          onChange={(e) => {
+            setCustomAmount(e.target.value);
+            setSelectedAmount("custom");
+          }}
+          onFocus={() => setSelectedAmount("custom")}
+          style={{
+            width: 70,
+            padding: '4px 8px',
+            borderRadius: 4,
+            border: selectedAmount === "custom" ? '2px solid #a5c422' : '1px solid #ccc',
+            fontSize: 12,
+          }}
+        />
+      </Flex>
+      <Button
+        size="xs"
+        fullWidth
+        onClick={handleSupport}
+        style={{
+          background: '#a5c422',
+          color: '#fff',
+        }}
+      >
+        {selectedAmount === "0" || (selectedAmount === "custom" && !customAmount)
+          ? "Continue for free"
+          : `Support with $${selectedAmount === "custom" ? customAmount : selectedAmount}`}
+      </Button>
+      <MantineText size="xs" c="dimmed" mt="xs" ta="center">
+        No payment required to use the chat. $0 is always okay!
+      </MantineText>
+    </Box>
+  );
+};
+
 // Define types for our chat messages
 interface ChatMessage {
   role: "user" | "assistant";
@@ -63,6 +159,8 @@ interface ChatState {
   chatId: string | null;
   error: string | null;
   isProcessingFile: boolean;
+  showPWYW: boolean;
+  messageCount: number;
 }
 
 interface UserInfo {
@@ -261,7 +359,26 @@ const ChatInterface: React.FC = () => {
     chatId: localStorage.getItem("fhi_chat_id"),
     error: null,
     isProcessingFile: false,
+    showPWYW: false,
+    messageCount: 0,
   });
+
+  // Check if user has dismissed PWYW before
+  const hasDismissedPWYW = localStorage.getItem("fhi_pwyw_dismissed") === "true";
+
+  // Show PWYW after a few exchanges (to not be intrusive)
+  useEffect(() => {
+    const assistantMessages = state.messages.filter(m => m.role === "assistant").length;
+    // Show PWYW after 3 assistant messages, if not dismissed before
+    if (assistantMessages >= 3 && !hasDismissedPWYW && !state.showPWYW) {
+      setState(prev => ({ ...prev, showPWYW: true }));
+    }
+  }, [state.messages, hasDismissedPWYW, state.showPWYW]);
+
+  const dismissPWYW = () => {
+    localStorage.setItem("fhi_pwyw_dismissed", "true");
+    setState(prev => ({ ...prev, showPWYW: false }));
+  };
 
   const wsRef = useRef<WebSocket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -759,6 +876,10 @@ const ChatInterface: React.FC = () => {
                 </Box>
               </Paper>
             )}
+
+            {/* PWYW Banner - shows after some helpful exchanges */}
+            {state.showPWYW && <PWYWBanner onDismiss={dismissPWYW} />}
+
             <div ref={messagesEndRef} />
           </Box>
         </ScrollArea>
