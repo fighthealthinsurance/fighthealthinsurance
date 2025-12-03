@@ -61,8 +61,11 @@ Additional Resources & Questions
   <table style="width: 100%; margin: 0 auto;">
     {{ combined.as_table }}
   </table>
-  <div style="margin-top:1.5rem; display:flex; justify-content:center;">
-    <input type="submit" value="Generate My Appeal" id="submit" style="
+  <div style="margin-top:1.5rem; display:flex; justify-content:space-between; align-items:center;">
+    <a href="{% url 'scan' %}" class="btn btn-link" style="color:#6c757d; text-decoration:underline; font-size:0.9rem;">
+      Start over with a new denial
+    </a>
+    <input type="submit" value="Generate My Appeal &rarr;" id="submit" style="
       background: #a5c422;
       text-align: center;
       color:#ffffff !important;

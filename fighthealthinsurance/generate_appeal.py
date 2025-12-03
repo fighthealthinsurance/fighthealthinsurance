@@ -793,7 +793,15 @@ class AppealGenerator(object):
         if denial.health_history is not None:
             medical_context += denial.health_history
         prof_pov = denial.professional_to_finish
-        plan_context = denial.plan_context
+        # Combine plan_context (from forms like WPATH detection) with plan_documents_summary
+        plan_context_parts = []
+        if denial.plan_context:
+            plan_context_parts.append(denial.plan_context)
+        if denial.plan_documents_summary:
+            plan_context_parts.append(
+                f"Summary of relevant plan document sections:\n{denial.plan_documents_summary}"
+            )
+        plan_context = "\n\n".join(plan_context_parts) if plan_context_parts else None
         # Find any FHI model dynamically
         fhi_model_names = [
             name for name in ml_router.models_by_name.keys() if name.startswith("fhi-")

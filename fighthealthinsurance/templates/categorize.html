@@ -23,8 +23,11 @@ Categorize Your Denial
       {{ post_infered_form.as_table }}
     </table>
     <br>
-    <div style="display:flex; justify-content:flex-end;">
-      <input type="submit" id="submit_cat" class="cat-submit-button" value="Continue" style="
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+      <a href="{% url 'scan' %}" class="btn btn-link" style="color:#6c757d; text-decoration:underline; font-size:0.9rem;">
+        Start over with a new denial
+      </a>
+      <input type="submit" id="submit_cat" class="cat-submit-button" value="Continue &rarr;" style="
         background: #a5c422;
         text-align: center;
         color:#ffffff !important;

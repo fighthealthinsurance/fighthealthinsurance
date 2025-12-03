@@ -20,6 +20,7 @@ from typing import (
 )
 from loguru import logger
 from PyPDF2 import PdfMerger
+import pymupdf
 import ray
 import tempfile
 import os
@@ -45,6 +46,7 @@ from fighthealthinsurance.models import *
 from fighthealthinsurance.utils import interleave_iterator_for_keep_alive
 from fighthealthinsurance.ml.ml_citations_helper import MLCitationsHelper
 from fighthealthinsurance.ml.ml_appeal_questions_helper import MLAppealQuestionsHelper
+from fighthealthinsurance.ml.ml_plan_doc_helper import MLPlanDocHelper
 from fighthealthinsurance import stripe_utils
 from fhi_users.models import ProfessionalUser, UserDomain
 from fhi_users import emails as fhi_emails
@@ -1198,6 +1200,10 @@ class DenialCreatorHelper:
             named_task(cls.extract_set_plan_id(denial_id), "plan id"),
             named_task(cls.extract_set_claim_id(denial_id), "claim id"),
             named_task(cls.extract_set_date_of_service(denial_id), "date of service"),
+            named_task(
+                MLPlanDocHelper.generate_plan_documents_summary(denial_id),
+                "plan document summary",
+            ),
         ]
 
         required_awaitables: list[Coroutine[Any, Any, tuple[str, Any]]] = [
@@ -1440,50 +1446,120 @@ class DenialCreatorHelper:
         return None
 
     @classmethod
+    async def get_plan_documents_text(cls, denial_id: int) -> str:
+        """
+        Extract text from all plan documents associated with a denial.
+
+        Args:
+            denial_id: The denial ID to get plan documents for
+
+        Returns:
+            Combined text from all plan documents (PDF and text files)
+        """
+        combined_text = ""
+        try:
+            plan_docs = PlanDocuments.objects.filter(denial_id=denial_id)
+            async for doc in plan_docs:
+                try:
+                    # Try encrypted field first, fall back to unencrypted
+                    file_field = doc.plan_document_enc or doc.plan_document
+                    if not file_field:
+                        continue
+
+                    path = file_field.path
+                    if path.lower().endswith(".pdf"):
+                        try:
+                            pdf_doc = pymupdf.open(path)
+                            for page in pdf_doc:
+                                combined_text += page.get_text() + "\n"
+                            pdf_doc.close()
+                        except RuntimeError as e:
+                            logger.warning(f"Error reading PDF {path}: {e}")
+                    else:
+                        # Try to read as text file
+                        try:
+                            with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                                combined_text += f.read() + "\n"
+                        except Exception as e:
+                            logger.debug(f"Could not read {path} as text: {e}")
+                except Exception as e:
+                    logger.debug(f"Error processing plan document: {e}")
+        except Exception as e:
+            logger.opt(exception=True).debug(
+                f"Error getting plan documents for denial {denial_id}: {e}"
+            )
+        return combined_text
+
+    @classmethod
     async def extract_set_fax_number(cls, denial_id):
-        # Try and extract the appeal fax number
+        """
+        Extract fax number from denial text and plan documents.
+
+        First tries the denial letter text, then searches plan documents if
+        no fax number was found. Validates extracted fax numbers against
+        source text to avoid hallucinations.
+        """
         denial = await Denial.objects.filter(denial_id=denial_id).aget()
         appeal_fax_number = denial.appeal_fax_number
+
+        # Text sources for validation
+        denial_text = denial.denial_text or ""
+        plan_docs_text = ""
+        all_source_text = denial_text
+
+        # First try to extract from denial text
         if not appeal_fax_number:
             try:
                 appeal_fax_number = await appealGenerator.get_fax_number(
-                    denial_text=denial.denial_text
+                    denial_text=denial_text
                 )
             except Exception as e:
                 logger.opt(exception=True).warning(
-                    f"Failed to extract fax number for denial {denial_id}: {e}"
+                    f"Failed to extract fax number from denial text for {denial_id}: {e}"
                 )
 
-        # More flexible validation against hallucinations
+        # If still not found, try plan documents
+        if not appeal_fax_number:
+            try:
+                plan_docs_text = await cls.get_plan_documents_text(denial_id)
+                if plan_docs_text:
+                    all_source_text = denial_text + "\n" + plan_docs_text
+                    appeal_fax_number = await appealGenerator.get_fax_number(
+                        denial_text=plan_docs_text
+                    )
+                    if appeal_fax_number:
+                        logger.debug(
+                            f"Found fax number in plan documents for denial {denial_id}"
+                        )
+            except Exception as e:
+                logger.opt(exception=True).warning(
+                    f"Failed to extract fax number from plan docs for {denial_id}: {e}"
+                )
+
+        # Validate the extracted fax number against hallucinations
         if appeal_fax_number is not None:
-            # Extract just the digits for comparison
             fax_digits = re.sub(r"\D", "", appeal_fax_number)
 
             if len(fax_digits) < 10 or len(fax_digits) > 15:
-                # Invalid length for a phone number
                 logger.debug(
                     f"Rejected fax number {appeal_fax_number} - invalid length"
                 )
                 appeal_fax_number = None
             elif len(appeal_fax_number) > 30:
-                # String is too long to be a reasonable fax number
                 logger.debug(f"Rejected fax number {appeal_fax_number} - too long")
                 appeal_fax_number = None
             else:
-                # Check if any subsequence of digits appears in the denial text
-                # This is more flexible than exact matching
-                denial_text_digits = re.sub(r"\D", "", denial.denial_text)
-                if fax_digits[-10:] not in denial_text_digits:
-                    # Not found in text - might be hallucinated
+                # Validate against all source text (denial + plan docs)
+                all_source_digits = re.sub(r"\D", "", all_source_text)
+                if fax_digits[-10:] not in all_source_digits:
                     logger.debug(
-                        f"Rejected fax number {appeal_fax_number} - digits not found in text"
+                        f"Rejected fax number {appeal_fax_number} - digits not found in source text"
                     )
                     appeal_fax_number = None
                 else:
                     logger.debug(f"Validated fax number {appeal_fax_number}")
 
         if appeal_fax_number is not None:
-            # Use aupdate instead of fetching and saving
             await Denial.objects.filter(denial_id=denial_id).aupdate(
                 appeal_fax_number=appeal_fax_number
             )
