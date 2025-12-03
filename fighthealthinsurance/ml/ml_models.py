@@ -2033,7 +2033,7 @@ class AlphaRemoteInternal(RemoteFullOpenLike):
     def models(cls) -> List[ModelDescription]:
         model_path = os.getenv(
             "ALPHA_HEALTH_BACKEND_MODEL",
-            "/models/fhi-2025-sep-q8-vllm-compressed",
+            "/models/fhi-2025-nov-q8-vllm-compressed",
         )
         # Extract a friendly name from the model path
         model_name = model_path.split("/")[-1] if "/" in model_path else model_path
