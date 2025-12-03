@@ -1,0 +1,39 @@
+# Conda environment for Fight Health Insurance development
+# Usage:
+#   conda env create -f environment.yml
+#   conda activate fhi
+#
+# Or with micromamba/mamba:
+#   mamba env create -f environment.yml
+#   mamba activate fhi
+
+name: fhi
+
+channels:
+  - conda-forge
+  - defaults
+
+dependencies:
+  # Python version - project supports 3.10, 3.11, 3.12
+  - python>=3.10,<3.13
+
+  # System dependencies that are easier via conda than pip
+  - tesseract>=5.0
+  - cairo
+  - pango
+  - gdk-pixbuf
+  - libffi
+  - poppler  # For PDF handling
+
+  # Build tools
+  - pip
+  - setuptools
+  - wheel
+
+  # For tex/PDF generation
+  - texlive-core
+
+  # Pip dependencies from requirements.txt
+  - pip:
+      - -r requirements.txt
+      - -r requirements-dev.txt
