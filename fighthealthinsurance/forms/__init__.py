@@ -112,13 +112,34 @@ class ChooseAppealForm(DenialRefForm):
 
 
 class FaxForm(DenialRefForm):
-    name = forms.CharField(required=True, label="Your name (for the cover page)")
-    insurance_company = forms.CharField(required=True)
-    fax_phone = forms.CharField(required=True)
-    completed_appeal_text = forms.CharField(
-        widget=forms.Textarea(attrs={"class": "appeal_text"}), required=True
+    name = forms.CharField(
+        required=True,
+        label="Your full name",
+        help_text="This will appear on the fax cover page.",
+        widget=forms.TextInput(attrs={"placeholder": "e.g., Jane Smith"}),
     )
-    include_provided_health_history = forms.BooleanField(required=False)
+    insurance_company = forms.CharField(
+        required=True,
+        label="Insurance company name",
+        help_text="The company receiving this fax.",
+        widget=forms.TextInput(attrs={"placeholder": "e.g., Aetna, Blue Cross"}),
+    )
+    fax_phone = forms.CharField(
+        required=True,
+        label="Fax number for appeals",
+        help_text="Check your denial letter for the appeals fax number.",
+        widget=forms.TextInput(attrs={"placeholder": "e.g., 1-800-555-1234", "type": "tel"}),
+    )
+    completed_appeal_text = forms.CharField(
+        widget=forms.Textarea(attrs={"class": "appeal_text"}),
+        required=True,
+        label="Your appeal letter",
+    )
+    include_provided_health_history = forms.BooleanField(
+        required=False,
+        label="Include my health history in the fax",
+        help_text="If you provided health history earlier, include it with your appeal.",
+    )
     # Note: we don't have fax_pwyw etc. so we don't overload.
 
 
@@ -143,35 +164,76 @@ class BasePostInferedForm(DenialRefForm):
     denial_type = forms.ModelMultipleChoiceField(
         queryset=DenialTypes.objects.all(),
         required=False,
-        label="Denial type (if known)",
+        label="Type of denial",
+        help_text="Select all that apply. If unsure, leave blank.",
     )
     denial_type_text = forms.CharField(
         required=False,
-        label="Denial Type (text, you can type if the above categories don't match the denial type)",
+        label="Other denial type",
+        help_text="If your denial type isn't listed above, describe it here.",
+        widget=forms.TextInput(attrs={"placeholder": "e.g., Out of network, Experimental treatment"}),
     )
-    plan_id = forms.CharField(required=False)
-    claim_id = forms.CharField(required=False)
-    date_of_service = forms.CharField(required=False)
-    insurance_company = forms.CharField(required=False)
+    plan_id = forms.CharField(
+        required=False,
+        label="Plan ID / Member ID",
+        help_text="Usually found on your insurance card.",
+        widget=forms.TextInput(attrs={"placeholder": "e.g., ABC123456789"}),
+    )
+    claim_id = forms.CharField(
+        required=False,
+        label="Claim ID / Reference Number",
+        help_text="From your denial letter or Explanation of Benefits (EOB).",
+        widget=forms.TextInput(attrs={"placeholder": "e.g., CLM-2024-12345"}),
+    )
+    date_of_service = forms.CharField(
+        required=False,
+        label="Date of service",
+        help_text="When the denied service was provided or requested.",
+        widget=forms.TextInput(attrs={"placeholder": "e.g., 01/15/2024 or January 2024"}),
+    )
+    insurance_company = forms.CharField(
+        required=False,
+        label="Insurance company",
+        help_text="The name of your health insurance provider.",
+        widget=forms.TextInput(attrs={"placeholder": "e.g., Blue Cross, Aetna, UnitedHealthcare"}),
+    )
     plan_source = forms.ModelMultipleChoiceField(
-        queryset=PlanSource.objects.all(), required=False
+        queryset=PlanSource.objects.all(),
+        required=False,
+        label="How do you get your insurance?",
+        help_text="Select all that apply.",
     )
-    #    plan_type = forms.ModelMultipleChoiceField(queryset=PlanType.objects.all())
-    #    plan_type_text = forms.CharField(required=False)
-    employer_name = forms.CharField(required=False)
-    denial_date = forms.DateField(required=False)
-    your_state = forms.CharField(max_length=2, required=False)
+    employer_name = forms.CharField(
+        required=False,
+        label="Employer name (if employer-provided insurance)",
+        widget=forms.TextInput(attrs={"placeholder": "e.g., Acme Corporation"}),
+    )
+    denial_date = forms.DateField(
+        required=False,
+        label="Date of denial letter",
+        help_text="When was the denial letter dated?",
+        widget=forms.DateInput(attrs={"type": "date"}),
+    )
+    your_state = forms.CharField(
+        max_length=2,
+        required=False,
+        label="Your state",
+        help_text="Two-letter state code (e.g., CA, NY, TX).",
+        widget=forms.TextInput(attrs={"placeholder": "CA", "maxlength": "2", "style": "width: 60px;"}),
+    )
     procedure = forms.CharField(
         max_length=200,
-        label="What is your denied procedure/treatment?",
         required=False,
+        label="Denied procedure or treatment",
+        help_text="What service, procedure, or treatment was denied?",
+        widget=forms.TextInput(attrs={"placeholder": "e.g., MRI, Physical therapy, Surgery"}),
     )
     diagnosis = forms.CharField(
         max_length=200,
-        label="What is the diagnosis (if any) associated with the request?"
-        + "Does not need to be a disease it can be any number of personal factors, "
-        + 'including things like "high risk homosexual behavior" (yeah that\'s a real one)',
         required=False,
+        label="Related diagnosis or condition",
+        help_text="The medical condition or reason for needing the treatment. Can include any relevant personal health factors.",
+        widget=forms.TextInput(attrs={"placeholder": "e.g., Chronic back pain, Diabetes, Gender dysphoria"}),
     )
 
 
