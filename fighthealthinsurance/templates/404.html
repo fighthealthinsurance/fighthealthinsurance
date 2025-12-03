@@ -1,0 +1,38 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Page Not Found - Fight Health Insurance{% endblock title %}
+
+{% block content %}
+<div class="container" style="padding: 3rem 1rem; text-align: center; max-width: 600px; margin: 0 auto;">
+    <div style="font-size: 6rem; color: #a5c422; margin-bottom: 1rem;">404</div>
+    <h1 style="color: #333; margin-bottom: 1rem;">Page Not Found</h1>
+    <p style="color: #666; font-size: 1.1rem; margin-bottom: 2rem;">
+        Sorry, we couldn't find the page you're looking for. It might have been moved or doesn't exist.
+    </p>
+
+    <div style="background: #f8f9fa; padding: 1.5rem; border-radius: 8px; margin-bottom: 2rem;">
+        <h3 style="color: #333; margin-bottom: 1rem;">Looking to appeal a health insurance denial?</h3>
+        <a href="{% url 'scan' %}" class="btn btn-green" style="background: #a5c422; color: white; padding: 12px 30px; border-radius: 4px; text-decoration: none; display: inline-block;">
+            Start Your Appeal
+        </a>
+    </div>
+
+    <div style="border-top: 1px solid #eee; padding-top: 1.5rem; margin-top: 1rem;">
+        <p style="color: #888; margin-bottom: 0.5rem;">Need help? We're here for you.</p>
+        <p style="margin: 0;">
+            <a href="mailto:support42@fighthealthinsurance.com" style="color: #a5c422;">
+                support42@fighthealthinsurance.com
+            </a>
+        </p>
+    </div>
+
+    <div style="margin-top: 2rem;">
+        <a href="{% url 'root' %}" style="color: #666; text-decoration: underline;">Return to Home</a>
+        &nbsp;|&nbsp;
+        <a href="{% url 'contact' %}" style="color: #666; text-decoration: underline;">Contact Us</a>
+        &nbsp;|&nbsp;
+        <a href="{% url 'faq' %}" style="color: #666; text-decoration: underline;">FAQ</a>
+    </div>
+</div>
+{% endblock content %}
