@@ -24,10 +24,16 @@ Categorize Your Denial
     </table>
     <br>
     <div style="display:flex; justify-content:space-between; align-items:center;">
+      {% if back_url %}
+      <a href="{{ back_url }}" class="btn btn-secondary" style="background:#6c757d; color:white; padding:10px 20px; border-radius:3px; text-decoration:none;">
+        ← Back
+      </a>
+      {% else %}
       <a href="{% url 'scan' %}" class="btn btn-link" style="color:#6c757d; text-decoration:underline; font-size:0.9rem;">
         Start over with a new denial
       </a>
-      <input type="submit" id="submit_cat" class="cat-submit-button" value="Continue &rarr;" style="
+      {% endif %}
+      <button type="submit" id="submit_cat" class="cat-submit-button" style="
         background: #a5c422;
         text-align: center;
         color:#ffffff !important;
@@ -35,7 +41,7 @@ Categorize Your Denial
         border-radius: 3px;
         padding: 10px 30px;
         font-size: 16px;
-        cursor: pointer;">
+        cursor: pointer;">Continue →</button>
     </div>
   </form>
 </div>

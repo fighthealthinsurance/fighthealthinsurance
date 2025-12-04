@@ -121,56 +121,56 @@
         </div>
 
         <div class="flow-progress-step {% if current_step > 1 %}completed{% elif current_step == 1 %}active{% endif %}">
-            <div class="flow-progress-circle" aria-current="{% if current_step == 1 %}step{% endif %}">
+            <div class="flow-progress-circle"{% if current_step == 1 %} aria-current="step"{% endif %}>
                 {% if current_step > 1 %}{% else %}1{% endif %}
             </div>
             <div class="flow-progress-label">Upload</div>
         </div>
 
         <div class="flow-progress-step {% if current_step > 2 %}completed{% elif current_step == 2 %}active{% endif %}">
-            <div class="flow-progress-circle" aria-current="{% if current_step == 2 %}step{% endif %}">
+            <div class="flow-progress-circle"{% if current_step == 2 %} aria-current="step"{% endif %}>
                 {% if current_step > 2 %}{% else %}2{% endif %}
             </div>
             <div class="flow-progress-label">History</div>
         </div>
 
         <div class="flow-progress-step {% if current_step > 3 %}completed{% elif current_step == 3 %}active{% endif %}">
-            <div class="flow-progress-circle" aria-current="{% if current_step == 3 %}step{% endif %}">
+            <div class="flow-progress-circle"{% if current_step == 3 %} aria-current="step"{% endif %}>
                 {% if current_step > 3 %}{% else %}3{% endif %}
             </div>
             <div class="flow-progress-label">Documents</div>
         </div>
 
         <div class="flow-progress-step {% if current_step > 4 %}completed{% elif current_step == 4 %}active{% endif %}">
-            <div class="flow-progress-circle" aria-current="{% if current_step == 4 %}step{% endif %}">
+            <div class="flow-progress-circle"{% if current_step == 4 %} aria-current="step"{% endif %}>
                 {% if current_step > 4 %}{% else %}4{% endif %}
             </div>
             <div class="flow-progress-label">Processing</div>
         </div>
 
         <div class="flow-progress-step {% if current_step > 5 %}completed{% elif current_step == 5 %}active{% endif %}">
-            <div class="flow-progress-circle" aria-current="{% if current_step == 5 %}step{% endif %}">
+            <div class="flow-progress-circle"{% if current_step == 5 %} aria-current="step"{% endif %}>
                 {% if current_step > 5 %}{% else %}5{% endif %}
             </div>
             <div class="flow-progress-label">Review</div>
         </div>
 
         <div class="flow-progress-step {% if current_step > 6 %}completed{% elif current_step == 6 %}active{% endif %}">
-            <div class="flow-progress-circle" aria-current="{% if current_step == 6 %}step{% endif %}">
+            <div class="flow-progress-circle"{% if current_step == 6 %} aria-current="step"{% endif %}>
                 {% if current_step > 6 %}{% else %}6{% endif %}
             </div>
             <div class="flow-progress-label">Questions</div>
         </div>
 
         <div class="flow-progress-step {% if current_step > 7 %}completed{% elif current_step == 7 %}active{% endif %}">
-            <div class="flow-progress-circle" aria-current="{% if current_step == 7 %}step{% endif %}">
+            <div class="flow-progress-circle"{% if current_step == 7 %} aria-current="step"{% endif %}>
                 {% if current_step > 7 %}{% else %}7{% endif %}
             </div>
             <div class="flow-progress-label">Generate</div>
         </div>
 
         <div class="flow-progress-step {% if current_step == 8 %}active{% endif %}">
-            <div class="flow-progress-circle" aria-current="{% if current_step == 8 %}step{% endif %}">
+            <div class="flow-progress-circle"{% if current_step == 8 %} aria-current="step"{% endif %}>
                 8
             </div>
             <div class="flow-progress-label">Send</div>

@@ -862,8 +862,7 @@ class PlanDocumentsView(SessionRequiredMixin, generic.FormView):
                 "form": form,
                 "next": reverse("dvc"),
                 "current_step": 3,
-                # Note: back_url not provided here as going back would lose health history data
-                # The browser's back button can still be used if needed
+                "back_url": reverse("hh"),
             },
         )
 
@@ -891,6 +890,8 @@ class DenialCollectedView(SessionRequiredMixin, generic.FormView):
                 "form": new_form,
                 "next": reverse("eev"),
                 "current_step": 4,
+                "back_url": reverse("hh"),
+                "back_label": "Forgot some plan documents?",
                 "form_context": {
                     "denial_id": form.cleaned_data["denial_id"],
                     "email": form.cleaned_data["email"],

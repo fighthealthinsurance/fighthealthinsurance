@@ -32,10 +32,10 @@
 	  <div class="form-navigation" style="display:flex; gap:1rem; align-items:center; margin-top:1rem;">
 	    {% if back_url %}
 	    <a href="{{ back_url }}" class="btn btn-secondary" style="background:#6c757d; color:white; padding:10px 20px; border-radius:3px; text-decoration:none;">
-	      &larr; Back
+	      ← {{ back_label|default:"Back" }}
 	    </a>
 	    {% endif %}
-	    <button id="next" type="submit" class="btn btn-green">Next &rarr;</button>
+	    <button id="next" type="submit" class="btn btn-green">Next →</button>
 	  </div>
 	</form>
 	</div>
