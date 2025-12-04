@@ -117,7 +117,7 @@ Cheap-O-Insurance-Corp""",
         self.select_option_by_value("select#id_denial_type", "2")
         self.type("input#id_procedure", "prep")
         self.type("input#id_diagnosis", "high risk homosexual behaviour")
-        self.click("input#submit_cat")
+        self.click("button#submit_cat")
         self.assert_title_eventually("Some additional questions")
         self.type("input#id_medical_reason", "FakeReason")
         self.click("input#submit")
@@ -171,7 +171,7 @@ Cheap-O-Insurance-Corp""",
         self.assert_title_eventually("Optional: Add Plan Documents")
         self.click("button#next")
         self.assert_title_eventually("Categorize Your Denial")
-        self.click("input#submit_cat")
+        self.click("button#submit_cat")
         self.assert_title_eventually("Some additional questions")
 
     def test_submit_an_appeal_with_enough_then_delete(self):
@@ -202,7 +202,7 @@ Cheap-O-Insurance-Corp""",
         self.assert_title_eventually("Optional: Add Plan Documents")
         self.click("button#next")
         self.assert_title_eventually("Categorize Your Denial")
-        self.click("input#submit_cat")
+        self.click("button#submit_cat")
         self.assert_title_eventually("Some additional questions")
         # Assert we have some data
         hashed_email = hashlib.sha512(email.encode("utf-8")).hexdigest()
