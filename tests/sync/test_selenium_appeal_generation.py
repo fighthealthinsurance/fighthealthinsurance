@@ -269,3 +269,44 @@ Cheap-O-Insurance-Corp"""
         assert "expiry" not in fname_value, f"fname contains expiry: {fname_value}"
         assert "{" not in lname_value, f"lname contains JSON: {lname_value}"
         assert "{" not in email_value, f"email contains JSON: {email_value}"
+
+    def test_back_button_link_on_health_history(self):
+        """
+        Test that the back button link on health history page works correctly.
+        """
+        test_fname = "BackBtnFirst"
+        test_lname = "BackBtnLast"
+        test_email = "backbtn@test.com"
+        test_denial = """Dear BackBtnFirst BackBtnLast;
+Your claim for Truvada has been denied as not medically necessary.
+
+Sincerely,
+Cheap-O-Insurance-Corp"""
+
+        # Fill out scan form and submit
+        self.open(f"{self.live_server_url}/")
+        self.click('a[id="scanlink"]')
+        self.assert_title_eventually("Upload your Health Insurance Denial")
+
+        self.type("input#store_fname", test_fname)
+        self.type("input#store_lname", test_lname)
+        self.type("input#email", test_email)
+        self.type("textarea#denial_text", test_denial)
+        self.click("input#pii")
+        self.click("input#privacy")
+        self.click("input#tos")
+        self.click("button#submit")
+
+        # Health History page - should have back button to scan
+        self.assert_title_eventually("Optional: Health History")
+        back_link = self.find_element("a.btn-secondary")
+        assert back_link is not None, "Health History page should have a back button"
+        back_link.click()
+
+        # Should be back at Scan page
+        self.assert_title_eventually("Upload your Health Insurance Denial")
+        self.assert_element("textarea#denial_text")
+        # Verify form values preserved via localStorage
+        assert self.get_value("input#store_fname") == test_fname
+        assert self.get_value("input#store_lname") == test_lname
+        assert self.get_value("input#email") == test_email
