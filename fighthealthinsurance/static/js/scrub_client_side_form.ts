@@ -1,3 +1,5 @@
+import { getLocalStorageItemWithTTL, setLocalStorageItemWithTTL } from "./shared";
+
 // Add text
 export function addText(text: string): void {
   const input = document.getElementById("denial_text") as HTMLTextAreaElement;
@@ -160,7 +162,7 @@ function storeInLocalStorage(): void {
       id,
     ) as HTMLInputElement | HTMLTextAreaElement | null;
     if (element) {
-      localStorage.setItem(id, element.value);
+      setLocalStorageItemWithTTL(id, element.value);
     }
   });
 }
@@ -171,7 +173,8 @@ function retrieveFromLocalStorage(): void {
       id,
     ) as HTMLInputElement | HTMLTextAreaElement | null;
     if (element) {
-      element.value = localStorage.getItem(id) || "";
+      const storedValue = getLocalStorageItemWithTTL(id);
+      element.value = storedValue !== null ? storedValue : "";
     }
   });
 }
