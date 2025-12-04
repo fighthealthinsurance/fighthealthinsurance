@@ -1,6 +1,6 @@
 import * as pdfjsLib from "pdfjs-dist";
 
-// TTL for localStorage persistence (24 hours in milliseconds)
+// TTL for localStorage persistence (best-effort expiration)
 const LOCAL_STORAGE_TTL_MS = 24 * 60 * 60 * 1000;
 
 // Key for the persistence preference
