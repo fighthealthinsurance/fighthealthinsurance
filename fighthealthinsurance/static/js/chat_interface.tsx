@@ -49,15 +49,9 @@ const THEME = {
 
 // PWYW Component for the chat interface
 const PWYWBanner: React.FC<{ onDismiss: () => void }> = ({ onDismiss }) => {
-  const [selectedAmount, setSelectedAmount] = useState<string>("0");
-  const [customAmount, setCustomAmount] = useState<string>("");
-
   const handleSupport = () => {
-    const amount = selectedAmount === "custom" ? customAmount : selectedAmount;
-    if (amount && parseInt(amount) > 0) {
-      // Open Stripe payment link in new tab
-      window.open(`https://buy.stripe.com/5kA03r2ZwbgebyE7ss`, '_blank', 'noopener,noreferrer');
-    }
+    // Open Stripe payment page where users can enter their preferred amount
+    window.open(`https://buy.stripe.com/5kA03r2ZwbgebyE7ss`, '_blank', 'noopener,noreferrer');
     onDismiss();
   };
 
@@ -86,43 +80,8 @@ const PWYWBanner: React.FC<{ onDismiss: () => void }> = ({ onDismiss }) => {
         </ActionIcon>
       </Flex>
       <MantineText size="xs" c="dimmed" mb="sm">
-        Fight Health Insurance is free for everyone. If we've helped you, consider supporting our work so we can help more people appeal their denials.
+        Fight Health Insurance is free for everyone. If we've helped you, consider supporting our work so we can help more people appeal their denials. Pay what you want on the next page.
       </MantineText>
-      <Flex gap="xs" wrap="wrap" mb="sm">
-        {["0", "10", "25"].map((amount) => (
-          <Button
-            key={amount}
-            size="xs"
-            variant={selectedAmount === amount ? "filled" : "outline"}
-            onClick={() => setSelectedAmount(amount)}
-            style={{
-              borderColor: selectedAmount === amount ? '#a5c422' : '#ccc',
-              background: selectedAmount === amount ? '#a5c422' : 'transparent',
-              color: selectedAmount === amount ? '#fff' : '#333',
-            }}
-          >
-            ${amount}{amount === "0" ? " (free)" : ""}
-          </Button>
-        ))}
-        <input
-          type="number"
-          min="1"
-          placeholder="Custom"
-          value={customAmount}
-          onChange={(e) => {
-            setCustomAmount(e.target.value);
-            setSelectedAmount("custom");
-          }}
-          onFocus={() => setSelectedAmount("custom")}
-          style={{
-            width: 70,
-            padding: '4px 8px',
-            borderRadius: 4,
-            border: selectedAmount === "custom" ? '2px solid #a5c422' : '1px solid #ccc',
-            fontSize: 12,
-          }}
-        />
-      </Flex>
       <Button
         size="xs"
         fullWidth
@@ -132,12 +91,10 @@ const PWYWBanner: React.FC<{ onDismiss: () => void }> = ({ onDismiss }) => {
           color: '#fff',
         }}
       >
-        {selectedAmount === "0" || (selectedAmount === "custom" && !customAmount)
-          ? "Continue for free"
-          : `Support with $${selectedAmount === "custom" ? customAmount : selectedAmount}`}
+        Support Us (Pay What You Want)
       </Button>
       <MantineText size="xs" c="dimmed" mt="xs" ta="center">
-        No payment required to use the chat. $0 is always okay!
+        No payment required to use the chat
       </MantineText>
     </Box>
   );
