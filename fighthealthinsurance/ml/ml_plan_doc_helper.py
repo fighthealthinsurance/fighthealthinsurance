@@ -217,20 +217,19 @@ Focus on terms that would appear in an insurance plan document."""
 
         if path.lower().endswith(".pdf"):
             try:
-                doc = pymupdf.open(path)
-                for page in doc:
-                    page_text = page.get_text()
-                    page_lower = page_text.lower()
+                with pymupdf.open(path) as doc:
+                    for page in doc:
+                        page_text = page.get_text()
+                        page_lower = page_text.lower()
 
-                    # Check if any search term appears in this page
-                    matches = sum(1 for term in search_terms if term.lower() in page_lower)
-                    if matches > 0:
-                        # Include page number for context
-                        page_num = page.number + 1
-                        matching_pages.append(
-                            f"[Page {page_num}]\n{page_text}"
-                        )
-                doc.close()
+                        # Check if any search term appears in this page
+                        matches = sum(1 for term in search_terms if term.lower() in page_lower)
+                        if matches > 0:
+                            # Include page number for context
+                            page_num = page.number + 1
+                            matching_pages.append(
+                                f"[Page {page_num}]\n{page_text}"
+                            )
             except RuntimeError as e:
                 logger.warning(f"Error reading PDF {path}: {e}")
         else:
