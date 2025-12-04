@@ -10,42 +10,6 @@ Additional Resources & Questions
   <!-- Progress indicator -->
   {% include 'partials/flow_progress.html' with current_step=current_step|default:6 %}
 
-  <div style="background:#e3f2fd; padding:1rem; border-radius:4px; margin-bottom:1.5rem; border-left:4px solid #2196f3;">
-    <h4 style="margin:0 0 0.5rem 0; color:#1565c0;">Before you generate your appeal...</h4>
-    <p style="margin:0;">Here are some resources that might help with your specific situation.</p>
-  </div>
-
-<table class="outside-help-options-table" style="width:100%; border-collapse:collapse; margin-bottom:1.5rem;">
-  <tr style="background:#f5f5f5;">
-    <th style="padding:0.75rem; text-align:left; border-bottom:2px solid #ddd;">Option</th>
-    <th style="padding:0.75rem; text-align:left; border-bottom:2px solid #ddd;">How to do it</th>
-  </tr>
-  <tr>
-    <td style="padding:0.75rem; border-bottom:1px solid #eee;">
-	    Request all records associated with your denial (useful for complex cases)
-    </td>
-    <td style="padding:0.75rem; border-bottom:1px solid #eee;">
-      See ProPublica's <a href="https://www.propublica.org/article/find-out-why-health-insurance-claim-denied" target="_blank" rel="noopener">guide on requesting your claim file</a>
-    </td>
-  </tr>
-  {% for d in outside_help_details %}
-  {% autoescape off %}
-  <tr>
-    <td style="padding:0.75rem; border-bottom:1px solid #eee;">{{d.0}}</td>
-    <td style="padding:0.75rem; border-bottom:1px solid #eee;">{{d.1}}</td>
-  </tr>
-  {% endautoescape %}
-  {% endfor %}
-  <tr style="background:#f9fbe7;">
-    <td style="padding:0.75rem; font-weight:bold;">
-      Generate a health insurance appeal letter
-    </td>
-    <td style="padding:0.75rem;">
-      Fill out the form below and click "Generate Appeal"
-    </td>
-  </tr>
-</table>
-
 {% if combined %}
 <div style="background:#fff8e1; padding:1rem; border-radius:4px; margin-bottom:1rem; border-left:4px solid #ffc107;">
   <p style="margin:0;"><strong>A few more questions</strong> to help us create a better appeal for your situation:</p>
@@ -77,5 +41,33 @@ Additional Resources & Questions
       font-weight: bold;">
   </div>
   </form>
+
+  <div style="background:#e3f2fd; padding:1rem; border-radius:4px; margin:1.5rem 0 1rem 0; border-left:4px solid #2196f3;">
+    <h4 style="margin:0 0 0.5rem 0; color:#1565c0;">Additional resources that might help</h4>
+    <p style="margin:0;">Here are some other options you may want to consider for your specific situation:</p>
+  </div>
+
+<table class="outside-help-options-table" style="width:100%; border-collapse:collapse; margin-bottom:1.5rem;">
+  <tr style="background:#f5f5f5;">
+    <th style="padding:0.75rem; text-align:left; border-bottom:2px solid #ddd;">Option</th>
+    <th style="padding:0.75rem; text-align:left; border-bottom:2px solid #ddd;">How to do it</th>
+  </tr>
+  <tr>
+    <td style="padding:0.75rem; border-bottom:1px solid #eee;">
+	    Request all records associated with your denial (useful for complex cases)
+    </td>
+    <td style="padding:0.75rem; border-bottom:1px solid #eee;">
+      See ProPublica's <a href="https://www.propublica.org/article/find-out-why-health-insurance-claim-denied" target="_blank" rel="noopener">guide on requesting your claim file</a>
+    </td>
+  </tr>
+  {% for d in outside_help_details %}
+  {% autoescape off %}
+  <tr>
+    <td style="padding:0.75rem; border-bottom:1px solid #eee;">{{d.0}}</td>
+    <td style="padding:0.75rem; border-bottom:1px solid #eee;">{{d.1}}</td>
+  </tr>
+  {% endautoescape %}
+  {% endfor %}
+</table>
 </div>
 {% endblock content %}

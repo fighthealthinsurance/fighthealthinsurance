@@ -670,6 +670,8 @@ const ChatInterface: React.FC = () => {
       chatId: chatId, // Reset chat ID
       error: null,
       isProcessingFile: false,
+      showPWYW: false,
+      messageCount: 0,
     });
 
     // Handle WebSocket for a new chat
