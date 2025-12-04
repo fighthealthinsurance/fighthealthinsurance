@@ -302,7 +302,7 @@ Include specific page references where helpful."""
                 )
                 if result and len(result) > 50:
                     logger.debug(f"Generated plan document summary ({len(result)} chars)")
-                    return result
+                    return str(result)
             except asyncio.TimeoutError:
                 logger.warning(f"Timeout summarizing plan docs with {model}")
             except Exception as e:
