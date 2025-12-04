@@ -40,14 +40,6 @@ function clearFormData(): void {
   keysToRemove.forEach(key => window.localStorage.removeItem(key));
 }
 
-function getLocalStorageItemOrDefault(
-  key: string,
-  defaultValue: string,
-): string {
-  const value = window.localStorage.getItem(key);
-  return value !== null ? value : defaultValue;
-}
-
 // Get item with TTL check
 function getLocalStorageItemWithTTL(key: string): string | null {
   if (!isPersistenceEnabled()) {
@@ -84,6 +76,15 @@ function setLocalStorageItemWithTTL(key: string, value: string): void {
     expiry: Date.now() + LOCAL_STORAGE_TTL_MS,
   };
   window.localStorage.setItem(key, JSON.stringify(item));
+}
+
+// Get item with TTL check and default value
+function getLocalStorageItemOrDefault(
+  key: string,
+  defaultValue: string,
+): string {
+  const value = getLocalStorageItemWithTTL(key);
+  return value !== null ? value : defaultValue;
 }
 
 function getLocalStorageItemOrDefaultEQ(key: string): string {
