@@ -17,50 +17,9 @@ Optional: Health History
   <br>
 </div>
 <script type="module">
-// Health history persistence with TTL
-const TTL_MS = 24 * 60 * 60 * 1000;
-const PERSISTENCE_KEY = "fhi_persistence_enabled";
-
-function isPersistenceEnabled() {
-  const stored = window.localStorage.getItem(PERSISTENCE_KEY);
-  return stored !== "false";
-}
-
-function getWithTTL(key) {
-  if (!isPersistenceEnabled()) return null;
-  const stored = window.localStorage.getItem(key);
-  if (!stored) return null;
-  try {
-    const parsed = JSON.parse(stored);
-    if (parsed.expiry && Date.now() > parsed.expiry) {
-      window.localStorage.removeItem(key);
-      return null;
-    }
-    return parsed.value;
-  } catch {
-    return stored;
-  }
-}
-
-function setWithTTL(key, value) {
-  if (!isPersistenceEnabled()) return;
-  const item = { value: value, expiry: Date.now() + TTL_MS };
-  window.localStorage.setItem(key, JSON.stringify(item));
-}
-
+import { setupTextareaPersistence } from '{% static "js/dist/formPersistence.bundle.js" %}';
 document.addEventListener('DOMContentLoaded', function() {
-  const textarea = document.getElementById('health_history');
-  if (textarea) {
-    // Restore saved value
-    const saved = getWithTTL('health_history');
-    if (saved && textarea.value === '') {
-      textarea.value = saved;
-    }
-    // Save on input
-    textarea.addEventListener('input', function() {
-      setWithTTL('health_history', textarea.value);
-    });
-  }
+  setupTextareaPersistence('health_history');
 });
 </script>
 {% endblock formelm %}

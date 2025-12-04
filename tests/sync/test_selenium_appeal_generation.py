@@ -10,10 +10,12 @@ from django.contrib.staticfiles.testing import StaticLiveServerTestCase
 from fighthealthinsurance.models import *
 from seleniumbase import BaseCase
 
+from .fhi_selenium_base import FHISeleniumBase
+
 BaseCase.main(__name__, __file__)
 
 
-class SeleniumTestAppealGeneration:
+class SeleniumTestAppealGeneration(FHISeleniumBase, StaticLiveServerTestCase):
     fixtures = [
         "fighthealthinsurance/fixtures/initial.yaml",
         "fighthealthinsurance/fixtures/followup.yaml",
@@ -217,3 +219,53 @@ Cheap-O-Insurance-Corp""",
             hashed_email=hashed_email
         ).count()
         assert denials_for_user_count == 0
+
+    def test_back_navigation_preserves_form_data_correctly(self):
+        """Test that localStorage persistence returns parsed values, not raw JSON"""
+        test_fname = "BackTestFirst"
+        test_lname = "BackTestLast"
+        test_email = "backtest@test.com"
+        test_denial = """Dear BackTestFirst BackTestLast;
+Your claim for Truvada has been denied as not medically necessary.
+
+Sincerely,
+Cheap-O-Insurance-Corp"""
+
+        # Fill out the scrub form
+        self.open(f"{self.live_server_url}/")
+        self.assert_title_eventually(
+            "Fight Your Health Insurance Denial -- Use AI to Generate Your Health Insurance Appeal"
+        )
+        self.click('a[id="scanlink"]')
+        self.assert_title_eventually("Upload your Health Insurance Denial")
+        self.type("input#store_fname", test_fname)
+        self.type("input#store_lname", test_lname)
+        self.type("input#email", test_email)
+        self.type("textarea#denial_text", test_denial)
+        self.click("input#pii")
+        self.click("input#privacy")
+        self.click("input#tos")
+        self.click("button#submit")
+
+        # Move to next page
+        self.assert_title_eventually("Optional: Health History")
+
+        # Navigate back using browser back button
+        self.driver.back()
+        self.assert_title_eventually("Upload your Health Insurance Denial")
+
+        # Verify the values are correctly restored (not as JSON strings)
+        fname_value = self.get_value("input#store_fname")
+        lname_value = self.get_value("input#store_lname")
+        email_value = self.get_value("input#email")
+
+        # These should be the actual values, not JSON like {"value":"...","expiry":...}
+        assert fname_value == test_fname, f"Expected '{test_fname}', got '{fname_value}'"
+        assert lname_value == test_lname, f"Expected '{test_lname}', got '{lname_value}'"
+        assert email_value == test_email, f"Expected '{test_email}', got '{email_value}'"
+
+        # Verify no JSON-like strings are present
+        assert "{" not in fname_value, f"fname contains JSON: {fname_value}"
+        assert "expiry" not in fname_value, f"fname contains expiry: {fname_value}"
+        assert "{" not in lname_value, f"lname contains JSON: {lname_value}"
+        assert "{" not in email_value, f"email contains JSON: {email_value}"
