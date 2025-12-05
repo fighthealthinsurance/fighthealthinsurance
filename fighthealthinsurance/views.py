@@ -530,7 +530,7 @@ class FindNextSteps(View):
                     "combined": next_step_info.combined_form,
                     "denial_form": denial_ref_form,
                     "current_step": 6,
-                    "back_url": reverse("hh"),
+                    "back_url": build_back_url("hh", denial_id, email, next_step_info.semi_sekret),
                     "back_label": "Back to health history",
                 },
             )
@@ -596,7 +596,12 @@ class ChooseAppeal(View):
                 "appeal_info_extract": appeal_info_extracted,
                 "fax_form": fax_form,
                 "current_step": 8,
-                "back_url": reverse("hh"),
+                "back_url": build_back_url(
+                    "hh",
+                    form.cleaned_data["denial_id"],
+                    form.cleaned_data["email"],
+                    form.cleaned_data["semi_sekret"],
+                ),
                 "back_label": "Back to health history",
                 "fhi_always_restore": True,  # Always restore PII from localStorage
             },
@@ -656,7 +661,12 @@ class GenerateAppeal(View):
                 "denial_id": form.cleaned_data["denial_id"],
                 "semi_sekret": form.cleaned_data["semi_sekret"],
                 "current_step": 7,
-                "back_url": reverse("hh"),
+                "back_url": build_back_url(
+                    "hh",
+                    form.cleaned_data["denial_id"],
+                    form.cleaned_data["email"],
+                    form.cleaned_data["semi_sekret"],
+                ),
                 "back_label": "Back to health history",
             },
         )
@@ -788,6 +798,21 @@ class InitialProcessView(generic.FormView):
         )
 
 
+def build_back_url(url_name: str, denial_id, email: str, semi_sekret: str) -> str:
+    """
+    Build a back URL with denial ref parameters encoded.
+    This allows the user to navigate back and still have the form fields populated.
+    """
+    from urllib.parse import urlencode
+    base_url = reverse(url_name)
+    params = urlencode({
+        "denial_id": denial_id,
+        "email": email,
+        "semi_sekret": semi_sekret,
+    })
+    return f"{base_url}?{params}"
+
+
 class SessionRequiredMixin(View):
     """Verify that the current user has an active session."""
 
@@ -808,10 +833,80 @@ class SessionRequiredMixin(View):
                 return redirect("process")
         return super().dispatch(request, *args, **kwargs)  # type: ignore
 
+    def get_denial_ref_from_request(self) -> dict:
+        """
+        Get denial ref fields from GET params (for back navigation) or POST.
+        Also validates that the session matches if we have a session.
+        Returns dict with denial_id, email, and semi_sekret.
+        """
+        # Try GET params first (back navigation), then POST
+        if self.request.method == "GET":
+            denial_id = self.request.GET.get("denial_id")
+            email = self.request.GET.get("email")
+            semi_sekret = self.request.GET.get("semi_sekret")
+        else:
+            denial_id = self.request.POST.get("denial_id")
+            email = self.request.POST.get("email")
+            semi_sekret = self.request.POST.get("semi_sekret")
+
+        if denial_id and email and semi_sekret:
+            # Validate the denial exists and semi_sekret matches
+            try:
+                denial = models.Denial.objects.get(
+                    denial_id=denial_id,
+                    semi_sekret=semi_sekret,
+                )
+                # Check session matches if we have one
+                session_denial_id = self.request.session.get("denial_id")
+                if session_denial_id and str(session_denial_id) != str(denial_id):
+                    logger.warning(
+                        f"Session denial_id {session_denial_id} doesn't match "
+                        f"request denial_id {denial_id}"
+                    )
+                    # Still allow it - the semi_sekret validates ownership
+                return {
+                    "denial_id": denial.denial_id,
+                    "email": email,
+                    "semi_sekret": semi_sekret,
+                }
+            except models.Denial.DoesNotExist:
+                logger.warning(f"Invalid denial lookup: {denial_id}")
+
+        return {}
+
+    def get_back_url(self, url_name: str, denial_ref: dict) -> str:
+        """Build a back URL with denial ref params."""
+        if denial_ref:
+            return build_back_url(
+                url_name,
+                denial_ref.get("denial_id", ""),
+                denial_ref.get("email", ""),
+                denial_ref.get("semi_sekret", ""),
+            )
+        return reverse(url_name)
+
 
 class EntityExtractView(SessionRequiredMixin, generic.FormView):
     form_class = core_forms.EntityExtractForm
     template_name = "entity_extract.html"
+
+    def get_initial(self):
+        """Populate form with denial ref data from URL params for back navigation."""
+        initial = super().get_initial()
+        initial.update(self.get_denial_ref_from_request())
+        return initial
+
+    def get_context_data(self, **kwargs):
+        """Add context needed for the template."""
+        context = super().get_context_data(**kwargs)
+        denial_ref = self.get_denial_ref_from_request()
+        context["next"] = reverse("eev")
+        context["current_step"] = 4
+        context["back_url"] = self.get_back_url("hh", denial_ref)
+        context["back_label"] = "Back to health history"
+        # form_context needed for entity fetcher JS
+        context["form_context"] = denial_ref
+        return context
 
     def form_valid(self, form):
         denial_response = common_view_logic.DenialCreatorHelper.update_denial(
@@ -841,7 +936,12 @@ class EntityExtractView(SessionRequiredMixin, generic.FormView):
                 "post_infered_form": form,
                 "upload_more": True,
                 "current_step": 5,
-                "back_url": reverse("hh"),
+                "back_url": build_back_url(
+                    "hh",
+                    denial_response.denial_id,
+                    form.cleaned_data["email"],
+                    denial_response.semi_sekret,
+                ),
                 "back_label": "Back to health history",
             },
         )
@@ -851,15 +951,30 @@ class PlanDocumentsView(SessionRequiredMixin, generic.FormView):
     form_class = core_forms.HealthHistory
     template_name = "health_history.html"
 
+    def get_initial(self):
+        """Populate form with denial ref data from URL params for back navigation."""
+        initial = super().get_initial()
+        initial.update(self.get_denial_ref_from_request())
+        return initial
+
+    def get_context_data(self, **kwargs):
+        """Add context needed for the template."""
+        context = super().get_context_data(**kwargs)
+        context["next"] = reverse("hh")  # Form posts to itself
+        context["current_step"] = 2
+        context["back_url"] = reverse("scan")  # Scan doesn't need denial ref
+        return context
+
     def form_valid(self, form):
         denial_response = common_view_logic.DenialCreatorHelper.update_denial(
             **form.cleaned_data,
         )
 
-        form = core_forms.PlanDocumentsForm(
+        email = form.cleaned_data["email"]
+        new_form = core_forms.PlanDocumentsForm(
             initial={
                 "denial_id": denial_response.denial_id,
-                "email": form.cleaned_data["email"],
+                "email": email,
                 "semi_sekret": denial_response.semi_sekret,
             }
         )
@@ -868,10 +983,15 @@ class PlanDocumentsView(SessionRequiredMixin, generic.FormView):
             self.request,
             "plan_documents.html",
             context={
-                "form": form,
+                "form": new_form,
                 "next": reverse("dvc"),
                 "current_step": 3,
-                "back_url": reverse("hh"),
+                "back_url": build_back_url(
+                    "hh",
+                    denial_response.denial_id,
+                    email,
+                    denial_response.semi_sekret,
+                ),
             },
         )
 
@@ -879,6 +999,21 @@ class PlanDocumentsView(SessionRequiredMixin, generic.FormView):
 class DenialCollectedView(SessionRequiredMixin, generic.FormView):
     form_class = core_forms.PlanDocumentsForm
     template_name = "plan_documents.html"
+
+    def get_initial(self):
+        """Populate form with denial ref data from URL params for back navigation."""
+        initial = super().get_initial()
+        initial.update(self.get_denial_ref_from_request())
+        return initial
+
+    def get_context_data(self, **kwargs):
+        """Add context needed for the template."""
+        context = super().get_context_data(**kwargs)
+        denial_ref = self.get_denial_ref_from_request()
+        context["next"] = reverse("dvc")  # Form posts to itself
+        context["current_step"] = 3
+        context["back_url"] = self.get_back_url("hh", denial_ref)
+        return context
 
     def form_valid(self, form):
         # TODO: Make use of the response from this
@@ -899,7 +1034,12 @@ class DenialCollectedView(SessionRequiredMixin, generic.FormView):
                 "form": new_form,
                 "next": reverse("eev"),
                 "current_step": 4,
-                "back_url": reverse("hh"),
+                "back_url": build_back_url(
+                    "hh",
+                    form.cleaned_data["denial_id"],
+                    form.cleaned_data["email"],
+                    form.cleaned_data["semi_sekret"],
+                ),
                 "back_label": "Forgot some plan documents?",
                 "form_context": {
                     "denial_id": form.cleaned_data["denial_id"],

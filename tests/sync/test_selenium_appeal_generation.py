@@ -311,10 +311,11 @@ Cheap-O-Insurance-Corp"""
         assert self.get_value("input#store_lname") == test_lname
         assert self.get_value("input#email") == test_email
 
-    def test_back_button_link_on_plan_documents(self):
+    def test_back_button_link_on_plan_documents_and_forward_again(self):
         """
-        Test that the back button link on plan documents page works correctly.
-        It should navigate back to health history page.
+        Test that the back button link on plan documents page works correctly,
+        AND that we can then go forward again without losing form data.
+        This tests the denial_id/email/semi_sekret URL params work correctly.
         """
         test_fname = "BackBtnPlanFirst"
         test_lname = "BackBtnPlanLast"
@@ -361,6 +362,31 @@ Cheap-O-Insurance-Corp"""
         health_history_value = self.get_value("textarea#health_history")
         assert health_history_value == test_health_history, \
             f"Expected '{test_health_history}', got '{health_history_value}'"
+
+        # NOW TEST GOING FORWARD AGAIN - this is the key test for the fix
+        # The form should have hidden fields populated from URL params
+        self.click("button#next")
+
+        # Should successfully navigate to Plan Documents page without error
+        self.assert_title_eventually("Optional: Add Plan Documents")
+        # Verify we're on the right page and form works
+        self.assert_element("button#next")
+
+        # Go forward to Entity Extract
+        self.click("button#next")
+        self.assert_title_eventually("Categorize Your Denial")
+
+        # Go back again to plan documents
+        back_link = self.find_element("a.btn-secondary")
+        assert back_link is not None
+        back_link.click()
+
+        # Should be at health history (back button from entity_extract goes to hh)
+        self.assert_title_eventually("Optional: Health History")
+
+        # And forward again should still work
+        self.click("button#next")
+        self.assert_title_eventually("Optional: Add Plan Documents")
 
     def test_session_scoped_localstorage_does_not_mix_appeals(self):
         """
