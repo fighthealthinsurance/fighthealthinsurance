@@ -170,7 +170,7 @@ Focus on terms that would appear in an insurance plan document."""
 
         try:
             plan_docs = PlanDocuments.objects.filter(denial_id=denial_id)
-            async for doc in plan_docs:
+            async for doc in plan_docs.aiterator():
                 try:
                     # Get file path
                     file_field = doc.plan_document_enc or doc.plan_document

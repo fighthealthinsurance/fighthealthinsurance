@@ -33,7 +33,7 @@ function clearFormData(): void {
   const keysToRemove: string[] = [];
   for (let i = 0; i < window.localStorage.length; i++) {
     const key = window.localStorage.key(i);
-    if (key && key.startsWith("store_") || key === "email" || key === "denial_text") {
+    if (key && (key.startsWith("store_") || key === "email" || key === "denial_text")) {
       keysToRemove.push(key);
     }
   }
