@@ -530,6 +530,8 @@ class FindNextSteps(View):
                     "combined": next_step_info.combined_form,
                     "denial_form": denial_ref_form,
                     "current_step": 6,
+                    "back_url": reverse("hh"),
+                    "back_label": "Back to health history",
                 },
             )
 
