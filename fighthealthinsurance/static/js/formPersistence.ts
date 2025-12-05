@@ -7,6 +7,37 @@ const LOCAL_STORAGE_TTL_MS = 24 * 60 * 60 * 1000;
 // Key for the persistence preference
 const PERSISTENCE_ENABLED_KEY = "fhi_persistence_enabled";
 
+// Key prefix for session-scoped persistence
+const SESSION_KEY_PREFIX = "fhi_session_";
+
+// Get current session key from the page (set by Django template)
+function getSessionKey(): string | null {
+  const metaElement = document.querySelector('meta[name="fhi-session-key"]');
+  return metaElement ? metaElement.getAttribute('content') : null;
+}
+
+// Check if page was rendered via POST (set by Django template)
+function isPostResponse(): boolean {
+  const metaElement = document.querySelector('meta[name="fhi-request-method"]');
+  return metaElement ? metaElement.getAttribute('content') === 'POST' : false;
+}
+
+// Check if this is the final PII page that always needs restore
+function isAlwaysRestorePage(): boolean {
+  const metaElement = document.querySelector('meta[name="fhi-always-restore"]');
+  return metaElement ? metaElement.getAttribute('content') === 'true' : false;
+}
+
+// Get session-scoped storage key
+function getSessionScopedKey(key: string): string {
+  const sessionKey = getSessionKey();
+  if (sessionKey) {
+    return `${SESSION_KEY_PREFIX}${sessionKey}_${key}`;
+  }
+  // Fallback to global key if no session
+  return key;
+}
+
 // Interface for stored values with TTL
 interface StoredValueWithTTL {
   value: string;
@@ -20,14 +51,19 @@ export function isPersistenceEnabled(): boolean {
   return stored !== "false";
 }
 
-// Get item with TTL check
-export function getLocalStorageItemWithTTL(key: string): string | null {
+// Get item with TTL check (uses session-scoped key if session is available)
+export function getLocalStorageItemWithTTL(key: string, useSessionScope: boolean = true): string | null {
   if (!isPersistenceEnabled()) {
     return null;
   }
 
-  const stored = window.localStorage.getItem(key);
+  const storageKey = useSessionScope ? getSessionScopedKey(key) : key;
+  const stored = window.localStorage.getItem(storageKey);
   if (!stored) {
+    // Also check non-session-scoped key for backwards compatibility
+    if (useSessionScope && getSessionKey()) {
+      return getLocalStorageItemWithTTL(key, false);
+    }
     return null;
   }
 
@@ -35,7 +71,7 @@ export function getLocalStorageItemWithTTL(key: string): string | null {
     const parsed: StoredValueWithTTL = JSON.parse(stored);
     if (parsed.expiry && Date.now() > parsed.expiry) {
       // Item has expired, remove it
-      window.localStorage.removeItem(key);
+      window.localStorage.removeItem(storageKey);
       return null;
     }
     return parsed.value;
@@ -45,26 +81,45 @@ export function getLocalStorageItemWithTTL(key: string): string | null {
   }
 }
 
-// Set item with TTL
+// Set item with TTL (uses session-scoped key if session is available)
 export function setLocalStorageItemWithTTL(key: string, value: string): void {
   if (!isPersistenceEnabled()) {
     return;
   }
 
+  const storageKey = getSessionScopedKey(key);
   const item: StoredValueWithTTL = {
     value: value,
     expiry: Date.now() + LOCAL_STORAGE_TTL_MS,
   };
-  window.localStorage.setItem(key, JSON.stringify(item));
+  window.localStorage.setItem(storageKey, JSON.stringify(item));
 }
 
 // Helper to setup persistence for a textarea element
-export function setupTextareaPersistence(textareaId: string): void {
+// Options:
+// - alwaysRestore: if true, always restore from localStorage (for PII fill-in page)
+export function setupTextareaPersistence(textareaId: string, options?: { alwaysRestore?: boolean }): void {
   const textarea = document.getElementById(textareaId) as HTMLTextAreaElement | null;
   if (textarea) {
-    // Restore saved value if field is empty
+    // Determine if we should restore
+    // - On POST responses, only restore if the field is empty AND (alwaysRestore OR isAlwaysRestorePage)
+    // - On GET responses, always restore if field is empty
+    const shouldRestore = () => {
+      if (textarea.value !== '') {
+        return false;  // Field already has a value, don't overwrite
+      }
+      if (options?.alwaysRestore || isAlwaysRestorePage()) {
+        return true;  // This page always needs restore (e.g., PII fill-in)
+      }
+      if (isPostResponse()) {
+        return false;  // POST response with empty field - server intentionally left it empty
+      }
+      return true;  // GET response with empty field - restore from localStorage
+    };
+
+    // Restore saved value if conditions are met
     const saved = getLocalStorageItemWithTTL(textareaId);
-    if (saved && textarea.value === '') {
+    if (saved && shouldRestore()) {
       textarea.value = saved;
     }
     // Save on input
@@ -75,12 +130,28 @@ export function setupTextareaPersistence(textareaId: string): void {
 }
 
 // Helper to setup persistence for an input element
-export function setupInputPersistence(inputId: string): void {
+// Options:
+// - alwaysRestore: if true, always restore from localStorage (for PII fill-in page)
+export function setupInputPersistence(inputId: string, options?: { alwaysRestore?: boolean }): void {
   const input = document.getElementById(inputId) as HTMLInputElement | null;
   if (input) {
-    // Restore saved value if field is empty
+    // Determine if we should restore (same logic as textarea)
+    const shouldRestore = () => {
+      if (input.value !== '') {
+        return false;
+      }
+      if (options?.alwaysRestore || isAlwaysRestorePage()) {
+        return true;
+      }
+      if (isPostResponse()) {
+        return false;
+      }
+      return true;
+    };
+
+    // Restore saved value if conditions are met
     const saved = getLocalStorageItemWithTTL(inputId);
-    if (saved && input.value === '') {
+    if (saved && shouldRestore()) {
       input.value = saved;
     }
     // Save on change
@@ -109,5 +180,8 @@ if (typeof window !== 'undefined') {
     getLocalStorageItemWithTTL,
     setLocalStorageItemWithTTL,
     isPersistenceEnabled,
+    getSessionKey,
+    isPostResponse,
+    isAlwaysRestorePage,
   };
 }

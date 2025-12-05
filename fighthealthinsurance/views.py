@@ -598,6 +598,7 @@ class ChooseAppeal(View):
                 "current_step": 8,
                 "back_url": reverse("hh"),
                 "back_label": "Back to health history",
+                "fhi_always_restore": True,  # Always restore PII from localStorage
             },
         )
 
