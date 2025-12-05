@@ -361,3 +361,138 @@ Cheap-O-Insurance-Corp"""
         health_history_value = self.get_value("textarea#health_history")
         assert health_history_value == test_health_history, \
             f"Expected '{test_health_history}', got '{health_history_value}'"
+
+    def test_session_scoped_localstorage_does_not_mix_appeals(self):
+        """
+        Test that localStorage is scoped to session, so starting a new appeal
+        does not restore data from a previous appeal.
+        """
+        # First appeal
+        first_email = "first_appeal@test.com"
+        first_health = "First appeal health history"
+
+        self.open(f"{self.live_server_url}/")
+        self.click('a[id="scanlink"]')
+        self.assert_title_eventually("Upload your Health Insurance Denial")
+
+        self.type("input#store_fname", "FirstAppeal")
+        self.type("input#store_lname", "User")
+        self.type("input#email", first_email)
+        self.type("textarea#denial_text", """Dear FirstAppeal User;
+Your claim for Truvada has been denied.
+Sincerely, InsuranceCo""")
+        self.click("input#pii")
+        self.click("input#privacy")
+        self.click("input#tos")
+        self.click("button#submit")
+
+        self.assert_title_eventually("Optional: Health History")
+        self.type("textarea#health_history", first_health)
+
+        # Now start a SECOND appeal (new session)
+        self.open(f"{self.live_server_url}/")
+        self.click('a[id="scanlink"]')
+        self.assert_title_eventually("Upload your Health Insurance Denial")
+
+        second_email = "second_appeal@test.com"
+        self.type("input#store_fname", "SecondAppeal")
+        self.type("input#store_lname", "Person")
+        self.type("input#email", second_email)
+        self.type("textarea#denial_text", """Dear SecondAppeal Person;
+Your claim for different treatment has been denied.
+Sincerely, OtherInsuranceCo""")
+        self.click("input#pii")
+        self.click("input#privacy")
+        self.click("input#tos")
+        self.click("button#submit")
+
+        # On health history page for second appeal
+        self.assert_title_eventually("Optional: Health History")
+        time.sleep(0.5)  # Wait for JS
+
+        # Health history should NOT have the first appeal's data
+        health_value = self.get_value("textarea#health_history")
+        assert health_value != first_health, \
+            f"Second appeal should not restore first appeal's health history. Got: '{health_value}'"
+
+    def test_meta_tags_present_for_form_persistence(self):
+        """
+        Test that the meta tags for form persistence are rendered in the page.
+        """
+        self.open(f"{self.live_server_url}/")
+        self.click('a[id="scanlink"]')
+        self.assert_title_eventually("Upload your Health Insurance Denial")
+
+        # Fill in and submit to get a session
+        self.type("input#store_fname", "MetaTagTest")
+        self.type("input#store_lname", "User")
+        self.type("input#email", "metatag@test.com")
+        self.type("textarea#denial_text", """Dear MetaTagTest User;
+Your claim has been denied.
+Sincerely, InsuranceCo""")
+        self.click("input#pii")
+        self.click("input#privacy")
+        self.click("input#tos")
+        self.click("button#submit")
+
+        # On health history page - should have meta tags
+        self.assert_title_eventually("Optional: Health History")
+
+        # Check for request method meta tag (should be POST since we came from form submission)
+        request_method_meta = self.find_element('meta[name="fhi-request-method"]')
+        assert request_method_meta is not None, "Should have fhi-request-method meta tag"
+        method_content = request_method_meta.get_attribute("content")
+        assert method_content == "POST", f"Request method should be POST, got {method_content}"
+
+        # Session key meta tag should be present after form submission
+        session_key_meta = self.find_element('meta[name="fhi-session-key"]')
+        assert session_key_meta is not None, "Should have fhi-session-key meta tag"
+        session_content = session_key_meta.get_attribute("content")
+        assert len(session_content) > 0, "Session key should not be empty after form submission"
+
+    def test_back_button_navigates_with_get_request(self):
+        """
+        Test that clicking the back button link results in a GET request,
+        which should restore localStorage values.
+        """
+        test_health = "Health history to restore"
+
+        self.open(f"{self.live_server_url}/")
+        self.click('a[id="scanlink"]')
+        self.type("input#store_fname", "BackGetTest")
+        self.type("input#store_lname", "User")
+        self.type("input#email", "backget@test.com")
+        self.type("textarea#denial_text", """Dear BackGetTest User;
+Your claim has been denied.
+Sincerely, InsuranceCo""")
+        self.click("input#pii")
+        self.click("input#privacy")
+        self.click("input#tos")
+        self.click("button#submit")
+
+        # On health history page
+        self.assert_title_eventually("Optional: Health History")
+        self.type("textarea#health_history", test_health)
+        self.click("button#next")
+
+        # On plan documents page
+        self.assert_title_eventually("Optional: Add Plan Documents")
+
+        # Click back button link (should be a GET request)
+        back_link = self.find_element("a.btn-secondary")
+        back_link.click()
+
+        # Back at health history page via GET
+        self.assert_title_eventually("Optional: Health History")
+
+        # Check meta tag - should be GET (from link navigation)
+        request_method_meta = self.find_element('meta[name="fhi-request-method"]')
+        assert request_method_meta is not None
+        method_content = request_method_meta.get_attribute("content")
+        assert method_content == "GET", f"Back button should result in GET, got {method_content}"
+
+        # Health history should be restored from localStorage
+        time.sleep(0.5)
+        health_value = self.get_value("textarea#health_history")
+        assert health_value == test_health, \
+            f"Health history should be restored on GET. Expected '{test_health}', got '{health_value}'"
