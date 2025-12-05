@@ -834,6 +834,8 @@ class EntityExtractView(SessionRequiredMixin, generic.FormView):
                 "post_infered_form": form,
                 "upload_more": True,
                 "current_step": 5,
+                "back_url": reverse("hh"),
+                "back_label": "Back to health history",
             },
         )
 

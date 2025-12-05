@@ -26,7 +26,7 @@ Categorize Your Denial
     <div style="display:flex; justify-content:space-between; align-items:center;">
       {% if back_url %}
       <a href="{{ back_url }}" class="btn btn-secondary" style="background:#6c757d; color:white; padding:10px 20px; border-radius:3px; text-decoration:none;">
-        ← Back
+        ← {{ back_label|default:"Back" }}
       </a>
       {% else %}
       <a href="{% url 'scan' %}" class="btn btn-link" style="color:#6c757d; text-decoration:underline; font-size:0.9rem;">
