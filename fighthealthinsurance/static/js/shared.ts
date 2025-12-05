@@ -42,11 +42,13 @@ function clearFormData(): void {
 
 // Get item with TTL check
 function getLocalStorageItemWithTTL(key: string): string | null {
-  if (!isPersistenceEnabled()) {
-    return null;
-  }
 
+  // If someones disabled persistence remove items if found.
   const stored = window.localStorage.getItem(key);
+  if (!isPersistenceEnabled()) {
+      window.localStorage.removeItem(key);
+      return null;
+  }
   if (!stored) {
     return null;
   }
