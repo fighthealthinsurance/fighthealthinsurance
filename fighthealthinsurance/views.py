@@ -596,6 +596,8 @@ class ChooseAppeal(View):
                 "appeal_info_extract": appeal_info_extracted,
                 "fax_form": fax_form,
                 "current_step": 8,
+                "back_url": reverse("hh"),
+                "back_label": "Back to health history",
             },
         )
 
