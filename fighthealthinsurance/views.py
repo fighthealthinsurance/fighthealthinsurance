@@ -913,11 +913,12 @@ class EntityExtractView(SessionRequiredMixin, generic.FormView):
             **form.cleaned_data,
         )
 
-        form = core_forms.PostInferedForm(
+        email = form.cleaned_data["email"]
+        new_form = core_forms.PostInferedForm(
             initial={
                 "denial_type": denial_response.selected_denial_type,
                 "denial_id": denial_response.denial_id,
-                "email": form.cleaned_data["email"],
+                "email": email,
                 "your_state": denial_response.your_state,
                 "procedure": denial_response.procedure,
                 "diagnosis": denial_response.diagnosis,
@@ -933,13 +934,13 @@ class EntityExtractView(SessionRequiredMixin, generic.FormView):
             self.request,
             "categorize.html",
             context={
-                "post_infered_form": form,
+                "post_infered_form": new_form,
                 "upload_more": True,
                 "current_step": 5,
                 "back_url": build_back_url(
                     "hh",
                     denial_response.denial_id,
-                    form.cleaned_data["email"],
+                    email,
                     denial_response.semi_sekret,
                 ),
                 "back_label": "Back to health history",
