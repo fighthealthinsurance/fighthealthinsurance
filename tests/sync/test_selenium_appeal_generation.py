@@ -118,7 +118,7 @@ Cheap-O-Insurance-Corp""",
         self.type("input#id_procedure", "prep")
         self.type("input#id_diagnosis", "high risk homosexual behaviour")
         self.click("button#submit_cat")
-        self.assert_title_eventually("Some additional questions")
+        self.assert_title_eventually("Additional Resources & Questions")
         self.type("input#id_medical_reason", "FakeReason")
         self.click("input#submit")
         self.assert_title_eventually(
@@ -172,7 +172,7 @@ Cheap-O-Insurance-Corp""",
         self.click("button#next")
         self.assert_title_eventually("Categorize Your Denial")
         self.click("button#submit_cat")
-        self.assert_title_eventually("Some additional questions")
+        self.assert_title_eventually("Additional Resources & Questions")
 
     def test_submit_an_appeal_with_enough_then_delete(self):
         email = "farts@farts.com"
@@ -203,7 +203,7 @@ Cheap-O-Insurance-Corp""",
         self.click("button#next")
         self.assert_title_eventually("Categorize Your Denial")
         self.click("button#submit_cat")
-        self.assert_title_eventually("Some additional questions")
+        self.assert_title_eventually("Additional Resources & Questions")
         # Assert we have some data
         hashed_email = hashlib.sha512(email.encode("utf-8")).hexdigest()
         denials_for_user_count = Denial.objects.filter(
