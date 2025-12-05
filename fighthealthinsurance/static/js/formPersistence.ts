@@ -89,3 +89,25 @@ export function setupInputPersistence(inputId: string): void {
     });
   }
 }
+
+// Auto-initialize for known form elements when DOM is ready
+if (typeof document !== 'undefined') {
+  document.addEventListener('DOMContentLoaded', function() {
+    // Health history page
+    const healthHistory = document.getElementById('health_history');
+    if (healthHistory) {
+      setupTextareaPersistence('health_history');
+    }
+  });
+}
+
+// Export to window for manual use if needed
+if (typeof window !== 'undefined') {
+  (window as any).formPersistence = {
+    setupTextareaPersistence,
+    setupInputPersistence,
+    getLocalStorageItemWithTTL,
+    setLocalStorageItemWithTTL,
+    isPersistenceEnabled,
+  };
+}

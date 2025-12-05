@@ -16,10 +16,5 @@ Optional: Health History
 	    placeholder="Related Health History Goes Here" class="form-control"></textarea>
   <br>
 </div>
-<script type="module">
-import { setupTextareaPersistence } from '{% static "js/dist/formPersistence.bundle.js" %}';
-document.addEventListener('DOMContentLoaded', function() {
-  setupTextareaPersistence('health_history');
-});
-</script>
+<script src="{% static 'js/dist/formPersistence.bundle.js' %}"></script>
 {% endblock formelm %}

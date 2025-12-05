@@ -310,3 +310,54 @@ Cheap-O-Insurance-Corp"""
         assert self.get_value("input#store_fname") == test_fname
         assert self.get_value("input#store_lname") == test_lname
         assert self.get_value("input#email") == test_email
+
+    def test_back_button_link_on_plan_documents(self):
+        """
+        Test that the back button link on plan documents page works correctly.
+        It should navigate back to health history page.
+        """
+        test_fname = "BackBtnPlanFirst"
+        test_lname = "BackBtnPlanLast"
+        test_email = "backbtnplan@test.com"
+        test_denial = """Dear BackBtnPlanFirst BackBtnPlanLast;
+Your claim for Truvada has been denied as not medically necessary.
+
+Sincerely,
+Cheap-O-Insurance-Corp"""
+        test_health_history = "Test health history for back button test."
+
+        # Fill out scan form and submit
+        self.open(f"{self.live_server_url}/")
+        self.click('a[id="scanlink"]')
+        self.assert_title_eventually("Upload your Health Insurance Denial")
+
+        self.type("input#store_fname", test_fname)
+        self.type("input#store_lname", test_lname)
+        self.type("input#email", test_email)
+        self.type("textarea#denial_text", test_denial)
+        self.click("input#pii")
+        self.click("input#privacy")
+        self.click("input#tos")
+        self.click("button#submit")
+
+        # Health History page
+        self.assert_title_eventually("Optional: Health History")
+        self.type("textarea#health_history", test_health_history)
+        self.click("button#next")
+
+        # Plan Documents page - should have back button to health history
+        self.assert_title_eventually("Optional: Add Plan Documents")
+        back_link = self.find_element("a.btn-secondary")
+        assert back_link is not None, "Plan Documents page should have a back button"
+        back_link.click()
+
+        # Should be back at Health History page
+        self.assert_title_eventually("Optional: Health History")
+        self.assert_element("textarea#health_history")
+        # Wait for JavaScript to restore value from localStorage
+        time.sleep(0.5)
+
+        # Verify health history preserved via localStorage
+        health_history_value = self.get_value("textarea#health_history")
+        assert health_history_value == test_health_history, \
+            f"Expected '{test_health_history}', got '{health_history_value}'"
