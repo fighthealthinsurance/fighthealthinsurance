@@ -79,7 +79,12 @@ Fight Your Health Insurance Denial: Choose an Appeal
 <div id="output-container">
 </div>
 
-<div style="margin:1.5rem 0; text-align:center;">
+<div style="margin:1.5rem 0; display:flex; justify-content:center; gap:1rem; align-items:center;">
+  {% if back_url %}
+  <a href="{{ back_url }}" class="btn btn-secondary" style="background:#6c757d; color:white; padding:10px 20px; border-radius:3px; text-decoration:none;">
+    ← {{ back_label|default:"Back" }}
+  </a>
+  {% endif %}
   <a href="{% url 'scan' %}" class="btn btn-link" style="color:#6c757d; text-decoration:underline; font-size:0.9rem;">
     Start over with a new denial
   </a>

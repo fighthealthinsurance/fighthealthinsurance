@@ -653,6 +653,8 @@ class GenerateAppeal(View):
                 "denial_id": form.cleaned_data["denial_id"],
                 "semi_sekret": form.cleaned_data["semi_sekret"],
                 "current_step": 7,
+                "back_url": reverse("hh"),
+                "back_label": "Back to health history",
             },
         )
 
