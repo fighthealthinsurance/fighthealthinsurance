@@ -98,6 +98,30 @@ class LastTwoWeeksEmailsCSV(BaseEmailsWithRawEmailCSV):
         return "emails_last_two_weeks.csv"
 
 
+class AllDenialEmailCSV(BaseEmailsWithRawEmailCSV):
+    """Export all unique emails from all denials."""
+
+    def get_queryset(self):
+        return Denial.objects.filter(
+            raw_email__isnull=False
+        ).order_by("raw_email", "date")
+
+    def get_filename(self):
+        return "all_denial_emails.csv"
+
+
+class AllDenialEmailSansProCSV(BaseEmailsWithRawEmailCSV):
+    """Export all unique emails from denials excluding those created by professionals."""
+
+    def get_queryset(self):
+        return Denial.objects.filter(
+            raw_email__isnull=False, creating_professional__isnull=True,
+        ).order_by("raw_email", "date")
+
+    def get_filename(self):
+        return "all_denial_emails_sans_pro.csv"
+
+
 @staff_member_required
 def incomplete_signups_csv(request):
     response = HttpResponse(content_type="text/csv")
