@@ -39,11 +39,6 @@ urlpatterns = [
         name="emails_last_two_weeks",
     ),
     path(
-        "all_denial_emails",
-        staff_member_required(AllDenialEmailCSV.as_view()),
-        name="all_denial_emails",
-    ),
-    path(
         "all_denial_emails_sans_pro",
         staff_member_required(AllDenialEmailSansProCSV.as_view()),
         name="all_denial_emails_sans_pro",
