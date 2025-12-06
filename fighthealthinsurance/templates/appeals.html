@@ -10,11 +10,15 @@ Fight Your Health Insurance Denial: Choose an Appeal
 
 {% block content %}
 
+<div class="container" style="padding-top:1rem;">
+  <!-- Progress indicator -->
+  {% include 'partials/flow_progress.html' with current_step=current_step|default:7 %}
+</div>
 
-<!-- This code is partial written by AI -->
 <!-- Loading Spinner -->
-<div id="loading-text">
-  <h1>Loading appeals (please wait) -- should go away when all appeals are generated</h1>
+<div id="loading-text" style="text-align:center; padding:1rem;">
+  <h2 style="color:#333;">Generating Your Appeals</h2>
+  <p style="color:#666;">Please wait while we create personalized appeal options for you...</p>
 </div>
 <div id="loading-spinner">
 </div>
@@ -73,6 +77,17 @@ Fight Your Health Insurance Denial: Choose an Appeal
 </form>
 </div>
 <div id="output-container">
+</div>
+
+<div style="margin:1.5rem 0; display:flex; justify-content:center; gap:1rem; align-items:center;">
+  {% if back_url %}
+  <a href="{{ back_url }}" class="btn btn-secondary" style="background:#6c757d; color:white; padding:10px 20px; border-radius:3px; text-decoration:none;">
+    ← {{ back_label|default:"Back" }}
+  </a>
+  {% endif %}
+  <a href="{% url 'scan' %}" class="btn btn-link" style="color:#6c757d; text-decoration:underline; font-size:0.9rem;">
+    Start over with a new denial
+  </a>
 </div>
 
 <div class="appeals-share-wrapper">

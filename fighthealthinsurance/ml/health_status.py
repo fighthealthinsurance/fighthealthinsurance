@@ -113,7 +113,9 @@ class _HealthStatus:
                         if ok:
                             alive_count += 1
                 except concurrent.futures.TimeoutError:
-                    logger.debug("Timed out checking backends, remaining marked as dead.")
+                    logger.debug(
+                        "Timed out checking backends, remaining marked as dead."
+                    )
 
                 # Handle any futures that didn't complete within the as_completed window
                 for future, m in future_map.items():

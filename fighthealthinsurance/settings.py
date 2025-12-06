@@ -200,6 +200,7 @@ class Base(Configuration):
                     "django.template.context_processors.request",
                     "django.contrib.auth.context_processors.auth",
                     "django.contrib.messages.context_processors.messages",
+                    "fighthealthinsurance.context_processors.form_persistence_context",
                 ],
             },
         },

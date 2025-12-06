@@ -20,6 +20,7 @@ from typing import (
 )
 from loguru import logger
 from PyPDF2 import PdfMerger
+import pymupdf
 import ray
 import tempfile
 import os
@@ -45,6 +46,7 @@ from fighthealthinsurance.models import *
 from fighthealthinsurance.utils import interleave_iterator_for_keep_alive
 from fighthealthinsurance.ml.ml_citations_helper import MLCitationsHelper
 from fighthealthinsurance.ml.ml_appeal_questions_helper import MLAppealQuestionsHelper
+from fighthealthinsurance.ml.ml_plan_doc_helper import MLPlanDocHelper
 from fighthealthinsurance import stripe_utils
 from fhi_users.models import ProfessionalUser, UserDomain
 from fhi_users import emails as fhi_emails
@@ -679,6 +681,83 @@ class FollowUpHelper:
 
 class FindNextStepsHelper:
     @classmethod
+    def _get_outside_help_details(
+        cls, denial: "Denial", state: Optional[str] = None
+    ) -> list:
+        """Get outside help details based on state and regulator (shared logic)."""
+        outside_help_details = []
+        state = state or denial.your_state
+
+        if state in states_with_caps:
+            outside_help_details.append(
+                (
+                    (
+                        "<a href='https://www.cms.gov/CCIIO/Resources/Consumer-Assistance-Grants/"
+                        + state
+                        + "'>"
+                        + f"Your state {state} participates in a "
+                        + f"Consumer Assistance Program (CAP), and you may be able to get help "
+                        + f"through them.</a>"
+                    ),
+                    "Visit CMS.gov for more info<a href='https://www.cms.gov/CCIIO/Resources/Consumer-Assistance-Grants/'> here</a>",
+                )
+            )
+        erisa_regulator = Regulator.objects.filter(alt_name="ERISA").first()
+        if erisa_regulator and denial.regulator == erisa_regulator:
+            outside_help_details.append(
+                (
+                    (
+                        "Your plan looks to be an ERISA plan which means your employer <i>may</i>"
+                        + " have more input into plan decisions. If your are on good terms with HR "
+                        + " it could be worth it to ask them for advice."
+                    ),
+                    "Talk to your employer's HR if you are on good terms with them.",
+                )
+            )
+        return outside_help_details
+
+    @classmethod
+    def _build_question_forms(
+        cls, denial: "Denial", existing_answers: Optional[dict] = None
+    ) -> list:
+        """Build question forms from denial types and generated questions (shared logic)."""
+        from django import forms
+
+        question_forms = []
+        prof_pov = denial.professional_to_finish
+
+        # Add forms for each denial type
+        for dt in denial.denial_type.all():
+            new_form = dt.get_form()
+            if new_form is not None:
+                new_form = new_form(
+                    initial={"medical_reason": dt.appeal_text}, prof_pov=prof_pov
+                )
+                question_forms.append(new_form)
+
+        # Add generated questions form if available
+        if denial.generated_questions:
+            generated_questions: list[tuple[str, str]] = denial.generated_questions
+
+            class AppealQuestionsForm(forms.Form):
+                def __init__(self, *args, **kwargs):
+                    super().__init__(*args, **kwargs)
+                    for i, (question, initial_answer) in enumerate(
+                        generated_questions, 1
+                    ):
+                        field_name = f"appeal_generated_question_{i}"
+                        self.fields[field_name] = forms.CharField(
+                            label=question,
+                            help_text=question,
+                            required=False,
+                            initial=initial_answer,
+                        )
+
+            question_forms.append(AppealQuestionsForm())
+
+        return question_forms
+
+    @classmethod
     def find_next_steps(
         cls,
         denial_id: str,
@@ -743,34 +822,9 @@ class FindNextStepsHelper:
                 include_provided_health_history_in_appeal
             )
 
-        outside_help_details = []
-        state = your_state or denial.your_state
+        # Get outside help details using shared helper
+        outside_help_details = cls._get_outside_help_details(denial, your_state)
 
-        if state in states_with_caps:
-            outside_help_details.append(
-                (
-                    (
-                        "<a href='https://www.cms.gov/CCIIO/Resources/Consumer-Assistance-Grants/"
-                        + state
-                        + "'>"
-                        + f"Your state {state} participates in a "
-                        + f"Consumer Assistance Program (CAP), and you may be able to get help "
-                        + f"through them.</a>"
-                    ),
-                    "Visit CMS.gov for more info<a href='https://www.cms.gov/CCIIO/Resources/Consumer-Assistance-Grants/'> here</a>",
-                )
-            )
-        if denial.regulator == Regulator.objects.filter(alt_name="ERISA").get():
-            outside_help_details.append(
-                (
-                    (
-                        "Your plan looks to be an ERISA plan which means your employer <i>may</i>"
-                        + " have more input into plan decisions. If your are on good terms with HR "
-                        + " it could be worth it to ask them for advice."
-                    ),
-                    "Talk to your employer's HR if you are on good terms with them.",
-                )
-            )
         denial.insurance_company = insurance_company
         denial.plan_id = plan_id
         denial.claim_id = claim_id
@@ -808,59 +862,21 @@ class FindNextStepsHelper:
 
         denial.save()
 
-        # Define the special questions form for the denial
-        question_forms = []
-        for dt in denial.denial_type.all():
-            new_form = dt.get_form()
-            if new_form is not None:
-                new_form = new_form(
-                    initial={"medical_reason": dt.appeal_text}, prof_pov=prof_pov
-                )
-                question_forms.append(new_form)
-
-        # Generate questions for better appeal creation
+        # Generate questions for better appeal creation if they don't exist yet
         try:
-            # If questions don't exist yet, generate them
             if not denial.generated_questions or len(denial.generated_questions) == 0:
-                # Call the generate_appeal_questions method to get and store questions
-                # Using sync_to_async since we're in a synchronous method
                 logger.debug("Generating appeal questions")
                 async_to_sync(DenialCreatorHelper.generate_appeal_questions)(
                     denial_id=denial.denial_id
                 )
-                # Refresh the denial object to get the updated questions
                 denial.refresh_from_db()
-
-            # Create a form with the questions as fields if we have generated questions
-            if denial.generated_questions:
-                from django import forms
-
-                # The generated_questions field now contains tuples of (question, answer)
-                generated_questions: list[tuple[str, str]] = denial.generated_questions
-
-                # Create an AppealQuestionsForm to add to our question forms
-                class AppealQuestionsForm(forms.Form):
-                    def __init__(self, *args, **kwargs):
-                        super().__init__(*args, **kwargs)
-                        # Add fields for each question
-                        for i, (question, initial_answer) in enumerate(
-                            generated_questions, 1
-                        ):
-                            field_name = f"appeal_generated_question_{i}"
-                            self.fields[field_name] = forms.CharField(
-                                label=question,
-                                help_text=question,
-                                required=False,
-                                initial=initial_answer,  # Use the answer from the tuple
-                            )
-
-                appeal_questions_form = AppealQuestionsForm()
-                # Add this form to our question forms list
-                question_forms.append(appeal_questions_form)
         except Exception as e:
             logger.opt(exception=True).error(
                 f"Failed to process appeal questions for denial {denial_id}: {e}"
             )
+
+        # Build question forms using shared helper
+        question_forms = cls._build_question_forms(denial, existing_answers)
 
         # Combine all forms
         try:
@@ -880,6 +896,22 @@ class FindNextStepsHelper:
                 combined_form=combined_form,
                 semi_sekret=semi_sekret,
             )
+
+    @classmethod
+    def find_next_steps_for_denial(cls, denial: "Denial", email: str) -> "NextStepInfo":
+        """
+        Simplified version of find_next_steps for GET requests (back navigation).
+        Returns the outside_help info without modifying the denial.
+        """
+        # Use shared helpers for outside help details and question forms
+        outside_help_details = cls._get_outside_help_details(denial)
+        question_forms = cls._build_question_forms(denial)
+        combined_form = magic_combined_form(question_forms, {})
+        return NextStepInfo(
+            outside_help_details=outside_help_details,
+            combined_form=combined_form,
+            semi_sekret=denial.semi_sekret,
+        )
 
 
 @dataclass
@@ -1198,6 +1230,10 @@ class DenialCreatorHelper:
             named_task(cls.extract_set_plan_id(denial_id), "plan id"),
             named_task(cls.extract_set_claim_id(denial_id), "claim id"),
             named_task(cls.extract_set_date_of_service(denial_id), "date of service"),
+            named_task(
+                MLPlanDocHelper.generate_plan_documents_summary(denial_id),
+                "plan document summary",
+            ),
         ]
 
         required_awaitables: list[Coroutine[Any, Any, tuple[str, Any]]] = [
@@ -1440,50 +1476,121 @@ class DenialCreatorHelper:
         return None
 
     @classmethod
+    async def get_plan_documents_text(cls, denial_id: int) -> str:
+        """
+        Extract text from all plan documents associated with a denial.
+
+        Args:
+            denial_id: The denial ID to get plan documents for
+
+        Returns:
+            Combined text from all plan documents (PDF and text files)
+        """
+        combined_text = ""
+        try:
+            plan_docs = PlanDocuments.objects.filter(denial_id=denial_id)
+            async for doc in plan_docs:
+                try:
+                    # Try encrypted field first, fall back to unencrypted
+                    file_field = doc.plan_document_enc or doc.plan_document
+                    if not file_field:
+                        continue
+
+                    path = file_field.path
+                    if path.lower().endswith(".pdf"):
+                        try:
+                            with pymupdf.open(path) as pdf_doc:
+                                for page in pdf_doc:
+                                    combined_text += page.get_text() + "\n"
+                        except RuntimeError as e:
+                            logger.warning(f"Error reading PDF {path}: {e}")
+                    else:
+                        # Try to read as text file
+                        try:
+                            with open(
+                                path, "r", encoding="utf-8", errors="ignore"
+                            ) as f:
+                                combined_text += f.read() + "\n"
+                        except Exception as e:
+                            logger.debug(f"Could not read {path} as text: {e}")
+                except Exception as e:
+                    logger.debug(f"Error processing plan document: {e}")
+        except Exception as e:
+            logger.opt(exception=True).debug(
+                f"Error getting plan documents for denial {denial_id}: {e}"
+            )
+        return combined_text
+
+    @classmethod
     async def extract_set_fax_number(cls, denial_id):
-        # Try and extract the appeal fax number
+        """
+        Extract fax number from denial text and plan documents.
+
+        First tries the denial letter text, then searches plan documents if
+        no fax number was found. Validates extracted fax numbers against
+        source text to avoid hallucinations.
+        """
         denial = await Denial.objects.filter(denial_id=denial_id).aget()
         appeal_fax_number = denial.appeal_fax_number
+
+        # Text sources for validation
+        denial_text = denial.denial_text or ""
+        plan_docs_text = ""
+        all_source_text = denial_text
+
+        # First try to extract from denial text
         if not appeal_fax_number:
             try:
                 appeal_fax_number = await appealGenerator.get_fax_number(
-                    denial_text=denial.denial_text
+                    denial_text=denial_text
                 )
             except Exception as e:
                 logger.opt(exception=True).warning(
-                    f"Failed to extract fax number for denial {denial_id}: {e}"
+                    f"Failed to extract fax number from denial text for {denial_id}: {e}"
                 )
 
-        # More flexible validation against hallucinations
+        # If still not found, try plan documents
+        if not appeal_fax_number:
+            try:
+                plan_docs_text = await cls.get_plan_documents_text(denial_id)
+                if plan_docs_text:
+                    all_source_text = denial_text + "\n" + plan_docs_text
+                    appeal_fax_number = await appealGenerator.get_fax_number(
+                        denial_text=plan_docs_text
+                    )
+                    if appeal_fax_number:
+                        logger.debug(
+                            f"Found fax number in plan documents for denial {denial_id}"
+                        )
+            except Exception as e:
+                logger.opt(exception=True).warning(
+                    f"Failed to extract fax number from plan docs for {denial_id}: {e}"
+                )
+
+        # Validate the extracted fax number against hallucinations
         if appeal_fax_number is not None:
-            # Extract just the digits for comparison
             fax_digits = re.sub(r"\D", "", appeal_fax_number)
 
             if len(fax_digits) < 10 or len(fax_digits) > 15:
-                # Invalid length for a phone number
                 logger.debug(
                     f"Rejected fax number {appeal_fax_number} - invalid length"
                 )
                 appeal_fax_number = None
             elif len(appeal_fax_number) > 30:
-                # String is too long to be a reasonable fax number
                 logger.debug(f"Rejected fax number {appeal_fax_number} - too long")
                 appeal_fax_number = None
             else:
-                # Check if any subsequence of digits appears in the denial text
-                # This is more flexible than exact matching
-                denial_text_digits = re.sub(r"\D", "", denial.denial_text)
-                if fax_digits[-10:] not in denial_text_digits:
-                    # Not found in text - might be hallucinated
+                # Validate against all source text (denial + plan docs)
+                all_source_digits = re.sub(r"\D", "", all_source_text)
+                if fax_digits[-10:] not in all_source_digits:
                     logger.debug(
-                        f"Rejected fax number {appeal_fax_number} - digits not found in text"
+                        f"Rejected fax number {appeal_fax_number} - digits not found in source text"
                     )
                     appeal_fax_number = None
                 else:
                     logger.debug(f"Validated fax number {appeal_fax_number}")
 
         if appeal_fax_number is not None:
-            # Use aupdate instead of fetching and saving
             await Denial.objects.filter(denial_id=denial_id).aupdate(
                 appeal_fax_number=appeal_fax_number
             )
@@ -1732,9 +1839,9 @@ class AppealsBackendHelper:
                     subs["[Patient Name]"] = denial.patient_user.get_legal_name()
                     subs["[patient name]"] = denial.patient_user.get_legal_name()
                 if denial and denial.primary_professional is not None:
-                    subs["[Professional Name]"] = (
-                        denial.primary_professional.get_full_name()
-                    )
+                    subs[
+                        "[Professional Name]"
+                    ] = denial.primary_professional.get_full_name()
                 if denial.domain:
                     subs["[Professional Address]"] = denial.domain.get_address()
             except:
@@ -1853,7 +1960,7 @@ class AppealsBackendHelper:
                 qa_context = json.loads(denial.qa_context)
             qa_context["medical_context"] = " ".join(medical_context)
             denial.qa_context = json.dumps(qa_context)
-        if plan_context is not None:
+        if plan_context is not None and denial.plan_context is None:
             denial.plan_context = " ".join(set(plan_context))
         # Update the denial object with the received parameter if it differs
         if denial.professional_to_finish != professional_to_finish:
@@ -1947,6 +2054,14 @@ class AppealsBackendHelper:
             {"type": "status", "message": "Generating personalized appeals with AI..."}
         ) + "\n"
 
+        model_plan_context: Optional[str] = None
+        if denial.plan_context is not None:
+            model_plan_context = str(denial.plan_context)
+        if model_plan_context and len(plan_context) > 0:
+            model_plan_context = f"{plan_context}{denial.plan_documents_summary or ''}"
+        else:
+            model_plan_context = denial.plan_documents_summary
+
         appeals: Iterator[str] = await sync_to_async(appealGenerator.make_appeals)(
             denial,
             AppealTemplateGenerator(prefaces, main, footer),
@@ -1954,6 +2069,7 @@ class AppealsBackendHelper:
             non_ai_appeals=non_ai_appeals,
             pubmed_context=pubmed_context,
             ml_citations_context=ml_citation_context,
+            plan_context=model_plan_context,
         )
         # Only filters out None
         filtered_appeals: Iterator[str] = filter(lambda x: x != None, appeals)

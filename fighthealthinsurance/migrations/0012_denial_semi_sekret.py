@@ -6,7 +6,6 @@ import fighthealthinsurance.models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
         (
             "fighthealthinsurance",

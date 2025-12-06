@@ -7,7 +7,6 @@ import fighthealthinsurance.combined_storage
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
         ("fighthealthinsurance", "0033_pubmedarticlesummarized_pubquerymeddata"),
     ]

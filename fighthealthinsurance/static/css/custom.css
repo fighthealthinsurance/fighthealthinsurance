@@ -878,3 +878,78 @@ section:not(.slider) .share-subcopy {
         justify-content: center;
     }
 }
+
+/* Share and PWYW panel styles for appeal pages (non-hero) */
+.appeals-share-wrapper,
+.appeal-share-wrapper {
+    display: flex;
+    justify-content: center;
+    padding: 1rem 0;
+}
+.appeals-share-wrapper .share-panel,
+.appeal-share-wrapper .share-panel {
+    background: #fff !important;
+    color: #333 !important;
+    border: 1px solid #e0e0e0;
+    border-top: 4px solid #a5c422;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+    width: 100%;
+    max-width: 680px;
+    margin: 0 auto;
+}
+.appeals-share-wrapper .share-panel *,
+.appeal-share-wrapper .share-panel * {
+    color: inherit;
+}
+.appeals-share-wrapper .share-title,
+.appeal-share-wrapper .share-title {
+    color: #333 !important;
+    text-shadow: none;
+}
+.appeals-share-wrapper .share-subcopy,
+.appeal-share-wrapper .share-subcopy {
+    color: #555 !important;
+    text-shadow: none;
+}
+
+/* PWYW panel on appeal pages - fix text colors */
+.appeal-donate-wrapper .pwyw-panel {
+    background: #fff;
+    color: #333;
+    border: 2px solid #ADD100;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+}
+.appeal-donate-wrapper .pwyw-title {
+    color: #333;
+    text-shadow: none;
+}
+.appeal-donate-wrapper .pwyw-subcopy {
+    color: #555;
+    text-shadow: none;
+}
+.appeal-donate-wrapper .pwyw-option {
+    background: #f8f9fa;
+    color: #333;
+    border: 1px solid #ddd;
+}
+.appeal-donate-wrapper .pwyw-option small {
+    color: #666;
+}
+.appeal-donate-wrapper .pwyw-option span {
+    color: #333;
+}
+.appeal-donate-wrapper .pwyw-thanks {
+    color: #a5c422;
+}
+
+/* Centered content on desktop for appeal pages */
+@media (min-width: 768px) {
+    .appeals-share-wrapper .share-panel,
+    .appeal-share-wrapper .share-panel {
+        text-align: center;
+    }
+    .appeals-share-wrapper .share-buttons,
+    .appeal-share-wrapper .share-buttons {
+        justify-content: center;
+    }
+}

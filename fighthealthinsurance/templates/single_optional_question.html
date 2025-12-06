@@ -3,8 +3,12 @@
 {% block content %}
 <section class="scan-section mt-2">
     <div class="container">
+	<!-- Progress indicator -->
+	{% include 'partials/flow_progress.html' with current_step=current_step|default:2 %}
+
 	{% if form.errors %}
-	<div style="color:red">
+	<div class="alert alert-danger" role="alert" style="color:#721c24; background-color:#f8d7da; border:1px solid #f5c6cb; padding:1rem; border-radius:4px; margin-bottom:1rem;">
+	    <strong>Please fix the following:</strong>
 	    {{ form.errors }}
 	</div>
 	{% endif %}
@@ -20,10 +24,19 @@
 	  {% block formelm %}
 	  {% endblock formelm %}
 	  {% block formexplanation %}
-	  Don't include any personally identifiable information (PII) -- like your name, address, etc.) This field is optional so feel free to skip it if the only way to answer it would include your PII.<br>
-	  If you don't know (or don't want to answer) you can skip this question by not answering it and just pressing <b>Next</b>.<br>
+	  <div class="form-help-text" style="background:#f8f9fa; padding:1rem; border-radius:4px; margin-bottom:1rem;">
+	    <p style="margin-bottom:0.5rem;"><strong>This step is optional.</strong></p>
+	    <p style="margin-bottom:0;">Don't include any personally identifiable information (PII) like your name, address, etc. If you don't know the answer or prefer not to share, just press <strong>Next</strong> to skip.</p>
+	  </div>
 	  {% endblock formexplanation %}
-	<button id="next" type="submit" class="btn btn-green">Next</button>
+	  <div class="form-navigation" style="display:flex; gap:1rem; align-items:center; margin-top:1rem;">
+	    {% if back_url %}
+	    <a href="{{ back_url }}" class="btn btn-secondary" style="background:#6c757d; color:white; padding:10px 20px; border-radius:3px; text-decoration:none;">
+	      ← {{ back_label|default:"Back" }}
+	    </a>
+	    {% endif %}
+	    <button id="next" type="submit" class="btn btn-green">Next →</button>
+	  </div>
 	</form>
 	</div>
     </div>

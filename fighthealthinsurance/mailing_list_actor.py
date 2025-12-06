@@ -66,9 +66,7 @@ class MailingListActor:
         else:
             # Get all subscribers with their unsubscribe URLs
             subscribers = MailingListSubscriber.objects.all().iterator()
-            recipients = [
-                (sub.email, sub.get_unsubscribe_url()) for sub in subscribers
-            ]
+            recipients = [(sub.email, sub.get_unsubscribe_url()) for sub in subscribers]
 
         # Use connection reuse for better performance
         connection = get_connection()
@@ -121,7 +119,7 @@ class MailingListActor:
         """Append unsubscribe link to HTML content."""
         unsubscribe_html = (
             f'<br><hr><p style="font-size: 12px; color: #666;">'
-            f'To unsubscribe from this mailing list, '
+            f"To unsubscribe from this mailing list, "
             f'<a href="{unsubscribe_url}">click here</a>.</p>'
         )
         return html_content + unsubscribe_html

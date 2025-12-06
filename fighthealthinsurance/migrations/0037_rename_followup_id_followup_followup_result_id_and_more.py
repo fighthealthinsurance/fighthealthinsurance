@@ -8,7 +8,6 @@ import fighthealthinsurance.utils
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
         ("fighthealthinsurance", "0036_alter_followupsched_follow_up_type"),
     ]

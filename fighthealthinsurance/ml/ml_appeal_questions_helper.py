@@ -9,7 +9,6 @@ import re
 
 
 class MLAppealQuestionsHelper:
-
     @staticmethod
     async def generate_generic_questions(
         procedure: Optional[str], diagnosis: Optional[str], timeout: int = 90

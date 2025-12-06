@@ -5,7 +5,6 @@ import fighthealthinsurance.utils
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
         ("fighthealthinsurance", "0130_chatleads_drug"),
     ]

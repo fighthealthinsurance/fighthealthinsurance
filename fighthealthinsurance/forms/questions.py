@@ -349,7 +349,6 @@ class GenderAffirmingCareQuestions(InsuranceQuestions):
 
 
 class GenderAffirmingCareBreastAugmentationQuestions(GenderAffirmingCareQuestions):
-
     def plan_context(self, denial: Denial):
         if self.wpath_version(denial) == "7":
             return """The plan references version 7 of the WPATH SOC. As covered on P59 of the WPATH 7 SOC the only requirements for breast augmentation is 1. Persistent, well-documented gender dysphoria;

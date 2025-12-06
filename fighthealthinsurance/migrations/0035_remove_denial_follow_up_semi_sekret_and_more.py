@@ -7,7 +7,6 @@ import fighthealthinsurance.utils
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
         (
             "fighthealthinsurance",

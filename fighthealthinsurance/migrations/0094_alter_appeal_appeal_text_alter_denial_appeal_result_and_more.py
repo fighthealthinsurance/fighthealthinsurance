@@ -5,7 +5,6 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
         ("fhi_users", "0033_userdomain_stripe_customer_id"),
         ("fighthealthinsurance", "0093_denial_manual_deidentified_ocr_cleaned_denial"),

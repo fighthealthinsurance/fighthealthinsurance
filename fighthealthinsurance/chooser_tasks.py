@@ -14,10 +14,7 @@ from django.conf import settings
 from loguru import logger
 
 from fighthealthinsurance.ml.ml_router import ml_router
-from fighthealthinsurance.models import (
-    ChooserCandidate,
-    ChooserTask
-)
+from fighthealthinsurance.models import ChooserCandidate, ChooserTask
 from fighthealthinsurance.utils import fire_and_forget_in_new_threadpool
 
 # Configuration for auto-refill thresholds
@@ -402,7 +399,9 @@ async def _generate_chat_candidates(task: ChooserTask):
                     prompt=simple_prompt,
                 )
             if final_user_prompt:
-                final_user_prompt = final_user_prompt.strip().strip('"').strip("'").strip()
+                final_user_prompt = (
+                    final_user_prompt.strip().strip('"').strip("'").strip()
+                )
             history = []
 
         if len(final_user_prompt) < 10 or len(final_user_prompt) > 1000:

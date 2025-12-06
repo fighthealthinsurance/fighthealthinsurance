@@ -529,6 +529,7 @@ class AppealGenerator(object):
         insurance_company=None,
         ml_context=None,
         pubmed_context=None,
+        plan_context=None,
     ) -> Optional[str]:
         """
         Constructs a prompt for generating a health insurance appeal based on denial details and optional contextual information.
@@ -553,6 +554,8 @@ class AppealGenerator(object):
         base = ""
         if is_trans:
             base = "While answering the question keep in mind the patient is trans."
+        if plan_context is not None and len(plan_context) > 5:
+            base = f"{base} The patient's insurance plan details are as follows: {plan_context}."
         if professional_to_finish:
             sign_off = f"Sign the letter as {professional}.\n" if professional else ""
             # List of good examples to randomize
@@ -641,6 +644,7 @@ class AppealGenerator(object):
         non_ai_appeals=None,
         pubmed_context=None,
         ml_citations_context=None,
+        plan_context=None,
     ) -> Iterator[str]:
         """
         Generates an iterator of appeal texts for a given insurance denial using templates, non-AI sources, and AI models.
@@ -654,6 +658,7 @@ class AppealGenerator(object):
             non_ai_appeals: Optional list of pre-written appeals to include.
             pubmed_context: Optional PubMed context to provide to AI models.
             ml_citations_context: Optional list of citation contexts for AI models.
+            plan_context: Optional plan context to provide to AI models
 
         Returns:
             An iterator yielding generated appeal texts as strings.
@@ -677,6 +682,7 @@ class AppealGenerator(object):
             insurance_company=denial.insurance_company,
             ml_context=denial.ml_citation_context,
             pubmed_context=denial.pubmed_context,
+            plan_context=plan_context,
         )
         open_medically_necessary_prompt = self.make_open_med_prompt(
             procedure=denial.procedure,
@@ -793,7 +799,15 @@ class AppealGenerator(object):
         if denial.health_history is not None:
             medical_context += denial.health_history
         prof_pov = denial.professional_to_finish
-        plan_context = denial.plan_context
+        # Combine plan_context (from forms like WPATH detection) with plan_documents_summary
+        plan_context_parts = []
+        if denial.plan_context:
+            plan_context_parts.append(denial.plan_context)
+        if denial.plan_documents_summary:
+            plan_context_parts.append(
+                f"Summary of relevant plan document sections:\n{denial.plan_documents_summary}"
+            )
+        plan_context = "\n\n".join(plan_context_parts) if plan_context_parts else None
         # Find any FHI model dynamically
         fhi_model_names = [
             name for name in ml_router.models_by_name.keys() if name.startswith("fhi-")

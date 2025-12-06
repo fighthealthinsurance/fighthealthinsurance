@@ -5,7 +5,6 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
         ("fhi_users", "0016_alter_professionaldomainrelation_active_and_more"),
         ("fighthealthinsurance", "0069_mailinglistsubscriber"),

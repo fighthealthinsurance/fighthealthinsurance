@@ -75,4 +75,4 @@ class SeleniumFollowUp(BaseCase, StaticLiveServerTestCase):
             f"v0/followup/{denial.uuid}/{denial.hashed_email}/{denial.hashed_email}"
         )
         self.open(f"{self.live_server_url}/{mylink}")
-        self.assert_title("Server Error (500)")
+        self.assert_title("Something Went Wrong - Fight Health Insurance")

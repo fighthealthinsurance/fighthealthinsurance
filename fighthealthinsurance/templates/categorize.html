@@ -8,18 +8,41 @@ Categorize Your Denial
 {% load static %}
 {% block content %}
 
-<div class="container" style="width: 80%; margin-top: 2.5rem !important; margin-top: 15vh;">
-  <p>Thank you for your submission!<br>
-    We've tried our best to extract information from your upload (but we could totally have got this wrong).<br>
-    Here are a few questions to categorize your denial so we can generate the right kind of appeal:<br>
-  </p>
+<div class="container" style="width: 80%; margin-top: 2.5rem !important;">
+  <!-- Progress indicator -->
+  {% include 'partials/flow_progress.html' with current_step=current_step|default:5 %}
+
+  <div style="background:#e8f5e9; padding:1rem; border-radius:4px; margin-bottom:1.5rem; border-left:4px solid #a5c422;">
+    <h4 style="margin:0 0 0.5rem 0; color:#2e7d32;">Almost there!</h4>
+    <p style="margin:0;">We've tried our best to extract information from your denial letter. Please review and correct anything that looks wrong below.</p>
+  </div>
+
   <form action="{% url 'find_next_steps' %}" method="post">
     {% csrf_token %}
     <table class="post-infered-table">
       {{ post_infered_form.as_table }}
     </table>
     <br>
-    <input type="submit" id="submit_cat" class="cat-submit-button">
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+      {% if back_url %}
+      <a href="{{ back_url }}" class="btn btn-secondary" style="background:#6c757d; color:white; padding:10px 20px; border-radius:3px; text-decoration:none;">
+        ← {{ back_label|default:"Back" }}
+      </a>
+      {% else %}
+      <a href="{% url 'scan' %}" class="btn btn-link" style="color:#6c757d; text-decoration:underline; font-size:0.9rem;">
+        Start over with a new denial
+      </a>
+      {% endif %}
+      <button type="submit" id="submit_cat" class="cat-submit-button" style="
+        background: #a5c422;
+        text-align: center;
+        color:#ffffff !important;
+        border: none;
+        border-radius: 3px;
+        padding: 10px 30px;
+        font-size: 16px;
+        cursor: pointer;">Continue →</button>
+    </div>
   </form>
 </div>
 {% endblock content %}

@@ -6,7 +6,6 @@ import fighthealthinsurance.models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
         ("fighthealthinsurance", "0026_denialtypes_diagnosis_regex_and_more"),
     ]

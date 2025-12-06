@@ -1,4 +1,4 @@
-import { storeLocal } from "./shared";
+import { storeLocal, storeTextareaLocal, getLocalStorageItemWithTTL, setLocalStorageItemWithTTL, isPersistenceEnabled, setPersistenceEnabled } from "./shared";
 
 import { recognize } from "./scrub_ocr";
 
@@ -26,6 +26,16 @@ const recognizeEvent = async function (evt: Event) {
 };
 
 function setupScrub(): void {
+  // Setup persistence toggle checkbox
+  const persistenceCheckbox = document.getElementById("persistence_enabled") as HTMLInputElement;
+  if (persistenceCheckbox) {
+    persistenceCheckbox.checked = isPersistenceEnabled();
+    persistenceCheckbox.addEventListener("change", (event) => {
+      const target = event.target as HTMLInputElement;
+      setPersistenceEnabled(target.checked);
+    });
+  }
+
   // Restore previous local values
   var input = document.getElementsByTagName("input");
   console.log(input);
@@ -37,12 +47,25 @@ function setupScrub(): void {
     if (node.id.startsWith("store_") || node.id.startsWith("email")) {
       node.addEventListener("change", storeLocal);
       if (node.value == "") {
-        const storedValue = window.localStorage.getItem(node.id);
+        const storedValue = getLocalStorageItemWithTTL(node.id);
         node.value = storedValue !== null ? storedValue : ""; // Ensure string assignment
       }
     }
   }
   nodes.forEach(handleStorage);
+
+  // Handle textareas (for denial_text)
+  const textareas: NodeListOf<HTMLTextAreaElement> = document.querySelectorAll("textarea");
+  textareas.forEach((textarea) => {
+    if (textarea.id === "denial_text" || textarea.id.startsWith("store_")) {
+      textarea.addEventListener("input", storeTextareaLocal);
+      if (textarea.value === "") {
+        const storedValue = getLocalStorageItemWithTTL(textarea.id);
+        textarea.value = storedValue !== null ? storedValue : "";
+      }
+    }
+  });
+
   const elm = document.getElementById("uploader");
   if (elm != null) {
     elm.addEventListener("change", recognizeEvent);

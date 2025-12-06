@@ -243,7 +243,6 @@ class NextStepsViewSet(viewsets.ViewSet, CreateMixin):
 
 
 class DenialViewSet(viewsets.ViewSet, CreateMixin):
-
     serializer_class = serializers.DenialFormSerializer
 
     def get_serializer_class(self):

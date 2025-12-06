@@ -539,7 +539,6 @@ class ModelDescription:
 
 
 class RemoteModel(RemoteModelLike):
-
     def __init__(self, model: str):
         pass
 
@@ -592,7 +591,6 @@ class RemoteModel(RemoteModelLike):
 
 
 class RemoteOpenLike(RemoteModel):
-
     _expensive = False
 
     def __init__(

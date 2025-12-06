@@ -6,7 +6,6 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
         ("fhi_users", "0041_professionaluser_credentials"),
         ("fighthealthinsurance", "0122_appeal_chat_priorauthrequest_chat"),

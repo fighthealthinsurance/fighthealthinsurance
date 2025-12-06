@@ -48,7 +48,7 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.11'
           
       - name: Install system level packages
         run: (sudo apt-get update || echo "sometimes this fails because of the azure cli repo which we do not use") && sudo apt-get install -y libcairo2-dev libgirepository1.0-dev pkg-config python3-dev && sudo apt-get clean
@@ -77,10 +77,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ['3.10']
+        python: ['3.11']
         django: ['50']
         include:
-          - python: '3.10'
+          - python: '3.11'
             django: '50'
 
     name: Run the sync test suite (Python ${{ matrix.python }}, Django ${{ matrix.django }})
@@ -139,10 +139,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ['3.10']
+        python: ['3.11']
         django: ['50']
         include:
-          - python: '3.10'
+          - python: '3.11'
             django: '50'
     name: Run the sync actor test suite (Python ${{ matrix.python }}, Django ${{ matrix.django }})
     steps:
@@ -274,10 +274,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ['3.10']
+        python: ['3.11']
         django: ['50']
         include:
-          - python: '3.10'
+          - python: '3.11'
             django: '50'
 
     name: Run the async test suite (Python ${{ matrix.python }}, Django ${{ matrix.django }})
