@@ -2054,13 +2054,13 @@ class AppealsBackendHelper:
             {"type": "status", "message": "Generating personalized appeals with AI..."}
         ) + "\n"
 
-        plan_context: Optional[str] = None
+        model_plan_context: Optional[str] = None
         if denial.plan_context is not None:
-            plan_context = str(denial.plan_context)
-        if plan_context and len(plan_context) > 0:
-            plan_context = f"{plan_context}{denial.plan_documents_summary or ''}"
+            model_plan_context = str(denial.plan_context)
+        if model_plan_context and len(plan_context) > 0:
+            model_plan_context = f"{plan_context}{denial.plan_documents_summary or ''}"
         else:
-            plan_context = denial.plan_documents_summary
+            model_plan_context = denial.plan_documents_summary
 
         appeals: Iterator[str] = await sync_to_async(appealGenerator.make_appeals)(
             denial,
@@ -2069,7 +2069,7 @@ class AppealsBackendHelper:
             non_ai_appeals=non_ai_appeals,
             pubmed_context=pubmed_context,
             ml_citations_context=ml_citation_context,
-            plan_context=plan_context,
+            plan_context=model_plan_context,
         )
         # Only filters out None
         filtered_appeals: Iterator[str] = filter(lambda x: x != None, appeals)
