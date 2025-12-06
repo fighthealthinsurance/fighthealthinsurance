@@ -1,0 +1,1095 @@
+{
+  "mri-denial": {
+    "slug": "mri-denial",
+    "title": "Appealing MRI Denials",
+    "default_procedure": "MRI Scan",
+    "tagline": "Insurance often denies MRIs as 'not medically necessary'—here’s how to overturn it.",
+    "hero_h1": "Appeal Your MRI Denial",
+    "hero_subhead": "Don’t let \"not medically necessary\" stop you from getting real answers.",
+    "intro": "MRIs get denied all the time — usually because the insurer wants cheaper imaging first or claims your symptoms don’t justify the scan. But if your doctor ordered it, there’s a strong chance you can overturn the denial with a clear appeal explaining why the MRI is clinically necessary.",
+    "common_denial_reasons": [
+      "Not medically necessary",
+      "Try X-ray or PT first",
+      "Insufficient documentation of symptoms",
+      "Out-of-network imaging provider"
+    ],
+    "how_we_help": "We help you explain your symptoms, clinical history, and physician recommendations in a way insurers actually respond to. Upload your denial and we’ll generate a polished appeal letter you can submit today.",
+    "cta": "Start your MRI appeal — it takes about 3 minutes.",
+    "faq": [
+      {
+        "question": "Can I appeal an MRI denial if I already had the scan done?",
+        "answer": "Yes. Even if the MRI already happened, you can still appeal the denial and ask the insurer to cover it. Your appeal will focus on why the scan was medically necessary at the time it was ordered."
+      },
+      {
+        "question": "Do I need my doctor to write a letter for my MRI appeal?",
+        "answer": "It helps a lot. Our letter generator can work with what you have, but a short note from your doctor explaining why the MRI was necessary can significantly strengthen your appeal."
+      },
+      {
+        "question": "What if my insurer says I should have tried an X-ray first?",
+        "answer": "Many guidelines support going straight to MRI when symptoms or red flags are serious enough. Your appeal should explain your symptoms, risks, and why an MRI was the appropriate first test."
+      }
+    ],
+    "evidence_snippets": [
+      "Clinical guidelines support MRI when there are neurologic deficits, red-flag symptoms, or failure of conservative treatment.",
+      "Delays in appropriate imaging can lead to missed or worsened diagnoses, increased morbidity, and higher downstream costs.",
+      "The requested MRI is consistent with evidence-based practice and standard of care for this clinical presentation."
+    ],
+    "pubmed_search_terms": [
+      "MRI appropriateness criteria low back pain red flags",
+      "evidence-based guidelines MRI neurologic symptoms",
+      "impact of delayed MRI diagnosis outcomes"
+    ]
+  },
+  "ct-scan-denial": {
+    "slug": "ct-scan-denial",
+    "title": "Appealing CT Scan Denials",
+    "default_procedure": "CT Scan",
+    "tagline": "Step-by-step help appealing CT scan denials, especially for urgent or diagnostic cases.",
+    "hero_h1": "Appeal Your CT Scan Denial",
+    "hero_subhead": "When your doctor orders it, insurers shouldn’t second-guess them.",
+    "intro": "CT scans are often denied because insurers think the issue isn’t urgent or could be diagnosed another way. A strong appeal clarifies why your doctor chose a CT and why delay could harm your health.",
+    "common_denial_reasons": [
+      "Not medically necessary",
+      "Alternate imaging recommended first",
+      "No documentation of urgent symptoms"
+    ],
+    "how_we_help": "We help you articulate the clinical urgency and rationale behind your CT order, backed by your doctor’s notes and your symptoms.",
+    "cta": "Start your CT scan appeal.",
+    "faq": [
+      {
+        "question": "Why did my insurer deny my CT scan?",
+        "answer": "Common reasons include claiming your condition isn't urgent, preferring another test first, or saying your symptoms weren’t clearly documented. Your appeal should address each of those points directly."
+      },
+      {
+        "question": "Do I need ER or urgent care notes for my CT appeal?",
+        "answer": "They help. If you have records from an ER or urgent visit, including them can show why your doctor felt a CT scan was needed quickly."
+      },
+      {
+        "question": "Can I still appeal if I went ahead and got the CT scan anyway?",
+        "answer": "Yes. You can appeal after the fact and ask for coverage, especially if your results showed something significant or matched the doctor’s concerns."
+      }
+    ],
+    "evidence_snippets": [
+      "CT imaging is recommended in many guidelines when serious pathology is suspected and rapid diagnosis affects management.",
+      "Timely CT scans can reduce morbidity and mortality in conditions such as suspected stroke, pulmonary embolism, or abdominal emergencies.",
+      "The requested CT is consistent with standard of care and clinical decision rules for this presentation."
+    ],
+    "pubmed_search_terms": [
+      "CT scan emergency department diagnostic yield",
+      "guidelines CT imaging acute abdominal pain",
+      "clinical decision rules CT imaging"
+    ]
+  },
+  "sleep-study-denial": {
+    "slug": "sleep-study-denial",
+    "title": "Appealing Sleep Study Denials",
+    "default_procedure": "Sleep Study (Polysomnography or Home Study)",
+    "tagline": "Insurers frequently require a home test first—learn how to appeal this and win.",
+    "hero_h1": "Appeal Your Sleep Study Denial",
+    "hero_subhead": "Whether in-lab or at home, testing for sleep disorders shouldn’t be a battle.",
+    "intro": "Sleep studies are denied constantly — often because insurers want a home test first or don’t see enough documented symptoms. Your appeal can fix this.",
+    "common_denial_reasons": [
+      "Must complete home sleep test first",
+      "Insufficient symptoms documented",
+      "Repeat test not covered"
+    ],
+    "how_we_help": "We help you clarify symptoms like snoring, apnea episodes, daytime sleepiness, and medical risks, all of which support medical necessity.",
+    "cta": "Start your sleep study appeal.",
+    "faq": [
+      {
+        "question": "What symptoms should I mention in my sleep study appeal?",
+        "answer": "Include loud snoring, witnessed apneas, gasping, morning headaches, daytime sleepiness, trouble focusing, and any work or driving safety concerns."
+      },
+      {
+        "question": "Can I appeal if I need an in-lab study instead of a home test?",
+        "answer": "Yes. You can explain why an in-lab study is safer or more accurate in your case, such as other medical conditions or prior inconclusive home tests."
+      },
+      {
+        "question": "Do I have to wait for another denial to appeal?",
+        "answer": "No. You usually have the right to file an internal appeal after the first denial. Check your plan’s deadline and file as soon as you can."
+      }
+    ],
+    "evidence_snippets": [
+      "Polysomnography is the standard diagnostic tool for obstructive sleep apnea and related disorders.",
+      "Untreated sleep apnea is associated with cardiovascular disease, metabolic disorders, and increased accident risk.",
+      "Early diagnosis and treatment of sleep disorders reduce long-term healthcare costs and improve quality of life."
+    ],
+    "pubmed_search_terms": [
+      "polysomnography obstructive sleep apnea guidelines",
+      "untreated sleep apnea cardiovascular risk",
+      "home sleep apnea testing vs polysomnography"
+    ]
+  },
+  "cpap-denial": {
+    "slug": "cpap-denial",
+    "title": "Appealing CPAP Denials",
+    "default_procedure": "CPAP Machine or Supplies",
+    "tagline": "Helpful for OSA patients denied CPAP devices or replacement supplies.",
+    "hero_h1": "Appeal Your CPAP Denial",
+    "hero_subhead": "If you’ve been diagnosed with sleep apnea, treatment should not be optional.",
+    "intro": "Insurers regularly deny CPAP machines and supplies, often claiming test results don't meet criteria or that compliance wasn’t proven.",
+    "common_denial_reasons": [
+      "Doesn’t meet AHI thresholds",
+      "Non-compliant usage",
+      "Home sleep study insufficient",
+      "Replacement schedule not allowed"
+    ],
+    "how_we_help": "We help you appeal with documentation of symptoms, severity, diagnostic testing, or medical need for supplies or equipment replacement.",
+    "cta": "Start your CPAP appeal.",
+    "faq": [
+      {
+        "question": "What if my AHI is just below their cutoff?",
+        "answer": "Your appeal can emphasize symptoms, comorbid conditions, and functional impairment. Many guidelines support treatment even at moderate AHI when symptoms are significant."
+      },
+      {
+        "question": "How do I address a \"non-compliance\" denial?",
+        "answer": "Explain barriers you faced, how you’ve addressed them, and include any updated compliance data from your device if available."
+      },
+      {
+        "question": "Can I appeal denials for CPAP supplies and replacement parts?",
+        "answer": "Yes. Supplies are part of keeping treatment effective. Your appeal can explain why replacements are needed to maintain therapy."
+      }
+    ],
+    "evidence_snippets": [
+      "CPAP therapy has been shown to reduce daytime sleepiness, improve blood pressure, and lower cardiovascular risk in obstructive sleep apnea.",
+      "Adherence improves when therapy is supported rather than interrupted by coverage denials.",
+      "Providing CPAP therapy is cost-effective compared with the long-term costs of untreated sleep apnea."
+    ],
+    "pubmed_search_terms": [
+      "CPAP therapy outcomes obstructive sleep apnea",
+      "cost effectiveness CPAP cardiovascular",
+      "adherence CPAP treatment health outcomes"
+    ]
+  },
+  "pt-ot-st-denial": {
+    "slug": "pt-ot-st-denial",
+    "title": "Appealing Physical/Occupational/Speech Therapy Denials",
+    "default_procedure": "Physical / Occupational / Speech Therapy",
+    "tagline": "Appeal visit-limit denials and claims insurers mark as 'maintenance only.'",
+    "hero_h1": "Appeal Your Physical, Occupational, or Speech Therapy Denial",
+    "hero_subhead": "Movement, recovery, and communication aren’t optional.",
+    "intro": "Insurers often deny therapy by calling it \"maintenance care\" or limiting visit counts. Your appeal can correct that.",
+    "common_denial_reasons": [
+      "Maintenance only, not restorative",
+      "Exceeded allowed visit limit",
+      "Insufficient documentation of functional deficits"
+    ],
+    "how_we_help": "We help you explain your functional goals, progress, and clinician recommendations clearly — things insurers typically overlook.",
+    "cta": "Start your therapy appeal.",
+    "faq": [
+      {
+        "question": "What counts as \"medical necessity\" for therapy?",
+        "answer": "Showing that therapy improves or prevents decline in mobility, strength, speech, or daily activities usually supports medical necessity."
+      },
+      {
+        "question": "Can I appeal if I’ve hit the plan’s visit limit?",
+        "answer": "Yes. Many plans allow exceptions when continued therapy is medically necessary. Your appeal can include progress notes and updated goals."
+      },
+      {
+        "question": "Should my therapist provide documentation?",
+        "answer": "Absolutely. Progress notes, functional assessments, and a short letter from your therapist can significantly strengthen your appeal."
+      }
+    ],
+    "evidence_snippets": [
+      "Rehabilitation therapies improve function, reduce disability, and can prevent more costly interventions or institutional care.",
+      "Continuing therapy beyond arbitrary visit limits may be necessary when measurable gains are still being made.",
+      "Therapy is considered medically necessary when it is expected to result in significant, sustained improvement in function."
+    ],
+    "pubmed_search_terms": [
+      "physical therapy functional outcomes chronic conditions",
+      "occupational therapy activities of daily living improvement",
+      "speech therapy effectiveness communication disorders"
+    ]
+  },
+  "mental-health-denial": {
+    "slug": "mental-health-denial",
+    "title": "Appealing Mental Health Care Denials",
+    "default_procedure": "Psychiatry / Therapy Services",
+    "tagline": "Mental health parity laws exist — let’s make insurers follow them.",
+    "hero_h1": "Appeal Your Mental Health Care Denial",
+    "hero_subhead": "Mental health care is real health care.",
+    "intro": "Therapy and psychiatric care get denied for absurd reasons like \"not medically necessary\" or \"not enough impairment.\" Many of these denials violate mental health parity laws.",
+    "common_denial_reasons": [
+      "Not medically necessary",
+      "Too frequent or insufficient symptoms",
+      "Provider out-of-network"
+    ],
+    "how_we_help": "We help you document symptoms, risks, impact on daily life, and your clinician’s treatment plan — which often turns denials around quickly.",
+    "cta": "Start your mental health appeal.",
+    "faq": [
+      {
+        "question": "What are mental health parity laws?",
+        "answer": "Parity laws generally require insurers to cover mental health and substance use care on equal terms with medical and surgical care. Denials based on stricter rules may violate these laws."
+      },
+      {
+        "question": "Can I appeal if my insurer reduced my therapy frequency?",
+        "answer": "Yes. You can appeal a reduction or limit by showing that your current frequency is medically necessary and supported by your therapist or psychiatrist."
+      },
+      {
+        "question": "Do I need to share very personal details in my appeal?",
+        "answer": "You can focus on symptoms and how they affect work, school, relationships, and self-care. It should be honest but doesn’t require every personal detail."
+      }
+    ],
+    "evidence_snippets": [
+      "Evidence-based psychotherapy and psychiatric medication reduce symptoms, relapse risk, and overall healthcare utilization.",
+      "Under-treatment of mental health conditions is associated with increased emergency visits, hospitalizations, and disability.",
+      "Parity regulations support coverage of mental health treatment consistent with standards of care."
+    ],
+    "pubmed_search_terms": [
+      "mental health treatment outcomes psychotherapy medication",
+      "parity law impact insurance coverage mental health",
+      "under-treatment depression healthcare utilization"
+    ]
+  },
+  "autism-therapy-denial": {
+    "slug": "autism-therapy-denial",
+    "title": "Appealing ABA Therapy Denials",
+    "default_procedure": "Applied Behavior Analysis (ABA)",
+    "tagline": "ABA therapy is medically necessary for many autistic children — insurers still deny it.",
+    "hero_h1": "Appeal Your ABA Therapy Denial",
+    "hero_subhead": "Every child deserves appropriate care.",
+    "intro": "ABA therapy is frequently denied due to cost-cutting disguised as \"not medically necessary\" or \"insufficient evidence.\" A strong appeal can fix that.",
+    "common_denial_reasons": [
+      "Experimental or not medically necessary",
+      "Too many hours authorized",
+      "Not enough documentation of behavioral goals"
+    ],
+    "how_we_help": "We help you articulate clinical necessity, treatment goals, safety concerns, and progress — all key to overturning ABA denials.",
+    "cta": "Start your ABA appeal.",
+    "faq": [
+      {
+        "question": "Why do insurers say ABA is \"experimental\"?",
+        "answer": "Many plans rely on outdated or selective interpretations of the evidence. In reality, ABA is widely recognized as an effective intervention for many autistic children."
+      },
+      {
+        "question": "How many therapy hours can I reasonably appeal for?",
+        "answer": "That depends on your child’s needs and your provider’s recommendation. Your appeal should match the clinical recommendation, not an arbitrary cap."
+      },
+      {
+        "question": "Do I need a formal autism diagnosis for ABA coverage?",
+        "answer": "Most insurers require a formal diagnosis. If you have one, reference it clearly. If not, your appeal may instead focus on getting evaluation covered."
+      }
+    ],
+    "evidence_snippets": [
+      "ABA-based interventions have demonstrated improvements in communication, adaptive functioning, and behavior for many autistic children.",
+      "Early intensive behavioral intervention is associated with better long-term outcomes and reduced need for more intensive services later.",
+      "Coverage of ABA is consistent with recommendations from multiple professional societies."
+    ],
+    "pubmed_search_terms": [
+      "applied behavior analysis autism outcomes",
+      "early intensive behavioral intervention long-term",
+      "guidelines ABA insurance coverage autism"
+    ]
+  },
+  "infusion-therapy-denial": {
+    "slug": "infusion-therapy-denial",
+    "title": "Appealing Infusion Therapy Denials",
+    "default_procedure": "Infusion Therapy",
+    "tagline": "Covers IVIG, chemo, biologics, and more.",
+    "hero_h1": "Appeal Your Infusion Therapy Denial",
+    "hero_subhead": "Infusion care can be life-saving — denials shouldn’t delay it.",
+    "intro": "Insurers deny infusions due to cost, preferred site-of-care, or claims of \"non-medical necessity.\" A strong appeal can reverse this.",
+    "common_denial_reasons": [
+      "Not medically necessary",
+      "Wrong site-of-care (home vs hospital)",
+      "Step therapy required first"
+    ],
+    "how_we_help": "We help you explain your diagnosis, risks of delaying treatment, and why the ordered site-of-care is necessary.",
+    "cta": "Start your infusion appeal.",
+    "faq": [
+      {
+        "question": "What is \"site-of-care\" and why does it matter?",
+        "answer": "Insurers sometimes require infusions at certain locations, like outpatient centers instead of hospitals. Your appeal can explain why the chosen setting is safer or medically necessary."
+      },
+      {
+        "question": "Can I appeal if they want me to switch to a different drug?",
+        "answer": "Yes. Your appeal can explain why the prescribed medication is clinically appropriate and why alternatives may be less effective or riskier in your case."
+      },
+      {
+        "question": "What if delaying infusion could make my condition worse?",
+        "answer": "Make that explicit. Appeals are stronger when they clearly describe the risks of delay, including organ damage, flare-ups, or hospitalizations."
+      }
+    ],
+    "evidence_snippets": [
+      "Timely administration of infusion therapies reduces disease activity and prevents irreversible organ damage in many conditions.",
+      "Site-of-care should be determined based on clinical safety and stability, not solely cost.",
+      "Step therapy policies should not override evidence-based prescribing when prior treatments have failed or are contraindicated."
+    ],
+    "pubmed_search_terms": [
+      "infusion therapy outcomes autoimmune",
+      "site-of-care infusion safety home vs hospital",
+      "step therapy impact biologic treatment delays"
+    ]
+  },
+  "ivig-denial": {
+    "slug": "ivig-denial",
+    "title": "Appealing IVIG Denials",
+    "default_procedure": "IVIG Infusion",
+    "tagline": "IVIG is standard care for many autoimmune diseases — insurers still deny it.",
+    "hero_h1": "Appeal Your IVIG Denial",
+    "hero_subhead": "IVIG denials are extremely common — but often reversible.",
+    "intro": "IVIG denials often happen because insurers don’t understand the exact diagnostic criteria or disease progression.",
+    "common_denial_reasons": [
+      "Insufficient documentation of autoimmune diagnosis",
+      "Other treatments must be tried first",
+      "Home infusion only"
+    ],
+    "how_we_help": "We help you explain diagnostic markers, prior treatments, symptom history, and clinical risks of delaying IVIG.",
+    "cta": "Start your IVIG appeal.",
+    "faq": [
+      {
+        "question": "Why is IVIG so commonly denied?",
+        "answer": "IVIG is expensive, so insurers scrutinize it heavily. Denials often focus on technical criteria, missing labs, or step therapy requirements."
+      },
+      {
+        "question": "What documentation should I include for IVIG appeals?",
+        "answer": "Include lab results, biopsy findings, prior treatment history, neurologic or rheumatologic exams, and your specialist’s notes."
+      },
+      {
+        "question": "Can I appeal if they want me to try cheaper treatments again?",
+        "answer": "Yes. Your appeal can show what you’ve already tried, why it failed, and why repeating it is unlikely to help and may be harmful."
+      }
+    ],
+    "evidence_snippets": [
+      "IVIG is an established therapy for multiple autoimmune and neuromuscular disorders with guideline support.",
+      "Delaying indicated IVIG therapy can lead to irreversible neurologic deficits or organ damage.",
+      "Coverage determinations should follow disease-specific criteria rather than blanket cost-based denials."
+    ],
+    "pubmed_search_terms": [
+      "IVIG autoimmune neuropathy guidelines",
+      "IVIG treatment outcomes immune thrombocytopenia",
+      "evidence-based indications for intravenous immunoglobulin"
+    ]
+  },
+  "biologic-denial": {
+    "slug": "biologic-denial",
+    "title": "Appealing Biologic Medication Denials",
+    "default_procedure": "Biologic Medication",
+    "tagline": "Autoimmune diseases deserve real treatment — not insurance excuses.",
+    "hero_h1": "Appeal Your Biologic Medication Denial",
+    "hero_subhead": "Humira, Skyrizi, Stelara, Entyvio, and others are routinely denied.",
+    "intro": "Biologics for RA, Crohn’s, psoriasis and more are often denied for step therapy or \"insufficient severity.\"",
+    "common_denial_reasons": [
+      "Must try cheaper medications first",
+      "Condition not severe enough",
+      "Off-label use not covered"
+    ],
+    "how_we_help": "We help you articulate clinical severity, treatment failures, diagnostic evidence, and medical rationale that insurers need to see.",
+    "cta": "Start your biologic appeal.",
+    "faq": [
+      {
+        "question": "What is \"step therapy\" and how do I fight it?",
+        "answer": "Step therapy means the insurer wants you to fail cheaper drugs first. Your appeal can show that you've already tried and failed them, or that they’re unsafe or inappropriate for you."
+      },
+      {
+        "question": "What if my biologic is off-label for my condition?",
+        "answer": "Some off-label uses are still supported by strong evidence. Your appeal can cite studies and guidelines that support the prescription."
+      },
+      {
+        "question": "Should my specialist be involved in my appeal?",
+        "answer": "Yes, ideally. A short letter from your specialist explaining why this biologic is necessary can make a big difference."
+      }
+    ],
+    "evidence_snippets": [
+      "Biologic therapies have been shown to induce remission and prevent progression in many autoimmune diseases.",
+      "Treat-to-target strategies recommend escalation to biologics when conventional therapies fail.",
+      "Delaying appropriate biologic therapy can lead to irreversible joint or organ damage and higher long-term costs."
+    ],
+    "pubmed_search_terms": [
+      "biologic therapy rheumatoid arthritis treat-to-target",
+      "biologic agents inflammatory bowel disease guidelines",
+      "delayed biologic treatment outcomes autoimmune"
+    ]
+  },
+  "oxygen-therapy-denial": {
+    "slug": "oxygen-therapy-denial",
+    "title": "Appealing Oxygen Therapy Denials",
+    "default_procedure": "Home Oxygen Therapy",
+    "tagline": "Breathing is not optional.",
+    "hero_h1": "Appeal Your Oxygen Therapy Denial",
+    "hero_subhead": "COPD and pulmonary patients are denied oxygen far too often.",
+    "intro": "Oxygen therapy is frequently denied over narrow testing thresholds or documentation gaps.",
+    "common_denial_reasons": [
+      O2 saturation not low enough",
+      "Home oxygen setup not justified",
+      "Equipment replacement too soon"
+    ],
+    "how_we_help": "We help you explain symptoms, functional limits, risks, and test results to support medical necessity.",
+    "cta": "Start your oxygen therapy appeal.",
+    "faq": [
+      {
+        "question": "Do I need a specific oxygen saturation number for coverage?",
+        "answer": "Many plans use specific thresholds, but your appeal can explain your real-world symptoms, desaturations with activity, and other risk factors."
+      },
+      {
+        "question": "Can I appeal replacement denials for oxygen equipment?",
+        "answer": "Yes. Your appeal can document wear, malfunction, and safety issues with old equipment."
+      },
+      {
+        "question": "Should I include my pulmonary function tests?",
+        "answer": "If you have them, yes. PFTs, six-minute walk tests, and oximetry reports can all support your appeal."
+      }
+    ],
+    "evidence_snippets": [
+      "Long-term oxygen therapy improves survival in selected patients with chronic hypoxemia.",
+      "Without oxygen, patients with advanced lung disease may experience increased hospitalizations and reduced quality of life.",
+      "Decisions about oxygen therapy should incorporate functional impairment and documented desaturation, not just resting values."
+    ],
+    "pubmed_search_terms": [
+      "long term oxygen therapy survival COPD",
+      "oxygen therapy chronic hypoxemia guidelines",
+      "home oxygen functional outcomes pulmonary disease"
+    ]
+  },
+  "wheelchair-denial": {
+    "slug": "wheelchair-denial",
+    "title": "Appealing Wheelchair or Mobility Aid Denials",
+    "default_procedure": "Wheelchair / Mobility Device",
+    "tagline": "Mobility is a medical necessity — not a luxury.",
+    "hero_h1": "Appeal Your Wheelchair or Mobility Aid Denial",
+    "hero_subhead": "Wheelchairs and mobility aids get denied constantly for bad reasons.",
+    "intro": "Insurers often deny mobility devices due to coding issues, documentation gaps, or \"not medically necessary\" claims.",
+    "common_denial_reasons": [
+      "Not medically necessary",
+      "Cheaper device required",
+      "Insufficient documentation of mobility limitation"
+    ],
+    "how_we_help": "We help you present clear functional limitations, clinician recommendations, and why the specific device is medically required.",
+    "cta": "Start your mobility appeal.",
+    "faq": [
+      {
+        "question": "What should I say about my daily activities?",
+        "answer": "Explain how walking or standing affects you, including pain, falls, fatigue, and whether you can safely get around at home or in the community without a device."
+      },
+      {
+        "question": "Can I appeal for a power chair instead of a manual one?",
+        "answer": "Yes. Your appeal should explain why you cannot effectively use a manual chair, such as limited arm strength or endurance."
+      },
+      {
+        "question": "Should my PT or OT help with the appeal?",
+        "answer": "If you have a mobility evaluation from PT or OT, including it with your appeal can be very persuasive."
+      }
+    ],
+    "evidence_snippets": [
+      "Appropriate mobility devices reduce fall risk, maintain independence, and can prevent institutionalization.",
+      "Choosing the correct type of wheelchair based on functional needs is cost-effective over time.",
+      "Coverage determinations should consider safety, independence, and long-term outcomes."
+    ],
+    "pubmed_search_terms": [
+      "wheelchair prescription functional outcomes",
+      "mobility aids fall risk reduction elderly",
+      "power wheelchair cost effectiveness independence"
+    ]
+  },
+  "surgery-denial": {
+    "slug": "surgery-denial",
+    "title": "Appealing Surgery Denials",
+    "default_procedure": "Surgery",
+    "tagline": "When your doctor says it’s necessary, insurers shouldn’t overrule them.",
+    "hero_h1": "Appeal Your Surgery Denial",
+    "hero_subhead": "Surgery denials often rely on outdated or incorrect standards.",
+    "intro": "Surgeries get denied because insurers think conservative care hasn’t been exhausted or symptoms aren’t severe enough.",
+    "common_denial_reasons": [
+      "Conservative treatments not completed",
+      "Insufficient imaging or clinical documentation",
+      "Procedure considered elective"
+    ],
+    "how_we_help": "We help you document severity, prior treatments, imaging findings, and medical necessity.",
+    "cta": "Start your surgery appeal.",
+    "faq": [
+      {
+        "question": "What does \"conservative care\" mean in surgery denials?",
+        "answer": "Insurers usually mean treatments like medication, physical therapy, or injections. Your appeal should show what you’ve tried and why surgery is now appropriate."
+      },
+      {
+        "question": "Can I appeal if they called my surgery \"elective\"?",
+        "answer": "Yes. Your appeal can explain the medical consequences of delaying surgery, including pain, disability, or progression of disease."
+      },
+      {
+        "question": "Do I need my surgeon to help with the appeal?",
+        "answer": "A short letter from your surgeon outlining the medical necessity, risks of delay, and expected benefits of surgery can be very helpful."
+      }
+    ],
+    "evidence_snippets": [
+      "For many conditions, timely surgery improves pain, function, and long-term outcomes compared to prolonged conservative care.",
+      "Delaying indicated surgery may lead to irreversible damage or more complex procedures later.",
+      "Coverage determinations should account for specialist recommendations and evidence-based surgical indications."
+    ],
+    "pubmed_search_terms": [
+      "timing of surgery outcomes orthopedic",
+      "conservative management vs surgery comparative effectiveness",
+      "elective vs medically necessary surgery insurance"
+    ]
+  },
+  "implantable-device-denial": {
+    "slug": "implantable-device-denial",
+    "title": "Appealing Implantable Device Denials",
+    "default_procedure": "Implantable Device or Medical Implant",
+    "tagline": "Implants can be life-changing — insurers shouldn’t deny them lightly.",
+    "hero_h1": "Appeal Your Implantable Device Denial",
+    "hero_subhead": "Spinal stimulators, cardiac devices, and pain pumps are often denied for cost reasons.",
+    "intro": "Insurers often deny implants due to cost, labeling them \"experimental\" or requiring unnecessary steps.",
+    "common_denial_reasons": [
+      "Experimental or investigational",
+      "Not medically necessary",
+      "Alternative treatment recommended"
+    ],
+    "how_we_help": "We help you outline clinical justification, symptom history, and why non-implant treatments were insufficient.",
+    "cta": "Start your implant appeal.",
+    "faq": [
+      {
+        "question": "Why did they call my implant \"experimental\"?",
+        "answer": "Insurers sometimes use older policy language that doesn’t reflect current evidence. Your appeal can cite up-to-date studies and guidelines."
+      },
+      {
+        "question": "What if I’ve already tried other treatments?",
+        "answer": "Your appeal should list each prior treatment, how long you tried it, and why it failed or caused side effects."
+      },
+      {
+        "question": "Should my specialist provide device-specific information?",
+        "answer": "Yes. Manufacturer and clinical data, plus your specialist’s letter, can directly counter \"experimental\" or \"not necessary\" claims."
+      }
+    ],
+    "evidence_snippets": [
+      "Implantable devices such as spinal cord stimulators have demonstrated efficacy in reducing pain and improving function in selected patients.",
+      "Cardiac devices like ICDs and pacemakers reduce mortality in appropriately selected populations.",
+      "Implant coverage decisions should align with FDA indications and specialty society guidelines."
+    ],
+    "pubmed_search_terms": [
+      "spinal cord stimulation chronic pain outcomes",
+      "implantable cardioverter defibrillator mortality benefit",
+      "guidelines implantable medical devices indications"
+    ]
+  },
+  "pain-management-denial": {
+    "slug": "pain-management-denial",
+    "title": "Appealing Pain Management Denials",
+    "default_procedure": "Pain Management Treatment",
+    "tagline": "Injections, ablations, and nerve blocks aren’t optional.",
+    "hero_h1": "Appeal Your Pain Management Treatment Denial",
+    "hero_subhead": "Pain care gets denied constantly — we can help reverse that.",
+    "intro": "Pain treatments get denied because insurers love to call them \"experimental\" or require weeks of PT first.",
+    "common_denial_reasons": [
+      "Experimental / investigational",
+      "Conservative care required first",
+      "Not enough clinical documentation"
+    ],
+    "how_we_help": "We help you articulate diagnosis, severity, prior treatments, and clinical justification for your pain plan.",
+    "cta": "Start your pain management appeal.",
+    "faq": [
+      {
+        "question": "Why do they say my injections are \"experimental\"?",
+        "answer": "Many interventional pain procedures have guideline support. Your appeal can reference those guidelines and your past treatment failures."
+      },
+      {
+        "question": "Do I have to keep doing PT before getting pain procedures?",
+        "answer": "Not always. If you’ve already tried PT or cannot tolerate it, your appeal should explain that and why procedures are now appropriate."
+      },
+      {
+        "question": "Should I describe how pain affects my daily life?",
+        "answer": "Yes. Include how pain limits walking, work, sleep, caregiving, and other activities. That helps show why treatment is medically necessary."
+      }
+    ],
+    "evidence_snippets": [
+      "Interventional pain procedures can reduce pain scores, improve function, and decrease reliance on systemic medications.",
+      "For some patients, procedures provide safer, targeted relief than chronic opioid therapy.",
+      "Coverage decisions should follow pain society guidelines and individualized treatment planning."
+    ],
+    "pubmed_search_terms": [
+      "epidural steroid injection chronic back pain outcomes",
+      "radiofrequency ablation facet joint pain effectiveness",
+      "interventional pain management guidelines"
+    ]
+  },
+  "prenatal-denial": {
+    "slug": "prenatal-denial",
+    "title": "Appealing Prenatal Care Denials",
+    "default_procedure": "Prenatal Care / Ultrasound",
+    "tagline": "Pregnancy care should never be a fight.",
+    "hero_h1": "Appeal Your Prenatal Care Denial",
+    "hero_subhead": "Ultrasounds and prenatal monitoring are essential care.",
+    "intro": "Prenatal care often gets denied due to coding errors or nonsense \"not medically necessary\" claims.",
+    "common_denial_reasons": [
+      "Too many ultrasounds",
+      "Screening not medically necessary",
+      "Provider out of network"
+    ],
+    "how_we_help": "We help you clarify risks, symptoms, and physician recommendations.",
+    "cta": "Start your prenatal care appeal.",
+    "faq": [
+      {
+        "question": "Why did they say I had too many ultrasounds?",
+        "answer": "Some plans only expect a small number of scans. Your appeal can explain high-risk factors or complications that justified additional imaging."
+      },
+      {
+        "question": "Can I appeal if they denied prenatal labs?",
+        "answer": "Yes. Many labs are standard of care in pregnancy. Your appeal can reference guidelines and any risk factors you have."
+      },
+      {
+        "question": "What if my OB is out-of-network?",
+        "answer": "You can appeal in some cases, especially if there is limited access to in-network providers or continuity of care concerns."
+      }
+    ],
+    "evidence_snippets": [
+      "Adequate prenatal care and appropriate fetal monitoring are associated with better maternal and neonatal outcomes.",
+      "High-risk pregnancies often require more frequent imaging or testing than uncomplicated pregnancies.",
+      "Coverage should reflect obstetric guidelines and individualized risk factors, not a fixed number of visits or scans."
+    ],
+    "pubmed_sear_terms": [
+      "prenatal care outcomes maternal neonatal",
+      "high risk pregnancy ultrasound frequency guidelines",
+      "antenatal testing evidence-based recommendations"
+    ]
+  },
+  "breast-imaging-denial": {
+    "slug": "breast-imaging-denial",
+    "title": "Appealing Breast Imaging Denials",
+    "default_procedure": "Mammogram / Breast MRI / Ultrasound",
+    "tagline": "Early detection saves lives — denials shouldn’t stand in the way.",
+    "hero_h1": "Appeal Your Breast Imaging Denial",
+    "hero_subhead": "High-risk screening often gets denied — your appeal can fix that.",
+    "intro": "Mammograms, ultrasounds, and breast MRIs can be denied when insurers claim you're not \"high-risk enough.\"",
+    "common_denial_reasons": [
+      "High-risk criteria not met",
+      "Routine screening too early",
+      "Diagnostic imaging not justified"
+    ],
+    "how_we_help": "We help you explain risk factors, symptoms, and why additional imaging was recommended.",
+    "cta": "Start your breast imaging appeal.",
+    "faq": [
+      {
+        "question": "What counts as \"high risk\" for extra breast imaging?",
+        "answer": "Family history, genetic mutations, prior chest radiation, and certain biopsy results can all count. Your appeal should list your risk factors clearly."
+      },
+      {
+        "question": "Can I appeal if they denied a diagnostic mammogram or MRI?",
+        "answer": "Yes. Your appeal can explain your symptoms, prior imaging findings, and why your clinician ordered diagnostic testing instead of routine screening."
+      },
+      {
+        "question": "Does age matter for my appeal?",
+        "answer": "Many guidelines allow earlier or more frequent imaging for high-risk people. Your appeal can cite these exceptions."
+      }
+    ],
+    "evidence_snippets": [
+      "Appropriate breast imaging reduces late-stage cancer diagnoses and improves survival.",
+      "High-risk populations benefit from supplemental imaging such as MRI in addition to mammography.",
+      "Coverage decisions should consider individual risk rather than a one-size-fits-all age cutoff."
+    ],
+    "pubmed_search_terms": [
+      "breast cancer screening high risk MRI",
+      "supplemental breast MRI outcomes",
+      "breast imaging guidelines high risk women"
+    ]
+  },
+  "ffs-denial": {
+    "slug": "ffs-denial",
+    "title": "Appealing Facial Feminization Surgery (FFS) Denials",
+    "default_procedure": "Facial Feminization Surgery (FFS)",
+    "tagline": "FFS is medically necessary gender-affirming care — not cosmetic.",
+    "hero_h1": "Appeal Your FFS Denial",
+    "hero_subhead": "FFS drastically reduces gender dysphoria and improves safety — insurers often deny it incorrectly as \"cosmetic.\"",
+    "intro": "FFS is one of the most life-changing gender-affirming procedures, but insurers frequently deny it by misclassifying it as cosmetic. Appeals succeed when they clearly document dysphoria, clinical necessity, and WPATH-aligned recommendations.",
+    "common_denial_reasons": [
+      "Incorrectly deemed cosmetic",
+      "Insufficient documentation of gender dysphoria",
+      "Missing mental health evaluation notes",
+      "Provider out-of-network or no contract for FFS"
+    ],
+    "how_we_help": "We help you document dysphoria, functional impairments, safety concerns, and WPATH-consistent medical necessity. We also help present your provider’s clinical support in a way insurers respond to.",
+    "cta": "Start your FFS appeal.",
+    "faq": [
+      {
+        "question": "Why did my insurer call FFS \"cosmetic\"?",
+        "answer": "Many plans use outdated language that ignores current medical and professional guidance. Your appeal can explain how FFS treats gender dysphoria and improves safety, not appearance for its own sake."
+      },
+      {
+        "question": "Do I need letters from therapists or mental health providers?",
+        "answer": "Often yes. Including letters that diagnose gender dysphoria and support FFS as medically necessary can significantly strengthen your appeal."
+      },
+      {
+        "question": "Can I appeal if only some FFS procedures were denied?",
+        "answer": "Yes. You can appeal specific components and explain how each one affects your dysphoria, safety, or ability to be perceived as your correct gender."
+      }
+    ],
+    "evidence_snippets": [
+      "Studies show that facial gender-affirming surgery significantly reduces gender dysphoria and improves quality of life.",
+      "FFS can reduce harassment, misgendering, and violence risk by aligning facial features with gender identity.",
+      "Professional guidelines increasingly recognize facial procedures as medically necessary components of gender-affirming care."
+    ],
+    "pubmed_search_terms": [
+      "facial feminization surgery quality of life gender dysphoria",
+      "gender affirming facial surgery mental health outcomes",
+      "WPATH facial gender affirming surgery medical necessity"
+    ]
+  },
+  "top-surgery-masc-denial": {
+    "slug": "top-surgery-masc-denial",
+    "title": "Appealing Transmasculine Top Surgery Denials",
+    "default_procedure": "Chest Reconstruction (Top Surgery)",
+    "tagline": "Top surgery is medically necessary and supported by WPATH — insurers still deny it wrongfully.",
+    "hero_h1": "Appeal Your Top Surgery Denial",
+    "hero_subhead": "Insurers often demand outdated or unnecessary requirements — we help you push back.",
+    "intro": "Top surgery is essential gender-affirming care that reduces dysphoria, improves daily function, and lowers safety risks. Denials typically rely on outdated guidelines or incorrect criteria.",
+    "common_denial_reasons": [
+      "Not medically necessary",
+      "BMI requirements or arbitrary weight rules",
+      "Requests for excessive therapy letters",
+      "Incorrectly labeled cosmetic"
+    ],
+    "how_we_help": "We help you cite WPATH standards, document dysphoria and functional limitations, and present your provider’s letter in a format insurers can’t easily ignore.",
+    "cta": "Start your top surgery appeal.",
+    "faq": [
+      {
+        "question": "Do I have to meet a specific BMI to get coverage?",
+        "answer": "Many insurers use arbitrary BMI cutoffs that don’t reflect individualized risk. Your appeal can address safety planning without using BMI as an absolute barrier."
+      },
+      {
+        "question": "Can I appeal if they want more therapy letters than WPATH suggests?",
+        "answer": "Yes. You can point to WPATH standards and explain that excessive gatekeeping is not clinically justified."
+      },
+      {
+        "question": "Should I talk about binding in my appeal?",
+        "answer": "Yes, if it’s relevant. You can describe pain, skin damage, breathing issues, and functional problems from binding, which support medical necessity for surgery."
+      }
+    ],
+    "evidence_snippets": [
+      "Gender-affirming chest surgery is associated with large reductions in gender dysphoria and improvements in mental health.",
+      "Top surgery can relieve physical harms from long-term binding, including pain and respiratory issues.",
+      "Professional guidelines recognize chest reconstruction as medically necessary for many transmasculine and nonbinary patients."
+    ],
+    "pubmed_search_terms": [
+      "gender affirming chest surgery mental health outcomes",
+      "top surgery transmasculine quality of life",
+      "chest binding physical health effects"
+    ]
+  },
+  "top-surgery-fem-denial": {
+    "slug": "top-surgery-fem-denial",
+    "title": "Appealing Transfeminine Breast Augmentation Denials",
+    "default_procedure": "Breast Augmentation (Gender-Affirming)",
+    "tagline": "Breast augmentation for transfeminine people is gender-affirming care, not cosmetic.",
+    "hero_h1": "Appeal Your Breast Augmentation Denial",
+    "hero_subhead": "Many insurers rely on outdated criteria — appeals often succeed with proper documentation.",
+    "intro": "Gender-affirming breast augmentation is frequently denied as \"cosmetic,\" even when medically necessary. A proper appeal reframes the request according to WPATH and clinical needs.",
+    "common_denial_reasons": [
+      "Incorrectly deemed cosmetic",
+      "Claim that hormones should be continued longer first",
+      "Insufficient dysphoria documentation",
+      "Provider out-of-network"
+    ],
+    "how_we_help": "We help you build a strong appeal documenting medical necessity, dysphoria reduction, and provider recommendations aligned with WPATH SOC8.",
+    "cta": "Start your appeal.",
+    "faq": [
+      {
+        "question": "How long do I have to be on hormones before appealing?",
+        "answer": "Insurers sometimes require a minimum hormone duration, but this should be individualized. Your appeal can explain your actual development and ongoing dysphoria."
+      },
+      {
+        "question": "Should I include photos in my appeal?",
+        "answer": "You do not have to. Most appeals focus on dysphoria, physical development, and mental health impact rather than photos."
+      },
+      {
+        "question": "Can I appeal if I’m nonbinary or not fully out?",
+        "answer": "Yes. The key is documenting your gender dysphoria, your goals, and your provider’s support, not a specific label or coming-out timeline."
+      }
+    ],
+    "evidence_snippets": [
+      "Gender-affirming breast procedures are associated with improved body image and mental health in transfeminine patients.",
+      "Breast augmentation can reduce misgendering and social anxiety, improving daily functioning.",
+      "Guidelines increasingly support chest procedures as medically necessary components of gender-affirming care."
+    ],
+    "pubmed_search_terms": [
+      "gender affirming breast augmentation outcomes transfeminine",
+      "chest surgery body image transgender women",
+      "WPATH chest surgery medical necessity transfeminine"
+    ]
+  },
+  "electrolysis-denial": {
+    "slug": "electrolysis-denial",
+    "title": "Appealing Electrolysis & Gender-Affirming Hair Removal Denials",
+    "default_procedure": "Electrolysis / Laser Hair Removal (Gender-Affirming)",
+    "tagline": "Hair removal is often required for surgeries — insurers still deny it as cosmetic.",
+    "hero_h1": "Appeal Your Electrolysis Denial",
+    "hero_subhead": "Gender-affirming hair removal is medically necessary for many people, especially pre-op.",
+    "intro": "Electrolysis and laser hair removal are often necessary before genital surgeries and to reduce dysphoria. Insurers still deny them as cosmetic despite clear surgical guidelines.",
+    "common_denial_reasons": [
+      "Incorrectly classified as cosmetic",
+      "Not deemed medically necessary for surgery prep",
+      "Insufficient documentation or referral",
+      "Claim that it is purely aesthetic"
+    ],
+    "how_we_help": "We help you show medical necessity, surgical requirements, and clinician documentation that turns these denials around.",
+    "cta": "Start your electrolysis appeal.",
+    "faq": [
+      {
+        "question": "Why do surgeons require hair removal before some surgeries?",
+        "answer": "Pre-op hair removal can prevent complications like hair growth where it shouldn’t be and reduce infection risk. Your appeal can cite your surgeon’s requirements."
+      },
+      {
+        "question": "Can I appeal if I’m not having surgery but still need hair removal?",
+        "answer": "Yes. Hair removal can still be medically necessary to treat severe dysphoria or safety concerns even when surgery isn’t planned."
+      },
+      {
+        "question": "Do I need a referral from a surgeon or endocrinologist?",
+        "answer": "It helps. A letter stating hair removal is medically necessary for your gender-affirming care can strengthen your appeal."
+      }
+    ],
+    "evidence_snippets": [
+      "Hair removal is a standard preoperative requirement in many genital reconstruction protocols.",
+      "Gender-affirming hair removal can reduce dysphoria and improve mental health and social functioning.",
+      "Classifying medically necessary hair removal as purely cosmetic is inconsistent with contemporary guidelines for gender-affirming care."
+    ],
+    "pubmed_search_terms": [
+      hair removal preoperative vaginoplasty protocol",
+      "gender affirming hair removal mental health outcomes",
+      "WPATH hair removal medical necessity transgender"
+    ]
+  },
+  "voice-therapy-denial": {
+    "slug": "voice-therapy-denial",
+    "title": "Appealing Voice Therapy Denials",
+    "default_procedure": "Voice Therapy (Gender-Affirming)",
+    "tagline": "Voice therapy is medically necessary gender-affirming care — not elective.",
+    "hero_h1": "Appeal Your Voice Therapy Denial",
+    "hero_subhead": "Insurers often misclassify voice work as cosmetic or elective — which is incorrect.",
+    "intro": "Gender-affirming voice therapy reduces dysphoria, improves safety, and supports communication. Denials often rely on outdated coverage policies.",
+    "common_denial_reasons": [
+      "Considered cosmetic",
+      "No speech pathology notes provided",
+      "Insufficient documentation of dysphoria or vocal strain",
+      "Provider out-of-network"
+    ],
+    "how_we_help": "We help you document clinical necessity, communication limitations, and dysphoria impacts — key elements insurers often overlook.",
+    "cta": "Start your voice therapy appeal.",
+    "faq": [
+      {
+        "question": "Why does my insurer think voice therapy is cosmetic?",
+        "answer": "Old policies treat voice only as appearance-related. Your appeal can explain how misgendering, safety concerns, and vocal strain make therapy medically necessary."
+      },
+      {
+        "question": "Do I need an evaluation from a speech-language pathologist?",
+        "answer": "It’s very helpful. An SLP’s assessment of your current voice, goals, and any strain or pain can support medical necessity."
+      },
+      {
+        "question": "Can I appeal if I’ve already started voice therapy and they won’t cover more sessions?",
+        "answer": "Yes. Your appeal can show progress made so far and why continued sessions are needed to reach safe, sustainable vocal patterns."
+      }
+    ],
+    "evidence_snippets": [
+      "Gender-affirming voice therapy improves vocal satisfaction, reduces dysphoria, and can decrease vocal strain.",
+      "Voice training can reduce misgendering and associated anxiety, improving daily functioning and mental health.",
+      "Professional groups recognize gender-affirming voice therapy as a legitimate scope of speech-language pathology practice."
+    ],
+    "pubmed_search_terms": [
+      "gender affirming voice therapy transgender outcomes",
+      "voice therapy transgender women satisfaction dysphoria",
+      "speech language pathology gender affirming voice care"
+    ]
+  },
+  "voice-surgery-denial": {
+    "slug": "voice-surgery-denial",
+    "title": "Appealing Voice Surgery Denials",
+    "default_procedure": "Vocal Feminization / Masculinization Surgery",
+    "tagline": "Voice surgery is medically necessary for many trans people, not cosmetic.",
+    "hero_h1": "Appeal Your Voice Surgery Denial",
+    "hero_subhead": "Insurers frequently deny voice surgeries due to outdated criteria.",
+    "intro": "Voice surgeries are life-changing and medically necessary for many trans people. Insurers often deny them as cosmetic despite evidence to the contrary.",
+    "common_denial_reasons": [
+      "Incorrectly labeled cosmetic",
+      "Must complete voice therapy first",
+      "Insufficient documentation of dysphoria",
+      "Provider out-of-network"
+    ],
+    "how_we_help": "We help you build a WPATH-consistent appeal explaining why surgery is required and how conservative treatments were insufficient.",
+    "cta": "Start your voice surgery appeal.",
+    "faq": [
+      {
+        "question": "Do I have to do voice therapy before surgery for coverage?",
+        "answer": "Some insurers require it, but your appeal can explain what you’ve tried, how effective it was, and why surgery is still necessary."
+      },
+      {
+        "question": "Is voice surgery really considered medically necessary?",
+        "answer": "For many people, yes. It can significantly reduce dysphoria and safety risks. Your appeal should connect the surgery directly to your health and functioning."
+      },
+      {
+        "question": "Should I talk about misgendering in my appeal?",
+        "answer": "Yes. Explain how your voice leads to misgendering, harassment, or avoidance of daily activities, which supports medical necessity."
+      }
+    ],
+    "evidence_snippets": [
+      "Gender-affirming voice surgery can produce durable pitch changes and improved gender congruence.",
+      "Patients often report reduced dysphoria and improved social comfort after voice surgery.",
+      "When voice therapy alone is insufficient, surgery is an evidence-supported next step for some patients."
+    ],
+    "pubmed_search_terms": [
+      "gender affirming voice surgery outcomes pitch",
+      "vocal feminization surgery satisfaction transgender women",
+      "voice surgery transgender patients quality of life"
+    ]
+  },
+  "hrt-denial": {
+    "slug": "hrt-denial",
+    "title": "Appealing Hormone Therapy (HRT) Denials",
+    "default_procedure": "Gender-Affirming Hormone Therapy",
+    "tagline": "HRT is standard, medically necessary care — insurers should cover it.",
+    "hero_h1": "Appeal Your Hormone Therapy Denial",
+    "hero_subhead": "Denials often rely on outdated guidelines or incorrect coding.",
+    "intro": "Hormone therapy is essential gender-affirming care. Denials often stem from coding errors, documentation issues, or outdated requirements.",
+    "common_denial_reasons": [
+      "Not medically necessary",
+      "Plan claims it doesn’t cover hormone therapy",
+      "Missing diagnosis codes (gender dysphoria ICD-10)",
+      "Duration of therapy requirements"
+    ],
+    "how_we_help": "We help you fix coding issues, document dysphoria, and demonstrate clear medical necessity supported by WPATH and Endocrine Society guidelines.",
+    "cta": "Start your HRT appeal.",
+    "faq": [
+      {
+        "question": "Do I need a specific diagnosis code for HRT coverage?",
+        "answer": "Often yes. Appeals are stronger when they clearly reference a diagnosis like gender dysphoria or gender incongruence plus your clinician’s treatment plan."
+      },
+      {
+        "question": "What if my plan says it doesn’t cover gender-affirming hormones at all?",
+        "answer": "Your appeal can argue that excluding medically necessary gender-affirming care is discriminatory and conflicts with current medical standards."
+      },
+      {
+        "question": "Can I appeal dose or formulation changes they denied?",
+        "answer": "Yes. Your appeal can explain why your current or requested dose and route are clinically appropriate and monitored by your provider."
+      }
+    ],
+    "evidence_snippets": [
+      "Gender-affirming hormone therapy significantly reduces gender dysphoria and improves mental health outcomes.",
+      "Major medical organizations endorse HRT as medically necessary for many transgender and nonbinary people.",
+      "Discontinuity or denial of HRT is associated with higher levels of distress and healthcare utilization."
+    ],
+    "pubmed_search_terms": [
+      "gender affirming hormone therapy mental health outcomes",
+      "endocrine society clinical practice guideline gender dysphoria",
+      "transgender hormone therapy quality of life"
+    ]
+  },
+  "puberty-blocker-denial": {
+    "slug": "puberty-blocker-denial",
+    "title": "Appealing Puberty Blocker Denials",
+    "default_procedure": "Puberty Blockers (GnRH Analogues)",
+    "tagline": "Puberty blockers are evidence-based care — insurers frequently deny them without justification.",
+    "hero_h1": "Appeal Your Puberty Blocker Denial",
+    "hero_subhead": "Access to blockers is critical for trans youth — denials need strong appeals.",
+    "intro": "Blockers reduce dysphoria and improve long-term outcomes. Insurers often deny them due to age, documentation, or misconceptions.",
+    "common_denial_reasons": [
+      "Considered experimental",
+      "Age or consent requirements",
+      "Missing mental health documentation",
+      "Plan exclusion for gender care"
+    ],
+    "how_we_help": "We help you align documentation with WPATH and pediatric endocrine guidelines to overturn these denials.",
+    "cta": "Start your puberty blocker appeal.",
+    "faq": [
+      {
+        "question": "Are puberty blockers really evidence-based?",
+        "answer": "Yes. Puberty blockers have been used for decades and are included in multiple professional guidelines for treating early puberty and gender dysphoria."
+      },
+      {
+        "question": "Do we need a mental health evaluation for coverage?",
+        "answer": "Most insurers want documentation of gender dysphoria and a mental health professional’s support. Your appeal can highlight those records."
+      },
+      {
+        "question": "Can we appeal if the plan has a blanket exclusion?",
+        "answer": "You can still appeal and argue that excluding medically necessary gender-affirming care is discriminatory and conflicts with current medical standards."
+      }
+    ],
+    "evidence_snippets": [
+      "Puberty blockers can reduce distress by pausing unwanted pubertal changes and allowing time for exploration and informed decision-making.",
+      "Use of GnRH analogues for gender dysphoria is supported by professional guidelines when carefully monitored.",
+      "Early intervention with blockers can reduce future need for more invasive procedures and associated distress."
+    ],
+    "pubmed_search_terms": [
+      "puberty suppression gender dysphoria outcomes",
+      "GnRH analogue treatment transgender youth",
+      "guidelines puberty blockers gender incongruence"
+    ]
+  },
+  "grs-denial": {
+    "slug": "grs-denial",
+    "title": "Appealing Gender-Affirming Genital Surgery Denials",
+    "default_procedure": "Gender-Affirming Genital Surgery (GRS)",
+    "tagline": "Vaginoplasty, phalloplasty, and metoidioplasty are medically necessary surgeries.",
+    "hero_h1": "Appeal Your Genital Surgery Denial",
+    "hero_subhead": "Insurers deny GRS using outdated, incorrect, or discriminatory criteria.",
+    "intro": "Gender-affirming genital surgeries are medically necessary for many trans people. Insurers frequently deny coverage based on obsolete guidelines or arbitrary requirements.",
+    "common_denial_reasons": [
+      "Considered cosmetic or elective",
+      "Insufficient therapy letters",
+      "Genital surgery exclusions",
+      "Provider out-of-network or limited network"
+    ],
+    "how_we_help": "We help you document dysphoria, prior treatments, safety concerns, and WPATH SOC8 criteria to strengthen your appeal.",
+    "cta": "Start your genital surgery appeal.",
+    "faq": [
+      {
+        "question": "Do I need to meet exact WPATH criteria to appeal?",
+        "answer": "Your appeal can show how you meet or reasonably align with those criteria, and why additional gatekeeping isn’t clinically justified."
+      },
+      {
+        "question": "Can I appeal exclusions that say genital surgery is never covered?",
+        "answer": "You can argue that blanket exclusions conflict with current medical standards and may be discriminatory. Some plans reconsider after internal and external review."
+      },
+      {
+        "question": "Should I discuss safety and mental health in my appeal?",
+        "answer": "Yes. Explain how surgery relates to your mental health, safety, and ability to function in daily life."
+      }
+    ],
+    "evidence_snippets": [
+      "Gender-affirming genital surgery is associated with high satisfaction rates and significant reductions in gender dysphoria.",
+      "Studies show improvements in mental health, quality of life, and sexual functioning following genital reconstruction.",
+      "Major medical organizations recognize genital surgery as medically necessary for many transgender individuals."
+    ],
+    "pubmed_search_terms": [
+      "gender affirming genital surgery outcomes quality of life",
+      "vaginoplasty satisfaction transgender women mental health",
+      "phalloplasty transgender men outcomes dysphoria"
+    ]
+  },
+  "fertility-preservation-denial": {
+    "slug": "fertility-preservation-denial",
+    "title": "Appealing Fertility Preservaon Denials",
+    "default_procedure": "Fertility Preservation Prior to Gender-Affirming Treatment",
+    "tagline": "Many insurers must cover this when medically indicated — appeals often win.",
+    "hero_h1": "Appeal Your Fertility Preservation Denial",
+    "hero_subhead": "Egg or sperm preservation before gender-affirming care can be medically necessary.",
+    "intro": "Fertility preservation is critical for many trans people before starting HRT or undergoing surgery. Insurers frequently deny coverage due to outdated or discriminatory policies.",
+    "common_denial_reasons": [
+      "Not medically necessary",
+      "Considered elective",
+      "Plan excludes fertility services generally",
+      "Incorrect coding for gender-affirming context"
+    ],
+    "how_we_help": "We help you reframe the request as medically necessary and supported by major medical societies, not elective.",
+    "cta": "Start your fertility preservation appeal.",
+    "faq": [
+      {
+        "question": "Why should fertility preservation be covered?",
+        "answer": "Gender-affirming treatments can affect fertility. Preserving eggs or sperm beforehand is a medically recommended way to keep future family-building options open."
+      },
+      {
+        "question": "What if my plan excludes all fertility treatment?",
+        "answer": "Your appeal can argue that preserving fertility before medically necessary treatment is different from elective fertility treatment and should be considered part of comprehensive care."
+      },
+      {
+        "question": "Do guidelines actually support fertility counseling and preservation?",
+        "answer": "Yes. Many guidelines recommend discussing fertility options before starting treatments that can reduce fertility."
+      }
+    ],
+    "evidence_snippets": [
+      "Clinical guidelines recommend discussing and offering fertility preservation options before treatments that may impair fertility.",
+      "Transgender individuals often regret loss of fertility options when this is not addressed prior to treatment.",
+      "Fertility preservation in this context is preventive care related to medically necessary treatment, not purely elective fertility enhancement."
+    ],
+    "pubmed_search_terms": [
+      "fertility preservation transgender individuals guidelines",
+      "counseling fertility options before gender affirming hormones",
+      "fertility preservation oncology analogy standard of care"
+    ]
+  }
+}
+
