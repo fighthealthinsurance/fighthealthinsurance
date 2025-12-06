@@ -376,17 +376,17 @@ Cheap-O-Insurance-Corp"""
         self.click("button#next")
         self.assert_title_eventually("Categorize Your Denial")
 
-        # Go back again to plan documents
+        # Go back again to plan documents (back from entity_extract now goes to plan docs)
         back_link = self.find_element("a.btn-secondary")
         assert back_link is not None
         back_link.click()
 
-        # Should be at health history (back button from entity_extract goes to hh)
-        self.assert_title_eventually("Optional: Health History")
+        # Should be at Plan Documents (back button from entity_extract goes to dvc)
+        self.assert_title_eventually("Optional: Add Plan Documents")
 
         # And forward again should still work
         self.click("button#next")
-        self.assert_title_eventually("Optional: Add Plan Documents")
+        self.assert_title_eventually("Categorize Your Denial")
 
     def test_session_scoped_localstorage_does_not_mix_appeals(self):
         """
@@ -465,15 +465,14 @@ Sincerely, InsuranceCo""")
         self.assert_title_eventually("Optional: Health History")
 
         # Check for request method meta tag (should be POST since we came from form submission)
-        request_method_meta = self.find_element('meta[name="fhi-request-method"]')
-        assert request_method_meta is not None, "Should have fhi-request-method meta tag"
-        method_content = request_method_meta.get_attribute("content")
+        # Use wait_for_element_present since meta tags aren't visible
+        self.wait_for_element_present('meta[name="fhi-request-method"]')
+        method_content = self.get_attribute('meta[name="fhi-request-method"]', "content")
         assert method_content == "POST", f"Request method should be POST, got {method_content}"
 
         # Session key meta tag should be present after form submission
-        session_key_meta = self.find_element('meta[name="fhi-session-key"]')
-        assert session_key_meta is not None, "Should have fhi-session-key meta tag"
-        session_content = session_key_meta.get_attribute("content")
+        self.wait_for_element_present('meta[name="fhi-session-key"]')
+        session_content = self.get_attribute('meta[name="fhi-session-key"]', "content")
         assert len(session_content) > 0, "Session key should not be empty after form submission"
 
     def test_back_button_navigates_with_get_request(self):
@@ -512,9 +511,9 @@ Sincerely, InsuranceCo""")
         self.assert_title_eventually("Optional: Health History")
 
         # Check meta tag - should be GET (from link navigation)
-        request_method_meta = self.find_element('meta[name="fhi-request-method"]')
-        assert request_method_meta is not None
-        method_content = request_method_meta.get_attribute("content")
+        # Use wait_for_element_present since meta tags aren't visible
+        self.wait_for_element_present('meta[name="fhi-request-method"]')
+        method_content = self.get_attribute('meta[name="fhi-request-method"]', "content")
         assert method_content == "GET", f"Back button should result in GET, got {method_content}"
 
         # Health history should be restored from localStorage
