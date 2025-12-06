@@ -522,3 +522,170 @@ Sincerely, InsuranceCo""")
         health_value = self.get_value("textarea#health_history")
         assert health_value == test_health, \
             f"Health history should be restored on GET. Expected '{test_health}', got '{health_value}'"
+
+    def test_back_navigation_flow_from_categorize_to_documents(self):
+        """
+        Test that the back button from Categorize (Entity Extract) goes to
+        Plan Documents (not Health History), since processing is a system step.
+        """
+        test_fname = "BackCatFirst"
+        test_lname = "BackCatLast"
+        test_email = "backcat@test.com"
+        test_denial = """Dear BackCatFirst BackCatLast;
+Your claim for Truvada has been denied as not medically necessary.
+
+Sincerely,
+Cheap-O-Insurance-Corp"""
+
+        # Go through the flow to reach Categorize
+        self.open(f"{self.live_server_url}/")
+        self.click('a[id="scanlink"]')
+        self.assert_title_eventually("Upload your Health Insurance Denial")
+
+        self.type("input#store_fname", test_fname)
+        self.type("input#store_lname", test_lname)
+        self.type("input#email", test_email)
+        self.type("textarea#denial_text", test_denial)
+        self.click("input#pii")
+        self.click("input#privacy")
+        self.click("input#tos")
+        self.click("button#submit")
+
+        self.assert_title_eventually("Optional: Health History")
+        self.click("button#next")
+
+        self.assert_title_eventually("Optional: Add Plan Documents")
+        self.click("button#next")
+
+        # Now at Categorize page
+        self.assert_title_eventually("Categorize Your Denial")
+
+        # Click back button - should go to Plan Documents (not Health History)
+        back_link = self.find_element("a.btn-secondary")
+        assert back_link is not None, "Categorize page should have a back button"
+        back_link.click()
+
+        # Should be at Plan Documents page
+        self.assert_title_eventually("Optional: Add Plan Documents")
+
+        # Go forward again - should work without errors
+        self.click("button#next")
+        self.assert_title_eventually("Categorize Your Denial")
+
+    def test_back_navigation_flow_from_questions_to_categorize(self):
+        """
+        Test that the back button from Questions (Find Next Steps) goes to
+        Categorize Review page.
+        """
+        test_fname = "BackQuestFirst"
+        test_lname = "BackQuestLast"
+        test_email = "backquest@test.com"
+        test_denial = """Dear BackQuestFirst BackQuestLast;
+Your claim for Truvada has been denied as not medically necessary.
+
+Sincerely,
+Cheap-O-Insurance-Corp"""
+
+        # Go through the flow to reach Questions
+        self.open(f"{self.live_server_url}/")
+        self.click('a[id="scanlink"]')
+        self.assert_title_eventually("Upload your Health Insurance Denial")
+
+        self.type("input#store_fname", test_fname)
+        self.type("input#store_lname", test_lname)
+        self.type("input#email", test_email)
+        self.type("textarea#denial_text", test_denial)
+        self.click("input#pii")
+        self.click("input#privacy")
+        self.click("input#tos")
+        self.click("button#submit")
+
+        self.assert_title_eventually("Optional: Health History")
+        self.click("button#next")
+
+        self.assert_title_eventually("Optional: Add Plan Documents")
+        self.click("button#next")
+
+        self.assert_title_eventually("Categorize Your Denial")
+        # Manually select denial type since channels is not working in test
+        self.select_option_by_value("select#id_denial_type", "2")
+        self.type("input#id_procedure", "prep")
+        self.type("input#id_diagnosis", "high risk homosexual behaviour")
+        self.click("button#submit_cat")
+
+        # Now at Questions page
+        self.assert_title_eventually("Additional Resources & Questions")
+
+        # Click back button - should go to Categorize Review
+        back_link = self.find_element("a.btn-secondary")
+        assert back_link is not None, "Questions page should have a back button"
+        back_link.click()
+
+        # Should be at Categorize Review page (shows the categorization)
+        self.assert_title_eventually("Categorize Your Denial")
+
+        # Go forward again - should work without errors
+        self.click("button#submit_cat")
+        self.assert_title_eventually("Additional Resources & Questions")
+
+    def test_back_navigation_flow_from_generate_to_questions(self):
+        """
+        Test that the back button from Generate Appeal goes to Questions page.
+        """
+        test_fname = "BackGenFirst"
+        test_lname = "BackGenLast"
+        test_email = "backgen@test.com"
+        test_denial = """Dear BackGenFirst BackGenLast;
+Your claim for Truvada has been denied as not medically necessary.
+
+Sincerely,
+Cheap-O-Insurance-Corp"""
+
+        # Go through the flow to reach Generate Appeal
+        self.open(f"{self.live_server_url}/")
+        self.click('a[id="scanlink"]')
+        self.assert_title_eventually("Upload your Health Insurance Denial")
+
+        self.type("input#store_fname", test_fname)
+        self.type("input#store_lname", test_lname)
+        self.type("input#email", test_email)
+        self.type("textarea#denial_text", test_denial)
+        self.click("input#pii")
+        self.click("input#privacy")
+        self.click("input#tos")
+        self.click("button#submit")
+
+        self.assert_title_eventually("Optional: Health History")
+        self.click("button#next")
+
+        self.assert_title_eventually("Optional: Add Plan Documents")
+        self.click("button#next")
+
+        self.assert_title_eventually("Categorize Your Denial")
+        self.select_option_by_value("select#id_denial_type", "2")
+        self.type("input#id_procedure", "prep")
+        self.type("input#id_diagnosis", "high risk homosexual behaviour")
+        self.click("button#submit_cat")
+
+        self.assert_title_eventually("Additional Resources & Questions")
+        self.type("input#id_medical_reason", "FakeReason")
+        self.click("input#submit")
+
+        # Now at Generate Appeal page
+        self.assert_title_eventually(
+            "Fight Your Health Insurance Denial: Choose an Appeal"
+        )
+
+        # Click back button - should go to Questions page
+        back_link = self.find_element("a.btn-secondary")
+        assert back_link is not None, "Generate Appeal page should have a back button"
+        back_link.click()
+
+        # Should be at Questions page
+        self.assert_title_eventually("Additional Resources & Questions")
+
+        # Go forward again - should work without errors
+        self.click("input#submit")
+        self.assert_title_eventually(
+            "Fight Your Health Insurance Denial: Choose an Appeal"
+        )

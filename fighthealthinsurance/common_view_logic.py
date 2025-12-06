@@ -884,6 +884,87 @@ class FindNextStepsHelper:
             )
 
 
+    @classmethod
+    def find_next_steps_for_denial(cls, denial: "Denial", email: str) -> "NextStepInfo":
+        """
+        Simplified version of find_next_steps for GET requests (back navigation).
+        Returns the outside_help info without modifying the denial.
+        """
+        outside_help_details = []
+        state = denial.your_state
+
+        if state in states_with_caps:
+            outside_help_details.append(
+                (
+                    (
+                        "<a href='https://www.cms.gov/CCIIO/Resources/Consumer-Assistance-Grants/"
+                        + state
+                        + "'>"
+                        + f"Your state {state} participates in a "
+                        + f"Consumer Assistance Program (CAP), and you may be able to get help "
+                        + f"through them.</a>"
+                    ),
+                    "Visit CMS.gov for more info<a href='https://www.cms.gov/CCIIO/Resources/Consumer-Assistance-Grants/'> here</a>",
+                )
+            )
+        if denial.regulator == Regulator.objects.filter(alt_name="ERISA").first():
+            outside_help_details.append(
+                (
+                    (
+                        "Your plan looks to be an ERISA plan which means your employer <i>may</i>"
+                        + " have more input into plan decisions. If your are on good terms with HR "
+                        + " it could be worth it to ask them for advice."
+                    ),
+                    "Talk to your employer's HR if you are on good terms with them.",
+                )
+            )
+
+        # Build question forms from denial types
+        question_forms = []
+        prof_pov = denial.professional_to_finish
+        for dt in denial.denial_type.all():
+            new_form = dt.get_form()
+            if new_form is not None:
+                new_form = new_form(
+                    initial={"medical_reason": dt.appeal_text}, prof_pov=prof_pov
+                )
+                question_forms.append(new_form)
+
+        # Build generated questions form if available
+        if denial.generated_questions:
+            from django import forms
+
+            generated_questions: list[tuple[str, str]] = denial.generated_questions
+
+            class AppealQuestionsForm(forms.Form):
+                def __init__(self, *args, **kwargs):
+                    super().__init__(*args, **kwargs)
+                    for i, (question, initial_answer) in enumerate(
+                        generated_questions, 1
+                    ):
+                        field_name = f"appeal_generated_{i}"
+                        self.fields[field_name] = forms.CharField(
+                            label=question,
+                            required=False,
+                            initial=initial_answer,
+                            widget=forms.Textarea(
+                                attrs={
+                                    "rows": 3,
+                                    "class": "form-control appeal-question-field",
+                                }
+                            ),
+                        )
+
+            question_forms.append(AppealQuestionsForm())
+
+        combined_form = magic_combined_form(question_forms, {})
+        return NextStepInfo(
+            outside_help_details=outside_help_details,
+            combined_form=combined_form,
+            semi_sekret=denial.semi_sekret,
+        )
+
+
 @dataclass
 class DenialResponseInfo:
     selected_denial_type: list[DenialTypes]

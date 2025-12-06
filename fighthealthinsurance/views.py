@@ -505,7 +505,94 @@ class RecommendAppeal(View):
         return render(request, "")
 
 
+class CategorizeReview(View):
+    """View for the categorize/review page that supports GET for back navigation."""
+
+    def get(self, request):
+        """Handle GET requests for back navigation to categorize/review page."""
+        denial_id = request.GET.get("denial_id")
+        email = request.GET.get("email")
+        semi_sekret = request.GET.get("semi_sekret")
+
+        if not all([denial_id, email, semi_sekret]):
+            return redirect("scan")
+
+        # Validate denial exists
+        try:
+            denial = models.Denial.objects.get(denial_id=denial_id, semi_sekret=semi_sekret)
+        except models.Denial.DoesNotExist:
+            return redirect("scan")
+
+        # Build the PostInferedForm with denial data
+        form = core_forms.PostInferedForm(
+            initial={
+                "denial_type": list(denial.denial_type.all()),
+                "denial_id": denial.denial_id,
+                "email": email,
+                "your_state": denial.your_state,
+                "procedure": denial.procedure,
+                "diagnosis": denial.diagnosis,
+                "semi_sekret": denial.semi_sekret,
+                "insurance_company": denial.insurance_company,
+                "plan_id": denial.plan_id,
+                "claim_id": denial.claim_id,
+                "date_of_service": denial.date_of_service,
+            }
+        )
+
+        return render(
+            request,
+            "categorize.html",
+            context={
+                "post_infered_form": form,
+                "upload_more": True,
+                "current_step": 5,
+                "back_url": build_back_url("dvc", denial_id, email, semi_sekret),
+                "back_label": "Back to plan documents",
+            },
+        )
+
+
 class FindNextSteps(View):
+    def get(self, request):
+        """Handle GET requests for back navigation to outside_help/questions page."""
+        denial_id = request.GET.get("denial_id")
+        email = request.GET.get("email")
+        semi_sekret = request.GET.get("semi_sekret")
+
+        if not all([denial_id, email, semi_sekret]):
+            return redirect("scan")
+
+        # Validate denial exists
+        try:
+            denial = models.Denial.objects.get(denial_id=denial_id, semi_sekret=semi_sekret)
+        except models.Denial.DoesNotExist:
+            return redirect("scan")
+
+        # Get the next step info based on denial
+        next_step_info = common_view_logic.FindNextStepsHelper.find_next_steps_for_denial(
+            denial, email
+        )
+        denial_ref_form = core_forms.DenialRefForm(
+            initial={
+                "denial_id": denial_id,
+                "email": email,
+                "semi_sekret": semi_sekret,
+            }
+        )
+        return render(
+            request,
+            "outside_help.html",
+            context={
+                "outside_help_details": next_step_info.outside_help_details,
+                "combined": next_step_info.combined_form,
+                "denial_form": denial_ref_form,
+                "current_step": 6,
+                "back_url": build_back_url("categorize_review", denial_id, email, semi_sekret),
+                "back_label": "Back to review",
+            },
+        )
+
     def post(self, request):
         form = core_forms.PostInferedForm(request.POST)
         if form.is_valid():
@@ -530,8 +617,8 @@ class FindNextSteps(View):
                     "combined": next_step_info.combined_form,
                     "denial_form": denial_ref_form,
                     "current_step": 6,
-                    "back_url": build_back_url("hh", denial_id, email, next_step_info.semi_sekret),
-                    "back_label": "Back to health history",
+                    "back_url": build_back_url("categorize_review", denial_id, email, next_step_info.semi_sekret),
+                    "back_label": "Back to review",
                 },
             )
 
@@ -597,18 +684,54 @@ class ChooseAppeal(View):
                 "fax_form": fax_form,
                 "current_step": 8,
                 "back_url": build_back_url(
-                    "hh",
+                    "generate_appeal",
                     form.cleaned_data["denial_id"],
                     form.cleaned_data["email"],
                     form.cleaned_data["semi_sekret"],
                 ),
-                "back_label": "Back to health history",
+                "back_label": "Back to appeals",
                 "fhi_always_restore": True,  # Always restore PII from localStorage
             },
         )
 
 
 class GenerateAppeal(View):
+    def get(self, request):
+        """Handle GET requests for back navigation to appeals page."""
+        denial_id = request.GET.get("denial_id")
+        email = request.GET.get("email")
+        semi_sekret = request.GET.get("semi_sekret")
+
+        if not all([denial_id, email, semi_sekret]):
+            return redirect("scan")
+
+        # Validate denial exists
+        try:
+            denial = models.Denial.objects.get(denial_id=denial_id, semi_sekret=semi_sekret)
+        except models.Denial.DoesNotExist:
+            return redirect("scan")
+
+        # Build form context from denial
+        elems = {
+            "denial_id": denial_id,
+            "email": email,
+            "semi_sekret": semi_sekret,
+        }
+
+        return render(
+            request,
+            "appeals.html",
+            context={
+                "form_context": json.dumps(elems),
+                "user_email": email,
+                "denial_id": denial_id,
+                "semi_sekret": semi_sekret,
+                "current_step": 7,
+                "back_url": build_back_url("find_next_steps", denial_id, email, semi_sekret),
+                "back_label": "Back to questions",
+            },
+        )
+
     def post(self, request):
         form = core_forms.DenialRefForm(request.POST)
         if not form.is_valid():
@@ -662,12 +785,12 @@ class GenerateAppeal(View):
                 "semi_sekret": form.cleaned_data["semi_sekret"],
                 "current_step": 7,
                 "back_url": build_back_url(
-                    "hh",
+                    "find_next_steps",
                     form.cleaned_data["denial_id"],
                     form.cleaned_data["email"],
                     form.cleaned_data["semi_sekret"],
                 ),
-                "back_label": "Back to health history",
+                "back_label": "Back to questions",
             },
         )
 
@@ -902,8 +1025,8 @@ class EntityExtractView(SessionRequiredMixin, generic.FormView):
         denial_ref = self.get_denial_ref_from_request()
         context["next"] = reverse("eev")
         context["current_step"] = 4
-        context["back_url"] = self.get_back_url("hh", denial_ref)
-        context["back_label"] = "Back to health history"
+        context["back_url"] = self.get_back_url("dvc", denial_ref)
+        context["back_label"] = "Back to plan documents"
         # form_context needed for entity fetcher JS
         context["form_context"] = denial_ref
         return context
@@ -938,12 +1061,12 @@ class EntityExtractView(SessionRequiredMixin, generic.FormView):
                 "upload_more": True,
                 "current_step": 5,
                 "back_url": build_back_url(
-                    "hh",
+                    "dvc",
                     denial_response.denial_id,
                     email,
                     denial_response.semi_sekret,
                 ),
-                "back_label": "Back to health history",
+                "back_label": "Back to plan documents",
             },
         )
 

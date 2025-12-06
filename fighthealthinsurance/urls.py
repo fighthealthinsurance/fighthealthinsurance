@@ -179,6 +179,11 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
     path("v0/plan_documents", views.PlanDocumentsView.as_view(), name="hh"),
     path("v0/categorize", views.EntityExtractView.as_view(), name="eev"),
     path(
+        "categorize_review",
+        sensitive_post_parameters("email")(views.CategorizeReview.as_view()),
+        name="categorize_review",
+    ),
+    path(
         "server_side_ocr",
         sensitive_post_parameters("email")(views.OCRView.as_view()),
         name="server_side_ocr",
