@@ -8,7 +8,7 @@ BUILDX_CMD=${BUILDX_CMD:-push}
 source "${SCRIPT_DIR}/setup_templates.sh"
 
 # BUILDKIT_NO_CLIENT_TOKEN=true
-FHI_VERSION=v0.12.21d
+FHI_VERSION=v0.12.22a
 
 
 MYORG=${MYORG:-totallylegitco}
