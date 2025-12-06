@@ -79,7 +79,7 @@ class OlderThanTwoWeeksEmailsCSV(BaseEmailsWithRawEmailCSV):
         two_weeks_ago = timezone.now().date() - timedelta(days=14)
         return Denial.objects.filter(
             raw_email__isnull=False, date__lt=two_weeks_ago
-        ).order_by("raw_email", "date")
+        ).order_by("raw_email", "date").distinct("raw_email")
 
     def get_filename(self):
         return "emails_older_than_two_weeks.csv"
@@ -92,10 +92,57 @@ class LastTwoWeeksEmailsCSV(BaseEmailsWithRawEmailCSV):
         two_weeks_ago = timezone.now().date() - timedelta(days=14)
         return Denial.objects.filter(
             raw_email__isnull=False, date__gte=two_weeks_ago
-        ).order_by("raw_email", "date")
+        ).order_by("raw_email", "date").distinct("raw_email")
 
     def get_filename(self):
         return "emails_last_two_weeks.csv"
+
+
+class AllDenialEmailSansProCSV(BaseEmailsWithRawEmailCSV):
+    """Export all unique emails from denials excluding those created by professionals."""
+
+    def get_queryset(self):
+        return Denial.objects.filter(
+            raw_email__isnull=False
+        ).order_by("raw_email", "date").distinct("raw_email")
+
+    def get_filename(self):
+        return "all_denial_emails_sans_pro.csv"
+
+
+class MailingListSubscriberCSV(View):
+    """Export all mailing list subscriber emails."""
+
+    def get(self, request):
+        """Handle the request and return a CSV response."""
+        from fighthealthinsurance.models import MailingListSubscriber
+
+        subscribers_qs = (
+            MailingListSubscriber.objects.all()
+            .order_by("email", "signup_date")
+            .distinct("email")
+        )
+
+        response = HttpResponse(content_type="text/csv")
+        response["Content-Disposition"] = (
+            'attachment; filename="mailing_list_subscribers.csv"'
+        )
+
+        writer = csv.writer(response)
+        writer.writerow(["Email", "Name", "Phone", "Signup Date", "Comments"])
+
+        for subscriber in subscribers_qs:
+            writer.writerow(
+                [
+                    subscriber.email,
+                    subscriber.name,
+                    subscriber.phone,
+                    subscriber.signup_date.strftime("%Y-%m-%d"),
+                    subscriber.comments,
+                ]
+            )
+
+        return response
 
 
 @staff_member_required
@@ -233,7 +280,8 @@ def pro_signups_csv_single_lines(request):
             "clicked_for_paid",
             "phone_number",
         )
-        .order_by("signup_date")
+        .order_by("email", "signup_date")
+        .distinct("email")
     )
     response = HttpResponse(content_type="text/csv")
     response["Content-Disposition"] = (

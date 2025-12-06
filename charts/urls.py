@@ -10,6 +10,8 @@ from .views import (
     pro_signups_csv_single_lines,
     OlderThanTwoWeeksEmailsCSV,
     LastTwoWeeksEmailsCSV,
+    AllDenialEmailSansProCSV,
+    MailingListSubscriberCSV,
     de_identified_export,
     incomplete_signups_csv,
     procedures_denied_chart,
@@ -35,6 +37,16 @@ urlpatterns = [
         "emails_last_two_weeks",
         staff_member_required(LastTwoWeeksEmailsCSV.as_view()),
         name="emails_last_two_weeks",
+    ),
+    path(
+        "all_denial_emails_sans_pro",
+        staff_member_required(AllDenialEmailSansProCSV.as_view()),
+        name="all_denial_emails_sans_pro",
+    ),
+    path(
+        "mailing_list_subscribers",
+        staff_member_required(MailingListSubscriberCSV.as_view()),
+        name="mailing_list_subscribers",
     ),
     path(
         "incomplete_signups_csv", incomplete_signups_csv, name="incomplete_signups_csv"
