@@ -4,7 +4,6 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
         ("fighthealthinsurance", "0052_alter_faxestosend_attempting_to_send_as_of"),
     ]

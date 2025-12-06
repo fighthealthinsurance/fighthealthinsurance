@@ -4,7 +4,6 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
         ("fighthealthinsurance", "0134_mailinglistsubscriber_unsubscribe_token"),
     ]

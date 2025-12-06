@@ -5,7 +5,6 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
         ("fighthealthinsurance", "0035_remove_denial_follow_up_semi_sekret_and_more"),
     ]

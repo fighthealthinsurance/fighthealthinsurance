@@ -13,6 +13,6 @@ def form_persistence_context(request):
     from localStorage.
     """
     return {
-        'fhi_session_key': request.session.get('denial_uuid', ''),
-        'fhi_request_method': request.method,
+        "fhi_session_key": request.session.get("denial_uuid", ""),
+        "fhi_request_method": request.method,
     }

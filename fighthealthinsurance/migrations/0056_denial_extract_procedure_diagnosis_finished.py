@@ -4,7 +4,6 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
         ("fighthealthinsurance", "0055_pubmedarticlesummarized_article_url_and_more"),
     ]

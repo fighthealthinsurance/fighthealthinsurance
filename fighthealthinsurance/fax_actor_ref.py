@@ -7,7 +7,6 @@ class FaxActorRef:
 
     @cached_property
     def get(self):
-
         # Shut down existing actor if needed.
         name = "FaxActor"
         if self.fax_actor is None:

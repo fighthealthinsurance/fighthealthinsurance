@@ -681,7 +681,9 @@ class FollowUpHelper:
 
 class FindNextStepsHelper:
     @classmethod
-    def _get_outside_help_details(cls, denial: "Denial", state: Optional[str] = None) -> list:
+    def _get_outside_help_details(
+        cls, denial: "Denial", state: Optional[str] = None
+    ) -> list:
         """Get outside help details based on state and regulator (shared logic)."""
         outside_help_details = []
         state = state or denial.your_state
@@ -715,7 +717,9 @@ class FindNextStepsHelper:
         return outside_help_details
 
     @classmethod
-    def _build_question_forms(cls, denial: "Denial", existing_answers: Optional[dict] = None) -> list:
+    def _build_question_forms(
+        cls, denial: "Denial", existing_answers: Optional[dict] = None
+    ) -> list:
         """Build question forms from denial types and generated questions (shared logic)."""
         from django import forms
 
@@ -892,7 +896,6 @@ class FindNextStepsHelper:
                 combined_form=combined_form,
                 semi_sekret=semi_sekret,
             )
-
 
     @classmethod
     def find_next_steps_for_denial(cls, denial: "Denial", email: str) -> "NextStepInfo":
@@ -1504,7 +1507,9 @@ class DenialCreatorHelper:
                     else:
                         # Try to read as text file
                         try:
-                            with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                            with open(
+                                path, "r", encoding="utf-8", errors="ignore"
+                            ) as f:
                                 combined_text += f.read() + "\n"
                         except Exception as e:
                             logger.debug(f"Could not read {path} as text: {e}")
@@ -1834,9 +1839,9 @@ class AppealsBackendHelper:
                     subs["[Patient Name]"] = denial.patient_user.get_legal_name()
                     subs["[patient name]"] = denial.patient_user.get_legal_name()
                 if denial and denial.primary_professional is not None:
-                    subs["[Professional Name]"] = (
-                        denial.primary_professional.get_full_name()
-                    )
+                    subs[
+                        "[Professional Name]"
+                    ] = denial.primary_professional.get_full_name()
                 if denial.domain:
                     subs["[Professional Address]"] = denial.domain.get_address()
             except:
@@ -1955,7 +1960,7 @@ class AppealsBackendHelper:
                 qa_context = json.loads(denial.qa_context)
             qa_context["medical_context"] = " ".join(medical_context)
             denial.qa_context = json.dumps(qa_context)
-        if plan_context is not None:
+        if plan_context is not None and denial.plan_context is None:
             denial.plan_context = " ".join(set(plan_context))
         # Update the denial object with the received parameter if it differs
         if denial.professional_to_finish != professional_to_finish:
@@ -2049,6 +2054,12 @@ class AppealsBackendHelper:
             {"type": "status", "message": "Generating personalized appeals with AI..."}
         ) + "\n"
 
+        plan_context = denial.plan_context
+        if plan_context and len(plan_context) > 0:
+            plan_context = f"{plan_context}{denial.plan_documents_summary or ''}"
+        else:
+            plan_context = denial.plan_documents_summary
+
         appeals: Iterator[str] = await sync_to_async(appealGenerator.make_appeals)(
             denial,
             AppealTemplateGenerator(prefaces, main, footer),
@@ -2056,6 +2067,7 @@ class AppealsBackendHelper:
             non_ai_appeals=non_ai_appeals,
             pubmed_context=pubmed_context,
             ml_citations_context=ml_citation_context,
+            plan_context=plan_context,
         )
         # Only filters out None
         filtered_appeals: Iterator[str] = filter(lambda x: x != None, appeals)

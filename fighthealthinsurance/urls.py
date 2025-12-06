@@ -283,9 +283,7 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
     ),
     path(
         "sitemap.xml",
-        cache_control(public=True)(
-            cache_page(60 * 60 * 24)(sitemap_view)
-        ),
+        cache_control(public=True)(cache_page(60 * 60 * 24)(sitemap_view)),
         name="django.contrib.sitemaps.views.sitemap",
     ),
     path(

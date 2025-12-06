@@ -10,7 +10,6 @@ class Command(BaseCommand):
     help = "Run tests with coverage and open the HTML report in the browser"
 
     def add_arguments(self, parser):
-
         parser.add_argument(
             "--test-file",
             type=str,

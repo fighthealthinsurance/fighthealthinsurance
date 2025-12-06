@@ -5,7 +5,6 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
         ("fighthealthinsurance", "0133_remove_mailinglistsubscriber_unsubscribe_token"),
     ]

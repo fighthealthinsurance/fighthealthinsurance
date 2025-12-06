@@ -76,7 +76,9 @@ class CombinedStorage(Storage):
                 error_list.append(e)
                 last_error = e
         if l is None:
-            logger.error(f"Saving to all backends {self.backends} failed with {error_list}!")
+            logger.error(
+                f"Saving to all backends {self.backends} failed with {error_list}!"
+            )
             raise Exception(
                 f"Failed to save to any backend w/ errors {error_list} -- last error {last_error}"
             )

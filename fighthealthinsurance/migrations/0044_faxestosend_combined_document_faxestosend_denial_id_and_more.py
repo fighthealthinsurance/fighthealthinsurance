@@ -10,7 +10,6 @@ import fighthealthinsurance.combined_storage
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
         ("fighthealthinsurance", "0043_faxestosend_denial_appeal_fax_number"),
     ]

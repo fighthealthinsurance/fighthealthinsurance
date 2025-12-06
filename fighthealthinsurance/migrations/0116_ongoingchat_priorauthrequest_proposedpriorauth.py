@@ -7,7 +7,6 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
         ("fhi_users", "0040_pendingprostripecheckoutsession"),
         ("fighthealthinsurance", "0115_denial_gen_attempts"),

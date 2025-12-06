@@ -5,7 +5,6 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
         ("fhi_users", "0040_pendingprostripecheckoutsession"),
         (

@@ -138,14 +138,14 @@ class ChatInterface:
                 -20:
             ]  # Only use the last twenty messages in short history
             for model_backend in model_backends[:2]:
-                short_awaitable: Awaitable[Tuple[Optional[str], Optional[str]]] = (
-                    model_backend.generate_chat_response(
-                        current_message_for_llm,
-                        previous_context_summary=previous_context_summary,
-                        history=short_history,
-                        is_professional=not self.is_patient,
-                        is_logged_in=is_logged_in,
-                    )
+                short_awaitable: Awaitable[
+                    Tuple[Optional[str], Optional[str]]
+                ] = model_backend.generate_chat_response(
+                    current_message_for_llm,
+                    previous_context_summary=previous_context_summary,
+                    history=short_history,
+                    is_professional=not self.is_patient,
+                    is_logged_in=is_logged_in,
                 )
                 calls.append(short_awaitable)
                 call_scores[short_awaitable] = model_backend.quality()
@@ -428,9 +428,13 @@ class ChatInterface:
                     await self.send_status_message(
                         "Processing Medicaid eligibility data"
                     )
-                    (eligible_2025, eligible_2026, medicare, alternatives, missing) = (
-                        is_eligible(**loaded)
-                    )
+                    (
+                        eligible_2025,
+                        eligible_2026,
+                        medicare,
+                        alternatives,
+                        missing,
+                    ) = is_eligible(**loaded)
                     info_text = "We're helping figure out if someone is likely eligible for Medicaid. Be clear this is an approximation and they'll need to confirm with the state to be sure."
                     if len(missing) > 0:
                         info_text += f"To figure out if their eligible we have {missing} questions to ask."
@@ -456,16 +460,17 @@ class ChatInterface:
                         {"role": "user", "content": current_message_for_llm}
                     ]
                     history_for_llm += [{"role": "agent", "content": response_text}]
-                    additional_response_text, additional_context_part = (
-                        await self._call_llm_with_actions(
-                            model_backends,
-                            current_message_for_llm=info_text + action_text,
-                            previous_context_summary="Medicaid eligibility investigation",
-                            history_for_llm=history_for_llm,
-                            depth=depth + 1,
-                            is_logged_in=is_logged_in,
-                            is_professional=is_professional,
-                        )
+                    (
+                        additional_response_text,
+                        additional_context_part,
+                    ) = await self._call_llm_with_actions(
+                        model_backends,
+                        current_message_for_llm=info_text + action_text,
+                        previous_context_summary="Medicaid eligibility investigation",
+                        history_for_llm=history_for_llm,
+                        depth=depth + 1,
+                        is_logged_in=is_logged_in,
+                        is_professional=is_professional,
                     )
                     if additional_response_text and len(additional_response_text) > 1:
                         response_text = additional_response_text
@@ -546,16 +551,17 @@ class ChatInterface:
                             {"role": "user", "content": current_message_for_llm}
                         ]
                         history_for_llm += [{"role": "agent", "content": response_text}]
-                        additional_response_text, additional_context_part = (
-                            await self._call_llm_with_actions(
-                                model_backends,
-                                medicaid_info_text,
-                                "",
-                                history_for_llm,
-                                depth=depth + 1,
-                                is_logged_in=is_logged_in,
-                                is_professional=is_professional,
-                            )
+                        (
+                            additional_response_text,
+                            additional_context_part,
+                        ) = await self._call_llm_with_actions(
+                            model_backends,
+                            medicaid_info_text,
+                            "",
+                            history_for_llm,
+                            depth=depth + 1,
+                            is_logged_in=is_logged_in,
+                            is_professional=is_professional,
                         )
                         # Log the response for debugging
                         logger.debug(
@@ -670,16 +676,17 @@ class ChatInterface:
                             + "\\n\\n".join(summaries)
                             + "]. If you reference them make sure to include the title and journal.\\n"
                         )
-                        additional_response_text, additional_context_part = (
-                            await self._call_llm_with_actions(
-                                model_backends,
-                                pubmed_context_str,
-                                previous_context_summary,
-                                history_for_llm,
-                                depth=depth + 1,
-                                is_logged_in=is_logged_in,
-                                is_professional=is_professional,
-                            )
+                        (
+                            additional_response_text,
+                            additional_context_part,
+                        ) = await self._call_llm_with_actions(
+                            model_backends,
+                            pubmed_context_str,
+                            previous_context_summary,
+                            history_for_llm,
+                            depth=depth + 1,
+                            is_logged_in=is_logged_in,
+                            is_professional=is_professional,
                         )
                         if cleaned_response and additional_response_text:
                             cleaned_response += additional_response_text

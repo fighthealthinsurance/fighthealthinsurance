@@ -6,7 +6,6 @@ import regex_field.fields
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
         (
             "fighthealthinsurance",

@@ -128,7 +128,9 @@ class FaxForm(DenialRefForm):
         required=True,
         label="Fax number for appeals",
         help_text="Check your denial letter for the appeals fax number.",
-        widget=forms.TextInput(attrs={"placeholder": "e.g., 1-800-555-1234", "type": "tel"}),
+        widget=forms.TextInput(
+            attrs={"placeholder": "e.g., 1-800-555-1234", "type": "tel"}
+        ),
     )
     completed_appeal_text = forms.CharField(
         widget=forms.Textarea(attrs={"class": "appeal_text"}),
@@ -171,7 +173,9 @@ class BasePostInferedForm(DenialRefForm):
         required=False,
         label="Other denial type",
         help_text="If your denial type isn't listed above, describe it here.",
-        widget=forms.TextInput(attrs={"placeholder": "e.g., Out of network, Experimental treatment"}),
+        widget=forms.TextInput(
+            attrs={"placeholder": "e.g., Out of network, Experimental treatment"}
+        ),
     )
     plan_id = forms.CharField(
         required=False,
@@ -189,13 +193,17 @@ class BasePostInferedForm(DenialRefForm):
         required=False,
         label="Date of service",
         help_text="When the denied service was provided or requested.",
-        widget=forms.TextInput(attrs={"placeholder": "e.g., 01/15/2024 or January 2024"}),
+        widget=forms.TextInput(
+            attrs={"placeholder": "e.g., 01/15/2024 or January 2024"}
+        ),
     )
     insurance_company = forms.CharField(
         required=False,
         label="Insurance company",
         help_text="The name of your health insurance provider.",
-        widget=forms.TextInput(attrs={"placeholder": "e.g., Blue Cross, Aetna, UnitedHealthcare"}),
+        widget=forms.TextInput(
+            attrs={"placeholder": "e.g., Blue Cross, Aetna, UnitedHealthcare"}
+        ),
     )
     plan_source = forms.ModelMultipleChoiceField(
         queryset=PlanSource.objects.all(),
@@ -219,21 +227,27 @@ class BasePostInferedForm(DenialRefForm):
         required=False,
         label="Your state",
         help_text="Two-letter state code (e.g., CA, NY, TX).",
-        widget=forms.TextInput(attrs={"placeholder": "CA", "maxlength": "2", "style": "width: 60px;"}),
+        widget=forms.TextInput(
+            attrs={"placeholder": "CA", "maxlength": "2", "style": "width: 60px;"}
+        ),
     )
     procedure = forms.CharField(
         max_length=200,
         required=False,
         label="Denied procedure or treatment",
         help_text="What service, procedure, or treatment was denied?",
-        widget=forms.TextInput(attrs={"placeholder": "e.g., MRI, Physical therapy, Surgery"}),
+        widget=forms.TextInput(
+            attrs={"placeholder": "e.g., MRI, Physical therapy, Surgery"}
+        ),
     )
     diagnosis = forms.CharField(
         max_length=200,
         required=False,
         label="Related diagnosis or condition",
         help_text="The medical condition or reason for needing the treatment. Can include any relevant personal health factors.",
-        widget=forms.TextInput(attrs={"placeholder": "e.g., Chronic back pain, Diabetes, Gender dysphoria"}),
+        widget=forms.TextInput(
+            attrs={"placeholder": "e.g., Chronic back pain, Diabetes, Gender dysphoria"}
+        ),
     )
 
 
@@ -309,7 +323,9 @@ class SendMailingListMailForm(forms.Form):
     subject = forms.CharField(
         required=True,
         max_length=200,
-        widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "Email subject"}),
+        widget=forms.TextInput(
+            attrs={"class": "form-control", "placeholder": "Email subject"}
+        ),
     )
     html_content = forms.CharField(
         required=True,

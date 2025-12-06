@@ -102,7 +102,9 @@ Focus on terms that would appear in an insurance plan document."""
                     # Filter out any obviously bad terms
                     terms = [t for t in terms if not t.startswith("-") and len(t) < 100]
                     if terms:
-                        logger.debug(f"Generated {len(terms)} search terms: {terms[:5]}")
+                        logger.debug(
+                            f"Generated {len(terms)} search terms: {terms[:5]}"
+                        )
                         return terms[:10]  # Limit to 10 terms
             except asyncio.TimeoutError:
                 logger.warning(f"Timeout generating search terms with {model}")
@@ -200,9 +202,7 @@ Focus on terms that would appear in an insurance plan document."""
         return "\n\n---\n\n".join(relevant_sections)
 
     @classmethod
-    def _extract_pages_with_terms(
-        cls, path: str, search_terms: List[str]
-    ) -> List[str]:
+    def _extract_pages_with_terms(cls, path: str, search_terms: List[str]) -> List[str]:
         """
         Extract pages from a document that contain any of the search terms.
 
@@ -223,13 +223,13 @@ Focus on terms that would appear in an insurance plan document."""
                         page_lower = page_text.lower()
 
                         # Check if any search term appears in this page
-                        matches = sum(1 for term in search_terms if term.lower() in page_lower)
+                        matches = sum(
+                            1 for term in search_terms if term.lower() in page_lower
+                        )
                         if matches > 0:
                             # Include page number for context
                             page_num = page.number + 1
-                            matching_pages.append(
-                                f"[Page {page_num}]\n{page_text}"
-                            )
+                            matching_pages.append(f"[Page {page_num}]\n{page_text}")
             except RuntimeError as e:
                 logger.warning(f"Error reading PDF {path}: {e}")
         else:
@@ -264,7 +264,9 @@ Focus on terms that would appear in an insurance plan document."""
         if not relevant_text or len(relevant_text.strip()) < 50:
             return None
 
-        procedure = denial.procedure or denial.candidate_procedure or "the denied treatment"
+        procedure = (
+            denial.procedure or denial.candidate_procedure or "the denied treatment"
+        )
         diagnosis = denial.diagnosis or denial.candidate_diagnosis or ""
 
         prompt = f"""Summarize the following insurance plan document excerpts that are relevant
@@ -301,7 +303,9 @@ Include specific page references where helpful."""
                     timeout=45,
                 )
                 if result and len(result) > 50:
-                    logger.debug(f"Generated plan document summary ({len(result)} chars)")
+                    logger.debug(
+                        f"Generated plan document summary ({len(result)} chars)"
+                    )
                     return str(result)
             except asyncio.TimeoutError:
                 logger.warning(f"Timeout summarizing plan docs with {model}")
@@ -356,7 +360,9 @@ Include specific page references where helpful."""
                 relevant_text = await cls.extract_relevant_text(denial_id, search_terms)
 
                 if not relevant_text:
-                    logger.debug(f"No relevant text found in plan docs for denial {denial_id}")
+                    logger.debug(
+                        f"No relevant text found in plan docs for denial {denial_id}"
+                    )
                     return None
 
                 # Step 3: Summarize the relevant sections

@@ -39,7 +39,6 @@ application = ProtocolTypeRouter(
 from django.conf import settings
 
 if settings.SENTRY_ENDPOINT and not settings.DEBUG:
-
     import sentry_sdk
     from sentry_sdk.integrations.django import DjangoIntegration
 

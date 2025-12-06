@@ -5,7 +5,6 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
         ("fhi_users", "0012_patientdomainrelation_domain_and_more"),
         ("fighthealthinsurance", "0067_remove_denialdomainrelation_domain"),

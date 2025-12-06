@@ -519,7 +519,9 @@ class CategorizeReview(View):
 
         # Validate denial exists
         try:
-            denial = models.Denial.objects.get(denial_id=denial_id, semi_sekret=semi_sekret)
+            denial = models.Denial.objects.get(
+                denial_id=denial_id, semi_sekret=semi_sekret
+            )
         except models.Denial.DoesNotExist:
             return redirect("scan")
 
@@ -565,13 +567,17 @@ class FindNextSteps(View):
 
         # Validate denial exists
         try:
-            denial = models.Denial.objects.get(denial_id=denial_id, semi_sekret=semi_sekret)
+            denial = models.Denial.objects.get(
+                denial_id=denial_id, semi_sekret=semi_sekret
+            )
         except models.Denial.DoesNotExist:
             return redirect("scan")
 
         # Get the next step info based on denial
-        next_step_info = common_view_logic.FindNextStepsHelper.find_next_steps_for_denial(
-            denial, email
+        next_step_info = (
+            common_view_logic.FindNextStepsHelper.find_next_steps_for_denial(
+                denial, email
+            )
         )
         denial_ref_form = core_forms.DenialRefForm(
             initial={
@@ -588,7 +594,9 @@ class FindNextSteps(View):
                 "combined": next_step_info.combined_form,
                 "denial_form": denial_ref_form,
                 "current_step": 6,
-                "back_url": build_back_url("categorize_review", denial_id, email, semi_sekret),
+                "back_url": build_back_url(
+                    "categorize_review", denial_id, email, semi_sekret
+                ),
                 "back_label": "Back to review",
             },
         )
@@ -617,7 +625,12 @@ class FindNextSteps(View):
                     "combined": next_step_info.combined_form,
                     "denial_form": denial_ref_form,
                     "current_step": 6,
-                    "back_url": build_back_url("categorize_review", denial_id, email, next_step_info.semi_sekret),
+                    "back_url": build_back_url(
+                        "categorize_review",
+                        denial_id,
+                        email,
+                        next_step_info.semi_sekret,
+                    ),
                     "back_label": "Back to review",
                 },
             )
@@ -707,7 +720,9 @@ class GenerateAppeal(View):
 
         # Validate denial exists
         try:
-            denial = models.Denial.objects.get(denial_id=denial_id, semi_sekret=semi_sekret)
+            denial = models.Denial.objects.get(
+                denial_id=denial_id, semi_sekret=semi_sekret
+            )
         except models.Denial.DoesNotExist:
             return redirect("scan")
 
@@ -727,7 +742,9 @@ class GenerateAppeal(View):
                 "denial_id": denial_id,
                 "semi_sekret": semi_sekret,
                 "current_step": 7,
-                "back_url": build_back_url("find_next_steps", denial_id, email, semi_sekret),
+                "back_url": build_back_url(
+                    "find_next_steps", denial_id, email, semi_sekret
+                ),
                 "back_label": "Back to questions",
             },
         )
@@ -888,7 +905,8 @@ class InitialProcessView(generic.FormView):
                 logger.debug(f"Error subscribing {email} to mailing list: {e}")
                 try:
                     models.MailingListSubscriber.objects.filter(email=email).update(
-                        **defaults)
+                        **defaults
+                    )
                 except Exception as e2:
                     logger.warning(f"Error updating subscriber? {email}!?!")
 
@@ -927,12 +945,15 @@ def build_back_url(url_name: str, denial_id, email: str, semi_sekret: str) -> st
     This allows the user to navigate back and still have the form fields populated.
     """
     from urllib.parse import urlencode
+
     base_url = reverse(url_name)
-    params = urlencode({
-        "denial_id": denial_id,
-        "email": email,
-        "semi_sekret": semi_sekret,
-    })
+    params = urlencode(
+        {
+            "denial_id": denial_id,
+            "email": email,
+            "semi_sekret": semi_sekret,
+        }
+    )
     return f"{base_url}?{params}"
 
 
