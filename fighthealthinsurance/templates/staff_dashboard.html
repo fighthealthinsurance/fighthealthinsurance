@@ -1,216 +1,230 @@
-<!DOCTYPE html>
-<html>
-<head>
-  <title>Staff Dashboard</title>
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      max-width: 1000px;
-      margin: 0 auto;
-      padding: 20px;
-      background-color: #f5f5f5;
-    }
-    h1 {
-      color: #333;
-      border-bottom: 2px solid #007bff;
-      padding-bottom: 10px;
-    }
-    h2 {
-      color: #555;
-      margin-top: 30px;
-      border-left: 4px solid #007bff;
-      padding-left: 10px;
-    }
-    .dashboard-section {
-      background: white;
-      padding: 20px;
-      border-radius: 8px;
-      margin-bottom: 20px;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    }
-    .link-list {
-      list-style: none;
-      padding: 0;
-    }
-    .link-list li {
-      margin-bottom: 10px;
-    }
-    .link-list a {
-      display: block;
-      padding: 12px 15px;
-      background-color: #f8f9fa;
-      border: 1px solid #dee2e6;
-      border-radius: 4px;
-      color: #007bff;
-      text-decoration: none;
-      transition: all 0.2s;
-    }
-    .link-list a:hover {
-      background-color: #007bff;
-      color: white;
-      border-color: #007bff;
-    }
-    .link-description {
-      font-size: 0.85em;
-      color: #666;
-      margin-top: 3px;
-    }
-    .link-list a:hover .link-description {
-      color: #e0e0e0;
-    }
-    .admin-link {
-      display: inline-block;
-      padding: 10px 20px;
-      background-color: #28a745;
-      color: white;
-      text-decoration: none;
-      border-radius: 4px;
-      margin-top: 10px;
-    }
-    .admin-link:hover {
-      background-color: #218838;
-    }
-  </style>
-</head>
-<body>
-  <h1>Staff Dashboard</h1>
-  
-  <div class="dashboard-section">
-    <h2>📧 Email &amp; Communication</h2>
-    <ul class="link-list">
-      <li>
-        <a href="{% url 'send_mailing_list_mail' %}">
-          <strong>Send Mailing List Email</strong>
-          <div class="link-description">Send emails to all mailing list subscribers with HTML and text versions</div>
-        </a>
-      </li>
-      <li>
-        <a href="/timbit/help/followup_sender_test">
-          <strong>Follow-up Email Sender Test</strong>
-          <div class="link-description">Test the follow-up email sender functionality</div>
-        </a>
-      </li>
-      <li>
-        <a href="/timbit/help/thankyou_sender_test">
-          <strong>Thank You Email Sender Test</strong>
-          <div class="link-description">Test the thank you email sender functionality</div>
-        </a>
-      </li>
-      <li>
-        <a href="/timbit/help/followup_fax_test">
-          <strong>Follow-up Fax Sender Test</strong>
-          <div class="link-description">Test the follow-up fax sender functionality</div>
-        </a>
-      </li>
-    </ul>
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Staff Dashboard - Fight Health Insurance{% endblock %}
+
+{% block extra_style %}
+<style>
+  .dashboard-section {
+    background: white;
+    padding: 20px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  }
+  .dashboard-section h2 {
+    color: #555;
+    border-left: 4px solid #007bff;
+    padding-left: 10px;
+    margin-bottom: 20px;
+  }
+  .link-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+  .link-list li {
+    margin-bottom: 10px;
+  }
+  .link-list a {
+    display: block;
+    padding: 12px 15px;
+    background-color: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    color: #007bff;
+    text-decoration: none;
+    transition: all 0.2s;
+  }
+  .link-list a:hover {
+    background-color: #007bff;
+    color: white;
+    border-color: #007bff;
+  }
+  .link-description {
+    font-size: 0.85em;
+    color: #666;
+    margin-top: 3px;
+  }
+  .link-list a:hover .link-description {
+    color: #e0e0e0;
+  }
+  .admin-link {
+    display: inline-block;
+    padding: 10px 20px;
+    background-color: #28a745;
+    color: white;
+    text-decoration: none;
+    border-radius: 4px;
+    margin-top: 10px;
+  }
+  .admin-link:hover {
+    background-color: #218838;
+    color: white;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<section class="section" id="staff-dashboard">
+  <div class="container">
+    <h1 class="mb-4 pb-2 border-bottom">Staff Dashboard</h1>
+
+    <div class="row">
+      <div class="col-lg-6">
+        <div class="dashboard-section">
+          <h2>Email &amp; Communication</h2>
+          <ul class="link-list">
+            <li>
+              <a href="{% url 'send_mailing_list_mail' %}">
+                <strong>Send Mailing List Email</strong>
+                <div class="link-description">Send emails to all mailing list subscribers with HTML and text versions</div>
+              </a>
+            </li>
+            <li>
+              <a href="{% url 'staff_dashboard' %}followup_sender_test">
+                <strong>Follow-up Email Sender Test</strong>
+                <div class="link-description">Test the follow-up email sender functionality</div>
+              </a>
+            </li>
+            <li>
+              <a href="{% url 'staff_dashboard' %}thankyou_sender_test">
+                <strong>Thank You Email Sender Test</strong>
+                <div class="link-description">Test the thank you email sender functionality</div>
+              </a>
+            </li>
+            <li>
+              <a href="{% url 'staff_dashboard' %}followup_fax_test">
+                <strong>Follow-up Fax Sender Test</strong>
+                <div class="link-description">Test the follow-up fax sender functionality</div>
+              </a>
+            </li>
+          </ul>
+        </div>
+
+        <div class="dashboard-section">
+          <h2>User Management</h2>
+          <ul class="link-list">
+            <li>
+              <a href="{% url 'activate_pro' %}">
+                <strong>Activate Pro User</strong>
+                <div class="link-description">Activate a professional user domain by phone number</div>
+              </a>
+            </li>
+            <li>
+              <a href="{% url 'enable_beta' %}">
+                <strong>Enable Beta Features</strong>
+                <div class="link-description">Enable beta features for a domain by phone number</div>
+              </a>
+            </li>
+          </ul>
+        </div>
+
+        <div class="dashboard-section">
+          <h2>Scheduling</h2>
+          <ul class="link-list">
+            <li>
+              <a href="{% url 'staff_dashboard' %}followup_sched">
+                <strong>Schedule Follow-ups</strong>
+                <div class="link-description">Schedule any missing follow-up reminders</div>
+              </a>
+            </li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="col-lg-6">
+        <div class="dashboard-section">
+          <h2>Charts &amp; Analytics</h2>
+          <ul class="link-list">
+            <li>
+              <a href="{% url 'charts:signups_by_day' %}">
+                <strong>Signups by Day</strong>
+                <div class="link-description">View daily signup statistics</div>
+              </a>
+            </li>
+            <li>
+              <a href="{% url 'charts:users_by_day' %}">
+                <strong>Users by Day</strong>
+                <div class="link-description">View daily user activity statistics</div>
+              </a>
+            </li>
+            <li>
+              <a href="{% url 'charts:sf_signups' %}">
+                <strong>SF Signups</strong>
+                <div class="link-description">View San Francisco area signups</div>
+              </a>
+            </li>
+            <li>
+              <a href="{% url 'charts:procedures_denied_chart' %}">
+                <strong>Procedures Denied Chart</strong>
+                <div class="link-description">View chart of denied procedures</div>
+              </a>
+            </li>
+          </ul>
+        </div>
+
+        <div class="dashboard-section">
+          <h2>Data Exports</h2>
+          <ul class="link-list">
+            <li>
+              <a href="{% url 'charts:de_identified_export' %}">
+                <strong>De-Identified Data Export</strong>
+                <div class="link-description">Export de-identified data for analysis</div>
+              </a>
+            </li>
+            <li>
+              <a href="{% url 'charts:pro_signups_csv' %}">
+                <strong>Pro Signups CSV</strong>
+                <div class="link-description">Export professional signups as CSV</div>
+              </a>
+            </li>
+            <li>
+              <a href="{% url 'charts:pro_signups_csv_single_lines' %}">
+                <strong>Pro Signups CSV (Single Lines)</strong>
+                <div class="link-description">Export professional signups as CSV with single line entries</div>
+              </a>
+            </li>
+            <li>
+              <a href="{% url 'charts:emails_older_than_two_weeks' %}">
+                <strong>Emails Older Than Two Weeks</strong>
+                <div class="link-description">Export emails older than two weeks</div>
+              </a>
+            </li>
+            <li>
+              <a href="{% url 'charts:emails_last_two_weeks' %}">
+                <strong>Emails Last Two Weeks</strong>
+                <div class="link-description">Export emails from the last two weeks</div>
+              </a>
+            </li>
+            <li>
+              <a href="{% url 'charts:all_denial_emails_sans_pro' %}">
+                <strong>All Denial Emails (Sans Pro)</strong>
+                <div class="link-description">Export all denial emails excluding professional users</div>
+              </a>
+            </li>
+            <li>
+              <a href="{% url 'charts:mailing_list_subscribers' %}">
+                <strong>Mailing List Subscribers</strong>
+                <div class="link-description">Export mailing list subscriber data</div>
+              </a>
+            </li>
+            <li>
+              <a href="{% url 'charts:incomplete_signups_csv' %}">
+                <strong>Incomplete Signups CSV</strong>
+                <div class="link-description">Export incomplete signups as CSV</div>
+              </a>
+            </li>
+          </ul>
+        </div>
+
+        <div class="dashboard-section">
+          <h2>Django Admin</h2>
+          <p>Access the full Django admin interface for complete database management.</p>
+          <a href="/timbit/admin/" class="admin-link">Open Django Admin</a>
+        </div>
+      </div>
+    </div>
   </div>
-  
-  <div class="dashboard-section">
-    <h2>👤 User Management</h2>
-    <ul class="link-list">
-      <li>
-        <a href="{% url 'activate_pro' %}">
-          <strong>Activate Pro User</strong>
-          <div class="link-description">Activate a professional user domain by phone number</div>
-        </a>
-      </li>
-      <li>
-        <a href="{% url 'enable_beta' %}">
-          <strong>Enable Beta Features</strong>
-          <div class="link-description">Enable beta features for a domain by phone number</div>
-        </a>
-      </li>
-    </ul>
-  </div>
-  
-  <div class="dashboard-section">
-    <h2>📅 Scheduling</h2>
-    <ul class="link-list">
-      <li>
-        <a href="/timbit/help/followup_sched">
-          <strong>Schedule Follow-ups</strong>
-          <div class="link-description">Schedule any missing follow-up reminders</div>
-        </a>
-      </li>
-    </ul>
-  </div>
-  
-  <div class="dashboard-section">
-    <h2>📊 Charts &amp; Analytics</h2>
-    <ul class="link-list">
-      <li>
-        <a href="{% url 'charts:signups_by_day' %}">
-          <strong>Signups by Day</strong>
-          <div class="link-description">View daily signup statistics</div>
-        </a>
-      </li>
-      <li>
-        <a href="{% url 'charts:users_by_day' %}">
-          <strong>Users by Day</strong>
-          <div class="link-description">View daily user activity statistics</div>
-        </a>
-      </li>
-      <li>
-        <a href="{% url 'charts:sf_signups' %}">
-          <strong>SF Signups</strong>
-          <div class="link-description">View San Francisco area signups</div>
-        </a>
-      </li>
-      <li>
-        <a href="{% url 'charts:procedures_denied_chart' %}">
-          <strong>Procedures Denied Chart</strong>
-          <div class="link-description">View chart of denied procedures</div>
-        </a>
-      </li>
-    </ul>
-  </div>
-  
-  <div class="dashboard-section">
-    <h2>📁 Data Exports</h2>
-    <ul class="link-list">
-      <li>
-        <a href="{% url 'charts:de_identified_export' %}">
-          <strong>De-Identified Data Export</strong>
-          <div class="link-description">Export de-identified data for analysis</div>
-        </a>
-      </li>
-      <li>
-        <a href="{% url 'charts:pro_signups_csv' %}">
-          <strong>Pro Signups CSV</strong>
-          <div class="link-description">Export professional signups as CSV</div>
-        </a>
-      </li>
-      <li>
-        <a href="{% url 'charts:pro_signups_csv_single_lines' %}">
-          <strong>Pro Signups CSV (Single Lines)</strong>
-          <div class="link-description">Export professional signups as CSV with single line entries</div>
-        </a>
-      </li>
-      <li>
-        <a href="{% url 'charts:emails_older_than_two_weeks' %}">
-          <strong>Emails Older Than Two Weeks</strong>
-          <div class="link-description">Export emails older than two weeks</div>
-        </a>
-      </li>
-      <li>
-        <a href="{% url 'charts:emails_last_two_weeks' %}">
-          <strong>Emails Last Two Weeks</strong>
-          <div class="link-description">Export emails from the last two weeks</div>
-        </a>
-      </li>
-      <li>
-        <a href="{% url 'charts:incomplete_signups_csv' %}">
-          <strong>Incomplete Signups CSV</strong>
-          <div class="link-description">Export incomplete signups as CSV</div>
-        </a>
-      </li>
-    </ul>
-  </div>
-  
-  <div class="dashboard-section">
-    <h2>⚙️ Django Admin</h2>
-    <p>Access the full Django admin interface for complete database management.</p>
-    <a href="/timbit/admin/" class="admin-link">Open Django Admin</a>
-  </div>
-</body>
-</html>
+</section>
+{% endblock content %}
