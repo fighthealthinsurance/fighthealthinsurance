@@ -2054,7 +2054,9 @@ class AppealsBackendHelper:
             {"type": "status", "message": "Generating personalized appeals with AI..."}
         ) + "\n"
 
-        plan_context = denial.plan_context
+        plan_context: Optional[str] = None
+        if denial.plan_context is not None:
+            plan_context = str(denial.plan_context)
         if plan_context and len(plan_context) > 0:
             plan_context = f"{plan_context}{denial.plan_documents_summary or ''}"
         else:
