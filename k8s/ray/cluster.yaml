@@ -89,5 +89,5 @@ spec:
           name: log-volume
         - name: ssh-privatekey
           secret:
-            secretName: ssh-privatekey
+            secretName: faxymcfaxface-ssh
             defaultMode: 0755
