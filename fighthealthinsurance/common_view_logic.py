@@ -1496,10 +1496,9 @@ class DenialCreatorHelper:
                     path = file_field.path
                     if path.lower().endswith(".pdf"):
                         try:
-                            pdf_doc = pymupdf.open(path)
-                            for page in pdf_doc:
-                                combined_text += page.get_text() + "\n"
-                            pdf_doc.close()
+                            with pymupdf.open(path) as pdf_doc:
+                                for page in pdf_doc:
+                                    combined_text += page.get_text() + "\n"
                         except RuntimeError as e:
                             logger.warning(f"Error reading PDF {path}: {e}")
                     else:
