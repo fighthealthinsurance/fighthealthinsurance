@@ -37,16 +37,16 @@ spec:
             volumeMounts:
               - mountPath: /tmp/ray
                 name: log-volume
-              - name: ssh-privatekey
+              - name: faxymcfaxface-ssh
                 readOnly: true
                 # container will see /root/.ssh/id_rsa as usual:
                 mountPath: "/home/ray/.ssh"
         volumes:
         - emptyDir: {}
           name: log-volume
-        - name: ssh-privatekey
+        - name: faxymcfaxface-ssh
           secret:
-            secretName: ssh-privatekey
+            secretName: faxymcfaxface-ssh
             defaultMode: 0755
   workerGroupSpecs:
   - groupName: workergroup
@@ -80,14 +80,14 @@ spec:
             volumeMounts:
             - mountPath: /tmp/ray
               name: log-volume
-            - name: ssh-privatekey
+            - name: faxymcfaxface-ssh
               readOnly: true
               # container will see /root/.ssh/id_rsa as usual:
               mountPath: "/home/ray/.ssh"
         volumes:
         - emptyDir: {}
           name: log-volume
-        - name: ssh-privatekey
+        - name: faxymcfaxface-ssh
           secret:
             secretName: faxymcfaxface-ssh
             defaultMode: 0755
