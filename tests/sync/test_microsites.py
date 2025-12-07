@@ -221,6 +221,18 @@ class MicrositeModuleTest(TestCase):
             self.assertTrue(hasattr(microsite, "intro"))
             self.assertTrue(hasattr(microsite, "faq"))
 
+    def test_microsite_has_optional_image_attribute(self):
+        """Test that Microsite objects have the optional image attribute."""
+        slugs = get_microsite_slugs()
+        if slugs:
+            microsite = get_microsite(slugs[0])
+            # Image is optional, so it should exist as attribute but may be None
+            self.assertTrue(hasattr(microsite, "image"))
+            # If image is set, it should be a string (URL)
+            if microsite.image is not None:
+                self.assertIsInstance(microsite.image, str)
+                self.assertGreater(len(microsite.image), 0)
+
 
 class MicrositeViewTest(TestCase):
     """Tests for the microsite landing page view."""

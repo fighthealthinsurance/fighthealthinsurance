@@ -11,7 +11,11 @@
     <div class="row">
         <div class="item item-first">
             <div class="caption d-flex flex-column align-items-center justify-content-center">
-                <div class="hero-inner">
+                <div class="hero-inner {% if microsite.image %}hero-with-image{% endif %}">
+                    {% if microsite.image %}
+                    <div class="hero-content-wrapper">
+                        <div class="hero-text">
+                    {% endif %}
                     <h3 class="hero-tagline">{{ microsite.tagline }}</h3>
                     <h1 class="hero-headline">{{ microsite.hero_h1 }}</h1>
                     <p class="hero-subcopy">{{ microsite.hero_subhead }}</p>
@@ -27,6 +31,13 @@
                             AI Chat
                         </a>
                     </div>
+                    {% if microsite.image %}
+                        </div>
+                        <div class="hero-image">
+                            <img src="{{ microsite.image }}" alt="{{ microsite.default_procedure }}" class="img-fluid rounded shadow">
+                        </div>
+                    </div>
+                    {% endif %}
                 </div>
             </div>
         </div>
@@ -178,6 +189,49 @@
     #microsite-hero .hero-inner {
         max-width: 800px;
         padding: 2rem;
+    }
+
+    #microsite-hero .hero-inner.hero-with-image {
+        max-width: 1000px;
+    }
+
+    #microsite-hero .hero-content-wrapper {
+        display: flex;
+        align-items: center;
+        gap: 3rem;
+        flex-wrap: wrap;
+        justify-content: center;
+    }
+
+    #microsite-hero .hero-text {
+        flex: 1;
+        min-width: 300px;
+    }
+
+    #microsite-hero .hero-image {
+        flex: 0 0 auto;
+        max-width: 280px;
+    }
+
+    #microsite-hero .hero-image img {
+        max-height: 280px;
+        width: auto;
+        object-fit: contain;
+    }
+
+    @media (max-width: 768px) {
+        #microsite-hero .hero-content-wrapper {
+            flex-direction: column-reverse;
+            gap: 1.5rem;
+        }
+
+        #microsite-hero .hero-image {
+            max-width: 200px;
+        }
+
+        #microsite-hero .hero-image img {
+            max-height: 200px;
+        }
     }
 
     #microsite-intro .about-info {

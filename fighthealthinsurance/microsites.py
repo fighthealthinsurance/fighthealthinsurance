@@ -29,6 +29,8 @@ class Microsite:
         self.faq: list[dict[str, str]] = data.get("faq", [])
         self.evidence_snippets: list[str] = data.get("evidence_snippets", [])
         self.pubmed_search_terms: list[str] = data.get("pubmed_search_terms", [])
+        # Optional image URL for displaying medicine/procedure images
+        self.image: Optional[str] = data.get("image")
 
     def __repr__(self) -> str:
         return f"<Microsite: {self.slug}>"
