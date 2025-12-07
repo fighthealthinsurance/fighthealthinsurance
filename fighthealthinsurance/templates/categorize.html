@@ -12,6 +12,12 @@ Categorize Your Denial
   <!-- Progress indicator -->
   {% include 'partials/flow_progress.html' with current_step=current_step|default:5 %}
 
+  {% if microsite_prefill_note %}
+  <div style="background:#fff3cd; padding:1rem; border-radius:4px; margin-bottom:1rem; border-left:4px solid #ffc107;">
+    <p style="margin:0;">You started from the <strong>{{ microsite_title }}</strong> page, so we pre-filled your procedure as <strong>{{ default_procedure }}</strong>. You can change it below if needed.</p>
+  </div>
+  {% endif %}
+
   <div style="background:#e8f5e9; padding:1rem; border-radius:4px; margin-bottom:1.5rem; border-left:4px solid #a5c422;">
     <h4 style="margin:0 0 0.5rem 0; color:#2e7d32;">Almost there!</h4>
     <p style="margin:0;">We've tried our best to extract information from your denial letter. Please review and correct anything that looks wrong below.</p>
