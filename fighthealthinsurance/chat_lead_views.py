@@ -5,7 +5,7 @@ from rest_framework.decorators import action
 
 from loguru import logger
 
-from fighthealthinsurance.models import ChatLeads
+from fighthealthinsurance.models import ChatLeads, MailingListSubscriber
 from fighthealthinsurance.chat_lead_serializers import ChatLeadsSerializer
 
 
@@ -25,6 +25,33 @@ class ChatLeadsViewSet(viewsets.GenericViewSet):
             import uuid
 
             chat_lead = serializer.save(session_id=str(uuid.uuid4()))
+
+            # Handle mailing list subscription if requested
+            if serializer.validated_data.get("subscribe", False):
+                email = serializer.validated_data.get("email")
+                name = serializer.validated_data.get("name", "")
+                phone = serializer.validated_data.get("phone", "")
+                
+                defaults = {"comments": "From chat leads form"}
+                if name:
+                    defaults["name"] = name
+                if phone:
+                    defaults["phone"] = phone
+                
+                # Use get_or_create to avoid duplicate subscriptions
+                try:
+                    MailingListSubscriber.objects.get_or_create(
+                        email=email,
+                        defaults=defaults,
+                    )
+                except Exception as e:
+                    logger.debug(f"Error subscribing {email} to mailing list: {e}")
+                    try:
+                        MailingListSubscriber.objects.filter(email=email).update(
+                            **defaults
+                        )
+                    except Exception as e2:
+                        logger.warning(f"Error updating subscriber {email}: {e2}")
 
             # Return the session ID to be used for chat
             return Response(
