@@ -2,10 +2,16 @@
 Tests for microsite functionality.
 
 Tests that:
-1. The microsite route loads correctly
-2. The default procedure is passed through the appeal flow
-3. Users can still override the default procedure
+1. The microsites.json file loads and parses correctly
+2. All microsites have required fields with valid data
+3. The microsite route loads correctly
+4. The default procedure is passed through the appeal flow
+5. Users can still override the default procedure
 """
+
+import json
+import os
+from pathlib import Path
 
 from django.test import TestCase, Client
 from django.urls import reverse
@@ -17,6 +23,161 @@ from fighthealthinsurance.microsites import (
     get_microsite_slugs,
     Microsite,
 )
+
+
+def load_microsites_json_directly():
+    """Load microsites.json directly from the file system for testing.
+
+    This bypasses Django's staticfiles storage which may not be available
+    in all test environments.
+    """
+    # Find the project root and load the JSON file directly
+    current_dir = Path(__file__).parent
+    project_root = current_dir.parent.parent
+    json_path = project_root / "fighthealthinsurance" / "static" / "microsites.json"
+
+    if not json_path.exists():
+        return {}
+
+    with open(json_path, "r") as f:
+        data = json.load(f)
+
+    # Convert to Microsite objects like the module does
+    microsites = {}
+    for slug, microsite_data in data.items():
+        microsites[slug] = Microsite(microsite_data)
+    return microsites
+
+
+class MicrositeJSONValidationTest(TestCase):
+    """Tests that validate the microsites.json file loads and parses correctly."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        # Load microsites directly from file for validation tests
+        cls.microsites = load_microsites_json_directly()
+
+    def test_microsites_json_loads_successfully(self):
+        """Test that microsites.json loads without errors."""
+        self.assertIsInstance(self.microsites, dict)
+        self.assertGreater(len(self.microsites), 0, "microsites.json should contain at least one microsite")
+
+    def test_microsites_json_has_expected_count(self):
+        """Test that we have the expected number of microsites defined."""
+        # Based on the JSON file, we expect at least 25+ microsites
+        self.assertGreaterEqual(len(self.microsites), 25, "Expected at least 25 microsites defined")
+
+    def test_all_microsites_have_required_string_fields(self):
+        """Test that all microsites have required non-empty string fields."""
+        required_string_fields = [
+            "slug",
+            "title",
+            "default_procedure",
+            "tagline",
+            "hero_h1",
+            "hero_subhead",
+            "intro",
+            "how_we_help",
+            "cta",
+        ]
+
+        for slug, microsite in self.microsites.items():
+            for field in required_string_fields:
+                value = getattr(microsite, field, None)
+                self.assertIsNotNone(
+                    value,
+                    f"Microsite '{slug}' is missing required field '{field}'"
+                )
+                self.assertIsInstance(
+                    value, str,
+                    f"Microsite '{slug}' field '{field}' should be a string"
+                )
+                self.assertGreater(
+                    len(value), 0,
+                    f"Microsite '{slug}' field '{field}' should not be empty"
+                )
+
+    def test_all_microsites_have_slug_matching_key(self):
+        """Test that each microsite's slug field matches its dictionary key."""
+        for key, microsite in self.microsites.items():
+            self.assertEqual(
+                key, microsite.slug,
+                f"Microsite key '{key}' doesn't match its slug field '{microsite.slug}'"
+            )
+
+    def test_all_microsites_have_valid_faq_structure(self):
+        """Test that all microsites have properly structured FAQ entries."""
+        for slug, microsite in self.microsites.items():
+            self.assertIsInstance(
+                microsite.faq, list,
+                f"Microsite '{slug}' faq should be a list"
+            )
+            for i, faq_item in enumerate(microsite.faq):
+                self.assertIsInstance(
+                    faq_item, dict,
+                    f"Microsite '{slug}' faq[{i}] should be a dict"
+                )
+                self.assertIn(
+                    "question", faq_item,
+                    f"Microsite '{slug}' faq[{i}] missing 'question' key"
+                )
+                self.assertIn(
+                    "answer", faq_item,
+                    f"Microsite '{slug}' faq[{i}] missing 'answer' key"
+                )
+                self.assertGreater(
+                    len(faq_item["question"]), 0,
+                    f"Microsite '{slug}' faq[{i}] question should not be empty"
+                )
+                self.assertGreater(
+                    len(faq_item["answer"]), 0,
+                    f"Microsite '{slug}' faq[{i}] answer should not be empty"
+                )
+
+    def test_all_microsites_have_common_denial_reasons(self):
+        """Test that all microsites have at least one common denial reason."""
+        for slug, microsite in self.microsites.items():
+            self.assertIsInstance(
+                microsite.common_denial_reasons, list,
+                f"Microsite '{slug}' common_denial_reasons should be a list"
+            )
+            self.assertGreater(
+                len(microsite.common_denial_reasons), 0,
+                f"Microsite '{slug}' should have at least one common denial reason"
+            )
+
+    def test_all_microsites_have_evidence_snippets(self):
+        """Test that all microsites have at least one evidence snippet."""
+        for slug, microsite in self.microsites.items():
+            self.assertIsInstance(
+                microsite.evidence_snippets, list,
+                f"Microsite '{slug}' evidence_snippets should be a list"
+            )
+            self.assertGreater(
+                len(microsite.evidence_snippets), 0,
+                f"Microsite '{slug}' should have at least one evidence snippet"
+            )
+
+    def test_known_microsites_exist(self):
+        """Test that specific known microsites are present."""
+        known_slugs = [
+            "mri-denial",
+            "ct-scan-denial",
+            "sleep-study-denial",
+            "cpap-denial",
+            "mental-health-denial",
+            "biologic-denial",
+            "surgery-denial",
+            "ffs-denial",
+            "hrt-denial",
+            "grs-denial",
+        ]
+        for slug in known_slugs:
+            self.assertIn(
+                slug, self.microsites,
+                f"Expected microsite '{slug}' to be defined in microsites.json"
+            )
 
 
 class MicrositeModuleTest(TestCase):
