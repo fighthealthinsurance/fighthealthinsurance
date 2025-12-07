@@ -134,7 +134,7 @@
       "Home sleep study insufficient",
       "Replacement schedule not allowed"
     ],
-    "how_we_help": "We help you appeal with documentation of symptoms, severity, diagnostic testing, or medical need for supplies or equipment replacement.",
+    "how_we_help": "We help you appeal by asking questions and helping you explain symptoms, severity, diagnostic testing, or medical need for supplies or equipment replacement.",
     "cta": "Start your CPAP appeal.",
     "faq": [
       {
@@ -214,7 +214,7 @@
       "Too frequent or insufficient symptoms",
       "Provider out-of-network"
     ],
-    "how_we_help": "We help you document symptoms, risks, impact on daily life, and your clinician’s treatment plan — which often turns denials around quickly.",
+    "how_we_help": "We can help you explain your symptoms, risks, impact on daily life, and your clinician’s treatment plan — which often turns denials around quickly.",
     "cta": "Start your mental health appeal.",
     "faq": [
       {
@@ -239,46 +239,6 @@
       "mental health treatment outcomes psychotherapy medication",
       "parity law impact insurance coverage mental health",
       "under-treatment depression healthcare utilization"
-    ]
-  },
-  "autism-therapy-denial": {
-    "slug": "autism-therapy-denial",
-    "title": "Appealing ABA Therapy Denials",
-    "default_procedure": "Applied Behavior Analysis (ABA)",
-    "tagline": "If your provider prescribed ABA therapy, we can help you appeal the denial.",
-    "hero_h1": "Appeal Your ABA Therapy Denial",
-    "hero_subhead": "Every child deserves appropriate care.",
-    "intro": "ABA therapy is frequently denied due to cost-cutting disguised as \"not medically necessary\" or \"insufficient evidence.\" A strong appeal can fix that.",
-    "common_denial_reasons": [
-      "Experimental or not medically necessary",
-      "Too many hours authorized",
-      "Not enough documentation of behavioral goals"
-    ],
-    "how_we_help": "We help you articulate clinical necessity, treatment goals, safety concerns, and progress — all key to overturning ABA denials.",
-    "cta": "Start your ABA appeal.",
-    "faq": [
-      {
-        "question": "Why do insurers say ABA is \"experimental\"?",
-        "answer": "Many plans rely on outdated or selective interpretations of the evidence. Your appeal can cite current professional guidelines and your provider's clinical recommendations."
-      },
-      {
-        "question": "How many therapy hours can I reasonably appeal for?",
-        "answer": "That depends on your child’s needs and your provider’s recommendation. Your appeal should match the clinical recommendation, not an arbitrary cap."
-      },
-      {
-        "question": "Do I need a formal autism diagnosis for ABA coverage?",
-        "answer": "Most insurers require a formal diagnosis. If you have one, reference it clearly. If not, your appeal may instead focus on getting evaluation covered."
-      }
-    ],
-    "evidence_snippets": [
-      "Multiple professional societies include ABA in their clinical recommendations for autism spectrum disorder.",
-      "Many state insurance mandates require coverage of ABA therapy when prescribed by a qualified provider.",
-      "Your provider's clinical judgment and treatment plan are key factors in establishing medical necessity for your appeal."
-    ],
-    "pubmed_search_terms": [
-      "applied behavior analysis autism outcomes",
-      "early intensive behavioral intervention long-term",
-      "guidelines ABA insurance coverage autism"
     ]
   },
   "infusion-therapy-denial": {
@@ -878,7 +838,7 @@
       "Insufficient dysphoria documentation",
       "Provider out-of-network"
     ],
-    "how_we_help": "We help you build a strong appeal documenting medical necessity, dysphoria reduction, and provider recommendations aligned with WPATH SOC8.",
+    "how_we_help": "We help you build a strong appeal documenting medical necessity, dysphoria reduction aligned with WPATH SOC8.",
     "cta": "Start your appeal.",
     "faq": [
       {
@@ -919,7 +879,7 @@
       "Insufficient documentation or referral",
       "Claim that it is purely aesthetic"
     ],
-    "how_we_help": "We help you show medical necessity, surgical requirements, and clinician documentation that turns these denials around.",
+    "how_we_help": "We help you show medical necessity and when applicable clarify surgical requirements that can help turn these denials around.",
     "cta": "Start your electrolysis appeal.",
     "faq": [
       {
@@ -960,7 +920,7 @@
       "Insufficient documentation of dysphoria or vocal strain",
       "Provider out-of-network"
     ],
-    "how_we_help": "We help you document clinical necessity, communication limitations, and dysphoria impacts — key elements insurers often overlook.",
+    "how_we_help": "We help you explain clinical necessity, communication limitations, and dysphoria impacts — key elements insurers often overlook.",
     "cta": "Start your voice therapy appeal.",
     "faq": [
       {
@@ -1244,5 +1204,1333 @@
       "counseling fertility options before gender affirming hormones",
       "fertility preservation oncology analogy standard of care"
     ]
+  },
+  "glp1-denial": {
+    "slug": "glp1-denial",
+    "title": "Appealing GLP-1 Medication Denials",
+    "default_procedure": "GLP-1 Medication (Ozempic, Wegovy, Mounjaro, etc.)",
+    "tagline": "Weight and diabetes meds are not vanity drugs when they treat real disease.",
+    "hero_h1": "Appeal Your GLP-1 Medication Denial",
+    "hero_subhead": "Whether for diabetes or obesity, GLP-1s are often medically necessary — not optional extras.",
+    "intro": "GLP-1 medications like semaglutide and tirzepatide are frequently denied because insurers say your diagnosis does not qualify, you have not tried enough alternatives, or your plan excludes weight-loss drugs entirely. But for many people with diabetes and obesity-related conditions, these medications are key to preventing serious complications.",
+    "common_denial_reasons": [
+      "Plan excludes weight-loss medications",
+      "Patient does not meet BMI or comorbidity criteria",
+      "Has not tried metformin or other oral agents first",
+      "Dose or formulation not on formulary",
+      "Off-label use not covered"
+    ],
+    "how_we_help": "We help you explain your medical history, prior treatments, and obesity or diabetes-related complications in a way that shows this medication is medically necessary, not cosmetic. We also help you respond to step-therapy requirements and plan exclusions.",
+    "cta": "Start your GLP-1 appeal in a few minutes.",
+    "faq": [
+      {
+        "question": "Can I appeal if my plan excludes weight-loss drugs?",
+        "answer": "Yes. You can argue that your GLP-1 is treating serious health conditions like diabetes, sleep apnea, or cardiovascular risk rather than purely cosmetic weight loss. Your appeal can emphasize comorbidities, functional limits, and guideline support for using GLP-1s in high-risk patients."
+      },
+      {
+        "question": "What if I have already tried other diabetes medications?",
+        "answer": "List every medication you have tried, how long you used it, and what happened. If you had side effects, poor control, or complications, your appeal should connect those experiences to why a GLP-1 is now medically appropriate."
+      },
+      {
+        "question": "Can I appeal if my A1c is not extremely high?",
+        "answer": "Yes. Your appeal can highlight other risk factors like obesity, cardiovascular disease, kidney disease, or prior complications. GLP-1s are often used to reduce long-term risk, not only to fix very high A1c values."
+      }
+    ],
+    "evidence_snippets": [
+      "GLP-1 receptor agonists improve glycemic control and promote clinically meaningful weight loss in many patients with type 2 diabetes and obesity.",
+      "Large outcome trials show some GLP-1 medications reduce cardiovascular events in people at high risk.",
+      "Treating obesity and diabetes aggressively can prevent downstream complications such as heart disease, kidney failure, and disability."
+    ],
+    "pubmed_search_terms": [
+      "GLP-1 receptor agonist cardiovascular outcomes trial",
+      "semaglutide weight loss obesity randomized study",
+      "tirzepatide type 2 diabetes glycemic control"
+    ]
+  },
+  "migraine-med-denial": {
+    "slug": "migraine-med-denial",
+    "title": "Appealing Migraine Medication Denials",
+    "default_procedure": "Migraine Medications (CGRP Inhibitors, Gepants, Triptans)",
+    "tagline": "When migraines steal your life, treatment is not optional.",
+    "hero_h1": "Appeal Your Migraine Medication Denial",
+    "hero_subhead": "CGRP meds, gepants, and triptans are often denied until you push back.",
+    "intro": "Newer migraine medications are frequently denied as too expensive, not medically necessary, or reserved for people who have failed a long list of older drugs. Even older triptans may be limited to a tiny number of pills per month. A good appeal tells your story clearly and aligns it with headache guidelines.",
+    "common_denial_reasons": [
+      "Must fail multiple older preventive medications first",
+      "Quantity limits on acute migraine medications",
+      "Condition not documented as chronic or severe enough",
+      "Off-label use or non-formulary medication"
+    ],
+    "how_we_help": "We help you explain how often you have migraines, how they affect work and daily life, which medications you have tried before, and why your prescriber chose this treatment. We turn that into a structured appeal that speaks the insurer's language.",
+    "cta": "Start your migraine appeal now.",
+    "faq": [
+      {
+        "question": "What should I include about my migraine history?",
+        "answer": "Include how many days per month you have headaches, how many are disabling, what symptoms you experience, and how they affect work, school, or caregiving. If you have an official diagnosis of chronic migraine, make sure that is clearly stated."
+      },
+      {
+        "question": "How do I respond to step-therapy requirements?",
+        "answer": "Your appeal should list all preventives and acute medications you have already tried, including side effects and treatment failures. If a required medication is unsafe or inappropriate for you, your doctor can explain why it should be skipped."
+      },
+      {
+        "question": "Can I appeal quantity limits on triptans or gepants?",
+        "answer": "Yes. You can appeal by showing how many migraines you actually have per month, how you currently ration medication, and how inadequate quantities lead to ER visits, urgent care, or missed work."
+      }
+    ],
+    "evidence_snippets": [
+      "CGRP-targeting therapies reduce monthly migraine days and improve quality of life in patients with episodic and chronic migraine.",
+      "Effective migraine prevention can reduce the need for emergency visits and hospitalizations.",
+      "Treating migraine adequately lowers disability and improves work productivity and daily functioning."
+    ],
+    "pubmed_search_terms": [
+      "calcitonin gene related peptide monoclonal antibody migraine trial",
+      "gepants acute migraine randomized controlled",
+      "chronic migraine prevention guidelines"
+    ]
+  },
+  "asthma-biologic-denial": {
+    "slug": "asthma-biologic-denial",
+    "title": "Appealing Asthma Biologic Denials",
+    "default_procedure": "Severe Asthma Biologic (Dupilumab, Omalizumab, etc.)",
+    "tagline": "For severe asthma, biologics can be the difference between stability and the ICU.",
+    "hero_h1": "Appeal Your Asthma Biologic Denial",
+    "hero_subhead": "If inhalers and steroids are not enough, insurers should not stand in the way of the next step.",
+    "intro": "Biologic medications for severe asthma, such as omalizumab, dupilumab, and others, are often denied because insurers say you have not met exact lab criteria, have not failed enough inhalers, or your asthma is not severe enough. These denials ignore how dangerous uncontrolled asthma can be.",
+    "common_denial_reasons": [
+      "Does not meet blood eosinophil or IgE thresholds",
+      "Insufficient trial of high-dose inhaled corticosteroids and other controllers",
+      "Asthma not documented as severe or uncontrolled",
+      "Non-formulary biologic requested when a different one is preferred"
+    ],
+    "how_we_help": "We help you explain your asthma history, ER visits, oral steroid bursts, and test results so that an appeal clearly shows you meet guideline-based criteria for a biologic and that ongoing uncontrolled asthma is unsafe and costly.",
+    "cta": "Start your asthma biologic appeal.",
+    "faq": [
+      {
+        "question": "What counts as severe or uncontrolled asthma in an appeal?",
+        "answer": "Frequent symptoms, night awakenings, multiple ER or urgent care visits, hospitalizations, or repeated steroid bursts are all signs of uncontrolled asthma. Your appeal should list these events and any limitations on daily activities."
+      },
+      {
+        "question": "Do I need specific lab results for a biologic?",
+        "answer": "Many biologics require lab values such as eosinophil counts or IgE levels. If you have those results, include them and have your doctor explain how they match the criteria. If results are borderline, your doctor can still explain why treatment is appropriate."
+      },
+      {
+        "question": "Can I appeal if the insurer wants me to use a different biologic?",
+        "answer": "Yes. Your clinician can explain why the prescribed biologic is the best choice for you, based on your phenotype, comorbidities, prior response, or side effects with others."
+      }
+    ],
+    "evidence_snippets": [
+      "Biologic therapies for severe asthma reduce exacerbation rates and oral steroid use in appropriately selected patients.",
+      "Uncontrolled asthma is associated with frequent ER visits, hospitalizations, and impaired quality of life.",
+      "Guidelines recommend escalation to biologic therapy when high-dose inhaled therapies do not adequately control disease."
+    ],
+    "pubmed_search_terms": [
+      "severe asthma biologic therapy randomized trial",
+      "omalizumab dupilumab mepolizumab exacerbation reduction",
+      "GINA guideline severe asthma biologics"
+    ]
+  },
+  "eczema-biologic-denial": {
+    "slug": "eczema-biologic-denial",
+    "title": "Appealing Eczema Biologic Denials",
+    "default_procedure": "Biologic or Targeted Therapy for Atopic Dermatitis",
+    "tagline": "Severe eczema is not just dry skin — it is a serious inflammatory disease.",
+    "hero_h1": "Appeal Your Eczema Biologic Denial",
+    "hero_subhead": "When topical creams fail, insurers often fight advanced therapies. You can fight back.",
+    "intro": "For moderate-to-severe atopic dermatitis, biologic drugs and targeted therapies can dramatically reduce itching, skin breakdown, and infections. Insurers frequently deny them as too expensive, not medically necessary, or not tried long enough after topical treatments.",
+    "common_denial_reasons": [
+      "Topical therapies and phototherapy not tried long enough",
+      "Disease severity not documented as moderate-to-severe",
+      "Non-formulary drug requested when another is preferred",
+      "Off-label dosing or age not covered"
+    ],
+    "how_we_help": "We help you tell the story of your eczema: how much of your body is affected, how often your skin flares, any infections or hospital visits, and what treatments you have already tried. We structure this into an appeal that aligns with dermatology guidelines.",
+    "cta": "Start your eczema biologic appeal.",
+    "faq": [
+      {
+        "question": "How do I show that my eczema is severe enough?",
+        "answer": "Describe how many areas of your body are affected, how often your skin cracks or bleeds, any infections or hospital visits, and how itching disrupts sleep, work, or school. Dermatology notes and photographs can also help demonstrate severity."
+      },
+      {
+        "question": "Do I have to fail every cream and phototherapy first?",
+        "answer": "Not always. Your appeal can explain what you have already used, why some treatments were not tolerated or practical, and why moving to a biologic is now appropriate based on guidelines and your dermatologist's judgment."
+      },
+      {
+        "question": "Can children or adolescents be covered for eczema biologics?",
+        "answer": "Yes, many biologics have pediatric indications. Your appeal should note the patient's age, prior therapies, pediatric dosing recommendations, and the impact of uncontrolled eczema on growth, sleep, and development."
+      }
+    ],
+    "evidence_snippets": [
+      "Biologic therapies for atopic dermatitis improve skin clearance, reduce itching, and enhance quality of life compared to standard topical treatments alone.",
+      "Uncontrolled atopic dermatitis is associated with sleep disturbance, infections, and significant psychosocial burden.",
+      "Guidelines support escalating to systemic or biologic treatments when topical therapies are insufficient for moderate-to-severe disease."
+    ],
+    "pubmed_search_terms": [
+      "dupilumab atopic dermatitis randomized controlled trial",
+      "systemic therapy moderate severe atopic dermatitis guidelines",
+      "quality of life atopic dermatitis biologic therapy"
+    ]
+  },
+  "insulin-pump-cgm-denial": {
+    "slug": "insulin-pump-cgm-denial",
+    "title": "Appealing Insulin Pump and CGM Denials",
+    "default_procedure": "Insulin Pump or Continuous Glucose Monitor",
+    "tagline": "For many people with diabetes, diabetes tech is not a luxury — it is survival.",
+    "hero_h1": "Appeal Your Insulin Pump or CGM Denial",
+    "hero_subhead": "Insurers often set narrow criteria for diabetes technology. Your real-world data can change their minds.",
+    "intro": "Insulin pumps and continuous glucose monitors (CGMs) help people with diabetes keep blood sugar in a safer range and avoid life-threatening highs and lows. Insurers often deny them for not meeting strict eligibility rules, being on the wrong diagnosis code, or preferring older, less effective approaches.",
+    "common_denial_reasons": [
+      "Diagnosis code or type of diabetes does not meet policy criteria",
+      "Not enough documented episodes of hypoglycemia or hyperglycemia",
+      "Failure to document multiple daily injections and frequent glucose testing",
+      "Device not on the formulary or out-of-network supplier"
+    ],
+    "how_we_help": "We ask you questions to help provide information about A1c trends, episodes of severe lows or highs, and prior treatment history so your appeal shows why a pump or CGM is medically necessary, not just convenient.",
+    "cta": "Start your insulin pump or CGM appeal.",
+    "faq": [
+      {
+        "question": "What information should I include from my glucose records?",
+        "answer": "Include examples of frequent lows, wide swings, or persistent high readings despite following your regimen. Downloaded reports from meters or existing CGMs can show patterns that justify advanced technology."
+      },
+      {
+        "question": "Can people with type 2 diabetes ever get pumps or CGMs covered?",
+        "answer": "Yes. Many policies allow coverage when there is intensive insulin use, high risk of hypoglycemia, or complications. Your appeal should highlight these factors and show why structured finger-stick testing is insufficient."
+      },
+      {
+        "question": "What if the insurer wants a different brand of device?",
+        "answer": "You can appeal by having your prescriber explain why a specific device is medically preferable for you, such as integration with your pump, alarm features, vision or dexterity issues, or prior problems with other brands."
+      }
+    ],
+    "evidence_snippets": [
+      "Continuous glucose monitoring reduces time spent in hypoglycemia and improves overall glycemic control compared with traditional self-monitoring alone.",
+      "Insulin pump therapy can improve flexibility and glycemic outcomes in selected patients, especially those with type 1 diabetes.",
+      "Better glycemic control reduces the risk of long-term complications such as kidney disease, neuropathy, and retinopathy."
+    ],
+    "pubmed_search_terms": [
+      "continuous glucose monitoring randomized trial hypoglycemia",
+      "insulin pump therapy type 1 diabetes outcomes",
+      "technology-assisted diabetes care quality of life"
+    ]
+  },
+  "prosthetic-denial": {
+    "slug": "prosthetic-denial",
+    "title": "Appealing Prosthetic Limb Denials",
+    "default_procedure": "Prosthetic Limb or Advanced Prosthetic Component",
+    "tagline": "Mobility, independence, and work are not cosmetic goals.",
+    "hero_h1": "Appeal Your Prosthetic Limb Denial",
+    "hero_subhead": "When insurers push the cheapest option, you can push back with function and safety.",
+    "intro": "People who use prosthetic limbs often face denials for new devices, replacements, or advanced components like microprocessor knees. Insurers may argue that a lower-level device is sufficient or that advanced features are not medically necessary.",
+    "common_denial_reasons": [
+      "Cheaper or more basic prosthetic considered adequate",
+      "Replacement requested too soon according to policy",
+      "Insufficient documentation of activity level or goals",
+      "Advanced components labeled as convenience or luxury"
+    ],
+    "how_we_help": "We help you describe your daily activities, work demands, fall risks, and medical conditions in a way that shows why the prescribed device level is necessary for safe ambulation and independence.",
+    "cta": "Start your prosthetic appeal.",
+    "faq": [
+      {
+        "question": "How do I show that I need an advanced component?",
+        "answer": "Describe your typical day, walking surfaces, job tasks, and any history of falls or near-falls. Your prosthetist can explain why a basic device cannot safely support those activities and how advanced components reduce risk."
+      },
+      {
+        "question": "What if my insurer says my current prosthetic should last longer?",
+        "answer": "Your appeal can include documentation of wear, fit problems, changes in limb shape, or activity level increases that make a replacement medically necessary even if arbitrary time limits have not been reached."
+      },
+      {
+        "question": "Can I appeal if they only approve a device suited for limited indoor walking?",
+        "answer": "Yes. If you need to walk outdoors, at work, or on uneven surfaces, your prosthetist can explain that your functional level requires a device designed for that activity, not a purely basic indoor limb."
+      }
+    ],
+    "evidence_snippets": [
+      "Appropriate prosthetic prescription is associated with improved mobility, reduced fall risk, and better participation in work and community life.",
+      "Under-prescription of prosthetic technology can increase long-term costs by contributing to falls, injuries, and loss of independence.",
+      "Prosthetic selection should be based on functional level, comorbidities, and goals rather than lowest upfront cost."
+    ],
+    "pubmed_search_terms": [
+      "prosthetic limb functional outcomes microprocessor knee",
+      "amputee mobility falls risk prosthesis",
+      "cost effectiveness advanced prosthetic components"
+    ]
+  },
+  "hearing-aid-denial": {
+    "slug": "hearing-aid-denial",
+    "title": "Appealing Hearing Aid and Cochlear Implant Denials",
+    "default_procedure": "Hearing Aids or Cochlear Implant",
+    "tagline": "Communication is a health need, not a luxury.",
+    "hero_h1": "Appeal Your Hearing Aid or Cochlear Implant Denial",
+    "hero_subhead": "Even when policies are restrictive, you may still be able to win coverage for medically necessary hearing devices.",
+    "intro": "Many plans exclude hearing aids entirely or only cover very limited devices for certain ages. Cochlear implants may be denied for not meeting audiologic criteria. Appeals can focus on the health, safety, and developmental impact of untreated hearing loss.",
+    "common_denial_reasons": [
+      "Plan excludes hearing aids as a benefit",
+      "Hearing loss not severe enough by plan criteria",
+      "Age limits or frequency limits on devices",
+      "Cochlear implant criteria not fully met"
+    ],
+    "how_we_help": "We help you present your reports, speech and language impacts, workplace communication needs, safety concerns, and developmental risks so your appeal shows why a hearing device is medically necessary.",
+    "cta": "Start your hearing device appeal.",
+    "faq": [
+      {
+        "question": "Can I appeal if my plan excludes hearing aids?",
+        "answer": "You can still appeal by emphasizing that untreated hearing loss affects safety, mental health, and ability to work or learn. Success varies by plan, but a strong appeal can sometimes lead to exceptions or partial coverage."
+      },
+      {
+        "question": "What documentation should I include?",
+        "answer": "Include audiograms, speech discrimination scores, notes from audiologists or ENT specialists, and descriptions of how hearing loss affects daily life, school, or work. For children, include information about speech and language development."
+      },
+      {
+        "question": "What about cochlear implant denials?",
+        "answer": "Your appeal should address each criterion in the policy, include updated audiology testing, and have your implant team explain why an implant is necessary to achieve functional hearing despite hearing aids."
+      }
+    ],
+    "evidence_snippets": [
+      "Untreated hearing loss is associated with social isolation, depression, and cognitive decline in adults.",
+      "Early access to amplification or cochlear implantation improves language and educational outcomes in children with significant hearing loss.",
+      "Hearing devices can reduce safety risks related to environmental awareness, such as hearing alarms and traffic."
+    ],
+    "pubmed_search_terms": [
+      "hearing aid outcomes quality of life adult hearing loss",
+      "cochlear implant speech language development children",
+      "hearing loss cognitive decline association"
+    ]
+  },
+  "genetic-testing-denial": {
+    "slug": "genetic-testing-denial",
+    "title": "Appealing Genetic Testing Denials",
+    "default_procedure": "Genetic or Genomic Testing",
+    "tagline": "Genetic answers can change treatment, screening, and family planning.",
+    "hero_h1": "Appeal Your Genetic Testing Denial",
+    "hero_subhead": "When testing could change your care, insurers should not dismiss it as unnecessary.",
+    "intro": "Genetic and genomic tests are often denied as experimental, not medically necessary, or not covered for your specific indication. For many conditions, however, test results directly affect treatment choices, cancer screening, or family risk.",
+    "common_denial_reasons": [
+      "Test considered experimental or investigational",
+      "Patient does not meet narrow family history criteria",
+      "Gene panel larger than policy allows",
+      "Testing ordered by non-specialist provider"
+    ],
+    "how_we_help": "We help you show how test results will change management, summarize relevant family history, and map your situation to guideline-based indications for testing.",
+    "cta": "Start your genetic testing appeal.",
+    "faq": [
+      {
+        "question": "How do I show that genetic testing will change my care?",
+        "answer": "Have your clinician explain how positive, negative, or uncertain results would affect medication choice, surveillance imaging, surgery, or recommendations for relatives. Appeals are strongest when the link between results and action is clear."
+      },
+      {
+        "question": "What if my family history is complicated or incomplete?",
+        "answer": "Your appeal can still describe known relatives with relevant cancers or conditions, and explain any barriers to obtaining more information. Genetic counselors are skilled at working with incomplete pedigrees and can support testing when risk is still elevated."
+      },
+      {
+        "question": "Can I appeal broad gene panel denials?",
+        "answer": "Yes. Your clinician or genetic counselor can justify why a panel is more appropriate than single-gene testing, especially when multiple syndromes could explain your or your family's history."
+      }
+    ],
+    "evidence_snippets": [
+      "Genetic testing for hereditary cancer syndromes can guide screening, prophylactic surgery, and targeted therapy.",
+      "Identifying pathogenic variants allows cascade testing of at-risk relatives, enabling early detection and prevention.",
+      "Professional guidelines support genetic evaluation when personal or family history suggests an inherited risk."
+    ],
+    "pubmed_search_terms": [
+      "hereditary cancer genetic testing guidelines BRCA Lynch",
+      "clinical utility multigene panel testing oncology",
+      "cascade genetic testing prevention outcomes"
+    ]
+  },
+  "pet-scan-denial": {
+    "slug": "pet-scan-denial",
+    "title": "Appealing PET Scan Denials",
+    "default_procedure": "Positron Emission Tomography (PET) Scan",
+    "tagline": "When staging or restaging cancer, the right scan matters.",
+    "hero_h1": "Appeal Your PET Scan Denial",
+    "hero_subhead": "PET scans are often key for cancer staging and treatment decisions — and often denied on cost grounds.",
+    "intro": "PET scans are widely used in oncology and some neurologic and cardiac conditions, but insurers frequently deny them as not medically necessary, outside of policy indications, or unnecessary compared with CT alone.",
+    "common_denial_reasons": [
+      "PET not on policy list for this cancer type or stage",
+      "Alternative imaging considered sufficient",
+      "Repeat PET within restricted time window",
+      "Non-oncologic use considered experimental"
+    ],
+    "how_we_help": "We help explain how PET results will affect treatment decisions, show that your situation matches guideline-based indications, and address concerns about repeated or off-label use.",
+    "cta": "Start your PET scan appeal.",
+    "faq": [
+      {
+        "question": "When is a PET scan usually considered medically necessary?",
+        "answer": "Many cancer guidelines recommend PET for initial staging, assessing treatment response, or evaluating suspected recurrence in specific cancers. Your appeal should reference those guidelines and your exact clinical question."
+      },
+      {
+        "question": "Can I appeal a denial for a repeat PET scan?",
+        "answer": "Yes. Your appeal can explain why new symptoms, lab changes, or treatment milestones make a repeat scan important now, and how results will alter the treatment plan."
+      },
+      {
+        "question": "What about PET scans for non-cancer conditions?",
+        "answer": "Some neurologic or cardiac PET scans have established roles. Your specialist can cite evidence and explain why PET, and not another test, is needed for accurate diagnosis or risk assessment."
+      }
+    ],
+    "evidence_snippets": [
+      "PET imaging improves staging accuracy in many cancers, which can change surgical and systemic treatment decisions.",
+      "PET scans are useful in assessing metabolic response to therapy and detecting residual or recurrent disease.",
+      "Guidelines specify indications where PET is preferred or recommended over conventional imaging alone."
+    ],
+    "pubmed_search_terms": [
+      "PET CT oncology staging treatment decisions",
+      "FDG PET response assessment cancer outcomes",
+      "PET indications guideline tumor staging"
+    ]
+  },
+  "bariatric-surgery-denial": {
+    "slug": "bariatric-surgery-denial",
+    "title": "Appealing Bariatric Surgery Denials",
+    "default_procedure": "Metabolic or Bariatric Surgery",
+    "tagline": "Bariatric surgery treats a disease — it is not a cosmetic shortcut.",
+    "hero_h1": "Appeal Your Bariatric Surgery Denial",
+    "hero_subhead": "When obesity is harming your health, surgery may be the evidence-based treatment.",
+    "intro": "Bariatric surgery is one of the most effective treatments for severe obesity and related conditions, yet many plans deny coverage based on BMI thresholds, documentation technicalities, or blanket exclusions for weight-loss procedures.",
+    "common_denial_reasons": [
+      "BMI or comorbidity criteria not met on paper",
+      "Insufficient documentation of supervised weight-loss attempts",
+      "Plan excludes bariatric surgery as a benefit",
+      "Required evaluations or classes not documented"
+    ],
+    "how_we_help": "We help you gather weight history, comorbid conditions, prior supervised programs, and multidisciplinary evaluations to show that bariatric surgery is medically necessary and consistent with major guidelines.",
+    "cta": "Start your bariatric surgery appeal.",
+    "faq": [
+      {
+        "question": "What if I have not completed a long supervised diet program?",
+        "answer": "Your appeal can explain attempts you have made to lose weight, including structured and unstructured efforts, and why further delay would worsen health risks. Your surgeon can also explain how rigid program requirements may not reflect current evidence."
+      },
+      {
+        "question": "How do I document obesity-related health problems?",
+        "answer": "Include diagnoses such as diabetes, sleep apnea, hypertension, fatty liver disease, joint disease, and any hospitalizations or limitations caused by weight. Laboratory results and sleep studies can be helpful."
+      },
+      {
+        "question": "Can I appeal a plan exclusion on bariatric surgery?",
+        "answer": "You can argue that excluding evidence-based treatment for a chronic disease is inconsistent with modern medical standards. Success depends on plan type and state law, but strong appeals sometimes lead employers or plans to make exceptions."
+      }
+    ],
+    "evidence_snippets": [
+      "Bariatric surgery leads to substantial and sustained weight loss and can induce remission of type 2 diabetes in many patients.",
+      "Surgery reduces long-term risks of cardiovascular disease, mortality, and obesity-related complications compared with non-surgical management for eligible patients.",
+      "Professional societies consider bariatric surgery medically necessary treatment for selected individuals with severe obesity and comorbid conditions."
+    ],
+    "pubmed_search_terms": [
+      "bariatric surgery long term outcomes mortality",
+      "gastric bypass diabetes remission randomized",
+      "metabolic surgery guidelines obesity treatment"
+    ]
+  },
+  "substance-use-treatment-denial": {
+    "slug": "substance-use-treatment-denial",
+    "title": "Appealing Substance Use Treatment Denials",
+    "default_procedure": "Substance Use Disorder Treatment (Inpatient, IOP, MAT)",
+    "tagline": "Addiction is a chronic medical condition — treatment should be covered like any other.",
+    "hero_h1": "Appeal Your Substance Use Treatment Denial",
+    "hero_subhead": "When your life or your loved one's life is at stake, coverage denials are not acceptable.",
+    "intro": "Detox, rehab, medication-assisted treatment, and intensive outpatient programs for substance use disorders are often denied or cut short, even though mental health parity laws require comparable coverage to medical conditions.",
+    "common_denial_reasons": [
+      "Lower level of care deemed sufficient",
+      "Length of stay considered longer than medically necessary",
+      "Medication-assisted treatment limited or not covered",
+      "Plan claims no benefit for residential or certain program types"
+    ],
+    "how_we_help": "We help you explain the relapse risk, withdrawal history, co-occurring conditions, and safety concerns so your appeal shows why the recommended level of care and duration are medically necessary.",
+    "cta": "Start your substance use treatment appeal.",
+    "faq": [
+      {
+        "question": "How does mental health parity help my appeal?",
+        "answer": "Parity laws generally require that insurers use comparable criteria for mental health and substance use treatment as for medical care. Your appeal can point out if stricter limits or different rules are being applied to addiction treatment."
+      },
+      {
+        "question": "What should my provider include in their letter?",
+        "answer": "They should describe your diagnosis, prior treatment attempts, overdose history, medical and psychiatric comorbidities, home environment, and why a specific level of care (inpatient, residential, IOP, or MAT) is needed now."
+      },
+      {
+        "question": "Can I appeal denial of medication-assisted treatment?",
+        "answer": "Yes. Your appeal can explain how medications like buprenorphine, methadone, or naltrexone reduce overdose risk and support recovery, and why discontinuing or restricting them is dangerous."
+      }
+    ],
+    "evidence_snippets": [
+      "Medication-assisted treatment for opioid use disorder reduces overdose deaths and improves retention in care.",
+      "Higher levels of care are often required after relapse, overdose, or failed lower-intensity treatment.",
+      "Parity regulations support equitable coverage for substance use disorder treatment compared with other medical conditions."
+    ],
+    "pubmed_search_terms": [
+      "medication assisted treatment opioid use disorder mortality",
+      "inpatient versus outpatient substance use treatment outcomes",
+      "mental health parity substance use insurance coverage"
+    ]
+  },
+  "emergency-room-denial": {
+    "slug": "emergency-room-denial",
+    "title": "Appealing Emergency Room Visit Denials",
+    "default_procedure": "Emergency Department Visit",
+    "tagline": "If it felt like an emergency at the time, the law is usually on your side.",
+    "hero_h1": "Appeal Your ER Visit Denial",
+    "hero_subhead": "Insurers often second-guess emergencies after the fact — appeals can force them to apply the prudent layperson standard.",
+    "intro": "Some insurers deny emergency department claims by saying your condition was not an emergency after all. This ignores the reality that patients must decide based on symptoms in the moment, not final diagnoses.",
+    "common_denial_reasons": [
+      "Condition judged non-emergent in hindsight",
+      "Care could have been provided at urgent care or primary care",
+      "Out-of-network emergency facility charges denied",
+      "Observation vs. inpatient status disputes tied to the ER visit"
+    ],
+    "how_we_help": "We help you describe what you were experiencing before you went to the ER, connect those symptoms to reasonable fears of serious harm, and point to laws that require insurers to use the prudent layperson standard.",
+    "cta": "Start your ER visit appeal.",
+    "faq": [
+      {
+        "question": "What is the prudent layperson standard?",
+        "answer": "It is a legal standard that requires emergency coverage if a reasonable person with your symptoms would think they might have a serious medical problem, even if the final diagnosis turns out to be minor."
+      },
+      {
+        "question": "What should I include in my appeal about the ER visit?",
+        "answer": "Describe your symptoms before going to the ER, any prior calls to nurse lines or doctors, why you thought it was serious, and what treatments or tests were done there. Include the ER doctor's notes if possible."
+      },
+      {
+        "question": "Can I appeal out-of-network emergency bills?",
+        "answer": "Yes. Many laws require emergency care to be covered at in-network cost sharing even if the hospital or clinician is out of network. Your appeal can reference these protections and ask for a corrected claim."
+      }
+    ],
+    "evidence_snippets": [
+      "Emergency patients must make care decisions without knowing the final diagnosis, which is why coverage rules focus on presenting symptoms.",
+      "Delays in seeking emergency care can worsen outcomes in conditions such as heart attack, stroke, and sepsis.",
+      "Regulations generally prohibit insurers from denying emergency claims solely because the final diagnosis appears non-urgent."
+    ],
+    "pubmed_search_terms": [
+      "prudent layperson standard emergency department insurance",
+      "emergency room visit denial insurance appeals",
+      "delay in seeking emergency care outcomes"
+    ]
+  },
+  "ambulance-transport-denial": {
+    "slug": "ambulance-transport-denial",
+    "title": "Appealing Ambulance Transport Denials",
+    "default_procedure": "Ground or Air Ambulance Transport",
+    "tagline": "If it was not safe to drive, ambulance care was not optional.",
+    "hero_h1": "Appeal Your Ambulance Bill Denial",
+    "hero_subhead": "Ambulance denials often ignore the safety and urgency that existed at the time.",
+    "intro": "Ambulance rides are frequently denied as not medically necessary or out-of-network, leaving patients with large bills. Appeals should focus on why you could not safely travel by private car and how the situation met emergency criteria.",
+    "common_denial_reasons": [
+      "Transport judged non-emergent",
+      "Patient considered stable for private vehicle",
+      "Out-of-network ambulance provider",
+      "No prior authorization"
+    ],
+    "how_we_help": "We help you explain the symptoms, risks, and scene circumstances that made ambulance transport the only safe option, and we help you reference protections for emergency transport where they apply.",
+    "cta": "Start your ambulance transport appeal.",
+    "faq": [
+      {
+        "question": "What counts as medically necessary ambulance transport?",
+        "answer": "Situations where you could worsen or harm yourself by traveling in a private vehicle, such as chest pain, breathing difficulty, altered mental status, severe injuries, or when monitoring and interventions are needed during transport."
+      },
+      {
+        "question": "Can I appeal if the ambulance was out of network?",
+        "answer": "Yes. Your appeal can argue that in an emergency you could not shop for in-network transport and that emergency protections should limit your financial responsibility."
+      },
+      {
+        "question": "Should I include the EMS run sheet?",
+        "answer": "If you can obtain it, yes. The run sheet documents your vital signs, symptoms, and treatments in the field, which can strongly support medical necessity."
+      }
+    ],
+    "evidence_snippets": [
+      "EMS transport provides monitoring and interventions en route that are not available in private vehicles.",
+      "Timely ambulance transport can improve outcomes in conditions such as stroke, trauma, and acute coronary syndromes.",
+      "Emergency care protections are intended to prevent financial penalties for calling 911 in good faith."
+    ],
+    "pubmed_search_terms": [
+      "emergency medical services transport outcomes",
+      "ambulance use medical necessity criteria",
+      "out of network ambulance surprise billing"
+    ]
+  },
+  "glp1-denial-semaglutide-ozempic": {
+    "slug": "glp1-denial-semaglutide-ozempic",
+    "title": "Appealing Ozempic (Semaglutide) Denials",
+    "default_procedure": "Ozempic (Semaglutide)",
+    "tagline": "Ozempic treats more than blood sugar — it helps prevent serious complications.",
+    "hero_h1": "Appeal Your Ozempic Denial",
+    "hero_subhead": "If your clinician prescribed Ozempic, chances are there’s a strong medical reason.",
+    "intro": "Ozempic (semaglutide) is often denied because insurers say your A1c is not high enough, you have not failed enough other medications, or they consider it too expensive. But Ozempic can be medically necessary to control diabetes, reduce complications, and address obesity-related risk.",
+    "common_denial_reasons": [
+      "Not meeting A1c or diagnosis criteria for coverage",
+      "Plan requires failure of multiple cheaper diabetes medications first",
+      "Dose or pen strength not on formulary",
+      "Use for weight reduction considered non-covered"
+    ],
+    "how_we_help": "We help you list prior medications, side effects, comorbidities, and complication risks so your appeal shows why Ozempic is the right next step—not a cosmetic option.",
+    "cta": "Start your Ozempic appeal.",
+    "faq": [
+      {
+        "question": "What should I include about my diabetes history?",
+        "answer": "Include your A1c trend, episodes of highs and lows, other conditions like kidney disease, neuropathy, or sleep apnea, and all medications you have tried. Make it clear that Ozempic is part of preventing further damage, not just lowering a number on paper."
+      },
+      {
+        "question": "Can I appeal if my insurer says I must stay on older drugs?",
+        "answer": "Yes. Your appeal can explain how you used those medications, why they did not work well enough or caused side effects, and why your prescriber chose Ozempic instead."
+      }
+    ],
+    "evidence_snippets": [
+      "Semaglutide improves glycemic control and promotes clinically meaningful weight loss in adults with type 2 diabetes.",
+      "GLP-1 receptor agonists like semaglutide have shown cardiovascular benefit in high-risk patients.",
+      "Aggressive management of type 2 diabetes reduces long-term complications such as kidney failure, neuropathy, and cardiovascular events."
+    ],
+    "pubmed_search_terms": [
+      "semaglutide Ozempic type 2 diabetes cardiovascular outcomes",
+      "semaglutide GLP-1 receptor agonist glycemic control",
+      "GLP-1 agonist weight loss diabetes complications"
+    ]
+  },
+  "glp1-denial-semaglutide-wegovy": {
+    "slug": "glp1-denial-semaglutide-wegovy",
+    "title": "Appealing Wegovy (Semaglutide) Denials",
+    "default_procedure": "Wegovy (Semaglutide for Obesity)",
+    "tagline": "Wegovy is obesity treatment, not vanity medicine.",
+    "hero_h1": "Appeal Your Wegovy Denial",
+    "hero_subhead": "When weight is damaging your health, Wegovy can be medically necessary care.",
+    "intro": "Wegovy is frequently denied because plans exclude weight-loss drugs, require very specific BMI thresholds, or ignore obesity-related complications. Appeals can reframe Wegovy as treatment for a chronic disease that is harming your health, not a cosmetic choice.",
+    "common_denial_reasons": [
+      "Plan excludes anti-obesity medications entirely",
+      "BMI criteria or comorbidity rules not met on paper",
+      "Insufficient documentation of prior weight-loss attempts",
+      "Dose strength not on formulary"
+    ],
+    "how_we_help": "We help you present your BMI history, obesity-related conditions, prior supervised and unsupervised weight-loss efforts, and functional limitations to show Wegovy is medically necessary obesity treatment.",
+    "cta": "Start your Wegovy appeal.",
+    "faq": [
+      {
+        "question": "How do I show Wegovy is more than cosmetic?",
+        "answer": "Describe specific health issues—such as diabetes, sleep apnea, hypertension, joint damage, or fatty liver—and how weight worsens them. Explain how weight affects your ability to work, parent, or perform daily tasks."
+      },
+      {
+        "question": "What if my plan says it never covers weight-loss drugs?",
+        "answer": "You can still appeal by emphasizing that obesity is a chronic disease and Wegovy is evidence-based treatment for high-risk patients. Some employers or plans grant exceptions when the medical risk is clear."
+      }
+    ],
+    "evidence_snippets": [
+      "Once-weekly semaglutide for obesity results in substantial and sustained weight loss compared with lifestyle interventions alone.",
+      "Weight reduction in people with obesity improves blood pressure, glycemic control, and cardiovascular risk factors.",
+      "Obesity is recognized as a chronic disease requiring long-term management, not a short-term cosmetic issue."
+    ],
+    "pubmed_search_terms": [
+      "semaglutide Wegovy obesity randomized controlled trial",
+      "GLP-1 receptor agonist weight loss cardiovascular risk",
+      "pharmacologic treatment obesity guidelines semaglutide"
+    ]
+  },
+  "glp1-denial-tirzepatide-mounjaro": {
+    "slug": "glp1-denial-tirzepatide-mounjaro",
+    "title": "Appealing Mounjaro (Tirzepatide) Denials",
+    "default_procedure": "Mounjaro (Tirzepatide for Type 2 Diabetes)",
+    "tagline": "Tirzepatide is a powerful tool for high-risk diabetes, not an optional upgrade.",
+    "hero_h1": "Appeal Your Mounjaro Denial",
+    "hero_subhead": "If prior regimens failed, denying Mounjaro can be unsafe and short-sighted.",
+    "intro": "Mounjaro is often denied because it is newer, more expensive, and requires strict criteria. Insurers may demand failure of multiple other drugs or limit use to narrow subsets of people with type 2 diabetes.",
+    "common_denial_reasons": [
+      "Not enough prior medication failures documented",
+      "Use for weight reduction rather than documented diabetes",
+      "Dose or titration schedule not on formulary",
+      "Plan prefers a different GLP-1/GIP agent"
+    ],
+    "how_we_help": "We help you document your full diabetes regimen history, comorbidities, and any complications so your appeal shows why Mounjaro is clinically appropriate and not easily substituted.",
+    "cta": "Start your Mounjaro appeal.",
+    "faq": [
+      {
+        "question": "What makes Mounjaro medically necessary in my case?",
+        "answer": "Explain your current A1c, prior therapies, side effects, weight-related risk, and any complications. Your prescriber can explain why tirzepatide’s mechanism and potency are especially helpful for your situation."
+      },
+      {
+        "question": "Can I appeal if I am also hoping for weight loss benefits?",
+        "answer": "Yes. You can acknowledge weight loss benefits while emphasizing that the primary goal is better diabetes control and reduced risk of cardiovascular and metabolic complications."
+      }
+    ],
+    "evidence_snippets": [
+      "Tirzepatide significantly lowers A1c and body weight in adults with type 2 diabetes compared with several existing therapies.",
+      "Intensive glycemic control in high-risk patients reduces microvascular and, in some groups, macrovascular complications.",
+      "Treatments that address both hyperglycemia and obesity can provide synergistic risk reduction."
+    ],
+    "pubmed_search_terms": [
+      "tirzepatide Mounjaro type 2 diabetes randomized trial",
+      "dual GIP GLP-1 agonist glycemic control weight",
+      "tirzepatide cardiovascular risk factors outcomes"
+    ]
+  },
+  "glp1-denial-tirzepatide-zepbound": {
+    "slug": "glp1-denial-tirzepatide-zepbound",
+    "title": "Appealing Zepbound (Tirzepatide) Denials",
+    "default_procedure": "Zepbound (Tirzepatide for Obesity)",
+    "tagline": "Zepbound is intensive obesity medicine for high-risk patients, not a vanity drug.",
+    "hero_h1": "Appeal Your Zepbound Denial",
+    "hero_subhead": "When obesity is damaging your health, denying Zepbound can be dangerous.",
+    "intro": "Zepbound is commonly denied because anti-obesity medications are excluded or tightly restricted. Appeals can connect Zepbound to concrete health outcomes: fewer complications, fewer hospitalizations, and better function.",
+    "common_denial_reasons": [
+      "Anti-obesity medications excluded from coverage",
+      "BMI and comorbidity criteria not documented correctly",
+      "Insufficient evidence of structured weight-loss attempts",
+      "Dose or duration limits exceeded"
+    ],
+    "how_we_help": "We help you compile your BMI history, documented co-morbidities, prior weight-loss programs, and functional impairment so your appeal makes a strong medical case for Zepbound.",
+    "cta": "Start your Zepbound appeal.",
+    "faq": [
+      {
+        "question": "How do I document prior weight-loss attempts?",
+        "answer": "List supervised programs, diets, medications, and lifestyle changes, including durations and outcomes. If weight was regained, note why, such as medication side effects or mobility limits."
+      },
+      {
+        "question": "Can my doctor’s letter make a difference?",
+        "answer": "Yes. A concise letter linking Zepbound to reduction in concrete risks—such as diabetes progression, sleep apnea, or heart disease—can be very persuasive."
+      }
+    ],
+    "evidence_snippets": [
+      "Tirzepatide produces substantial weight loss in adults with obesity, often exceeding that of earlier agents.",
+      "Weight loss improves cardiometabolic risk factors and can prevent or delay type 2 diabetes in high-risk individuals.",
+      "Treating obesity as a chronic disease requires long-term strategies, including medications when appropriate."
+    ],
+    "pubmed_search_terms": [
+      "tirzepatide obesity clinical trial weight loss",
+      "pharmacologic treatment obesity tirzepatide",
+      "anti-obesity medication cardiometabolic outcomes"
+    ]
+  },
+
+  "asthma-biologic-denial-dupilumab": {
+    "slug": "asthma-biologic-denial-dupilumab",
+    "title": "Appealing Dupixent (Dupilumab) Asthma Denials",
+    "default_procedure": "Dupixent for Severe Asthma",
+    "tagline": "Dupixent can calm type 2 inflammation when inhalers alone are not enough.",
+    "hero_h1": "Appeal Your Dupixent Asthma Denial",
+    "hero_subhead": "If you are still wheezing on high-dose inhalers, biologic therapy may be essential.",
+    "intro": "Dupixent is often denied for asthma due to borderline lab criteria, questions about severity, or insurer preference for other biologics. A strong appeal shows that you meet guideline-based criteria and that your asthma remains unsafe without Dupixent.",
+    "common_denial_reasons": [
+      "Eosinophil count or FeNO not meeting strict thresholds",
+      "Asthma not documented as severe or uncontrolled",
+      "Insufficient documentation of high-dose inhaler and steroid use",
+      "Plan prefers another biologic first"
+    ],
+    "how_we_help": "We help you and your clinician summarize ER visits, steroid bursts, spirometry, and biomarker data to show why Dupixent specifically is medically appropriate.",
+    "cta": "Start your Dupixent asthma appeal.",
+    "faq": [
+      {
+        "question": "What should my doctor highlight about my asthma?",
+        "answer": "They should list exacerbations, hospitalizations, oral steroid courses, and how symptoms limit daily life. They should tie these to type 2 inflammation markers that support Dupixent use."
+      },
+      {
+        "question": "Can I appeal if my eosinophil count is borderline?",
+        "answer": "Yes. Your appeal can explain your clinical history, FeNO levels if available, and how your pattern fits guideline criteria even if a single lab value is borderline."
+      }
+    ],
+    "evidence_snippets": [
+      "Dupilumab reduces exacerbations and improves lung function in patients with moderate-to-severe asthma with type 2 inflammation.",
+      "Biologic therapy can reduce dependence on systemic steroids, lowering the risk of steroid-related side effects.",
+      "Guidelines endorse biologics like dupilumab for patients with uncontrolled asthma despite maximal inhaled therapy."
+    ],
+    "pubmed_search_terms": [
+      "dupilumab severe asthma randomized trial",
+      "type 2 inflammation asthma biologic dupilumab",
+      "GINA guideline biologic therapy dupilumab"
+    ]
+  },
+  "asthma-biologic-denial-omalizumab": {
+    "slug": "asthma-biologic-denial-omalizumab",
+    "title": "Appealing Xolair (Omalizumab) Asthma Denials",
+    "default_procedure": "Xolair for Allergic Asthma",
+    "tagline": "For allergic asthma, IgE-targeted therapy can be life-changing.",
+    "hero_h1": "Appeal Your Xolair Asthma Denial",
+    "hero_subhead": "If allergy-driven asthma is out of control, denying Xolair can be dangerous.",
+    "intro": "Xolair is often denied for not hitting a narrow IgE range, weight band, or step-therapy path. Appeals that walk through your allergy history and exacerbations can reverse those decisions.",
+    "common_denial_reasons": [
+      "IgE level or weight not within policy table",
+      "Insufficient documentation of perennial allergen sensitization",
+      "Asthma not labeled as severe persistent",
+      "Insurer prefers alternative therapies"
+    ],
+    "how_we_help": "We help you assemble allergy testing, exacerbation history, and inhaler use so your appeal clearly shows why Xolair is medically appropriate for your pattern of allergic asthma.",
+    "cta": "Start your Xolair asthma appeal.",
+    "faq": [
+      {
+        "question": "What allergy documentation should I include?",
+        "answer": "Include skin or blood test results for perennial allergens (like dust mites or animal dander), plus notes connecting exposures to symptom flares."
+      },
+      {
+        "question": "What if I’ve been on high-dose inhalers for years?",
+        "answer": "Your appeal should make that clear, including any side effects or ongoing exacerbations despite treatment—this supports escalation to Xolair."
+      }
+    ],
+    "evidence_snippets": [
+      "Omalizumab reduces exacerbations and healthcare use in patients with moderate-to-severe allergic asthma.",
+      "Targeting IgE can help patients whose asthma is driven by perennial allergen sensitization.",
+      "Biologic therapy is recommended when standard inhaled regimens fail to provide adequate control."
+    ],
+    "pubmed_search_terms": [
+      "omalizumab allergic asthma exacerbation reduction",
+      "IgE targeted therapy severe persistent asthma",
+      "omalizumab guideline severe allergic asthma"
+    ]
+  },
+  "asthma-biologic-denial-mepolizumab": {
+    "slug": "asthma-biologic-denial-mepolizumab",
+    "title": "Appealing Nucala (Mepolizumab) Asthma Denials",
+    "default_procedure": "Nucala for Eosinophilic Asthma",
+    "tagline": "Eosinophilic asthma is high risk—denials often ignore that.",
+    "hero_h1": "Appeal Your Nucala Asthma Denial",
+    "hero_subhead": "Eosinophilic asthma is high risk—denials often ignore that.",
+    "intro": "Nucala is denied when eosinophil counts are questioned, documentation is incomplete, or insurers want a different biologic first. Appeals can show that your eosinophilic asthma remains uncontrolled and at high risk without Nucala.",
+    "common_denial_reasons": [
+      "Eosinophil counts not documented or not repeated",
+      "Asthma not labeled as eosinophilic or severe",
+      "Not enough steroid bursts or exacerbations documented",
+      "Preference for an alternative eosinophil-targeting biologic"
+    ],
+    "how_we_help": "We help your clinician pull together lab trends, imaging, lung function, and exacerbation records to show why Nucala is medically necessary.",
+    "cta": "Start your Nucala asthma appeal.",
+    "faq": [
+      {
+        "question": "Do I need multiple eosinophil counts?",
+        "answer": "Multiple measurements can help. Your appeal can include both historical and recent labs, especially if steroids temporarily lowered counts."
+      },
+      {
+        "question": "How do I show that my asthma is eosinophilic?",
+        "answer": "Your clinician can connect lab values, nasal or sinus disease, and response to steroids with the diagnosis of eosinophilic asthma."
+      }
+    ],
+    "evidence_snippets": [
+      "Mepolizumab reduces exacerbations and oral steroid use in patients with severe eosinophilic asthma.",
+      "Eosinophilic inflammation is a key driver of exacerbations in a subset of asthma patients.",
+      "Biologics targeting IL-5 or related pathways are standard options for severe eosinophilic asthma in guideline algorithms."
+    ],
+    "pubmed_search_terms": [
+      "mepolizumab eosinophilic asthma randomized trial",
+      "IL-5 inhibition severe eosinophilic asthma outcomes",
+      "eosinophilic asthma biologic guideline mepolizumab"
+    ]
+  },
+
+  "eczema-biologic-denial-dupilumab": {
+    "slug": "eczema-biologic-denial-dupilumab",
+    "title": "Appealing Dupixent (Dupilumab) Eczema Denials",
+    "default_procedure": "Dupixent for Atopic Dermatitis",
+    "tagline": "Severe eczema is a systemic disease, not just a rash.",
+    "hero_h1": "Appeal Your Dupixent Eczema Denial",
+    "hero_subhead": "When skin is cracked, infected, and sleepless, denying Dupixent is not reasonable.",
+    "intro": "Dupixent is often denied for atopic dermatitis because severity is under-documented, prior treatments are not listed, or plans prefer to avoid high-cost biologics. Appeals that clearly describe severity can change outcomes.",
+    "common_denial_reasons": [
+      "Disease not documented as moderate-to-severe",
+      "Topical therapies or phototherapy not fully documented",
+      "Age or dosing concerns for pediatric patients",
+      "Plan questions long-term use"
+    ],
+    "how_we_help": "We help you document body areas involved, infections, sleep loss, and emotional distress to show Dupixent is medically necessary and guideline-consistent.",
+    "cta": "Start your Dupixent eczema appeal.",
+    "faq": [
+      {
+        "question": "How detailed should I be about my symptoms?",
+        "answer": "Very detailed. Describe itch, pain, bleeding, infections, missed work or school, and how long flares last. Photos and dermatologist notes help."
+      },
+      {
+        "question": "Can children be approved for Dupixent?",
+        "answer": "Yes, many children meet indications. Your appeal should highlight pediatric dosing recommendations and the impact on growth, sleep, and development."
+      }
+    ],
+    "evidence_snippets": [
+      "Dupilumab significantly improves skin clearance and itch in moderate-to-severe atopic dermatitis.",
+      "Effective treatment of atopic dermatitis improves sleep, work productivity, and mental health.",
+      "Guidelines endorse systemic or biologic therapies when topical treatments are insufficient."
+    ],
+    "pubmed_search_terms": [
+      "dupilumab moderate severe atopic dermatitis trial",
+      "biologic therapy atopic dermatitis quality of life",
+      "atopic dermatitis guideline systemic therapy dupilumab"
+    ]
+  },
+  "eczema-biologic-denial-upadacitinib": {
+    "slug": "eczema-biologic-denial-upadacitinib",
+    "title": "Appealing Rinvoq (Upadacitinib) Eczema Denials",
+    "default_procedure": "Rinvoq for Atopic Dermatitis",
+    "tagline": "When topical and biologic options fail, targeted oral therapy may be necessary.",
+    "hero_h1": "Appeal Your Rinvoq Eczema Denial",
+    "hero_subhead": "Rinvoq is often reserved for the hardest cases—exactly where appeals matter most.",
+    "intro": "Rinvoq is a JAK inhibitor used for moderate-to-severe atopic dermatitis when other options are inadequate. Insurers may deny it as too risky, experimental, or not medically necessary.",
+    "common_denial_reasons": [
+      "Not enough prior systemic or biologic therapy failures documented",
+      "Concerns about JAK inhibitor safety profile without context",
+      "Disease severity not clearly documented",
+      "Age or comorbidity concerns not addressed"
+    ],
+    "how_we_help": "We help you and your dermatologist explain prior treatment failures, monitoring plans, and why Rinvoq’s benefits outweigh risks in your case.",
+    "cta": "Start your Rinvoq eczema appeal.",
+    "faq": [
+      {
+        "question": "How do we address safety concerns in the appeal?",
+        "answer": "Your clinician can describe baseline labs, ongoing monitoring, and why benefits—such as preventing infections from open skin—are clinically important."
+      },
+      {
+        "question": "What if I've already tried Dupixent or other biologics?",
+        "answer": "List each prior systemic treatment, how long you used it, and why it was insufficient or intolerable. That strengthens the case for advancing to Rinvoq."
+      }
+    ],
+    "evidence_snippets": [
+      "Upadacitinib improves skin clearance and reduces itch in patients with refractory atopic dermatitis.",
+      "For some patients, targeted oral therapies are needed after failure of biologic or conventional systemic treatments.",
+      "Careful selection and monitoring can mitigate risks associated with JAK inhibitors."
+    ],
+    "pubmed_search_terms": [
+      "upadacitinib atopic dermatitis randomized trial",
+      "JAK inhibitor atopic dermatitis safety efficacy",
+      "systemic therapy refractory atopic dermatitis upadacitinib"
+    ]
+  },
+
+  "migraine-med-denial-emgality": {
+    "slug": "migraine-med-denial-emgality",
+    "title": "Appealing Emgality (Galcanezumab) Denials",
+    "default_procedure": "Emgality for Migraine Prevention",
+    "tagline": "Chronic migraines are often under treated by insurance.",
+    "hero_h1": "Appeal Your Emgality Denial",
+    "hero_subhead": "If chronic migraine is disabling you, denying Emgality is not acceptable.",
+    "intro": "Emgality is often denied until patients have failed a long list of older preventives. Appeals can show that you meet criteria and that Emgality is needed to reduce disability and emergency visits.",
+    "common_denial_reasons": [
+      "Not enough failed preventive medications documented",
+      "Migraine frequency not clearly recorded",
+      "Insurer prefers a different CGRP antibody",
+      "Quantity limits or duration limits"
+    ],
+    "how_we_help": "We help you document headache days per month, disability, prior medication failures, and ER/urgent care visits to support Emgality coverage.",
+    "cta": "Start your Emgality appeal.",
+    "faq": [
+      {
+        "question": "How do I document my migraine burden?",
+        "answer": "Use a headache diary or calendar showing number of migraine days, severity, and impact on work or school. Include any ER or urgent care visits."
+      },
+      {
+        "question": "Can I appeal if I had side effects from older preventives?",
+        "answer": "Yes. Note the side effects and how they limited use—this supports moving to a better-tolerated option like Emgality."
+      }
+    ],
+    "evidence_snippets": [
+      "Galcanezumab reduces monthly migraine days in patients with episodic and chronic migraine.",
+      "CGRP monoclonal antibodies are specifically designed for migraine prevention and are often better tolerated than older preventives.",
+      "Effective migraine prevention decreases disability and healthcare utilization."
+    ],
+    "pubmed_search_terms": [
+      "galcanezumab Emgality chronic migraine randomized",
+      "CGRP monoclonal antibody migraine prevention",
+      "migraine disability reduction CGRP therapy"
+    ]
+  },
+  "migraine-med-denial-aimovig": {
+    "slug": "migraine-med-denial-aimovig",
+    "title": "Appealing Aimovig (Erenumab) Denials",
+    "default_procedure": "Aimovig for Migraine Prevention",
+    "tagline": "Step therapy shouldn't stop you from accessing the care you need.",
+    "hero_h1": "Appeal Your Aimovig Denial",
+    "hero_subhead": "Aimovig may be appropriate when multiple older preventives have failed.",
+    "intro": "Aimovig is often denied due to strict step-therapy rules or incomplete documentation. A focused appeal can show that you meet standard criteria for CGRP therapy.",
+    "common_denial_reasons": [
+      "Fewer than required trialed preventive drugs documented",
+      "Migraine days per month not clearly stated",
+      "Insurer prefers a different CGRP agent",
+      "Issues with prior authorization timing"
+    ],
+    "how_we_help": "We help you and your clinician summarize prior preventives, side effects, and migraine burden so Aimovig is seen as medically necessary.",
+    "cta": "Start your Aimovig appeal.",
+    "faq": [
+      {
+        "question": "Which prior medications should I mention?",
+        "answer": "List beta-blockers, antiepileptics, antidepressants, or other preventives you’ve tried, including dose, duration, and why they failed or were stopped."
+      },
+      {
+        "question": "Can I appeal if I previously used another CGRP drug?",
+        "answer": "Yes. Explain response or side effects and why switching to Aimovig is appropriate now."
+      }
+    ],
+    "evidence_snippets": [
+      "Erenumab reduces monthly migraine days and improves quality of life in migraine patients.",
+      "CGRP-targeted therapies provide a migraine-specific preventive option when older drugs fail.",
+      "Long-term data suggest sustained benefit and tolerability for many patients."
+    ],
+    "pubmed_search_terms": [
+      "erenumab Aimovig migraine randomized controlled",
+      "CGRP receptor antagonist migraine prevention",
+      "long term safety erenumab migraine"
+    ]
+  },
+  "migraine-med-denial-ajovy": {
+    "slug": "migraine-med-denial-ajovy",
+    "title": "Appealing Ajovy (Fremanezumab) Denials",
+    "default_procedure": "Ajovy for Migraine Prevention",
+    "tagline": "Monthly or quarterly dosing can simplify life with migraine.",
+    "hero_h1": "Appeal Your Ajovy Denial",
+    "hero_subhead": "Ajovy is one of several CGRP antibodies—appeals can justify why it’s the right one for you.",
+    "intro": "Ajovy may be denied when insurers want you to try a different CGRP antibody or insist that older preventives are enough. Appeals should highlight your specific needs and prior experiences.",
+    "common_denial_reasons": [
+      "Failure to use insurer-preferred CGRP agent first",
+      "Not meeting threshold for chronic or high-frequency migraine",
+      "Incomplete documentation of prior preventive failures",
+      "Questions about monthly vs. quarterly dosing"
+    ],
+    "how_we_help": "We help your clinician explain why Ajovy’s dosing schedule, response in your case, or side-effect profile makes it the most appropriate option.",
+    "cta": "Start your Ajovy appeal.",
+    "faq": [
+      {
+        "question": "Does it matter if my migraines are episodic or chronic?",
+        "answer": "Yes. Your appeal should specify which pattern you have and reference data showing Ajovy’s benefit in that group."
+      },
+      {
+        "question": "Can dosing schedule matter in an appeal?",
+        "answer": "Absolutely. If quarterly dosing improves adherence or reduces burden, your clinician should spell that out."
+      }
+    ],
+    "evidence_snippets": [
+      "Fremanezumab reduces migraine frequency in both episodic and chronic migraine.",
+      "Flexible monthly or quarterly dosing can support adherence and patient preference.",
+      "CGRP monoclonal antibodies are recommended for patients with frequent migraines who fail standard preventives."
+    ],
+    "pubmed_search_terms": [
+      "fremanezumab Ajovy episodic chronic migraine trial",
+      "CGRP monoclonal antibody migraine quarterly dosing",
+      "migraine guideline CGRP monoclonal antibody fremanezumab"
+    ]
+  },
+  "migraine-med-denial-nurtec": {
+    "slug": "migraine-med-denial-nurtec",
+    "title": "Appealing Nurtec ODT (Rimegepant) Denials",
+    "default_procedure": "Nurtec ODT for Acute and Preventive Migraine Treatment",
+    "tagline": "Medication for both stopping and helping prevent migraine attacks.",
+    "hero_h1": "Appeal Your Nurtec Denial",
+    "hero_subhead": "Nurtec is often denied on cost grounds or strict quantity limits.",
+    "intro": "Nurtec ODT is a gepant used for acute migraine and, in some cases, prevention. Insurers often impose severe quantity limits or reject coverage entirely.",
+    "common_denial_reasons": [
+      "Quantity limits inconsistent with patient’s attack frequency",
+      "Requirement to fail multiple triptans first",
+      "Off-label use for prevention questioned",
+      "Plan prefers a different gepant"
+    ],
+    "how_we_help": "We help you explain migraine frequency, failed triptans, and any contraindications that make Nurtec necessary for you.",
+    "cta": "Start your Nurtec appeal.",
+    "faq": [
+      {
+        "question": "How do I appeal quantity limits?",
+        "answer": "Show your typical number of attacks per month and how strict limits lead to untreated attacks, ER visits, or missed work."
+      },
+      {
+        "question": "What if I cannot take triptans?",
+        "answer": "Have your clinician explain contraindications—such as heart disease or stroke risk—or intolerable side effects from triptans."
+      }
+    ],
+    "evidence_snippets": [
+      "Rimegepant provides relief for acute migraine and has evidence for preventive use with regular dosing.",
+      "Gepants offer an option for patients who cannot use or do not respond to triptans.",
+      "Adequate acute and preventive treatment reduces migraine-related disability."
+    ],
+    "pubmed_search_terms": [
+      "rimegepant Nurtec acute migraine randomized",
+      "rimegepant preventive migraine dosing trial",
+      "gepant therapy migraine triptan contraindication"
+    ]
+  },
+  "migraine-med-denial-ubrelvy": {
+    "slug": "migraine-med-denial-ubrelvy",
+    "title": "Appealing Ubrelvy (Ubrogepant) Denials",
+    "default_procedure": "Ubrelvy for Acute Migraine Treatment",
+    "tagline": "When triptans are not an option, gepants can be crucial.",
+    "hero_h1": "Appeal Your Ubrelvy Denial",
+    "hero_subhead": "Ubrelvy is often denied or heavily restricted, but appeals frequently succeed.",
+    "intro": "Ubrelvy is a gepant used acutely to stop migraine attacks. Plans often restrict it to small quantities or deny it unless several triptans have failed.",
+    "common_denial_reasons": [
+      "Insufficient prior triptan trials",
+      "Quantity limits too low for attack frequency",
+      "Use in patients with perceived low migraine burden",
+      "Preference for formulary alternatives"
+    ],
+    "how_we_help": "We help you document prior acute treatments, contraindications, and attack frequency to justify Ubrelvy at an appropriate quantity.",
+    "cta": "Start your Ubrelvy appeal.",
+    "faq": [
+      {
+        "question": "How many prior medications do I need to document?",
+        "answer": "List all acute meds you’ve tried—over-the-counter and prescription—with responses and side effects. The more thorough, the better."
+      },
+      {
+        "question": "Can I appeal even if I still have some triptan benefit?",
+        "answer": "Yes. If triptans cause side effects, can’t be used often enough, or are unsafe given your risk factors, that still supports coverage for Ubrelvy."
+      }
+    ],
+    "evidence_snippets": [
+      "Ubrogepant is effective for acute treatment of migraine and is generally well tolerated.",
+      "Gepants provide an option for patients with cardiovascular risk factors that limit triptan use.",
+      "Timely acute treatment reduces the need for emergency care and shortens attack duration."
+    ],
+    "pubmed_search_terms": [
+      "ubrogepant Ubrelvy acute migraine randomized",
+      "gepant acute migraine cardiovascular risk",
+      "ubrogepant efficacy safety migraine treatment"
+    ]
+  },
+
+  "insulin-pump-cgm-denial-dexcom": {
+    "slug": "insulin-pump-cgm-denial-dexcom",
+    "title": "Appealing Dexcom CGM Denials",
+    "default_procedure": "Dexcom Continuous Glucose Monitor",
+    "tagline": "Real-time glucose data can prevent dangerous highs and lows.",
+    "hero_h1": "Appeal Your Dexcom CGM Denial",
+    "hero_subhead": "When finger sticks are not enough, Dexcom can be medically necessary.",
+    "intro": "Dexcom CGMs are denied when plans claim that traditional glucose monitoring is sufficient, or that criteria like multiple daily injections are not clearly documented. Appeals can show how Dexcom improves safety and control.",
+    "common_denial_reasons": [
+      "Not enough documented hypoglycemia episodes",
+      "Insufficient evidence of multiple daily insulin injections",
+      "Use for type 2 diabetes questioned",
+      "Preference for a different CGM"
+    ],
+    "how_we_help": "We help you compile logs of lows, highs, and variability, plus your insulin regimen, to demonstrate why Dexcom’s continuous data is necessary.",
+    "cta": "Start your Dexcom appeal.",
+    "faq": [
+      {
+        "question": "What data should I include?",
+        "answer": "Include documented low readings, episodes where you needed help, night-time events, and any ER visits for hypo- or hyperglycemia."
+      },
+      {
+        "question": "Can people with type 2 diabetes qualify?",
+        "answer": "Yes, especially on intensive insulin regimens or with high hypoglycemia risk. Your appeal should highlight those factors."
+      }
+    ],
+    "evidence_snippets": [
+      "Continuous glucose monitoring reduces hypoglycemia and improves glycemic control compared with finger-stick monitoring alone.",
+      "Real-time CGM data allow earlier intervention for rising or falling glucose levels.",
+      "Improved glucose control reduces long-term complications and acute events."
+    ],
+    "pubmed_search_terms": [
+      "Dexcom continuous glucose monitoring randomized trial",
+      "real time CGM type 1 type 2 diabetes outcomes",
+      "continuous glucose monitoring hypoglycemia risk reduction"
+    ]
+  },
+  "insulin-pump-cgm-denial-freestyle-libre": {
+    "slug": "insulin-pump-cgm-denial-freestyle-libre",
+    "title": "Appealing FreeStyle Libre Denials",
+    "default_procedure": "FreeStyle Libre Flash Glucose Monitoring",
+    "tagline": "Scanning a sensor is not a luxury—it’s safer than guessing.",
+    "hero_h1": "Appeal Your FreeStyle Libre Denial",
+    "hero_subhead": "Libre gives continuous insight without constant finger sticks.",
+    "intro": "FreeStyle Libre is often denied as unnecessary when finger-stick testing is available. Appeals can show how sensor data helps prevent severe highs and lows, especially for people on insulin.",
+    "common_denial_reasons": [
+      "Plan believes standard glucose testing is sufficient",
+      "Not enough documented daily testing or insulin use",
+      "Use in type 2 diabetes restricted",
+      "Supplier or brand not preferred"
+    ],
+    "how_we_help": "We help you and your clinician show how Libre improves adherence, safety, and control compared with occasional finger-stick checks.",
+    "cta": "Start your Libre appeal.",
+    "faq": [
+      {
+        "question": "Should I include my current testing pattern?",
+        "answer": "Yes. Show how often you realistically test now and why more frequent data from Libre would improve safety and control."
+      },
+      {
+        "question": "What if I have trouble with finger sticks?",
+        "answer": "Note pain, calluses, vision issues, or dexterity limits that make traditional testing difficult—these are strong arguments for Libre."
+      }
+    ],
+    "evidence_snippets": [
+      "Flash glucose monitoring improves time in range and reduces hypoglycemia in people with insulin-treated diabetes.",
+      "Sensor-based monitoring can increase engagement and adherence to glucose monitoring.",
+      "Better glucose data allow more precise insulin adjustments and lifestyle decisions."
+    ],
+    "pubmed_search_terms": [
+      "FreeStyle Libre flash glucose monitoring trial",
+      "flash glucose monitoring time in range hypoglycemia",
+      "sensor based glucose monitoring insulin treated diabetes"
+    ]
+  },
+  "insulin-pump-denial-omnipod": {
+    "slug": "insulin-pump-denial-omnipod",
+    "title": "Appealing Omnipod Insulin Pump Denials",
+    "default_procedure": "Omnipod Insulin Pump System",
+    "tagline": "Tubeless pump therapy can be the safest and most realistic option for some people.",
+    "hero_h1": "Appeal Your Omnipod Pump Denial",
+    "hero_subhead": "If multiple daily injections are not working, Omnipod may be medically necessary.",
+    "intro": "Omnipod and other insulin pumps are denied when insurers believe injections are sufficient or another pump should be used. Appeals can show why a tubeless system is necessary for safety, adherence, or disability.",
+    "common_denial_reasons": [
+      "Not enough documented problems with multiple daily injections",
+      "Not meeting criteria for insulin pump therapy",
+      "Preference for a different pump brand",
+      "Classified as convenience rather than medical necessity"
+    ],
+    "how_we_help": "We help you describe hypoglycemia risk, dawn phenomenon, injection site issues, and lifestyle factors that make Omnipod safer and more effective than injections.",
+    "cta": "Start your Omnipod appeal.",
+    "faq": [
+      {
+        "question": "Why does pump therapy count as medically necessary?",
+        "answer": "Your clinician can explain how a pump allows finer dosing, better pattern management, and fewer highs/lows compared with injections."
+      },
+      {
+        "question": "How do I justify Omnipod specifically?",
+        "answer": "Mention factors like needle phobia, tubing entanglement risks, work or sports activities, or sensory issues that make tubeless therapy important."
+      }
+    ],
+    "evidence_snippets": [
+      "Insulin pump therapy can improve glycemic control and reduce hypoglycemia in selected patients.",
+      "Tubeless pump systems may improve quality of life and adherence for some individuals.",
+      "Pump therapy is particularly useful for patients requiring flexible basal rates and frequent dose adjustments."
+    ],
+    "pubmed_search_terms": [
+      "insulin pump therapy glycemic control type 1",
+      "tubeless insulin pump Omnipod quality of life",
+      "insulin pump vs multiple daily injections outcomes"
+    ]
+  },
+{
+  "pep-denial-hiv-exposure": {
+    "slug": "pep-denial-hiv-exposure",
+    "title": "Appealing HIV PEP (Post-Exposure Prophylaxis) Denials",
+    "default_procedure": "HIV Post-Exposure Prophylaxis (PEP)",
+    "tagline": "PEP is time-critical emergency prevention — coverage fights come second.",
+    "hero_h1": "Appeal Your HIV PEP Denial",
+    "hero_subhead": "If you might have been exposed to HIV, getting PEP fast is the emergency — we help you fight the bill after.",
+    "intro": "PEP is a course of HIV medicines that should be started as soon as possible after a potential exposure. We encourage you to not wait for insurance and seek out treatment as soon as possible. This page focuses on what to do **after** you’ve gotten care and are facing a denial or a huge bill.",
+    "common_denial_reasons": [
+      "Insurer claims the exposure was not \"high risk\" enough for PEP",
+      "Started PEP close to or slightly beyond a strict 72-hour cutoff",
+      "Plan treating PEP as non-emergency pharmacy benefit only (no ER coverage)",
+      "Lack of prior authorization even though treatment was urgent",
+      "Denial of some components of the 3-drug regimen or follow-up labs"
+    ],
+    "how_we_help": "We help you explain the exposure, timing, and clinical recommendations in plain language, tie your situation to HIV prevention guidelines, and argue that PEP was urgent post-exposure care — not elective medication. We also help challenge denial of specific drugs or follow-up testing and fix common coding issues.",
+    "cta": "Start your HIV PEP appeal.",
+    "faq": [
+      {
+        "question": "What should I do *right now* if I think I’ve been exposed to HIV?",
+          "answer": "We do not provide medical advice, but we strongly encourage you to consult a provider as soon as possible as PEP is most effective when started as soon as possible. We strongly encourage you not to wait for an insurance decision to seek care and look into community resources that can help in the meantime."
+      },
+      {
+        "question": "Does it still make sense to appeal if I already finished PEP and only now got the denial?",
+        "answer": "Yes. Many people only find out later that their PEP visit or medications weren’t fully covered. Your appeal can explain why PEP was clinically appropriate at the time, how quickly you presented, and what your provider recommended, and ask the plan to reconsider the charges."
+      },
+      {
+        "question": "Can my insurer deny PEP because they think the risk was low?",
+        "answer": "Your appeal can describe what actually happened (in terms you’re comfortable with) and reference clinical guidance that supports offering PEP for similar exposures. Plans shouldn’t substitute their own risk guesses for the judgment of clinicians using current guidelines."
+      },
+      {
+        "question": "What if the problem is that different parts of the bill were denied?",
+        "answer": "Sometimes the ER visit is covered but the pharmacy isn’t, or vice versa. Your appeal can argue that the visit, medication, and required labs were all part of one medically necessary PEP episode and should be considered together."
+      },
+      {
+        "question": "Are there local resources that can help me besides my insurer?",
+        "answer": "Yes. Many cities and states have HIV hotlines, AIDS service organizations, or health department programs that help people access PEP and navigate billing. You can search for \"HIV hotline\" plus your city or state, or call your local health department or an LGBTQ+ community health center to ask about PEP help and financial assistance."
+      }
+    ],
+    "evidence_snippets": [
+      "HIV PEP is most effective when started as soon as possible after a potential exposure and must generally be started within 72 hours; earlier is better.",
+      "Standard PEP regimens are 3-drug antiretroviral combinations taken for 28 days with follow-up HIV testing.",
+      "Clinical guidelines treat HIV exposure as a medical emergency and recommend initiating PEP immediately when indicated, with insurance coverage following standard emergency-care rules."
+    ],
+    "pubmed_search_terms": [
+      "HIV post exposure prophylaxis timing 72 hours 28 days regimen",
+      "nonoccupational HIV PEP guidelines United States",
+      "emergency HIV exposure prophylaxis clinical outcomes"
+    ],
+    "assistance_programs": [
+      {
+        "name": "HIV.gov PEP Access and Assistance",
+        "url": "https://www.hiv.gov/hiv-basics/hiv-prevention/using-hiv-medication-to-reduce-risk/post-exposure-prophylaxis/accessing",
+        "description": "Overview of how to access PEP quickly and manufacturer patient assistance programs that may provide PEP medications at low or no cost."
+      },
+      {
+        "name": "Gilead Advancing Access",
+        "url": "https://www.gileadadvancingaccess.com/",
+        "description": "Patient assistance and co-pay support program for certain HIV medications commonly used in PEP regimens."
+      },
+      {
+        "name": "State PrEP/PEP Assistance Programs (NASTAD directory)",
+        "url": "https://nastad.org/prepcost-resources/state-prep-assistance-programs",
+        "description": "State-level programs that may help with PEP and related lab costs for uninsured or under-insured people."
+      }
+    ]
+  },
+
+  "doxy-pep-denial": {
+    "slug": "doxy-pep-denial",
+    "title": "Appealing Doxy-PEP (Doxycycline Post-Exposure Prophylaxis) Denials",
+    "default_procedure": "Doxycycline Post-Exposure Prophylaxis (Doxy-PEP) for STIs",
+    "tagline": "Doxy-PEP is guideline-supported STI prevention for some patients — not experimental for everyone.",
+    "hero_h1": "Appeal Your Doxy-PEP Denial",
+    "hero_subhead": "For some MSM and trans women, taking doxycycline after sex is now part of standard STI prevention.",
+    "intro": "Doxycycline post-exposure prophylaxis (doxy-PEP) is a newer STI prevention strategy where certain patients take doxycycline shortly after sex to reduce the risk of syphilis and chlamydia and, in some settings, gonorrhea. Current U.S. guidelines recommend doxy-PEP discussion and prescribing for specific groups, especially men who have sex with men and transgender women with a recent bacterial STI. Plans may deny coverage as \"experimental\" or \"not medically necessary\" even when you’re clearly in the guideline-supported group.",
+    "common_denial_reasons": [
+      "Classified as experimental or investigational despite guideline support for selected populations",
+      "Plan says doxycycline is only covered for infections, not prevention",
+      "Risk factors or recent STI history not clearly documented in the chart",
+      "Confusion about dosing (e.g., 200 mg within 72 hours after sex) vs standard infection treatment"
+    ],
+    "how_we_help": "We help your clinician document your risk factors and recent STI history, show that you fall into a guideline-supported group for doxy-PEP, and explain that this is targeted, evidence-based prevention — not casual or indefinite antibiotic use.",
+    "cta": "Start your doxy-PEP appeal.",
+    "faq": [
+      {
+        "question": "Who do guidelines say doxy-PEP is appropriate for?",
+        "answer": "Current U.S. guidance focuses on men who have sex with men and transgender women who have had a recent bacterial STI like syphilis, chlamydia, or gonorrhea, or who have ongoing high risk of exposure. Your appeal can show that your situation matches those criteria and that the decision was made with shared decision-making."
+      },
+      {
+        "question": "How is doxy-PEP taken?",
+        "answer": "Guidelines describe a single dose of doxycycline (often 200 mg) taken within a specified window after condomless sex. Your clinician’s note can clarify your dosing plan and emphasize that this is intermittent, post-exposure prevention — not daily long-term antibiotics."
+      },
+      {
+        "question": "What if my plan is worried about antibiotic resistance or side effects?",
+        "answer": "Your appeal can acknowledge these concerns and explain that your clinician is following guideline criteria, monitoring side effects, and periodically re-evaluating whether doxy-PEP is still appropriate, balancing individual and public health considerations."
+      },
+      {
+        "question": "Should I also be getting regular STI screening while on doxy-PEP?",
+        "answer": "Yes. Doxy-PEP is designed to complement, not replace, regular STI testing and other prevention strategies. Your appeal can mention that you’re in ongoing sexual health care, including routine screening and follow-up."
+      }
+    ],
+    "evidence_snippets": [
+      "Randomized trials have shown that doxy-PEP can substantially reduce syphilis and chlamydia infections and may reduce gonorrhea in some populations of men who have sex with men and transgender women.",
+      "CDC clinical guidelines now recommend that clinicians discuss doxy-PEP with certain high-risk patients and consider prescribing it using shared decision-making.",
+      "Guideline-based doxy-PEP uses targeted dosing after exposures, not continuous antibiotics, and includes regular STI screening and follow-up."
+    ],
+    "pubmed_search_terms": [
+      "doxycycline postexposure prophylaxis bacterial sexually transmitted infection MSM transgender women",
+      "CDC clinical guidelines doxy PEP 2024 syphilis chlamydia gonorrhea",
+      "doxy PEP randomized trial STI prevention"
+    ]
+  },
+  "flexitouch-plus-denial": {
+    "slug": "flexitouch-plus-denial",
+    "title": "Appealing Flexitouch Plus & Advanced Pneumatic Compression Device Denials",
+    "default_procedure": "Flexitouch Plus or Similar Advanced Pneumatic Compression Device",
+    "tagline": "For many people with lymphedema, advanced compression devices are medically necessary — not luxury massage gear.",
+    "hero_h1": "Appeal Your Flexitouch Plus or Lymphedema Pump Denial",
+    "hero_subhead": "When basic compression isn’t enough, advanced pneumatic compression can protect function, skin, and quality of life.",
+    "intro": "Devices like Flexitouch Plus are advanced pneumatic compression systems used at home to treat lymphedema, including limb and head-and-neck lymphedema. Insurers often deny them by saying \"use standard compression only,\" demanding long conservative-therapy trials, or calling them experimental. In reality, many coverage policies do allow these devices when conservative measures haven’t worked and there is documented, persistent lymphedema.",
+    "common_denial_reasons": [
+      "\"Conservative therapy not exhausted\" (e.g., not enough weeks of bandaging, garments, elevation, exercise)",
+      "No documentation of persistent swelling, skin changes, or functional limits",
+      "Device labeled as experimental or not medically necessary",
+      "Request for trunk/head-and-neck treatment when policy is written for limb-only devices",
+      "Lack of clear physician plan of care or follow-up notes"
+    ],
+    "how_we_help": "We help you lay out your full lymphedema history: how long you’ve had swelling, infections, skin breakdown, or pain; what conservative measures you’ve actually tried and for how long; and how much function you’re losing. We also help your clinician reference coverage criteria and clinical studies showing that advanced pneumatic compression can reduce swelling and symptoms, especially when standard care hasn’t been enough.",
+    "cta": "Start your Flexitouch Plus or lymphedema pump appeal.",
+    "faq": [
+      {
+        "question": "What counts as \"conservative therapy\" for lymphedema devices?",
+        "answer": "Most policies expect a documented period (often 4 weeks or more) of consistent use of compression garments or bandaging, exercise, and elevation, sometimes with complete decongestive therapy. Your appeal should list dates, therapies used, and why they were not enough by themselves."
+      },
+      {
+        "question": "How do I show that I really need an advanced device instead of a basic pump or just garments?",
+        "answer": "Your appeal can include limb or neck measurements over time, photos (if you’re comfortable), therapist notes, episodes of cellulitis, difficulty with daily activities, and any failure of simpler devices. If your lymphedema involves the trunk or head and neck, it’s especially important to show why a device designed for those areas is needed."
+      },
+      {
+        "question": "Is Flexitouch Plus actually studied, or is it experimental?",
+        "answer": "Clinical studies have evaluated advanced pneumatic compression devices, including Flexitouch systems, in people with limb and head-and-neck lymphedema. Trials have reported improvements in swelling, symptoms, and function compared with self-care alone in selected patients. Your appeal can cite that there is published evidence and that the device is FDA-cleared for lymphedema, even if your plan’s policy summary sounds cautious."
+      },
+      {
+        "question": "What documentation should my doctor or therapist provide?",
+        "answer": "Helpful items include a formal lymphedema diagnosis, stage, limb/trunk/neck measurements, photos, a signed plan of care, notes from at least one recent in-person visit, and documentation of conservative measures already tried. If you’ve had hospitalizations or recurrent infections related to lymphedema, include those too."
+      }
+    ],
+    "evidence_snippets": [
+      "Coverage policies for home pneumatic compression devices often require a documented trial of conservative therapy and persistent lymphedema before covering advanced devices.",
+      "Prospective and randomized studies of advanced pneumatic compression devices, including Flexitouch systems, have reported reductions in limb or head-and-neck swelling, symptom burden, and sometimes healthcare utilization.",
+      "Advanced pneumatic compression devices are FDA-cleared for lymphedema treatment and are typically considered when standard garments and basic pumps are insufficient."
+    ],
+    "pubmed_search_terms": [
+      "advanced pneumatic compression device lymphedema Flexitouch randomized trial",
+      "home pneumatic compression lymphedema coverage criteria conservative therapy",
+      "head and neck lymphedema Flexitouch Plus clinical outcomes"
+    ]
   }
+}
 }
