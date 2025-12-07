@@ -124,6 +124,64 @@
 </section>
 {% endif %}
 
+<!-- Alternatives Section -->
+{% if microsite.alternatives %}
+<section id="alternatives" class="py-5">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <h2 class="text-center mb-4">While You're Fighting Your Denial</h2>
+                <p class="text-center text-muted mb-4">Talk to your provider about these options that might help bridge the gap:</p>
+                <div class="alternatives-list">
+                    {% for alternative in microsite.alternatives %}
+                    <div class="card mb-3">
+                        <div class="card-body">
+                            <p class="card-text mb-0">
+                                <i class="text-info me-2">&#8594;</i>
+                                {{ alternative }}
+                            </p>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+{% endif %}
+
+<!-- Patient Assistance Programs Section -->
+{% if microsite.assistance_programs %}
+<section id="assistance-programs" class="py-5 bg-light">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <h2 class="text-center mb-4">Patient Assistance &amp; Copay Programs</h2>
+                <p class="text-center text-muted mb-4">These programs may help reduce your costs while you appeal:</p>
+                <div class="assistance-programs-list">
+                    {% for program in microsite.assistance_programs %}
+                    <div class="card mb-3 assistance-card">
+                        <div class="card-body">
+                            <h5 class="card-title mb-2">
+                                <a href="{{ program.url }}" target="_blank" rel="noopener noreferrer" class="assistance-link">
+                                    {{ program.name }}
+                                    <i class="text-muted ms-1" style="font-size: 0.8em;">&#8599;</i>
+                                </a>
+                            </h5>
+                            <p class="card-text text-muted mb-0">{{ program.description }}</p>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                <p class="text-muted small mt-4 mb-0 text-center">
+                    <em>Eligibility requirements and program terms may change. Please verify current details directly with each organization.</em>
+                </p>
+            </div>
+        </div>
+    </div>
+</section>
+{% endif %}
+
 <!-- FAQ Section -->
 {% if microsite.faq %}
 <section id="faq" class="py-5">
@@ -177,6 +235,21 @@
                        class="btn btn-outline-green btn-lg">
                         Chat with AI Assistant
                     </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Disclaimer Section -->
+<section id="disclaimer" class="py-4">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <div class="disclaimer-box p-3 bg-light border rounded">
+                    <p class="text-muted small mb-0">
+                        <strong>Disclaimer:</strong> Fight Health Insurance is not affiliated with, endorsed by, or partnered with any pharmaceutical manufacturer, healthcare provider, medical device company, or patient assistance program. All information provided is for educational and informational purposes only and does not constitute medical or legal advice. Please consult with your healthcare provider regarding treatment options and with your insurance company regarding coverage decisions.
+                    </p>
                 </div>
             </div>
         </div>
@@ -244,6 +317,33 @@
 
     .evidence-snippets .card {
         border-left: 4px solid #28a745;
+    }
+
+    .alternatives-list .card {
+        border-left: 4px solid #17a2b8;
+    }
+
+    .assistance-programs-list .assistance-card {
+        border-left: 4px solid #6f42c1;
+        transition: box-shadow 0.2s ease;
+    }
+
+    .assistance-programs-list .assistance-card:hover {
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    }
+
+    .assistance-link {
+        color: #6f42c1;
+        text-decoration: none;
+    }
+
+    .assistance-link:hover {
+        color: #563d7c;
+        text-decoration: underline;
+    }
+
+    .disclaimer-box {
+        border-color: #dee2e6 !important;
     }
 
     .accordion-button:not(.collapsed) {

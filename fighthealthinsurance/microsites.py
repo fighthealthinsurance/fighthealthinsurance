@@ -31,6 +31,14 @@ class Microsite:
         self.pubmed_search_terms: list[str] = data.get("pubmed_search_terms", [])
         # Optional image URL for displaying medicine/procedure images
         self.image: Optional[str] = data.get("image")
+        # Optional alternatives section for drugs where patients might consider other options
+        # while fighting insurance denials
+        self.alternatives: list[str] = data.get("alternatives", [])
+        # Optional assistance programs (patient assistance, copay cards, etc.)
+        # Each entry should have: name, url, description
+        self.assistance_programs: list[dict[str, str]] = data.get(
+            "assistance_programs", []
+        )
 
     def __repr__(self) -> str:
         return f"<Microsite: {self.slug}>"

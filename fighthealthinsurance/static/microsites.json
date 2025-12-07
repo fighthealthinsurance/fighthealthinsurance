@@ -287,7 +287,7 @@
     "default_procedure": "Infusion Therapy",
     "tagline": "Covers IVIG, chemo, biologics, and more.",
     "hero_h1": "Appeal Your Infusion Therapy Denial",
-    "hero_subhead": "Infusion care can be life-saving — denials shouldn’t delay it.",
+    "hero_subhead": "Infusion care can be life-saving — denials shouldn't delay it.",
     "intro": "Insurers deny infusions due to cost, preferred site-of-care, or claims of \"non-medical necessity.\" A strong appeal can reverse this.",
     "common_denial_reasons": [
       "Not medically necessary",
@@ -319,6 +319,33 @@
       "infusion therapy outcomes autoimmune",
       "site-of-care infusion safety home vs hospital",
       "step therapy impact biologic treatment delays"
+    ],
+    "alternatives": [
+      "Some infused medications have subcutaneous versions that may have different coverage status.",
+      "Ask your provider about biosimilars which may be on a preferred tier with your insurer.",
+      "Home infusion vs. hospital/clinic infusion may have different coverage — discuss options with your provider."
+    ],
+    "assistance_programs": [
+      {
+        "name": "EntyvioConnect (Entyvio)",
+        "url": "https://www.entyvio.com/copay-support",
+        "description": "Eligible patients may pay as little as $5 per dose. Max $20,000/year benefit for commercial insurance."
+      },
+      {
+        "name": "Janssen CarePath (Remicade, Simponi Aria)",
+        "url": "https://www.jnjwithme.com/",
+        "description": "Copay assistance and patient assistance programs for J&J infused medications."
+      },
+      {
+        "name": "Genentech Access Solutions (Rituxan, Ocrevus)",
+        "url": "https://www.genentech-access.com/",
+        "description": "Copay assistance and patient assistance for Genentech infused therapies."
+      },
+      {
+        "name": "Immune Deficiency Foundation Resources",
+        "url": "https://primaryimmune.org/living-primary-immunodeficiency/get-support/find-other-support",
+        "description": "Comprehensive list of manufacturer programs and independent foundations for infusion assistance."
+      }
     ]
   },
   "ivig-denial": {
@@ -328,7 +355,7 @@
     "tagline": "IVIG is standard care for many autoimmune diseases — insurers still deny it.",
     "hero_h1": "Appeal Your IVIG Denial",
     "hero_subhead": "IVIG denials are extremely common — but often reversible.",
-    "intro": "IVIG denials often happen because insurers don’t understand the exact diagnostic criteria or disease progression.",
+    "intro": "IVIG denials often happen because insurers don't understand the exact diagnostic criteria or disease progression.",
     "common_denial_reasons": [
       "Insufficient documentation of autoimmune diagnosis",
       "Other treatments must be tried first",
@@ -343,11 +370,11 @@
       },
       {
         "question": "What documentation should I include for IVIG appeals?",
-        "answer": "Include lab results, biopsy findings, prior treatment history, neurologic or rheumatologic exams, and your specialist’s notes."
+        "answer": "Include lab results, biopsy findings, prior treatment history, neurologic or rheumatologic exams, and your specialist's notes."
       },
       {
         "question": "Can I appeal if they want me to try cheaper treatments again?",
-        "answer": "Yes. Your appeal can show what you’ve already tried, why it failed, and why repeating it is unlikely to help and may be harmful."
+        "answer": "Yes. Your appeal can show what you've already tried, why it failed, and why repeating it is unlikely to help and may be harmful."
       }
     ],
     "evidence_snippets": [
@@ -359,6 +386,38 @@
       "IVIG autoimmune neuropathy guidelines",
       "IVIG treatment outcomes immune thrombocytopenia",
       "evidence-based indications for intravenous immunoglobulin"
+    ],
+    "alternatives": [
+      "Subcutaneous immunoglobulin (SCIG) may be an alternative with different coverage criteria for some conditions.",
+      "For some conditions, plasma exchange may be covered differently while you appeal.",
+      "Ask your provider about different IVIG brands, as formulary coverage varies by manufacturer."
+    ],
+    "assistance_programs": [
+      {
+        "name": "Grifols Patient Assistance (Gamunex-C)",
+        "url": "https://www.gamunex-c.com/patient-resources",
+        "description": "Help with deductibles, copays, and coinsurance. Call 1-888-MYGAMUNEX (1-888-694-2686)."
+      },
+      {
+        "name": "CSL Behring Patient Support (Privigen, Hizentra)",
+        "url": "https://www.cslbehring.com/patients",
+        "description": "Patient assistance for uninsured/underinsured. Copay support for commercially insured."
+      },
+      {
+        "name": "Octapharma Copay Program (Octagam, Panzyga)",
+        "url": "https://www.octapharmausa.com/patients",
+        "description": "Eligible patients may pay as little as $0 per treatment with commercial insurance."
+      },
+      {
+        "name": "Immune Deficiency Foundation Resources",
+        "url": "https://primaryimmune.org/living-primary-immunodeficiency/get-support/find-other-support",
+        "description": "Comprehensive list of manufacturer programs and independent foundations for IVIG assistance."
+      },
+      {
+        "name": "GBS/CIDP Foundation Financial Resources",
+        "url": "https://www.gbs-cidp.org/support/resources/financial-assistance-resources/",
+        "description": "Financial assistance resources specifically for GBS and CIDP patients needing IVIG."
+      }
     ]
   },
   "biologic-denial": {
@@ -368,7 +427,7 @@
     "tagline": "Autoimmune diseases deserve real treatment — not insurance excuses.",
     "hero_h1": "Appeal Your Biologic Medication Denial",
     "hero_subhead": "Humira, Skyrizi, Stelara, Entyvio, and others are routinely denied.",
-    "intro": "Biologics for RA, Crohn’s, psoriasis and more are often denied for step therapy or \"insufficient severity.\"",
+    "intro": "Biologics for RA, Crohn's, psoriasis and more are often denied for step therapy or \"insufficient severity.\"",
     "common_denial_reasons": [
       "Must try cheaper medications first",
       "Condition not severe enough",
@@ -379,7 +438,7 @@
     "faq": [
       {
         "question": "What is \"step therapy\" and how do I fight it?",
-        "answer": "Step therapy means the insurer wants you to fail cheaper drugs first. Your appeal can show that you've already tried and failed them, or that they’re unsafe or inappropriate for you."
+        "answer": "Step therapy means the insurer wants you to fail cheaper drugs first. Your appeal can show that you've already tried and failed them, or that they're unsafe or inappropriate for you."
       },
       {
         "question": "What if my biologic is off-label for my condition?",
@@ -399,6 +458,48 @@
       "biologic therapy rheumatoid arthritis treat-to-target",
       "biologic agents inflammatory bowel disease guidelines",
       "delayed biologic treatment outcomes autoimmune"
+    ],
+    "alternatives": [
+      "While fighting your denial, ask your provider about biosimilar options which may have different coverage status.",
+      "Some conditions may respond to conventional DMARDs (like methotrexate) as a bridge while appealing.",
+      "Different biologics with similar mechanisms may have better formulary status with your insurer."
+    ],
+    "assistance_programs": [
+      {
+        "name": "myAbbVie Assist (Humira, Skyrizi, Rinvoq)",
+        "url": "https://www.abbvie.com/patients/patient-support/patient-assistance.html",
+        "description": "Free medication for qualifying uninsured/underinsured patients. Income limits apply."
+      },
+      {
+        "name": "HUMIRA Complete Savings Card",
+        "url": "https://www.humira.com/humira-complete/cost-and-copay",
+        "description": "Commercially insured patients may pay as little as $0/month. Not for government insurance."
+      },
+      {
+        "name": "Skyrizi Complete Savings Card",
+        "url": "https://www.skyrizi.com/skyrizi-complete/save-on-skyrizi-costs",
+        "description": "Eligible commercially insured patients may pay as little as $0 per dose. Max $14,000/year benefit."
+      },
+      {
+        "name": "Janssen CarePath (Stelara)",
+        "url": "https://www.jnjwithme.com/patient/stelara/cost-support/",
+        "description": "Eligible patients pay $5 per dose with commercial insurance. Patient assistance also available."
+      },
+      {
+        "name": "EntyvioConnect (Entyvio)",
+        "url": "https://www.entyvio.com/copay-support",
+        "description": "Eligible patients may pay as little as $5 per dose. Max $20,000/year benefit for commercial insurance."
+      },
+      {
+        "name": "COSENTYX Connect",
+        "url": "https://www.cosentyx.com/all/treatment-cost",
+        "description": "84% of eligible patients paid $0 out of pocket. Up to 2 years free while appealing denials."
+      },
+      {
+        "name": "Enbrel Co-Pay Program",
+        "url": "https://www.enbrel.com/support",
+        "description": "Eligible commercially insured patients may pay as little as $0 per dose."
+      }
     ]
   },
   "oxygen-therapy-denial": {
@@ -937,7 +1038,7 @@
     "intro": "Hormone therapy is essential gender-affirming care. Denials often stem from coding errors, documentation issues, or outdated requirements.",
     "common_denial_reasons": [
       "Not medically necessary",
-      "Plan claims it doesn’t cover hormone therapy",
+      "Plan claims it doesn't cover hormone therapy",
       "Missing diagnosis codes (gender dysphoria ICD-10)",
       "Duration of therapy requirements"
     ],
@@ -946,10 +1047,10 @@
     "faq": [
       {
         "question": "Do I need a specific diagnosis code for HRT coverage?",
-        "answer": "Often yes. Appeals are stronger when they clearly reference a diagnosis like gender dysphoria or gender incongruence plus your clinician’s treatment plan."
+        "answer": "Often yes. Appeals are stronger when they clearly reference a diagnosis like gender dysphoria or gender incongruence plus your clinician's treatment plan."
       },
       {
-        "question": "What if my plan says it doesn’t cover gender-affirming hormones at all?",
+        "question": "What if my plan says it doesn't cover gender-affirming hormones at all?",
         "answer": "Your appeal can argue that excluding medically necessary gender-affirming care is discriminatory and conflicts with current medical standards."
       },
       {
@@ -966,6 +1067,33 @@
       "gender affirming hormone therapy mental health outcomes",
       "endocrine society clinical practice guideline gender dysphoria",
       "transgender hormone therapy quality of life"
+    ],
+    "alternatives": [
+      "Generic formulations of estradiol and testosterone are often significantly cheaper and may have better coverage.",
+      "Different delivery methods (pills vs patches vs injections) may have different coverage status with your insurer.",
+      "GoodRx and similar discount programs can significantly reduce out-of-pocket costs for hormone prescriptions."
+    ],
+    "assistance_programs": [
+      {
+        "name": "Point of Pride HRT Access Fund",
+        "url": "https://www.pointofpride.org/hrt-access-fund",
+        "description": "Provides 18 months of HRT-related care including visits, labs, and prescriptions for qualifying trans individuals."
+      },
+      {
+        "name": "FOLX HRT Care Fund",
+        "url": "https://www.folxhealth.com/hrt-care-fund",
+        "description": "Year-long grants covering hormone therapy, clinical visits, and lab work through FOLX telehealth."
+      },
+      {
+        "name": "Plume (with Trans Lifeline discount)",
+        "url": "https://getplume.co/",
+        "description": "Telehealth HRT provider. Trans Lifeline members receive discounted rates. Accepts some insurance."
+      },
+      {
+        "name": "GoodRx Prescription Savings",
+        "url": "https://www.goodrx.com/",
+        "description": "Free discount card that can significantly reduce costs for generic estradiol and testosterone at pharmacies."
+      }
     ]
   },
   "puberty-blocker-denial": {
@@ -991,7 +1119,7 @@
       },
       {
         "question": "Do we need a mental health evaluation for coverage?",
-        "answer": "Most insurers want documentation of gender dysphoria and a mental health professional’s support. Your appeal can highlight those records."
+        "answer": "Most insurers want documentation of gender dysphoria and a mental health professional's support. Your appeal can highlight those records."
       },
       {
         "question": "Can we appeal if the plan has a blanket exclusion?",
@@ -1007,6 +1135,32 @@
       "puberty suppression gender dysphoria outcomes",
       "GnRH analogue treatment transgender youth",
       "guidelines puberty blockers gender incongruence"
+    ],
+    "alternatives": [
+      "Different GnRH analogue formulations (monthly vs. 3-month vs. implant) may have different coverage status.",
+      "Ask your provider about which specific medication has the best formulary status with your insurer."
+    ],
+    "assistance_programs": [
+      {
+        "name": "Lupron Depot-PED Copay Assistance",
+        "url": "https://www.lupronpedpro.com/",
+        "description": "Eligible commercially insured patients may pay as little as $10 per prescription. Max $4,000-$7,000/year benefit."
+      },
+      {
+        "name": "Abbott Patient Assistance Foundation (Lupron)",
+        "url": "https://www.rxassist.org/pap-info/company-detail?CmpId=1",
+        "description": "Free Lupron Depot for patients experiencing financial difficulties who meet eligibility criteria."
+      },
+      {
+        "name": "Endo Pharmaceuticals PAP (Supprelin LA)",
+        "url": "https://www.supprelinla.com/",
+        "description": "Patient assistance program providing free medication to eligible uninsured/underinsured patients."
+      },
+      {
+        "name": "Point of Pride HRT Access Fund",
+        "url": "https://www.pointofpride.org/hrt-access-fund",
+        "description": "While primarily for HRT, may assist with gender-affirming care navigation for trans youth (18+)."
+      }
     ]
   },
   "grs-denial": {

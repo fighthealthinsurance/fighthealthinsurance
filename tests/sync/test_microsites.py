@@ -233,6 +233,49 @@ class MicrositeModuleTest(TestCase):
                 self.assertIsInstance(microsite.image, str)
                 self.assertGreater(len(microsite.image), 0)
 
+    def test_microsite_has_optional_alternatives_attribute(self):
+        """Test that Microsite objects have the optional alternatives attribute."""
+        slugs = get_microsite_slugs()
+        if slugs:
+            microsite = get_microsite(slugs[0])
+            # Alternatives is optional, so it should exist as attribute but may be empty
+            self.assertTrue(hasattr(microsite, "alternatives"))
+            self.assertIsInstance(microsite.alternatives, list)
+            # If alternatives are set, they should be strings
+            for alt in microsite.alternatives:
+                self.assertIsInstance(alt, str)
+                self.assertGreater(len(alt), 0)
+
+    def test_microsite_has_optional_assistance_programs_attribute(self):
+        """Test that Microsite objects have the optional assistance_programs attribute."""
+        slugs = get_microsite_slugs()
+        if slugs:
+            microsite = get_microsite(slugs[0])
+            # Assistance programs is optional, so it should exist as attribute but may be empty
+            self.assertTrue(hasattr(microsite, "assistance_programs"))
+            self.assertIsInstance(microsite.assistance_programs, list)
+            # If programs are set, they should have required keys
+            for program in microsite.assistance_programs:
+                self.assertIsInstance(program, dict)
+                self.assertIn("name", program)
+                self.assertIn("url", program)
+                self.assertIn("description", program)
+
+    def test_biologic_denial_has_assistance_programs(self):
+        """Test that the biologic-denial microsite has assistance programs."""
+        # Use direct file loading to ensure we get fresh data
+        microsites = load_microsites_json_directly()
+        microsite = microsites.get("biologic-denial")
+        self.assertIsNotNone(microsite)
+        self.assertGreater(
+            len(microsite.assistance_programs), 0,
+            "biologic-denial microsite should have assistance programs"
+        )
+        self.assertGreater(
+            len(microsite.alternatives), 0,
+            "biologic-denial microsite should have alternatives"
+        )
+
 
 class MicrositeViewTest(TestCase):
     """Tests for the microsite landing page view."""
