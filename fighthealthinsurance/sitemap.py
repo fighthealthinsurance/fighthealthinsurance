@@ -50,6 +50,35 @@ class StaticViewSitemap(Sitemap):
         return reverse(item)
 
 
+class MicrositeSitemap(Sitemap):
+    """Sitemap for microsite landing pages."""
+
+    priority = 0.7
+    changefreq = "monthly"
+
+    def items(self) -> list[str]:
+        """Return list of microsite slugs from microsites.json."""
+        try:
+            with staticfiles_storage.open("microsites.json", "r") as f:
+                contents = f.read()
+                if not isinstance(contents, str):
+                    contents = contents.decode("utf-8")
+                data = json.loads(contents)
+            if not isinstance(data, dict):
+                return []
+            return list(data.keys())
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            logger.warning(f"Could not load microsites.json for sitemap: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"Unexpected error loading microsites for sitemap: {e}")
+            return []
+
+    def location(self, item: str) -> str:
+        """Return the URL for a microsite."""
+        return reverse("microsite", kwargs={"slug": item})
+
+
 class BlogSitemap(Sitemap):
     """Sitemap for blog posts."""
 
@@ -90,6 +119,7 @@ class BlogSitemap(Sitemap):
 sitemaps = {
     "static": StaticViewSitemap,
     "blog": BlogSitemap,
+    "microsites": MicrositeSitemap,
 }
 
 
