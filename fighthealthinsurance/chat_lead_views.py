@@ -31,13 +31,13 @@ class ChatLeadsViewSet(viewsets.GenericViewSet):
                 email = serializer.validated_data.get("email")
                 name = serializer.validated_data.get("name", "")
                 phone = serializer.validated_data.get("phone", "")
-                
+
                 defaults = {"comments": "From chat leads form"}
                 if name:
                     defaults["name"] = name
                 if phone:
                     defaults["phone"] = phone
-                
+
                 # Use get_or_create to avoid duplicate subscriptions
                 try:
                     MailingListSubscriber.objects.get_or_create(
