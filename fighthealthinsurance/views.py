@@ -890,7 +890,7 @@ class InitialProcessView(generic.FormView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        context["ocr_result"] = self.get_ocr_result() or ""
+        ocr_result = self.get_ocr_result() or ""
         context["upload_more"] = True
 
         # Capture microsite parameters from URL for display
@@ -902,6 +902,13 @@ class InitialProcessView(generic.FormView):
             context["default_procedure"] = default_procedure
             context["microsite_slug"] = microsite_slug
             context["microsite_title"] = microsite_title
+
+            # If no OCR result yet, provide default denial text for users
+            # coming from microsites who may not have a denial letter
+            if not ocr_result:
+                ocr_result = f"The patient was denied {default_procedure}."
+
+        context["ocr_result"] = ocr_result
 
         return context
 

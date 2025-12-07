@@ -309,6 +309,20 @@ class MicrositeDefaultProcedureFlowTest(TestCase):
         # Should not contain microsite-specific note
         self.assertNotContains(response, "You started from the")
 
+    def test_scan_page_prefills_denial_text_from_microsite(self):
+        """Test that the scan page prefills denial text when coming from microsite."""
+        response = self.client.get(
+            reverse("scan"),
+            {
+                "default_procedure": "MRI Scan",
+                "microsite_slug": "mri-denial",
+                "microsite_title": "Appealing MRI Denials",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        # Should contain the default denial text
+        self.assertContains(response, "The patient was denied MRI Scan.")
+
 
 class MicrositeOverrideTest(TestCase):
     """Tests verifying users can override the default procedure."""
