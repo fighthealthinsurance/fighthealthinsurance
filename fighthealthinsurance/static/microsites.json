@@ -410,7 +410,7 @@
     "hero_subhead": "COPD and pulmonary patients are denied oxygen far too often.",
     "intro": "Oxygen therapy is frequently denied over narrow testing thresholds or documentation gaps.",
     "common_denial_reasons": [
-      O2 saturation not low enough",
+      "O2 saturation not low enough",
       "Home oxygen setup not justified",
       "Equipment replacement too soon"
     ],
@@ -782,11 +782,11 @@
     "faq": [
       {
         "question": "How long do I have to be on hormones before appealing?",
-        "answer": "Insurers sometimes require a minimum hormone duration, but this should be individualized. Your appeal can explain your actual development and ongoing dysphoria."
+        "answer": "Insurers sometimes require a minimum hormone duration, but this should be individualized. Your appeal can explain your actual development and ongoing dysphoria. Many plans reference the WPATH standards of care which have changed so checking the version in your plan documents can help."
       },
       {
         "question": "Should I include photos in my appeal?",
-        "answer": "You do not have to. Most appeals focus on dysphoria, physical development, and mental health impact rather than photos."
+        "answer": "Most appeals focus on dysphoria, physical development, and mental health impact rather than photos."
       },
       {
         "question": "Can I appeal if I’m nonbinary or not fully out?",
@@ -840,7 +840,7 @@
       "Classifying medically necessary hair removal as purely cosmetic is inconsistent with contemporary guidelines for gender-affirming care."
     ],
     "pubmed_search_terms": [
-      hair removal preoperative vaginoplasty protocol",
+      "hair removal preoperative vaginoplasty protocol",
       "gender affirming hair removal mental health outcomes",
       "WPATH hair removal medical necessity transgender"
     ]
@@ -872,7 +872,7 @@
       },
       {
         "question": "Can I appeal if I’ve already started voice therapy and they won’t cover more sessions?",
-        "answer": "Yes. Your appeal can show progress made so far and why continued sessions are needed to reach safe, sustainable vocal patterns."
+          "answer": "Yes. Your appeal can show progress made so far and why continued sessions are needed to reach safe, sustainable vocal patterns. However, retroactive coverage for sessions already paid for may be more difficult to achieve if \"prior authorization\" is required."
       }
     ],
     "evidence_snippets": [
@@ -974,13 +974,13 @@
     "default_procedure": "Puberty Blockers (GnRH Analogues)",
     "tagline": "Puberty blockers are evidence-based care — insurers frequently deny them without justification.",
     "hero_h1": "Appeal Your Puberty Blocker Denial",
-    "hero_subhead": "Access to blockers is critical for trans youth — denials need strong appeals.",
+    "hero_subhead": "Access to blockers is critical for trans people — denials need strong appeals.",
     "intro": "Blockers reduce dysphoria and improve long-term outcomes. Insurers often deny them due to age, documentation, or misconceptions.",
     "common_denial_reasons": [
       "Considered experimental",
-      "Age or consent requirements",
+      "Age requirements",
       "Missing mental health documentation",
-      "Plan exclusion for gender care"
+      "Plan exclusion for gender affirming care"
     ],
     "how_we_help": "We help you align documentation with WPATH and pediatric endocrine guidelines to overturn these denials.",
     "cta": "Start your puberty blocker appeal.",
@@ -995,7 +995,7 @@
       },
       {
         "question": "Can we appeal if the plan has a blanket exclusion?",
-        "answer": "You can still appeal and argue that excluding medically necessary gender-affirming care is discriminatory and conflicts with current medical standards."
+        "answer": "You can still appeal and argue that excluding medically necessary gender-affirming care is discriminatory and conflicts with current medical standards. The success of these arguments often depends on who the plans regulator is."
       }
     ],
     "evidence_snippets": [
@@ -1023,7 +1023,7 @@
       "Genital surgery exclusions",
       "Provider out-of-network or limited network"
     ],
-    "how_we_help": "We help you document dysphoria, prior treatments, safety concerns, and WPATH SOC8 criteria to strengthen your appeal.",
+      "how_we_help": "We help you document dysphoria, prior treatments, safety concerns, and World Professional Association for Transgender Health(WPATH) Standards of Care (SOC) criteria to strengthen your appeal.",
     "cta": "Start your genital surgery appeal.",
     "faq": [
       {
@@ -1036,7 +1036,7 @@
       },
       {
         "question": "Should I discuss safety and mental health in my appeal?",
-        "answer": "Yes. Explain how surgery relates to your mental health, safety, and ability to function in daily life."
+          "answer": "This is a personal choice, but explaining how surgery relates to your mental health, safety, and ability to function in daily life can be helpful."
       }
     ],
     "evidence_snippets": [
@@ -1053,10 +1053,10 @@
   "fertility-preservation-denial": {
     "slug": "fertility-preservation-denial",
     "title": "Appealing Fertility Preservaon Denials",
-    "default_procedure": "Fertility Preservation Prior to Gender-Affirming Treatment",
+    "default_procedure": "Fertility Preservation Prior to treatment",
     "tagline": "Many insurers must cover this when medically indicated — appeals often win.",
     "hero_h1": "Appeal Your Fertility Preservation Denial",
-    "hero_subhead": "Egg or sperm preservation before gender-affirming care can be medically necessary.",
+      "hero_subhead": "Egg or sperm preservation before gender-affirming, oncology, and other care can be medically necessary.",
     "intro": "Fertility preservation is critical for many trans people before starting HRT or undergoing surgery. Insurers frequently deny coverage due to outdated or discriminatory policies.",
     "common_denial_reasons": [
       "Not medically necessary",
@@ -1077,7 +1077,7 @@
       },
       {
         "question": "Do guidelines actually support fertility counseling and preservation?",
-        "answer": "Yes. Many guidelines recommend discussing fertility options before starting treatments that can reduce fertility."
+        "answer": "Many guidelines recommend discussing fertility options before starting treatments that can reduce fertility, including HRT and oncology."
       }
     ],
     "evidence_snippets": [
@@ -1092,4 +1092,3 @@
     ]
   }
 }
-
