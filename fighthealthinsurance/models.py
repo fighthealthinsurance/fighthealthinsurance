@@ -1156,7 +1156,6 @@ class ChatLeads(ExportModelOperationsMixin("ChatLeads"), models.Model):  # type:
     session_id = models.CharField(max_length=255, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     drug = models.CharField(max_length=255, null=True, blank=True)
-    subscribe = models.BooleanField(default=True)
 
     class Meta:
         verbose_name = "Chat Lead"

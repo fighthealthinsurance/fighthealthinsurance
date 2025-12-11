@@ -27,7 +27,8 @@ class ChatLeadsViewSet(viewsets.GenericViewSet):
             chat_lead = serializer.save(session_id=str(uuid.uuid4()))
 
             # Handle mailing list subscription if requested
-            if serializer.validated_data.get("subscribe", False):
+            # Read subscribe from request data since it's not stored in the model
+            if request.data.get("subscribe", False):
                 email = serializer.validated_data.get("email")
                 name = serializer.validated_data.get("name", "")
                 phone = serializer.validated_data.get("phone", "")

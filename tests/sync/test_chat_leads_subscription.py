@@ -14,13 +14,6 @@ class ChatLeadsSubscriptionTest(TestCase):
         self.client = APIClient()
         self.url = reverse("chat-leads-list")
 
-    def test_serializer_includes_subscribe_field(self):
-        """Test that the subscribe field exists in the serializer."""
-        from fighthealthinsurance.chat_lead_serializers import ChatLeadsSerializer
-
-        serializer = ChatLeadsSerializer()
-        self.assertIn("subscribe", serializer.fields)
-
     def test_chat_lead_submission_creates_mailing_list_subscriber(self):
         """Test that submitting with subscribe=True creates a MailingListSubscriber."""
         # Initial count
@@ -98,12 +91,12 @@ class ChatLeadsSubscriptionTest(TestCase):
             ).exists()
         )
 
-    def test_chat_lead_default_subscribe_is_true(self):
-        """Test that the subscribe field defaults to True."""
+    def test_chat_lead_without_subscribe_field_does_not_create_subscriber(self):
+        """Test that omitting subscribe field does not create a MailingListSubscriber."""
         # Initial count
         initial_subscriber_count = MailingListSubscriber.objects.count()
 
-        # Submit chat lead data without subscribe field (should default to True)
+        # Submit chat lead data without subscribe field
         data = {
             "name": "Default User",
             "email": "default@example.com",
@@ -118,12 +111,12 @@ class ChatLeadsSubscriptionTest(TestCase):
         # Check that the request was successful
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
-        # Check that a subscriber was created (since default is True)
+        # Check that no subscriber was created (since subscribe was not provided)
         new_subscriber_count = MailingListSubscriber.objects.count()
-        self.assertEqual(new_subscriber_count, initial_subscriber_count + 1)
+        self.assertEqual(new_subscriber_count, initial_subscriber_count)
 
-        # Verify the subscriber was created
-        self.assertTrue(
+        # Verify no subscriber was created
+        self.assertFalse(
             MailingListSubscriber.objects.filter(email="default@example.com").exists()
         )
 
