@@ -126,7 +126,7 @@
     "default_procedure": "CPAP Machine or Supplies",
     "tagline": "Helpful for OSA patients denied CPAP devices or replacement supplies.",
     "hero_h1": "Appeal Your CPAP Denial",
-    "hero_subhead": "If you’ve been diagnosed with sleep apnea, treatment should not be optional.",
+    "hero_subhead": "Insurers often deny CPAP coverage despite your doctor's prescription.",
     "intro": "Insurers regularly deny CPAP machines and supplies, often claiming test results don't meet criteria or that compliance wasn’t proven.",
     "common_denial_reasons": [
       "Doesn’t meet AHI thresholds",
@@ -151,9 +151,9 @@
       }
     ],
     "evidence_snippets": [
-      "CPAP therapy has been shown to reduce daytime sleepiness, improve blood pressure, and lower cardiovascular risk in obstructive sleep apnea.",
-      "Adherence improves when therapy is supported rather than interrupted by coverage denials.",
-      "Providing CPAP therapy is cost-effective compared with the long-term costs of untreated sleep apnea."
+      "Medical literature supports CPAP as a standard treatment option for obstructive sleep apnea when prescribed by a physician.",
+      "Coverage continuity helps patients maintain the treatment plan their doctor has established.",
+      "Many guidelines recognize CPAP as an appropriate treatment for patients who meet clinical criteria."
     ],
     "pubmed_search_terms": [
       "CPAP therapy outcomes obstructive sleep apnea",
@@ -245,7 +245,7 @@
     "slug": "autism-therapy-denial",
     "title": "Appealing ABA Therapy Denials",
     "default_procedure": "Applied Behavior Analysis (ABA)",
-    "tagline": "ABA therapy is medically necessary for many autistic children — insurers still deny it.",
+    "tagline": "If your provider prescribed ABA therapy, we can help you appeal the denial.",
     "hero_h1": "Appeal Your ABA Therapy Denial",
     "hero_subhead": "Every child deserves appropriate care.",
     "intro": "ABA therapy is frequently denied due to cost-cutting disguised as \"not medically necessary\" or \"insufficient evidence.\" A strong appeal can fix that.",
@@ -259,7 +259,7 @@
     "faq": [
       {
         "question": "Why do insurers say ABA is \"experimental\"?",
-        "answer": "Many plans rely on outdated or selective interpretations of the evidence. In reality, ABA is widely recognized as an effective intervention for many autistic children."
+        "answer": "Many plans rely on outdated or selective interpretations of the evidence. Your appeal can cite current professional guidelines and your provider's clinical recommendations."
       },
       {
         "question": "How many therapy hours can I reasonably appeal for?",
@@ -271,9 +271,9 @@
       }
     ],
     "evidence_snippets": [
-      "ABA-based interventions have demonstrated improvements in communication, adaptive functioning, and behavior for many autistic children.",
-      "Early intensive behavioral intervention is associated with better long-term outcomes and reduced need for more intensive services later.",
-      "Coverage of ABA is consistent with recommendations from multiple professional societies."
+      "Multiple professional societies include ABA in their clinical recommendations for autism spectrum disorder.",
+      "Many state insurance mandates require coverage of ABA therapy when prescribed by a qualified provider.",
+      "Your provider's clinical judgment and treatment plan are key factors in establishing medical necessity for your appeal."
     ],
     "pubmed_search_terms": [
       "applied behavior analysis autism outcomes",
@@ -287,7 +287,7 @@
     "default_procedure": "Infusion Therapy",
     "tagline": "Covers IVIG, chemo, biologics, and more.",
     "hero_h1": "Appeal Your Infusion Therapy Denial",
-    "hero_subhead": "Infusion care can be life-saving — denials shouldn't delay it.",
+    "hero_subhead": "When your doctor orders infusion therapy, insurers shouldn't stand in the way.",
     "intro": "Insurers deny infusions due to cost, preferred site-of-care, or claims of \"non-medical necessity.\" A strong appeal can reverse this.",
     "common_denial_reasons": [
       "Not medically necessary",
@@ -352,7 +352,7 @@
     "slug": "ivig-denial",
     "title": "Appealing IVIG Denials",
     "default_procedure": "IVIG Infusion",
-    "tagline": "IVIG is standard care for many autoimmune diseases — insurers still deny it.",
+    "tagline": "IVIG denials are common but often successfully appealed with proper documentation.",
     "hero_h1": "Appeal Your IVIG Denial",
     "hero_subhead": "IVIG denials are extremely common — but often reversible.",
     "intro": "IVIG denials often happen because insurers don't understand the exact diagnostic criteria or disease progression.",
@@ -378,8 +378,8 @@
       }
     ],
     "evidence_snippets": [
-      "IVIG is an established therapy for multiple autoimmune and neuromuscular disorders with guideline support.",
-      "Delaying indicated IVIG therapy can lead to irreversible neurologic deficits or organ damage.",
+      "Professional medical guidelines include IVIG as a treatment option for various conditions when prescribed by a specialist.",
+      "Your specialist's documentation of diagnosis and treatment rationale is essential for a successful appeal.",
       "Coverage determinations should follow disease-specific criteria rather than blanket cost-based denials."
     ],
     "pubmed_search_terms": [
@@ -424,7 +424,7 @@
     "slug": "biologic-denial",
     "title": "Appealing Biologic Medication Denials",
     "default_procedure": "Biologic Medication",
-    "tagline": "Autoimmune diseases deserve real treatment — not insurance excuses.",
+    "tagline": "Help appealing biologic denials for conditions like RA, Crohn's, and psoriasis.",
     "hero_h1": "Appeal Your Biologic Medication Denial",
     "hero_subhead": "Humira, Skyrizi, Stelara, Entyvio, and others are routinely denied.",
     "intro": "Biologics for RA, Crohn's, psoriasis and more are often denied for step therapy or \"insufficient severity.\"",
@@ -450,9 +450,9 @@
       }
     ],
     "evidence_snippets": [
-      "Biologic therapies have been shown to induce remission and prevent progression in many autoimmune diseases.",
-      "Treat-to-target strategies recommend escalation to biologics when conventional therapies fail.",
-      "Delaying appropriate biologic therapy can lead to irreversible joint or organ damage and higher long-term costs."
+      "Professional guidelines include biologics as treatment options for various autoimmune conditions when prescribed by a specialist.",
+      "Your rheumatologist, gastroenterologist, or dermatologist's treatment plan is key evidence for your appeal.",
+      "Documentation of prior treatment attempts and their outcomes strengthens appeals for biologic coverage."
     ],
     "pubmed_search_terms": [
       "biologic therapy rheumatoid arthritis treat-to-target",
@@ -506,7 +506,7 @@
     "slug": "oxygen-therapy-denial",
     "title": "Appealing Oxygen Therapy Denials",
     "default_procedure": "Home Oxygen Therapy",
-    "tagline": "Breathing is not optional.",
+    "tagline": "Help appealing oxygen therapy denials when your doctor has prescribed it.",
     "hero_h1": "Appeal Your Oxygen Therapy Denial",
     "hero_subhead": "COPD and pulmonary patients are denied oxygen far too often.",
     "intro": "Oxygen therapy is frequently denied over narrow testing thresholds or documentation gaps.",
@@ -532,9 +532,9 @@
       }
     ],
     "evidence_snippets": [
-      "Long-term oxygen therapy improves survival in selected patients with chronic hypoxemia.",
-      "Without oxygen, patients with advanced lung disease may experience increased hospitalizations and reduced quality of life.",
-      "Decisions about oxygen therapy should incorporate functional impairment and documented desaturation, not just resting values."
+      "Your pulmonologist's prescription and clinical documentation are the foundation of a strong appeal.",
+      "Medical guidelines support oxygen therapy for patients who meet specific clinical criteria determined by their physician.",
+      "Coverage decisions should consider your physician's assessment of functional impairment and documented test results."
     ],
     "pubmed_search_terms": [
       "long term oxygen therapy survival COPD",
@@ -666,7 +666,7 @@
     "slug": "pain-management-denial",
     "title": "Appealing Pain Management Denials",
     "default_procedure": "Pain Management Treatment",
-    "tagline": "Injections, ablations, and nerve blocks aren’t optional.",
+    "tagline": "Help appealing denials for pain procedures your doctor has recommended.",
     "hero_h1": "Appeal Your Pain Management Treatment Denial",
     "hero_subhead": "Pain care gets denied constantly — we can help reverse that.",
     "intro": "Pain treatments get denied because insurers love to call them \"experimental\" or require weeks of PT first.",
@@ -736,7 +736,7 @@
       "High-risk pregnancies often require more frequent imaging or testing than uncomplicated pregnancies.",
       "Coverage should reflect obstetric guidelines and individualized risk factors, not a fixed number of visits or scans."
     ],
-    "pubmed_sear_terms": [
+    "pubmed_search_terms": [
       "prenatal care outcomes maternal neonatal",
       "high risk pregnancy ultrasound frequency guidelines",
       "antenatal testing evidence-based recommendations"
@@ -786,10 +786,10 @@
     "slug": "ffs-denial",
     "title": "Appealing Facial Feminization Surgery (FFS) Denials",
     "default_procedure": "Facial Feminization Surgery (FFS)",
-    "tagline": "FFS is medically necessary gender-affirming care — not cosmetic.",
+    "tagline": "Insurers often incorrectly classify FFS as cosmetic — appeals can change that.",
     "hero_h1": "Appeal Your FFS Denial",
-    "hero_subhead": "FFS drastically reduces gender dysphoria and improves safety — insurers often deny it incorrectly as \"cosmetic.\"",
-    "intro": "FFS is one of the most life-changing gender-affirming procedures, but insurers frequently deny it by misclassifying it as cosmetic. Appeals succeed when they clearly document dysphoria, clinical necessity, and WPATH-aligned recommendations.",
+    "hero_subhead": "Insurers often deny FFS incorrectly as \"cosmetic\" — your appeal can address this.",
+    "intro": "FFS is frequently denied by insurers who misclassify it as cosmetic. Appeals succeed when they clearly document your diagnosis, your provider's clinical recommendations, and alignment with WPATH standards.",
     "common_denial_reasons": [
       "Incorrectly deemed cosmetic",
       "Insufficient documentation of gender dysphoria",
@@ -813,9 +813,9 @@
       }
     ],
     "evidence_snippets": [
-      "Studies show that facial gender-affirming surgery significantly reduces gender dysphoria and improves quality of life.",
-      "FFS can reduce harassment, misgendering, and violence risk by aligning facial features with gender identity.",
-      "Professional guidelines increasingly recognize facial procedures as medically necessary components of gender-affirming care."
+      "Your provider's documentation of diagnosis and treatment recommendations is essential for your appeal.",
+      "WPATH Standards of Care address facial gender-affirming procedures as part of comprehensive care.",
+      "Professional guidelines can be cited in appeals to counter insurer claims that FFS is purely cosmetic."
     ],
     "pubmed_search_terms": [
       "facial feminization surgery quality of life gender dysphoria",
@@ -827,10 +827,10 @@
     "slug": "top-surgery-masc-denial",
     "title": "Appealing Transmasculine Top Surgery Denials",
     "default_procedure": "Chest Reconstruction (Top Surgery)",
-    "tagline": "Top surgery is medically necessary and supported by WPATH — insurers still deny it wrongfully.",
+    "tagline": "If your provider recommended top surgery, we can help you appeal the denial.",
     "hero_h1": "Appeal Your Top Surgery Denial",
     "hero_subhead": "Insurers often demand outdated or unnecessary requirements — we help you push back.",
-    "intro": "Top surgery is essential gender-affirming care that reduces dysphoria, improves daily function, and lowers safety risks. Denials typically rely on outdated guidelines or incorrect criteria.",
+    "intro": "Top surgery denials typically rely on outdated guidelines or incorrect criteria. A strong appeal focuses on your provider's recommendations and alignment with current standards of care.",
     "common_denial_reasons": [
       "Not medically necessary",
       "BMI requirements or arbitrary weight rules",
@@ -854,9 +854,9 @@
       }
     ],
     "evidence_snippets": [
-      "Gender-affirming chest surgery is associated with large reductions in gender dysphoria and improvements in mental health.",
-      "Top surgery can relieve physical harms from long-term binding, including pain and respiratory issues.",
-      "Professional guidelines recognize chest reconstruction as medically necessary for many transmasculine and nonbinary patients."
+      "Your provider's documentation and letters supporting the surgery are the foundation of a strong appeal.",
+      "WPATH Standards of Care can be cited in appeals to counter arbitrary insurer requirements.",
+      "Professional guidelines address criteria for chest reconstruction that your appeal can reference."
     ],
     "pubmed_search_terms": [
       "gender affirming chest surgery mental health outcomes",
@@ -1032,10 +1032,10 @@
     "slug": "hrt-denial",
     "title": "Appealing Hormone Therapy (HRT) Denials",
     "default_procedure": "Gender-Affirming Hormone Therapy",
-    "tagline": "HRT is standard, medically necessary care — insurers should cover it.",
+    "tagline": "When your doctor prescribes hormone therapy, denials can often be appealed.",
     "hero_h1": "Appeal Your Hormone Therapy Denial",
     "hero_subhead": "Denials often rely on outdated guidelines or incorrect coding.",
-    "intro": "Hormone therapy is essential gender-affirming care. Denials often stem from coding errors, documentation issues, or outdated requirements.",
+    "intro": "Hormone therapy denials often stem from coding errors, documentation issues, or outdated insurer requirements. A well-documented appeal can address these issues.",
     "common_denial_reasons": [
       "Not medically necessary",
       "Plan claims it doesn't cover hormone therapy",
@@ -1059,9 +1059,9 @@
       }
     ],
     "evidence_snippets": [
-      "Gender-affirming hormone therapy significantly reduces gender dysphoria and improves mental health outcomes.",
-      "Major medical organizations endorse HRT as medically necessary for many transgender and nonbinary people.",
-      "Discontinuity or denial of HRT is associated with higher levels of distress and healthcare utilization."
+      "Your provider's prescription and documentation are the foundation of a strong HRT appeal.",
+      "WPATH and Endocrine Society guidelines can be cited in appeals to support your provider's treatment plan.",
+      "Proper diagnosis coding (ICD-10) is often key to successful hormone therapy appeals."
     ],
     "pubmed_search_terms": [
       "gender affirming hormone therapy mental health outcomes",
@@ -1100,10 +1100,10 @@
     "slug": "puberty-blocker-denial",
     "title": "Appealing Puberty Blocker Denials",
     "default_procedure": "Puberty Blockers (GnRH Analogues)",
-    "tagline": "Puberty blockers are evidence-based care — insurers frequently deny them without justification.",
+    "tagline": "When your provider prescribes puberty blockers, denials can often be appealed.",
     "hero_h1": "Appeal Your Puberty Blocker Denial",
-    "hero_subhead": "Access to blockers is critical for trans people — denials need strong appeals.",
-    "intro": "Blockers reduce dysphoria and improve long-term outcomes. Insurers often deny them due to age, documentation, or misconceptions.",
+    "hero_subhead": "Puberty blocker denials often require strong appeals with proper documentation.",
+    "intro": "Insurers often deny puberty blockers due to age requirements, documentation issues, or outdated policies. Your appeal should focus on your provider's recommendations and clinical guidelines.",
     "common_denial_reasons": [
       "Considered experimental",
       "Age requirements",
@@ -1127,9 +1127,9 @@
       }
     ],
     "evidence_snippets": [
-      "Puberty blockers can reduce distress by pausing unwanted pubertal changes and allowing time for exploration and informed decision-making.",
-      "Use of GnRH analogues for gender dysphoria is supported by professional guidelines when carefully monitored.",
-      "Early intervention with blockers can reduce future need for more invasive procedures and associated distress."
+      "Your provider's documentation and treatment plan are essential for a successful puberty blocker appeal.",
+      "Professional guidelines from WPATH and pediatric endocrine societies can be cited in your appeal.",
+      "GnRH analogues have been used for decades for various conditions and are included in clinical guidelines."
     ],
     "pubmed_search_terms": [
       "puberty suppression gender dysphoria outcomes",
@@ -1167,10 +1167,10 @@
     "slug": "grs-denial",
     "title": "Appealing Gender-Affirming Genital Surgery Denials",
     "default_procedure": "Gender-Affirming Genital Surgery (GRS)",
-    "tagline": "Vaginoplasty, phalloplasty, and metoidioplasty are medically necessary surgeries.",
+    "tagline": "When your provider recommends genital surgery, denials can often be appealed.",
     "hero_h1": "Appeal Your Genital Surgery Denial",
     "hero_subhead": "Insurers deny GRS using outdated, incorrect, or discriminatory criteria.",
-    "intro": "Gender-affirming genital surgeries are medically necessary for many trans people. Insurers frequently deny coverage based on obsolete guidelines or arbitrary requirements.",
+    "intro": "Insurers frequently deny gender-affirming genital surgery coverage based on obsolete guidelines or arbitrary requirements. A strong appeal focuses on your provider's recommendations and WPATH criteria.",
     "common_denial_reasons": [
       "Considered cosmetic or elective",
       "Insufficient therapy letters",
@@ -1194,9 +1194,9 @@
       }
     ],
     "evidence_snippets": [
-      "Gender-affirming genital surgery is associated with high satisfaction rates and significant reductions in gender dysphoria.",
-      "Studies show improvements in mental health, quality of life, and sexual functioning following genital reconstruction.",
-      "Major medical organizations recognize genital surgery as medically necessary for many transgender individuals."
+      "Your surgeon's and mental health provider's documentation are essential for a successful GRS appeal.",
+      "WPATH Standards of Care criteria can be cited in appeals to counter arbitrary insurer requirements.",
+      "Professional medical organization positions can be referenced to counter claims that GRS is elective or cosmetic."
     ],
     "pubmed_search_terms": [
       "gender affirming genital surgery outcomes quality of life",

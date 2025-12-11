@@ -6,7 +6,6 @@ Tests that:
 2. All microsites have required fields with valid data
 3. The microsite route loads correctly
 4. The default procedure is passed through the appeal flow
-5. Users can still override the default procedure
 """
 
 import json
@@ -25,22 +24,60 @@ from fighthealthinsurance.microsites import (
 )
 
 
+# Define the valid schema keys for microsites
+REQUIRED_MICROSITE_KEYS = {
+    "slug",
+    "title",
+    "default_procedure",
+    "tagline",
+    "hero_h1",
+    "hero_subhead",
+    "intro",
+    "common_denial_reasons",
+    "how_we_help",
+    "cta",
+    "faq",
+    "evidence_snippets",
+    "pubmed_search_terms",
+}
+
+OPTIONAL_MICROSITE_KEYS = {
+    "image",
+    "alternatives",
+    "assistance_programs",
+}
+
+ALL_VALID_MICROSITE_KEYS = REQUIRED_MICROSITE_KEYS | OPTIONAL_MICROSITE_KEYS
+
+
+def get_microsites_json_path():
+    """Get the path to microsites.json."""
+    current_dir = Path(__file__).parent
+    project_root = current_dir.parent.parent
+    return project_root / "fighthealthinsurance" / "static" / "microsites.json"
+
+
+def load_microsites_json_raw():
+    """Load microsites.json as raw dict for schema validation.
+
+    Returns the raw JSON data without converting to Microsite objects.
+    """
+    json_path = get_microsites_json_path()
+
+    if not json_path.exists():
+        return {}
+
+    with open(json_path, "r") as f:
+        return json.load(f)
+
+
 def load_microsites_json_directly():
     """Load microsites.json directly from the file system for testing.
 
     This bypasses Django's staticfiles storage which may not be available
     in all test environments.
     """
-    # Find the project root and load the JSON file directly
-    current_dir = Path(__file__).parent
-    project_root = current_dir.parent.parent
-    json_path = project_root / "fighthealthinsurance" / "static" / "microsites.json"
-
-    if not json_path.exists():
-        return {}
-
-    with open(json_path, "r") as f:
-        data = json.load(f)
+    data = load_microsites_json_raw()
 
     # Convert to Microsite objects like the module does
     microsites = {}
@@ -178,6 +215,39 @@ class MicrositeJSONValidationTest(TestCase):
                 slug, self.microsites,
                 f"Expected microsite '{slug}' to be defined in microsites.json"
             )
+
+    def test_no_unexpected_keys_in_microsites(self):
+        """Test that microsites.json contains no unexpected/typo keys.
+
+        This catches typos like 'pubmed_sear_terms' instead of 'pubmed_search_terms'.
+        """
+        raw_data = load_microsites_json_raw()
+        errors = []
+
+        for slug, microsite_data in raw_data.items():
+            unexpected_keys = set(microsite_data.keys()) - ALL_VALID_MICROSITE_KEYS
+            if unexpected_keys:
+                errors.append(
+                    f"Microsite '{slug}' has unexpected keys: {unexpected_keys}"
+                )
+
+        if errors:
+            self.fail("\n".join(errors))
+
+    def test_all_required_keys_present(self):
+        """Test that all microsites have all required keys."""
+        raw_data = load_microsites_json_raw()
+        errors = []
+
+        for slug, microsite_data in raw_data.items():
+            missing_keys = REQUIRED_MICROSITE_KEYS - set(microsite_data.keys())
+            if missing_keys:
+                errors.append(
+                    f"Microsite '{slug}' is missing required keys: {missing_keys}"
+                )
+
+        if errors:
+            self.fail("\n".join(errors))
 
 
 class MicrositeModuleTest(TestCase):
@@ -423,13 +493,6 @@ class MicrositeOverrideTest(TestCase):
         # The form should be rendered with the procedure field
         self.assertContains(response, 'name="procedure"')
 
-    def test_user_can_submit_different_procedure(self):
-        """Test that user can submit a different procedure than the default."""
-        # The form should accept any procedure value, not just the default
-        # This is implicitly tested by the form not having the field locked
-        # The actual form submission would require a more complex integration test
-        pass
-
 
 class MicrositeSpecificTest(TestCase):
     """Tests for specific microsites defined in microsites.json."""
@@ -440,12 +503,20 @@ class MicrositeSpecificTest(TestCase):
     def test_mri_denial_microsite_loads(self):
         """Test that the MRI denial microsite loads correctly."""
         response = self.client.get(reverse("microsite", kwargs={"slug": "mri-denial"}))
-        # May be 200 or 404 depending on if microsites.json is available in staticfiles
-        self.assertIn(response.status_code, [200, 404])
+        self.assertEqual(
+            response.status_code,
+            200,
+            "MRI denial microsite should load successfully. "
+            "If this fails, ensure microsites.json is available to Django's staticfiles."
+        )
 
     def test_ct_scan_denial_microsite_loads(self):
         """Test that the CT scan denial microsite loads correctly."""
         response = self.client.get(
             reverse("microsite", kwargs={"slug": "ct-scan-denial"})
         )
-        self.assertIn(response.status_code, [200, 404])
+        self.assertEqual(
+            response.status_code,
+            200,
+            "CT scan denial microsite should load successfully."
+        )
