@@ -3,9 +3,12 @@ Microsite definitions for Fight Health Insurance.
 
 This module loads microsite configurations from the static microsites.json file
 and provides helper functions for accessing microsite data.
+
+Microsites are cached in memory after first load for performance.
 """
 
 import json
+from functools import lru_cache
 from typing import Any, Optional
 
 from django.contrib.staticfiles.storage import staticfiles_storage
@@ -44,12 +47,13 @@ class Microsite:
         return f"<Microsite: {self.slug}>"
 
 
-def load_microsites() -> dict[str, Microsite]:
+@lru_cache(maxsize=1)
+def _load_microsites_cached() -> tuple[tuple[str, Microsite], ...]:
     """
     Load microsite definitions from the static microsites.json file.
 
-    Returns:
-        Dictionary mapping slug to Microsite object
+    Returns a tuple of tuples for hashability (required by lru_cache).
+    Use load_microsites() to get a dict instead.
     """
     try:
         with staticfiles_storage.open("microsites.json", "r") as f:
@@ -58,20 +62,32 @@ def load_microsites() -> dict[str, Microsite]:
                 contents = contents.decode("utf-8")
             data = json.loads(contents)
 
-        microsites = {}
+        microsites = []
         for slug, microsite_data in data.items():
-            microsites[slug] = Microsite(microsite_data)
+            microsites.append((slug, Microsite(microsite_data)))
 
-        return microsites
+        return tuple(microsites)
     except FileNotFoundError:
         logger.warning("microsites.json not found in static files")
-        return {}
+        return ()
     except json.JSONDecodeError as e:
         logger.error(f"Error parsing microsites.json: {e}")
-        return {}
+        return ()
     except Exception as e:
         logger.error(f"Unexpected error loading microsites: {e}")
-        return {}
+        return ()
+
+
+def load_microsites() -> dict[str, Microsite]:
+    """
+    Load microsite definitions from the static microsites.json file.
+
+    Results are cached in memory after first load.
+
+    Returns:
+        Dictionary mapping slug to Microsite object
+    """
+    return dict(_load_microsites_cached())
 
 
 def get_microsite(slug: str) -> Optional[Microsite]:
