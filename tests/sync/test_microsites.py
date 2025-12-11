@@ -9,7 +9,7 @@ Tests that:
 """
 
 import json
-import os
+
 from pathlib import Path
 
 from django.test import TestCase, Client
