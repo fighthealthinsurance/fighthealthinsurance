@@ -20,13 +20,13 @@
                     <h1 class="hero-headline">{{ microsite.hero_h1 }}</h1>
                     <p class="hero-subcopy">{{ microsite.hero_subhead }}</p>
                     <div class="hero-cta-group">
-                        <a href="{% url 'scan' %}?default_procedure={{ microsite.default_procedure|urlencode }}&microsite_slug={{ microsite.slug|urlencode }}&microsite_title={{ microsite.title|urlencode }}"
+                        <a href="{% url 'scan' %}?default_procedure={{ microsite.default_procedure|urlencode }}&microsite_slug={{ microsite.slug|urlencode }}&microsite_title={{ microsite.title|urlencode }}{% if microsite.default_condition %}&default_condition={{ microsite.default_condition|urlencode }}{% endif %}"
                            class="section-btn btn btn-default smoothScroll primary-cta">
                             Start Your Appeal
                         </a>
                     </div>
                     <div class="hero-cta-group hero-cta-secondary">
-                        <a href="{% url 'chat' %}?default_procedure={{ microsite.default_procedure|urlencode }}"
+                        <a href="{% url 'chat' %}?default_procedure={{ microsite.default_procedure|urlencode }}{% if microsite.default_condition %}&default_condition={{ microsite.default_condition|urlencode }}{% endif %}"
                            class="btn btn-outline-green smoothScroll secondary-cta">
                             AI Chat
                         </a>
@@ -89,7 +89,7 @@
                 <h2 class="mb-4">How We Help</h2>
                 <p class="lead">{{ microsite.how_we_help }}</p>
                 <div class="mt-4">
-                    <a href="{% url 'scan' %}?default_procedure={{ microsite.default_procedure|urlencode }}&microsite_slug={{ microsite.slug|urlencode }}&microsite_title={{ microsite.title|urlencode }}"
+                    <a href="{% url 'scan' %}?default_procedure={{ microsite.default_procedure|urlencode }}&microsite_slug={{ microsite.slug|urlencode }}&microsite_title={{ microsite.title|urlencode }}{% if microsite.default_condition %}&default_condition={{ microsite.default_condition|urlencode }}{% endif %}"
                        class="btn btn-green btn-lg">
                         {{ microsite.cta }}
                     </a>
@@ -227,11 +227,11 @@
                 <h2 class="mb-3">Ready to Fight Your {{ microsite.default_procedure }} Denial?</h2>
                 <p class="lead mb-4">Our free AI-powered tool will help you generate a compelling appeal letter in minutes.</p>
                 <div class="d-flex justify-content-center gap-3 flex-wrap">
-                    <a href="{% url 'scan' %}?default_procedure={{ microsite.default_procedure|urlencode }}&microsite_slug={{ microsite.slug|urlencode }}&microsite_title={{ microsite.title|urlencode }}"
+                    <a href="{% url 'scan' %}?default_procedure={{ microsite.default_procedure|urlencode }}&microsite_slug={{ microsite.slug|urlencode }}&microsite_title={{ microsite.title|urlencode }}{% if microsite.default_condition %}&default_condition={{ microsite.default_condition|urlencode }}{% endif %}"
                        class="btn btn-green btn-lg">
                         Start Your Appeal
                     </a>
-                    <a href="{% url 'chat' %}?default_procedure={{ microsite.default_procedure|urlencode }}"
+                    <a href="{% url 'chat' %}?default_procedure={{ microsite.default_procedure|urlencode }}{% if microsite.default_condition %}&default_condition={{ microsite.default_condition|urlencode }}{% endif %}"
                        class="btn btn-outline-green btn-lg">
                         Chat with AI Assistant
                     </a>

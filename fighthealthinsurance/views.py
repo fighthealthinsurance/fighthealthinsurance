@@ -895,18 +895,25 @@ class InitialProcessView(generic.FormView):
 
         # Capture microsite parameters from URL for display
         default_procedure = self.request.GET.get("default_procedure", "")
+        default_condition = self.request.GET.get("default_condition", "")
         microsite_slug = self.request.GET.get("microsite_slug", "")
         microsite_title = self.request.GET.get("microsite_title", "")
 
-        if default_procedure:
+        if default_procedure or default_condition:
             context["default_procedure"] = default_procedure
+            context["default_condition"] = default_condition
             context["microsite_slug"] = microsite_slug
             context["microsite_title"] = microsite_title
 
             # If no OCR result yet, provide default denial text for users
             # coming from microsites who may not have a denial letter
             if not ocr_result:
-                ocr_result = f"The patient was denied {default_procedure}."
+                if default_procedure and default_condition:
+                    ocr_result = f"The patient with {default_condition} was denied {default_procedure}."
+                elif default_procedure:
+                    ocr_result = f"The patient was denied {default_procedure}."
+                elif default_condition:
+                    ocr_result = f"The patient with {default_condition} was denied treatment."
 
         context["ocr_result"] = ocr_result
 
@@ -959,6 +966,9 @@ class InitialProcessView(generic.FormView):
         default_procedure = self.request.POST.get(
             "default_procedure"
         ) or self.request.GET.get("default_procedure", "")
+        default_condition = self.request.POST.get(
+            "default_condition"
+        ) or self.request.GET.get("default_condition", "")
         microsite_slug = self.request.POST.get(
             "microsite_slug"
         ) or self.request.GET.get("microsite_slug", "")
@@ -966,8 +976,9 @@ class InitialProcessView(generic.FormView):
             "microsite_title"
         ) or self.request.GET.get("microsite_title", "")
 
-        if default_procedure:
+        if default_procedure or default_condition:
             self.request.session["default_procedure"] = default_procedure
+            self.request.session["default_condition"] = default_condition
             self.request.session["microsite_slug"] = microsite_slug
             self.request.session["microsite_title"] = microsite_title
 
@@ -1425,13 +1436,15 @@ def chat_interface_view(request):
         )
         return redirect("chat_consent")
 
-    # Check for default_procedure from microsite URL param
+    # Check for default_procedure and default_condition from microsite URL params
     default_procedure = request.GET.get("default_procedure", "")
+    default_condition = request.GET.get("default_condition", "")
 
     context = {
         "title": "Chat with FightHealthInsurance",
         "email": email,
         "default_procedure": default_procedure,
+        "default_condition": default_condition,
     }
     logger.debug(f"Rendering chat interface with context: {context}")
     return render(request, "chat_interface.html", context)

@@ -45,6 +45,7 @@ OPTIONAL_MICROSITE_KEYS = {
     "image",
     "alternatives",
     "assistance_programs",
+    "default_condition",
 }
 
 ALL_VALID_MICROSITE_KEYS = REQUIRED_MICROSITE_KEYS | OPTIONAL_MICROSITE_KEYS

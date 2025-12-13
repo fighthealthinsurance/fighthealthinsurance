@@ -22,6 +22,10 @@ class Microsite:
         self.slug: str = data.get("slug", "")
         self.title: str = data.get("title", "")
         self.default_procedure: str = data.get("default_procedure", "")
+        # Optional condition (e.g., "Asthma", "Migraine", "Transgender")
+        # Some microsites are condition-focused (transgender), others are
+        # procedure-focused (MRI), and some have both (FFS for transgender)
+        self.default_condition: Optional[str] = data.get("default_condition")
         self.tagline: str = data.get("tagline", "")
         self.hero_h1: str = data.get("hero_h1", "")
         self.hero_subhead: str = data.get("hero_subhead", "")
