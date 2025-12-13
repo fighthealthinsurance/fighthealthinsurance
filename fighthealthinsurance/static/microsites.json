@@ -2150,6 +2150,7 @@
     "slug": "migraine-med-denial-emgality",
     "title": "Appealing Emgality (Galcanezumab) Denials",
     "default_procedure": "Emgality for Migraine Prevention",
+    "default_condition": "Migraine",
     "tagline": "Chronic migraines are often under treated by insurance.",
     "hero_h1": "Appeal Your Emgality Denial",
     "hero_subhead": "If chronic migraine is disabling you, denying Emgality is not acceptable.",
@@ -2181,12 +2182,25 @@
       "galcanezumab Emgality chronic migraine randomized",
       "CGRP monoclonal antibody migraine prevention",
       "migraine disability reduction CGRP therapy"
+    ],
+    "assistance_programs": [
+      {
+        "name": "Emgality Savings Card",
+        "url": "https://www.emgality.lilly.com/savings-support",
+        "description": "Pay as little as $0/month for up to 12 months with commercial insurance. Max $4,900/year savings."
+      },
+      {
+        "name": "Lilly Cares Foundation",
+        "url": "https://www.lillycares.com/",
+        "description": "Free medication for qualifying patients without commercial insurance and with low income, including some Medicare Part D patients."
+      }
     ]
   },
   "migraine-med-denial-aimovig": {
     "slug": "migraine-med-denial-aimovig",
     "title": "Appealing Aimovig (Erenumab) Denials",
     "default_procedure": "Aimovig for Migraine Prevention",
+    "default_condition": "Migraine",
     "tagline": "Step therapy shouldn't stop you from accessing the care you need.",
     "hero_h1": "Appeal Your Aimovig Denial",
     "hero_subhead": "Aimovig may be appropriate when multiple older preventives have failed.",
@@ -2218,12 +2232,30 @@
       "erenumab Aimovig migraine randomized controlled",
       "CGRP receptor antagonist migraine prevention",
       "long term safety erenumab migraine"
+    ],
+    "assistance_programs": [
+      {
+        "name": "Aimovig Copay Card",
+        "url": "https://www.aimovig.com/paying-for-aimovig",
+        "description": "Pay as little as $5/month with commercial insurance. Up to $3,500 annual benefit."
+      },
+      {
+        "name": "Aimovig Bridge Program",
+        "url": "https://www.aimovigcopaycard.com/enroll",
+        "description": "Free Aimovig for up to 12 doses while insurance coverage is pending."
+      },
+      {
+        "name": "Amgen Safety Net Foundation",
+        "url": "https://www.amgensafetynetfoundation.com/",
+        "description": "Free medication for qualifying uninsured patients or those whose insurance excludes Aimovig."
+      }
     ]
   },
   "migraine-med-denial-ajovy": {
     "slug": "migraine-med-denial-ajovy",
     "title": "Appealing Ajovy (Fremanezumab) Denials",
     "default_procedure": "Ajovy for Migraine Prevention",
+    "default_condition": "Migraine",
     "tagline": "Monthly or quarterly dosing can simplify life with migraine.",
     "hero_h1": "Appeal Your Ajovy Denial",
     "hero_subhead": "Ajovy is one of several CGRP antibodies—appeals can justify why it’s the right one for you.",
@@ -2255,12 +2287,25 @@
       "fremanezumab Ajovy episodic chronic migraine trial",
       "CGRP monoclonal antibody migraine quarterly dosing",
       "migraine guideline CGRP monoclonal antibody fremanezumab"
+    ],
+    "assistance_programs": [
+      {
+        "name": "Ajovy Savings Offer",
+        "url": "https://www.ajovy.com/savings",
+        "description": "Pay as little as $15 per prescription with commercial insurance. Annual limits apply."
+      },
+      {
+        "name": "Teva Cares Foundation",
+        "url": "https://www.tevacares.org/",
+        "description": "Free medication for qualifying uninsured or underinsured patients meeting income criteria."
+      }
     ]
   },
   "migraine-med-denial-nurtec": {
     "slug": "migraine-med-denial-nurtec",
     "title": "Appealing Nurtec ODT (Rimegepant) Denials",
     "default_procedure": "Nurtec ODT for Acute and Preventive Migraine Treatment",
+    "default_condition": "Migraine",
     "tagline": "Medication for both stopping and helping prevent migraine attacks.",
     "hero_h1": "Appeal Your Nurtec Denial",
     "hero_subhead": "Nurtec is often denied on cost grounds or strict quantity limits.",
@@ -2292,12 +2337,25 @@
       "rimegepant Nurtec acute migraine randomized",
       "rimegepant preventive migraine dosing trial",
       "gepant therapy migraine triptan contraindication"
+    ],
+    "assistance_programs": [
+      {
+        "name": "Nurtec ODT Copay Card",
+        "url": "https://www.nurtec.com/savings",
+        "description": "Pay as little as $0 for a 30-day supply with commercial insurance. Max $7,000/year benefit."
+      },
+      {
+        "name": "Pfizer Patient Assistance Program",
+        "url": "https://www.pfizerrxpathways.com/",
+        "description": "Free medication for qualifying patients at or below 300% federal poverty level."
+      }
     ]
   },
   "migraine-med-denial-ubrelvy": {
     "slug": "migraine-med-denial-ubrelvy",
     "title": "Appealing Ubrelvy (Ubrogepant) Denials",
     "default_procedure": "Ubrelvy for Acute Migraine Treatment",
+    "default_condition": "Migraine",
     "tagline": "When triptans are not an option, gepants can be crucial.",
     "hero_h1": "Appeal Your Ubrelvy Denial",
     "hero_subhead": "Ubrelvy is often denied or heavily restricted, but appeals frequently succeed.",
@@ -2329,6 +2387,18 @@
       "ubrogepant Ubrelvy acute migraine randomized",
       "gepant acute migraine cardiovascular risk",
       "ubrogepant efficacy safety migraine treatment"
+    ],
+    "assistance_programs": [
+      {
+        "name": "Ubrelvy Savings Card",
+        "url": "https://www.ubrelvy.com/savings",
+        "description": "Pay as little as $0/month with commercial insurance. Up to 13 fills per year."
+      },
+      {
+        "name": "myAbbVie Assist",
+        "url": "https://www.abbvie.com/patients/patient-assistance.html",
+        "description": "Free medication for qualifying patients who have difficulty paying for their medicine."
+      }
     ]
   },
 
