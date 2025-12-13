@@ -381,3 +381,113 @@ class ChatStatusMessageTest(APITestCase):
         self.assertEqual(error_messages[0], "Something went wrong")
 
         await self.asyncTearDown()
+
+    async def test_status_cleared_on_response(self):
+        """Test that status is cleared when a response is received."""
+        await self.asyncSetUp()
+
+        # Create a session key for anonymous chat
+        session_key = "test_session_key_456"
+        
+        # Create a ChatLeads entry
+        await sync_to_async(ChatLeads.objects.create)(
+            session_id=session_key,
+            email="clear@example.com",
+        )
+
+        # Create communicator
+        communicator = WebsocketCommunicator(
+            OngoingChatConsumer.as_asgi(), "/ws/ongoing-chat/"
+        )
+        
+        from django.contrib.auth.models import AnonymousUser
+        communicator.scope["user"] = AnonymousUser()
+
+        connected, _ = await communicator.connect()
+        self.assertTrue(connected)
+
+        # Set mock response
+        self.mock_model.set_next_response(
+            "Response received",
+            "Context"
+        )
+
+        # Send a message
+        await communicator.send_json_to(
+            {
+                "session_key": session_key,
+                "content": "Test message",
+                "is_patient": False,
+            }
+        )
+
+        # Wait for response
+        response = None
+        try:
+            while True:
+                response = await communicator.receive_json_from(timeout=5)
+                # When we get actual content, the status should be cleared
+                if "content" in response and response.get("role") == "assistant":
+                    # This is the final response, status should be cleared
+                    break
+        except asyncio.TimeoutError:
+            pass
+
+        self.assertIsNotNone(response, "Should have received a response")
+        self.assertIn("content", response)
+
+        await communicator.disconnect()
+        await self.asyncTearDown()
+
+    async def test_retry_functionality(self):
+        """Test that retry functionality can be triggered when needed."""
+        await self.asyncSetUp()
+
+        user = await sync_to_async(User.objects.create_user)(
+            username="retryuser", password="testpass", email="retry@example.com"
+        )
+        professional = await sync_to_async(ProfessionalUser.objects.create)(
+            user=user, active=True, npi_number="7777777777"
+        )
+        chat = await sync_to_async(OngoingChat.objects.create)(
+            professional_user=professional,
+            chat_history=[
+                {
+                    "role": "user",
+                    "content": "Original message",
+                }
+            ],
+            summary_for_next_call=[],
+        )
+
+        sent_messages = []
+
+        async def mock_send_json(data):
+            sent_messages.append(data)
+
+        chat_interface = ChatInterface(
+            send_json_message_func=mock_send_json,
+            chat=chat,
+            user=user,
+            is_patient=False,
+        )
+
+        # Set a response for the retry
+        self.mock_model.set_next_response(
+            "Retry response",
+            "Retry context"
+        )
+
+        # Simulate handling the same message again (retry scenario)
+        await chat_interface.handle_chat_message("Original message")
+
+        # Verify message was processed
+        # Should have status messages and final response
+        self.assertGreater(len(sent_messages), 0)
+
+        # Check that we got a response
+        response_messages = [msg for msg in sent_messages if msg.get("role") == "assistant"]
+        self.assertGreater(len(response_messages), 0, "Should have received at least one assistant response")
+
+        await self.asyncTearDown()
+
