@@ -166,7 +166,7 @@ class MLCitationsHelper:
                         microsite = get_microsite(denial.microsite_slug)
                         if microsite and microsite.evidence_snippets:
                             logger.debug(f"Adding {len(microsite.evidence_snippets)} microsite evidence snippets")
-                            result = result + microsite.evidence_snippets
+                            result.extend(microsite.evidence_snippets)
                     except Exception as e:
                         logger.opt(exception=True).warning(f"Failed to load microsite evidence snippets: {e}")
                 
@@ -237,7 +237,7 @@ class MLCitationsHelper:
                         microsite = get_microsite(denial.microsite_slug)
                         if microsite and microsite.evidence_snippets:
                             logger.debug(f"Adding {len(microsite.evidence_snippets)} microsite evidence snippets to generated citations")
-                            result = result + microsite.evidence_snippets
+                            result.extend(microsite.evidence_snippets)
                     except Exception as e:
                         logger.opt(exception=True).warning(f"Failed to load microsite evidence snippets: {e}")
 
