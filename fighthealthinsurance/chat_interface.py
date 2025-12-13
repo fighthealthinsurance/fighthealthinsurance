@@ -184,7 +184,7 @@ class ChatInterface:
         response_text, context_part = await best_within_timelimit(
             calls,
             score_fn,
-            timeout=50.0,
+            timeout=30.0,
         )
 
         response_text = response_text or ""
