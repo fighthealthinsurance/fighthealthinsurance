@@ -21,21 +21,14 @@ from fighthealthinsurance.microsites import (
     get_all_microsites,
     get_microsite_slugs,
     Microsite,
+    REQUIRED_MICROSITE_KEYS,
 )
 
 
-# Define the valid schema keys for microsites
-REQUIRED_MICROSITE_KEYS = {
-    "slug",
-    "title",
-    "default_procedure",
-    "tagline",
-    "hero_h1",
-    "hero_subhead",
-    "intro",
+# Keys that are optional but commonly present in microsites
+# These have sensible defaults (empty lists) in the Microsite class
+COMMON_LIST_KEYS = {
     "common_denial_reasons",
-    "how_we_help",
-    "cta",
     "faq",
     "evidence_snippets",
     "pubmed_search_terms",
@@ -48,7 +41,8 @@ OPTIONAL_MICROSITE_KEYS = {
     "default_condition",
 }
 
-ALL_VALID_MICROSITE_KEYS = REQUIRED_MICROSITE_KEYS | OPTIONAL_MICROSITE_KEYS
+# All valid keys that can appear in a microsite JSON entry
+ALL_VALID_MICROSITE_KEYS = REQUIRED_MICROSITE_KEYS | COMMON_LIST_KEYS | OPTIONAL_MICROSITE_KEYS
 
 
 def get_microsites_json_path():

@@ -15,32 +15,66 @@ from django.contrib.staticfiles.storage import staticfiles_storage
 from loguru import logger
 
 
+class MicrositeValidationError(ValueError):
+    """Raised when a microsite configuration is invalid."""
+
+    pass
+
+
+# Required keys that must be present in every microsite
+REQUIRED_MICROSITE_KEYS = {
+    "slug",
+    "title",
+    "default_procedure",
+    "tagline",
+    "hero_h1",
+    "hero_subhead",
+    "intro",
+    "how_we_help",
+    "cta",
+}
+
+
 class Microsite:
     """Represents a microsite configuration."""
 
     def __init__(self, data: dict[str, Any]):
-        self.slug: str = data.get("slug", "")
-        self.title: str = data.get("title", "")
-        self.default_procedure: str = data.get("default_procedure", "")
-        # Optional condition (e.g., "Asthma", "Migraine", "Transgender")
-        # Some microsites are condition-focused (transgender), others are
-        # procedure-focused (MRI), and some have both (FFS for transgender)
+        # Validate required keys are present
+        missing_keys = REQUIRED_MICROSITE_KEYS - set(data.keys())
+        if missing_keys:
+            raise MicrositeValidationError(
+                f"Microsite '{data.get('slug', '<unknown>')}' missing required keys: {missing_keys}"
+            )
+
+        # Required fields - will raise KeyError if missing (shouldn't happen after validation)
+        self.slug: str = data["slug"]
+        self.title: str = data["title"]
+        self.default_procedure: str = data["default_procedure"]
+        self.tagline: str = data["tagline"]
+        self.hero_h1: str = data["hero_h1"]
+        self.hero_subhead: str = data["hero_subhead"]
+        self.intro: str = data["intro"]
+        self.how_we_help: str = data["how_we_help"]
+        self.cta: str = data["cta"]
+
+        # Optional condition (e.g., "Asthma", "Migraine", "Gender Dysphoria")
+        # Some microsites are condition-focused, others are procedure-focused,
+        # and some have both (FFS for Gender Dysphoria)
         self.default_condition: Optional[str] = data.get("default_condition")
-        self.tagline: str = data.get("tagline", "")
-        self.hero_h1: str = data.get("hero_h1", "")
-        self.hero_subhead: str = data.get("hero_subhead", "")
-        self.intro: str = data.get("intro", "")
+
+        # Optional lists with sensible defaults
         self.common_denial_reasons: list[str] = data.get("common_denial_reasons", [])
-        self.how_we_help: str = data.get("how_we_help", "")
-        self.cta: str = data.get("cta", "")
         self.faq: list[dict[str, str]] = data.get("faq", [])
         self.evidence_snippets: list[str] = data.get("evidence_snippets", [])
         self.pubmed_search_terms: list[str] = data.get("pubmed_search_terms", [])
+
         # Optional image URL for displaying medicine/procedure images
         self.image: Optional[str] = data.get("image")
-        # Optional alternatives section for drugs where patients might consider other options
-        # while fighting insurance denials
+
+        # Optional alternatives section for drugs where patients might consider
+        # other options while fighting insurance denials
         self.alternatives: list[str] = data.get("alternatives", [])
+
         # Optional assistance programs (patient assistance, copay cards, etc.)
         # Each entry should have: name, url, description
         self.assistance_programs: list[dict[str, str]] = data.get(
@@ -58,6 +92,9 @@ def _load_microsites_cached() -> tuple[tuple[str, Microsite], ...]:
 
     Returns a tuple of tuples for hashability (required by lru_cache).
     Use load_microsites() to get a dict instead.
+
+    Never raises exceptions to avoid breaking startup - logs errors and returns
+    empty tuple on failure.
     """
     try:
         with staticfiles_storage.open("microsites.json", "r") as f:
@@ -66,19 +103,36 @@ def _load_microsites_cached() -> tuple[tuple[str, Microsite], ...]:
                 contents = contents.decode("utf-8")
             data = json.loads(contents)
 
+        # Validate that parsed JSON is a dict
+        if not isinstance(data, dict):
+            logger.error(
+                f"microsites.json has invalid shape: expected dict, got {type(data).__name__}"
+            )
+            return ()
+
         microsites = []
         for slug, microsite_data in data.items():
-            microsites.append((slug, Microsite(microsite_data)))
+            # Validate each microsite entry is a dict
+            if not isinstance(microsite_data, dict):
+                logger.error(
+                    f"Microsite '{slug}' has invalid shape: expected dict, got {type(microsite_data).__name__}"
+                )
+                continue
+            try:
+                microsites.append((slug, Microsite(microsite_data)))
+            except MicrositeValidationError:
+                logger.exception(f"Validation error for microsite '{slug}'")
+                continue
 
         return tuple(microsites)
     except FileNotFoundError:
         logger.warning("microsites.json not found in static files")
         return ()
-    except json.JSONDecodeError as e:
-        logger.error(f"Error parsing microsites.json: {e}")
+    except json.JSONDecodeError:
+        logger.exception("Error parsing microsites.json")
         return ()
-    except Exception as e:
-        logger.error(f"Unexpected error loading microsites: {e}")
+    except Exception:
+        logger.exception("Unexpected error loading microsites")
         return ()
 
 
