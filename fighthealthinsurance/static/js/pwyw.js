@@ -42,7 +42,10 @@
             headers: {
               'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ amount: amt })
+            body: JSON.stringify({ 
+              amount: amt,
+              return_url: window.location.pathname + window.location.search
+            })
           });
 
           const data = await response.json();

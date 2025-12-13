@@ -9,6 +9,13 @@ Follow Up On Your Health Insurance Appeal
 {% block scriptmagic %}
 {% endblock scriptmagic %}
 {% block content %}
+{% if request.GET.donation == 'success' %}
+<div style="background:#e3f2fd; padding:1.5rem; border-radius:8px; margin:1.5rem 0; border-left:4px solid #2196f3;">
+  <h3 style="margin:0 0 0.5rem 0; color:#1565c0;">🎉 Thank You for Supporting Us!</h3>
+  <p style="margin:0;">Your support helps us continue to help others fight their health insurance denials. We really appreciate it!</p>
+</div>
+{% endif %}
+
 <h2>Provide Feedback on your Fight Health Insurance Process</h2>
 <p>Thank you so much for taking the time to let us know a bit about how your experience using fight health insurance went. The most important things for us to know are:
 </p>
