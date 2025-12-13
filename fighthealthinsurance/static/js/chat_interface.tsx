@@ -309,9 +309,10 @@ const restorePersonalInfo = (message: string, userInfo: UserInfo): string => {
 
 interface ChatInterfaceProps {
   defaultProcedure?: string;
+  defaultCondition?: string;
 }
 
-const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure }) => {
+const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, defaultCondition }) => {
   // State for our chat interface
   const [state, setState] = useState<ChatState>({
     messages: [],
@@ -406,10 +407,18 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure }) => {
           if (defaultProcedure && !hasSentInitialMessage.current) {
             hasSentInitialMessage.current = true;
             console.log("Sending initial message for procedure:", defaultProcedure);
+            if (defaultCondition) {
+              console.log("Default condition from microsite:", defaultCondition);
+            }
 
             // Small delay to ensure welcome message is displayed first
             setTimeout(() => {
-              const initialMessage = `I'm working on an appeal for ${defaultProcedure}. Can you help me understand what I need to do?`;
+              // Build initial message with procedure and optionally condition
+              let initialMessage = `I'm working on an appeal for ${defaultProcedure}`;
+              if (defaultCondition) {
+                initialMessage += ` for ${defaultCondition}`;
+              }
+              initialMessage += `. Can you help me understand what I need to do?`;
 
               // Add the user message to the UI
               const userMessage: ChatMessage = {
@@ -1021,16 +1030,20 @@ document.addEventListener("DOMContentLoaded", () => {
   if (chatRoot) {
     console.log("Chat interface root element found");
 
-    // Get default procedure from data attribute (from microsite)
+    // Get default procedure and condition from data attributes (from microsite)
     const defaultProcedure = chatRoot.dataset.defaultProcedure || undefined;
+    const defaultCondition = chatRoot.dataset.defaultCondition || undefined;
     if (defaultProcedure) {
       console.log("Default procedure from microsite:", defaultProcedure);
+    }
+    if (defaultCondition) {
+      console.log("Default condition from microsite:", defaultCondition);
     }
 
     const root = createRoot(chatRoot);
     root.render(
       <MantineProvider>
-        <ChatInterface defaultProcedure={defaultProcedure} />
+        <ChatInterface defaultProcedure={defaultProcedure} defaultCondition={defaultCondition} />
       </MantineProvider>,
     );
   } else {
