@@ -118,6 +118,8 @@ interface ChatState {
   isProcessingFile: boolean;
   showPWYW: boolean;
   messageCount: number;
+  statusMessage: string | null;
+  requestStartTime: number | null;
 }
 
 interface UserInfo {
@@ -131,22 +133,64 @@ interface UserInfo {
   acceptedTerms: boolean;
 }
 
-// Typing animation component for loading state
-const TypingAnimation: React.FC = () => {
+// Typing animation component for loading state with elapsed time
+const TypingAnimation: React.FC<{ startTime?: number | null }> = ({ startTime }) => {
   const [dots, setDots] = useState(".");
+  const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => {
-    const interval = setInterval(() => {
+    const dotsInterval = setInterval(() => {
       setDots((prevDots) => {
         if (prevDots.length >= 3) return ".";
         return prevDots + ".";
       });
     }, 500);
 
-    return () => clearInterval(interval);
+    return () => clearInterval(dotsInterval);
   }, []);
 
-  return <span style={{ marginLeft: 4 }}>Typing{dots}</span>;
+  useEffect(() => {
+    if (!startTime) return;
+
+    const updateElapsed = () => {
+      const now = Date.now();
+      const elapsedSeconds = Math.floor((now - startTime) / 1000);
+      setElapsed(elapsedSeconds);
+    };
+
+    // Update immediately
+    updateElapsed();
+
+    // Update every second
+    const elapsedInterval = setInterval(updateElapsed, 1000);
+
+    return () => clearInterval(elapsedInterval);
+  }, [startTime]);
+
+  const getStatusMessage = () => {
+    if (!startTime) return null;
+    
+    if (elapsed < 45) {
+      return `Most responses come in 45 seconds${elapsed > 0 ? ` (${elapsed}s elapsed)` : ""}`;
+    } else if (elapsed < 360) {
+      return `Still working on your response... Some can take up to 6 minutes (${elapsed}s elapsed)`;
+    } else {
+      return `This is taking longer than expected (${elapsed}s elapsed). You can try resending your message.`;
+    }
+  };
+
+  const statusMsg = getStatusMessage();
+
+  return (
+    <Box>
+      <span style={{ marginLeft: 4 }}>Typing{dots}</span>
+      {statusMsg && (
+        <MantineText size="xs" c="dimmed" mt="xs" style={{ fontStyle: "italic" }}>
+          {statusMsg}
+        </MantineText>
+      )}
+    </Box>
+  );
 };
 
 // Get a session key or use an existing one from localStorage
@@ -323,6 +367,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
     isProcessingFile: false,
     showPWYW: false,
     messageCount: 0,
+    statusMessage: null,
+    requestStartTime: null,
   });
 
   // Track if we've sent the initial procedure message
@@ -432,6 +478,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
                 ...prev,
                 messages: [...prev.messages, userMessage],
                 isLoading: true,
+                requestStartTime: Date.now(),
               }));
 
               // Get user info for scrubbing
@@ -523,12 +570,15 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
               },
             ],
             isLoading: false,
+            requestStartTime: null, // Clear the timer when we get a response
+            statusMessage: null,
           }));
         } else if (data.status) {
           // This is a status update (typing, etc.)
           setState((prev) => ({
             ...prev,
             isLoading: true,
+            statusMessage: data.status,
           }));
         }
       };
@@ -586,6 +636,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
           ...prev,
           messages: [...prev.messages, userMessage],
           isLoading: true,
+          requestStartTime: Date.now(),
         }));
 
         // Get user info for scrubbing
@@ -644,6 +695,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
       messages: [...prev.messages, userMessage],
       input: "",
       isLoading: true,
+      requestStartTime: Date.now(), // Track when the request started
+      statusMessage: null,
     }));
 
     // Scrub personal information before sending
@@ -657,6 +710,45 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
       email: userInfo?.email, // Include email for server-side processing
       content: scrubbedContent,
       is_patient: true, // This is for the patient-facing version
+      session_key: getSessionKey(),
+    };
+
+    wsRef.current.send(JSON.stringify(messageToSend));
+  };
+
+  // Handle retrying the last message
+  const handleRetryLastMessage = () => {
+    if (!wsRef.current || state.isLoading) return;
+
+    // Find the last user message
+    const lastUserMessage = [...state.messages]
+      .reverse()
+      .find((msg) => msg.role === "user");
+
+    if (!lastUserMessage) return;
+
+    // Get user info for scrubbing
+    const userInfo = getUserInfo();
+
+    setState((prev) => ({
+      ...prev,
+      isLoading: true,
+      requestStartTime: Date.now(),
+      statusMessage: null,
+      error: null,
+    }));
+
+    // Scrub personal information before sending
+    const scrubbedContent = userInfo
+      ? scrubPersonalInfo(lastUserMessage.content, userInfo)
+      : lastUserMessage.content;
+
+    // Send the message to the server
+    const messageToSend = {
+      chat_id: state.chatId,
+      email: userInfo?.email,
+      content: scrubbedContent,
+      is_patient: true,
       session_key: getSessionKey(),
     };
 
@@ -687,6 +779,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
       isProcessingFile: false,
       showPWYW: false,
       messageCount: 0,
+      statusMessage: null,
+      requestStartTime: null,
     });
 
     // Handle WebSocket for a new chat
@@ -751,7 +845,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
               {isUser ? "You" : "FightHealthInsurance Assistant"}
             </MantineText>
             {message.status === "typing" ? (
-              <TypingAnimation />
+              <TypingAnimation startTime={state.requestStartTime} />
             ) : (
               <ReactMarkdown>{message.content}</ReactMarkdown>
             )}
@@ -889,8 +983,23 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
                   </MantineText>
                 </Flex>
                 <Box mt="xs">
-                  <TypingAnimation />
+                  <TypingAnimation startTime={state.requestStartTime} />
                 </Box>
+                {state.requestStartTime && Date.now() - state.requestStartTime > 60000 && (
+                  <Box mt="sm">
+                    <Button
+                      size="xs"
+                      onClick={handleRetryLastMessage}
+                      style={{
+                        ...THEME.buttonSharedStyles,
+                        borderRadius: THEME.borderRadius.buttonDefault,
+                      }}
+                      leftSection={<IconRefresh size={13} />}
+                    >
+                      Retry
+                    </Button>
+                  </Box>
+                )}
               </Paper>
             )}
 
