@@ -1446,12 +1446,14 @@ def chat_interface_view(request):
     # Check for default_procedure and default_condition from microsite URL params
     default_procedure = request.GET.get("default_procedure", "")
     default_condition = request.GET.get("default_condition", "")
+    microsite_slug = request.GET.get("microsite_slug", "")
 
     context = {
         "title": "Chat with FightHealthInsurance",
         "email": email,
         "default_procedure": default_procedure,
         "default_condition": default_condition,
+        "microsite_slug": microsite_slug,
     }
     logger.debug(f"Rendering chat interface with context: {context}")
     return render(request, "chat_interface.html", context)

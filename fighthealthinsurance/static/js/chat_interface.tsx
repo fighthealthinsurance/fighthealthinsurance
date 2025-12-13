@@ -310,9 +310,10 @@ const restorePersonalInfo = (message: string, userInfo: UserInfo): string => {
 interface ChatInterfaceProps {
   defaultProcedure?: string;
   defaultCondition?: string;
+  micrositeSlug?: string;
 }
 
-const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, defaultCondition }) => {
+const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, defaultCondition, micrositeSlug }) => {
   // State for our chat interface
   const [state, setState] = useState<ChatState>({
     messages: [],
@@ -1033,17 +1034,21 @@ document.addEventListener("DOMContentLoaded", () => {
     // Get default procedure and condition from data attributes (from microsite)
     const defaultProcedure = chatRoot.dataset.defaultProcedure || undefined;
     const defaultCondition = chatRoot.dataset.defaultCondition || undefined;
+    const micrositeSlug = chatRoot.dataset.micrositeSlug || undefined;
     if (defaultProcedure) {
       console.log("Default procedure from microsite:", defaultProcedure);
     }
     if (defaultCondition) {
       console.log("Default condition from microsite:", defaultCondition);
     }
+    if (micrositeSlug) {
+      console.log("Microsite slug:", micrositeSlug);
+    }
 
     const root = createRoot(chatRoot);
     root.render(
       <MantineProvider>
-        <ChatInterface defaultProcedure={defaultProcedure} defaultCondition={defaultCondition} />
+        <ChatInterface defaultProcedure={defaultProcedure} defaultCondition={defaultCondition} micrositeSlug={micrositeSlug} />
       </MantineProvider>,
     );
   } else {
