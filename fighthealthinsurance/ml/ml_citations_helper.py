@@ -7,6 +7,7 @@ from fighthealthinsurance.utils import (
     best_within_timelimit,
 )
 from fighthealthinsurance.ml.ml_router import ml_router
+from fighthealthinsurance.microsites import get_microsite
 
 
 class MLCitationsHelper:
@@ -162,7 +163,6 @@ class MLCitationsHelper:
                 # Add microsite evidence snippets if available
                 if denial and denial.microsite_slug:
                     try:
-                        from fighthealthinsurance.microsites import get_microsite
                         microsite = get_microsite(denial.microsite_slug)
                         if microsite and microsite.evidence_snippets:
                             logger.debug(f"Adding {len(microsite.evidence_snippets)} microsite evidence snippets")
@@ -192,7 +192,6 @@ class MLCitationsHelper:
                 # Even without backends, check for microsite evidence snippets
                 if denial and denial.microsite_slug:
                     try:
-                        from fighthealthinsurance.microsites import get_microsite
                         microsite = get_microsite(denial.microsite_slug)
                         if microsite and microsite.evidence_snippets:
                             logger.debug(f"Returning {len(microsite.evidence_snippets)} microsite evidence snippets (no backends)")
@@ -235,7 +234,6 @@ class MLCitationsHelper:
                 # Add microsite evidence snippets if available
                 if denial and denial.microsite_slug:
                     try:
-                        from fighthealthinsurance.microsites import get_microsite
                         microsite = get_microsite(denial.microsite_slug)
                         if microsite and microsite.evidence_snippets:
                             logger.debug(f"Adding {len(microsite.evidence_snippets)} microsite evidence snippets to generated citations")

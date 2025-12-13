@@ -5,6 +5,7 @@ from fighthealthinsurance.models import (
 )
 from asgiref.sync import sync_to_async, async_to_sync
 from fighthealthinsurance.utils import pubmed_fetcher
+from fighthealthinsurance.microsites import get_microsite
 from .utils import markdown_escape
 from concurrent.futures import Future
 from metapub import FindIt
@@ -140,7 +141,6 @@ class PubMedTools(object):
                 # Add microsite pubmed search terms if available
                 if denial.microsite_slug:
                     try:
-                        from fighthealthinsurance.microsites import get_microsite
                         microsite = get_microsite(denial.microsite_slug)
                         if microsite and microsite.pubmed_search_terms:
                             logger.debug(f"Adding {len(microsite.pubmed_search_terms)} microsite search terms for {denial.microsite_slug}")
