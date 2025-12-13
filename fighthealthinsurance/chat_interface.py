@@ -842,12 +842,16 @@ class ChatInterface:
                     microsite = get_microsite(chat.microsite_slug)
                     if microsite and microsite.pubmed_search_terms:
                         logger.info(f"Triggering PubMed searches for microsite {chat.microsite_slug}")
-                        await self.send_status_message(f"Searching medical literature for {microsite.default_procedure}...")
+                        # Sanitize the procedure name for display
+                        safe_procedure = str(microsite.default_procedure)[:100]  # Limit length
+                        await self.send_status_message(f"Searching medical literature for {safe_procedure}...")
                         
                         # Trigger PubMed searches for each search term
                         for search_term in microsite.pubmed_search_terms[:3]:  # Limit to first 3 to avoid overwhelming
                             try:
-                                await self.send_status_message(f"Searching: {search_term[:50]}...")
+                                # Sanitize search term for display
+                                safe_search_term = str(search_term)[:50]
+                                await self.send_status_message(f"Searching: {safe_search_term}...")
                                 articles = await self.pubmed_tools.find_pubmed_article_ids_for_query(
                                     search_term, since="2020"
                                 )

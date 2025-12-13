@@ -510,9 +510,12 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                     raise OngoingChat.DoesNotExist("User mismatch")
                 
                 # Update microsite_slug if provided and not already set
+                # Only save on first message to avoid excessive database writes
                 if microsite_slug and not chat.microsite_slug:
+                    await OngoingChat.objects.filter(id=chat.id).aupdate(
+                        microsite_slug=microsite_slug
+                    )
                     chat.microsite_slug = microsite_slug
-                    await sync_to_async(chat.save)()
                 
                 return chat
             except OngoingChat.DoesNotExist as e:
