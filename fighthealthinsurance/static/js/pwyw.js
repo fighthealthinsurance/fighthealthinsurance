@@ -37,6 +37,9 @@
           submitBtn.disabled = true;
           submitBtn.textContent = 'Processing...';
 
+          // Get current URL without hash
+          const returnUrl = window.location.pathname + window.location.search;
+
           const response = await fetch('/v0/pwyw/checkout', {
             method: 'POST',
             headers: {
@@ -44,7 +47,7 @@
             },
             body: JSON.stringify({ 
               amount: amt,
-              return_url: window.location.pathname + window.location.search
+              return_url: returnUrl
             })
           });
 

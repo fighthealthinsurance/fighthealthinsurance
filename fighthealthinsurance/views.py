@@ -4,6 +4,7 @@ import os
 import re
 import typing
 from typing import TypedDict
+from urllib.parse import urlparse
 
 from django import forms
 from django.conf import settings
@@ -1502,7 +1503,6 @@ def create_pwyw_checkout(request):
         return_url = data.get("return_url", "/")
 
         # Validate return_url to prevent open redirect
-        from urllib.parse import urlparse
         parsed = urlparse(return_url)
         # Only allow relative URLs or URLs from the same host
         if parsed.netloc and parsed.netloc != request.get_host():
