@@ -310,9 +310,10 @@ const restorePersonalInfo = (message: string, userInfo: UserInfo): string => {
 interface ChatInterfaceProps {
   defaultProcedure?: string;
   defaultCondition?: string;
+  medicare?: string;
 }
 
-const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, defaultCondition }) => {
+const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, defaultCondition, medicare }) => {
   // State for our chat interface
   const [state, setState] = useState<ChatState>({
     messages: [],
@@ -410,6 +411,9 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
             if (defaultCondition) {
               console.log("Default condition from microsite:", defaultCondition);
             }
+            if (medicare) {
+              console.log("Medicare flag set:", medicare);
+            }
 
             // Small delay to ensure welcome message is displayed first
             setTimeout(() => {
@@ -417,6 +421,9 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
               let initialMessage = `I'm working on an appeal for ${defaultProcedure}`;
               if (defaultCondition) {
                 initialMessage += ` for ${defaultCondition}`;
+              }
+              if (medicare === "true") {
+                initialMessage += ` through Medicare`;
               }
               initialMessage += `. Can you help me understand what I need to do?`;
 
@@ -1033,17 +1040,21 @@ document.addEventListener("DOMContentLoaded", () => {
     // Get default procedure and condition from data attributes (from microsite)
     const defaultProcedure = chatRoot.dataset.defaultProcedure || undefined;
     const defaultCondition = chatRoot.dataset.defaultCondition || undefined;
+    const medicare = chatRoot.dataset.medicare || undefined;
     if (defaultProcedure) {
       console.log("Default procedure from microsite:", defaultProcedure);
     }
     if (defaultCondition) {
       console.log("Default condition from microsite:", defaultCondition);
     }
+    if (medicare) {
+      console.log("Medicare flag from microsite:", medicare);
+    }
 
     const root = createRoot(chatRoot);
     root.render(
       <MantineProvider>
-        <ChatInterface defaultProcedure={defaultProcedure} defaultCondition={defaultCondition} />
+        <ChatInterface defaultProcedure={defaultProcedure} defaultCondition={defaultCondition} medicare={medicare} />
       </MantineProvider>,
     );
   } else {

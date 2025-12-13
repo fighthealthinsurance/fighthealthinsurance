@@ -81,6 +81,9 @@ class Microsite:
             "assistance_programs", []
         )
 
+        # Optional Medicare flag to indicate Medicare-specific content
+        self.medicare: bool = data.get("medicare", False)
+
     def __repr__(self) -> str:
         return f"<Microsite: {self.slug}>"
 

@@ -1896,7 +1896,6 @@
       "anti-obesity medication cardiometabolic outcomes"
     ]
   },
-
   "asthma-biologic-denial-dupilumab": {
     "slug": "asthma-biologic-denial-dupilumab",
     "title": "Appealing Dupixent (Dupilumab) Asthma Denials",
@@ -2008,7 +2007,6 @@
       "eosinophilic asthma biologic guideline mepolizumab"
     ]
   },
-
   "eczema-biologic-denial-dupilumab": {
     "slug": "eczema-biologic-denial-dupilumab",
     "title": "Appealing Dupixent (Dupilumab) Eczema Denials",
@@ -2083,7 +2081,6 @@
       "systemic therapy refractory atopic dermatitis upadacitinib"
     ]
   },
-
   "migraine-med-denial-emgality": {
     "slug": "migraine-med-denial-emgality",
     "title": "Appealing Emgality (Galcanezumab) Denials",
@@ -2269,7 +2266,6 @@
       "ubrogepant efficacy safety migraine treatment"
     ]
   },
-
   "insulin-pump-cgm-denial-dexcom": {
     "slug": "insulin-pump-cgm-denial-dexcom",
     "title": "Appealing Dexcom CGM Denials",
@@ -2448,7 +2444,6 @@
       }
     ]
   },
-
   "doxy-pep-denial": {
     "slug": "doxy-pep-denial",
     "title": "Appealing Doxy-PEP (Doxycycline Post-Exposure Prophylaxis) Denials",
@@ -2539,5 +2534,56 @@
       "home pneumatic compression lymphedema coverage criteria conservative therapy",
       "head and neck lymphedema Flexitouch Plus clinical outcomes"
     ]
+  },
+  "medicare-work-requirements": {
+    "slug": "medicare-work-requirements",
+    "title": "Understanding Medicare Work Requirements",
+    "default_procedure": "Medicare Services",
+    "tagline": "Navigating Medicare work requirements and appealing service denials.",
+    "hero_h1": "Understanding Medicare Work Requirements",
+    "hero_subhead": "Learn about Medicare coverage requirements and how to appeal denials.",
+    "intro": "Medicare has specific requirements and documentation needs for coverage. Whether you are facing denials for medical services, equipment, or treatments, understanding Medicare work requirements can help you successfully appeal and get the coverage you deserve.",
+    "common_denial_reasons": [
+      "Service deemed not medically necessary",
+      "Lack of proper prior authorization",
+      "Insufficient documentation from provider",
+      "Service not covered by Medicare Part A, B, or D",
+      "Out-of-network provider used"
+    ],
+    "how_we_help": "We help you understand Medicare coverage requirements, document medical necessity, and create compelling appeal letters that address Medicare-specific criteria and regulations.",
+    "cta": "Get help with your Medicare appeal",
+    "faq": [
+      {
+        "question": "What are the different parts of Medicare?",
+        "answer": "Medicare Part A covers hospital stays and inpatient care. Part B covers doctor visits and outpatient services. Part C (Medicare Advantage) is an alternative to Original Medicare. Part D covers prescription drugs. Each part has different coverage rules and appeal processes."
+      },
+      {
+        "question": "How long do I have to file a Medicare appeal?",
+        "answer": "Generally, you have 60 days from the date on your Medicare Summary Notice (MSN) or denial letter to file an appeal. The appeal process has multiple levels, and it is important to act quickly to preserve your appeal rights."
+      },
+      {
+        "question": "What documentation do I need for a Medicare appeal?",
+        "answer": "You typically need the denial letter or MSN, medical records supporting medical necessity, your doctor's notes and recommendations, any test results or diagnostic reports, and a clear explanation of why the service should be covered under Medicare rules."
+      },
+      {
+        "question": "Can I get help from my doctor for my Medicare appeal?",
+        "answer": "Yes. A letter from your doctor explaining medical necessity and why the service meets Medicare coverage criteria is often critical for a successful appeal. Your doctor can also provide supporting medical records and test results."
+      },
+      {
+        "question": "What if Medicare says my service is not medically necessary?",
+        "answer": "You can appeal by providing evidence that the service meets Medicare's definition of medically necessary care. This often includes medical guidelines, your specific condition and symptoms, and your doctor's clinical judgment about why the service is needed."
+      }
+    ],
+    "evidence_snippets": [
+      "Medicare coverage decisions must follow national and local coverage determinations (NCDs and LCDs) and be based on medical necessity.",
+      "Beneficiaries have the right to appeal Medicare coverage denials through a multi-level administrative appeals process.",
+      "Proper documentation from healthcare providers is essential for demonstrating that services meet Medicare coverage criteria."
+    ],
+    "pubmed_search_terms": [
+      "Medicare coverage criteria medical necessity",
+      "Medicare appeals process outcomes",
+      "Medicare beneficiary rights coverage denials"
+    ],
+    "medicare": true
   }
 }

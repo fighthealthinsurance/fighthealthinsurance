@@ -9,6 +9,6 @@
     <p style="margin:0;">You're chatting about {% if default_procedure %}<strong>{{ default_procedure }}</strong>{% endif %}{% if default_procedure and default_condition %} for {% endif %}{% if default_condition %}<strong>{{ default_condition }}</strong>{% endif %}. Feel free to ask any questions about appealing your denial.</p>
 </div>
 {% endif %}
-<div id="chat-interface-root" data-default-procedure="{{ default_procedure|default:'' }}" data-default-condition="{{ default_condition|default:'' }}"></div>
+<div id="chat-interface-root" data-default-procedure="{{ default_procedure|default:'' }}" data-default-condition="{{ default_condition|default:'' }}" data-medicare="{{ medicare|default:'' }}"></div>
 <script src="{% static 'js/dist/chat_interface.bundle.js' %}"></script>
 {% endblock %}
