@@ -1752,6 +1752,7 @@
     "slug": "glp1-denial-semaglutide-ozempic",
     "title": "Appealing Ozempic (Semaglutide) Denials",
     "default_procedure": "Ozempic (Semaglutide)",
+    "default_condition": "Type 2 Diabetes",
     "tagline": "Ozempic treats more than blood sugar — it helps prevent serious complications.",
     "hero_h1": "Appeal Your Ozempic Denial",
     "hero_subhead": "If your clinician prescribed Ozempic, chances are there’s a strong medical reason.",
@@ -1783,12 +1784,30 @@
       "semaglutide Ozempic type 2 diabetes cardiovascular outcomes",
       "semaglutide GLP-1 receptor agonist glycemic control",
       "GLP-1 agonist weight loss diabetes complications"
+    ],
+    "assistance_programs": [
+      {
+        "name": "Ozempic Savings Card",
+        "url": "https://www.ozempic.com/savings-and-resources/save-on-ozempic.html",
+        "description": "Pay as little as $25/month for up to 48 months with commercial insurance. Not for government programs."
+      },
+      {
+        "name": "NovoCare - Ozempic",
+        "url": "https://www.novocare.com/diabetes/products/ozempic.html",
+        "description": "Savings offers, patient assistance program for eligible uninsured patients, and support resources."
+      },
+      {
+        "name": "Novo Nordisk Patient Assistance Program",
+        "url": "https://www.novocare.com/diabetes/help-with-costs/pap.html",
+        "description": "Free medication for qualifying patients at or below 400% federal poverty level without insurance."
+      }
     ]
   },
   "glp1-denial-semaglutide-wegovy": {
     "slug": "glp1-denial-semaglutide-wegovy",
     "title": "Appealing Wegovy (Semaglutide) Denials",
     "default_procedure": "Wegovy (Semaglutide for Obesity)",
+    "default_condition": "Obesity",
     "tagline": "Wegovy is obesity treatment, not vanity medicine.",
     "hero_h1": "Appeal Your Wegovy Denial",
     "hero_subhead": "When weight is damaging your health, Wegovy can be medically necessary care.",
@@ -1820,12 +1839,30 @@
       "semaglutide Wegovy obesity randomized controlled trial",
       "GLP-1 receptor agonist weight loss cardiovascular risk",
       "pharmacologic treatment obesity guidelines semaglutide"
+    ],
+    "assistance_programs": [
+      {
+        "name": "Wegovy Savings Card",
+        "url": "https://www.wegovy.com/coverage-and-savings/save-on-wegovy.html",
+        "description": "Pay as little as $0/month with commercial insurance coverage (up to $225 off per fill). Not for government programs."
+      },
+      {
+        "name": "NovoCare - Wegovy",
+        "url": "https://www.novocare.com/obesity/products/wegovy/savings-offer.html",
+        "description": "Savings offers and support for Wegovy patients, including $349/month self-pay option."
+      },
+      {
+        "name": "NovoCare Pharmacy",
+        "url": "https://www.novocare.com/eligibility/wegovy-savings-card.html",
+        "description": "Home delivery option for self-pay patients with access to savings programs."
+      }
     ]
   },
   "glp1-denial-tirzepatide-mounjaro": {
     "slug": "glp1-denial-tirzepatide-mounjaro",
     "title": "Appealing Mounjaro (Tirzepatide) Denials",
     "default_procedure": "Mounjaro (Tirzepatide for Type 2 Diabetes)",
+    "default_condition": "Type 2 Diabetes",
     "tagline": "Tirzepatide is a powerful tool for high-risk diabetes, not an optional upgrade.",
     "hero_h1": "Appeal Your Mounjaro Denial",
     "hero_subhead": "If prior regimens failed, denying Mounjaro can be unsafe and short-sighted.",
@@ -1857,6 +1894,18 @@
       "tirzepatide Mounjaro type 2 diabetes randomized trial",
       "dual GIP GLP-1 agonist glycemic control weight",
       "tirzepatide cardiovascular risk factors outcomes"
+    ],
+    "assistance_programs": [
+      {
+        "name": "Mounjaro Savings Card",
+        "url": "https://www.mounjaro.lilly.com/savings-resources",
+        "description": "Pay as little as $25/month with commercial insurance coverage. Up to $150 off per fill."
+      },
+      {
+        "name": "LillyDirect - Mounjaro",
+        "url": "https://www.lilly.com/lillydirect/medicines/mounjaro",
+        "description": "Order direct from Lilly. Self-pay patients may pay $499/month without insurance coverage."
+      }
     ]
   },
   "glp1-denial-tirzepatide-zepbound": {
