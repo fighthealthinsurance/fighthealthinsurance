@@ -1863,6 +1863,7 @@
     "slug": "glp1-denial-tirzepatide-zepbound",
     "title": "Appealing Zepbound (Tirzepatide) Denials",
     "default_procedure": "Zepbound (Tirzepatide for Obesity)",
+    "default_condition": "Obesity",
     "tagline": "Zepbound is intensive obesity medicine for high-risk patients, not a vanity drug.",
     "hero_h1": "Appeal Your Zepbound Denial",
     "hero_subhead": "When obesity is damaging your health, denying Zepbound can be dangerous.",
@@ -1894,6 +1895,18 @@
       "tirzepatide obesity clinical trial weight loss",
       "pharmacologic treatment obesity tirzepatide",
       "anti-obesity medication cardiometabolic outcomes"
+    ],
+    "assistance_programs": [
+      {
+        "name": "Zepbound Savings Card",
+        "url": "https://www.zepbound.lilly.com/coverage-savings",
+        "description": "Pay as little as $25/month with commercial insurance coverage, or up to $569 off without coverage. Not for government insurance."
+      },
+      {
+        "name": "LillyDirect - Zepbound",
+        "url": "https://www.lilly.com/lillydirect/medicines/zepbound",
+        "description": "Order Zepbound vials direct from Lilly for $299/month (self-pay option)."
+      }
     ]
   },
 
