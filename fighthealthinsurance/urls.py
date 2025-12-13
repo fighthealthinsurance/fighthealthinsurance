@@ -336,6 +336,14 @@ urlpatterns += [
         name="chooser",
     ),
     path("cookies/", include("cookie_consent.urls")),
+    # Microsites - condition-specific landing pages
+    path(
+        "microsite/<slug:slug>/",
+        cache_control(public=True)(
+            cache_page(60 * 60 * 2)(views.MicrositeView.as_view())
+        ),
+        name="microsite",
+    ),
 ]
 
 

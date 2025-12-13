@@ -307,7 +307,12 @@ const restorePersonalInfo = (message: string, userInfo: UserInfo): string => {
   return restoredMessage;
 };
 
-const ChatInterface: React.FC = () => {
+interface ChatInterfaceProps {
+  defaultProcedure?: string;
+  defaultCondition?: string;
+}
+
+const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, defaultCondition }) => {
   // State for our chat interface
   const [state, setState] = useState<ChatState>({
     messages: [],
@@ -319,6 +324,9 @@ const ChatInterface: React.FC = () => {
     showPWYW: false,
     messageCount: 0,
   });
+
+  // Track if we've sent the initial procedure message
+  const hasSentInitialMessage = useRef(false);
 
   // Check if user has dismissed PWYW before
   const hasDismissedPWYW = localStorage.getItem("fhi_pwyw_dismissed") === "true";
@@ -394,6 +402,56 @@ const ChatInterface: React.FC = () => {
         } else {
           // If we don't have a chat ID no replay is needed
           console.log("Waiting for user input to start new chat");
+
+          // If we have a default procedure from a microsite, send an initial message
+          if (defaultProcedure && !hasSentInitialMessage.current) {
+            hasSentInitialMessage.current = true;
+            console.log("Sending initial message for procedure:", defaultProcedure);
+            if (defaultCondition) {
+              console.log("Default condition from microsite:", defaultCondition);
+            }
+
+            // Small delay to ensure welcome message is displayed first
+            setTimeout(() => {
+              // Build initial message with procedure and optionally condition
+              let initialMessage = `I'm working on an appeal for ${defaultProcedure}`;
+              if (defaultCondition) {
+                initialMessage += ` for ${defaultCondition}`;
+              }
+              initialMessage += `. Can you help me understand what I need to do?`;
+
+              // Add the user message to the UI
+              const userMessage: ChatMessage = {
+                role: "user",
+                content: initialMessage,
+                timestamp: new Date().toISOString(),
+                status: "done",
+              };
+
+              setState((prev) => ({
+                ...prev,
+                messages: [...prev.messages, userMessage],
+                isLoading: true,
+              }));
+
+              // Get user info for scrubbing
+              const userInfo = getUserInfo();
+              const scrubbedContent = userInfo
+                ? scrubPersonalInfo(initialMessage, userInfo)
+                : initialMessage;
+
+              // Send to server
+              ws.send(
+                JSON.stringify({
+                  chat_id: null,
+                  email: userInfo?.email,
+                  content: scrubbedContent,
+                  is_patient: true,
+                  session_key: getSessionKey(),
+                }),
+              );
+            }, 500);
+          }
         }
       };
 
@@ -971,10 +1029,21 @@ document.addEventListener("DOMContentLoaded", () => {
   const chatRoot = document.getElementById("chat-interface-root");
   if (chatRoot) {
     console.log("Chat interface root element found");
+
+    // Get default procedure and condition from data attributes (from microsite)
+    const defaultProcedure = chatRoot.dataset.defaultProcedure || undefined;
+    const defaultCondition = chatRoot.dataset.defaultCondition || undefined;
+    if (defaultProcedure) {
+      console.log("Default procedure from microsite:", defaultProcedure);
+    }
+    if (defaultCondition) {
+      console.log("Default condition from microsite:", defaultCondition);
+    }
+
     const root = createRoot(chatRoot);
     root.render(
       <MantineProvider>
-        <ChatInterface />
+        <ChatInterface defaultProcedure={defaultProcedure} defaultCondition={defaultCondition} />
       </MantineProvider>,
     );
   } else {

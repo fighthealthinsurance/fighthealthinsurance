@@ -1,0 +1,384 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}{{ microsite.title }} - Fight Health Insurance{% endblock title %}
+{% block metatitle %}{{ microsite.title }} - Fight Health Insurance{% endblock metatitle %}
+{% block metadescription %}{{ microsite.tagline }} Free AI-powered appeal letter generation to help you fight your health insurance denial.{% endblock metadescription %}
+
+{% block content %}
+<!-- Hero Section -->
+<section id="microsite-hero" class="slider" data-stellar-background-ratio="0.5">
+    <div class="row">
+        <div class="item item-first">
+            <div class="caption d-flex flex-column align-items-center justify-content-center">
+                <div class="hero-inner {% if microsite.image %}hero-with-image{% endif %}">
+                    {% if microsite.image %}
+                    <div class="hero-content-wrapper">
+                        <div class="hero-text">
+                    {% endif %}
+                    <h3 class="hero-tagline">{{ microsite.tagline }}</h3>
+                    <h1 class="hero-headline">{{ microsite.hero_h1 }}</h1>
+                    <p class="hero-subcopy">{{ microsite.hero_subhead }}</p>
+                    <div class="hero-cta-group">
+                        <a href="{% url 'scan' %}?default_procedure={{ microsite.default_procedure|urlencode }}&microsite_slug={{ microsite.slug|urlencode }}&microsite_title={{ microsite.title|urlencode }}{% if microsite.default_condition %}&default_condition={{ microsite.default_condition|urlencode }}{% endif %}"
+                           class="section-btn btn btn-default smoothScroll primary-cta">
+                            Start Your Appeal
+                        </a>
+                    </div>
+                    <div class="hero-cta-group hero-cta-secondary">
+                        <a href="{% url 'chat' %}?default_procedure={{ microsite.default_procedure|urlencode }}{% if microsite.default_condition %}&default_condition={{ microsite.default_condition|urlencode }}{% endif %}"
+                           class="btn btn-outline-green smoothScroll secondary-cta">
+                            AI Chat
+                        </a>
+                    </div>
+                    {% if microsite.image %}
+                        </div>
+                        <div class="hero-image">
+                            <img src="{{ microsite.image }}" alt="{{ microsite.default_procedure }}" class="img-fluid rounded shadow">
+                        </div>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Introduction Section -->
+<section id="microsite-intro" class="py-5">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <div class="about-info">
+                    <h2>Understanding Your {{ microsite.default_procedure }} Denial</h2>
+                    <p class="lead">{{ microsite.intro }}</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Common Denial Reasons Section -->
+{% if microsite.common_denial_reasons %}
+<section id="denial-reasons" class="py-5 bg-light">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <h2 class="text-center mb-4">Common Reasons for Denial</h2>
+                <div class="denial-reasons-list">
+                    <ul class="list-group">
+                        {% for reason in microsite.common_denial_reasons %}
+                        <li class="list-group-item d-flex align-items-center">
+                            <span class="badge bg-warning text-dark me-3">!</span>
+                            {{ reason }}
+                        </li>
+                        {% endfor %}
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+{% endif %}
+
+<!-- How We Help Section -->
+<section id="how-we-help" class="py-5">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto text-center">
+                <h2 class="mb-4">How We Help</h2>
+                <p class="lead">{{ microsite.how_we_help }}</p>
+                <div class="mt-4">
+                    <a href="{% url 'scan' %}?default_procedure={{ microsite.default_procedure|urlencode }}&microsite_slug={{ microsite.slug|urlencode }}&microsite_title={{ microsite.title|urlencode }}{% if microsite.default_condition %}&default_condition={{ microsite.default_condition|urlencode }}{% endif %}"
+                       class="btn btn-green btn-lg">
+                        {{ microsite.cta }}
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Evidence Section -->
+{% if microsite.evidence_snippets %}
+<section id="evidence" class="py-5 bg-light">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <h2 class="text-center mb-4">Some Types of Evidence We Can Use For Supporting Your Appeal</h2>
+                <div class="evidence-snippets">
+                    {% for snippet in microsite.evidence_snippets %}
+                    <div class="card mb-3">
+                        <div class="card-body">
+                            <p class="card-text mb-0">
+                                <i class="text-success me-2">&#10003;</i>
+                                {{ snippet }}
+                            </p>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+{% endif %}
+
+<!-- Alternatives Section -->
+{% if microsite.alternatives %}
+<section id="alternatives" class="py-5">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <h2 class="text-center mb-4">While You're Fighting Your Denial</h2>
+                <p class="text-center text-muted mb-4">Talk to your provider about these options that might help bridge the gap:</p>
+                <div class="alternatives-list">
+                    {% for alternative in microsite.alternatives %}
+                    <div class="card mb-3">
+                        <div class="card-body">
+                            <p class="card-text mb-0">
+                                <i class="text-info me-2">&#8594;</i>
+                                {{ alternative }}
+                            </p>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+{% endif %}
+
+<!-- Patient Assistance Programs Section -->
+{% if microsite.assistance_programs %}
+<section id="assistance-programs" class="py-5 bg-light">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <h2 class="text-center mb-4">Patient Assistance &amp; Copay Programs</h2>
+                <p class="text-center text-muted mb-4">These programs may help reduce your costs while you appeal:</p>
+                <div class="assistance-programs-list">
+                    {% for program in microsite.assistance_programs %}
+                    <div class="card mb-3 assistance-card">
+                        <div class="card-body">
+                            <h5 class="card-title mb-2">
+                                <a href="{{ program.url }}" target="_blank" rel="noopener noreferrer" class="assistance-link">
+                                    {{ program.name }}
+                                    <i class="text-muted ms-1" style="font-size: 0.8em;">&#8599;</i>
+                                </a>
+                            </h5>
+                            <p class="card-text text-muted mb-0">{{ program.description }}</p>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                <p class="text-muted small mt-4 mb-0 text-center">
+                    <em>Eligibility requirements and program terms may change. Please verify current details directly with each organization.</em>
+                </p>
+            </div>
+        </div>
+    </div>
+</section>
+{% endif %}
+
+<!-- FAQ Section -->
+{% if microsite.faq %}
+<section id="faq" class="py-5">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <h2 class="text-center mb-4">Frequently Asked Questions</h2>
+                <div class="accordion" id="faqAccordion">
+                    {% for item in microsite.faq %}
+                    <div class="accordion-item">
+                        <h3 class="accordion-header" id="faqHeading{{ forloop.counter }}">
+                            <button class="accordion-button {% if not forloop.first %}collapsed{% endif %}"
+                                    type="button"
+                                    data-bs-toggle="collapse"
+                                    data-bs-target="#faqCollapse{{ forloop.counter }}"
+                                    aria-expanded="{% if forloop.first %}true{% else %}false{% endif %}"
+                                    aria-controls="faqCollapse{{ forloop.counter }}">
+                                {{ item.question }}
+                            </button>
+                        </h3>
+                        <div id="faqCollapse{{ forloop.counter }}"
+                             class="accordion-collapse collapse {% if forloop.first %}show{% endif %}"
+                             aria-labelledby="faqHeading{{ forloop.counter }}"
+                             data-bs-parent="#faqAccordion">
+                            <div class="accordion-body">
+                                {{ item.answer }}
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+{% endif %}
+
+<!-- Final CTA Section -->
+<section id="final-cta" class="py-5 bg-light">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto text-center">
+                <h2 class="mb-3">Ready to Fight Your {{ microsite.default_procedure }} Denial?</h2>
+                <p class="lead mb-4">Our free AI-powered tool will help you generate a compelling appeal letter in minutes.</p>
+                <div class="d-flex justify-content-center gap-3 flex-wrap">
+                    <a href="{% url 'scan' %}?default_procedure={{ microsite.default_procedure|urlencode }}&microsite_slug={{ microsite.slug|urlencode }}&microsite_title={{ microsite.title|urlencode }}{% if microsite.default_condition %}&default_condition={{ microsite.default_condition|urlencode }}{% endif %}"
+                       class="btn btn-green btn-lg">
+                        Start Your Appeal
+                    </a>
+                    <a href="{% url 'chat' %}?default_procedure={{ microsite.default_procedure|urlencode }}{% if microsite.default_condition %}&default_condition={{ microsite.default_condition|urlencode }}{% endif %}"
+                       class="btn btn-outline-green btn-lg">
+                        Chat with AI Assistant
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Disclaimer Section -->
+<section id="disclaimer" class="py-4">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <div class="disclaimer-box p-3 bg-light border rounded">
+                    <p class="text-muted small mb-0">
+                        <strong>Disclaimer:</strong> Fight Health Insurance is not affiliated with, endorsed by, or partnered with any pharmaceutical manufacturer, healthcare provider, medical device company, or patient assistance program. All information provided is for educational and informational purposes only and does not constitute medical or legal advice. Please consult with your healthcare provider regarding treatment options and with your insurance company regarding coverage decisions.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock content %}
+
+{% block extra_style %}
+<style>
+    #microsite-hero .hero-inner {
+        max-width: 800px;
+        padding: 2rem;
+    }
+
+    #microsite-hero .hero-inner.hero-with-image {
+        max-width: 1000px;
+    }
+
+    #microsite-hero .hero-content-wrapper {
+        display: flex;
+        align-items: center;
+        gap: 3rem;
+        flex-wrap: wrap;
+        justify-content: center;
+    }
+
+    #microsite-hero .hero-text {
+        flex: 1;
+        min-width: 300px;
+    }
+
+    #microsite-hero .hero-image {
+        flex: 0 0 auto;
+        max-width: 280px;
+    }
+
+    #microsite-hero .hero-image img {
+        max-height: 280px;
+        width: auto;
+        object-fit: contain;
+    }
+
+    @media (max-width: 768px) {
+        #microsite-hero .hero-content-wrapper {
+            flex-direction: column-reverse;
+            gap: 1.5rem;
+        }
+
+        #microsite-hero .hero-image {
+            max-width: 200px;
+        }
+
+        #microsite-hero .hero-image img {
+            max-height: 200px;
+        }
+    }
+
+    #microsite-intro .about-info {
+        text-align: center;
+    }
+
+    .denial-reasons-list .list-group-item {
+        border-left: 4px solid #ffc107;
+    }
+
+    .evidence-snippets .card {
+        border-left: 4px solid #28a745;
+    }
+
+    .alternatives-list .card {
+        border-left: 4px solid #17a2b8;
+    }
+
+    .assistance-programs-list .assistance-card {
+        border-left: 4px solid #6f42c1;
+        transition: box-shadow 0.2s ease;
+    }
+
+    .assistance-programs-list .assistance-card:hover {
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    }
+
+    .assistance-link {
+        color: #6f42c1;
+        text-decoration: none;
+    }
+
+    .assistance-link:hover {
+        color: #563d7c;
+        text-decoration: underline;
+    }
+
+    .disclaimer-box {
+        border-color: #dee2e6 !important;
+    }
+
+    .accordion-button:not(.collapsed) {
+        background-color: rgba(40, 167, 69, 0.1);
+        color: #155724;
+    }
+
+    .accordion-button:focus {
+        box-shadow: 0 0 0 0.25rem rgba(40, 167, 69, 0.25);
+    }
+
+    #final-cta {
+        background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+    }
+
+    .btn-green {
+        background-color: #28a745;
+        border-color: #28a745;
+        color: white;
+    }
+
+    .btn-green:hover {
+        background-color: #218838;
+        border-color: #1e7e34;
+        color: white;
+    }
+
+    .btn-outline-green {
+        color: #28a745;
+        border-color: #28a745;
+    }
+
+    .btn-outline-green:hover {
+        background-color: #28a745;
+        color: white;
+    }
+</style>
+{% endblock extra_style %}

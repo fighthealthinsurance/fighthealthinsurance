@@ -4,6 +4,11 @@
 {% block title %}FightHealthInsurance Chat{% endblock %}
 
 {% block content %}
-<div id="chat-interface-root"></div>
+{% if default_procedure or default_condition %}
+<div style="background:#e8f5e9; padding:1rem; border-radius:4px; margin:1rem auto; max-width:800px; border-left:4px solid #a5c422;">
+    <p style="margin:0;">You're chatting about {% if default_procedure %}<strong>{{ default_procedure }}</strong>{% endif %}{% if default_procedure and default_condition %} for {% endif %}{% if default_condition %}<strong>{{ default_condition }}</strong>{% endif %}. Feel free to ask any questions about appealing your denial.</p>
+</div>
+{% endif %}
+<div id="chat-interface-root" data-default-procedure="{{ default_procedure|default:'' }}" data-default-condition="{{ default_condition|default:'' }}"></div>
 <script src="{% static 'js/dist/chat_interface.bundle.js' %}"></script>
 {% endblock %}

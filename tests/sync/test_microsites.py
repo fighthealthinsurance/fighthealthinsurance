@@ -1,0 +1,517 @@
+"""
+Tests for microsite functionality.
+
+Tests that:
+1. The microsites.json file loads and parses correctly
+2. All microsites have required fields with valid data
+3. The microsite route loads correctly
+4. The default procedure is passed through the appeal flow
+"""
+
+import json
+
+from pathlib import Path
+
+from django.test import TestCase, Client
+from django.urls import reverse
+
+from fighthealthinsurance import models
+from fighthealthinsurance.microsites import (
+    get_microsite,
+    get_all_microsites,
+    get_microsite_slugs,
+    Microsite,
+    REQUIRED_MICROSITE_KEYS,
+)
+
+
+# Keys that are optional but commonly present in microsites
+# These have sensible defaults (empty lists) in the Microsite class
+COMMON_LIST_KEYS = {
+    "common_denial_reasons",
+    "faq",
+    "evidence_snippets",
+    "pubmed_search_terms",
+}
+
+OPTIONAL_MICROSITE_KEYS = {
+    "image",
+    "alternatives",
+    "assistance_programs",
+    "default_condition",
+}
+
+# All valid keys that can appear in a microsite JSON entry
+ALL_VALID_MICROSITE_KEYS = REQUIRED_MICROSITE_KEYS | COMMON_LIST_KEYS | OPTIONAL_MICROSITE_KEYS
+
+
+def get_microsites_json_path():
+    """Get the path to microsites.json."""
+    current_dir = Path(__file__).parent
+    project_root = current_dir.parent.parent
+    return project_root / "fighthealthinsurance" / "static" / "microsites.json"
+
+
+def load_microsites_json_raw():
+    """Load microsites.json as raw dict for schema validation.
+
+    Returns the raw JSON data without converting to Microsite objects.
+    """
+    json_path = get_microsites_json_path()
+
+    if not json_path.exists():
+        return {}
+
+    with open(json_path, "r") as f:
+        return json.load(f)
+
+
+def load_microsites_json_directly():
+    """Load microsites.json directly from the file system for testing.
+
+    This bypasses Django's staticfiles storage which may not be available
+    in all test environments.
+    """
+    data = load_microsites_json_raw()
+
+    # Convert to Microsite objects like the module does
+    microsites = {}
+    for slug, microsite_data in data.items():
+        microsites[slug] = Microsite(microsite_data)
+    return microsites
+
+
+class MicrositeJSONValidationTest(TestCase):
+    """Tests that validate the microsites.json file loads and parses correctly."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        # Load microsites directly from file for validation tests
+        cls.microsites = load_microsites_json_directly()
+
+    def test_microsites_json_loads_successfully(self):
+        """Test that microsites.json loads without errors."""
+        self.assertIsInstance(self.microsites, dict)
+        self.assertGreater(len(self.microsites), 0, "microsites.json should contain at least one microsite")
+
+    def test_microsites_json_has_expected_count(self):
+        """Test that we have the expected number of microsites defined."""
+        # Based on the JSON file, we expect at least 25+ microsites
+        self.assertGreaterEqual(len(self.microsites), 25, "Expected at least 25 microsites defined")
+
+    def test_all_microsites_have_required_string_fields(self):
+        """Test that all microsites have required non-empty string fields."""
+        required_string_fields = [
+            "slug",
+            "title",
+            "default_procedure",
+            "tagline",
+            "hero_h1",
+            "hero_subhead",
+            "intro",
+            "how_we_help",
+            "cta",
+        ]
+
+        for slug, microsite in self.microsites.items():
+            for field in required_string_fields:
+                value = getattr(microsite, field, None)
+                self.assertIsNotNone(
+                    value,
+                    f"Microsite '{slug}' is missing required field '{field}'"
+                )
+                self.assertIsInstance(
+                    value, str,
+                    f"Microsite '{slug}' field '{field}' should be a string"
+                )
+                self.assertGreater(
+                    len(value), 0,
+                    f"Microsite '{slug}' field '{field}' should not be empty"
+                )
+
+    def test_all_microsites_have_slug_matching_key(self):
+        """Test that each microsite's slug field matches its dictionary key."""
+        for key, microsite in self.microsites.items():
+            self.assertEqual(
+                key, microsite.slug,
+                f"Microsite key '{key}' doesn't match its slug field '{microsite.slug}'"
+            )
+
+    def test_all_microsites_have_valid_faq_structure(self):
+        """Test that all microsites have properly structured FAQ entries."""
+        for slug, microsite in self.microsites.items():
+            self.assertIsInstance(
+                microsite.faq, list,
+                f"Microsite '{slug}' faq should be a list"
+            )
+            for i, faq_item in enumerate(microsite.faq):
+                self.assertIsInstance(
+                    faq_item, dict,
+                    f"Microsite '{slug}' faq[{i}] should be a dict"
+                )
+                self.assertIn(
+                    "question", faq_item,
+                    f"Microsite '{slug}' faq[{i}] missing 'question' key"
+                )
+                self.assertIn(
+                    "answer", faq_item,
+                    f"Microsite '{slug}' faq[{i}] missing 'answer' key"
+                )
+                self.assertGreater(
+                    len(faq_item["question"]), 0,
+                    f"Microsite '{slug}' faq[{i}] question should not be empty"
+                )
+                self.assertGreater(
+                    len(faq_item["answer"]), 0,
+                    f"Microsite '{slug}' faq[{i}] answer should not be empty"
+                )
+
+    def test_all_microsites_have_common_denial_reasons(self):
+        """Test that all microsites have at least one common denial reason."""
+        for slug, microsite in self.microsites.items():
+            self.assertIsInstance(
+                microsite.common_denial_reasons, list,
+                f"Microsite '{slug}' common_denial_reasons should be a list"
+            )
+            self.assertGreater(
+                len(microsite.common_denial_reasons), 0,
+                f"Microsite '{slug}' should have at least one common denial reason"
+            )
+
+    def test_all_microsites_have_evidence_snippets(self):
+        """Test that all microsites have at least one evidence snippet."""
+        for slug, microsite in self.microsites.items():
+            self.assertIsInstance(
+                microsite.evidence_snippets, list,
+                f"Microsite '{slug}' evidence_snippets should be a list"
+            )
+            self.assertGreater(
+                len(microsite.evidence_snippets), 0,
+                f"Microsite '{slug}' should have at least one evidence snippet"
+            )
+
+    def test_known_microsites_exist(self):
+        """Test that specific known microsites are present."""
+        known_slugs = [
+            "mri-denial",
+            "ct-scan-denial",
+            "sleep-study-denial",
+            "cpap-denial",
+            "mental-health-denial",
+            "biologic-denial",
+            "surgery-denial",
+            "ffs-denial",
+            "hrt-denial",
+            "grs-denial",
+        ]
+        for slug in known_slugs:
+            self.assertIn(
+                slug, self.microsites,
+                f"Expected microsite '{slug}' to be defined in microsites.json"
+            )
+
+    def test_no_unexpected_keys_in_microsites(self):
+        """Test that microsites.json contains no unexpected/typo keys.
+
+        This catches typos like 'pubmed_sear_terms' instead of 'pubmed_search_terms'.
+        """
+        raw_data = load_microsites_json_raw()
+        errors = []
+
+        for slug, microsite_data in raw_data.items():
+            unexpected_keys = set(microsite_data.keys()) - ALL_VALID_MICROSITE_KEYS
+            if unexpected_keys:
+                errors.append(
+                    f"Microsite '{slug}' has unexpected keys: {unexpected_keys}"
+                )
+
+        if errors:
+            self.fail("\n".join(errors))
+
+    def test_all_required_keys_present(self):
+        """Test that all microsites have all required keys."""
+        raw_data = load_microsites_json_raw()
+        errors = []
+
+        for slug, microsite_data in raw_data.items():
+            missing_keys = REQUIRED_MICROSITE_KEYS - set(microsite_data.keys())
+            if missing_keys:
+                errors.append(
+                    f"Microsite '{slug}' is missing required keys: {missing_keys}"
+                )
+
+        if errors:
+            self.fail("\n".join(errors))
+
+
+class MicrositeModuleTest(TestCase):
+    """Tests for the microsites module."""
+
+    def test_get_all_microsites_returns_dict(self):
+        """Test that get_all_microsites returns a dictionary."""
+        microsites = get_all_microsites()
+        self.assertIsInstance(microsites, dict)
+
+    def test_get_microsite_slugs_returns_list(self):
+        """Test that get_microsite_slugs returns a list of strings."""
+        slugs = get_microsite_slugs()
+        self.assertIsInstance(slugs, list)
+        if slugs:
+            self.assertIsInstance(slugs[0], str)
+
+    def test_get_microsite_returns_microsite_for_valid_slug(self):
+        """Test that get_microsite returns a Microsite for a valid slug."""
+        slugs = get_microsite_slugs()
+        if slugs:
+            microsite = get_microsite(slugs[0])
+            self.assertIsInstance(microsite, Microsite)
+            self.assertEqual(microsite.slug, slugs[0])
+
+    def test_get_microsite_returns_none_for_invalid_slug(self):
+        """Test that get_microsite returns None for an invalid slug."""
+        microsite = get_microsite("this-slug-does-not-exist-12345")
+        self.assertIsNone(microsite)
+
+    def test_microsite_has_required_attributes(self):
+        """Test that Microsite objects have all required attributes."""
+        slugs = get_microsite_slugs()
+        if slugs:
+            microsite = get_microsite(slugs[0])
+            self.assertTrue(hasattr(microsite, "slug"))
+            self.assertTrue(hasattr(microsite, "title"))
+            self.assertTrue(hasattr(microsite, "default_procedure"))
+            self.assertTrue(hasattr(microsite, "tagline"))
+            self.assertTrue(hasattr(microsite, "hero_h1"))
+            self.assertTrue(hasattr(microsite, "intro"))
+            self.assertTrue(hasattr(microsite, "faq"))
+
+    def test_microsite_has_optional_image_attribute(self):
+        """Test that Microsite objects have the optional image attribute."""
+        slugs = get_microsite_slugs()
+        if slugs:
+            microsite = get_microsite(slugs[0])
+            # Image is optional, so it should exist as attribute but may be None
+            self.assertTrue(hasattr(microsite, "image"))
+            # If image is set, it should be a string (URL)
+            if microsite.image is not None:
+                self.assertIsInstance(microsite.image, str)
+                self.assertGreater(len(microsite.image), 0)
+
+    def test_microsite_has_optional_alternatives_attribute(self):
+        """Test that Microsite objects have the optional alternatives attribute."""
+        slugs = get_microsite_slugs()
+        if slugs:
+            microsite = get_microsite(slugs[0])
+            # Alternatives is optional, so it should exist as attribute but may be empty
+            self.assertTrue(hasattr(microsite, "alternatives"))
+            self.assertIsInstance(microsite.alternatives, list)
+            # If alternatives are set, they should be strings
+            for alt in microsite.alternatives:
+                self.assertIsInstance(alt, str)
+                self.assertGreater(len(alt), 0)
+
+    def test_microsite_has_optional_assistance_programs_attribute(self):
+        """Test that Microsite objects have the optional assistance_programs attribute."""
+        slugs = get_microsite_slugs()
+        if slugs:
+            microsite = get_microsite(slugs[0])
+            # Assistance programs is optional, so it should exist as attribute but may be empty
+            self.assertTrue(hasattr(microsite, "assistance_programs"))
+            self.assertIsInstance(microsite.assistance_programs, list)
+            # If programs are set, they should have required keys
+            for program in microsite.assistance_programs:
+                self.assertIsInstance(program, dict)
+                self.assertIn("name", program)
+                self.assertIn("url", program)
+                self.assertIn("description", program)
+
+    def test_biologic_denial_has_assistance_programs(self):
+        """Test that the biologic-denial microsite has assistance programs."""
+        # Use direct file loading to ensure we get fresh data
+        microsites = load_microsites_json_directly()
+        microsite = microsites.get("biologic-denial")
+        self.assertIsNotNone(microsite)
+        self.assertGreater(
+            len(microsite.assistance_programs), 0,
+            "biologic-denial microsite should have assistance programs"
+        )
+        self.assertGreater(
+            len(microsite.alternatives), 0,
+            "biologic-denial microsite should have alternatives"
+        )
+
+
+class MicrositeViewTest(TestCase):
+    """Tests for the microsite landing page view."""
+
+    def setUp(self):
+        self.client = Client()
+
+    def test_microsite_route_loads_for_valid_slug(self):
+        """Test that the microsite route loads for a valid slug."""
+        slugs = get_microsite_slugs()
+        if slugs:
+            response = self.client.get(reverse("microsite", kwargs={"slug": slugs[0]}))
+            self.assertEqual(response.status_code, 200)
+
+    def test_microsite_route_returns_404_for_invalid_slug(self):
+        """Test that the microsite route returns 404 for an invalid slug."""
+        response = self.client.get(
+            reverse("microsite", kwargs={"slug": "nonexistent-microsite-slug"})
+        )
+        self.assertEqual(response.status_code, 404)
+
+    def test_microsite_page_contains_title(self):
+        """Test that the microsite page contains the microsite title."""
+        slugs = get_microsite_slugs()
+        if slugs:
+            microsite = get_microsite(slugs[0])
+            response = self.client.get(reverse("microsite", kwargs={"slug": slugs[0]}))
+            self.assertContains(response, microsite.title)
+
+    def test_microsite_page_contains_start_appeal_button(self):
+        """Test that the microsite page contains a Start Your Appeal button."""
+        slugs = get_microsite_slugs()
+        if slugs:
+            response = self.client.get(reverse("microsite", kwargs={"slug": slugs[0]}))
+            self.assertContains(response, "Start Your Appeal")
+
+    def test_microsite_page_links_to_scan_with_default_procedure(self):
+        """Test that the microsite page links to scan with default_procedure."""
+        slugs = get_microsite_slugs()
+        if slugs:
+            microsite = get_microsite(slugs[0])
+            response = self.client.get(reverse("microsite", kwargs={"slug": slugs[0]}))
+            # Check that the link includes the default_procedure parameter
+            self.assertContains(response, f"default_procedure={microsite.default_procedure.replace(' ', '%20').replace('/', '%2F')}" if '/' in microsite.default_procedure else f"default_procedure={microsite.default_procedure.replace(' ', '%20')}")
+
+
+class MicrositeDefaultProcedureFlowTest(TestCase):
+    """Tests for the default procedure flow from microsites."""
+
+    def setUp(self):
+        self.client = Client()
+
+    def test_scan_page_shows_microsite_note_when_default_procedure_provided(self):
+        """Test that the scan page shows a note when coming from a microsite."""
+        response = self.client.get(
+            reverse("scan"),
+            {
+                "default_procedure": "MRI Scan",
+                "microsite_slug": "mri-denial",
+                "microsite_title": "Appealing MRI Denials",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Appealing MRI Denials")
+        self.assertContains(response, "MRI Scan")
+
+    def test_scan_page_includes_hidden_fields_for_microsite_data(self):
+        """Test that the scan page includes hidden fields for microsite data."""
+        response = self.client.get(
+            reverse("scan"),
+            {
+                "default_procedure": "MRI Scan",
+                "microsite_slug": "mri-denial",
+                "microsite_title": "Appealing MRI Denials",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'name="default_procedure"')
+        self.assertContains(response, 'name="microsite_slug"')
+        self.assertContains(response, 'name="microsite_title"')
+
+    def test_scan_page_works_without_microsite_params(self):
+        """Test that the scan page works normally without microsite params."""
+        response = self.client.get(reverse("scan"))
+        self.assertEqual(response.status_code, 200)
+        # Should not contain microsite-specific note
+        self.assertNotContains(response, "You started from the")
+
+    def test_scan_page_prefills_denial_text_from_microsite(self):
+        """Test that the scan page prefills denial text when coming from microsite."""
+        response = self.client.get(
+            reverse("scan"),
+            {
+                "default_procedure": "MRI Scan",
+                "microsite_slug": "mri-denial",
+                "microsite_title": "Appealing MRI Denials",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        # Should contain the default denial text
+        self.assertContains(response, "The patient was denied MRI Scan.")
+
+
+class MicrositeOverrideTest(TestCase):
+    """Tests verifying users can override the default procedure."""
+
+    def setUp(self):
+        self.client = Client()
+
+        # Create a test denial that we can use
+        self.denial = models.Denial.objects.create(
+            denial_id=99999,
+            hashed_email="test-hashed-email-microsite",
+            semi_sekret="test-semi-sekret-microsite",
+            procedure="",  # Empty procedure to test prefill
+        )
+
+    def test_categorize_page_allows_editing_prefilled_procedure(self):
+        """Test that the categorize page allows editing the prefilled procedure."""
+        # Set up session with microsite data
+        session = self.client.session
+        session["denial_id"] = self.denial.denial_id
+        session["default_procedure"] = "MRI Scan"
+        session["microsite_title"] = "Appealing MRI Denials"
+        session["microsite_slug"] = "mri-denial"
+        session.save()
+
+        # Access the categorize review page
+        response = self.client.get(
+            reverse("categorize_review"),
+            {
+                "denial_id": self.denial.denial_id,
+                "email": "test@example.com",
+                "semi_sekret": self.denial.semi_sekret,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        # Check that the page shows the microsite prefill note
+        self.assertContains(response, "Appealing MRI Denials")
+        self.assertContains(response, "MRI Scan")
+
+        # Check that the procedure field is editable (not disabled)
+        # The form should be rendered with the procedure field
+        self.assertContains(response, 'name="procedure"')
+
+
+class MicrositeSpecificTest(TestCase):
+    """Tests for specific microsites defined in microsites.json."""
+
+    def setUp(self):
+        self.client = Client()
+
+    def test_mri_denial_microsite_loads(self):
+        """Test that the MRI denial microsite loads correctly."""
+        response = self.client.get(reverse("microsite", kwargs={"slug": "mri-denial"}))
+        self.assertEqual(
+            response.status_code,
+            200,
+            "MRI denial microsite should load successfully. "
+            "If this fails, ensure microsites.json is available to Django's staticfiles."
+        )
+
+    def test_ct_scan_denial_microsite_loads(self):
+        """Test that the CT scan denial microsite loads correctly."""
+        response = self.client.get(
+            reverse("microsite", kwargs={"slug": "ct-scan-denial"})
+        )
+        self.assertEqual(
+            response.status_code,
+            200,
+            "CT scan denial microsite should load successfully."
+        )

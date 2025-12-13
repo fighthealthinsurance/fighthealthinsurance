@@ -525,6 +525,16 @@ class CategorizeReview(View):
         except models.Denial.DoesNotExist:
             return redirect("scan")
 
+        # Check for microsite default procedure in session
+        procedure = denial.procedure
+        default_procedure = request.session.get("default_procedure", "")
+        microsite_title = request.session.get("microsite_title", "")
+        used_default_procedure = False
+
+        if not procedure and default_procedure:
+            procedure = default_procedure
+            used_default_procedure = True
+
         # Build the PostInferedForm with denial data
         form = core_forms.PostInferedForm(
             initial={
@@ -532,7 +542,7 @@ class CategorizeReview(View):
                 "denial_id": denial.denial_id,
                 "email": email,
                 "your_state": denial.your_state,
-                "procedure": denial.procedure,
+                "procedure": procedure,
                 "diagnosis": denial.diagnosis,
                 "semi_sekret": denial.semi_sekret,
                 "insurance_company": denial.insurance_company,
@@ -542,16 +552,24 @@ class CategorizeReview(View):
             }
         )
 
+        context = {
+            "post_infered_form": form,
+            "upload_more": True,
+            "current_step": 5,
+            "back_url": build_back_url("dvc", denial_id, email, semi_sekret),
+            "back_label": "Back to plan documents",
+        }
+
+        # Add microsite prefill note if applicable
+        if used_default_procedure and microsite_title:
+            context["microsite_prefill_note"] = True
+            context["microsite_title"] = microsite_title
+            context["default_procedure"] = default_procedure
+
         return render(
             request,
             "categorize.html",
-            context={
-                "post_infered_form": form,
-                "upload_more": True,
-                "current_step": 5,
-                "back_url": build_back_url("dvc", denial_id, email, semi_sekret),
-                "back_label": "Back to plan documents",
-            },
+            context=context,
         )
 
 
@@ -872,8 +890,33 @@ class InitialProcessView(generic.FormView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        context["ocr_result"] = self.get_ocr_result() or ""
+        ocr_result = self.get_ocr_result() or ""
         context["upload_more"] = True
+
+        # Capture microsite parameters from URL for display
+        default_procedure = self.request.GET.get("default_procedure", "")
+        default_condition = self.request.GET.get("default_condition", "")
+        microsite_slug = self.request.GET.get("microsite_slug", "")
+        microsite_title = self.request.GET.get("microsite_title", "")
+
+        if default_procedure or default_condition:
+            context["default_procedure"] = default_procedure
+            context["default_condition"] = default_condition
+            context["microsite_slug"] = microsite_slug
+            context["microsite_title"] = microsite_title
+
+            # If no OCR result yet, provide default denial text for users
+            # coming from microsites who may not have a denial letter
+            if not ocr_result:
+                if default_procedure and default_condition:
+                    ocr_result = f"The patient with {default_condition} was denied {default_procedure}."
+                elif default_procedure:
+                    ocr_result = f"The patient was denied {default_procedure}."
+                elif default_condition:
+                    ocr_result = f"The patient with {default_condition} was denied treatment."
+
+        context["ocr_result"] = ocr_result
+
         return context
 
     def get_success_url(self):
@@ -918,6 +961,26 @@ class InitialProcessView(generic.FormView):
         # This allows the SessionRequiredMixin to verify the user is working with a valid denial
         self.request.session["denial_uuid"] = str(denial_response.uuid)
         self.request.session["denial_id"] = denial_response.denial_id
+
+        # Store microsite data in session for prefilling later in the flow
+        default_procedure = self.request.POST.get(
+            "default_procedure"
+        ) or self.request.GET.get("default_procedure", "")
+        default_condition = self.request.POST.get(
+            "default_condition"
+        ) or self.request.GET.get("default_condition", "")
+        microsite_slug = self.request.POST.get(
+            "microsite_slug"
+        ) or self.request.GET.get("microsite_slug", "")
+        microsite_title = self.request.POST.get(
+            "microsite_title"
+        ) or self.request.GET.get("microsite_title", "")
+
+        if default_procedure or default_condition:
+            self.request.session["default_procedure"] = default_procedure
+            self.request.session["default_condition"] = default_condition
+            self.request.session["microsite_slug"] = microsite_slug
+            self.request.session["microsite_title"] = microsite_title
 
         form = core_forms.HealthHistory(
             initial={
@@ -1058,13 +1121,25 @@ class EntityExtractView(SessionRequiredMixin, generic.FormView):
         )
 
         email = form.cleaned_data["email"]
+
+        # Check if we have a default procedure from microsite that should be used
+        procedure = denial_response.procedure
+        default_procedure = self.request.session.get("default_procedure", "")
+        microsite_title = self.request.session.get("microsite_title", "")
+        used_default_procedure = False
+
+        # If no procedure was extracted and we have a default from microsite, use it
+        if not procedure and default_procedure:
+            procedure = default_procedure
+            used_default_procedure = True
+
         new_form = core_forms.PostInferedForm(
             initial={
                 "denial_type": denial_response.selected_denial_type,
                 "denial_id": denial_response.denial_id,
                 "email": email,
                 "your_state": denial_response.your_state,
-                "procedure": denial_response.procedure,
+                "procedure": procedure,
                 "diagnosis": denial_response.diagnosis,
                 "semi_sekret": denial_response.semi_sekret,
                 "insurance_company": denial_response.insurance_company,
@@ -1074,21 +1149,29 @@ class EntityExtractView(SessionRequiredMixin, generic.FormView):
             }
         )
 
+        context = {
+            "post_infered_form": new_form,
+            "upload_more": True,
+            "current_step": 5,
+            "back_url": build_back_url(
+                "dvc",
+                denial_response.denial_id,
+                email,
+                denial_response.semi_sekret,
+            ),
+            "back_label": "Back to plan documents",
+        }
+
+        # Add microsite prefill note if applicable
+        if used_default_procedure and microsite_title:
+            context["microsite_prefill_note"] = True
+            context["microsite_title"] = microsite_title
+            context["default_procedure"] = default_procedure
+
         return render(
             self.request,
             "categorize.html",
-            context={
-                "post_infered_form": new_form,
-                "upload_more": True,
-                "current_step": 5,
-                "back_url": build_back_url(
-                    "dvc",
-                    denial_response.denial_id,
-                    email,
-                    denial_response.semi_sekret,
-                ),
-                "back_label": "Back to plan documents",
-            },
+            context=context,
         )
 
 
@@ -1353,9 +1436,15 @@ def chat_interface_view(request):
         )
         return redirect("chat_consent")
 
+    # Check for default_procedure and default_condition from microsite URL params
+    default_procedure = request.GET.get("default_procedure", "")
+    default_condition = request.GET.get("default_condition", "")
+
     context = {
         "title": "Chat with FightHealthInsurance",
         "email": email,
+        "default_procedure": default_procedure,
+        "default_condition": default_condition,
     }
     logger.debug(f"Rendering chat interface with context: {context}")
     return render(request, "chat_interface.html", context)
@@ -1510,5 +1599,35 @@ class ChooserView(TemplateView):
         except Exception as e:
             # Don't let pre-fill errors break page load
             pass
+
+        return context
+
+
+class MicrositeView(TemplateView):
+    """View for microsite landing pages."""
+
+    template_name = "microsite.html"
+
+    def get(self, request, slug, *args, **kwargs):
+        from fighthealthinsurance.microsites import get_microsite
+
+        microsite = get_microsite(slug)
+        if microsite is None:
+            from django.http import Http404
+
+            raise Http404(f"Microsite '{slug}' not found")
+
+        return super().get(request, *args, **kwargs)
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        slug = self.kwargs.get("slug", "")
+
+        from fighthealthinsurance.microsites import get_microsite
+
+        microsite = get_microsite(slug)
+        if microsite:
+            context["microsite"] = microsite
+            context["title"] = microsite.title
 
         return context

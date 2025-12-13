@@ -15,6 +15,11 @@ Upload your Health Insurance Denial
 {% block content %}
 <section class="scan-section mt-2">
     <div class="container">
+	{% if default_procedure or default_condition %}
+	<div style="background:#e8f5e9; padding:1rem; border-radius:4px; margin-bottom:1.5rem; border-left:4px solid #a5c422;">
+	    <p style="margin: 0;">You started from the <strong>{{ microsite_title }}</strong> page. We'll pre-fill {% if default_procedure %}your procedure as <strong>{{ default_procedure }}</strong>{% endif %}{% if default_procedure and default_condition %} and {% endif %}{% if default_condition %}your condition as <strong>{{ default_condition }}</strong>{% endif %} later in the process. You can still change it if needed.</p>
+	</div>
+	{% endif %}
 	{% if form.errors %}
 	<div style="color:red">
 	    {{ form.errors }}
@@ -23,6 +28,12 @@ Upload your Health Insurance Denial
 	<div class="main-form">
 	<form method="post" action="{% url 'process' %}" id="fuck_health_insurance_form" enctype="multipart/form-data">
 		{% csrf_token %}
+		{% if default_procedure or default_condition %}
+		<input type="hidden" name="default_procedure" value="{{ default_procedure }}">
+		<input type="hidden" name="default_condition" value="{{ default_condition }}">
+		<input type="hidden" name="microsite_slug" value="{{ microsite_slug }}">
+		<input type="hidden" name="microsite_title" value="{{ microsite_title }}">
+		{% endif %}
 	<div class="together-form-group">
 	  <div>
 	    <label for="store_fname" class="form-label">First name*</label><br>
