@@ -126,6 +126,11 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         views.FollowUpView.as_view(),
         name="followup-with-trailing-slash",
     ),
+    path(
+        "v0/followup/<uuid:uuid>/<slug:hashed_email>/<slug:follow_up_semi_sekret>/thankyou",
+        views.FollowUpThankYouView.as_view(),
+        name="followup_thankyou",
+    ),
     # Unsubscribe from mailing list
     path(
         "v0/unsubscribe/<slug:token>",

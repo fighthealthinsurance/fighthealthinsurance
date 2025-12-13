@@ -90,7 +90,14 @@ class FollowUpView(generic.FormView):
 
     def form_valid(self, form):
         common_view_logic.FollowUpHelper.store_follow_up_result(**form.cleaned_data)
-        return render(self.request, "followup_thankyou.html")
+        # Use redirect-after-POST pattern to handle Stripe returns correctly
+        # Build the thank you URL with the same parameters
+        thankyou_url = reverse('followup_thankyou', kwargs=self.kwargs)
+        return redirect(thankyou_url)
+
+
+class FollowUpThankYouView(TemplateView):
+    template_name = "followup_thankyou.html"
 
 
 class ProVersionThankYouView(TemplateView):
