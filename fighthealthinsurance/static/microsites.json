@@ -933,7 +933,7 @@
       },
       {
         "question": "Can I appeal if I’ve already started voice therapy and they won’t cover more sessions?",
-          "answer": "Yes. Your appeal can show progress made so far and why continued sessions are needed to reach safe, sustainable vocal patterns. However, retroactive coverage for sessions already paid for may be more difficult to achieve if \"prior authorization\" is required."
+        "answer": "Yes. Your appeal can show progress made so far and why continued sessions are needed to reach safe, sustainable vocal patterns. However, retroactive coverage for sessions already paid for may be more difficult to achieve if \"prior authorization\" is required."
       }
     ],
     "evidence_snippets": [
@@ -1137,7 +1137,7 @@
       "Genital surgery exclusions",
       "Provider out-of-network or limited network"
     ],
-      "how_we_help": "We help you document dysphoria, prior treatments, safety concerns, and World Professional Association for Transgender Health(WPATH) Standards of Care (SOC) criteria to strengthen your appeal.",
+    "how_we_help": "We help you document dysphoria, prior treatments, safety concerns, and World Professional Association for Transgender Health(WPATH) Standards of Care (SOC) criteria to strengthen your appeal.",
     "cta": "Start your genital surgery appeal.",
     "faq": [
       {
@@ -1150,7 +1150,7 @@
       },
       {
         "question": "Should I discuss safety and mental health in my appeal?",
-          "answer": "This is a personal choice, but explaining how surgery relates to your mental health, safety, and ability to function in daily life can be helpful."
+        "answer": "This is a personal choice, but explaining how surgery relates to your mental health, safety, and ability to function in daily life can be helpful."
       }
     ],
     "evidence_snippets": [
@@ -1170,7 +1170,7 @@
     "default_procedure": "Fertility Preservation Prior to treatment",
     "tagline": "Many insurers must cover this when medically indicated — appeals often win.",
     "hero_h1": "Appeal Your Fertility Preservation Denial",
-      "hero_subhead": "Egg or sperm preservation before gender-affirming, oncology, and other care can be medically necessary.",
+    "hero_subhead": "Egg or sperm preservation before gender-affirming, oncology, and other care can be medically necessary.",
     "intro": "Fertility preservation is critical for many trans people before starting HRT or undergoing surgery. Insurers frequently deny coverage due to outdated or discriminatory policies.",
     "common_denial_reasons": [
       "Not medically necessary",
@@ -2392,7 +2392,7 @@
     "faq": [
       {
         "question": "What should I do *right now* if I think I’ve been exposed to HIV?",
-          "answer": "We do not provide medical advice, but we strongly encourage you to consult a provider as soon as possible as PEP is most effective when started as soon as possible. We strongly encourage you not to wait for an insurance decision to seek care and look into community resources that can help in the meantime."
+        "answer": "We do not provide medical advice, but we strongly encourage you to consult a provider as soon as possible as PEP is most effective when started as soon as possible. We strongly encourage you not to wait for an insurance decision to seek care and look into community resources that can help in the meantime."
       },
       {
         "question": "Does it still make sense to appeal if I already finished PEP and only now got the denial?",
