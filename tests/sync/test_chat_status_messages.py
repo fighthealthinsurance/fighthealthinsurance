@@ -29,7 +29,11 @@ class ChatStatusMessageTest(APITestCase):
     """Test cases for chat status messages and timing."""
 
     async def asyncSetUp(self):
-        """Set up test environment with mock model."""
+        """
+        Prepare the async test fixture by creating a MockChatModel and patching ml_router.get_chat_backends to return it.
+        
+        Initializes self.mock_model, starts a patcher stored in self.get_chat_backends_patcher, and assigns the started patch mock to self.mock_get_chat_backends so it returns [self.mock_model].
+        """
         self.mock_model = MockChatModel()
         self.get_chat_backends_patcher = patch(
             "fighthealthinsurance.ml.ml_router.ml_router.get_chat_backends"
@@ -38,7 +42,11 @@ class ChatStatusMessageTest(APITestCase):
         self.mock_get_chat_backends.return_value = [self.mock_model]
 
     async def asyncTearDown(self):
-        """Clean up the test environment."""
+        """
+        Stop the patched chat backend getter and perform async test teardown.
+        
+        This stops the patcher created in asyncSetUp, restoring the original get_chat_backends implementation.
+        """
         self.get_chat_backends_patcher.stop()
 
     async def test_send_status_message(self):
@@ -62,6 +70,12 @@ class ChatStatusMessageTest(APITestCase):
         status_messages = []
 
         async def mock_send_json(data):
+            """
+            Capture the 'status' field from a JSON-like payload and record it in the enclosing status_messages list.
+            
+            Parameters:
+                data (dict): JSON-like payload to inspect; if it contains a "status" key, that value is appended to the outer `status_messages` list.
+            """
             if "status" in data:
                 status_messages.append(data["status"])
 
@@ -101,6 +115,12 @@ class ChatStatusMessageTest(APITestCase):
         status_messages = []
 
         async def mock_send_json(data):
+            """
+            Capture the 'status' field from a JSON-like payload and record it in the enclosing status_messages list.
+            
+            Parameters:
+                data (dict): JSON-like payload to inspect; if it contains a "status" key, that value is appended to the outer `status_messages` list.
+            """
             if "status" in data:
                 status_messages.append(data["status"])
 
@@ -157,6 +177,12 @@ class ChatStatusMessageTest(APITestCase):
         status_messages = []
 
         async def mock_send_json(data):
+            """
+            Capture the 'status' field from a JSON-like payload and record it in the enclosing status_messages list.
+            
+            Parameters:
+                data (dict): JSON-like payload to inspect; if it contains a "status" key, that value is appended to the outer `status_messages` list.
+            """
             if "status" in data:
                 status_messages.append(data["status"])
 
@@ -271,6 +297,12 @@ class ChatStatusMessageTest(APITestCase):
         status_messages = []
 
         async def mock_send_json(data):
+            """
+            Capture the 'status' field from a JSON-like payload and record it in the enclosing status_messages list.
+            
+            Parameters:
+                data (dict): JSON-like payload to inspect; if it contains a "status" key, that value is appended to the outer `status_messages` list.
+            """
             if "status" in data:
                 status_messages.append(data["status"])
 
@@ -313,6 +345,12 @@ class ChatStatusMessageTest(APITestCase):
         status_messages = []
 
         async def mock_send_json(data):
+            """
+            Capture the 'status' field from a JSON-like payload and record it in the enclosing status_messages list.
+            
+            Parameters:
+                data (dict): JSON-like payload to inspect; if it contains a "status" key, that value is appended to the outer `status_messages` list.
+            """
             if "status" in data:
                 status_messages.append(data["status"])
 
@@ -363,6 +401,12 @@ class ChatStatusMessageTest(APITestCase):
         error_messages = []
 
         async def mock_send_json(data):
+            """
+            Capture and record any 'error' field from the provided JSON-like message into the test's error_messages list.
+            
+            Parameters:
+                data (dict): JSON-like message received; if it contains an "error" key, its value is appended to the surrounding scope's `error_messages` list.
+            """
             if "error" in data:
                 error_messages.append(data["error"])
 
@@ -463,6 +507,12 @@ class ChatStatusMessageTest(APITestCase):
         sent_messages = []
 
         async def mock_send_json(data):
+            """
+            Capture an outgoing JSON-like message by appending it to the outer-scoped sent_messages list.
+            
+            Parameters:
+                data (dict): JSON-serializable payload to record.
+            """
             sent_messages.append(data)
 
         chat_interface = ChatInterface(
@@ -490,4 +540,3 @@ class ChatStatusMessageTest(APITestCase):
         self.assertGreater(len(response_messages), 0, "Should have received at least one assistant response")
 
         await self.asyncTearDown()
-
