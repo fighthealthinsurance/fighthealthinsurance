@@ -39,6 +39,7 @@ OPTIONAL_MICROSITE_KEYS = {
     "alternatives",
     "assistance_programs",
     "default_condition",
+    "medicare",
 }
 
 # All valid keys that can appear in a microsite JSON entry
@@ -204,6 +205,7 @@ class MicrositeJSONValidationTest(TestCase):
             "ffs-denial",
             "hrt-denial",
             "grs-denial",
+            "medicare-work-requirements",
         ]
         for slug in known_slugs:
             self.assertIn(
@@ -515,3 +517,162 @@ class MicrositeSpecificTest(TestCase):
             200,
             "CT scan denial microsite should load successfully."
         )
+
+
+class MedicareMicrositeTest(TestCase):
+    """Tests for Medicare work requirements microsite."""
+
+    def setUp(self):
+        self.client = Client()
+
+    def test_medicare_work_requirements_microsite_exists(self):
+        """Test that the Medicare work requirements microsite exists."""
+        microsite = get_microsite("medicare-work-requirements")
+        self.assertIsNotNone(
+            microsite,
+            "Medicare work requirements microsite should exist"
+        )
+
+    def test_medicare_work_requirements_microsite_loads(self):
+        """Test that the Medicare work requirements microsite loads correctly."""
+        response = self.client.get(
+            reverse("microsite", kwargs={"slug": "medicare-work-requirements"})
+        )
+        self.assertEqual(
+            response.status_code,
+            200,
+            "Medicare work requirements microsite should load successfully."
+        )
+
+    def test_medicare_work_requirements_has_medicare_flag(self):
+        """Test that the Medicare microsite has the medicare flag set."""
+        microsite = get_microsite("medicare-work-requirements")
+        self.assertIsNotNone(microsite)
+        self.assertTrue(
+            microsite.medicare,
+            "Medicare work requirements microsite should have medicare=True"
+        )
+
+    def test_medicare_work_requirements_page_contains_medicare_content(self):
+        """Test that the Medicare page contains Medicare-specific content."""
+        response = self.client.get(
+            reverse("microsite", kwargs={"slug": "medicare-work-requirements"})
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Understanding Medicare Work Requirements")
+        self.assertContains(response, "Medicare")
+
+    def test_medicare_work_requirements_chat_link_includes_medicare_parameter(self):
+        """Test that chat links from Medicare microsite include medicare=true parameter."""
+        response = self.client.get(
+            reverse("microsite", kwargs={"slug": "medicare-work-requirements"})
+        )
+        self.assertEqual(response.status_code, 200)
+        # Check that the chat link includes medicare=true
+        self.assertContains(response, "medicare=true")
+
+    def test_medicare_work_requirements_chat_link_includes_default_procedure(self):
+        """Test that chat links from Medicare microsite include default_procedure."""
+        response = self.client.get(
+            reverse("microsite", kwargs={"slug": "medicare-work-requirements"})
+        )
+        self.assertEqual(response.status_code, 200)
+        # Check that the chat link includes the default procedure
+        self.assertContains(response, "default_procedure=Medicare")
+
+    def test_medicare_work_requirements_has_faq(self):
+        """Test that the Medicare microsite has FAQ entries."""
+        microsite = get_microsite("medicare-work-requirements")
+        self.assertIsNotNone(microsite)
+        self.assertGreater(
+            len(microsite.faq),
+            0,
+            "Medicare work requirements microsite should have FAQ entries"
+        )
+
+    def test_medicare_work_requirements_has_common_denial_reasons(self):
+        """Test that the Medicare microsite has common denial reasons."""
+        microsite = get_microsite("medicare-work-requirements")
+        self.assertIsNotNone(microsite)
+        self.assertGreater(
+            len(microsite.common_denial_reasons),
+            0,
+            "Medicare work requirements microsite should have common denial reasons"
+        )
+
+    def test_medicare_work_requirements_has_evidence_snippets(self):
+        """Test that the Medicare microsite has evidence snippets."""
+        microsite = get_microsite("medicare-work-requirements")
+        self.assertIsNotNone(microsite)
+        self.assertGreater(
+            len(microsite.evidence_snippets),
+            0,
+            "Medicare work requirements microsite should have evidence snippets"
+        )
+
+
+class MedicareChatIntegrationTest(TestCase):
+    """Tests for Medicare chat integration."""
+
+    def setUp(self):
+        self.client = Client()
+
+    def test_chat_accepts_medicare_parameter(self):
+        """Test that the chat view accepts medicare parameter."""
+        # First complete consent
+        session = self.client.session
+        session["consent_completed"] = True
+        session["email"] = "test@example.com"
+        session.save()
+
+        # Access chat with medicare parameter
+        response = self.client.get(
+            reverse("chat"),
+            {
+                "default_procedure": "Medicare Services",
+                "medicare": "true",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+
+    def test_chat_page_includes_medicare_data_attribute(self):
+        """Test that the chat page includes medicare data attribute."""
+        # First complete consent
+        session = self.client.session
+        session["consent_completed"] = True
+        session["email"] = "test@example.com"
+        session.save()
+
+        # Access chat with medicare parameter
+        response = self.client.get(
+            reverse("chat"),
+            {
+                "default_procedure": "Medicare Services",
+                "medicare": "true",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        # Check that the chat interface root has the medicare data attribute
+        self.assertContains(response, 'data-medicare="true"')
+
+    def test_chat_with_medicare_and_procedure(self):
+        """Test that chat works with both Medicare flag and default procedure."""
+        # First complete consent
+        session = self.client.session
+        session["consent_completed"] = True
+        session["email"] = "test@example.com"
+        session.save()
+
+        # Access chat with medicare and procedure parameters
+        response = self.client.get(
+            reverse("chat"),
+            {
+                "default_procedure": "Medicare Services",
+                "medicare": "true",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Medicare Services")
+        self.assertContains(response, 'data-medicare="true"')
+        self.assertContains(response, 'data-default-procedure="Medicare Services"')
+
