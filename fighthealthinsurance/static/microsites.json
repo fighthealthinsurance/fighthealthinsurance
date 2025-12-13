@@ -2476,6 +2476,7 @@
     "slug": "insulin-pump-cgm-denial-dexcom",
     "title": "Appealing Dexcom CGM Denials",
     "default_procedure": "Dexcom Continuous Glucose Monitor",
+    "default_condition": "Diabetes",
     "tagline": "Real-time glucose data can prevent dangerous highs and lows.",
     "hero_h1": "Appeal Your Dexcom CGM Denial",
     "hero_subhead": "When finger sticks are not enough, Dexcom can be medically necessary.",
@@ -2507,13 +2508,26 @@
       "Dexcom continuous glucose monitoring randomized trial",
       "real time CGM type 1 type 2 diabetes outcomes",
       "continuous glucose monitoring hypoglycemia risk reduction"
+    ],
+    "assistance_programs": [
+      {
+        "name": "Dexcom Patient Assistance Program",
+        "url": "https://assistance.dexcom.com/",
+        "description": "Discounts for qualifying patients, as low as $45 per 90-day supply for Type 1 diabetes patients meeting income criteria."
+      },
+      {
+        "name": "Dexcom Pharmacy Savings Program",
+        "url": "https://www.dexcom.com/en-us/savings-center",
+        "description": "Save over 50% on standard monthly cash price at participating pharmacies."
+      }
     ]
   },
   "insulin-pump-cgm-denial-freestyle-libre": {
     "slug": "insulin-pump-cgm-denial-freestyle-libre",
     "title": "Appealing FreeStyle Libre Denials",
     "default_procedure": "FreeStyle Libre Flash Glucose Monitoring",
-    "tagline": "Scanning a sensor is not a luxury—it’s safer than guessing.",
+    "default_condition": "Diabetes",
+    "tagline": "Scanning a sensor is not a luxury—it's safer than guessing.",
     "hero_h1": "Appeal Your FreeStyle Libre Denial",
     "hero_subhead": "Libre gives continuous insight without constant finger sticks.",
     "intro": "FreeStyle Libre is often denied as unnecessary when finger-stick testing is available. Appeals can show how sensor data helps prevent severe highs and lows, especially for people on insulin.",
@@ -2544,12 +2558,30 @@
       "FreeStyle Libre flash glucose monitoring trial",
       "flash glucose monitoring time in range hypoglycemia",
       "sensor based glucose monitoring insulin treated diabetes"
+    ],
+    "assistance_programs": [
+      {
+        "name": "MyFreeStyle Program",
+        "url": "https://www.freestyle.abbott/us-en/myfreestyle-freestyle-libre-3.html",
+        "description": "Eligible patients can receive one sensor at $0 copay. Free sensor offer for new users."
+      },
+      {
+        "name": "FreeStyle Libre Copay Card",
+        "url": "https://www.freestyle.abbott/us-en/support.html",
+        "description": "Savings for commercially insured patients. Over 95% of commercial plans cover FreeStyle Libre."
+      },
+      {
+        "name": "Abbott Patient Assistance Foundation",
+        "url": "https://www.abbott.com/corpnewsroom/diabetes-care/at-a-crossroads-heres-how-to-get-help-for-diabetes.html",
+        "description": "Free or reduced-cost sensors for patients meeting income and insurance criteria."
+      }
     ]
   },
   "insulin-pump-denial-omnipod": {
     "slug": "insulin-pump-denial-omnipod",
     "title": "Appealing Omnipod Insulin Pump Denials",
     "default_procedure": "Omnipod Insulin Pump System",
+    "default_condition": "Diabetes",
     "tagline": "Tubeless pump therapy can be the safest and most realistic option for some people.",
     "hero_h1": "Appeal Your Omnipod Pump Denial",
     "hero_subhead": "If multiple daily injections are not working, Omnipod may be medically necessary.",
@@ -2581,6 +2613,18 @@
       "insulin pump therapy glycemic control type 1",
       "tubeless insulin pump Omnipod quality of life",
       "insulin pump vs multiple daily injections outcomes"
+    ],
+    "assistance_programs": [
+      {
+        "name": "Omnipod Financial Assistance Program",
+        "url": "https://www.omnipod.com/is-omnipod-right-for-me/coverage/financial-assistance",
+        "description": "Copay card to reduce monthly out-of-pocket costs for commercially insured patients."
+      },
+      {
+        "name": "Omnipod 5 Free Trial",
+        "url": "https://www.omnipod.com/what-is-omnipod/omnipod-5",
+        "description": "30-day free trial for new patients switching from injections or tubed pumps."
+      }
     ]
   },
   "pep-denial-hiv-exposure": {
