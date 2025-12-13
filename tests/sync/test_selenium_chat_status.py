@@ -83,23 +83,35 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
         self.wait(2)  # Wait for WebSocket connection
         
         # Type and send a message
-        # Find the textarea - it may be in a shadow DOM or iframe
+        # React components require special handling, so we use JavaScript to interact
+        # with the dynamically rendered textarea and button
         try:
-            # Try to find the message input
-            self.execute_script("""
-                const textarea = document.querySelector('textarea');
-                if (textarea) {
-                    textarea.value = 'Hello, I need help with my appeal';
-                    const event = new Event('input', { bubbles: true });
-                    textarea.dispatchEvent(event);
-                }
-            """)
-            
-            # Click send button
-            self.execute_script("""
-                const sendButton = document.querySelector('button[aria-label="Send message"]');
-                if (sendButton) sendButton.click();
-            """)
+            # Try using Selenium's standard methods first
+            try:
+                self.type("textarea", "Hello, I need help with my appeal")
+                self.click("button[aria-label='Send message']")
+            except:
+                # Fallback: Use JavaScript for React component interaction
+                # This is necessary because React may not have stable selectors
+                self.execute_script("""
+                    const textarea = document.querySelector('textarea');
+                    if (textarea) {
+                        // Simulate React's controlled component behavior
+                        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+                            window.HTMLTextAreaElement.prototype, 'value'
+                        ).set;
+                        nativeInputValueSetter.call(textarea, 'Hello, I need help with my appeal');
+                        
+                        const event = new Event('input', { bubbles: true });
+                        textarea.dispatchEvent(event);
+                    }
+                """)
+                
+                # Click send button
+                self.execute_script("""
+                    const sendButton = document.querySelector('button[aria-label="Send message"]');
+                    if (sendButton) sendButton.click();
+                """)
             
             # Wait for typing indicator to appear
             self.wait(1)
@@ -136,19 +148,27 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
         
         # Send a message that will trigger a long response
         try:
-            self.execute_script("""
-                const textarea = document.querySelector('textarea');
-                if (textarea) {
-                    textarea.value = 'Test message for elapsed time';
-                    const event = new Event('input', { bubbles: true });
-                    textarea.dispatchEvent(event);
-                }
-            """)
-            
-            self.execute_script("""
-                const sendButton = document.querySelector('button[aria-label="Send message"]');
-                if (sendButton) sendButton.click();
-            """)
+            # Try standard Selenium first
+            try:
+                self.type("textarea", "Test message for elapsed time")
+                self.click("button[aria-label='Send message']")
+            except:
+                # Fallback to JavaScript for React components
+                self.execute_script("""
+                    const textarea = document.querySelector('textarea');
+                    if (textarea) {
+                        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+                            window.HTMLTextAreaElement.prototype, 'value'
+                        ).set;
+                        nativeInputValueSetter.call(textarea, 'Test message for elapsed time');
+                        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+                    }
+                """)
+                
+                self.execute_script("""
+                    const sendButton = document.querySelector('button[aria-label="Send message"]');
+                    if (sendButton) sendButton.click();
+                """)
             
             # Wait a few seconds and check for elapsed time text
             self.wait(3)
