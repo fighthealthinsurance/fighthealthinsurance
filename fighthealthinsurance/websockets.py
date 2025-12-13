@@ -369,6 +369,13 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
         email = data.get("email", None)  # Email for patient users so we can delete data
         session_key = data.get("session_key", None)  # Session key for anonymous users
         microsite_slug = data.get("microsite_slug", None)  # Microsite slug if coming from a microsite
+        
+        # Validate microsite_slug if provided
+        if microsite_slug:
+            from fighthealthinsurance.microsites import get_microsite
+            if not get_microsite(microsite_slug):
+                logger.warning(f"Invalid microsite_slug received: {microsite_slug}")
+                microsite_slug = None
 
         logger.debug(
             f"Message: {message} replay {replay_requested} chat_id {chat_id} "
@@ -515,7 +522,8 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                     await OngoingChat.objects.filter(id=chat.id).aupdate(
                         microsite_slug=microsite_slug
                     )
-                    chat.microsite_slug = microsite_slug
+                    # Refresh the chat object to ensure consistency
+                    await chat.arefresh_from_db()
                 
                 return chat
             except OngoingChat.DoesNotExist as e:

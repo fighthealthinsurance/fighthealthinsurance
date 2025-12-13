@@ -953,12 +953,16 @@ class InitialProcessView(generic.FormView):
                 except Exception as e2:
                     logger.warning(f"Error updating subscriber? {email}!?!")
 
-        # Get microsite slug from request if available
+        # Get microsite slug from request if available and validate it
         microsite_slug = self.request.POST.get(
             "microsite_slug"
         ) or self.request.GET.get("microsite_slug", "")
         if microsite_slug:
-            cleaned_data["microsite_slug"] = microsite_slug
+            from fighthealthinsurance.microsites import get_microsite
+            if get_microsite(microsite_slug):
+                cleaned_data["microsite_slug"] = microsite_slug
+            else:
+                logger.warning(f"Invalid microsite_slug received: {microsite_slug}")
 
         denial_response = common_view_logic.DenialCreatorHelper.create_or_update_denial(
             **cleaned_data,

@@ -143,8 +143,9 @@ class PubMedTools(object):
                     try:
                         microsite = get_microsite(denial.microsite_slug)
                         if microsite and microsite.pubmed_search_terms:
-                            logger.debug(f"Adding {len(microsite.pubmed_search_terms)} microsite search terms for {denial.microsite_slug}")
-                            queries.update(microsite.pubmed_search_terms)
+                            if len(microsite.pubmed_search_terms) > 0:
+                                logger.debug(f"Adding {len(microsite.pubmed_search_terms)} microsite search terms for {denial.microsite_slug}")
+                                queries.update(microsite.pubmed_search_terms)
                     except Exception as e:
                         logger.opt(exception=True).warning(f"Failed to load microsite search terms: {e}")
                 

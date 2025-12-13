@@ -1090,6 +1090,31 @@ class DenialCreatorHelper:
     ):
         """
         Create or update an existing denial.
+        
+        Args:
+            email: The email address associated with the denial.
+            denial_text: The text of the denial.
+            zip: The ZIP code associated with the denial.
+            health_history: Optional health history information.
+            pii: Whether personally identifiable information is included.
+            tos: Whether terms of service have been accepted.
+            privacy: Whether privacy policy has been accepted.
+            use_external_models: Whether to use external models.
+            store_raw_email: Whether to store the raw email address.
+            plan_documents: Optional plan documents.
+            patient_id: Optional patient ID.
+            insurance_company: Optional insurance company name.
+            denial: Optional existing Denial object to update.
+            creating_professional: Optional ProfessionalUser creating the denial.
+            primary_professional: Optional ProfessionalUser as primary.
+            patient_user: Optional PatientUser associated with the denial.
+            patient_visible: Whether the denial is visible to the patient.
+            subscribe: Whether the user has subscribed (not handled in this function).
+            microsite_slug: Optional slug identifier for the microsite from which the denial was created.
+                           Should be a valid microsite slug or None.
+        
+        Returns:
+            The created or updated Denial object.
         """
         hashed_email = Denial.get_hashed_email(email)
         # If they ask us to store their raw e-mail we do

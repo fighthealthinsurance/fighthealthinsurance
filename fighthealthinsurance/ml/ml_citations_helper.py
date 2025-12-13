@@ -158,7 +158,8 @@ class MLCitationsHelper:
                 logger.debug(
                     f"Found cached generic citations for {procedure}/{diagnosis} -- {cached.generated_context}"
                 )
-                result = cast(List[str], cached.generated_context)
+                # Create a new list to avoid modifying cached data
+                result = list(cached.generated_context)
                 
                 # Add microsite evidence snippets if available
                 if denial and denial.microsite_slug:

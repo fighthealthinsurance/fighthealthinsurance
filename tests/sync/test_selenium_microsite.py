@@ -2,7 +2,7 @@
 
 import time
 from django.contrib.staticfiles.testing import StaticLiveServerTestCase
-from fighthealthinsurance.models import Denial, OngoingChat, ChatLeads
+from fighthealthinsurance.models import Denial, OngoingChat
 from seleniumbase import BaseCase
 
 from .fhi_selenium_base import FHISeleniumBase
@@ -21,13 +21,11 @@ class SeleniumTestMicrositeIntegration(FHISeleniumBase, StaticLiveServerTestCase
 
     @classmethod
     def setUpClass(cls):
-        super(StaticLiveServerTestCase, cls).setUpClass()
-        super(BaseCase, cls).setUpClass()
+        super(SeleniumTestMicrositeIntegration, cls).setUpClass()
 
     @classmethod
     def tearDownClass(cls):
-        super(StaticLiveServerTestCase, cls).tearDownClass()
-        super(BaseCase, cls).tearDownClass()
+        super(SeleniumTestMicrositeIntegration, cls).tearDownClass()
 
     def test_microsite_appeal_flow_stores_slug(self):
         """Test that coming from a microsite stores the microsite_slug in the Denial."""
@@ -101,13 +99,6 @@ class SeleniumTestMicrositeIntegration(FHISeleniumBase, StaticLiveServerTestCase
         
         # Check that we're on the chat page
         self.assert_element('#chat-interface-root')
-        
-        # Wait a bit for the chat to initialize
-        time.sleep(3)
-        
-        # Note: We can't easily test the OngoingChat creation via selenium since it happens
-        # via WebSocket. This would require more complex setup. The integration test
-        # in test_microsite_integration.py covers the backend logic.
 
     def test_microsite_chat_triggers_pubmed_search(self):
         """Test that chat from microsite triggers PubMed searches with status messages."""
@@ -152,18 +143,16 @@ class SeleniumTestMicrositeIntegration(FHISeleniumBase, StaticLiveServerTestCase
         # Get the page HTML to check for search-related text
         page_text = self.get_page_source()
         
-        # Check for evidence that PubMed search was triggered
-        # Look for either status messages or the initial message about MRI
+        # Check for specific PubMed search status messages (not just "MRI")
         search_triggered = (
             "Searching medical literature" in page_text or
             "Medical literature search" in page_text or
-            "Searching:" in page_text or
-            "MRI" in page_text  # At minimum, the initial message should mention MRI
+            "Searching:" in page_text
         )
         
         self.assertTrue(
             search_triggered,
-            "Chat should show evidence of PubMed search being triggered from microsite"
+            "Chat should show PubMed search status messages ('Searching medical literature...' or 'Medical literature search complete')"
         )
         
         # Verify that an OngoingChat was created with the microsite_slug
