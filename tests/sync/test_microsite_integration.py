@@ -8,7 +8,6 @@ Tests that:
 4. Microsite data is passed to chat interface
 """
 
-import pytest
 from django.test import TestCase, Client
 from django.urls import reverse
 
@@ -120,16 +119,14 @@ class MicrositeChatLeadsTest(TestCase):
 class MicrositeDataIntegrationTest(TestCase):
     """Tests that microsite data (pubmed_search_terms, evidence_snippets) are properly used."""
 
-    @pytest.mark.asyncio
-    async def test_microsite_pubmed_search_terms_available(self):
+    def test_microsite_pubmed_search_terms_available(self):
         """Test that microsite pubmed_search_terms are accessible."""
         microsite = get_microsite("mri-denial")
         self.assertIsNotNone(microsite)
         self.assertIsInstance(microsite.pubmed_search_terms, list)
         self.assertGreater(len(microsite.pubmed_search_terms), 0)
 
-    @pytest.mark.asyncio
-    async def test_microsite_evidence_snippets_available(self):
+    def test_microsite_evidence_snippets_available(self):
         """Test that microsite evidence_snippets are accessible."""
         microsite = get_microsite("mri-denial")
         self.assertIsNotNone(microsite)
