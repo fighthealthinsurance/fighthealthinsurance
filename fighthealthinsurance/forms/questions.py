@@ -452,3 +452,103 @@ class StepTherapy(MedicalNeccessaryQuestions):
         label="Why doesn't the insurance supported care option work?",
         help_text="E.g., you've tried the suggested medication, are allergic, it is not recommended, or it was ineffective. Briefly explain why the insurer's alternative is not appropriate in your case.",
     )
+
+
+class FormularyChangeQuestions(InsuranceQuestions):
+    """Questions for formulary changes and continuity of care appeals."""
+
+    currently_taking = forms.BooleanField(
+        required=False,
+        label="Are you currently taking this medication?",
+        help_text="Check if you've been taking this medication and it's being removed from formulary or moved to a higher tier.",
+    )
+    how_long_taking = forms.CharField(
+        max_length=100,
+        required=False,
+        label="How long have you been taking this medication?",
+        help_text="E.g., '6 months', '2 years', 'since 2021'. This helps establish continuity of care.",
+    )
+    medication_working = forms.BooleanField(
+        required=False,
+        label="Is the medication working well for you?",
+        help_text="Check if your condition is stable and well-controlled on this medication.",
+    )
+    tried_alternatives = forms.BooleanField(
+        required=False,
+        label="Have you tried the alternative medication(s) the insurer suggests?",
+        help_text="Check if you've previously tried and failed on the preferred/alternative medications.",
+    )
+    alternative_problems = forms.CharField(
+        max_length=300,
+        required=False,
+        label="What problems did you have with alternatives (if any)?",
+        help_text="E.g., 'Side effects were intolerable', 'Did not control my symptoms', 'I'm allergic to the alternative'.",
+    )
+    mid_year_change = forms.BooleanField(
+        required=False,
+        label="Is this a mid-year formulary change?",
+        help_text="Check if the formulary changed during your plan year (not at annual renewal).",
+    )
+
+    def medical_context(self):
+        """Return context about continuity of care to inform the LLM."""
+        response = ""
+        if self.cleaned_data.get("currently_taking"):
+            response += "The patient is currently taking this medication. "
+            if self.cleaned_data.get("how_long_taking"):
+                response += (
+                    f"They have been taking it for {self.cleaned_data['how_long_taking']}. "
+                )
+        if self.cleaned_data.get("medication_working"):
+            response += "The medication is working well and their condition is stable. "
+        if self.cleaned_data.get("tried_alternatives"):
+            response += "The patient has tried alternative medications. "
+            if self.cleaned_data.get("alternative_problems"):
+                response += f"Problems with alternatives: {self.cleaned_data['alternative_problems']}. "
+        if self.cleaned_data.get("mid_year_change"):
+            response += "This is a mid-year formulary change, which may trigger additional patient protections. "
+        return response
+
+    def main(self):
+        """Return main appeal text based on answers."""
+        r = []
+
+        # Only add continuity of care arguments if patient is currently taking the medication
+        if not self.cleaned_data.get("currently_taking"):
+            return r
+
+        if self.cleaned_data.get("how_long_taking"):
+            r.append(
+                f"I have been taking this medication for {self.cleaned_data['how_long_taking']} "
+                "and my condition is well-controlled. Switching medications would disrupt my care."
+            )
+
+        if self.cleaned_data.get("medication_working"):
+            r.append(
+                "My current medication is working effectively. Medical literature shows that "
+                "medication switching can lead to adverse outcomes, treatment failures, and "
+                "increased healthcare costs."
+            )
+
+        if self.cleaned_data.get("tried_alternatives"):
+            base = "I have previously tried the alternative medication(s) you suggest"
+            if self.cleaned_data.get("alternative_problems"):
+                r.append(f"{base}, but experienced problems: {self.cleaned_data['alternative_problems']}.")
+            else:
+                r.append(f"{base}, which did not work for me.")
+
+        if self.cleaned_data.get("mid_year_change"):
+            r.append(
+                "This formulary change occurred during my plan year. Under 45 CFR § 156.122(c), "
+                "health plans must provide a reasonable transition process when drugs are removed "
+                "from formulary. Many states also have non-medical switching laws that prohibit "
+                "forcing patients to switch stable medications mid-year."
+            )
+
+        r.append(
+            "I am requesting a medical exception based on continuity of care. "
+            "Federal regulations require insurers to grant exceptions when a formulary change "
+            "would disrupt ongoing treatment."
+        )
+
+        return r
