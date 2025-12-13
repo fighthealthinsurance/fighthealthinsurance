@@ -1086,6 +1086,7 @@ class DenialCreatorHelper:
         patient_user: Optional[PatientUser] = None,
         patient_visible: bool = False,
         subscribe: bool = False,  # Note: we don't handle this, but it's in the form so passed through.
+        microsite_slug: Optional[str] = None,
     ):
         """
         Create or update an existing denial.
@@ -1117,6 +1118,7 @@ class DenialCreatorHelper:
                     insurance_company=insurance_company,
                     patient_visible=patient_visible,
                     professional_to_finish=professional_to_finish,
+                    microsite_slug=microsite_slug,
                 )
             except Exception as e:
                 # This is a temporary hack to drop non-ASCII characters
@@ -1137,6 +1139,7 @@ class DenialCreatorHelper:
                     insurance_company=insurance_company,
                     patient_visible=patient_visible,
                     professional_to_finish=professional_to_finish,
+                    microsite_slug=microsite_slug,
                 )
         else:
             # Directly update denial object fields instead of using denial.update()
@@ -1157,6 +1160,8 @@ class DenialCreatorHelper:
                 denial.insurance_company = insurance_company
             if patient_visible is not None:
                 denial.patient_visible = patient_visible
+            if microsite_slug is not None:
+                denial.microsite_slug = microsite_slug
 
             denial.save()
 

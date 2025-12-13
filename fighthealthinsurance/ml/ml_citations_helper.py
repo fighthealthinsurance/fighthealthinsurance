@@ -123,6 +123,8 @@ class MLCitationsHelper:
         """
         Generate generic citations using ML models based only on procedure and diagnosis.
         These are cached for reuse across multiple patients with the same procedure/diagnosis.
+        
+        If the denial has a microsite_slug, also includes the microsite's evidence_snippets.
 
         Args:
             denial: the denial
@@ -155,7 +157,20 @@ class MLCitationsHelper:
                 logger.debug(
                     f"Found cached generic citations for {procedure}/{diagnosis} -- {cached.generated_context}"
                 )
-                return cast(List[str], cached.generated_context)
+                result = cast(List[str], cached.generated_context)
+                
+                # Add microsite evidence snippets if available
+                if denial and denial.microsite_slug:
+                    try:
+                        from fighthealthinsurance.microsites import get_microsite
+                        microsite = get_microsite(denial.microsite_slug)
+                        if microsite and microsite.evidence_snippets:
+                            logger.debug(f"Adding {len(microsite.evidence_snippets)} microsite evidence snippets")
+                            result = result + microsite.evidence_snippets
+                    except Exception as e:
+                        logger.opt(exception=True).warning(f"Failed to load microsite evidence snippets: {e}")
+                
+                return result
             else:
                 logger.debug(
                     f"No cached generic citations found for {procedure}/{diagnosis}"
@@ -174,6 +189,16 @@ class MLCitationsHelper:
             # Only proceed if we have backends to use
             if not partial_citation_backends:
                 logger.debug("No citation backends available for generic citations")
+                # Even without backends, check for microsite evidence snippets
+                if denial and denial.microsite_slug:
+                    try:
+                        from fighthealthinsurance.microsites import get_microsite
+                        microsite = get_microsite(denial.microsite_slug)
+                        if microsite and microsite.evidence_snippets:
+                            logger.debug(f"Returning {len(microsite.evidence_snippets)} microsite evidence snippets (no backends)")
+                            return microsite.evidence_snippets
+                    except Exception as e:
+                        logger.opt(exception=True).warning(f"Failed to load microsite evidence snippets: {e}")
                 return []
 
             # Create tasks for partial backends
@@ -206,6 +231,17 @@ class MLCitationsHelper:
                     )
                 except:
                     result = []
+
+                # Add microsite evidence snippets if available
+                if denial and denial.microsite_slug:
+                    try:
+                        from fighthealthinsurance.microsites import get_microsite
+                        microsite = get_microsite(denial.microsite_slug)
+                        if microsite and microsite.evidence_snippets:
+                            logger.debug(f"Adding {len(microsite.evidence_snippets)} microsite evidence snippets to generated citations")
+                            result = result + microsite.evidence_snippets
+                    except Exception as e:
+                        logger.opt(exception=True).warning(f"Failed to load microsite evidence snippets: {e}")
 
                 # If we have citations, cache them for future use
                 if result:
