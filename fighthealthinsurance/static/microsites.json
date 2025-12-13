@@ -1963,6 +1963,7 @@
     "slug": "asthma-biologic-denial-dupilumab",
     "title": "Appealing Dupixent (Dupilumab) Asthma Denials",
     "default_procedure": "Dupixent for Severe Asthma",
+    "default_condition": "Severe Asthma",
     "tagline": "Dupixent can calm type 2 inflammation when inhalers alone are not enough.",
     "hero_h1": "Appeal Your Dupixent Asthma Denial",
     "hero_subhead": "If you are still wheezing on high-dose inhalers, biologic therapy may be essential.",
@@ -1994,12 +1995,25 @@
       "dupilumab severe asthma randomized trial",
       "type 2 inflammation asthma biologic dupilumab",
       "GINA guideline biologic therapy dupilumab"
+    ],
+    "assistance_programs": [
+      {
+        "name": "DUPIXENT MyWay Copay Card",
+        "url": "https://www.dupixent.com/support-savings/copay-card",
+        "description": "Pay as little as $0 per fill with commercial insurance. Max $13,000/year benefit."
+      },
+      {
+        "name": "DUPIXENT MyWay Patient Support",
+        "url": "https://www.dupixent.com/support-savings/dupixent-my-way",
+        "description": "Benefits investigation, prior auth support, and patient assistance for uninsured or coverage gaps."
+      }
     ]
   },
   "asthma-biologic-denial-omalizumab": {
     "slug": "asthma-biologic-denial-omalizumab",
     "title": "Appealing Xolair (Omalizumab) Asthma Denials",
     "default_procedure": "Xolair for Allergic Asthma",
+    "default_condition": "Allergic Asthma",
     "tagline": "For allergic asthma, IgE-targeted therapy can be life-changing.",
     "hero_h1": "Appeal Your Xolair Asthma Denial",
     "hero_subhead": "If allergy-driven asthma is out of control, denying Xolair can be dangerous.",
@@ -2031,12 +2045,25 @@
       "omalizumab allergic asthma exacerbation reduction",
       "IgE targeted therapy severe persistent asthma",
       "omalizumab guideline severe allergic asthma"
+    ],
+    "assistance_programs": [
+      {
+        "name": "Xolair Co-pay Program",
+        "url": "https://www.xolaircopay.com/",
+        "description": "Pay as little as $0 per injection with commercial insurance. Up to $15,000/year for allergic asthma."
+      },
+      {
+        "name": "Genentech Patient Foundation",
+        "url": "https://www.genentech-access.com/patient/brands/xolair/how-we-help-you.html",
+        "description": "Free medication for qualifying uninsured or underinsured patients meeting income requirements."
+      }
     ]
   },
   "asthma-biologic-denial-mepolizumab": {
     "slug": "asthma-biologic-denial-mepolizumab",
     "title": "Appealing Nucala (Mepolizumab) Asthma Denials",
     "default_procedure": "Nucala for Eosinophilic Asthma",
+    "default_condition": "Eosinophilic Asthma",
     "tagline": "Eosinophilic asthma is high risk—denials often ignore that.",
     "hero_h1": "Appeal Your Nucala Asthma Denial",
     "hero_subhead": "Eosinophilic asthma is high risk—denials often ignore that.",
@@ -2068,6 +2095,18 @@
       "mepolizumab eosinophilic asthma randomized trial",
       "IL-5 inhibition severe eosinophilic asthma outcomes",
       "eosinophilic asthma biologic guideline mepolizumab"
+    ],
+    "assistance_programs": [
+      {
+        "name": "NUCALA Copay Program",
+        "url": "https://www.nucala.com/nucala-copay-program/",
+        "description": "Pay as little as $0 with commercial insurance. Up to $15,000/year benefit."
+      },
+      {
+        "name": "GSK Patient Assistance Foundation",
+        "url": "https://gskpaf.org/gsk/prescription-medicine-patient-assistance/nucala-uninsured/",
+        "description": "Free medication for qualifying uninsured patients or those with Medicare."
+      }
     ]
   },
 
