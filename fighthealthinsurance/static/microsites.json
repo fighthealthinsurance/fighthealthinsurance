@@ -1166,7 +1166,7 @@
   },
   "fertility-preservation-denial": {
     "slug": "fertility-preservation-denial",
-    "title": "Appealing Fertility Preservaon Denials",
+    "title": "Appealing Fertility Preservation Denials",
     "default_procedure": "Fertility Preservation Prior to treatment",
     "tagline": "Many insurers must cover this when medically indicated — appeals often win.",
     "hero_h1": "Appeal Your Fertility Preservation Denial",
@@ -2372,7 +2372,6 @@
       "insulin pump vs multiple daily injections outcomes"
     ]
   },
-{
   "pep-denial-hiv-exposure": {
     "slug": "pep-denial-hiv-exposure",
     "title": "Appealing HIV PEP (Post-Exposure Prophylaxis) Denials",
@@ -2532,5 +2531,4 @@
       "head and neck lymphedema Flexitouch Plus clinical outcomes"
     ]
   }
-}
 }
