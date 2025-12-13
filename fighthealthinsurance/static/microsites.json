@@ -2114,6 +2114,7 @@
     "slug": "eczema-biologic-denial-dupilumab",
     "title": "Appealing Dupixent (Dupilumab) Eczema Denials",
     "default_procedure": "Dupixent for Atopic Dermatitis",
+    "default_condition": "Atopic Dermatitis",
     "tagline": "Severe eczema is a systemic disease, not just a rash.",
     "hero_h1": "Appeal Your Dupixent Eczema Denial",
     "hero_subhead": "When skin is cracked, infected, and sleepless, denying Dupixent is not reasonable.",
@@ -2145,12 +2146,25 @@
       "dupilumab moderate severe atopic dermatitis trial",
       "biologic therapy atopic dermatitis quality of life",
       "atopic dermatitis guideline systemic therapy dupilumab"
+    ],
+    "assistance_programs": [
+      {
+        "name": "DUPIXENT MyWay Copay Card",
+        "url": "https://www.dupixent.com/support-savings/copay-card",
+        "description": "Pay as little as $0 per fill with commercial insurance. Max $13,000/year benefit."
+      },
+      {
+        "name": "DUPIXENT MyWay Patient Support",
+        "url": "https://www.dupixent.com/support-savings/dupixent-my-way",
+        "description": "Benefits investigation, prior auth support, and patient assistance for uninsured or coverage gaps."
+      }
     ]
   },
   "eczema-biologic-denial-upadacitinib": {
     "slug": "eczema-biologic-denial-upadacitinib",
     "title": "Appealing Rinvoq (Upadacitinib) Eczema Denials",
     "default_procedure": "Rinvoq for Atopic Dermatitis",
+    "default_condition": "Atopic Dermatitis",
     "tagline": "When topical and biologic options fail, targeted oral therapy may be necessary.",
     "hero_h1": "Appeal Your Rinvoq Eczema Denial",
     "hero_subhead": "Rinvoq is often reserved for the hardest cases—exactly where appeals matter most.",
@@ -2182,6 +2196,23 @@
       "upadacitinib atopic dermatitis randomized trial",
       "JAK inhibitor atopic dermatitis safety efficacy",
       "systemic therapy refractory atopic dermatitis upadacitinib"
+    ],
+    "assistance_programs": [
+      {
+        "name": "RINVOQ Complete Savings Card",
+        "url": "https://www.rinvoq.com/resources/save-on-rinvoq-costs",
+        "description": "Pay as little as $0/month with commercial insurance. Up to $14,000/year benefit."
+      },
+      {
+        "name": "RINVOQ Complete Bridge Program",
+        "url": "https://www.rinvoq.com/resources/rinvoq-complete",
+        "description": "Free medication for up to 24 months while insurance coverage is delayed or denied."
+      },
+      {
+        "name": "myAbbVie Assist",
+        "url": "https://www.abbvie.com/patients/patient-assistance.html",
+        "description": "Free medication for qualifying uninsured, underinsured, or unemployed patients."
+      }
     ]
   },
 
