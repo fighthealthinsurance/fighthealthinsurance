@@ -92,7 +92,11 @@ class FollowUpView(generic.FormView):
         common_view_logic.FollowUpHelper.store_follow_up_result(**form.cleaned_data)
         # Use redirect-after-POST pattern to handle Stripe returns correctly
         # Build the thank you URL with the same parameters
-        thankyou_url = reverse('followup_thankyou', kwargs=self.kwargs)
+        # Normalize the parameter name to match the thankyou URL pattern
+        kwargs = self.kwargs.copy()
+        if 'followup_semi_sekret' in kwargs and 'follow_up_semi_sekret' not in kwargs:
+            kwargs['follow_up_semi_sekret'] = kwargs.pop('followup_semi_sekret')
+        thankyou_url = reverse('followup_thankyou', kwargs=kwargs)
         return redirect(thankyou_url)
 
 
