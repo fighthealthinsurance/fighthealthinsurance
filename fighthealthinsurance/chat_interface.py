@@ -835,6 +835,31 @@ class ChatInterface:
 
         is_patient = self.is_patient
         if is_new_chat:
+            # If this chat is from a microsite, automatically search PubMed with microsite search terms
+            if chat.microsite_slug:
+                try:
+                    from fighthealthinsurance.microsites import get_microsite
+                    microsite = get_microsite(chat.microsite_slug)
+                    if microsite and microsite.pubmed_search_terms:
+                        logger.info(f"Triggering PubMed searches for microsite {chat.microsite_slug}")
+                        await self.send_status_message(f"Searching medical literature for {microsite.default_procedure}...")
+                        
+                        # Trigger PubMed searches for each search term
+                        for search_term in microsite.pubmed_search_terms[:3]:  # Limit to first 3 to avoid overwhelming
+                            try:
+                                await self.send_status_message(f"Searching: {search_term[:50]}...")
+                                articles = await self.pubmed_tools.find_pubmed_article_ids_for_query(
+                                    search_term, since="2020"
+                                )
+                                if articles:
+                                    logger.info(f"Found {len(articles)} articles for search term: {search_term}")
+                            except Exception as e:
+                                logger.warning(f"Error searching PubMed for '{search_term}': {e}")
+                        
+                        await self.send_status_message("Medical literature search complete")
+                except Exception as e:
+                    logger.warning(f"Error loading microsite data for chat: {e}")
+            
             # If this is a trial professional user, add a banner message to the chat history
             if is_trial_professional:
                 trial_banner = {

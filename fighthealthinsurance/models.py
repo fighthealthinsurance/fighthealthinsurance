@@ -1085,6 +1085,8 @@ class OngoingChat(models.Model):
     hashed_email = models.CharField(
         max_length=300, null=True, blank=True, help_text="Hashed email of the user"
     )
+    # Track which microsite the user came from (if any)
+    microsite_slug = models.CharField(max_length=100, null=True, blank=True)
 
     @staticmethod
     def find_chats_by_email(email: str):

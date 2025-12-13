@@ -385,6 +385,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
           session_key: getSessionKey(),
           email: userInfo?.email, // Send email if available
           is_patient: true, // Indicate this is a patient session
+          microsite_slug: micrositeSlug || undefined, // Include microsite slug if available
         };
 
         // If we have a chat ID, request the chat history we explicitily refresh from local storage
@@ -449,6 +450,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
                   content: scrubbedContent,
                   is_patient: true,
                   session_key: getSessionKey(),
+                  microsite_slug: micrositeSlug || undefined,
                 }),
               );
             }, 500);
