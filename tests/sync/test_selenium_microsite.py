@@ -4,6 +4,7 @@ import time
 from django.contrib.staticfiles.testing import StaticLiveServerTestCase
 from fighthealthinsurance.models import Denial, OngoingChat
 from seleniumbase import BaseCase
+from loguru import logger
 
 from .fhi_selenium_base import FHISeleniumBase
 
@@ -137,27 +138,29 @@ class SeleniumTestMicrositeIntegration(FHISeleniumBase, StaticLiveServerTestCase
         
         # Wait for status messages indicating PubMed search is happening
         # The chat should show "Searching medical literature for MRI Scan..."
-        # We need to wait longer as WebSocket communication and PubMed searches take time
-        time.sleep(5)
-        
-        # Get the page HTML to check for search-related text
-        page_text = self.get_page_source()
-        
-        # Check for specific PubMed search status messages (not just "MRI")
-        search_triggered = (
-            "Searching medical literature" in page_text or
-            "Medical literature search" in page_text or
-            "Searching:" in page_text
-        )
+        # Since searches are now non-blocking/background, we need to wait for them to eventually complete
+        # Try multiple times over a longer period
+        search_found = False
+        max_attempts = 15  # Try for up to 15 seconds
+        for attempt in range(max_attempts):
+            time.sleep(1)
+            page_text = self.get_page_source()
+            
+            # Check for specific PubMed search status messages
+            if ("Searching medical literature" in page_text or
+                "Medical literature search" in page_text or
+                "Searching:" in page_text):
+                search_found = True
+                break
         
         self.assertTrue(
-            search_triggered,
-            "Chat should show PubMed search status messages ('Searching medical literature...' or 'Medical literature search complete')"
+            search_found,
+            "Chat should eventually show PubMed search status messages ('Searching medical literature...' or 'Medical literature search complete')"
         )
         
         # Verify that an OngoingChat was created with the microsite_slug
-        # Note: This check might not work immediately due to async WebSocket behavior
-        time.sleep(2)
+        # Wait a bit more for background processing
+        time.sleep(3)
         chats = OngoingChat.objects.filter(
             hashed_email=Denial.get_hashed_email("pubmed-search-test@example.com")
         )
@@ -169,6 +172,15 @@ class SeleniumTestMicrositeIntegration(FHISeleniumBase, StaticLiveServerTestCase
                 "mri-denial",
                 "OngoingChat should have microsite_slug set to 'mri-denial'"
             )
+            
+            # Check that PubMed results were eventually stored in the chat context
+            # The background task should have added context to summary_for_next_call
+            if chat.summary_for_next_call:
+                context_str = str(chat.summary_for_next_call)
+                has_pubmed_context = "PubMed" in context_str or "PMID" in context_str
+                # This is optional since timing can vary, just log if not found
+                if not has_pubmed_context:
+                    logger.warning("PubMed context not yet stored in chat (background task may still be running)")
 
     def test_microsite_landing_page_elements(self):
         """Test that microsite landing page has all expected elements."""

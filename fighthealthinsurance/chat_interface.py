@@ -839,28 +839,62 @@ class ChatInterface:
             if chat.microsite_slug:
                 try:
                     from fighthealthinsurance.microsites import get_microsite
+                    from fighthealthinsurance.utils import fire_and_forget_in_new_threadpool
                     microsite = get_microsite(chat.microsite_slug)
                     if microsite and microsite.pubmed_search_terms:
-                        logger.info(f"Triggering PubMed searches for microsite {chat.microsite_slug}")
-                        # Sanitize the procedure name for display
-                        safe_procedure = str(microsite.default_procedure)[:100]  # Limit length
-                        await self.send_status_message(f"Searching medical literature for {safe_procedure}...")
+                        logger.info(f"Triggering background PubMed searches for microsite {chat.microsite_slug}")
                         
-                        # Trigger PubMed searches for each search term
-                        for search_term in microsite.pubmed_search_terms[:3]:  # Limit to first 3 to avoid overwhelming
+                        # Create background task for PubMed searches
+                        async def search_and_store_pubmed():
+                            """Search PubMed in background and append results to chat context."""
                             try:
-                                # Sanitize search term for display
-                                safe_search_term = str(search_term)[:50]
-                                await self.send_status_message(f"Searching: {safe_search_term}...")
-                                articles = await self.pubmed_tools.find_pubmed_article_ids_for_query(
-                                    search_term, since="2020"
-                                )
-                                if articles:
-                                    logger.info(f"Found {len(articles)} articles for search term: {search_term}")
+                                # Sanitize the procedure name for display
+                                safe_procedure = str(microsite.default_procedure)[:100]
+                                await self.send_status_message(f"Searching medical literature for {safe_procedure}...")
+                                
+                                all_articles = []
+                                # Trigger PubMed searches for each search term
+                                for search_term in microsite.pubmed_search_terms[:3]:
+                                    try:
+                                        # Sanitize search term for display
+                                        safe_search_term = str(search_term)[:50]
+                                        await self.send_status_message(f"Searching: {safe_search_term}...")
+                                        articles = await self.pubmed_tools.find_pubmed_article_ids_for_query(
+                                            search_term, since="2020"
+                                        )
+                                        if articles:
+                                            logger.info(f"Found {len(articles)} articles for search term: {search_term}")
+                                            all_articles.extend(articles[:5])  # Limit to 5 per search term
+                                    except Exception as e:
+                                        logger.warning(f"Error searching PubMed for '{search_term}': {e}")
+                                
+                                # Store the results in chat context
+                                if all_articles:
+                                    # Build context string from articles
+                                    context_parts = [f"PubMed search results for {microsite.default_procedure}:"]
+                                    for pmid in all_articles[:10]:  # Limit total to 10
+                                        context_parts.append(f"- PMID: {pmid}")
+                                    
+                                    pubmed_context = "\n".join(context_parts)
+                                    
+                                    # Append to chat summary
+                                    from asgiref.sync import sync_to_async
+                                    chat_obj = await OngoingChat.objects.aget(id=chat.id)
+                                    if not chat_obj.summary_for_next_call:
+                                        chat_obj.summary_for_next_call = []
+                                    chat_obj.summary_for_next_call.append(pubmed_context)
+                                    await sync_to_async(chat_obj.save)()
+                                    
+                                    logger.info(f"Stored {len(all_articles)} PubMed articles in chat context")
+                                    await self.send_status_message(f"Medical literature search complete - found {len(all_articles)} relevant articles")
+                                else:
+                                    await self.send_status_message("Medical literature search complete")
                             except Exception as e:
-                                logger.warning(f"Error searching PubMed for '{search_term}': {e}")
+                                logger.opt(exception=True).warning(f"Error in background PubMed search: {e}")
                         
-                        await self.send_status_message("Medical literature search complete")
+                        # Fire off the search in the background (non-blocking)
+                        await fire_and_forget_in_new_threadpool(search_and_store_pubmed())
+                        
                 except Exception as e:
                     logger.warning(f"Error loading microsite data for chat: {e}")
             

@@ -1476,6 +1476,35 @@ class ChatUserConsentView(FormView):
         "/chat/"  # Redirect to chat interface after successful form submission
     )
 
+    def get_success_url(self):
+        """Preserve query parameters when redirecting to chat."""
+        # Get the base success URL
+        url = self.success_url
+        
+        # Preserve microsite-related query parameters
+        query_params = []
+        for param in ['default_procedure', 'default_condition', 'microsite_slug', 'microsite_title']:
+            value = self.request.GET.get(param) or self.request.POST.get(param)
+            if value:
+                from urllib.parse import urlencode
+                query_params.append((param, value))
+        
+        if query_params:
+            from urllib.parse import urlencode
+            url = f"{url}?{urlencode(query_params)}"
+        
+        return url
+
+    def get_context_data(self, **kwargs):
+        """Pass query parameters to template so they can be preserved in hidden fields."""
+        context = super().get_context_data(**kwargs)
+        # Add microsite params to context so they can be included as hidden fields
+        context['default_procedure'] = self.request.GET.get('default_procedure', '')
+        context['default_condition'] = self.request.GET.get('default_condition', '')
+        context['microsite_slug'] = self.request.GET.get('microsite_slug', '')
+        context['microsite_title'] = self.request.GET.get('microsite_title', '')
+        return context
+
     def form_valid(self, form):
         # Mark consent as completed in the session
         self.request.session["consent_completed"] = True
