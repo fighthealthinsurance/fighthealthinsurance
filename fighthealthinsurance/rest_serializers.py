@@ -863,3 +863,16 @@ class ChooserVoteResponseSerializer(serializers.Serializer):
     success = serializers.BooleanField()
     message = serializers.CharField()
     vote_id = serializers.IntegerField(required=False)
+
+
+class ChooserSkipRequestSerializer(serializers.Serializer):
+    """Serializer for skipping a chooser task."""
+
+    task_id = serializers.IntegerField(required=True)
+
+
+class ChooserSkipResponseSerializer(serializers.Serializer):
+    """Serializer for skip response."""
+
+    success = serializers.BooleanField()
+    message = serializers.CharField()
