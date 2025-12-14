@@ -172,10 +172,12 @@ const TypingAnimation: React.FC<{ startTime?: number | null }> = ({ startTime })
     
     if (elapsed < 45) {
       return `Most responses come in 45 seconds${elapsed > 0 ? ` (${elapsed}s elapsed)` : ""}`;
+    } else if (elapsed < 60) {
+      return `Still working on your response... Most responses complete within 60 seconds (${elapsed}s elapsed)`;
     } else if (elapsed < 360) {
-      return `Still working on your response... Some can take up to 6 minutes (${elapsed}s elapsed)`;
+      return `Still working on your response... Some can take up to 6 minutes (${elapsed}s elapsed). You can retry if needed.`;
     } else {
-      return `This is taking longer than expected (${elapsed}s elapsed). You can try resending your message.`;
+      return `This is taking longer than expected (${elapsed}s elapsed). Please try the retry button below.`;
     }
   };
 
@@ -371,11 +373,35 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
     requestStartTime: null,
   });
 
+  // Track when to show retry button (separate state to avoid re-render issues)
+  const [showRetryButton, setShowRetryButton] = useState(false);
+
   // Track if we've sent the initial procedure message
   const hasSentInitialMessage = useRef(false);
 
   // Check if user has dismissed PWYW before
   const hasDismissedPWYW = localStorage.getItem("fhi_pwyw_dismissed") === "true";
+
+  // Update retry button visibility based on elapsed time
+  useEffect(() => {
+    if (!state.requestStartTime || !state.isLoading) {
+      setShowRetryButton(false);
+      return;
+    }
+
+    const checkRetryButton = () => {
+      const elapsed = Date.now() - state.requestStartTime!;
+      setShowRetryButton(elapsed > 60000); // Show after 60 seconds
+    };
+
+    // Check immediately
+    checkRetryButton();
+
+    // Check every second
+    const interval = setInterval(checkRetryButton, 1000);
+
+    return () => clearInterval(interval);
+  }, [state.requestStartTime, state.isLoading]);
 
   // Show PWYW after a few exchanges (to not be intrusive)
   useEffect(() => {
@@ -985,11 +1011,21 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
                 <Box mt="xs">
                   <TypingAnimation startTime={state.requestStartTime} />
                 </Box>
-                {state.requestStartTime && Date.now() - state.requestStartTime > 60000 && (
+                {/* Display server status messages if available */}
+                {state.statusMessage && (
+                  <Box mt="xs">
+                    <MantineText size="xs" c="dimmed" style={{ fontStyle: "italic" }}>
+                      {state.statusMessage}
+                    </MantineText>
+                  </Box>
+                )}
+                {/* Show retry button after 60 seconds */}
+                {showRetryButton && (
                   <Box mt="sm">
                     <Button
                       size="xs"
                       onClick={handleRetryLastMessage}
+                      disabled={!state.isLoading}
                       style={{
                         ...THEME.buttonSharedStyles,
                         borderRadius: THEME.borderRadius.buttonDefault,

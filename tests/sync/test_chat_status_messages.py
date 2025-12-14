@@ -1,9 +1,8 @@
 """Tests for chat status messages and timing functionality."""
 import typing
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import patch
 from channels.testing import WebsocketCommunicator
 import asyncio
-import json
 
 from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
@@ -143,7 +142,8 @@ class ChatStatusMessageTest(APITestCase):
             'find_pubmed_article_ids_for_query',
             return_value=[]
         ):
-            response_text, context = await chat_interface._call_llm_with_actions(
+            # Call the LLM which will trigger PubMed status messages
+            await chat_interface._call_llm_with_actions(
                 [self.mock_model],
                 "Tell me about diabetes treatment",
                 None,
@@ -201,7 +201,8 @@ class ChatStatusMessageTest(APITestCase):
 
         # Mock medicaid API
         with patch('fighthealthinsurance.chat_interface.get_medicaid_info', return_value="Medicaid info"):
-            response_text, context = await chat_interface._call_llm_with_actions(
+            # Call the LLM which will trigger Medicaid status messages
+            await chat_interface._call_llm_with_actions(
                 [self.mock_model],
                 "What are California's Medicaid rules?",
                 None,
@@ -266,6 +267,7 @@ class ChatStatusMessageTest(APITestCase):
                 if "content" in response and response.get("role") == "assistant":
                     break
         except asyncio.TimeoutError:
+            # Timeout is expected when no more responses are available
             pass
 
         # Verify we got at least one response
@@ -367,7 +369,8 @@ class ChatStatusMessageTest(APITestCase):
             "Appeal context"
         )
 
-        response_text, context = await chat_interface._call_llm_with_actions(
+        # Call the LLM which will trigger appeal creation status messages
+        await chat_interface._call_llm_with_actions(
             [self.mock_model],
             "Create an appeal for my MRI",
             None,
@@ -475,6 +478,7 @@ class ChatStatusMessageTest(APITestCase):
                     # This is the final response, status should be cleared
                     break
         except asyncio.TimeoutError:
+            # Timeout is expected when no more responses are available
             pass
 
         self.assertIsNotNone(response, "Should have received a response")
