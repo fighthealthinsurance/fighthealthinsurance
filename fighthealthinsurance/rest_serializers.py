@@ -27,45 +27,61 @@ from typing import Optional, List
 from drf_spectacular.utils import extend_schema_field
 
 
-# Common
+# Common field types
 class StringListField(serializers.ListField):
+    """A list field that contains string values."""
+
     child = serializers.CharField()
 
 
 class DictionaryListField(serializers.ListField):
+    """A list field containing dictionaries with string values."""
+
     child = serializers.DictField(
         child=serializers.CharField(required=False, allow_blank=True)
     )
 
 
 class DictionaryStringField(serializers.DictField):
+    """A dictionary field with string keys and values."""
+
     child = serializers.CharField(required=False, allow_blank=True)
 
 
 # Common View Logic Results
 class NextStepInfoSerizableSerializer(serializers.Serializer):
+    """Serializer for next step information returned after denial analysis."""
+
     outside_help_details = StringListField()
     combined_form = DictionaryListField()
     semi_sekret = serializers.CharField()
 
 
 class DenialTypesSerializer(serializers.ModelSerializer):
+    """Serializer for denial type lookup values."""
+
     class Meta:
         model = DenialTypes
         fields = ["id", "name"]
 
 
 class ChooseAppealRequestSerializer(serializers.Serializer):
+    """Serializer for choosing between generated and edited appeal text."""
+
     generated_appeal_text = serializers.CharField()
     editted_appeal_text = serializers.CharField()
     denial_id = serializers.CharField()
 
 
 class DenialTypesListField(serializers.ListField):
+    """A list field containing DenialTypes serializers."""
+
     child = DenialTypesSerializer()
 
 
 class DenialResponseInfoSerializer(serializers.Serializer):
+    """Serializer for denial creation/update response with extracted information."""
+
     selected_denial_type = DenialTypesListField()
     all_denial_types = DenialTypesListField()
     denial_id = serializers.CharField()
@@ -82,28 +98,38 @@ class DenialResponseInfoSerializer(serializers.Serializer):
     date_of_service = serializers.CharField(required=False)
 
 
-# Forms
+# Form Serializers
 class HealthHistoryFormSerializer(FormSerializer):
+    """Serializer for patient health history form data."""
+
     class Meta(object):
         form = core_forms.HealthHistory
 
 
 class DeleteDataFormSerializer(FormSerializer):
+    """Serializer for data deletion request form."""
+
     class Meta(object):
         form = core_forms.DeleteDataForm
 
 
 class ShareAppealFormSerializer(FormSerializer):
+    """Serializer for sharing an appeal with another user."""
+
     class Meta(object):
         form = core_forms.ShareAppealForm
 
 
 class ChooseAppealFormSerializer(FormSerializer):
+    """Serializer for selecting final appeal text."""
+
     class Meta(object):
         form = core_forms.ChooseAppealForm
 
 
 class DenialFormSerializer(FormSerializer):
+    """Serializer for creating or updating denial records from professional form."""
+
     # Only used during updates
     denial_id = serializers.IntegerField(required=False)
 
@@ -122,6 +148,8 @@ class PostInferedFormSerializer(FormSerializer):
 
 
 class FollowUpFormSerializer(FormSerializer):
+    """Serializer for recording appeal follow-up outcomes."""
+
     class Meta(object):
         form = core_forms.FollowUpForm
         exclude = ("followup_documents",)
@@ -129,6 +157,8 @@ class FollowUpFormSerializer(FormSerializer):
 
 
 class QAResponsesSerializer(serializers.Serializer):
+    """Serializer for question-and-answer responses related to a denial."""
+
     denial_id = serializers.CharField()
     qa = serializers.DictField(child=serializers.CharField())
 
@@ -137,11 +167,15 @@ class QAResponsesSerializer(serializers.Serializer):
 
 
 class ProposedAppealSerializer(serializers.ModelSerializer):
+    """Serializer for ML-generated proposed appeal text."""
+
     class Meta:
         model = ProposedAppeal
 
 
 class AppealListRequestSerializer(serializers.Serializer):
+    """Serializer for appeal list filtering and pagination parameters."""
+
     status_filter = serializers.ChoiceField(
         choices=[
             "pending",
@@ -166,6 +200,8 @@ class AppealListRequestSerializer(serializers.Serializer):
 
 
 class AppealSummarySerializer(serializers.ModelSerializer):
+    """Serializer for appeal list view with summary information."""
+
     chat_id = serializers.IntegerField(source="chat.id", read_only=True)
     status = serializers.SerializerMethodField()
     professional_name = serializers.SerializerMethodField()
@@ -232,12 +268,16 @@ class AppealSummarySerializer(serializers.ModelSerializer):
 
 
 class DenialModelSerializer(serializers.ModelSerializer):
+    """Full model serializer for Denial records."""
+
     class Meta:
         model = Denial
         exclude: list[str] = []
 
 
 class AppealDetailSerializer(serializers.ModelSerializer):
+    """Serializer for individual appeal detail view with computed fields."""
+
     chat_id = serializers.IntegerField(source="chat.id", read_only=True)
     appeal_pdf_url = serializers.SerializerMethodField()
     status = serializers.SerializerMethodField()
@@ -315,6 +355,8 @@ class AppealDetailSerializer(serializers.ModelSerializer):
 
 
 class NotifyPatientRequestSerializer(serializers.Serializer):
+    """Serializer for patient notification requests."""
+
     # We either notify by patient id or appeal id and resolve to the patient
     id = serializers.IntegerField(required=False)
     include_provider = serializers.BooleanField(default=False)
@@ -322,6 +364,8 @@ class NotifyPatientRequestSerializer(serializers.Serializer):
 
 
 class AppealFullSerializer(serializers.ModelSerializer):
+    """Full appeal serializer including related denial, domain, and user data."""
+
     chat_id = serializers.IntegerField(source="chat.id", read_only=True)
     appeal_pdf_url = serializers.SerializerMethodField()
     denial = serializers.SerializerMethodField()
@@ -376,6 +420,8 @@ class AppealFullSerializer(serializers.ModelSerializer):
 
 
 class AssembleAppealRequestSerializer(serializers.Serializer):
+    """Serializer for assembling a final appeal document from components."""
+
     denial_uuid = serializers.CharField(required=False, allow_blank=True)
     denial_id = serializers.CharField(required=False, allow_blank=True)
     completed_appeal_text = serializers.CharField(required=True)
@@ -391,12 +437,16 @@ class AssembleAppealRequestSerializer(serializers.Serializer):
 
 
 class AssembleAppealResponseSerializer(serializers.Serializer):
+    """Response serializer for appeal assembly containing the created appeal ID."""
+
     appeal_id = serializers.IntegerField(required=True)
     status = serializers.CharField(required=False)
     message = serializers.CharField(required=False)
 
 
 class EmailVerifierSerializer(serializers.Serializer):
+    """Serializer for email verification tokens."""
+
     email = serializers.EmailField()
     token = serializers.CharField()
     user_id = serializers.IntegerField()
@@ -406,6 +456,8 @@ class EmailVerifierSerializer(serializers.Serializer):
 
 
 class MailingListSubscriberSerializer(serializers.ModelSerializer):
+    """Serializer for mailing list subscription data."""
+
     class Meta:
         model = MailingListSubscriber
         fields = ["email", "name"]
@@ -413,23 +465,31 @@ class MailingListSubscriberSerializer(serializers.ModelSerializer):
 
 # Demo request
 class DemoRequestsSerializer(serializers.ModelSerializer):
+    """Serializer for product demo request submissions."""
+
     class Meta:
         model = DemoRequests
         fields = ["email", "name", "company", "role", "source", "phone"]
 
 
 class SendToUserSerializer(serializers.Serializer):
+    """Serializer for sending a draft appeal to a user for completion."""
+
     appeal_id = serializers.IntegerField()
     professional_final_review = serializers.BooleanField()
 
 
 class SendFax(serializers.Serializer):
+    """Serializer for fax transmission requests."""
+
     appeal_id = serializers.IntegerField(required=True)
     fax_number = serializers.CharField(required=False)
     include_cover = serializers.BooleanField(required=False, default=True)
 
 
 class InviteProviderSerializer(serializers.Serializer):
+    """Serializer for inviting a provider to collaborate on an appeal."""
+
     professional_id = serializers.IntegerField(required=False)
     email = serializers.EmailField(required=False)
     appeal_id = serializers.IntegerField(required=True)
@@ -443,6 +503,8 @@ class InviteProviderSerializer(serializers.Serializer):
 
 
 class StatisticsSerializer(serializers.Serializer):
+    """Serializer for relative appeal statistics comparing two time periods."""
+
     current_total_appeals = serializers.IntegerField()
     current_pending_appeals = serializers.IntegerField()
     current_sent_appeals = serializers.IntegerField()
@@ -464,6 +526,8 @@ class StatisticsSerializer(serializers.Serializer):
 
 
 class AbsoluteStatisticsSerializer(serializers.Serializer):
+    """Serializer for absolute appeal statistics without time windowing."""
+
     total_appeals = serializers.IntegerField()
     pending_appeals = serializers.IntegerField()
     sent_appeals = serializers.IntegerField()
@@ -473,6 +537,8 @@ class AbsoluteStatisticsSerializer(serializers.Serializer):
 
 
 class SearchResultSerializer(serializers.Serializer):
+    """Serializer for appeal search result items."""
+
     id = serializers.IntegerField()
     uuid = serializers.CharField()
     appeal_text = serializers.CharField()
@@ -483,22 +549,30 @@ class SearchResultSerializer(serializers.Serializer):
 
 
 class AppealAttachmentSerializer(serializers.ModelSerializer):
+    """Serializer for appeal file attachment metadata."""
+
     class Meta:
         model = AppealAttachment
         fields = ["id", "filename", "mime_type", "created_at"]
 
 
 class AppealAttachmentUploadSerializer(serializers.Serializer):
+    """Serializer for uploading a file attachment to an appeal."""
+
     appeal_id = serializers.IntegerField()
     file = serializers.FileField()
 
 
 class StatusResponseSerializer(serializers.Serializer):
+    """Base serializer for API status responses."""
+
     status = serializers.CharField()
     message = serializers.CharField(required=False, allow_blank=True)
 
 
 class LiveModelsStatusSerializer(serializers.Serializer):
+    """Serializer for ML model health status endpoint response."""
+
     alive_models = serializers.IntegerField()
     last_checked = serializers.FloatField(allow_null=True)
     details = serializers.ListField(
@@ -508,6 +582,8 @@ class LiveModelsStatusSerializer(serializers.Serializer):
 
 
 class ErrorSerializer(StatusResponseSerializer):
+    """Serializer for API error responses with error message."""
+
     error = serializers.CharField()
 
     def __init__(self, data=None, *args, **kwargs):
@@ -521,6 +597,8 @@ class ErrorSerializer(StatusResponseSerializer):
 
 
 class NotPaidErrorSerializer(ErrorSerializer):
+    """Specialized error serializer for payment-required errors."""
+
     def __init__(self, data=None, *args, **kwargs):
         if data is None:
             data = {}
@@ -529,6 +607,8 @@ class NotPaidErrorSerializer(ErrorSerializer):
 
 
 class SuccessSerializer(StatusResponseSerializer):
+    """Serializer for successful API operation responses."""
+
     success = serializers.BooleanField(default=True)
 
     def __init__(self, data=None, *args, **kwargs):
@@ -541,21 +621,29 @@ class SuccessSerializer(StatusResponseSerializer):
 
 
 class PubMedMiniArticleSerializer(serializers.ModelSerializer):
+    """Serializer for PubMed article summary data."""
+
     class Meta:
         model = PubMedMiniArticle
         fields = ["pmid", "title", "abstract", "article_url", "created"]
 
 
 class GetCandidateArticlesSerializer(serializers.Serializer):
+    """Serializer for requesting candidate PubMed articles for a denial."""
+
     denial_id = serializers.IntegerField(required=True)
 
 
 class SelectContextArticlesSerializer(serializers.Serializer):
+    """Serializer for selecting PubMed articles to include in denial context."""
+
     denial_id = serializers.IntegerField(required=True)
     pmids = serializers.ListField(child=serializers.CharField(), required=True)
 
 
 class SelectAppealArticlesSerializer(serializers.Serializer):
+    """Serializer for selecting PubMed articles to include in an appeal fax."""
+
     appeal_id = serializers.IntegerField(required=True)
     pmids = serializers.ListField(child=serializers.CharField(), required=True)
 
@@ -605,9 +693,9 @@ class ProposedPriorAuthSerializer(serializers.ModelSerializer):
 
 
 class PriorAuthRequestSerializer(serializers.ModelSerializer):
-    chat_id = serializers.IntegerField(source="chat.id", read_only=True)
     """Serializer for prior authorization requests."""
 
+    chat_id = serializers.IntegerField(source="chat.id", read_only=True)
     professional_name = serializers.SerializerMethodField()
     questions = serializers.SerializerMethodField()
     proposals = ProposedPriorAuthSerializer(many=True, read_only=True)
