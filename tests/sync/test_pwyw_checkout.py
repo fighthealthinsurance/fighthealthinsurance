@@ -83,7 +83,11 @@ class PWYWCheckoutTest(TestCase):
 
     @patch("stripe.checkout.Session.create")
     def test_checkout_rejects_external_return_url(self, mock_stripe_create):
-        """Test that external URLs in return_url are rejected for security."""
+        """Test that absolute URLs in return_url are rejected for security.
+        
+        We reject all absolute URLs (even same-host) to prevent host header
+        injection attacks. Only relative URLs are allowed.
+        """
         mock_session = MagicMock()
         mock_session.url = "https://checkout.stripe.com/test"
         mock_stripe_create.return_value = mock_session
@@ -105,6 +109,36 @@ class PWYWCheckoutTest(TestCase):
         self.assertNotIn("evil.com", success_url)
         # Should fall back to home page
         self.assertIn("donation=success", success_url)
+
+    @patch("stripe.checkout.Session.create")
+    def test_checkout_rejects_same_host_absolute_url(self, mock_stripe_create):
+        """Test that same-host absolute URLs are also rejected for security.
+        
+        Even absolute URLs from the same host are rejected to prevent
+        host header injection attacks. Only relative URLs are accepted.
+        """
+        mock_session = MagicMock()
+        mock_session.url = "https://checkout.stripe.com/test"
+        mock_stripe_create.return_value = mock_session
+
+        response = self.client.post(
+            reverse("pwyw_checkout"),
+            data=json.dumps({
+                "amount": 10,
+                "return_url": "http://testserver/some/page"
+            }),
+            content_type="application/json",
+        )
+        
+        self.assertEqual(response.status_code, 200)
+        
+        # Check that absolute URL was replaced with "/"
+        call_args = mock_stripe_create.call_args
+        success_url = call_args.kwargs["success_url"]
+        # Should fall back to home page, not the requested page
+        self.assertIn("donation=success", success_url)
+        # The path from the absolute URL should not be in the success_url
+        # since we rejected it
 
     @patch("stripe.checkout.Session.create")
     def test_checkout_defaults_to_home_without_return_url(self, mock_stripe_create):

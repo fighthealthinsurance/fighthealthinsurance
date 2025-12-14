@@ -131,6 +131,16 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         views.FollowUpThankYouView.as_view(),
         name="followup_thankyou",
     ),
+    path(
+        "v0/followup/<uuid:uuid>/<slug:hashed_email>/<slug:follow_up_semi_sekret>/thankyou.",
+        views.FollowUpThankYouView.as_view(),
+        name="followup_thankyou_with_a_period",
+    ),
+    path(
+        "v0/followup/<uuid:uuid>/<slug:hashed_email>/<slug:follow_up_semi_sekret>/thankyou/",
+        views.FollowUpThankYouView.as_view(),
+        name="followup_thankyou_with_trailing_slash",
+    ),
     # Unsubscribe from mailing list
     path(
         "v0/unsubscribe/<slug:token>",

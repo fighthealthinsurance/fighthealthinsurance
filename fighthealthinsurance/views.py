@@ -1514,9 +1514,9 @@ def create_pwyw_checkout(request):
         return_url = data.get("return_url", "/")
 
         # Validate return_url to prevent open redirect
+        # Only allow relative URLs (no netloc) for security
         parsed = urlparse(return_url)
-        # Only allow relative URLs or URLs from the same host
-        if parsed.netloc and parsed.netloc != request.get_host():
+        if parsed.netloc:
             return_url = "/"
 
         if amount <= 0:
@@ -1531,12 +1531,22 @@ def create_pwyw_checkout(request):
         stripe.api_key = settings.STRIPE_API_SECRET_KEY
 
         # Build absolute URLs with donation parameter
+        # Use proper URL parsing to handle query parameters correctly
+        from urllib.parse import parse_qs, urlencode, urlunparse
+        
         success_url = request.build_absolute_uri(return_url)
-        # Add donation=success parameter
-        if "?" in success_url:
-            success_url += "&donation=success"
-        else:
-            success_url += "?donation=success"
+        parsed_success = urlparse(success_url)
+        query_params = parse_qs(parsed_success.query)
+        query_params['donation'] = ['success']
+        new_query = urlencode(query_params, doseq=True)
+        success_url = urlunparse((
+            parsed_success.scheme,
+            parsed_success.netloc,
+            parsed_success.path,
+            parsed_success.params,
+            new_query,
+            parsed_success.fragment
+        ))
         
         cancel_url = request.build_absolute_uri(return_url)
 
