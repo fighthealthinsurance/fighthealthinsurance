@@ -806,6 +806,11 @@ class ChatInterface:
         current_llm_context = None
         if chat.summary_for_next_call and len(chat.summary_for_next_call) > 0:
             current_llm_context = chat.summary_for_next_call[-1]
+            # If we had a pubmed result in between carry it forward.
+            if len(chat.summary_for_next_call) > 1:
+                if ("PubMed search results" in chat.summary_for_next_call[-2] or
+                    "PubMed search results" in current_llm_context):
+                    current_llm_context += chat.summary_for_next_call[-2]
 
         is_new_chat = not bool(chat.chat_history)
         llm_input_message = user_message
@@ -878,12 +883,11 @@ class ChatInterface:
                                     pubmed_context = "\n".join(context_parts)
                                     
                                     # Append to chat summary
-                                    from asgiref.sync import sync_to_async
                                     chat_obj = await OngoingChat.objects.aget(id=chat.id)
                                     if not chat_obj.summary_for_next_call:
                                         chat_obj.summary_for_next_call = []
                                     chat_obj.summary_for_next_call.append(pubmed_context)
-                                    await sync_to_async(chat_obj.save)()
+                                    await chat_obj.asave()
                                     
                                     logger.info(f"Stored {len(all_articles)} PubMed articles in chat context")
                                     await self.send_status_message(f"Medical literature search complete - found {len(all_articles)} relevant articles")
