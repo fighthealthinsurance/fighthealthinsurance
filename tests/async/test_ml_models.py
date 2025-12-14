@@ -290,6 +290,88 @@ class TestRemoteOpenLike(TestCase):
         asyncio.run(self.async_test_correct_implementation())
 
 
+class TestMedicaidDetection(TestCase):
+    """Test the Medicaid-related conversation detection functionality."""
+
+    def test_medicaid_keyword_detection(self):
+        """Test that _is_medicaid_related correctly detects Medicaid keywords."""
+        model = RemoteOpenLike(
+            api_base="http://test.com",
+            token="test_token",
+            model="test_model",
+            system_prompts_map={"test": ["test prompt"]},
+        )
+
+        # Test positive cases - should detect Medicaid
+        positive_cases = [
+            ("Am I eligible for Medicaid?", None, None),
+            ("How do I enroll in Medicare?", None, None),
+            ("What are the Medi-Cal requirements?", None, None),
+            ("Can you help with MassHealth?", None, None),
+            ("I need help with TennCare", None, None),
+            ("What about the work requirement?", None, None),
+            ("Do I qualify for government insurance?", None, None),
+            ("Help with appeal", "Previously discussing medicaid eligibility", None),
+            ("What else do I need?", None, [{"content": "I'm on Medicare"}]),
+        ]
+
+        for message, context, history in positive_cases:
+            result = model._is_medicaid_related(message, context, history)
+            self.assertTrue(
+                result,
+                f"Should detect Medicaid-related: message='{message}', context='{context}', history='{history}'",
+            )
+
+        # Test negative cases - should NOT detect Medicaid
+        negative_cases = [
+            ("Help me appeal my denial", None, None),
+            ("What CPT code should I use?", None, None),
+            ("How do I file a prior auth?", None, None),
+            ("My claim was denied for knee surgery", None, None),
+            ("What's the best way to word this appeal?", None, None),
+        ]
+
+        for message, context, history in negative_cases:
+            result = model._is_medicaid_related(message, context, history)
+            self.assertFalse(
+                result,
+                f"Should NOT detect Medicaid-related: message='{message}'",
+            )
+
+    def test_medicaid_detection_in_history(self):
+        """Test that Medicaid detection works with conversation history."""
+        model = RemoteOpenLike(
+            api_base="http://test.com",
+            token="test_token",
+            model="test_model",
+            system_prompts_map={"test": ["test prompt"]},
+        )
+
+        # History containing Medicaid discussion
+        history_with_medicaid = [
+            {"role": "user", "content": "Am I eligible for Medicaid?"},
+            {"role": "assistant", "content": "Let me check that for you."},
+            {"role": "user", "content": "I live in California"},
+        ]
+
+        # Current message doesn't mention Medicaid, but history does
+        result = model._is_medicaid_related(
+            "What else do I need to provide?", None, history_with_medicaid
+        )
+        self.assertTrue(result, "Should detect Medicaid from history")
+
+        # History without Medicaid
+        history_without_medicaid = [
+            {"role": "user", "content": "Help with my denial"},
+            {"role": "assistant", "content": "I can help with that."},
+        ]
+
+        result = model._is_medicaid_related(
+            "What else do I need?", None, history_without_medicaid
+        )
+        self.assertFalse(result, "Should not detect Medicaid without keywords")
+
+
 class TestRemoteFullOpenLike(TestCase):
     """Test for the RemoteFullOpenLike class."""
 
