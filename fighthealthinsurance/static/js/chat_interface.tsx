@@ -548,6 +548,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
             ...prev,
             isLoading: false,
             error: data.error,
+            // Keep requestStartTime so retry button remains visible with error
           }));
         } else if (data.messages) {
           // This is a history replay
@@ -744,7 +745,9 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
 
   // Handle retrying the last message
   const handleRetryLastMessage = () => {
-    if (!wsRef.current || state.isLoading) return;
+    if (!wsRef.current) return;
+    // Allow retry if there's an error OR if currently loading
+    if (state.isLoading && !state.error) return;
 
     // Find the last user message
     const lastUserMessage = [...state.messages]
@@ -1037,6 +1040,39 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
                     </Button>
                   </Box>
                 )}
+              </Paper>
+            )}
+
+            {/* Display error message with retry button */}
+            {state.error && (
+              <Paper
+                shadow="xs"
+                style={{ backgroundColor: "#fff5f5", marginBottom: 10, padding: 10, borderRadius: 12, border: "1px solid #feb2b2" }}
+              >
+                <Flex align="center" gap="xs">
+                  <MantineText fw={500} size="sm" c="red">
+                    ⚠️ Error
+                  </MantineText>
+                </Flex>
+                <Box mt="xs">
+                  <MantineText size="sm" c="red">
+                    {state.error}
+                  </MantineText>
+                </Box>
+                <Box mt="sm">
+                  <Button
+                    size="xs"
+                    onClick={handleRetryLastMessage}
+                    style={{
+                      ...THEME.buttonSharedStyles,
+                      borderRadius: THEME.borderRadius.buttonDefault,
+                    }}
+                    leftSection={<IconRefresh size={13} />}
+                    aria-label="Retry sending message after error"
+                  >
+                    Retry
+                  </Button>
+                </Box>
               </Paper>
             )}
 
