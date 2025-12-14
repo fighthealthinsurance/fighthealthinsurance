@@ -673,7 +673,9 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     candidate_ml_citation_context = models.JSONField(null=True, blank=True)
     gen_attempts = models.IntegerField(null=True, default=0)
     # Track which microsite the user came from (if any)
-    microsite_slug = models.CharField(max_length=100, null=True, blank=True, db_index=True)
+    microsite_slug = models.CharField(
+        max_length=100, null=True, blank=True, db_index=True
+    )
 
     @classmethod
     def filter_to_allowed_denials(cls, current_user: User):
@@ -1222,7 +1224,9 @@ class OngoingChat(models.Model):
         max_length=300, null=True, blank=True, help_text="Hashed email of the user"
     )
     # Track which microsite the user came from (if any)
-    microsite_slug = models.CharField(max_length=100, null=True, blank=True, db_index=True)
+    microsite_slug = models.CharField(
+        max_length=100, null=True, blank=True, db_index=True
+    )
 
     @staticmethod
     def find_chats_by_email(email: str):
@@ -1297,7 +1301,9 @@ class ChatLeads(ExportModelOperationsMixin("ChatLeads"), models.Model):  # type:
     created_at = models.DateTimeField(auto_now_add=True)
     drug = models.CharField(max_length=255, null=True, blank=True)
     # Track which microsite the user came from (if any)
-    microsite_slug = models.CharField(max_length=100, null=True, blank=True, db_index=True)
+    microsite_slug = models.CharField(
+        max_length=100, null=True, blank=True, db_index=True
+    )
 
     class Meta:
         verbose_name = "Chat Lead"

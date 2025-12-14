@@ -496,9 +496,7 @@ class FormularyChangeQuestions(InsuranceQuestions):
         if self.cleaned_data.get("currently_taking"):
             response += "The patient is currently taking this medication. "
             if self.cleaned_data.get("how_long_taking"):
-                response += (
-                    f"They have been taking it for {self.cleaned_data['how_long_taking']}. "
-                )
+                response += f"They have been taking it for {self.cleaned_data['how_long_taking']}. "
         if self.cleaned_data.get("medication_working"):
             response += "The medication is working well and their condition is stable. "
         if self.cleaned_data.get("tried_alternatives"):
@@ -536,7 +534,9 @@ class FormularyChangeQuestions(InsuranceQuestions):
         if self.cleaned_data.get("tried_alternatives"):
             base = "I have previously tried the alternative medication(s) you suggest"
             if self.cleaned_data.get("alternative_problems"):
-                r.append(f"{base}, but experienced problems: {self.cleaned_data['alternative_problems']}.")
+                r.append(
+                    f"{base}, but experienced problems: {self.cleaned_data['alternative_problems']}."
+                )
             else:
                 r.append(f"{base}, which did not work for me.")
 

@@ -1090,7 +1090,7 @@ class DenialCreatorHelper:
     ):
         """
         Create or update an existing denial.
-        
+
         Args:
             email: The email address associated with the denial.
             denial_text: The text of the denial.
@@ -1112,7 +1112,7 @@ class DenialCreatorHelper:
             subscribe: Whether the user has subscribed (not handled in this function).
             microsite_slug: Optional slug identifier for the microsite from which the denial was created.
                            Should be a valid microsite slug or None.
-        
+
         Returns:
             The created or updated Denial object.
         """

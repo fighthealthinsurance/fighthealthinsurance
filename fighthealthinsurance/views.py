@@ -978,7 +978,9 @@ class InitialProcessView(generic.FormView):
                 elif default_procedure:
                     ocr_result = f"The patient was denied {default_procedure}."
                 elif default_condition:
-                    ocr_result = f"The patient with {default_condition} was denied treatment."
+                    ocr_result = (
+                        f"The patient with {default_condition} was denied treatment."
+                    )
 
         context["ocr_result"] = ocr_result
 
@@ -1024,6 +1026,7 @@ class InitialProcessView(generic.FormView):
         ) or self.request.GET.get("microsite_slug", "")
         if microsite_slug:
             from fighthealthinsurance.microsites import get_microsite
+
             if get_microsite(microsite_slug):
                 cleaned_data["microsite_slug"] = microsite_slug
             else:
@@ -1526,9 +1529,15 @@ def chat_interface_view(request):
 
     # Check for default_procedure and default_condition from microsite URL params
     # Check both GET and POST since consent form could send either way
-    default_procedure = request.GET.get("default_procedure") or request.POST.get("default_procedure", "")
-    default_condition = request.GET.get("default_condition") or request.POST.get("default_condition", "")
-    microsite_slug = request.GET.get("microsite_slug") or request.POST.get("microsite_slug", "")
+    default_procedure = request.GET.get("default_procedure") or request.POST.get(
+        "default_procedure", ""
+    )
+    default_condition = request.GET.get("default_condition") or request.POST.get(
+        "default_condition", ""
+    )
+    microsite_slug = request.GET.get("microsite_slug") or request.POST.get(
+        "microsite_slug", ""
+    )
 
     context = {
         "title": "Chat with FightHealthInsurance",
@@ -1558,29 +1567,36 @@ class ChatUserConsentView(FormView):
         """Preserve query parameters when redirecting to chat."""
         # Get the base success URL
         url = self.success_url
-        
+
         # Preserve microsite-related query parameters
         query_params = []
-        for param in ['default_procedure', 'default_condition', 'microsite_slug', 'microsite_title']:
+        for param in [
+            "default_procedure",
+            "default_condition",
+            "microsite_slug",
+            "microsite_title",
+        ]:
             value = self.request.GET.get(param) or self.request.POST.get(param)
             if value:
                 from urllib.parse import urlencode
+
                 query_params.append((param, value))
-        
+
         if query_params:
             from urllib.parse import urlencode
+
             url = f"{url}?{urlencode(query_params)}"
-        
+
         return url
 
     def get_context_data(self, **kwargs):
         """Pass query parameters to template so they can be preserved in hidden fields."""
         context = super().get_context_data(**kwargs)
         # Add microsite params to context so they can be included as hidden fields
-        context['default_procedure'] = self.request.GET.get('default_procedure', '')
-        context['default_condition'] = self.request.GET.get('default_condition', '')
-        context['microsite_slug'] = self.request.GET.get('microsite_slug', '')
-        context['microsite_title'] = self.request.GET.get('microsite_title', '')
+        context["default_procedure"] = self.request.GET.get("default_procedure", "")
+        context["default_condition"] = self.request.GET.get("default_condition", "")
+        context["microsite_slug"] = self.request.GET.get("microsite_slug", "")
+        context["microsite_title"] = self.request.GET.get("microsite_title", "")
         return context
 
     def form_valid(self, form):

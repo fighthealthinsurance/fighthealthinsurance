@@ -369,9 +369,7 @@ What reason did they give you for your GLP-1 denied?🐼Helping a patient appeal
         answer = split[0]
         summary = split[1]
         if len(split) > 2:
-            logger.debug(
-                f"There were more pandas than expected in {result}"
-            )
+            logger.debug(f"There were more pandas than expected in {result}")
         return (answer, summary)
 
     async def get_entity(self, input_text: str, entity_type: str) -> Optional[str]:
