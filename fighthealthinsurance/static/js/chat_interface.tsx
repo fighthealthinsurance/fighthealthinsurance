@@ -995,6 +995,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
                         borderRadius: THEME.borderRadius.buttonDefault,
                       }}
                       leftSection={<IconRefresh size={13} />}
+                      aria-label="Retry sending message"
                     >
                       Retry
                     </Button>
