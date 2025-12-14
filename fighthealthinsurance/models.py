@@ -1420,4 +1420,43 @@ class ChooserVote(ExportModelOperationsMixin("ChooserVote"), models.Model):  # t
         verbose_name_plural = "Chooser Votes"
 
     def __str__(self):
+        """
+        Return a human-readable label for the vote that includes the chosen candidate ID and the task ID.
+
+        Returns:
+            str: A string in the form "Vote for Candidate {chosen_candidate_id} on Task {task_id}".
+        """
         return f"Vote for Candidate {self.chosen_candidate_id} on Task {self.task_id}"
+
+
+class ChooserSkip(ExportModelOperationsMixin("ChooserSkip"), models.Model):  # type: ignore
+    """
+    Model to track tasks that users have skipped.
+    This helps ensure users don't see the same task repeatedly.
+    """
+
+    id = models.AutoField(primary_key=True)
+    task = models.ForeignKey(
+        ChooserTask, on_delete=models.CASCADE, related_name="skips"
+    )
+    session_key = models.CharField(max_length=100, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        # Prevent same session from skipping same task multiple times
+        unique_together = [["task", "session_key"]]
+        indexes = [
+            models.Index(fields=["task"]),
+            models.Index(fields=["session_key"]),
+        ]
+        verbose_name = "Chooser Skip"
+        verbose_name_plural = "Chooser Skips"
+
+    def __str__(self):
+        """
+        Human-readable representation of this ChooserSkip showing the associated task and session.
+
+        Returns:
+            str: A string in the form "Skip of Task {task_id} by {session_key}".
+        """
+        return f"Skip of Task {self.task_id} by {self.session_key}"

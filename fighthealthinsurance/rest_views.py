@@ -35,6 +35,7 @@ from fighthealthinsurance.models import (
     Appeal,
     AppealAttachment,
     ChooserCandidate,
+    ChooserSkip,
     ChooserTask,
     ChooserVote,
     DemoRequests,
@@ -1745,19 +1746,23 @@ class ChooserViewSet(viewsets.ViewSet):
         Selection logic:
         1. Prefer tasks with zero votes
         2. If none, select tasks with the fewest total votes
-        3. Exclude tasks where this session key has already voted
+        3. Exclude tasks where this session key has already voted or skipped
         """
         session_key = self._get_session_key(request)
 
-        # Get tasks that this session hasn't voted on yet
+        # Get tasks that this session has already voted on or skipped
         voted_task_ids = ChooserVote.objects.filter(
             session_key=session_key
         ).values_list("task_id", flat=True)
+        skipped_task_ids = ChooserSkip.objects.filter(
+            session_key=session_key
+        ).values_list("task_id", flat=True)
+        excluded_task_ids = set(voted_task_ids) | set(skipped_task_ids)
 
-        # Find READY tasks of the requested type that haven't been voted on by this session
+        # Find READY tasks of the requested type that haven't been voted on or skipped
         available_tasks = (
             ChooserTask.objects.filter(task_type=task_type, status="READY")
-            .exclude(id__in=voted_task_ids)
+            .exclude(id__in=excluded_task_ids)
             .annotate(vote_count=Count("votes"))
             .order_by("vote_count", "created_at")
         )
@@ -1783,7 +1788,7 @@ class ChooserViewSet(viewsets.ViewSet):
             # Try to get the task again
             task = (
                 ChooserTask.objects.filter(task_type=task_type, status="READY")
-                .exclude(id__in=voted_task_ids)
+                .exclude(id__in=excluded_task_ids)
                 .first()
             )
 
@@ -1856,7 +1861,14 @@ class ChooserViewSet(viewsets.ViewSet):
     )
     @action(detail=False, methods=["post"])
     def vote(self, request: Request) -> Response:
-        """Submit a vote for a chooser task."""
+        """
+        Register a user's vote for a chooser task.
+
+        Validates the task exists and is in a votable state, the chosen candidate belongs to the task and was presented, and the session has not already voted on the task; then creates a ChooserVote.
+
+        Returns:
+            response (Response): On success, a 200 response containing {"success": True, "message": "Vote recorded successfully", "vote_id": <id>}. On failure, a 4xx response with an error message.
+        """
         serializer = serializers.ChooserVoteRequestSerializer(data=request.data)
         if not serializer.is_valid():
             return Response(
@@ -1939,6 +1951,68 @@ class ChooserViewSet(viewsets.ViewSet):
                     "success": True,
                     "message": "Vote recorded successfully",
                     "vote_id": vote.id,
+                }
+            ).data,
+            status=status.HTTP_200_OK,
+        )
+
+    @extend_schema(
+        request=serializers.ChooserSkipRequestSerializer,
+        responses={
+            200: serializers.ChooserSkipResponseSerializer,
+            400: serializers.ErrorSerializer,
+            404: serializers.ErrorSerializer,
+        },
+    )
+    @action(detail=False, methods=["post"])
+    def skip(self, request: Request) -> Response:
+        """
+        Mark a chooser task as skipped for the current session so it will not be presented again.
+
+        Validates the request payload and session, ensures the task exists, prevents skipping if the session has already voted on the task, and records the skip idempotently.
+
+        Returns:
+            Response: HTTP 200 with a success message when the task is skipped; HTTP 400 with error details for invalid input or if the task was already voted on; HTTP 404 if the task does not exist.
+        """
+        serializer = serializers.ChooserSkipRequestSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(
+                serializers.ErrorSerializer({"error": str(serializer.errors)}).data,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        session_key = self._get_session_key(request)
+        task_id = serializer.validated_data["task_id"]
+
+        # Validate task exists
+        try:
+            task = ChooserTask.objects.get(id=task_id)
+        except ChooserTask.DoesNotExist:
+            return Response(
+                serializers.ErrorSerializer({"error": "Task not found"}).data,
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Check if already voted on this task (can't skip if already voted)
+        if ChooserVote.objects.filter(task=task, session_key=session_key).exists():
+            return Response(
+                serializers.ErrorSerializer(
+                    {"error": "You have already voted on this task"}
+                ).data,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Create the skip record (or ignore if already skipped)
+        ChooserSkip.objects.get_or_create(
+            task=task,
+            session_key=session_key,
+        )
+
+        return Response(
+            serializers.ChooserSkipResponseSerializer(
+                {
+                    "success": True,
+                    "message": "Task skipped successfully",
                 }
             ).data,
             status=status.HTTP_200_OK,
