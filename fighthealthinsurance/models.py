@@ -1278,6 +1278,12 @@ class ChooserVote(ExportModelOperationsMixin("ChooserVote"), models.Model):  # t
         verbose_name_plural = "Chooser Votes"
 
     def __str__(self):
+        """
+        Return a human-readable label for the vote that includes the chosen candidate ID and the task ID.
+        
+        Returns:
+            str: A string in the form "Vote for Candidate {chosen_candidate_id} on Task {task_id}".
+        """
         return f"Vote for Candidate {self.chosen_candidate_id} on Task {self.task_id}"
 
 
@@ -1305,4 +1311,10 @@ class ChooserSkip(ExportModelOperationsMixin("ChooserSkip"), models.Model):  # t
         verbose_name_plural = "Chooser Skips"
 
     def __str__(self):
+        """
+        Human-readable representation of this ChooserSkip showing the associated task and session.
+        
+        Returns:
+            str: A string in the form "Skip of Task {task_id} by {session_key}".
+        """
         return f"Skip of Task {self.task_id} by {self.session_key}"

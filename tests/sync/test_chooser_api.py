@@ -607,6 +607,12 @@ class ChooserSkipAPITest(APITestCase):
     fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
 
     def setUp(self):
+        """
+        Create a READY "appeal" ChooserTask and two associated appeal_letter candidates.
+        
+        Sets up a ChooserTask with context_json {"procedure": "Test"} and two ChooserCandidate records:
+        candidate_index 0 and 1 with different model_name and content values.
+        """
         self.task = ChooserTask.objects.create(
             task_type="appeal",
             status="READY",
