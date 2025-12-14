@@ -578,7 +578,9 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     candidate_ml_citation_context = models.JSONField(null=True, blank=True)
     gen_attempts = models.IntegerField(null=True, default=0)
     # Track which microsite the user came from (if any)
-    microsite_slug = models.CharField(max_length=100, null=True, blank=True, db_index=True)
+    microsite_slug = models.CharField(
+        max_length=100, null=True, blank=True, db_index=True
+    )
 
     @classmethod
     def filter_to_allowed_denials(cls, current_user: User):
@@ -1086,7 +1088,9 @@ class OngoingChat(models.Model):
         max_length=300, null=True, blank=True, help_text="Hashed email of the user"
     )
     # Track which microsite the user came from (if any)
-    microsite_slug = models.CharField(max_length=100, null=True, blank=True, db_index=True)
+    microsite_slug = models.CharField(
+        max_length=100, null=True, blank=True, db_index=True
+    )
 
     @staticmethod
     def find_chats_by_email(email: str):
@@ -1161,7 +1165,9 @@ class ChatLeads(ExportModelOperationsMixin("ChatLeads"), models.Model):  # type:
     created_at = models.DateTimeField(auto_now_add=True)
     drug = models.CharField(max_length=255, null=True, blank=True)
     # Track which microsite the user came from (if any)
-    microsite_slug = models.CharField(max_length=100, null=True, blank=True, db_index=True)
+    microsite_slug = models.CharField(
+        max_length=100, null=True, blank=True, db_index=True
+    )
 
     class Meta:
         verbose_name = "Chat Lead"
@@ -1280,7 +1286,7 @@ class ChooserVote(ExportModelOperationsMixin("ChooserVote"), models.Model):  # t
     def __str__(self):
         """
         Return a human-readable label for the vote that includes the chosen candidate ID and the task ID.
-        
+
         Returns:
             str: A string in the form "Vote for Candidate {chosen_candidate_id} on Task {task_id}".
         """
@@ -1313,7 +1319,7 @@ class ChooserSkip(ExportModelOperationsMixin("ChooserSkip"), models.Model):  # t
     def __str__(self):
         """
         Human-readable representation of this ChooserSkip showing the associated task and session.
-        
+
         Returns:
             str: A string in the form "Skip of Task {task_id} by {session_key}".
         """

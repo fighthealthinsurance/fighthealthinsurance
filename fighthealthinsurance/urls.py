@@ -195,7 +195,9 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
     ),
     path(
         "how-to-help",
-        cache_control(public=True)(cache_page(60 * 60 * 2)(views.HowToHelpView.as_view())),
+        cache_control(public=True)(
+            cache_page(60 * 60 * 2)(views.HowToHelpView.as_view())
+        ),
         name="how-to-help",
     ),
     path(

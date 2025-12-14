@@ -121,7 +121,7 @@ class PubMedTools(object):
         Asynchronously retrieves and returns a list of PubMedMiniArticle objects relevant to a medical denial.
 
         Constructs a PubMed search query from the denial's procedure and diagnosis, searches for recent articles across multiple years, and limits the number of articles per query. For each unique PubMed ID found, attempts to retrieve a cached article from the database or fetches metadata from PubMed and stores it if not present. Handles timeouts and logs errors, returning all successfully retrieved articles.
-        
+
         If the denial has a microsite_slug, also uses the microsite's pubmed_search_terms.
         """
         pmids: List[str] = []
@@ -137,18 +137,22 @@ class PubMedTools(object):
                 queries: Set[str] = {
                     query,
                 }
-                
+
                 # Add microsite pubmed search terms if available
                 if denial.microsite_slug:
                     try:
                         microsite = get_microsite(denial.microsite_slug)
                         if microsite and microsite.pubmed_search_terms:
                             if len(microsite.pubmed_search_terms) > 0:
-                                logger.debug(f"Adding {len(microsite.pubmed_search_terms)} microsite search terms for {denial.microsite_slug}")
+                                logger.debug(
+                                    f"Adding {len(microsite.pubmed_search_terms)} microsite search terms for {denial.microsite_slug}"
+                                )
                                 queries.update(microsite.pubmed_search_terms)
                     except Exception as e:
-                        logger.opt(exception=True).warning(f"Failed to load microsite search terms: {e}")
-                
+                        logger.opt(exception=True).warning(
+                            f"Failed to load microsite search terms: {e}"
+                        )
+
                 for since in self.since_list:
                     for query in queries:
                         count = 0
@@ -400,12 +404,12 @@ class PubMedTools(object):
         return pubmed_docs
 
     async def do_article_summary(self, article_id) -> Optional[PubMedArticleSummarized]:
-        article: Optional[
-            PubMedArticleSummarized
-        ] = await PubMedArticleSummarized.objects.filter(
-            pmid=article_id,
-            basic_summary__isnull=False,
-        ).afirst()
+        article: Optional[PubMedArticleSummarized] = (
+            await PubMedArticleSummarized.objects.filter(
+                pmid=article_id,
+                basic_summary__isnull=False,
+            ).afirst()
+        )
 
         if article is None:
             try:

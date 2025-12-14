@@ -41,9 +41,9 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
         logger.debug("Waiting for message....")
         data = json.loads(text_data)
         logger.debug("Starting generation of appeals...")
-        aitr: AsyncIterator[
-            str
-        ] = common_view_logic.AppealsBackendHelper.generate_appeals(data)
+        aitr: AsyncIterator[str] = (
+            common_view_logic.AppealsBackendHelper.generate_appeals(data)
+        )
         # We do a try/except here to log since the WS framework swallow exceptions sometimes
         try:
             await asyncio.sleep(1)
@@ -368,11 +368,14 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
         )  # New parameter to identify patient users
         email = data.get("email", None)  # Email for patient users so we can delete data
         session_key = data.get("session_key", None)  # Session key for anonymous users
-        microsite_slug = data.get("microsite_slug", None)  # Microsite slug if coming from a microsite
-        
+        microsite_slug = data.get(
+            "microsite_slug", None
+        )  # Microsite slug if coming from a microsite
+
         # Validate microsite_slug if provided
         if microsite_slug:
             from fighthealthinsurance.microsites import get_microsite
+
             if not get_microsite(microsite_slug):
                 logger.warning(f"Invalid microsite_slug received: {microsite_slug}")
                 microsite_slug = None
@@ -444,7 +447,13 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                     professional_user = None
                     is_patient = True
             chat = await self._get_or_create_chat(
-                user, professional_user, is_patient, chat_id, session_key, email=email, microsite_slug=microsite_slug
+                user,
+                professional_user,
+                is_patient,
+                chat_id,
+                session_key,
+                email=email,
+                microsite_slug=microsite_slug,
             )
             self.chat_id = chat.id
             if (
@@ -515,7 +524,7 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                     raise OngoingChat.DoesNotExist("Session key mismatch")
                 if chat.user and chat.user != user:
                     raise OngoingChat.DoesNotExist("User mismatch")
-                
+
                 # Update microsite_slug if provided and not already set
                 # Only save on first message to avoid excessive database writes
                 if microsite_slug and not chat.microsite_slug:
@@ -524,7 +533,7 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                     )
                     # Refresh the chat object to ensure consistency
                     await chat.arefresh_from_db()
-                
+
                 return chat
             except OngoingChat.DoesNotExist as e:
                 logger.warning(
