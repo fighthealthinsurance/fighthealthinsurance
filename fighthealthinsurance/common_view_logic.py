@@ -1090,7 +1090,7 @@ class DenialCreatorHelper:
     ):
         """
         Create or update an existing denial.
-        
+
         Args:
             email: The email address associated with the denial.
             denial_text: The text of the denial.
@@ -1112,7 +1112,7 @@ class DenialCreatorHelper:
             subscribe: Whether the user has subscribed (not handled in this function).
             microsite_slug: Optional slug identifier for the microsite from which the denial was created.
                            Should be a valid microsite slug or None.
-        
+
         Returns:
             The created or updated Denial object.
         """
@@ -1869,9 +1869,9 @@ class AppealsBackendHelper:
                     subs["[Patient Name]"] = denial.patient_user.get_legal_name()
                     subs["[patient name]"] = denial.patient_user.get_legal_name()
                 if denial and denial.primary_professional is not None:
-                    subs[
-                        "[Professional Name]"
-                    ] = denial.primary_professional.get_full_name()
+                    subs["[Professional Name]"] = (
+                        denial.primary_professional.get_full_name()
+                    )
                 if denial.domain:
                     subs["[Professional Address]"] = denial.domain.get_address()
             except:

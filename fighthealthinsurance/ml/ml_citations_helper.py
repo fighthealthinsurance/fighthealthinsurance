@@ -124,7 +124,7 @@ class MLCitationsHelper:
         """
         Generate generic citations using ML models based only on procedure and diagnosis.
         These are cached for reuse across multiple patients with the same procedure/diagnosis.
-        
+
         If the denial has a microsite_slug, also includes the microsite's evidence_snippets.
 
         Args:
@@ -161,17 +161,21 @@ class MLCitationsHelper:
                 )
                 # Create a new list to avoid modifying cached data
                 result = list(cached.generated_context)
-                
+
                 # Add microsite evidence snippets if available
                 if denial and denial.microsite_slug:
                     try:
                         microsite = get_microsite(denial.microsite_slug)
                         if microsite and microsite.evidence_snippets:
-                            logger.debug(f"Adding {len(microsite.evidence_snippets)} microsite evidence snippets")
+                            logger.debug(
+                                f"Adding {len(microsite.evidence_snippets)} microsite evidence snippets"
+                            )
                             result.extend(microsite.evidence_snippets)
                     except Exception as e:
-                        logger.opt(exception=True).warning(f"Failed to load microsite evidence snippets: {e}")
-                
+                        logger.opt(exception=True).warning(
+                            f"Failed to load microsite evidence snippets: {e}"
+                        )
+
                 return result
             else:
                 logger.debug(
@@ -195,10 +199,14 @@ class MLCitationsHelper:
                     try:
                         microsite = get_microsite(denial.microsite_slug)
                         if microsite and microsite.evidence_snippets:
-                            logger.debug(f"Returning {len(microsite.evidence_snippets)} microsite evidence snippets (no backends)")
+                            logger.debug(
+                                f"Returning {len(microsite.evidence_snippets)} microsite evidence snippets (no backends)"
+                            )
                             return microsite.evidence_snippets
                     except Exception as e:
-                        logger.opt(exception=True).warning(f"Failed to load microsite evidence snippets: {e}")
+                        logger.opt(exception=True).warning(
+                            f"Failed to load microsite evidence snippets: {e}"
+                        )
                 return []
 
             # Create tasks for partial backends
@@ -237,10 +245,14 @@ class MLCitationsHelper:
                     try:
                         microsite = get_microsite(denial.microsite_slug)
                         if microsite and microsite.evidence_snippets:
-                            logger.debug(f"Adding {len(microsite.evidence_snippets)} microsite evidence snippets to generated citations")
+                            logger.debug(
+                                f"Adding {len(microsite.evidence_snippets)} microsite evidence snippets to generated citations"
+                            )
                             result.extend(microsite.evidence_snippets)
                     except Exception as e:
-                        logger.opt(exception=True).warning(f"Failed to load microsite evidence snippets: {e}")
+                        logger.opt(exception=True).warning(
+                            f"Failed to load microsite evidence snippets: {e}"
+                        )
 
                 # If we have citations, cache them for future use
                 if result:

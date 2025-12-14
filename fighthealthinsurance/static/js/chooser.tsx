@@ -196,6 +196,7 @@ const ChooserInterface: React.FC = () => {
     error: null,
     taskType: null,
   });
+  const [isSkipping, setIsSkipping] = useState(false);
 
   const fetchNextTask = useCallback(async (taskType: "appeal" | "chat") => {
     setState((prev) => ({ ...prev, mode: "loading", error: null, taskType }));
@@ -273,6 +274,44 @@ const ChooserInterface: React.FC = () => {
   const handleSelectCandidate = useCallback((candidate: ChooserCandidate) => {
     setState((prev) => ({ ...prev, selectedCandidate: candidate }));
   }, []);
+
+  const skipTask = useCallback(async () => {
+    if (!state.task) return;
+
+    setIsSkipping(true);
+
+    try {
+      const response = await fetch("/ziggy/rest/chooser/skip/", {
+	method: "POST",
+	headers: {
+	  "Content-Type": "application/json",
+	  "X-CSRFToken": getCSRFToken(),
+	},
+	credentials: "include",
+	body: JSON.stringify({
+	  task_id: state.task.task_id,
+	}),
+      });
+
+      if (!response.ok) {
+	const errorData = await response.json();
+	throw new Error(errorData.error || "Failed to skip task");
+      }
+
+      // Fetch the next task
+      if (state.taskType) {
+	fetchNextTask(state.taskType);
+      }
+    } catch (error) {
+      setState((prev) => ({
+	...prev,
+	mode: "error",
+	error: error instanceof Error ? error.message : "Failed to skip task",
+      }));
+    } finally {
+      setIsSkipping(false);
+    }
+  }, [state.task, state.taskType, fetchNextTask]);
 
   const resetToSelection = useCallback(() => {
     setState({
@@ -421,6 +460,47 @@ const ChooserInterface: React.FC = () => {
   // Render voting state
   if (state.mode === "voting" && state.task) {
     const labels = ["A", "B", "C", "D"];
+    const hasEnoughCandidates = state.task.candidates.length >= 2;
+
+    // If only one candidate, show a message and skip options
+    if (!hasEnoughCandidates) {
+      return (
+	<Container size="md" py="xl">
+	  <Stack gap="xl" align="center">
+	    <Title order={2} ta="center">
+	      Not Enough Options
+	    </Title>
+	    <Alert color="yellow" title="Single Option Available" radius="md">
+	      This task only has one response option, so there's nothing to compare.
+	      We'll skip this one and try to find another task for you.
+	    </Alert>
+	    <Group gap="lg" mt="xl">
+	      <Button
+		size="lg"
+		radius="md"
+		onClick={skipTask}
+		loading={isSkipping}
+		style={{
+		  background: THEME.colors.buttonBackground,
+		  color: THEME.colors.buttonText,
+		}}
+	      >
+		Find Another Task
+	      </Button>
+	      <Button
+		size="lg"
+		radius="md"
+		variant="outline"
+		onClick={resetToSelection}
+	      >
+		Go Back
+	      </Button>
+	    </Group>
+	  </Stack>
+	</Container>
+      );
+    }
+
     return (
       <Container size="xl" py="xl">
 	<Stack gap="xl">
@@ -464,7 +544,7 @@ const ChooserInterface: React.FC = () => {
 	    </Group>
 	  </Box>
 
-	  {/* Submit Button */}
+	  {/* Submit and Skip Buttons */}
 	  <Group justify="center" mt="xl">
 	    <Button
 	      size="lg"
@@ -483,6 +563,15 @@ const ChooserInterface: React.FC = () => {
 	    <Button
 	      size="lg"
 	      radius="md"
+	      variant="light"
+	      onClick={skipTask}
+	      loading={isSkipping}
+	    >
+	      Skip This One
+	    </Button>
+	    <Button
+	      size="lg"
+	      radius="md"
 	      variant="outline"
 	      onClick={resetToSelection}
 	    >
@@ -491,7 +580,7 @@ const ChooserInterface: React.FC = () => {
 	  </Group>
 
 	  <Text size="sm" c="dimmed" ta="center" mt="lg">
-	    Select the response you think is best, then click Submit Vote.
+	    Select the response you think is best, then click Submit Vote. Or skip if you're unsure.
 	  </Text>
 	</Stack>
       </Container>
