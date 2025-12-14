@@ -1787,7 +1787,14 @@ class ChooserViewSet(viewsets.ViewSet):
     )
     @action(detail=False, methods=["post"])
     def vote(self, request: Request) -> Response:
-        """Submit a vote for a chooser task."""
+        """
+        Register a user's vote for a chooser task.
+        
+        Validates the task exists and is in a votable state, the chosen candidate belongs to the task and was presented, and the session has not already voted on the task; then creates a ChooserVote.
+        
+        Returns:
+            response (Response): On success, a 200 response containing {"success": True, "message": "Vote recorded successfully", "vote_id": <id>}. On failure, a 4xx response with an error message.
+        """
         serializer = serializers.ChooserVoteRequestSerializer(data=request.data)
         if not serializer.is_valid():
             return Response(
@@ -1885,7 +1892,14 @@ class ChooserViewSet(viewsets.ViewSet):
     )
     @action(detail=False, methods=["post"])
     def skip(self, request: Request) -> Response:
-        """Skip a chooser task (mark it as skipped so user doesn't see it again)."""
+        """
+        Mark a chooser task as skipped for the current session so it will not be presented again.
+        
+        Validates the request payload and session, ensures the task exists, prevents skipping if the session has already voted on the task, and records the skip idempotently.
+        
+        Returns:
+            Response: HTTP 200 with a success message when the task is skipped; HTTP 400 with error details for invalid input or if the task was already voted on; HTTP 404 if the task does not exist.
+        """
         serializer = serializers.ChooserSkipRequestSerializer(data=request.data)
         if not serializer.is_valid():
             return Response(

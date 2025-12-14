@@ -43,6 +43,15 @@ class SeleniumTestChooserPageLoad(FHISeleniumBase, StaticLiveServerTestCase):
     def setUpClass(cls):
         # Start patching prefill BEFORE the live server starts
         # This prevents async DB conflicts in SQLite during tests
+        """
+        Prepare the class-level test environment by patching chooser async tasks and initializing parent live-server setup.
+        
+        Patches the async task entrypoints used by the chooser ("fighthealthinsurance.chooser_tasks.trigger_prefill_async"
+        and "fighthealthinsurance.chooser_tasks._generate_single_task") and starts those patchers to prevent asynchronous
+        database writes during tests. Stores the patcher and mock objects on the class as `prefill_patcher`, `generate_patcher`,
+        `mock_prefill`, and `mock_generate`. After starting the patches, invokes parent class setup for the live server and
+        Selenium base classes.
+        """
         cls.prefill_patcher = patch(
             "fighthealthinsurance.chooser_tasks.trigger_prefill_async"
         )
@@ -57,6 +66,11 @@ class SeleniumTestChooserPageLoad(FHISeleniumBase, StaticLiveServerTestCase):
 
     @classmethod
     def tearDownClass(cls):
+        """
+        Perform class-level teardown for Selenium tests and stop started patchers.
+        
+        This method invokes superclass class-teardown logic and stops the `prefill_patcher` and `generate_patcher` started in setUpClass to restore patched functions to their original state.
+        """
         super(StaticLiveServerTestCase, cls).tearDownClass()
         super(BaseCase, cls).tearDownClass()
         # Stop patching
@@ -86,14 +100,18 @@ class SeleniumTestChooserPageLoad(FHISeleniumBase, StaticLiveServerTestCase):
         self.assert_element("button:contains('Score Chat Responses')")
 
     def test_chooser_page_shows_help_text(self):
-        """Test that the chooser page shows helpful description."""
+        """
+        Verify the chooser page displays the main help heading "Help Us Improve Our AI Responses".
+        """
         self.open(f"{self.live_server_url}/chooser/")
 
         # Should explain what the user is doing
         self.assert_text("Help Us Improve Our AI Responses", timeout=10)
 
     def test_chooser_page_has_privacy_disclaimer(self):
-        """Test that chooser page has disclaimer about synthetic data."""
+        """
+        Verify the chooser page displays the privacy disclaimer stating data is synthetic/anonymized for training purposes.
+        """
         self.open(f"{self.live_server_url}/chooser/")
 
         # Should have privacy disclaimer
