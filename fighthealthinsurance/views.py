@@ -1440,6 +1440,7 @@ def chat_interface_view(request):
     default_procedure = request.GET.get("default_procedure", "")
     default_condition = request.GET.get("default_condition", "")
     medicare = request.GET.get("medicare", "")
+    microsite_slug = request.GET.get("microsite_slug", "")
 
     context = {
         "title": "Chat with FightHealthInsurance",
@@ -1447,6 +1448,7 @@ def chat_interface_view(request):
         "default_procedure": default_procedure,
         "default_condition": default_condition,
         "medicare": medicare,
+        "microsite_slug": microsite_slug,
     }
     logger.debug(f"Rendering chat interface with context: {context}")
     return render(request, "chat_interface.html", context)

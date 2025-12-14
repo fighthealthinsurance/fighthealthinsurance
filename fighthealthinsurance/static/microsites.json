@@ -2538,51 +2538,51 @@
   "medicare-work-requirements": {
     "slug": "medicare-work-requirements",
     "title": "Understanding Medicare Work Requirements",
-    "default_procedure": "Medicare Services",
-    "tagline": "Navigating Medicare work requirements and appealing service denials.",
+    "default_procedure": "Medicare Work Requirements",
+    "tagline": "Navigating the new Medicare work requirements and understanding your obligations.",
     "hero_h1": "Understanding Medicare Work Requirements",
-    "hero_subhead": "Learn about Medicare coverage requirements and how to appeal denials.",
-    "intro": "Medicare has specific requirements and documentation needs for coverage. Whether you are facing denials for medical services, equipment, or treatments, understanding Medicare work requirements can help you successfully appeal and get the coverage you deserve.",
+    "hero_subhead": "Get clarity on the new work requirements and how they affect your Medicare coverage.",
+    "intro": "Medicare has introduced new work requirements that affect certain beneficiaries. Understanding these requirements is crucial to maintaining your coverage. We can help you navigate what you need to know, what documentation you need, and how to comply with these new rules.",
     "common_denial_reasons": [
-      "Service deemed not medically necessary",
-      "Lack of proper prior authorization",
-      "Insufficient documentation from provider",
-      "Service not covered by Medicare Part A, B, or D",
-      "Out-of-network provider used"
+      "Insufficient documentation of work hours",
+      "Missing verification of job search activities",
+      "Lack of proof of exemption status",
+      "Incomplete work requirement reporting",
+      "Failure to meet monthly work hour minimums"
     ],
-    "how_we_help": "We help you understand Medicare coverage requirements, document medical necessity, and create compelling appeal letters that address Medicare-specific criteria and regulations.",
-    "cta": "Get help with your Medicare appeal",
+    "how_we_help": "We help you understand the Medicare work requirements, what documentation you need to maintain coverage, how to report your work activities, and what exemptions might apply to your situation.",
+    "cta": "Get help understanding Medicare work requirements",
     "faq": [
       {
-        "question": "What are the different parts of Medicare?",
-        "answer": "Medicare Part A covers hospital stays and inpatient care. Part B covers doctor visits and outpatient services. Part C (Medicare Advantage) is an alternative to Original Medicare. Part D covers prescription drugs. Each part has different coverage rules and appeal processes."
+        "question": "What are the new Medicare work requirements?",
+        "answer": "Medicare work requirements mandate that certain beneficiaries engage in work activities, job training, or community service for a specified number of hours per month to maintain their coverage. The specific requirements vary by state and individual circumstances."
       },
       {
-        "question": "How long do I have to file a Medicare appeal?",
-        "answer": "Generally, you have 60 days from the date on your Medicare Summary Notice (MSN) or denial letter to file an appeal. The appeal process has multiple levels, and it is important to act quickly to preserve your appeal rights."
+        "question": "Who is subject to Medicare work requirements?",
+        "answer": "Work requirements typically apply to able-bodied adults without dependents between certain ages. Many exemptions exist for individuals with disabilities, caregivers, students, and others. Check with your state Medicaid office for specific criteria."
       },
       {
-        "question": "What documentation do I need for a Medicare appeal?",
-        "answer": "You typically need the denial letter or MSN, medical records supporting medical necessity, your doctor's notes and recommendations, any test results or diagnostic reports, and a clear explanation of why the service should be covered under Medicare rules."
+        "question": "How do I report my work hours for Medicare?",
+        "answer": "Most states have online portals or phone systems for reporting work hours. You typically need to report monthly and provide documentation such as pay stubs, employer verification, or volunteer service confirmation. Keep copies of all documentation you submit."
       },
       {
-        "question": "Can I get help from my doctor for my Medicare appeal?",
-        "answer": "Yes. A letter from your doctor explaining medical necessity and why the service meets Medicare coverage criteria is often critical for a successful appeal. Your doctor can also provide supporting medical records and test results."
+        "question": "What happens if I cannot meet the work requirements?",
+        "answer": "If you cannot meet the requirements, you should immediately apply for an exemption. Valid exemptions include disability, caregiving responsibilities, pregnancy, student status, and other circumstances. Document your exemption status carefully to maintain coverage."
       },
       {
-        "question": "What if Medicare says my service is not medically necessary?",
-        "answer": "You can appeal by providing evidence that the service meets Medicare's definition of medically necessary care. This often includes medical guidelines, your specific condition and symptoms, and your doctor's clinical judgment about why the service is needed."
+        "question": "Can I appeal if my coverage is terminated for not meeting work requirements?",
+        "answer": "Yes, you have the right to appeal if your coverage is terminated. You typically have 60 days to file an appeal. Your appeal should include documentation of your work activities, proof of exemption status, or evidence of good cause for not meeting requirements."
       }
     ],
     "evidence_snippets": [
-      "Medicare coverage decisions must follow national and local coverage determinations (NCDs and LCDs) and be based on medical necessity.",
-      "Beneficiaries have the right to appeal Medicare coverage denials through a multi-level administrative appeals process.",
-      "Proper documentation from healthcare providers is essential for demonstrating that services meet Medicare coverage criteria."
+      "Medicare work requirements must include reasonable exemptions and good cause exceptions as mandated by federal regulations.",
+      "Beneficiaries have the right to appeal coverage terminations related to work requirements through the standard Medicare appeals process.",
+      "Proper documentation of work activities, exemptions, and compliance efforts is essential for maintaining coverage under work requirement policies."
     ],
     "pubmed_search_terms": [
-      "Medicare coverage criteria medical necessity",
-      "Medicare appeals process outcomes",
-      "Medicare beneficiary rights coverage denials"
+      "Medicare Medicaid work requirements health outcomes",
+      "work requirement policies health insurance coverage",
+      "Medicare eligibility work mandate compliance"
     ],
     "medicare": true
   }

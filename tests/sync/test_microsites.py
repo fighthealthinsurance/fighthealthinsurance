@@ -580,6 +580,15 @@ class MedicareMicrositeTest(TestCase):
         # Check that the chat link includes the default procedure
         self.assertContains(response, "default_procedure=Medicare")
 
+    def test_medicare_work_requirements_chat_link_includes_microsite_slug(self):
+        """Test that chat links from Medicare microsite include microsite_slug parameter."""
+        response = self.client.get(
+            reverse("microsite", kwargs={"slug": "medicare-work-requirements"})
+        )
+        self.assertEqual(response.status_code, 200)
+        # Check that the chat link includes the microsite slug
+        self.assertContains(response, "microsite_slug=medicare-work-requirements")
+
     def test_medicare_work_requirements_has_faq(self):
         """Test that the Medicare microsite has FAQ entries."""
         microsite = get_microsite("medicare-work-requirements")
@@ -667,12 +676,34 @@ class MedicareChatIntegrationTest(TestCase):
         response = self.client.get(
             reverse("chat"),
             {
-                "default_procedure": "Medicare Services",
+                "default_procedure": "Medicare Work Requirements",
                 "medicare": "true",
+                "microsite_slug": "medicare-work-requirements",
             },
         )
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Medicare Services")
+        self.assertContains(response, "Medicare Work Requirements")
         self.assertContains(response, 'data-medicare="true"')
-        self.assertContains(response, 'data-default-procedure="Medicare Services"')
+        self.assertContains(response, 'data-default-procedure="Medicare Work Requirements"')
+        self.assertContains(response, 'data-microsite-slug="medicare-work-requirements"')
+
+    def test_chat_with_medicare_work_requirements_slug(self):
+        """Test that chat includes microsite_slug for Medicare work requirements."""
+        # First complete consent
+        session = self.client.session
+        session["consent_completed"] = True
+        session["email"] = "test@example.com"
+        session.save()
+
+        # Access chat with medicare work requirements slug
+        response = self.client.get(
+            reverse("chat"),
+            {
+                "default_procedure": "Medicare Work Requirements",
+                "medicare": "true",
+                "microsite_slug": "medicare-work-requirements",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'data-microsite-slug="medicare-work-requirements"')
 
