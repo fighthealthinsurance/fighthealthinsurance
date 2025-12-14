@@ -12,6 +12,7 @@ from rest_framework.test import APITestCase
 from fhi_users.models import ExtraUserProperties, ProfessionalUser, UserDomain
 from fighthealthinsurance.models import (
     ChooserCandidate,
+    ChooserSkip,
     ChooserTask,
     ChooserVote,
     Denial,
@@ -562,6 +563,150 @@ class ChooserPrefillTest(APITestCase):
 
             self.assertEqual(response.status_code, status.HTTP_200_OK)
             mock_prefill.assert_called_once()
+
+
+class ChooserSkipModelTest(APITestCase):
+    """Test ChooserSkip model."""
+
+    fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
+
+    def test_create_skip(self):
+        """Test creating a ChooserSkip."""
+        task = ChooserTask.objects.create(
+            task_type="appeal",
+            status="READY",
+        )
+        skip = ChooserSkip.objects.create(
+            task=task,
+            session_key="test-session-123",
+        )
+        self.assertEqual(skip.task, task)
+        self.assertEqual(skip.session_key, "test-session-123")
+
+    def test_skip_unique_per_session(self):
+        """Test that a session can only skip once per task."""
+        task = ChooserTask.objects.create(
+            task_type="appeal",
+            status="READY",
+        )
+        ChooserSkip.objects.create(
+            task=task,
+            session_key="test-session-123",
+        )
+        # Creating another skip with the same session key should fail
+        with self.assertRaises(Exception):
+            ChooserSkip.objects.create(
+                task=task,
+                session_key="test-session-123",
+            )
+
+
+class ChooserSkipAPITest(APITestCase):
+    """Test the POST /api/chooser/skip endpoint."""
+
+    fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
+
+    def setUp(self):
+        self.task = ChooserTask.objects.create(
+            task_type="appeal",
+            status="READY",
+            context_json={"procedure": "Test"},
+        )
+        self.candidate1 = ChooserCandidate.objects.create(
+            task=self.task,
+            candidate_index=0,
+            kind="appeal_letter",
+            model_name="model-a",
+            content="Content A",
+        )
+        self.candidate2 = ChooserCandidate.objects.create(
+            task=self.task,
+            candidate_index=1,
+            kind="appeal_letter",
+            model_name="model-b",
+            content="Content B",
+        )
+
+    def test_submit_skip(self):
+        """Test skipping a task."""
+        url = reverse("chooser-skip")
+        data = {"task_id": self.task.id}
+        response = self.client.post(
+            url, json.dumps(data), content_type="application/json"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.json()["success"])
+        self.assertEqual(response.json()["message"], "Task skipped successfully")
+
+        # Verify skip was created
+        self.assertEqual(ChooserSkip.objects.filter(task=self.task).count(), 1)
+
+    def test_skip_invalid_task(self):
+        """Test skipping a non-existent task."""
+        url = reverse("chooser-skip")
+        data = {"task_id": 99999}
+        response = self.client.post(
+            url, json.dumps(data), content_type="application/json"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_duplicate_skip_allowed(self):
+        """Test that duplicate skips from same session are handled gracefully."""
+        url = reverse("chooser-skip")
+        data = {"task_id": self.task.id}
+
+        # First skip should succeed
+        response1 = self.client.post(
+            url, json.dumps(data), content_type="application/json"
+        )
+        self.assertEqual(response1.status_code, status.HTTP_200_OK)
+
+        # Second skip should also succeed (get_or_create handles duplicates)
+        response2 = self.client.post(
+            url, json.dumps(data), content_type="application/json"
+        )
+        self.assertEqual(response2.status_code, status.HTTP_200_OK)
+
+        # Only one skip should exist (get_or_create doesn't create duplicates)
+        self.assertEqual(ChooserSkip.objects.filter(task=self.task).count(), 1)
+
+    def test_skip_excludes_task_from_next(self):
+        """Test that skipped tasks are excluded from next task queries."""
+        # Create a second task
+        task2 = ChooserTask.objects.create(
+            task_type="appeal",
+            status="READY",
+            context_json={"procedure": "Test 2"},
+        )
+        ChooserCandidate.objects.create(
+            task=task2,
+            candidate_index=0,
+            kind="appeal_letter",
+            model_name="model-a",
+            content="Content A2",
+        )
+
+        # Skip the first task
+        skip_url = reverse("chooser-skip")
+        skip_data = {"task_id": self.task.id}
+        self.client.post(
+            skip_url, json.dumps(skip_data), content_type="application/json"
+        )
+
+        # Mock the task generation to prevent on-demand generation
+        with patch(
+            "fighthealthinsurance.chooser_tasks._generate_single_task"
+        ) as mock_generate:
+            mock_generate.return_value = None
+
+            # Get next task - should return task2, not the skipped task
+            next_url = reverse("chooser-next-appeal")
+            response = self.client.get(next_url)
+
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            self.assertEqual(response.json()["task_id"], task2.id)
 
 
 class ChooserTaskContextTest(APITestCase):
