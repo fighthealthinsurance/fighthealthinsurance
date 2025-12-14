@@ -181,6 +181,11 @@ class ChatViewSet(viewsets.ViewSet):
 
 
 class DataRemovalViewSet(viewsets.ViewSet, DeleteMixin, DeleteOnlyMixin):
+    """
+    ViewSet for handling data removal requests.
+    Allows users to request deletion of all their data by email address.
+    """
+
     serializer_class = serializers.DeleteDataFormSerializer
 
     @extend_schema(
@@ -198,6 +203,12 @@ class DataRemovalViewSet(viewsets.ViewSet, DeleteMixin, DeleteOnlyMixin):
 
 
 class HealthHistoryViewSet(viewsets.ViewSet, CreateMixin):
+    """
+    ViewSet for updating patient health history on a denial.
+
+    Accepts health context information and updates the associated denial record.
+    """
+
     serializer_class = serializers.HealthHistoryFormSerializer
 
     @extend_schema(responses=serializers.StatusResponseSerializer)
@@ -218,6 +229,13 @@ class HealthHistoryViewSet(viewsets.ViewSet, CreateMixin):
 
 
 class NextStepsViewSet(viewsets.ViewSet, CreateMixin):
+    """
+    ViewSet for determining next steps after denial information is collected.
+
+    Analyzes the denial data and returns recommended actions, appeal options,
+    and relevant regulatory information.
+    """
+
     serializer_class = serializers.PostInferedFormSerializer
 
     @extend_schema(
@@ -244,6 +262,14 @@ class NextStepsViewSet(viewsets.ViewSet, CreateMixin):
 
 
 class DenialViewSet(viewsets.ViewSet, CreateMixin):
+    """
+    ViewSet for creating and managing insurance denial records.
+
+    Supports creating new denials, retrieving existing ones, and managing
+    associated PubMed articles for evidence. Handles professional-created
+    denials with patient associations and mailing list subscriptions.
+    """
+
     serializer_class = serializers.DenialFormSerializer
 
     def get_serializer_class(self):
@@ -405,6 +431,13 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
 
 
 class QAResponseViewSet(viewsets.ViewSet, CreateMixin):
+    """
+    ViewSet for storing question-and-answer responses related to a denial.
+
+    Saves user-provided answers to appeal-related questions, which are used
+    to provide context for appeal generation.
+    """
+
     serializer_class = serializers.QAResponsesSerializer
 
     @extend_schema(responses=serializers.StatusResponseSerializer)
@@ -441,6 +474,13 @@ class QAResponseViewSet(viewsets.ViewSet, CreateMixin):
 
 
 class FollowUpViewSet(viewsets.ViewSet, CreateMixin):
+    """
+    ViewSet for recording follow-up outcomes on appeals.
+
+    Stores user-reported results of their appeal (success, denial, etc.)
+    to track appeal effectiveness and outcomes.
+    """
+
     serializer_class = serializers.FollowUpFormSerializer
 
     @extend_schema(responses=serializers.StatusResponseSerializer)
@@ -456,12 +496,16 @@ class FollowUpViewSet(viewsets.ViewSet, CreateMixin):
 
 
 class Ping(APIView):
+    """Simple health check endpoint that returns 204 No Content."""
+
     @extend_schema(responses=serializers.StatusResponseSerializer)
     def get(self, request: Request) -> Response:
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class CheckStorage(APIView):
+    """Health check endpoint that verifies external storage is accessible."""
+
     @extend_schema(responses=serializers.StatusResponseSerializer)
     def get(self, request: Request) -> Response:
         es = settings.EXTERNAL_STORAGE
@@ -472,6 +516,8 @@ class CheckStorage(APIView):
 
 
 class CheckMlBackend(APIView):
+    """Health check endpoint that verifies ML backend models are operational."""
+
     @extend_schema(responses=serializers.StatusResponseSerializer)
     def get(self, request: Request) -> Response:
         if ml_router.working():
@@ -511,6 +557,14 @@ class LiveModelsStatus(APIView):
 
 
 class AppealViewSet(viewsets.ViewSet, SerializerMixin):
+    """
+    ViewSet for managing appeals and related operations.
+
+    Provides endpoints for listing, retrieving, assembling, and sending appeals.
+    Supports fax transmission, patient notifications, provider invitations,
+    PubMed article selection, search, and appeal statistics (both relative and absolute).
+    """
+
     appeal_assembly_helper = AppealAssemblyHelper()
 
     def get_serializer_class(self):
@@ -1053,6 +1107,12 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
 
 
 class MailingListSubscriberViewSet(viewsets.ViewSet, CreateMixin, DeleteMixin):
+    """
+    ViewSet for managing mailing list subscriptions.
+
+    Allows users to subscribe to or unsubscribe from the mailing list by email.
+    """
+
     serializer_class = serializers.MailingListSubscriberSerializer
 
     @extend_schema(responses=serializers.StatusResponseSerializer)
@@ -1075,6 +1135,13 @@ class MailingListSubscriberViewSet(viewsets.ViewSet, CreateMixin, DeleteMixin):
 
 
 class DemoRequestsViewSet(viewsets.ViewSet, CreateMixin, DeleteMixin):
+    """
+    ViewSet for managing demo requests.
+
+    Allows users to submit requests for product demonstrations or remove
+    existing demo requests by email.
+    """
+
     serializer_class = serializers.DemoRequestsSerializer
 
     @extend_schema(responses=serializers.StatusResponseSerializer)
@@ -1113,6 +1180,13 @@ class SendToUserViewSet(viewsets.ViewSet, SerializerMixin):
 
 
 class AppealAttachmentViewSet(viewsets.ViewSet):
+    """
+    ViewSet for managing file attachments on appeals.
+
+    Supports listing, uploading, downloading (with decryption), and deleting
+    attachments. Files are encrypted at rest and decrypted on retrieval.
+    """
+
     serializer_class = serializers.AppealAttachmentSerializer
 
     @extend_schema(

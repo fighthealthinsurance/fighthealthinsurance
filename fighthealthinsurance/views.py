@@ -58,6 +58,7 @@ else:
 
 
 def render_ocr_error(request: HttpRequest, text: str) -> HttpResponseBase:
+    """Render an error page for OCR processing failures."""
     return render(
         request,
         "server_side_ocr_error.html",
@@ -68,12 +69,15 @@ def render_ocr_error(request: HttpRequest, text: str) -> HttpResponseBase:
 
 
 def csrf_failure(request, reason="", template_name="403_csrf.html"):
+    """Custom CSRF failure handler that renders a 403 page with the failure reason."""
     template = loader.get_template(template_name)
     logger.error(f"CSRF failure: {reason}")
     return HttpResponseForbidden(template.render({"reason": reason}, request))
 
 
 class FollowUpView(generic.FormView):
+    """View for recording follow-up outcomes on appeals via a form."""
+
     template_name = "followup.html"
     form_class = core_forms.FollowUpForm
 
@@ -93,10 +97,14 @@ class FollowUpView(generic.FormView):
 
 
 class ProVersionThankYouView(TemplateView):
+    """Thank you page displayed after professional version signup."""
+
     template_name = "professional_thankyou.html"
 
 
 class BRB(TemplateView):
+    """Service unavailable page returning HTTP 503 status."""
+
     template_name = "brb.html"
 
     def get(self, request, *args, **kwargs):
@@ -142,26 +150,38 @@ def safe_redirect(request, url):
 
 
 class ProVersionView(generic.RedirectView):
+    """Redirect to the professional version site."""
+
     url = "https://www.fightpaperwork.com"
 
 
 class IndexView(generic.TemplateView):
+    """Homepage view."""
+
     template_name = "index.html"
 
 
 class AboutView(generic.TemplateView):
+    """About us page."""
+
     template_name = "about_us.html"
 
 
 class HowToHelpView(generic.TemplateView):
+    """Page describing ways to help the project."""
+
     template_name = "how_to_help.html"
 
 
 class PBSNewsHourView(generic.TemplateView):
+    """Page about the PBS NewsHour feature."""
+
     template_name = "as_seen_on_pbs.html"
 
 
 class OtherResourcesView(generic.TemplateView):
+    """Page showing external health policy resources including RSS feeds."""
+
     template_name = "other_resources.html"
 
     def get_context_data(self, **kwargs):
@@ -265,6 +285,8 @@ class OtherResourcesView(generic.TemplateView):
 
 
 class BlogView(generic.TemplateView):
+    """Blog index page displaying list of blog posts."""
+
     template_name = "blog.html"
 
     def get_context_data(self, **kwargs):
@@ -294,6 +316,8 @@ class BlogView(generic.TemplateView):
 
 
 class BlogPostView(generic.TemplateView):
+    """Individual blog post page loaded from markdown files."""
+
     template_name = "blog_post.html"
 
     def get_context_data(self, **kwargs):
@@ -363,6 +387,8 @@ class BlogPostView(generic.TemplateView):
 
 
 class ScanView(generic.TemplateView):
+    """Initial scan/scrub page for uploading denial letters."""
+
     template_name = "scrub.html"
 
     def get_context_data(self, **kwargs):
@@ -370,6 +396,8 @@ class ScanView(generic.TemplateView):
 
 
 class PrivacyPolicyView(generic.TemplateView):
+    """Privacy policy page."""
+
     template_name = "privacy_policy.html"
 
     def get_context_data(self, **kwargs):
@@ -377,6 +405,8 @@ class PrivacyPolicyView(generic.TemplateView):
 
 
 class MHMDAView(generic.TemplateView):
+    """My Health My Data Act consumer privacy notice page."""
+
     template_name = "mhmda.html"
 
     def get_context_data(self, **kwargs):
@@ -384,6 +414,8 @@ class MHMDAView(generic.TemplateView):
 
 
 class TermsOfServiceView(generic.TemplateView):
+    """Terms of service page."""
+
     template_name = "tos.html"
 
     def get_context_data(self, **kwargs):
@@ -391,6 +423,8 @@ class TermsOfServiceView(generic.TemplateView):
 
 
 class ContactView(generic.TemplateView):
+    """Contact us page."""
+
     template_name = "contact.html"
 
     def get_context_data(self, **kwargs):
@@ -398,6 +432,8 @@ class ContactView(generic.TemplateView):
 
 
 class FAQView(generic.TemplateView):
+    """Frequently asked questions page."""
+
     template_name = "faq.html"
 
     def get_context_data(self, **kwargs):
@@ -405,6 +441,8 @@ class FAQView(generic.TemplateView):
 
 
 class MedicaidFAQView(generic.TemplateView):
+    """FAQ page specifically for Medicaid work requirements."""
+
     template_name = "faq_post.html"
 
     def get_context_data(self, **kwargs):
@@ -436,11 +474,15 @@ class MedicaidFAQView(generic.TemplateView):
 
 
 class ShareDenialView(View):
+    """View for sharing denial information."""
+
     def get(self, request):
         return render(request, "share_denial.html", context={"title": "Share Denial"})
 
 
 class ShareAppealView(View):
+    """View for sharing appeal text with the community."""
+
     def get(self, request):
         return render(request, "share_appeal.html", context={"title": "Share Appeal"})
 
@@ -470,6 +512,8 @@ class ShareAppealView(View):
 
 
 class RemoveDataView(View):
+    """View for users to request deletion of their data."""
+
     def get(self, request):
         return render(
             request,
@@ -505,6 +549,8 @@ class RemoveDataView(View):
 
 
 class RecommendAppeal(View):
+    """View for recommending appeal templates (placeholder)."""
+
     def post(self, request):
         return render(request, "")
 
@@ -578,6 +624,8 @@ class CategorizeReview(View):
 
 
 class FindNextSteps(View):
+    """View for determining and displaying next steps after denial categorization."""
+
     def get(self, request):
         """Handle GET requests for back navigation to outside_help/questions page."""
         denial_id = request.GET.get("denial_id")
@@ -669,6 +717,8 @@ class FindNextSteps(View):
 
 
 class ChooseAppeal(View):
+    """View for selecting and finalizing appeal text before sending."""
+
     def post(self, request):
         form = core_forms.ChooseAppealForm(request.POST)
 
@@ -731,6 +781,8 @@ class ChooseAppeal(View):
 
 
 class GenerateAppeal(View):
+    """View for generating appeal letters using ML models."""
+
     def get(self, request):
         """Handle GET requests for back navigation to appeals page."""
         denial_id = request.GET.get("denial_id")
@@ -835,6 +887,8 @@ class GenerateAppeal(View):
 
 
 class OCRView(View):
+    """View for server-side OCR processing of uploaded denial documents."""
+
     def __init__(self):
         # Load easy ocr reader if possible
         try:
@@ -884,6 +938,13 @@ class OCRView(View):
 
 
 class InitialProcessView(generic.FormView):
+    """
+    Initial denial processing view that creates a denial record and begins the appeal flow.
+
+    Handles the first step of the multi-step appeal process: collecting denial text,
+    user email, and basic information. Supports microsite integration for prefilled data.
+    """
+
     template_name = "scrub.html"
     form_class = core_forms.DenialForm
 
@@ -1112,6 +1173,8 @@ class SessionRequiredMixin(View):
 
 
 class EntityExtractView(SessionRequiredMixin, generic.FormView):
+    """View for ML entity extraction from denial text (procedure, diagnosis, etc.)."""
+
     form_class = core_forms.EntityExtractForm
     template_name = "entity_extract.html"
 
@@ -1194,6 +1257,8 @@ class EntityExtractView(SessionRequiredMixin, generic.FormView):
 
 
 class PlanDocumentsView(SessionRequiredMixin, generic.FormView):
+    """View for collecting patient health history information."""
+
     form_class = core_forms.HealthHistory
     template_name = "health_history.html"
 
@@ -1243,6 +1308,8 @@ class PlanDocumentsView(SessionRequiredMixin, generic.FormView):
 
 
 class DenialCollectedView(SessionRequiredMixin, generic.FormView):
+    """View for collecting plan documents related to the denial."""
+
     form_class = core_forms.PlanDocumentsForm
     template_name = "plan_documents.html"
 
@@ -1297,6 +1364,8 @@ class DenialCollectedView(SessionRequiredMixin, generic.FormView):
 
 
 class AppealFileView(View):
+    """View for downloading encrypted appeal PDF documents."""
+
     def get(self, request, *args, **kwargs):
         if not request.user.is_authenticated:
             return HttpResponse(status=401)
@@ -1313,6 +1382,8 @@ class AppealFileView(View):
 
 
 class StripeWebhookView(View):
+    """Webhook handler for Stripe payment events."""
+
     def post(self, request):
         try:
             return self.do_post(request)
@@ -1340,6 +1411,8 @@ class StripeWebhookView(View):
 
 
 class CompletePaymentView(View):
+    """View for completing payment after Stripe checkout redirect."""
+
     def get(self, request):
         try:
             # Extract parameters from URL query string
@@ -1557,7 +1630,7 @@ class ChatUserConsentView(FormView):
 
 @csrf_exempt
 @require_http_methods(["POST"])
-def create_pwyw_checkout(request):
+def create_pwyw_checkout(request: HttpRequest) -> HttpResponse:
     """Create a Stripe checkout session for pay-what-you-want donations."""
     try:
         data = json.loads(request.body)
