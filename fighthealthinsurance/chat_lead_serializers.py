@@ -18,6 +18,7 @@ class ChatLeadsSerializer(serializers.ModelSerializer):
             "session_id",
             "created_at",
             "drug",
+            "microsite_slug",
         ]
         read_only_fields = ["id", "session_id", "created_at"]
 

@@ -1086,9 +1086,35 @@ class DenialCreatorHelper:
         patient_user: Optional[PatientUser] = None,
         patient_visible: bool = False,
         subscribe: bool = False,  # Note: we don't handle this, but it's in the form so passed through.
+        microsite_slug: Optional[str] = None,
     ):
         """
         Create or update an existing denial.
+        
+        Args:
+            email: The email address associated with the denial.
+            denial_text: The text of the denial.
+            zip: The ZIP code associated with the denial.
+            health_history: Optional health history information.
+            pii: Whether personally identifiable information is included.
+            tos: Whether terms of service have been accepted.
+            privacy: Whether privacy policy has been accepted.
+            use_external_models: Whether to use external models.
+            store_raw_email: Whether to store the raw email address.
+            plan_documents: Optional plan documents.
+            patient_id: Optional patient ID.
+            insurance_company: Optional insurance company name.
+            denial: Optional existing Denial object to update.
+            creating_professional: Optional ProfessionalUser creating the denial.
+            primary_professional: Optional ProfessionalUser as primary.
+            patient_user: Optional PatientUser associated with the denial.
+            patient_visible: Whether the denial is visible to the patient.
+            subscribe: Whether the user has subscribed (not handled in this function).
+            microsite_slug: Optional slug identifier for the microsite from which the denial was created.
+                           Should be a valid microsite slug or None.
+        
+        Returns:
+            The created or updated Denial object.
         """
         hashed_email = Denial.get_hashed_email(email)
         # If they ask us to store their raw e-mail we do
@@ -1117,6 +1143,7 @@ class DenialCreatorHelper:
                     insurance_company=insurance_company,
                     patient_visible=patient_visible,
                     professional_to_finish=professional_to_finish,
+                    microsite_slug=microsite_slug,
                 )
             except Exception as e:
                 # This is a temporary hack to drop non-ASCII characters
@@ -1137,6 +1164,7 @@ class DenialCreatorHelper:
                     insurance_company=insurance_company,
                     patient_visible=patient_visible,
                     professional_to_finish=professional_to_finish,
+                    microsite_slug=microsite_slug,
                 )
         else:
             # Directly update denial object fields instead of using denial.update()
@@ -1157,6 +1185,8 @@ class DenialCreatorHelper:
                 denial.insurance_company = insurance_company
             if patient_visible is not None:
                 denial.patient_visible = patient_visible
+            if microsite_slug is not None:
+                denial.microsite_slug = microsite_slug
 
             denial.save()
 

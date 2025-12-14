@@ -953,6 +953,17 @@ class InitialProcessView(generic.FormView):
                 except Exception as e2:
                     logger.warning(f"Error updating subscriber? {email}!?!")
 
+        # Get microsite slug from request if available and validate it
+        microsite_slug = self.request.POST.get(
+            "microsite_slug"
+        ) or self.request.GET.get("microsite_slug", "")
+        if microsite_slug:
+            from fighthealthinsurance.microsites import get_microsite
+            if get_microsite(microsite_slug):
+                cleaned_data["microsite_slug"] = microsite_slug
+            else:
+                logger.warning(f"Invalid microsite_slug received: {microsite_slug}")
+
         denial_response = common_view_logic.DenialCreatorHelper.create_or_update_denial(
             **cleaned_data,
         )
@@ -1437,14 +1448,17 @@ def chat_interface_view(request):
         return redirect("chat_consent")
 
     # Check for default_procedure and default_condition from microsite URL params
-    default_procedure = request.GET.get("default_procedure", "")
-    default_condition = request.GET.get("default_condition", "")
+    # Check both GET and POST since consent form could send either way
+    default_procedure = request.GET.get("default_procedure") or request.POST.get("default_procedure", "")
+    default_condition = request.GET.get("default_condition") or request.POST.get("default_condition", "")
+    microsite_slug = request.GET.get("microsite_slug") or request.POST.get("microsite_slug", "")
 
     context = {
         "title": "Chat with FightHealthInsurance",
         "email": email,
         "default_procedure": default_procedure,
         "default_condition": default_condition,
+        "microsite_slug": microsite_slug,
     }
     logger.debug(f"Rendering chat interface with context: {context}")
     return render(request, "chat_interface.html", context)
@@ -1462,6 +1476,35 @@ class ChatUserConsentView(FormView):
     success_url = (
         "/chat/"  # Redirect to chat interface after successful form submission
     )
+
+    def get_success_url(self):
+        """Preserve query parameters when redirecting to chat."""
+        # Get the base success URL
+        url = self.success_url
+        
+        # Preserve microsite-related query parameters
+        query_params = []
+        for param in ['default_procedure', 'default_condition', 'microsite_slug', 'microsite_title']:
+            value = self.request.GET.get(param) or self.request.POST.get(param)
+            if value:
+                from urllib.parse import urlencode
+                query_params.append((param, value))
+        
+        if query_params:
+            from urllib.parse import urlencode
+            url = f"{url}?{urlencode(query_params)}"
+        
+        return url
+
+    def get_context_data(self, **kwargs):
+        """Pass query parameters to template so they can be preserved in hidden fields."""
+        context = super().get_context_data(**kwargs)
+        # Add microsite params to context so they can be included as hidden fields
+        context['default_procedure'] = self.request.GET.get('default_procedure', '')
+        context['default_condition'] = self.request.GET.get('default_condition', '')
+        context['microsite_slug'] = self.request.GET.get('microsite_slug', '')
+        context['microsite_title'] = self.request.GET.get('microsite_title', '')
+        return context
 
     def form_valid(self, form):
         # Mark consent as completed in the session

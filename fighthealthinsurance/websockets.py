@@ -368,11 +368,19 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
         )  # New parameter to identify patient users
         email = data.get("email", None)  # Email for patient users so we can delete data
         session_key = data.get("session_key", None)  # Session key for anonymous users
+        microsite_slug = data.get("microsite_slug", None)  # Microsite slug if coming from a microsite
+        
+        # Validate microsite_slug if provided
+        if microsite_slug:
+            from fighthealthinsurance.microsites import get_microsite
+            if not get_microsite(microsite_slug):
+                logger.warning(f"Invalid microsite_slug received: {microsite_slug}")
+                microsite_slug = None
 
         logger.debug(
             f"Message: {message} replay {replay_requested} chat_id {chat_id} "
             f"iterate_on_appeal {iterate_on_appeal} iterate_on_prior_auth {iterate_on_prior_auth} "
-            f"is_patient {is_patient} session_key {session_key}"
+            f"is_patient {is_patient} session_key {session_key} microsite_slug {microsite_slug}"
         )
 
         # Validate we have the required data
@@ -436,7 +444,7 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                     professional_user = None
                     is_patient = True
             chat = await self._get_or_create_chat(
-                user, professional_user, is_patient, chat_id, session_key, email=email
+                user, professional_user, is_patient, chat_id, session_key, email=email, microsite_slug=microsite_slug
             )
             self.chat_id = chat.id
             if (
@@ -491,6 +499,7 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
         chat_id=None,
         session_key=None,
         email=None,  # Email for patient users so we can handle data deletion later
+        microsite_slug=None,  # Microsite slug if coming from a microsite
     ):
         """Get an existing chat or create a new one."""
         if chat_id:
@@ -506,6 +515,16 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                     raise OngoingChat.DoesNotExist("Session key mismatch")
                 if chat.user and chat.user != user:
                     raise OngoingChat.DoesNotExist("User mismatch")
+                
+                # Update microsite_slug if provided and not already set
+                # Only save on first message to avoid excessive database writes
+                if microsite_slug and not chat.microsite_slug:
+                    await OngoingChat.objects.filter(id=chat.id).aupdate(
+                        microsite_slug=microsite_slug
+                    )
+                    # Refresh the chat object to ensure consistency
+                    await chat.arefresh_from_db()
+                
                 return chat
             except OngoingChat.DoesNotExist as e:
                 logger.warning(
@@ -532,6 +551,7 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                 chat_history=[],
                 summary_for_next_call=[],
                 is_patient=not is_trial_professional,  # Not a patient if it's a trial professional
+                microsite_slug=microsite_slug,
             )
         elif is_patient and user and user.is_authenticated:
             # Patient user
@@ -542,6 +562,7 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                 chat_history=[],
                 summary_for_next_call=[],
                 hashed_email=Denial.get_hashed_email(email) if email else None,
+                microsite_slug=microsite_slug,
             )
         else:
             # Professional user
@@ -552,4 +573,5 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                 professional_user=professional_user,
                 chat_history=[],
                 summary_for_next_call=[],
+                microsite_slug=microsite_slug,
             )

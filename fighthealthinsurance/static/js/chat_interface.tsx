@@ -356,9 +356,10 @@ const restorePersonalInfo = (message: string, userInfo: UserInfo): string => {
 interface ChatInterfaceProps {
   defaultProcedure?: string;
   defaultCondition?: string;
+  micrositeSlug?: string;
 }
 
-const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, defaultCondition }) => {
+const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, defaultCondition, micrositeSlug }) => {
   // State for our chat interface
   const [state, setState] = useState<ChatState>({
     messages: [],
@@ -456,6 +457,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
           session_key: getSessionKey(),
           email: userInfo?.email, // Send email if available
           is_patient: true, // Indicate this is a patient session
+          microsite_slug: micrositeSlug || undefined, // Include microsite slug if available
         };
 
         // If we have a chat ID, request the chat history we explicitily refresh from local storage
@@ -521,6 +523,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
                   content: scrubbedContent,
                   is_patient: true,
                   session_key: getSessionKey(),
+                  microsite_slug: micrositeSlug || undefined,
                 }),
               );
             }, 500);
@@ -1215,17 +1218,21 @@ document.addEventListener("DOMContentLoaded", () => {
     // Get default procedure and condition from data attributes (from microsite)
     const defaultProcedure = chatRoot.dataset.defaultProcedure || undefined;
     const defaultCondition = chatRoot.dataset.defaultCondition || undefined;
+    const micrositeSlug = chatRoot.dataset.micrositeSlug || undefined;
     if (defaultProcedure) {
       console.log("Default procedure from microsite:", defaultProcedure);
     }
     if (defaultCondition) {
       console.log("Default condition from microsite:", defaultCondition);
     }
+    if (micrositeSlug) {
+      console.log("Microsite slug:", micrositeSlug);
+    }
 
     const root = createRoot(chatRoot);
     root.render(
       <MantineProvider>
-        <ChatInterface defaultProcedure={defaultProcedure} defaultCondition={defaultCondition} />
+        <ChatInterface defaultProcedure={defaultProcedure} defaultCondition={defaultCondition} micrositeSlug={micrositeSlug} />
       </MantineProvider>,
     );
   } else {
