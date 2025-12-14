@@ -22,7 +22,7 @@ class TestHowToHelpPage(TestCase):
         """Test that the how-to-help page contains expected content."""
         url = reverse("how-to-help")
         result = self.client.get(url)
-        
+
         # Check for key sections
         self.assertContains(result, "How You Can Help")
         self.assertContains(result, "Share With Your Network")
@@ -34,7 +34,7 @@ class TestHowToHelpPage(TestCase):
         self.assertContains(result, "chooser")  # Link to chooser interface
         self.assertContains(result, "github.com/orgs/fighthealthinsurance")  # GitHub link
         self.assertContains(result, "buy.stripe.com")  # Donation link
-        
+
     def test_how_to_help_template_used(self):
         """Test that the correct template is used."""
         url = reverse("how-to-help")
