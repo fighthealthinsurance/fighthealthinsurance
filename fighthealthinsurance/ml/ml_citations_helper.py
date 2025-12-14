@@ -149,6 +149,7 @@ class MLCitationsHelper:
             return []
 
         # Check for existing cached citations first
+        result: List[str] = []
         try:
             cached = await GenericContextGeneration.objects.filter(
                 procedure=procedure, diagnosis=diagnosis
@@ -182,7 +183,6 @@ class MLCitationsHelper:
             )
 
         # If no cached citations exist, generate them
-        result: List[str] = []
         try:
             # Get the appropriate citation backends - only partial backends for generic citations
             partial_citation_backends = ml_router.partial_find_citation_backends()
