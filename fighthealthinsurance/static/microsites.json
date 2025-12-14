@@ -2971,5 +2971,181 @@
         "description": "Patient assistance for uninsured or underinsured patients who meet income requirements."
       }
     ]
+  },
+  "entyvio-formulary-removal": {
+    "slug": "entyvio-formulary-removal",
+    "title": "Appealing Entyvio (Vedolizumab) Formulary Removal",
+    "default_procedure": "Entyvio (Vedolizumab) Continuity of Care",
+    "default_condition": "Inflammatory Bowel Disease",
+    "tagline": "Stable on Entyvio for IBD? Fight for continued coverage.",
+    "hero_h1": "Fight Your Entyvio Formulary Removal",
+    "hero_subhead": "Express Scripts is excluding Entyvio IV in 2026 — but you can appeal for continuity of care.",
+    "intro": "Express Scripts is excluding Entyvio IV from the National Preferred Formulary effective 2026, with continuation of therapy through June 30, 2026 and full exclusion by July 1, 2026. If you have Crohn's disease or ulcerative colitis and are stable on Entyvio, you have rights under federal continuity of care regulations.",
+    "common_denial_reasons": [
+      "Entyvio IV excluded from formulary effective July 2026",
+      "Plan requires switch to alternative biologic",
+      "Prior authorization now required",
+      "Non-formulary exception denied"
+    ],
+    "how_we_help": "We help you document your IBD treatment history with Entyvio, explain why switching biologics may trigger disease flares, and cite federal and state laws that protect stable patients from forced medication changes.",
+    "cta": "Start your Entyvio continuity of care appeal.",
+    "faq": [
+      {
+        "question": "When is Entyvio being excluded?",
+        "answer": "Express Scripts is excluding Entyvio IV effective July 1, 2026. Continuation of therapy applies through June 30, 2026 for existing patients. Check with your specific plan for exact timelines."
+      },
+      {
+        "question": "Why is this particularly concerning for IBD patients?",
+        "answer": "Switching biologics in IBD can trigger disease flares, and patients may develop antibodies that make returning to their original medication difficult. Your appeal should emphasize the risks of switching when stable."
+      },
+      {
+        "question": "What alternatives might my plan prefer?",
+        "answer": "Plans may push for other biologics or JAK inhibitors. Your appeal can explain why Entyvio's gut-selective mechanism is specifically appropriate for your case, especially if you've tried other medications."
+      },
+      {
+        "question": "Can I get Entyvio covered even after exclusion?",
+        "answer": "Yes. Under 45 CFR § 156.122(c), you can request a non-formulary exception based on medical necessity. Your gastroenterologist should provide a letter explaining why Entyvio specifically is needed."
+      }
+    ],
+    "evidence_snippets": [
+      "Vedolizumab (Entyvio) has a gut-selective mechanism of action, which may offer advantages for patients who have failed or are intolerant to systemic immunosuppressants.",
+      "Switching biologics in IBD carries risk of disease flare, loss of response, and development of anti-drug antibodies.",
+      "Under 45 CFR § 156.122(c), health plans must provide a transition process when drugs are removed from formulary."
+    ],
+    "pubmed_search_terms": [
+      "vedolizumab inflammatory bowel disease switching biologics outcomes",
+      "IBD biologic switching disease flare anti-drug antibodies",
+      "vedolizumab gut selective mechanism ulcerative colitis Crohn"
+    ],
+    "assistance_programs": [
+      {
+        "name": "EntyvioConnect",
+        "url": "https://www.entyvio.com/copay-support",
+        "description": "Eligible patients with commercial insurance may pay as little as $5 per infusion. Not for government insurance."
+      },
+      {
+        "name": "Takeda Patient Assistance Program",
+        "url": "https://www.takeda.com/en-us/what-we-do/patient-services/",
+        "description": "Patient assistance for uninsured or underinsured patients who qualify."
+      }
+    ]
+  },
+  "skyrizi-formulary-removal": {
+    "slug": "skyrizi-formulary-removal",
+    "title": "Appealing Skyrizi (Risankizumab) Formulary Removal",
+    "default_procedure": "Skyrizi (Risankizumab) Continuity of Care",
+    "default_condition": "Psoriasis",
+    "tagline": "Stable on Skyrizi for psoriasis or IBD? Fight for continued coverage.",
+    "hero_h1": "Fight Your Skyrizi Formulary Removal",
+    "hero_subhead": "Some plans are excluding Skyrizi in 2026 — but you can appeal for continuity of care.",
+    "intro": "Express Scripts and some other PBMs are excluding Skyrizi from formularies in 2026. If you have psoriasis, psoriatic arthritis, or Crohn's disease and are stable on Skyrizi, you have rights under federal continuity of care regulations.",
+    "common_denial_reasons": [
+      "Skyrizi excluded from formulary",
+      "Plan requires switch to alternative biologic (Cosentyx, biosimilar, etc.)",
+      "Step therapy required before Skyrizi",
+      "Prior authorization now required",
+      "Non-formulary exception denied"
+    ],
+    "how_we_help": "We help you document your treatment history with Skyrizi, explain why switching biologics may trigger disease flares, and cite federal and state laws that protect stable patients from forced medication changes.",
+    "cta": "Start your Skyrizi continuity of care appeal.",
+    "faq": [
+      {
+        "question": "Which plans are excluding Skyrizi?",
+        "answer": "Express Scripts is excluding Skyrizi from the National Preferred Formulary in 2026. EmblemHealth and some other plans have also removed it. Check your specific plan's formulary for details."
+      },
+      {
+        "question": "Why is this concerning for psoriasis patients?",
+        "answer": "Skyrizi targets IL-23, which may be more effective for some patients than IL-17 inhibitors. Switching can lead to loss of skin clearance. Your appeal should emphasize your specific response to Skyrizi."
+      },
+      {
+        "question": "What alternatives might my plan prefer?",
+        "answer": "Plans may prefer Cosentyx, Otezla, or other IL-17 or IL-23 inhibitors. Your appeal can explain why Skyrizi's specific mechanism is appropriate for your case, especially if you've tried other biologics."
+      },
+      {
+        "question": "Can I get Skyrizi covered even after exclusion?",
+        "answer": "Yes. Under 45 CFR § 156.122(c), you can request a non-formulary exception based on medical necessity. Your dermatologist or rheumatologist should provide a letter explaining why Skyrizi is specifically needed."
+      }
+    ],
+    "evidence_snippets": [
+      "Risankizumab (Skyrizi) selectively targets IL-23, showing high rates of skin clearance in plaque psoriasis and efficacy in psoriatic arthritis and Crohn's disease.",
+      "Switching biologics in psoriasis and psoriatic arthritis can result in disease flare and incomplete response to subsequent agents.",
+      "Under 45 CFR § 156.122(c), health plans must provide a transition process when drugs are removed from formulary."
+    ],
+    "pubmed_search_terms": [
+      "risankizumab plaque psoriasis IL-23 clinical trial",
+      "biologic switching psoriasis loss of response",
+      "risankizumab psoriatic arthritis Crohn disease efficacy"
+    ],
+    "assistance_programs": [
+      {
+        "name": "Skyrizi Complete Savings Card",
+        "url": "https://www.skyrizi.com/skyrizi-complete/save-on-skyrizi-costs",
+        "description": "Eligible patients with commercial insurance may pay as little as $5 per dose. Not for government insurance."
+      },
+      {
+        "name": "myAbbVie Assist",
+        "url": "https://www.abbvie.com/patients/patient-assistance.html",
+        "description": "Patient assistance for uninsured or underinsured patients who qualify based on income."
+      }
+    ]
+  },
+  "tremfya-formulary-removal": {
+    "slug": "tremfya-formulary-removal",
+    "title": "Appealing Tremfya (Guselkumab) Formulary Removal",
+    "default_procedure": "Tremfya (Guselkumab) Continuity of Care",
+    "default_condition": "Psoriasis",
+    "tagline": "Stable on Tremfya for psoriasis? Fight for continued coverage.",
+    "hero_h1": "Fight Your Tremfya Formulary Removal",
+    "hero_subhead": "Express Scripts is excluding Tremfya in 2026 — but you can appeal for continuity of care.",
+    "intro": "Express Scripts is excluding Tremfya from the National Preferred Formulary in 2026. If you have psoriasis or psoriatic arthritis and are stable on Tremfya, you have rights under federal continuity of care regulations.",
+    "common_denial_reasons": [
+      "Tremfya excluded from formulary",
+      "Plan requires switch to alternative biologic",
+      "Step therapy required before Tremfya",
+      "Prior authorization now required",
+      "Non-formulary exception denied"
+    ],
+    "how_we_help": "We help you document your treatment history with Tremfya, explain why switching biologics may trigger disease flares, and cite federal and state laws that protect stable patients from forced medication changes.",
+    "cta": "Start your Tremfya continuity of care appeal.",
+    "faq": [
+      {
+        "question": "When is Tremfya being excluded?",
+        "answer": "Express Scripts is excluding Tremfya from the National Preferred Formulary in 2026. Check with your specific plan for exact timelines and whether continuation of therapy applies."
+      },
+      {
+        "question": "Why is this concerning for psoriasis patients?",
+        "answer": "Tremfya targets IL-23, and patients who have achieved clear or almost clear skin may not respond as well to a different biologic. Your appeal should document your skin clearance on Tremfya."
+      },
+      {
+        "question": "What alternatives might my plan prefer?",
+        "answer": "Plans may prefer Cosentyx, Skyrizi (if covered), or other biologics. Your appeal can explain why Tremfya's specific mechanism is appropriate for your case."
+      },
+      {
+        "question": "Can I get Tremfya covered even after exclusion?",
+        "answer": "Yes. Under 45 CFR § 156.122(c), you can request a non-formulary exception based on medical necessity. Your dermatologist should provide a letter explaining why Tremfya is specifically needed."
+      }
+    ],
+    "evidence_snippets": [
+      "Guselkumab (Tremfya) selectively targets IL-23, showing high rates of skin clearance in plaque psoriasis and efficacy in psoriatic arthritis.",
+      "Switching biologics in psoriasis can result in disease flare and may not achieve the same level of clearance as the original medication.",
+      "Under 45 CFR § 156.122(c), health plans must provide a transition process when drugs are removed from formulary."
+    ],
+    "pubmed_search_terms": [
+      "guselkumab plaque psoriasis IL-23 clinical trial",
+      "biologic switching psoriasis loss of response outcomes",
+      "guselkumab psoriatic arthritis efficacy safety"
+    ],
+    "assistance_programs": [
+      {
+        "name": "Janssen CarePath Savings Program",
+        "url": "https://www.janssencarepath.com/tremfya",
+        "description": "Eligible patients with commercial insurance may pay as little as $5 per dose. Not for government insurance."
+      },
+      {
+        "name": "Johnson & Johnson Patient Assistance Foundation",
+        "url": "https://www.jnjpaf.org/",
+        "description": "Patient assistance for uninsured or underinsured patients who meet income requirements."
+      }
+    ]
   }
 }
