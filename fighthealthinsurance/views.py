@@ -690,16 +690,53 @@ class ChooseAppeal(View):
             candidate_articles,
         ) = common_view_logic.ChooseAppealHelper.choose_appeal(**form.cleaned_data)
 
+        # Store data in session for redirect-after-POST pattern
+        # This allows the appeal page to be accessed via GET after PWYW redirects
+        request.session["chosen_appeal_data"] = {
+            "appeal_text": form.cleaned_data["appeal_text"],
+            "email": form.cleaned_data["email"],
+            "denial_id": form.cleaned_data["denial_id"],
+            "semi_sekret": form.cleaned_data["semi_sekret"],
+            "appeal_fax_number": appeal_fax_number,
+            "insurance_company": insurance_company,
+            "candidate_article_ids": [article.pmid for article in candidate_articles] if candidate_articles else [],
+        }
+        request.session.save()
+
+        # Redirect to GET endpoint
+        return redirect("view_appeal")
+
+
+class AppealView(View):
+    """View the chosen appeal (GET endpoint for redirect-after-POST)."""
+    
+    def get(self, request):
+        # Get data from session
+        appeal_data = request.session.get("chosen_appeal_data")
+        
+        if not appeal_data:
+            # No appeal chosen yet, redirect to scan
+            return redirect("scan")
+        
+        # Reconstruct the candidate articles
+        candidate_articles = None
+        if appeal_data.get("candidate_article_ids"):
+            from fighthealthinsurance.models import PubMedArticleSummarized
+            candidate_articles = PubMedArticleSummarized.objects.filter(
+                pmid__in=appeal_data["candidate_article_ids"]
+            )
+        
         appeal_info_extracted = ""
         fax_form = core_forms.FaxForm(
             initial={
-                "denial_id": form.cleaned_data["denial_id"],
-                "email": form.cleaned_data["email"],
-                "semi_sekret": form.cleaned_data["semi_sekret"],
-                "fax_phone": appeal_fax_number,
-                "insurance_company": insurance_company,
+                "denial_id": appeal_data["denial_id"],
+                "email": appeal_data["email"],
+                "semi_sekret": appeal_data["semi_sekret"],
+                "fax_phone": appeal_data.get("appeal_fax_number"),
+                "insurance_company": appeal_data.get("insurance_company"),
             }
         )
+        
         # Add the possible articles for inclusion
         if candidate_articles is not None:
             for article in candidate_articles[0:6]:
@@ -720,17 +757,17 @@ class ChooseAppeal(View):
             request,
             "appeal.html",
             context={
-                "appeal": form.cleaned_data["appeal_text"],
-                "user_email": form.cleaned_data["email"],
-                "denial_id": form.cleaned_data["denial_id"],
+                "appeal": appeal_data["appeal_text"],
+                "user_email": appeal_data["email"],
+                "denial_id": appeal_data["denial_id"],
                 "appeal_info_extract": appeal_info_extracted,
                 "fax_form": fax_form,
                 "current_step": 8,
                 "back_url": build_back_url(
                     "generate_appeal",
-                    form.cleaned_data["denial_id"],
-                    form.cleaned_data["email"],
-                    form.cleaned_data["semi_sekret"],
+                    appeal_data["denial_id"],
+                    appeal_data["email"],
+                    appeal_data["semi_sekret"],
                 ),
                 "back_label": "Back to appeals",
                 "fhi_always_restore": True,  # Always restore PII from localStorage

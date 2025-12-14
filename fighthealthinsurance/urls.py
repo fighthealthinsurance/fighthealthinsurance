@@ -290,6 +290,11 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         name="choose_appeal",
     ),
     path(
+        "view_appeal",
+        views.AppealView.as_view(),
+        name="view_appeal",
+    ),
+    path(
         "contact",
         cache_control(public=True)(
             cache_page(60 * 60 * 2)(views.ContactView.as_view())
