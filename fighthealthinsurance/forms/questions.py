@@ -513,17 +513,20 @@ class FormularyChangeQuestions(InsuranceQuestions):
         """Return main appeal text based on answers."""
         r = []
 
-        # Only add continuity of care arguments if patient is currently taking the medication
-        if not self.cleaned_data.get("currently_taking"):
-            return r
+        currently_taking = bool(self.cleaned_data.get("currently_taking"))
 
-        if self.cleaned_data.get("how_long_taking"):
+        # Only add continuity of care arguments if patient is currently taking the medication
+        if currently_taking:
+            r.append(
+                "I am requesting a medical exception. I believe this is required for continuity of care. "
+            )
+        if currently_taking and self.cleaned_data.get("how_long_taking"):
             r.append(
                 f"I have been taking this medication for {self.cleaned_data['how_long_taking']} "
                 "and my condition is well-controlled. Switching medications would disrupt my care."
             )
 
-        if self.cleaned_data.get("medication_working"):
+        if currently_taking and self.cleaned_data.get("medication_working"):
             r.append(
                 "My current medication is working effectively. Medical literature shows that "
                 "medication switching can lead to adverse outcomes, treatment failures, and "
@@ -539,16 +542,10 @@ class FormularyChangeQuestions(InsuranceQuestions):
 
         if self.cleaned_data.get("mid_year_change"):
             r.append(
-                "This formulary change occurred during my plan year. Under 45 CFR § 156.122(c), "
+                "This formulary change occurred during my plan year. Most often "
                 "health plans must provide a reasonable transition process when drugs are removed "
                 "from formulary. Many states also have non-medical switching laws that prohibit "
                 "forcing patients to switch stable medications mid-year."
             )
-
-        r.append(
-            "I am requesting a medical exception based on continuity of care. "
-            "Federal regulations require insurers to grant exceptions when a formulary change "
-            "would disrupt ongoing treatment."
-        )
 
         return r
