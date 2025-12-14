@@ -365,7 +365,13 @@ What reason did they give you for your GLP-1 denied?🐼Helping a patient appeal
             return (None, None)
         if "🐼" not in result:
             return (result, None)
-        answer, summary = result.split("🐼")
+        split = result.split("🐼")
+        answer = split[0]
+        summary = split[1]
+        if len(split) > 2:
+            logger.debug(
+                f"There were more pandas than expected in {result}"
+            )
         return (answer, summary)
 
     async def get_entity(self, input_text: str, entity_type: str) -> Optional[str]:
