@@ -124,6 +124,7 @@
     "slug": "cpap-denial",
     "title": "Appealing CPAP Denials",
     "default_procedure": "CPAP Machine or Supplies",
+    "default_condition": "Sleep Apnea",
     "tagline": "Helpful for OSA patients denied CPAP devices or replacement supplies.",
     "hero_h1": "Appeal Your CPAP Denial",
     "hero_subhead": "Insurers often deny CPAP coverage despite your doctor's prescription.",
@@ -956,6 +957,7 @@
     "slug": "voice-surgery-denial",
     "title": "Appealing Voice Surgery Denials",
     "default_procedure": "Vocal Feminization / Masculinization Surgery",
+    "default_condition": "Gender Dysphoria",
     "tagline": "Voice surgery is medically necessary for many trans people, not cosmetic.",
     "hero_h1": "Appeal Your Voice Surgery Denial",
     "hero_subhead": "Insurers frequently deny voice surgeries due to outdated criteria.",
@@ -1588,6 +1590,7 @@
     "slug": "bariatric-surgery-denial",
     "title": "Appealing Bariatric Surgery Denials",
     "default_procedure": "Metabolic or Bariatric Surgery",
+    "default_condition": "Obesity",
     "tagline": "Bariatric surgery treats a disease — it is not a cosmetic shortcut.",
     "hero_h1": "Appeal Your Bariatric Surgery Denial",
     "hero_subhead": "When obesity is harming your health, surgery may be the evidence-based treatment.",
@@ -1629,6 +1632,7 @@
     "slug": "substance-use-treatment-denial",
     "title": "Appealing Substance Use Treatment Denials",
     "default_procedure": "Substance Use Disorder Treatment (Inpatient, IOP, MAT)",
+    "default_condition": "Substance Use Disorder",
     "tagline": "Addiction is a chronic medical condition — treatment should be covered like any other.",
     "hero_h1": "Appeal Your Substance Use Treatment Denial",
     "hero_subhead": "When your life or your loved one's life is at stake, coverage denials are not acceptable.",
@@ -1752,6 +1756,7 @@
     "slug": "glp1-denial-semaglutide-ozempic",
     "title": "Appealing Ozempic (Semaglutide) Denials",
     "default_procedure": "Ozempic (Semaglutide)",
+    "default_condition": "Type 2 Diabetes",
     "tagline": "Ozempic treats more than blood sugar — it helps prevent serious complications.",
     "hero_h1": "Appeal Your Ozempic Denial",
     "hero_subhead": "If your clinician prescribed Ozempic, chances are there’s a strong medical reason.",
@@ -1783,12 +1788,30 @@
       "semaglutide Ozempic type 2 diabetes cardiovascular outcomes",
       "semaglutide GLP-1 receptor agonist glycemic control",
       "GLP-1 agonist weight loss diabetes complications"
+    ],
+    "assistance_programs": [
+      {
+        "name": "Ozempic Savings Card",
+        "url": "https://www.ozempic.com/savings-and-resources/save-on-ozempic.html",
+        "description": "Pay as little as $25/month for up to 48 months with commercial insurance. Not for government programs."
+      },
+      {
+        "name": "NovoCare - Ozempic",
+        "url": "https://www.novocare.com/diabetes/products/ozempic.html",
+        "description": "Savings offers, patient assistance program for eligible uninsured patients, and support resources."
+      },
+      {
+        "name": "Novo Nordisk Patient Assistance Program",
+        "url": "https://www.novocare.com/diabetes/help-with-costs/pap.html",
+        "description": "Free medication for qualifying patients at or below 400% federal poverty level without insurance."
+      }
     ]
   },
   "glp1-denial-semaglutide-wegovy": {
     "slug": "glp1-denial-semaglutide-wegovy",
     "title": "Appealing Wegovy (Semaglutide) Denials",
     "default_procedure": "Wegovy (Semaglutide for Obesity)",
+    "default_condition": "Obesity",
     "tagline": "Wegovy is obesity treatment, not vanity medicine.",
     "hero_h1": "Appeal Your Wegovy Denial",
     "hero_subhead": "When weight is damaging your health, Wegovy can be medically necessary care.",
@@ -1820,12 +1843,30 @@
       "semaglutide Wegovy obesity randomized controlled trial",
       "GLP-1 receptor agonist weight loss cardiovascular risk",
       "pharmacologic treatment obesity guidelines semaglutide"
+    ],
+    "assistance_programs": [
+      {
+        "name": "Wegovy Savings Card",
+        "url": "https://www.wegovy.com/coverage-and-savings/save-on-wegovy.html",
+        "description": "Pay as little as $0/month with commercial insurance coverage (up to $225 off per fill). Not for government programs."
+      },
+      {
+        "name": "NovoCare - Wegovy",
+        "url": "https://www.novocare.com/obesity/products/wegovy/savings-offer.html",
+        "description": "Savings offers and support for Wegovy patients, including $349/month self-pay option."
+      },
+      {
+        "name": "NovoCare Pharmacy",
+        "url": "https://www.novocare.com/eligibility/wegovy-savings-card.html",
+        "description": "Home delivery option for self-pay patients with access to savings programs."
+      }
     ]
   },
   "glp1-denial-tirzepatide-mounjaro": {
     "slug": "glp1-denial-tirzepatide-mounjaro",
     "title": "Appealing Mounjaro (Tirzepatide) Denials",
     "default_procedure": "Mounjaro (Tirzepatide for Type 2 Diabetes)",
+    "default_condition": "Type 2 Diabetes",
     "tagline": "Tirzepatide is a powerful tool for high-risk diabetes, not an optional upgrade.",
     "hero_h1": "Appeal Your Mounjaro Denial",
     "hero_subhead": "If prior regimens failed, denying Mounjaro can be unsafe and short-sighted.",
@@ -1857,12 +1898,20 @@
       "tirzepatide Mounjaro type 2 diabetes randomized trial",
       "dual GIP GLP-1 agonist glycemic control weight",
       "tirzepatide cardiovascular risk factors outcomes"
+    ],
+    "assistance_programs": [
+      {
+        "name": "Mounjaro Savings Card",
+        "url": "https://www.mounjaro.lilly.com/savings-resources",
+        "description": "Pay as little as $25/month with commercial insurance coverage. Up to $150 off per fill."
+      }
     ]
   },
   "glp1-denial-tirzepatide-zepbound": {
     "slug": "glp1-denial-tirzepatide-zepbound",
     "title": "Appealing Zepbound (Tirzepatide) Denials",
     "default_procedure": "Zepbound (Tirzepatide for Obesity)",
+    "default_condition": "Obesity",
     "tagline": "Zepbound is intensive obesity medicine for high-risk patients, not a vanity drug.",
     "hero_h1": "Appeal Your Zepbound Denial",
     "hero_subhead": "When obesity is damaging your health, denying Zepbound can be dangerous.",
@@ -1881,8 +1930,12 @@
         "answer": "List supervised programs, diets, medications, and lifestyle changes, including durations and outcomes. If weight was regained, note why, such as medication side effects or mobility limits."
       },
       {
-        "question": "Can my doctor’s letter make a difference?",
+        "question": "Can my doctor's letter make a difference?",
         "answer": "Yes. A concise letter linking Zepbound to reduction in concrete risks—such as diabetes progression, sleep apnea, or heart disease—can be very persuasive."
+      },
+      {
+        "question": "What if my plan is switching to a different GLP-1 medication?",
+        "answer": "If you're already stable on Zepbound and your insurer wants you to switch (e.g., CVS Caremark moving to Wegovy in mid-2025), you may have continuity of care rights. You can request a medical exception. Many states also have non-medical switching laws. See our continuity of care page for more information."
       }
     ],
     "evidence_snippets": [
@@ -1894,6 +1947,18 @@
       "tirzepatide obesity clinical trial weight loss",
       "pharmacologic treatment obesity tirzepatide",
       "anti-obesity medication cardiometabolic outcomes"
+    ],
+    "assistance_programs": [
+      {
+        "name": "Zepbound Savings Card",
+        "url": "https://www.zepbound.lilly.com/coverage-savings",
+        "description": "Pay as little as $25/month with commercial insurance coverage, or up to $569 off without coverage. Not for government insurance."
+      },
+      {
+        "name": "LillyDirect - Zepbound",
+        "url": "https://www.lilly.com/lillydirect/medicines/zepbound",
+        "description": "Order Zepbound vials direct from Lilly for $299/month (self-pay option)."
+      }
     ]
   },
 
@@ -1901,6 +1966,7 @@
     "slug": "asthma-biologic-denial-dupilumab",
     "title": "Appealing Dupixent (Dupilumab) Asthma Denials",
     "default_procedure": "Dupixent for Severe Asthma",
+    "default_condition": "Severe Asthma",
     "tagline": "Dupixent can calm type 2 inflammation when inhalers alone are not enough.",
     "hero_h1": "Appeal Your Dupixent Asthma Denial",
     "hero_subhead": "If you are still wheezing on high-dose inhalers, biologic therapy may be essential.",
@@ -1921,6 +1987,10 @@
       {
         "question": "Can I appeal if my eosinophil count is borderline?",
         "answer": "Yes. Your appeal can explain your clinical history, FeNO levels if available, and how your pattern fits guideline criteria even if a single lab value is borderline."
+      },
+      {
+        "question": "What if my plan is removing Dupixent from formulary or switching to another biologic?",
+        "answer": "If you're already stable on Dupixent and your insurer wants you to switch, you have continuity of care rights under 45 CFR § 156.122(c). You can request a medical exception showing that switching biologics may destabilize your condition. See our continuity of care page for more information."
       }
     ],
     "evidence_snippets": [
@@ -1932,12 +2002,25 @@
       "dupilumab severe asthma randomized trial",
       "type 2 inflammation asthma biologic dupilumab",
       "GINA guideline biologic therapy dupilumab"
+    ],
+    "assistance_programs": [
+      {
+        "name": "DUPIXENT MyWay Copay Card",
+        "url": "https://www.dupixent.com/support-savings/copay-card",
+        "description": "Pay as little as $0 per fill with commercial insurance. Max $13,000/year benefit."
+      },
+      {
+        "name": "DUPIXENT MyWay Patient Support",
+        "url": "https://www.dupixent.com/support-savings/dupixent-my-way",
+        "description": "Benefits investigation, prior auth support, and patient assistance for uninsured or coverage gaps."
+      }
     ]
   },
   "asthma-biologic-denial-omalizumab": {
     "slug": "asthma-biologic-denial-omalizumab",
     "title": "Appealing Xolair (Omalizumab) Asthma Denials",
     "default_procedure": "Xolair for Allergic Asthma",
+    "default_condition": "Allergic Asthma",
     "tagline": "For allergic asthma, IgE-targeted therapy can be life-changing.",
     "hero_h1": "Appeal Your Xolair Asthma Denial",
     "hero_subhead": "If allergy-driven asthma is out of control, denying Xolair can be dangerous.",
@@ -1969,12 +2052,25 @@
       "omalizumab allergic asthma exacerbation reduction",
       "IgE targeted therapy severe persistent asthma",
       "omalizumab guideline severe allergic asthma"
+    ],
+    "assistance_programs": [
+      {
+        "name": "Xolair Co-pay Program",
+        "url": "https://www.xolaircopay.com/",
+        "description": "Pay as little as $0 per injection with commercial insurance. Up to $15,000/year for allergic asthma."
+      },
+      {
+        "name": "Genentech Patient Foundation",
+        "url": "https://www.genentech-access.com/patient/brands/xolair/how-we-help-you.html",
+        "description": "Free medication for qualifying uninsured or underinsured patients meeting income requirements."
+      }
     ]
   },
   "asthma-biologic-denial-mepolizumab": {
     "slug": "asthma-biologic-denial-mepolizumab",
     "title": "Appealing Nucala (Mepolizumab) Asthma Denials",
     "default_procedure": "Nucala for Eosinophilic Asthma",
+    "default_condition": "Eosinophilic Asthma",
     "tagline": "Eosinophilic asthma is high risk—denials often ignore that.",
     "hero_h1": "Appeal Your Nucala Asthma Denial",
     "hero_subhead": "Eosinophilic asthma is high risk—denials often ignore that.",
@@ -2006,6 +2102,18 @@
       "mepolizumab eosinophilic asthma randomized trial",
       "IL-5 inhibition severe eosinophilic asthma outcomes",
       "eosinophilic asthma biologic guideline mepolizumab"
+    ],
+    "assistance_programs": [
+      {
+        "name": "NUCALA Copay Program",
+        "url": "https://www.nucala.com/nucala-copay-program/",
+        "description": "Pay as little as $0 with commercial insurance. Up to $15,000/year benefit."
+      },
+      {
+        "name": "GSK Patient Assistance Foundation",
+        "url": "https://gskpaf.org/gsk/prescription-medicine-patient-assistance/nucala-uninsured/",
+        "description": "Free medication for qualifying uninsured patients or those with Medicare."
+      }
     ]
   },
 
@@ -2013,6 +2121,7 @@
     "slug": "eczema-biologic-denial-dupilumab",
     "title": "Appealing Dupixent (Dupilumab) Eczema Denials",
     "default_procedure": "Dupixent for Atopic Dermatitis",
+    "default_condition": "Atopic Dermatitis",
     "tagline": "Severe eczema is a systemic disease, not just a rash.",
     "hero_h1": "Appeal Your Dupixent Eczema Denial",
     "hero_subhead": "When skin is cracked, infected, and sleepless, denying Dupixent is not reasonable.",
@@ -2033,6 +2142,10 @@
       {
         "question": "Can children be approved for Dupixent?",
         "answer": "Yes, many children meet indications. Your appeal should highlight pediatric dosing recommendations and the impact on growth, sleep, and development."
+      },
+      {
+        "question": "What if my plan is removing Dupixent from formulary or switching me to another medication?",
+        "answer": "If you're already stable on Dupixent and your insurer wants you to switch, you have continuity of care rights under 45 CFR § 156.122(c). Switching biologics or systemic therapies in atopic dermatitis can destabilize skin control. See our continuity of care page for more information."
       }
     ],
     "evidence_snippets": [
@@ -2044,12 +2157,25 @@
       "dupilumab moderate severe atopic dermatitis trial",
       "biologic therapy atopic dermatitis quality of life",
       "atopic dermatitis guideline systemic therapy dupilumab"
+    ],
+    "assistance_programs": [
+      {
+        "name": "DUPIXENT MyWay Copay Card",
+        "url": "https://www.dupixent.com/support-savings/copay-card",
+        "description": "Pay as little as $0 per fill with commercial insurance. Max $13,000/year benefit."
+      },
+      {
+        "name": "DUPIXENT MyWay Patient Support",
+        "url": "https://www.dupixent.com/support-savings/dupixent-my-way",
+        "description": "Benefits investigation, prior auth support, and patient assistance for uninsured or coverage gaps."
+      }
     ]
   },
   "eczema-biologic-denial-upadacitinib": {
     "slug": "eczema-biologic-denial-upadacitinib",
     "title": "Appealing Rinvoq (Upadacitinib) Eczema Denials",
     "default_procedure": "Rinvoq for Atopic Dermatitis",
+    "default_condition": "Atopic Dermatitis",
     "tagline": "When topical and biologic options fail, targeted oral therapy may be necessary.",
     "hero_h1": "Appeal Your Rinvoq Eczema Denial",
     "hero_subhead": "Rinvoq is often reserved for the hardest cases—exactly where appeals matter most.",
@@ -2081,6 +2207,23 @@
       "upadacitinib atopic dermatitis randomized trial",
       "JAK inhibitor atopic dermatitis safety efficacy",
       "systemic therapy refractory atopic dermatitis upadacitinib"
+    ],
+    "assistance_programs": [
+      {
+        "name": "RINVOQ Complete Savings Card",
+        "url": "https://www.rinvoq.com/resources/save-on-rinvoq-costs",
+        "description": "Pay as little as $0/month with commercial insurance. Up to $14,000/year benefit."
+      },
+      {
+        "name": "RINVOQ Complete Bridge Program",
+        "url": "https://www.rinvoq.com/resources/rinvoq-complete",
+        "description": "Free medication for up to 24 months while insurance coverage is delayed or denied."
+      },
+      {
+        "name": "myAbbVie Assist",
+        "url": "https://www.abbvie.com/patients/patient-assistance.html",
+        "description": "Free medication for qualifying uninsured, underinsured, or unemployed patients."
+      }
     ]
   },
 
@@ -2088,6 +2231,7 @@
     "slug": "migraine-med-denial-emgality",
     "title": "Appealing Emgality (Galcanezumab) Denials",
     "default_procedure": "Emgality for Migraine Prevention",
+    "default_condition": "Migraine",
     "tagline": "Chronic migraines are often under treated by insurance.",
     "hero_h1": "Appeal Your Emgality Denial",
     "hero_subhead": "If chronic migraine is disabling you, denying Emgality is not acceptable.",
@@ -2119,12 +2263,25 @@
       "galcanezumab Emgality chronic migraine randomized",
       "CGRP monoclonal antibody migraine prevention",
       "migraine disability reduction CGRP therapy"
+    ],
+    "assistance_programs": [
+      {
+        "name": "Emgality Savings Card",
+        "url": "https://www.emgality.lilly.com/savings-support",
+        "description": "Pay as little as $0/month for up to 12 months with commercial insurance. Max $4,900/year savings."
+      },
+      {
+        "name": "Lilly Cares Foundation",
+        "url": "https://www.lillycares.com/",
+        "description": "Free medication for qualifying patients without commercial insurance and with low income, including some Medicare Part D patients."
+      }
     ]
   },
   "migraine-med-denial-aimovig": {
     "slug": "migraine-med-denial-aimovig",
     "title": "Appealing Aimovig (Erenumab) Denials",
     "default_procedure": "Aimovig for Migraine Prevention",
+    "default_condition": "Migraine",
     "tagline": "Step therapy shouldn't stop you from accessing the care you need.",
     "hero_h1": "Appeal Your Aimovig Denial",
     "hero_subhead": "Aimovig may be appropriate when multiple older preventives have failed.",
@@ -2156,12 +2313,30 @@
       "erenumab Aimovig migraine randomized controlled",
       "CGRP receptor antagonist migraine prevention",
       "long term safety erenumab migraine"
+    ],
+    "assistance_programs": [
+      {
+        "name": "Aimovig Copay Card",
+        "url": "https://www.aimovig.com/paying-for-aimovig",
+        "description": "Pay as little as $5/month with commercial insurance. Up to $3,500 annual benefit."
+      },
+      {
+        "name": "Aimovig Bridge Program",
+        "url": "https://www.aimovigcopaycard.com/enroll",
+        "description": "Free Aimovig for up to 12 doses while insurance coverage is pending."
+      },
+      {
+        "name": "Amgen Safety Net Foundation",
+        "url": "https://www.amgensafetynetfoundation.com/",
+        "description": "Free medication for qualifying uninsured patients or those whose insurance excludes Aimovig."
+      }
     ]
   },
   "migraine-med-denial-ajovy": {
     "slug": "migraine-med-denial-ajovy",
     "title": "Appealing Ajovy (Fremanezumab) Denials",
     "default_procedure": "Ajovy for Migraine Prevention",
+    "default_condition": "Migraine",
     "tagline": "Monthly or quarterly dosing can simplify life with migraine.",
     "hero_h1": "Appeal Your Ajovy Denial",
     "hero_subhead": "Ajovy is one of several CGRP antibodies—appeals can justify why it’s the right one for you.",
@@ -2193,12 +2368,25 @@
       "fremanezumab Ajovy episodic chronic migraine trial",
       "CGRP monoclonal antibody migraine quarterly dosing",
       "migraine guideline CGRP monoclonal antibody fremanezumab"
+    ],
+    "assistance_programs": [
+      {
+        "name": "Ajovy Savings Offer",
+        "url": "https://www.ajovy.com/savings",
+        "description": "Pay as little as $15 per prescription with commercial insurance. Annual limits apply."
+      },
+      {
+        "name": "Teva Cares Foundation",
+        "url": "https://www.tevacares.org/",
+        "description": "Free medication for qualifying uninsured or underinsured patients meeting income criteria."
+      }
     ]
   },
   "migraine-med-denial-nurtec": {
     "slug": "migraine-med-denial-nurtec",
     "title": "Appealing Nurtec ODT (Rimegepant) Denials",
     "default_procedure": "Nurtec ODT for Acute and Preventive Migraine Treatment",
+    "default_condition": "Migraine",
     "tagline": "Medication for both stopping and helping prevent migraine attacks.",
     "hero_h1": "Appeal Your Nurtec Denial",
     "hero_subhead": "Nurtec is often denied on cost grounds or strict quantity limits.",
@@ -2230,12 +2418,25 @@
       "rimegepant Nurtec acute migraine randomized",
       "rimegepant preventive migraine dosing trial",
       "gepant therapy migraine triptan contraindication"
+    ],
+    "assistance_programs": [
+      {
+        "name": "Nurtec ODT Copay Card",
+        "url": "https://www.nurtec.com/savings",
+        "description": "Pay as little as $0 for a 30-day supply with commercial insurance. Max $7,000/year benefit."
+      },
+      {
+        "name": "Pfizer Patient Assistance Program",
+        "url": "https://www.pfizerrxpathways.com/",
+        "description": "Free medication for qualifying patients at or below 300% federal poverty level."
+      }
     ]
   },
   "migraine-med-denial-ubrelvy": {
     "slug": "migraine-med-denial-ubrelvy",
     "title": "Appealing Ubrelvy (Ubrogepant) Denials",
     "default_procedure": "Ubrelvy for Acute Migraine Treatment",
+    "default_condition": "Migraine",
     "tagline": "When triptans are not an option, gepants can be crucial.",
     "hero_h1": "Appeal Your Ubrelvy Denial",
     "hero_subhead": "Ubrelvy is often denied or heavily restricted, but appeals frequently succeed.",
@@ -2267,6 +2468,18 @@
       "ubrogepant Ubrelvy acute migraine randomized",
       "gepant acute migraine cardiovascular risk",
       "ubrogepant efficacy safety migraine treatment"
+    ],
+    "assistance_programs": [
+      {
+        "name": "Ubrelvy Savings Card",
+        "url": "https://www.ubrelvy.com/savings",
+        "description": "Pay as little as $0/month with commercial insurance. Up to 13 fills per year."
+      },
+      {
+        "name": "myAbbVie Assist",
+        "url": "https://www.abbvie.com/patients/patient-assistance.html",
+        "description": "Free medication for qualifying patients who have difficulty paying for their medicine."
+      }
     ]
   },
 
@@ -2274,6 +2487,7 @@
     "slug": "insulin-pump-cgm-denial-dexcom",
     "title": "Appealing Dexcom CGM Denials",
     "default_procedure": "Dexcom Continuous Glucose Monitor",
+    "default_condition": "Diabetes",
     "tagline": "Real-time glucose data can prevent dangerous highs and lows.",
     "hero_h1": "Appeal Your Dexcom CGM Denial",
     "hero_subhead": "When finger sticks are not enough, Dexcom can be medically necessary.",
@@ -2305,13 +2519,26 @@
       "Dexcom continuous glucose monitoring randomized trial",
       "real time CGM type 1 type 2 diabetes outcomes",
       "continuous glucose monitoring hypoglycemia risk reduction"
+    ],
+    "assistance_programs": [
+      {
+        "name": "Dexcom Patient Assistance Program",
+        "url": "https://assistance.dexcom.com/",
+        "description": "Discounts for qualifying patients, as low as $45 per 90-day supply for Type 1 diabetes patients meeting income criteria."
+      },
+      {
+        "name": "Dexcom Pharmacy Savings Program",
+        "url": "https://www.dexcom.com/en-us/savings-center",
+        "description": "Save over 50% on standard monthly cash price at participating pharmacies."
+      }
     ]
   },
   "insulin-pump-cgm-denial-freestyle-libre": {
     "slug": "insulin-pump-cgm-denial-freestyle-libre",
     "title": "Appealing FreeStyle Libre Denials",
     "default_procedure": "FreeStyle Libre Flash Glucose Monitoring",
-    "tagline": "Scanning a sensor is not a luxury—it’s safer than guessing.",
+    "default_condition": "Diabetes",
+    "tagline": "Scanning a sensor is not a luxury—it's safer than guessing.",
     "hero_h1": "Appeal Your FreeStyle Libre Denial",
     "hero_subhead": "Libre gives continuous insight without constant finger sticks.",
     "intro": "FreeStyle Libre is often denied as unnecessary when finger-stick testing is available. Appeals can show how sensor data helps prevent severe highs and lows, especially for people on insulin.",
@@ -2342,12 +2569,30 @@
       "FreeStyle Libre flash glucose monitoring trial",
       "flash glucose monitoring time in range hypoglycemia",
       "sensor based glucose monitoring insulin treated diabetes"
+    ],
+    "assistance_programs": [
+      {
+        "name": "MyFreeStyle Program",
+        "url": "https://www.freestyle.abbott/us-en/myfreestyle-freestyle-libre-3.html",
+        "description": "Eligible patients can receive one sensor at $0 copay. Free sensor offer for new users."
+      },
+      {
+        "name": "FreeStyle Libre Copay Card",
+        "url": "https://www.freestyle.abbott/us-en/support.html",
+        "description": "Savings for commercially insured patients. Over 95% of commercial plans cover FreeStyle Libre."
+      },
+      {
+        "name": "Abbott Patient Assistance Foundation",
+        "url": "https://www.abbott.com/corpnewsroom/diabetes-care/at-a-crossroads-heres-how-to-get-help-for-diabetes.html",
+        "description": "Free or reduced-cost sensors for patients meeting income and insurance criteria."
+      }
     ]
   },
   "insulin-pump-denial-omnipod": {
     "slug": "insulin-pump-denial-omnipod",
     "title": "Appealing Omnipod Insulin Pump Denials",
     "default_procedure": "Omnipod Insulin Pump System",
+    "default_condition": "Diabetes",
     "tagline": "Tubeless pump therapy can be the safest and most realistic option for some people.",
     "hero_h1": "Appeal Your Omnipod Pump Denial",
     "hero_subhead": "If multiple daily injections are not working, Omnipod may be medically necessary.",
@@ -2379,12 +2624,25 @@
       "insulin pump therapy glycemic control type 1",
       "tubeless insulin pump Omnipod quality of life",
       "insulin pump vs multiple daily injections outcomes"
+    ],
+    "assistance_programs": [
+      {
+        "name": "Omnipod Financial Assistance Program",
+        "url": "https://www.omnipod.com/is-omnipod-right-for-me/coverage/financial-assistance",
+        "description": "Copay card to reduce monthly out-of-pocket costs for commercially insured patients."
+      },
+      {
+        "name": "Omnipod 5 Free Trial",
+        "url": "https://www.omnipod.com/what-is-omnipod/omnipod-5",
+        "description": "30-day free trial for new patients switching from injections or tubed pumps."
+      }
     ]
   },
   "pep-denial-hiv-exposure": {
     "slug": "pep-denial-hiv-exposure",
     "title": "Appealing HIV PEP (Post-Exposure Prophylaxis) Denials",
     "default_procedure": "HIV Post-Exposure Prophylaxis (PEP)",
+    "default_condition": "HIV Exposure",
     "tagline": "PEP is time-critical emergency prevention — coverage fights come second.",
     "hero_h1": "Appeal Your HIV PEP Denial",
     "hero_subhead": "If you might have been exposed to HIV, getting PEP fast is the emergency — we help you fight the bill after.",
@@ -2453,6 +2711,7 @@
     "slug": "doxy-pep-denial",
     "title": "Appealing Doxy-PEP (Doxycycline Post-Exposure Prophylaxis) Denials",
     "default_procedure": "Doxycycline Post-Exposure Prophylaxis (Doxy-PEP) for STIs",
+    "default_condition": "STI Prevention",
     "tagline": "Doxy-PEP is guideline-supported STI prevention for some patients — not experimental for everyone.",
     "hero_h1": "Appeal Your Doxy-PEP Denial",
     "hero_subhead": "For some MSM and trans women, taking doxycycline after sex is now part of standard STI prevention.",
@@ -2498,6 +2757,7 @@
     "slug": "flexitouch-plus-denial",
     "title": "Appealing Flexitouch Plus & Advanced Pneumatic Compression Device Denials",
     "default_procedure": "Flexitouch Plus or Similar Advanced Pneumatic Compression Device",
+    "default_condition": "Lymphedema",
     "tagline": "For many people with lymphedema, advanced compression devices are medically necessary — not luxury massage gear.",
     "hero_h1": "Appeal Your Flexitouch Plus or Lymphedema Pump Denial",
     "hero_subhead": "When basic compression isn’t enough, advanced pneumatic compression can protect function, skin, and quality of life.",
@@ -2538,6 +2798,313 @@
       "advanced pneumatic compression device lymphedema Flexitouch randomized trial",
       "home pneumatic compression lymphedema coverage criteria conservative therapy",
       "head and neck lymphedema Flexitouch Plus clinical outcomes"
+    ]
+  },
+  "continuity-of-care-formulary-change": {
+    "slug": "continuity-of-care-formulary-change",
+    "title": "Appealing Formulary Changes Using Continuity of Care",
+    "default_procedure": "Medication Continuity of Care Exception",
+    "tagline": "When your medication worked and the plan changes, you have rights.",
+    "hero_h1": "Appeal Your Formulary Change Denial",
+    "hero_subhead": "If your medication is removed from formulary or moved to a higher tier, you can request an exception to continue your treatment.",
+    "intro": "Insurance plans frequently change their formularies (drug lists), sometimes removing medications that patients are already taking or moving them to higher cost-sharing tiers. Federal regulations (45 CFR § 156.122) and many state laws protect patients by requiring insurers to grant continuity of care exceptions when a formulary change would disrupt ongoing treatment. This page helps you understand your rights and appeal for continued coverage.",
+    "common_denial_reasons": [
+      "Drug removed from formulary — preferred alternative available",
+      "Drug moved to non-preferred or specialty tier with higher cost-sharing",
+      "Step therapy required before covering your current medication",
+      "Insurer claims equivalent medication is available",
+      "Mid-year formulary change with insufficient notice",
+      "Prior authorization now required for previously covered drug"
+    ],
+    "how_we_help": "We help you document how long you've been taking the medication, your treatment history and response, why switching would be medically harmful, and cite the federal and state laws that protect you from disruptive formulary changes. We also help you request a medical exception based on continuity of care.",
+    "cta": "Start your formulary change appeal.",
+    "faq": [
+      {
+        "question": "What federal protections exist for formulary changes?",
+        "answer": "Often insurers must provide a reasonable transition policy when they remove a drug from formulary. You have the right to request a medically necessary exception, and many state laws add additional protections against non-medical switching."
+      },
+      {
+        "question": "Can my insurer force me to switch medications mid-year?",
+        "answer": "Many states have 'non-medical switching' or 'continuity of care' laws that prevent insurers from forcing stable patients to switch medications mid-plan-year. Even without state law, federal regulations require a reasonable transition process. Your appeal can argue that switching now would disrupt your care."
+      },
+      {
+        "question": "What should I include in my appeal?",
+        "answer": "Document how long you've been on the medication, how well it's working, any previous failed treatments, and why switching would be harmful. A letter from your doctor explaining medical necessity is essential. Include specific details about your condition stability and any risks of changing medications."
+      },
+      {
+        "question": "What if my insurer says a generic or alternative is available?",
+        "answer": "Your appeal can explain why the alternative is not appropriate for you — for example, if you've tried it before and it didn't work, if you have allergies or intolerances, or if the medications are not truly therapeutically equivalent for your condition."
+      },
+      {
+        "question": "How long can I get a continuity of care exception?",
+        "answer": "Transition supplies are often limited (e.g., 30-90 days), but you can request a longer exception for the remainder of the plan year. Some states require coverage for the full plan year once granted. Check your state's laws and plan documents."
+      }
+    ],
+    "evidence_snippets": [
+      "Often health plans must have a transition policy when drugs are removed from formulary, and patients have the right to request a medically necessary exception.",
+      "Many states have enacted non-medical switching laws that protect patients from being forced to change medications that are working well, especially for conditions like cancer, HIV, epilepsy, and mental health.",
+      "Clinical research shows that medication switching can lead to adverse outcomes, treatment failures, and increased healthcare costs — supporting the medical necessity of continuity of care."
+    ],
+    "pubmed_search_terms": [
+      "medication switching adverse outcomes treatment stability",
+      "formulary exclusion patient impact continuity care",
+      "non-medical switching legislation insurance coverage"
+    ]
+  },
+  "humira-formulary-removal": {
+    "slug": "humira-formulary-removal",
+    "title": "Appealing Humira (Adalimumab) Formulary Removal",
+    "default_procedure": "Humira (Adalimumab) Continuity of Care",
+    "tagline": "Stable on Humira? You have the right to request continued coverage.",
+    "hero_h1": "Fight Your Humira Formulary Removal",
+    "hero_subhead": "Some major PBMs removed Humira, but you can appeal for continuity of care.",
+    "intro": "CVS Caremark, Express Scripts, and other major pharmacy benefit managers have removed Humira from many formularies in favor of biosimilars. If you've been stable on Humira and your insurer wants you to switch, you have rights under federal continuity of care regulations and potentially state non-medical switching laws.",
+    "common_denial_reasons": [
+      "Humira removed from formulary — biosimilar required",
+      "Plan requires switch to preferred biosimilar (Hyrimoz, Hadlima, etc.)",
+      "Humira no longer covered at current tier",
+      "Prior authorization required for continued Humira use",
+      "Non-formulary exception denied"
+    ],
+    "how_we_help": "We help you document your treatment history with Humira, explain why biosimilar switching may be harmful in your case, and cite federal and state laws that protect stable patients from forced medication changes.",
+    "cta": "Start your Humira continuity of care appeal.",
+    "faq": [
+      {
+        "question": "Why are insurers removing Humira from formularies?",
+        "answer": "Multiple adalimumab biosimilars have entered the market since 2023, and PBMs have negotiated deals to prefer certain biosimilars. CVS Caremark, Express Scripts, and OptumRx all excluded Humira from many formularies for 2025 in favor of lower-cost biosimilar options."
+      },
+      {
+        "question": "Are biosimilars truly the same as Humira?",
+        "answer": "Biosimilars are highly similar but not identical to the reference product. While FDA-approved biosimilars are considered safe and effective, some patients experience different responses when switching. Your appeal can document any concerns about switching."
+      },
+      {
+        "question": "What if I've tried a biosimilar and it didn't work?",
+        "answer": "Document your experience with the biosimilar — side effects, efficacy issues, or other problems. This strengthens your case for continued Humira coverage as medically necessary."
+      },
+      {
+        "question": "Can I get Humira covered even if it's not on formulary?",
+        "answer": "Yes. Depending on your plan and it's regulator you can request a non-formulary exception based on medical necessity. Your doctor should provide a letter explaining why Humira specifically is needed for your care."
+      }
+    ],
+    "evidence_snippets": [
+      "many health plans must provide a transition process when drugs are removed from formulary, and patients can request exceptions based on medical necessity.",
+      "The FDA requires that biosimilars demonstrate no clinically meaningful differences from the reference product, but individual patient responses may vary.",
+      "Studies on biosimilar switching show mixed results, and some patients may experience changes in efficacy or tolerability when switching from a reference biologic."
+    ],
+    "pubmed_search_terms": [
+      "adalimumab biosimilar switching efficacy safety",
+      "non-medical switching biologic therapy outcomes",
+      "humira biosimilar interchangeability patient outcomes"
+    ],
+    "assistance_programs": [
+      {
+        "name": "HUMIRA Complete Savings Card",
+        "url": "https://www.humira.com/humira-complete/cost-and-copay",
+        "description": "Pay as little as $5 per month with commercial insurance. Not valid with government insurance."
+      },
+      {
+        "name": "myAbbVie Assist",
+        "url": "https://www.abbvie.com/patients/patient-assistance.html",
+        "description": "Patient assistance for uninsured or underinsured patients who qualify based on income."
+      }
+    ]
+  },
+  "stelara-formulary-removal": {
+    "slug": "stelara-formulary-removal",
+    "title": "Appealing Stelara (Ustekinumab) Formulary Removal",
+    "default_procedure": "Stelara (Ustekinumab) Continuity of Care",
+    "tagline": "Stable on Stelara? Fight for continued coverage as biosimilars enter the market.",
+    "hero_h1": "Fight Your Stelara Formulary Removal",
+    "hero_subhead": "Some major PBMs are removing Stelara in 2025-2026, but you can appeal for continuity of care.",
+    "intro": "Health Alliance, Navitus, UnitedHealthcare, and other plans are removing Stelara from formularies in 2025-2026 as multiple ustekinumab biosimilars enter the market. If you've been stable on Stelara and your insurer wants you to switch to a biosimilar, you have rights under federal continuity of care regulations.",
+    "common_denial_reasons": [
+      "Stelara removed from formulary — biosimilar required",
+      "Plan requires switch to Steqeyma, Yesintek, or other biosimilar",
+      "Stelara no longer covered at current tier",
+      "Prior authorization now required for Stelara",
+      "Non-formulary exception denied"
+    ],
+    "how_we_help": "We help you document your treatment history with Stelara, explain why biosimilar switching may be harmful in your case, and cite federal and state laws that protect stable patients from forced medication changes.",
+    "cta": "Start your Stelara continuity of care appeal.",
+    "faq": [
+      {
+        "question": "Why are insurers removing Stelara from formularies?",
+        "answer": "Multiple ustekinumab biosimilars entered the market in 2024-2025, and PBMs are negotiating deals to prefer lower-cost biosimilar options. By early 2026, most major PBMs will have removed Stelara from national formularies."
+      },
+      {
+        "question": "When is Stelara being removed from my plan?",
+        "answer": "Timelines vary: Health Alliance removed Stelara April 2025, Navitus/OptumRx in July 2025, UnitedHealthcare in September 2025, and Blue KC/Express Scripts in January 2026. Check with your specific plan for details."
+      },
+      {
+        "question": "What biosimilars are being preferred instead?",
+        "answer": "Common preferred biosimilars include Steqeyma, Yesintek, and private-label versions from Lumicera (OptumRx) and Quallent (Express Scripts). Plans may differ in which specific biosimilar they prefer."
+      },
+      {
+        "question": "Can I get Stelara covered even after it's removed from formulary?",
+        "answer": "Yes. Under 45 CFR § 156.122(c), you can request a non-formulary exception. However, some plans may require you to pay the difference in cost between Stelara and the preferred biosimilar."
+      }
+    ],
+    "evidence_snippets": [
+    ],
+    "pubmed_search_terms": [
+      "ustekinumab biosimilar switching efficacy safety",
+      "non-medical switching biologic therapy inflammatory bowel disease",
+      "stelara biosimilar interchangeability patient outcomes"
+    ],
+    "assistance_programs": [
+      {
+        "name": "Janssen CarePath Savings Program",
+        "url": "https://www.jnjwithme.com/patient/stelara/cost-support/",
+        "description": "Eligible patients with commercial insurance may pay as little as $5 per dose. Not for government insurance."
+      },
+      {
+        "name": "Johnson & Johnson Patient Assistance Foundation",
+        "url": "https://www.jnjpaf.org/",
+        "description": "Patient assistance for uninsured or underinsured patients who meet income requirements."
+      }
+    ]
+  },
+  "entyvio-formulary-removal": {
+    "slug": "entyvio-formulary-removal",
+    "title": "Appealing Entyvio (Vedolizumab) Formulary Removal",
+    "default_procedure": "Entyvio (Vedolizumab) Continuity of Care",
+    "default_condition": "Inflammatory Bowel Disease",
+    "tagline": "Stable on Entyvio for IBD? Fight for continued coverage.",
+    "hero_h1": "Fight Your Entyvio Formulary Removal",
+    "hero_subhead": "Express Scripts is excluding Entyvio IV in 2026 — but you can appeal especially for continuity of care.",
+    "intro": "Express Scripts is excluding Entyvio IV from the National Preferred Formulary effective 2026. If you have Crohn's disease or ulcerative colitis and are stable on Entyvio, you may have rights under continuity of care regulations.",
+    "common_denial_reasons": [
+      "Entyvio IV excluded from formulary effective July 2026",
+      "Plan requires switch to alternative biologic",
+      "Prior authorization now required",
+      "Non-formulary exception denied"
+    ],
+    "how_we_help": "We help you document your IBD treatment history with Entyvio, explain why switching biologics may trigger disease flares, and cite federal and state laws that protect stable patients from forced medication changes.",
+    "cta": "Start your Entyvio continuity of care appeal.",
+    "faq": [
+      {
+        "question": "Why is this particularly concerning for IBD patients?",
+        "answer": "Switching biologics in IBD can trigger disease flares, and patients may develop antibodies that make returning to their original medication difficult. Your appeal should emphasize the risks of switching when stable."
+      },
+      {
+        "question": "What alternatives might my plan prefer?",
+        "answer": "Plans may push for other biologics or JAK inhibitors. Your appeal can explain why Entyvio's gut-selective mechanism is specifically appropriate for your case, especially if you've tried other medications."
+      },
+      {
+        "question": "Can I get Entyvio covered even after exclusion?",
+        "answer": "Yes. You can request a non-formulary exception based on medical necessity. Your gastroenterologist should provide a letter explaining why Entyvio specifically is needed."
+      }
+    ],
+    "evidence_snippets": [
+      "Vedolizumab (Entyvio) has a gut-selective mechanism of action, which may offer advantages for patients who have failed or are intolerant to systemic immunosuppressants.",
+      "Switching biologics in IBD carries risk of disease flare, loss of response, and development of anti-drug antibodies.",
+      "Under 45 CFR § 156.122(c), health plans must provide a transition process when drugs are removed from formulary."
+    ],
+    "pubmed_search_terms": [
+      "vedolizumab inflammatory bowel disease switching biologics outcomes",
+      "IBD biologic switching disease flare anti-drug antibodies",
+      "vedolizumab gut selective mechanism ulcerative colitis Crohn"
+    ],
+    "assistance_programs": [
+      {
+        "name": "EntyvioConnect",
+        "url": "https://www.entyvio.com/copay-support",
+        "description": "Eligible patients with commercial insurance may pay as little as $5 per infusion. Not for government insurance."
+      },
+      {
+        "name": "Takeda Patient Assistance Program",
+        "url": "https://www.takeda.com/en-us/what-we-do/patient-services/",
+        "description": "Patient assistance for uninsured or underinsured patients who qualify."
+      }
+    ]
+  },
+  "skyrizi-formulary-removal": {
+    "slug": "skyrizi-formulary-removal",
+    "title": "Appealing Skyrizi (Risankizumab) Formulary Removal",
+    "default_procedure": "Skyrizi (Risankizumab) Continuity of Care",
+    "default_condition": "Psoriasis",
+    "tagline": "Stable on Skyrizi for psoriasis or IBD? Fight for continued coverage.",
+    "hero_h1": "Fight Your Skyrizi Formulary Removal",
+    "hero_subhead": "Some plans are excluding Skyrizi in 2026 — but you can appeal for continuity of care.",
+    "intro": "Some PBMs are excluding Skyrizi from formularies in 2026. If you have psoriasis, psoriatic arthritis, or Crohn's disease and are stable on Skyrizi, you have rights under federal continuity of care regulations.",
+    "common_denial_reasons": [
+      "Skyrizi excluded from formulary",
+      "Plan requires switch to alternative biologic (Cosentyx, biosimilar, etc.)",
+      "Step therapy required before Skyrizi",
+      "Prior authorization now required",
+      "Non-formulary exception denied"
+    ],
+    "how_we_help": "We help you document your treatment history with Skyrizi, explain why switching biologics may trigger disease flares, and cite federal and state laws that protect stable patients from forced medication changes.",
+    "cta": "Start your Skyrizi continuity of care appeal.",
+    "faq": [
+      {
+        "question": "Can I get Skyrizi covered even after exclusion?",
+        "answer": "Yes. You can request a non-formulary exception based on medical necessity. Your dermatologist or rheumatologist should provide a letter explaining why Skyrizi is specifically needed."
+      }
+    ],
+    "evidence_snippets": [
+      "Risankizumab (Skyrizi) selectively targets IL-23, showing high rates of skin clearance in plaque psoriasis and efficacy in psoriatic arthritis and Crohn's disease.",
+      "Switching biologics in psoriasis and psoriatic arthritis can result in disease flare and incomplete response to subsequent agents.",
+    ],
+    "pubmed_search_terms": [
+      "risankizumab plaque psoriasis IL-23 clinical trial",
+      "biologic switching psoriasis loss of response",
+      "risankizumab psoriatic arthritis Crohn disease efficacy"
+    ],
+    "assistance_programs": [
+      {
+        "name": "Skyrizi Complete Savings Card",
+        "url": "https://www.skyrizi.com/skyrizi-complete/save-on-skyrizi-costs",
+        "description": "Eligible patients with commercial insurance may pay as little as $5 per dose. Not for government insurance."
+      },
+      {
+        "name": "myAbbVie Assist",
+        "url": "https://www.abbvie.com/patients/patient-assistance.html",
+        "description": "Patient assistance for uninsured or underinsured patients who qualify based on income."
+      }
+    ]
+  },
+  "tremfya-formulary-removal": {
+    "slug": "tremfya-formulary-removal",
+    "title": "Appealing Tremfya (Guselkumab) Formulary Removal",
+    "default_procedure": "Tremfya (Guselkumab) Continuity of Care",
+    "default_condition": "Psoriasis",
+    "tagline": "Stable on Tremfya for psoriasis? Fight for continued coverage.",
+    "hero_h1": "Fight Your Tremfya Formulary Removal",
+    "hero_subhead": "Express Scripts is excluding Tremfya in 2026 — but you can appeal for continuity of care.",
+    "intro": "Express Scripts is excluding Tremfya from the National Preferred Formulary in 2026. If you have psoriasis or psoriatic arthritis and are stable on Tremfya, you have rights under federal continuity of care regulations.",
+    "common_denial_reasons": [
+      "Tremfya excluded from formulary",
+      "Plan requires switch to alternative biologic",
+      "Step therapy required before Tremfya",
+      "Prior authorization now required",
+      "Non-formulary exception denied"
+    ],
+    "how_we_help": "We help you document your treatment history with Tremfya, explain why switching biologics may trigger disease flares, and cite federal and state laws that protect stable patients from forced medication changes.",
+    "cta": "Start your Tremfya continuity of care appeal.",
+    "faq": [
+    ],
+    "evidence_snippets": [
+      "Guselkumab (Tremfya) selectively targets IL-23, showing high rates of skin clearance in plaque psoriasis and efficacy in psoriatic arthritis.",
+      "Switching biologics in psoriasis can result in disease flare and may not achieve the same level of clearance as the original medication.",
+      "Under 45 CFR § 156.122(c), health plans must provide a transition process when drugs are removed from formulary."
+    ],
+    "pubmed_search_terms": [
+      "guselkumab plaque psoriasis IL-23 clinical trial",
+      "biologic switching psoriasis loss of response outcomes",
+      "guselkumab psoriatic arthritis efficacy safety"
+    ],
+    "assistance_programs": [
+      {
+        "name": "Janssen CarePath Savings Program",
+        "url": "https://www.janssencarepath.com/tremfya",
+        "description": "Eligible patients with commercial insurance may pay as little as $5 per dose. Not for government insurance."
+      },
+      {
+        "name": "Johnson & Johnson Patient Assistance Foundation",
+        "url": "https://www.jnjpaf.org/",
+        "description": "Patient assistance for uninsured or underinsured patients who meet income requirements."
+      }
     ]
   }
 }
