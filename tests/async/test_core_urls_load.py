@@ -14,6 +14,7 @@ class TestCoreURLsLoad(TestCase):
         simple_endpoints = [
             "scan",
             "about",
+            "how-to-help",
             "other-resources",
             "share_denial",
             #            "share_appeal",
