@@ -1448,9 +1448,10 @@ def chat_interface_view(request):
         return redirect("chat_consent")
 
     # Check for default_procedure and default_condition from microsite URL params
-    default_procedure = request.GET.get("default_procedure", "")
-    default_condition = request.GET.get("default_condition", "")
-    microsite_slug = request.GET.get("microsite_slug", "")
+    # Check both GET and POST since consent form could send either way
+    default_procedure = request.GET.get("default_procedure") or request.POST.get("default_procedure", "")
+    default_condition = request.GET.get("default_condition") or request.POST.get("default_condition", "")
+    microsite_slug = request.GET.get("microsite_slug") or request.POST.get("microsite_slug", "")
 
     context = {
         "title": "Chat with FightHealthInsurance",
