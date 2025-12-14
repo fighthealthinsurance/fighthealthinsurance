@@ -48,7 +48,14 @@
           const data = await response.json();
 
           if(data.success && data.url){
-            window.location.href = data.url;
+            // Open Stripe checkout in a new window so user stays on current page
+            window.open(data.url, '_blank');
+            if(thanks){
+              thanks.hidden = false;
+              thanks.textContent = 'Thanks! Complete your donation in the new tab, then close it to continue here.';
+            }
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Support (optional)';
           } else if(data.success && data.message){
             if(thanks){
               thanks.hidden = false;
