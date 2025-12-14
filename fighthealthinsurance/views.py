@@ -703,20 +703,72 @@ class ChooseAppeal(View):
         }
         request.session.save()
 
-        # Redirect to GET endpoint
-        return redirect("view_appeal")
+        # Redirect to GET endpoint with URL parameters for stable GET access
+        return redirect(
+            build_back_url(
+                "view_appeal",
+                form.cleaned_data["denial_id"],
+                form.cleaned_data["email"],
+                form.cleaned_data["semi_sekret"],
+            )
+        )
 
 
 class AppealView(View):
     """View the chosen appeal (GET endpoint for redirect-after-POST)."""
     
     def get(self, request):
-        # Get data from session
+        # Try to get data from session first
         appeal_data = request.session.get("chosen_appeal_data")
         
+        # If not in session, try to get from URL params and reconstruct from DB
         if not appeal_data:
-            # No appeal chosen yet, redirect to scan
-            return redirect("scan")
+            denial_id = request.GET.get("denial_id")
+            email = request.GET.get("email")
+            semi_sekret = request.GET.get("semi_sekret")
+            
+            if not all([denial_id, email, semi_sekret]):
+                # No appeal data and no valid params, redirect to scan
+                return redirect("scan")
+            
+            # Try to load the appeal from the database
+            try:
+                from fighthealthinsurance.models import Denial
+                hashed_email = Denial.get_hashed_email(email)
+                denial = Denial.objects.filter(
+                    denial_id=denial_id,
+                    hashed_email=hashed_email,
+                    semi_sekret=semi_sekret
+                ).first()
+                
+                if not denial or not denial.appeal_text:
+                    # No appeal chosen yet
+                    return redirect("scan")
+                
+                # Reconstruct appeal_data from denial
+                appeal_data = {
+                    "appeal_text": denial.appeal_text,
+                    "email": email,
+                    "denial_id": denial_id,
+                    "semi_sekret": semi_sekret,
+                    "appeal_fax_number": denial.appeal_fax_number,
+                    "insurance_company": denial.insurance_company,
+                    "candidate_article_ids": [],
+                }
+                
+                # Try to load article IDs
+                from fighthealthinsurance.models import PubMedQueryData
+                import json
+                pmqd = PubMedQueryData.objects.filter(denial_id=denial_id).first()
+                if pmqd and pmqd.articles:
+                    try:
+                        appeal_data["candidate_article_ids"] = json.loads(pmqd.articles)
+                    except json.JSONDecodeError:
+                        pass
+                
+            except Exception as e:
+                logger.error(f"Error loading appeal data: {e}")
+                return redirect("scan")
         
         # Reconstruct the candidate articles
         candidate_articles = None
