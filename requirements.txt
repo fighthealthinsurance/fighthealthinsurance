@@ -67,7 +67,7 @@ python-decouple==3.8
 python-Levenshtein
 pytz
 pyyaml
-scrape-google-scholar-py==0.3.4
+scholarly==1.7.11
 RapidFuzz==2.15.1 # See https://github.com/mindee/doctr/issues/1186
 ray==2.43.0
 ray[client]==2.43.0

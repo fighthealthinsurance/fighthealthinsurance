@@ -26,53 +26,89 @@ else:
 PER_QUERY = 2
 
 
-def google_scholar_fetcher_sync(query: str, since: Optional[str] = None) -> List[Dict[str, Any]]:
+def google_scholar_fetcher_sync(query: str, since: Optional[str] = None, max_results: int = 10) -> List[Dict[str, Any]]:
     """
-    Synchronous wrapper for Google Scholar scraping.
+    Synchronous wrapper for Google Scholar scraping using scholarly package.
     
     Args:
         query: Search query string
-        since: Optional year filter (not directly supported by scraper, will filter results)
+        since: Optional year filter to filter articles by publication year
+        max_results: Maximum number of results to return (default 10)
     
     Returns:
-        List of article dictionaries with keys: title, title_link, publication_info, 
-        snippet, cited_by_link, cited_by_count, pdf_file
+        List of article dictionaries with keys: title, bib (contains year, author, etc),
+        pub_url (link), num_citations, eprint_url (pdf if available)
     """
-    from google_scholar_py import CustomGoogleScholarOrganic
+    from scholarly import scholarly, ProxyGenerator
     
-    parser = CustomGoogleScholarOrganic()
     try:
-        # Scrape without pagination to keep it fast
-        results = parser.scrape_google_scholar_organic_results(
-            query=query,
-            pagination=False,
-            save_to_csv=False,
-            save_to_json=False
-        )
+        # Setup free proxy to avoid blocking (optional but recommended)
+        # Note: FreeProxies can be slow, consider using paid proxies in production
+        try:
+            pg = ProxyGenerator()
+            pg.FreeProxies()
+            scholarly.use_proxy(pg)
+        except Exception as proxy_error:
+            logger.warning(f"Could not set up proxy, continuing without: {proxy_error}")
         
-        # Filter by year if since parameter is provided
-        if since:
-            try:
-                since_year = int(since)
-                filtered_results = []
-                for result in results:
-                    # Try to extract year from publication_info
-                    pub_info = result.get('publication_info', '')
-                    # Look for 4-digit year in publication info
-                    years = re.findall(r'\b(20\d{2}|19\d{2})\b', pub_info)
-                    if years:
-                        year = int(years[0])
-                        if year >= since_year:
-                            filtered_results.append(result)
-                    else:
-                        # If no year found, include it
-                        filtered_results.append(result)
-                return filtered_results
-            except (ValueError, AttributeError):
-                logger.warning(f"Could not filter by year {since}, returning all results")
-                return results
+        # Search for publications
+        search_query = scholarly.search_pubs(query)
+        
+        results = []
+        count = 0
+        
+        # Iterate through results
+        for result in search_query:
+            if count >= max_results:
+                break
+                
+            # Extract relevant information
+            article_data = {
+                'title': result.get('bib', {}).get('title', ''),
+                'title_link': result.get('pub_url', ''),
+                'publication_info': '',  # Will build from bib
+                'snippet': result.get('bib', {}).get('abstract', ''),
+                'cited_by_link': result.get('citedby_url', ''),
+                'cited_by_count': result.get('num_citations', 0),
+                'pdf_file': result.get('eprint_url', ''),
+            }
+            
+            # Build publication info from bib
+            bib = result.get('bib', {})
+            pub_info_parts = []
+            if 'author' in bib:
+                # author might be a string or list
+                authors = bib['author']
+                if isinstance(authors, list):
+                    pub_info_parts.append(', '.join(authors[:3]))  # First 3 authors
+                else:
+                    pub_info_parts.append(authors)
+            if 'venue' in bib:
+                pub_info_parts.append(bib['venue'])
+            if 'pub_year' in bib:
+                pub_info_parts.append(str(bib['pub_year']))
+                
+            article_data['publication_info'] = ', '.join(pub_info_parts)
+            
+            # Filter by year if specified
+            if since:
+                try:
+                    since_year = int(since)
+                    pub_year = bib.get('pub_year')
+                    if pub_year:
+                        try:
+                            if int(pub_year) < since_year:
+                                continue  # Skip this article
+                        except (ValueError, TypeError):
+                            pass  # Include if we can't parse the year
+                except (ValueError, AttributeError):
+                    logger.warning(f"Could not filter by year {since}")
+            
+            results.append(article_data)
+            count += 1
         
         return results
+        
     except Exception as e:
         logger.opt(exception=True).error(f"Error scraping Google Scholar for query '{query}': {e}")
         return []

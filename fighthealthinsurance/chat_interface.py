@@ -26,6 +26,7 @@ from fighthealthinsurance.models import (
     ChatLeads,
 )
 from fighthealthinsurance.pubmed_tools import PubMedTools
+from fighthealthinsurance.google_scholar_tools import GoogleScholarTools
 from fighthealthinsurance import settings
 from fighthealthinsurance.prompt_templates import get_intro_template
 from fighthealthinsurance.utils import best_within_timelimit
@@ -70,6 +71,7 @@ class ChatInterface:
 
         self.send_json_message_func = wrap_send_json_message_func
         self.pubmed_tools = PubMedTools()
+        self.google_scholar_tools = GoogleScholarTools()
         self.chat: OngoingChat = chat
         self.user: User = user
         self.is_patient: bool = is_patient
@@ -698,6 +700,52 @@ class ChatInterface:
                             else additional_context_part
                         )
                         response_text = cleaned_response
+                        
+                        # Also search Google Scholar with the same terms
+                        try:
+                            await self.send_status_message(
+                                f"Also searching Google Scholar for: {pubmed_query_terms}..."
+                            )
+                            scholar_articles_awaitable = (
+                                self.google_scholar_tools.find_google_scholar_article_ids_for_query(
+                                    query=pubmed_query_terms, timeout=30.0
+                                )
+                            )
+                            scholar_article_ids = await scholar_articles_awaitable
+                            if scholar_article_ids and len(scholar_article_ids) > 0:
+                                # Limit to top few results
+                                scholar_article_ids = scholar_article_ids[:4]
+                                await self.send_status_message(
+                                    f"Found {len(scholar_article_ids)} Google Scholar articles."
+                                )
+                                scholar_articles_data = await self.google_scholar_tools.get_articles(scholar_article_ids)
+                                scholar_summaries = []
+                                for art in scholar_articles_data:
+                                    summary_text = art.snippet if art.snippet else art.text
+                                    if art.title and summary_text:
+                                        await self.send_status_message(
+                                            f"Found Google Scholar article: {art.title}"
+                                        )
+                                        citation_info = f" (Cited by {art.cited_by_count})" if art.cited_by_count else ""
+                                        scholar_summaries.append(
+                                            f"Title: {art.title}{citation_info}\\nSummary: {summary_text[:500]}..."
+                                        )
+                                if scholar_summaries:
+                                    scholar_context_str = (
+                                        "\\n\\nWe also got Google Scholar results:\\n"
+                                        + "\\n\\n".join(scholar_summaries)
+                                        + "\\n"
+                                    )
+                                    context = (
+                                        context + scholar_context_str if context else scholar_context_str
+                                    )
+                        except Exception as scholar_e:
+                            logger.warning(
+                                f"Error while processing Google Scholar query: {scholar_e}. Continuing."
+                            )
+                            await self.send_status_message(
+                                "Error while processing Google Scholar query. Continuing."
+                            )
                 else:
                     await self.send_status_message(
                         "No detailed information found for the articles from PubMed."

@@ -281,74 +281,74 @@ class GoogleScholarToolsTest(TransactionTestCase):
 class GoogleScholarFetcherTest(TestCase):
     """Test the synchronous Google Scholar fetcher."""
 
-    @mock.patch("google_scholar_py.CustomGoogleScholarOrganic")
-    def test_google_scholar_fetcher_sync_basic(self, mock_organic_class):
+    @mock.patch("scholarly.scholarly.search_pubs")
+    @mock.patch("scholarly.scholarly.use_proxy")
+    def test_google_scholar_fetcher_sync_basic(self, mock_use_proxy, mock_search_pubs):
         """Test basic fetching without year filter."""
         
-        # Create mock instance
-        mock_instance = mock.MagicMock()
-        mock_organic_class.return_value = mock_instance
-        
-        # Mock the scrape method
-        mock_instance.scrape_google_scholar_organic_results.return_value = [
-            {
+        # Mock the search results
+        mock_result = {
+            'bib': {
                 'title': 'Test Article',
-                'title_link': 'https://example.com/test',
-                'snippet': 'Test snippet',
-                'publication_info': 'Test Journal, 2024',
-                'cited_by_count': 10,
-                'cited_by_link': '',
-                'pdf_file': '',
-            }
-        ]
+                'author': ['Smith, J', 'Doe, A'],
+                'venue': 'Test Journal',
+                'pub_year': '2024',
+                'abstract': 'Test snippet abstract'
+            },
+            'pub_url': 'https://example.com/test',
+            'citedby_url': 'https://scholar.google.com/citations',
+            'num_citations': 10,
+            'eprint_url': 'https://example.com/test.pdf',
+        }
+        
+        # Create iterator that returns one result
+        mock_search_pubs.return_value = iter([mock_result])
         
         # Call the fetcher
-        results = google_scholar_fetcher_sync("test query")
+        results = google_scholar_fetcher_sync("test query", max_results=1)
         
         # Should return results
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]['title'], 'Test Article')
+        self.assertIn('Smith, J', results[0]['publication_info'])
+        self.assertEqual(results[0]['cited_by_count'], 10)
         
-        # Should have called scraper with correct params
-        mock_instance.scrape_google_scholar_organic_results.assert_called_once_with(
-            query="test query",
-            pagination=False,
-            save_to_csv=False,
-            save_to_json=False
-        )
+        # Should have called search
+        mock_search_pubs.assert_called_once_with("test query")
 
-    @mock.patch("google_scholar_py.CustomGoogleScholarOrganic")
-    def test_google_scholar_fetcher_sync_with_year_filter(self, mock_organic_class):
+    @mock.patch("scholarly.scholarly.search_pubs")
+    @mock.patch("scholarly.scholarly.use_proxy")
+    def test_google_scholar_fetcher_sync_with_year_filter(self, mock_use_proxy, mock_search_pubs):
         """Test fetching with year filtering."""
         
-        # Create mock instance
-        mock_instance = mock.MagicMock()
-        mock_organic_class.return_value = mock_instance
-        
         # Mock results with different years
-        mock_instance.scrape_google_scholar_organic_results.return_value = [
+        mock_results = [
             {
-                'title': 'Recent Article',
-                'publication_info': 'Journal, 2024',
-                'title_link': 'https://example.com/recent',
-                'snippet': '',
-                'cited_by_count': 0,
-                'cited_by_link': '',
-                'pdf_file': '',
+                'bib': {
+                    'title': 'Recent Article',
+                    'pub_year': '2024',
+                    'author': 'Smith, J',
+                    'venue': 'Journal'
+                },
+                'pub_url': 'https://example.com/recent',
+                'num_citations': 0,
             },
             {
-                'title': 'Old Article',
-                'publication_info': 'Journal, 2020',
-                'title_link': 'https://example.com/old',
-                'snippet': '',
-                'cited_by_count': 0,
-                'cited_by_link': '',
-                'pdf_file': '',
+                'bib': {
+                    'title': 'Old Article',
+                    'pub_year': '2020',
+                    'author': 'Doe, A',
+                    'venue': 'Journal'
+                },
+                'pub_url': 'https://example.com/old',
+                'num_citations': 0,
             }
         ]
         
+        mock_search_pubs.return_value = iter(mock_results)
+        
         # Call with year filter
-        results = google_scholar_fetcher_sync("test query", since="2023")
+        results = google_scholar_fetcher_sync("test query", since="2023", max_results=10)
         
         # Should only include articles from 2023 or later
         self.assertEqual(len(results), 1)
