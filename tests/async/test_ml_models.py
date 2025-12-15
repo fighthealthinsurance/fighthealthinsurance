@@ -304,15 +304,38 @@ class TestMedicaidDetection(TestCase):
 
         # Test positive cases - should detect Medicaid
         positive_cases = [
+            # Generic terms
             ("Am I eligible for Medicaid?", None, None),
             ("How do I enroll in Medicare?", None, None),
+            ("What about the work requirement?", None, None),
+            ("Do I qualify for government insurance?", None, None),
+            # State-specific program names
             ("What are the Medi-Cal requirements?", None, None),
             ("Can you help with MassHealth?", None, None),
             ("I need help with TennCare", None, None),
-            ("What about the work requirement?", None, None),
-            ("Do I qualify for government insurance?", None, None),
+            ("I'm on DenaliCare in Alaska", None, None),
+            ("Health First Colorado coverage", None, None),
+            ("Husky Health denied my claim", None, None),
+            ("Diamond State Health Plan question", None, None),
+            ("Med-QUEST in Hawaii", None, None),
+            ("HealthChoice Illinois appeal", None, None),
+            ("Hoosier Healthwise coverage", None, None),
+            ("MaineCare benefits", None, None),
+            ("MO HealthNet problem", None, None),
+            ("NJ FamilyCare question", None, None),
+            ("Turquoise Care in New Mexico", None, None),
+            ("SoonerCare in Oklahoma", None, None),
+            ("Healthy Connections in South Carolina", None, None),
+            ("STAR+PLUS in Texas", None, None),
+            ("Green Mountain Care Vermont", None, None),
+            ("Cardinal Care Virginia", None, None),
+            ("Apple Health Washington state", None, None),
+            ("Forward Health Wisconsin", None, None),
+            ("Equality Care Wyoming", None, None),
+            # Context and history
             ("Help with appeal", "Previously discussing medicaid eligibility", None),
             ("What else do I need?", None, [{"content": "I'm on Medicare"}]),
+            ("Continue from before", "Patient is on MassHealth", None),
         ]
 
         for message, context, history in positive_cases:

@@ -32,23 +32,69 @@ class RemoteModelLike(DenialBase):
     """Base class for remote ML model backends used for chat and appeal generation."""
 
     # Keywords that indicate Medicaid/Medicare-related conversation
+    # Note: All keywords should be lowercase for case-insensitive matching
     MEDICAID_KEYWORDS = [
         # Generic terms
         "medicaid", "medicare", "medi-cal", "medical assistance",
+        "medical assistance program",
         "eligibility", "eligible", "enrollment", "enroll",
         "work requirement", "80 hours",
-        # State-specific Medicaid program names
-        "denalicare", "health first colorado", "husky health",
-        "diamond state health plan", "med-quest", "healthchoice illinois",
-        "hoosier healthwise", "iowa medicaid", "kansas medical assistance",
-        "mainecare", "masshealth", "mo healthnet", "nj familycare",
-        "turquoise care", "new york state medicaid", "soonercare",
-        "healthy connections", "tenncare", "star+plus", "star plus",
-        "green mountain care", "cardinal care", "apple health",
-        "forward health", "equality care",
-        # Common questions
-        "qualify for", "am i eligible", "can i get",
+        # State-specific Medicaid program names (comprehensive list)
+        # Alaska
+        "denalicare",
+        # California
+        "medi-cal",
+        # Colorado
+        "health first colorado",
+        # Connecticut
+        "husky health",
+        # Delaware
+        "diamond state health plan",
+        # Hawaii
+        "med-quest", "medquest",
+        # Illinois
+        "healthchoice illinois",
+        # Indiana
+        "hoosier healthwise",
+        # Indiana
+        "iowa medicaid",
+        # Kansas
+        "kansas medical assistance", "kansas medical assistance program",
+        # Maine
+        "mainecare",
+        # Massachusetts
+        "masshealth",
+        # Missouri
+        "mo healthnet",
+        # New Jersey
+        "nj familycare",
+        # New Mexico
+        "turquoise care",
+        # New York
+        "new york state medicaid",
+        # Oklahoma
+        "soonercare",
+        # South Carolina
+        "healthy connections",
+        # Tennessee
+        "tenncare",
+        # Texas
+        "star+plus", "star plus", "star medicaid", "texas star",
+        # Vermont
+        "green mountain care",
+        # Virginia
+        "cardinal care",
+        # Washington
+        "apple health",
+        # Wisconsin
+        "forward health",
+        # Wyoming
+        "equality care",
+        # Common questions and phrases
+        "qualify for medicaid", "qualify for medicare",
+        "am i eligible", "can i get medicaid", "can i get medicare",
         "government insurance", "public insurance", "state insurance",
+        "government health", "public health insurance",
     ]
 
     def quality(self) -> int:
