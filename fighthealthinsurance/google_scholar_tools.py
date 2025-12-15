@@ -203,7 +203,7 @@ class GoogleScholarTools(object):
         retrieve a cached article from the database or scrapes from Google Scholar and stores it if not present.
         Handles timeouts and logs errors, returning all successfully retrieved articles.
 
-        If the denial has a microsite_slug, also uses the microsite's google_scholar_search_terms.
+        If the denial has a microsite_slug, also uses the microsite's pubmed_search_terms for Google Scholar queries.
         """
         article_ids: List[str] = []
         articles: List[GoogleScholarMiniArticle] = []
@@ -219,19 +219,20 @@ class GoogleScholarTools(object):
                     query,
                 }
 
-                # Add microsite google scholar search terms if available
+                # Add microsite pubmed search terms if available
+                # We use PubMed search terms for Google Scholar as well
                 if denial.microsite_slug:
                     try:
                         microsite = get_microsite(denial.microsite_slug)
-                        if microsite and hasattr(microsite, 'google_scholar_search_terms') and microsite.google_scholar_search_terms:
-                            if len(microsite.google_scholar_search_terms) > 0:
+                        if microsite and microsite.pubmed_search_terms:
+                            if len(microsite.pubmed_search_terms) > 0:
                                 logger.debug(
-                                    f"Adding {len(microsite.google_scholar_search_terms)} microsite Google Scholar search terms for {denial.microsite_slug}"
+                                    f"Adding {len(microsite.pubmed_search_terms)} microsite PubMed search terms for Google Scholar for {denial.microsite_slug}"
                                 )
-                                queries.update(microsite.google_scholar_search_terms)
+                                queries.update(microsite.pubmed_search_terms)
                     except Exception as e:
                         logger.opt(exception=True).warning(
-                            f"Failed to load microsite Google Scholar search terms: {e}"
+                            f"Failed to load microsite PubMed search terms: {e}"
                         )
 
                 for since in self.since_list:
