@@ -32,6 +32,8 @@
           return;
         }
 
+	let checkoutWindow = window.open('about:blank', '_blank');
+
         // Create Stripe checkout session via backend
         try {
           submitBtn.disabled = true;
@@ -39,7 +41,6 @@
 
           // Open window immediately (synchronously) to avoid popup blockers
           // This works on both desktop and mobile Safari
-          const checkoutWindow = window.open('about:blank', '_blank');
 
           const response = await fetch('/v0/pwyw/checkout', {
             method: 'POST',
