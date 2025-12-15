@@ -1635,6 +1635,7 @@ def create_pwyw_checkout(request: HttpRequest) -> HttpResponse:
     try:
         data = json.loads(request.body)
         amount = int(data.get("amount", 0))
+        return_url = data.get("return_url", "")
 
         if amount <= 0:
             return HttpResponse(
@@ -1646,6 +1647,17 @@ def create_pwyw_checkout(request: HttpRequest) -> HttpResponse:
             )
 
         stripe.api_key = settings.STRIPE_API_SECRET_KEY
+
+        # Validate and construct success/cancel URLs
+        # Use return_url if provided and it's a relative path, otherwise use root
+        if return_url and return_url.startswith("/"):
+            base_url = request.build_absolute_uri(return_url)
+            # Add donation=success parameter
+            success_url = base_url + ("&" if "?" in base_url else "?") + "donation=success"
+            cancel_url = base_url
+        else:
+            success_url = request.build_absolute_uri("/") + "?donation=success"
+            cancel_url = request.build_absolute_uri("/")
 
         # Create a checkout session with the specified amount
         checkout_session = stripe.checkout.Session.create(
@@ -1664,8 +1676,8 @@ def create_pwyw_checkout(request: HttpRequest) -> HttpResponse:
                 }
             ],
             mode="payment",
-            success_url=request.build_absolute_uri("/") + "?donation=success",
-            cancel_url=request.build_absolute_uri("/"),
+            success_url=success_url,
+            cancel_url=cancel_url,
             metadata={
                 "payment_type": "donation",
                 "donation_type": "pwyw",
