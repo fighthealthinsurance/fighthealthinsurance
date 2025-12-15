@@ -18,13 +18,13 @@ Fight Your Health Insurance Denial: Edit and send in your appeal
 
 <div style="background:#e8f5e9; padding:1.5rem; border-radius:8px; margin:1.5rem 0; border-left:4px solid #4caf50;">
   <h3 style="margin:0 0 0.5rem 0; color:#2e7d32;">🎉 Your Appeal is Ready!</h3>
-  <p style="margin:0; font-size:1.1rem;"><strong>Thank you for trusting us to help you fight your denial.</strong> We've drafted your appeal letter below. Now let's get it to your insurance company!</p>
+  <p style="margin:0; font-size:1.1rem;"><strong>Thank you for trusting us to help you fight your denial.</strong> We've drafted your appeal letter below. Please review and improve it with your personal details and story, then submit it to your insurance company!</p>
 </div>
 
 <div style="background:#fff3cd; padding:1.5rem; border-radius:8px; margin:1.5rem 0; border-left:4px solid #ffc107;">
   <h4 style="margin:0 0 1rem 0; color:#856404;">📋 What to Do Next - Simple 2-Step Process:</h4>
   <div style="margin-left: 1.5rem;">
-    <p style="margin:0.5rem 0;"><strong>Step 1:</strong> Review and fill in your personal information in the appeal letter below</p>
+    <p style="margin:0.5rem 0;"><strong>Step 1:</strong> Review, edit, and improve the appeal letter below - add your personal information and any additional details that strengthen your case</p>
     <p style="margin:0.5rem 0;"><strong>Step 2:</strong> Send your appeal using one of the options below (we explain each one!)</p>
   </div>
 </div>
@@ -39,8 +39,8 @@ Fight Your Health Insurance Denial: Edit and send in your appeal
   {% include 'partials/pwyw_panel.html' %}
 </div>
 
-<h3 style="color:#333; border-bottom:2px solid #4caf50; padding-bottom:0.5rem;">Step 1: Review and Fill In Your Appeal</h3>
-<p style="font-size:1.05rem;">Review the appeal letter below. Click the "Fill in your PII" button to add your personal information (name, address, etc.). You can also make any other edits you'd like.</p>
+<h3 style="color:#333; border-bottom:2px solid #4caf50; padding-bottom:0.5rem;">Step 1: Review, Edit, and Improve Your Appeal</h3>
+<p style="font-size:1.05rem;"><strong>Important:</strong> Take time to review and edit the appeal letter below. Click the "Fill in your PII" button to add your personal information (name, address, etc.), and feel free to add or modify any details that strengthen your case. The more personalized and detailed your appeal, the better!</p>
 
 <form action="{% url 'share_appeal' %}" method="post" class="col-md-12 d-flex flex-column align-items-center">
   {% csrf_token %}
@@ -119,9 +119,13 @@ Fight Your Health Insurance Denial: Edit and send in your appeal
 </div>
 
 <div style="background:#fff3cd; padding:1.5rem; border-radius:8px; margin:2rem 0; border-left:4px solid #ffc107;">
-  <p style="margin:0; font-size:1.05rem; color:#856404;">
-    <strong>💡 Tip:</strong> Keep a copy of your appeal and proof of submission (tracking number for mail, confirmation for fax) for your records!
-  </p>
+  <h4 style="margin:0 0 0.5rem 0; color:#856404;">💡 Important Reminders:</h4>
+  <ul style="margin:0.5rem 0 0 1.5rem; line-height:1.8; color:#856404;">
+    <li><strong>Save a copy:</strong> Download or save a copy of your completed appeal for your records before submitting. Computers and fax machines can be unreliable!</li>
+    <li><strong>Confirm receipt:</strong> After submitting (by mail or fax), call your insurance company to confirm they received your appeal. Keep a note of who you spoke with and when.</li>
+    <li><strong>Be ready to help:</strong> If they claim they "didn't receive it," you'll have your saved copy ready to resend immediately.</li>
+    <li><strong>Keep proof:</strong> Save tracking numbers (for mail) or fax confirmation pages as proof of submission.</li>
+  </ul>
 </div>
 
 <p>
