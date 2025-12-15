@@ -3,26 +3,19 @@ from fighthealthinsurance.models import (
     GoogleScholarQueryData,
     GoogleScholarMiniArticle,
 )
-from asgiref.sync import sync_to_async, async_to_sync
+from asgiref.sync import sync_to_async
 from fighthealthinsurance.microsites import get_microsite
-from .utils import markdown_escape
-from concurrent.futures import Future
 
 import asyncio
 from .models import Denial
 import json
-import PyPDF2
-import requests
-import aiohttp
 from fighthealthinsurance.ml.ml_router import ml_router
-import tempfile
-from typing import List, Optional, Dict, Tuple, Any, Set
-from .exec import pubmed_executor
-import subprocess
+from typing import List, Optional, Dict, Any, Set
 from loguru import logger
 from datetime import datetime, timedelta
 import sys
 import hashlib
+import re
 
 if sys.version_info >= (3, 11):
     from asyncio import timeout as async_timeout
@@ -66,7 +59,6 @@ def google_scholar_fetcher_sync(query: str, since: Optional[str] = None) -> List
                     # Try to extract year from publication_info
                     pub_info = result.get('publication_info', '')
                     # Look for 4-digit year in publication info
-                    import re
                     years = re.findall(r'\b(20\d{2}|19\d{2})\b', pub_info)
                     if years:
                         year = int(years[0])
@@ -93,12 +85,12 @@ class GoogleScholarTools(object):
     def _generate_article_id(self, result: Dict[str, Any]) -> str:
         """
         Generate a unique ID for a Google Scholar article.
-        Uses hash of title and link to create a stable identifier.
+        Uses SHA-256 hash of title and link to create a stable identifier.
         """
         title = result.get('title', '')
         link = result.get('title_link', '')
         unique_str = f"{title}|{link}"
-        return hashlib.md5(unique_str.encode()).hexdigest()
+        return hashlib.sha256(unique_str.encode()).hexdigest()
 
     async def find_google_scholar_article_ids_for_query(
         self,
