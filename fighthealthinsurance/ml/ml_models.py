@@ -145,9 +145,9 @@ class RemoteModelLike(DenialBase):
         if previous_context_summary:
             text_to_check += " " + previous_context_summary.lower()
 
-        # Check recent history (last 5 messages) for context
+        # Check recent-ish history (last 40 messages) for context
         if history:
-            for msg in history[-5:]:
+            for msg in history[-40:]:
                 content = msg.get("content", "")
                 if content:
                     text_to_check += " " + content.lower()
@@ -419,6 +419,7 @@ You can and should consider using the medicaid information tool once we've done 
 """
 
         # Build tools section conditionally based on whether the chat is Medicaid-related
+        medicaid_names_reminder = ""
         if is_medicaid_related:
             # Include full Medicaid tools when the conversation is about Medicaid/Medicare
             tools = f"""
@@ -475,8 +476,13 @@ Some important notes:
 
 - At the end of every response add the 🐼 emoji with the context of the chat so far necessary for answering the next turn of conversation.
 
+- Avoid any promises of success (although you can point to general information like it is believed the majourity of appeals are successful, but tracking is imperfect, etc.)
+
+- For queer folks needing immediate support (not health insurance related) PFLAG keeps a list of hotlines at https://pflag.org/resource/support-hotlines/ .
+
 So for example if a user asks a question and you have a follow up (like "How do I appeal a GLP-1 denial?") and your question is "What reason did they give you for your GLP-1 denied?" you would respond with:
 What reason did they give you for your GLP-1 denied?🐼Helping a patient appeal a GLP-1 denial.
+Remember in the last three sentences GLP-1 is just an _example_ check what the user is actually chatting about.
 """
         result: Optional[str] = None
         c = 0
