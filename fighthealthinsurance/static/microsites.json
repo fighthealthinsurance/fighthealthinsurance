@@ -38,6 +38,11 @@
       "MRI appropriateness criteria low back pain red flags",
       "evidence-based guidelines MRI neurologic symptoms",
       "impact of delayed MRI diagnosis outcomes"
+    ],
+    "google_scholar_search_terms": [
+      "MRI appropriateness criteria low back pain red flags",
+      "evidence-based guidelines MRI neurologic symptoms",
+      "impact of delayed MRI diagnosis outcomes"
     ]
   },
   "ct-scan-denial": {
@@ -78,6 +83,11 @@
       "CT scan emergency department diagnostic yield",
       "guidelines CT imaging acute abdominal pain",
       "clinical decision rules CT imaging"
+    ],
+    "google_scholar_search_terms": [
+      "CT scan emergency department diagnostic yield",
+      "guidelines CT imaging acute abdominal pain",
+      "clinical decision rules CT imaging"
     ]
   },
   "sleep-study-denial": {
@@ -115,6 +125,11 @@
       "Early diagnosis and treatment of sleep disorders reduce long-term healthcare costs and improve quality of life."
     ],
     "pubmed_search_terms": [
+      "polysomnography obstructive sleep apnea guidelines",
+      "untreated sleep apnea cardiovascular risk",
+      "home sleep apnea testing vs polysomnography"
+    ],
+    "google_scholar_search_terms": [
       "polysomnography obstructive sleep apnea guidelines",
       "untreated sleep apnea cardiovascular risk",
       "home sleep apnea testing vs polysomnography"
@@ -160,6 +175,11 @@
       "CPAP therapy outcomes obstructive sleep apnea",
       "cost effectiveness CPAP cardiovascular",
       "adherence CPAP treatment health outcomes"
+    ],
+    "google_scholar_search_terms": [
+      "CPAP therapy outcomes obstructive sleep apnea",
+      "cost effectiveness CPAP cardiovascular",
+      "adherence CPAP treatment health outcomes"
     ]
   },
   "pt-ot-st-denial": {
@@ -200,6 +220,11 @@
       "physical therapy functional outcomes chronic conditions",
       "occupational therapy activities of daily living improvement",
       "speech therapy effectiveness communication disorders"
+    ],
+    "google_scholar_search_terms": [
+      "physical therapy functional outcomes chronic conditions",
+      "occupational therapy activities of daily living improvement",
+      "speech therapy effectiveness communication disorders"
     ]
   },
   "mental-health-denial": {
@@ -237,6 +262,11 @@
       "Parity regulations support coverage of mental health treatment consistent with standards of care."
     ],
     "pubmed_search_terms": [
+      "mental health treatment outcomes psychotherapy medication",
+      "parity law impact insurance coverage mental health",
+      "under-treatment depression healthcare utilization"
+    ],
+    "google_scholar_search_terms": [
       "mental health treatment outcomes psychotherapy medication",
       "parity law impact insurance coverage mental health",
       "under-treatment depression healthcare utilization"
@@ -307,6 +337,11 @@
         "url": "https://primaryimmune.org/living-primary-immunodeficiency/get-support/find-other-support",
         "description": "Comprehensive list of manufacturer programs and independent foundations for infusion assistance."
       }
+    ],
+    "google_scholar_search_terms": [
+      "infusion therapy outcomes autoimmune",
+      "site-of-care infusion safety home vs hospital",
+      "step therapy impact biologic treatment delays"
     ]
   },
   "ivig-denial": {
@@ -379,6 +414,11 @@
         "url": "https://www.gbs-cidp.org/support/resources/financial-assistance-resources/",
         "description": "Financial assistance resources specifically for GBS and CIDP patients needing IVIG."
       }
+    ],
+    "google_scholar_search_terms": [
+      "IVIG autoimmune neuropathy guidelines",
+      "IVIG treatment outcomes immune thrombocytopenia",
+      "evidence-based indications for intravenous immunoglobulin"
     ]
   },
   "biologic-denial": {
@@ -461,6 +501,11 @@
         "url": "https://www.enbrel.com/support",
         "description": "Eligible commercially insured patients may pay as little as $0 per dose."
       }
+    ],
+    "google_scholar_search_terms": [
+      "biologic therapy rheumatoid arthritis treat-to-target",
+      "biologic agents inflammatory bowel disease guidelines",
+      "delayed biologic treatment outcomes autoimmune"
     ]
   },
   "oxygen-therapy-denial": {
@@ -498,6 +543,11 @@
       "Coverage decisions should consider your physician's assessment of functional impairment and documented test results."
     ],
     "pubmed_search_terms": [
+      "long term oxygen therapy survival COPD",
+      "oxygen therapy chronic hypoxemia guidelines",
+      "home oxygen functional outcomes pulmonary disease"
+    ],
+    "google_scholar_search_terms": [
       "long term oxygen therapy survival COPD",
       "oxygen therapy chronic hypoxemia guidelines",
       "home oxygen functional outcomes pulmonary disease"
@@ -541,6 +591,11 @@
       "wheelchair prescription functional outcomes",
       "mobility aids fall risk reduction elderly",
       "power wheelchair cost effectiveness independence"
+    ],
+    "google_scholar_search_terms": [
+      "wheelchair prescription functional outcomes",
+      "mobility aids fall risk reduction elderly",
+      "power wheelchair cost effectiveness independence"
     ]
   },
   "surgery-denial": {
@@ -578,6 +633,11 @@
       "Coverage determinations should account for specialist recommendations and evidence-based surgical indications."
     ],
     "pubmed_search_terms": [
+      "timing of surgery outcomes orthopedic",
+      "conservative management vs surgery comparative effectiveness",
+      "elective vs medically necessary surgery insurance"
+    ],
+    "google_scholar_search_terms": [
       "timing of surgery outcomes orthopedic",
       "conservative management vs surgery comparative effectiveness",
       "elective vs medically necessary surgery insurance"
@@ -621,6 +681,11 @@
       "spinal cord stimulation chronic pain outcomes",
       "implantable cardioverter defibrillator mortality benefit",
       "guidelines implantable medical devices indications"
+    ],
+    "google_scholar_search_terms": [
+      "spinal cord stimulation chronic pain outcomes",
+      "implantable cardioverter defibrillator mortality benefit",
+      "guidelines implantable medical devices indications"
     ]
   },
   "pain-management-denial": {
@@ -658,6 +723,11 @@
       "Coverage decisions should follow pain society guidelines and individualized treatment planning."
     ],
     "pubmed_search_terms": [
+      "epidural steroid injection chronic back pain outcomes",
+      "radiofrequency ablation facet joint pain effectiveness",
+      "interventional pain management guidelines"
+    ],
+    "google_scholar_search_terms": [
       "epidural steroid injection chronic back pain outcomes",
       "radiofrequency ablation facet joint pain effectiveness",
       "interventional pain management guidelines"
@@ -701,6 +771,11 @@
       "prenatal care outcomes maternal neonatal",
       "high risk pregnancy ultrasound frequency guidelines",
       "antenatal testing evidence-based recommendations"
+    ],
+    "google_scholar_search_terms": [
+      "prenatal care outcomes maternal neonatal",
+      "high risk pregnancy ultrasound frequency guidelines",
+      "antenatal testing evidence-based recommendations"
     ]
   },
   "breast-imaging-denial": {
@@ -738,6 +813,11 @@
       "Coverage decisions should consider individual risk rather than a one-size-fits-all age cutoff."
     ],
     "pubmed_search_terms": [
+      "breast cancer screening high risk MRI",
+      "supplemental breast MRI outcomes",
+      "breast imaging guidelines high risk women"
+    ],
+    "google_scholar_search_terms": [
       "breast cancer screening high risk MRI",
       "supplemental breast MRI outcomes",
       "breast imaging guidelines high risk women"
@@ -783,6 +863,11 @@
       "facial feminization surgery quality of life gender dysphoria",
       "gender affirming facial surgery mental health outcomes",
       "WPATH facial gender affirming surgery medical necessity"
+    ],
+    "google_scholar_search_terms": [
+      "facial feminization surgery quality of life gender dysphoria",
+      "gender affirming facial surgery mental health outcomes",
+      "WPATH facial gender affirming surgery medical necessity"
     ]
   },
   "top-surgery-masc-denial": {
@@ -822,6 +907,11 @@
       "Professional guidelines address criteria for chest reconstruction that your appeal can reference."
     ],
     "pubmed_search_terms": [
+      "gender affirming chest surgery mental health outcomes",
+      "top surgery transmasculine quality of life",
+      "chest binding physical health effects"
+    ],
+    "google_scholar_search_terms": [
       "gender affirming chest surgery mental health outcomes",
       "top surgery transmasculine quality of life",
       "chest binding physical health effects"
@@ -867,6 +957,11 @@
       "gender affirming breast augmentation outcomes transfeminine",
       "chest surgery body image transgender women",
       "WPATH chest surgery medical necessity transfeminine"
+    ],
+    "google_scholar_search_terms": [
+      "gender affirming breast augmentation outcomes transfeminine",
+      "chest surgery body image transgender women",
+      "WPATH chest surgery medical necessity transfeminine"
     ]
   },
   "electrolysis-denial": {
@@ -906,6 +1001,11 @@
       "Classifying medically necessary hair removal as purely cosmetic is inconsistent with contemporary guidelines for gender-affirming care."
     ],
     "pubmed_search_terms": [
+      "hair removal preoperative vaginoplasty protocol",
+      "gender affirming hair removal mental health outcomes",
+      "WPATH hair removal medical necessity transgender"
+    ],
+    "google_scholar_search_terms": [
       "hair removal preoperative vaginoplasty protocol",
       "gender affirming hair removal mental health outcomes",
       "WPATH hair removal medical necessity transgender"
@@ -951,6 +1051,11 @@
       "gender affirming voice therapy transgender outcomes",
       "voice therapy transgender women satisfaction dysphoria",
       "speech language pathology gender affirming voice care"
+    ],
+    "google_scholar_search_terms": [
+      "gender affirming voice therapy transgender outcomes",
+      "voice therapy transgender women satisfaction dysphoria",
+      "speech language pathology gender affirming voice care"
     ]
   },
   "voice-surgery-denial": {
@@ -990,6 +1095,11 @@
       "When voice therapy alone is insufficient, surgery is an evidence-supported next step for some patients."
     ],
     "pubmed_search_terms": [
+      "gender affirming voice surgery outcomes pitch",
+      "vocal feminization surgery satisfaction transgender women",
+      "voice surgery transgender patients quality of life"
+    ],
+    "google_scholar_search_terms": [
       "gender affirming voice surgery outcomes pitch",
       "vocal feminization surgery satisfaction transgender women",
       "voice surgery transgender patients quality of life"
@@ -1062,6 +1172,11 @@
         "url": "https://www.goodrx.com/",
         "description": "Free discount card that can significantly reduce costs for generic estradiol and testosterone at pharmacies."
       }
+    ],
+    "google_scholar_search_terms": [
+      "gender affirming hormone therapy mental health outcomes",
+      "endocrine society clinical practice guideline gender dysphoria",
+      "transgender hormone therapy quality of life"
     ]
   },
   "puberty-blocker-denial": {
@@ -1130,6 +1245,11 @@
         "url": "https://www.pointofpride.org/hrt-access-fund",
         "description": "While primarily for HRT, may assist with gender-affirming care navigation for trans youth (18+)."
       }
+    ],
+    "google_scholar_search_terms": [
+      "puberty suppression gender dysphoria outcomes",
+      "GnRH analogue treatment transgender youth",
+      "guidelines puberty blockers gender incongruence"
     ]
   },
   "grs-denial": {
@@ -1169,6 +1289,11 @@
       "Professional medical organization positions can be referenced to counter claims that GRS is elective or cosmetic."
     ],
     "pubmed_search_terms": [
+      "gender affirming genital surgery outcomes quality of life",
+      "vaginoplasty satisfaction transgender women mental health",
+      "phalloplasty transgender men outcomes dysphoria"
+    ],
+    "google_scholar_search_terms": [
       "gender affirming genital surgery outcomes quality of life",
       "vaginoplasty satisfaction transgender women mental health",
       "phalloplasty transgender men outcomes dysphoria"
@@ -1214,6 +1339,11 @@
       "fertility preservation transgender individuals guidelines",
       "counseling fertility options before gender affirming hormones",
       "fertility preservation oncology analogy standard of care"
+    ],
+    "google_scholar_search_terms": [
+      "fertility preservation transgender individuals guidelines",
+      "counseling fertility options before gender affirming hormones",
+      "fertility preservation oncology analogy standard of care"
     ]
   },
   "glp1-denial": {
@@ -1253,6 +1383,11 @@
       "Treating obesity and diabetes aggressively can prevent downstream complications such as heart disease, kidney failure, and disability."
     ],
     "pubmed_search_terms": [
+      "GLP-1 receptor agonist cardiovascular outcomes trial",
+      "semaglutide weight loss obesity randomized study",
+      "tirzepatide type 2 diabetes glycemic control"
+    ],
+    "google_scholar_search_terms": [
       "GLP-1 receptor agonist cardiovascular outcomes trial",
       "semaglutide weight loss obesity randomized study",
       "tirzepatide type 2 diabetes glycemic control"
@@ -1297,6 +1432,11 @@
       "calcitonin gene related peptide monoclonal antibody migraine trial",
       "gepants acute migraine randomized controlled",
       "chronic migraine prevention guidelines"
+    ],
+    "google_scholar_search_terms": [
+      "calcitonin gene related peptide monoclonal antibody migraine trial",
+      "gepants acute migraine randomized controlled",
+      "chronic migraine prevention guidelines"
     ]
   },
   "asthma-biologic-denial": {
@@ -1335,6 +1475,11 @@
       "Guidelines recommend escalation to biologic therapy when high-dose inhaled therapies do not adequately control disease."
     ],
     "pubmed_search_terms": [
+      "severe asthma biologic therapy randomized trial",
+      "omalizumab dupilumab mepolizumab exacerbation reduction",
+      "GINA guideline severe asthma biologics"
+    ],
+    "google_scholar_search_terms": [
       "severe asthma biologic therapy randomized trial",
       "omalizumab dupilumab mepolizumab exacerbation reduction",
       "GINA guideline severe asthma biologics"
@@ -1379,6 +1524,11 @@
       "dupilumab atopic dermatitis randomized controlled trial",
       "systemic therapy moderate severe atopic dermatitis guidelines",
       "quality of life atopic dermatitis biologic therapy"
+    ],
+    "google_scholar_search_terms": [
+      "dupilumab atopic dermatitis randomized controlled trial",
+      "systemic therapy moderate severe atopic dermatitis guidelines",
+      "quality of life atopic dermatitis biologic therapy"
     ]
   },
   "insulin-pump-cgm-denial": {
@@ -1417,6 +1567,11 @@
       "Better glycemic control reduces the risk of long-term complications such as kidney disease, neuropathy, and retinopathy."
     ],
     "pubmed_search_terms": [
+      "continuous glucose monitoring randomized trial hypoglycemia",
+      "insulin pump therapy type 1 diabetes outcomes",
+      "technology-assisted diabetes care quality of life"
+    ],
+    "google_scholar_search_terms": [
       "continuous glucose monitoring randomized trial hypoglycemia",
       "insulin pump therapy type 1 diabetes outcomes",
       "technology-assisted diabetes care quality of life"
@@ -1461,6 +1616,11 @@
       "prosthetic limb functional outcomes microprocessor knee",
       "amputee mobility falls risk prosthesis",
       "cost effectiveness advanced prosthetic components"
+    ],
+    "google_scholar_search_terms": [
+      "prosthetic limb functional outcomes microprocessor knee",
+      "amputee mobility falls risk prosthesis",
+      "cost effectiveness advanced prosthetic components"
     ]
   },
   "hearing-aid-denial": {
@@ -1499,6 +1659,11 @@
       "Hearing devices can reduce safety risks related to environmental awareness, such as hearing alarms and traffic."
     ],
     "pubmed_search_terms": [
+      "hearing aid outcomes quality of life adult hearing loss",
+      "cochlear implant speech language development children",
+      "hearing loss cognitive decline association"
+    ],
+    "google_scholar_search_terms": [
       "hearing aid outcomes quality of life adult hearing loss",
       "cochlear implant speech language development children",
       "hearing loss cognitive decline association"
@@ -1543,6 +1708,11 @@
       "hereditary cancer genetic testing guidelines BRCA Lynch",
       "clinical utility multigene panel testing oncology",
       "cascade genetic testing prevention outcomes"
+    ],
+    "google_scholar_search_terms": [
+      "hereditary cancer genetic testing guidelines BRCA Lynch",
+      "clinical utility multigene panel testing oncology",
+      "cascade genetic testing prevention outcomes"
     ]
   },
   "pet-scan-denial": {
@@ -1581,6 +1751,11 @@
       "Guidelines specify indications where PET is preferred or recommended over conventional imaging alone."
     ],
     "pubmed_search_terms": [
+      "PET CT oncology staging treatment decisions",
+      "FDG PET response assessment cancer outcomes",
+      "PET indications guideline tumor staging"
+    ],
+    "google_scholar_search_terms": [
       "PET CT oncology staging treatment decisions",
       "FDG PET response assessment cancer outcomes",
       "PET indications guideline tumor staging"
@@ -1626,6 +1801,11 @@
       "bariatric surgery long term outcomes mortality",
       "gastric bypass diabetes remission randomized",
       "metabolic surgery guidelines obesity treatment"
+    ],
+    "google_scholar_search_terms": [
+      "bariatric surgery long term outcomes mortality",
+      "gastric bypass diabetes remission randomized",
+      "metabolic surgery guidelines obesity treatment"
     ]
   },
   "substance-use-treatment-denial": {
@@ -1665,6 +1845,11 @@
       "Parity regulations support equitable coverage for substance use disorder treatment compared with other medical conditions."
     ],
     "pubmed_search_terms": [
+      "medication assisted treatment opioid use disorder mortality",
+      "inpatient versus outpatient substance use treatment outcomes",
+      "mental health parity substance use insurance coverage"
+    ],
+    "google_scholar_search_terms": [
       "medication assisted treatment opioid use disorder mortality",
       "inpatient versus outpatient substance use treatment outcomes",
       "mental health parity substance use insurance coverage"
@@ -1709,6 +1894,11 @@
       "prudent layperson standard emergency department insurance",
       "emergency room visit denial insurance appeals",
       "delay in seeking emergency care outcomes"
+    ],
+    "google_scholar_search_terms": [
+      "prudent layperson standard emergency department insurance",
+      "emergency room visit denial insurance appeals",
+      "delay in seeking emergency care outcomes"
     ]
   },
   "ambulance-transport-denial": {
@@ -1747,6 +1937,11 @@
       "Emergency care protections are intended to prevent financial penalties for calling 911 in good faith."
     ],
     "pubmed_search_terms": [
+      "emergency medical services transport outcomes",
+      "ambulance use medical necessity criteria",
+      "out of network ambulance surprise billing"
+    ],
+    "google_scholar_search_terms": [
       "emergency medical services transport outcomes",
       "ambulance use medical necessity criteria",
       "out of network ambulance surprise billing"
@@ -1805,6 +2000,11 @@
         "url": "https://www.novocare.com/diabetes/help-with-costs/pap.html",
         "description": "Free medication for qualifying patients at or below 400% federal poverty level without insurance."
       }
+    ],
+    "google_scholar_search_terms": [
+      "semaglutide Ozempic type 2 diabetes cardiovascular outcomes",
+      "semaglutide GLP-1 receptor agonist glycemic control",
+      "GLP-1 agonist weight loss diabetes complications"
     ]
   },
   "glp1-denial-semaglutide-wegovy": {
@@ -1860,6 +2060,11 @@
         "url": "https://www.novocare.com/eligibility/wegovy-savings-card.html",
         "description": "Home delivery option for self-pay patients with access to savings programs."
       }
+    ],
+    "google_scholar_search_terms": [
+      "semaglutide Wegovy obesity randomized controlled trial",
+      "GLP-1 receptor agonist weight loss cardiovascular risk",
+      "pharmacologic treatment obesity guidelines semaglutide"
     ]
   },
   "glp1-denial-tirzepatide-mounjaro": {
@@ -1905,6 +2110,11 @@
         "url": "https://www.mounjaro.lilly.com/savings-resources",
         "description": "Pay as little as $25/month with commercial insurance coverage. Up to $150 off per fill."
       }
+    ],
+    "google_scholar_search_terms": [
+      "tirzepatide Mounjaro type 2 diabetes randomized trial",
+      "dual GIP GLP-1 agonist glycemic control weight",
+      "tirzepatide cardiovascular risk factors outcomes"
     ]
   },
   "glp1-denial-tirzepatide-zepbound": {
@@ -1959,9 +2169,13 @@
         "url": "https://www.lilly.com/lillydirect/medicines/zepbound",
         "description": "Order Zepbound vials direct from Lilly for $299/month (self-pay option)."
       }
+    ],
+    "google_scholar_search_terms": [
+      "tirzepatide obesity clinical trial weight loss",
+      "pharmacologic treatment obesity tirzepatide",
+      "anti-obesity medication cardiometabolic outcomes"
     ]
   },
-
   "asthma-biologic-denial-dupilumab": {
     "slug": "asthma-biologic-denial-dupilumab",
     "title": "Appealing Dupixent (Dupilumab) Asthma Denials",
@@ -2014,6 +2228,11 @@
         "url": "https://www.dupixent.com/support-savings/dupixent-my-way",
         "description": "Benefits investigation, prior auth support, and patient assistance for uninsured or coverage gaps."
       }
+    ],
+    "google_scholar_search_terms": [
+      "dupilumab severe asthma randomized trial",
+      "type 2 inflammation asthma biologic dupilumab",
+      "GINA guideline biologic therapy dupilumab"
     ]
   },
   "asthma-biologic-denial-omalizumab": {
@@ -2064,6 +2283,11 @@
         "url": "https://www.genentech-access.com/patient/brands/xolair/how-we-help-you.html",
         "description": "Free medication for qualifying uninsured or underinsured patients meeting income requirements."
       }
+    ],
+    "google_scholar_search_terms": [
+      "omalizumab allergic asthma exacerbation reduction",
+      "IgE targeted therapy severe persistent asthma",
+      "omalizumab guideline severe allergic asthma"
     ]
   },
   "asthma-biologic-denial-mepolizumab": {
@@ -2114,9 +2338,13 @@
         "url": "https://gskpaf.org/gsk/prescription-medicine-patient-assistance/nucala-uninsured/",
         "description": "Free medication for qualifying uninsured patients or those with Medicare."
       }
+    ],
+    "google_scholar_search_terms": [
+      "mepolizumab eosinophilic asthma randomized trial",
+      "IL-5 inhibition severe eosinophilic asthma outcomes",
+      "eosinophilic asthma biologic guideline mepolizumab"
     ]
   },
-
   "eczema-biologic-denial-dupilumab": {
     "slug": "eczema-biologic-denial-dupilumab",
     "title": "Appealing Dupixent (Dupilumab) Eczema Denials",
@@ -2169,6 +2397,11 @@
         "url": "https://www.dupixent.com/support-savings/dupixent-my-way",
         "description": "Benefits investigation, prior auth support, and patient assistance for uninsured or coverage gaps."
       }
+    ],
+    "google_scholar_search_terms": [
+      "dupilumab moderate severe atopic dermatitis trial",
+      "biologic therapy atopic dermatitis quality of life",
+      "atopic dermatitis guideline systemic therapy dupilumab"
     ]
   },
   "eczema-biologic-denial-upadacitinib": {
@@ -2224,9 +2457,13 @@
         "url": "https://www.abbvie.com/patients/patient-assistance.html",
         "description": "Free medication for qualifying uninsured, underinsured, or unemployed patients."
       }
+    ],
+    "google_scholar_search_terms": [
+      "upadacitinib atopic dermatitis randomized trial",
+      "JAK inhibitor atopic dermatitis safety efficacy",
+      "systemic therapy refractory atopic dermatitis upadacitinib"
     ]
   },
-
   "migraine-med-denial-emgality": {
     "slug": "migraine-med-denial-emgality",
     "title": "Appealing Emgality (Galcanezumab) Denials",
@@ -2275,6 +2512,11 @@
         "url": "https://www.lillycares.com/",
         "description": "Free medication for qualifying patients without commercial insurance and with low income, including some Medicare Part D patients."
       }
+    ],
+    "google_scholar_search_terms": [
+      "galcanezumab Emgality chronic migraine randomized",
+      "CGRP monoclonal antibody migraine prevention",
+      "migraine disability reduction CGRP therapy"
     ]
   },
   "migraine-med-denial-aimovig": {
@@ -2330,6 +2572,11 @@
         "url": "https://www.amgensafetynetfoundation.com/",
         "description": "Free medication for qualifying uninsured patients or those whose insurance excludes Aimovig."
       }
+    ],
+    "google_scholar_search_terms": [
+      "erenumab Aimovig migraine randomized controlled",
+      "CGRP receptor antagonist migraine prevention",
+      "long term safety erenumab migraine"
     ]
   },
   "migraine-med-denial-ajovy": {
@@ -2380,6 +2627,11 @@
         "url": "https://www.tevacares.org/",
         "description": "Free medication for qualifying uninsured or underinsured patients meeting income criteria."
       }
+    ],
+    "google_scholar_search_terms": [
+      "fremanezumab Ajovy episodic chronic migraine trial",
+      "CGRP monoclonal antibody migraine quarterly dosing",
+      "migraine guideline CGRP monoclonal antibody fremanezumab"
     ]
   },
   "migraine-med-denial-nurtec": {
@@ -2430,6 +2682,11 @@
         "url": "https://www.pfizerrxpathways.com/",
         "description": "Free medication for qualifying patients at or below 300% federal poverty level."
       }
+    ],
+    "google_scholar_search_terms": [
+      "rimegepant Nurtec acute migraine randomized",
+      "rimegepant preventive migraine dosing trial",
+      "gepant therapy migraine triptan contraindication"
     ]
   },
   "migraine-med-denial-ubrelvy": {
@@ -2480,9 +2737,13 @@
         "url": "https://www.abbvie.com/patients/patient-assistance.html",
         "description": "Free medication for qualifying patients who have difficulty paying for their medicine."
       }
+    ],
+    "google_scholar_search_terms": [
+      "ubrogepant Ubrelvy acute migraine randomized",
+      "gepant acute migraine cardiovascular risk",
+      "ubrogepant efficacy safety migraine treatment"
     ]
   },
-
   "insulin-pump-cgm-denial-dexcom": {
     "slug": "insulin-pump-cgm-denial-dexcom",
     "title": "Appealing Dexcom CGM Denials",
@@ -2531,6 +2792,11 @@
         "url": "https://www.dexcom.com/en-us/savings-center",
         "description": "Save over 50% on standard monthly cash price at participating pharmacies."
       }
+    ],
+    "google_scholar_search_terms": [
+      "Dexcom continuous glucose monitoring randomized trial",
+      "real time CGM type 1 type 2 diabetes outcomes",
+      "continuous glucose monitoring hypoglycemia risk reduction"
     ]
   },
   "insulin-pump-cgm-denial-freestyle-libre": {
@@ -2586,6 +2852,11 @@
         "url": "https://www.abbott.com/corpnewsroom/diabetes-care/at-a-crossroads-heres-how-to-get-help-for-diabetes.html",
         "description": "Free or reduced-cost sensors for patients meeting income and insurance criteria."
       }
+    ],
+    "google_scholar_search_terms": [
+      "FreeStyle Libre flash glucose monitoring trial",
+      "flash glucose monitoring time in range hypoglycemia",
+      "sensor based glucose monitoring insulin treated diabetes"
     ]
   },
   "insulin-pump-denial-omnipod": {
@@ -2636,6 +2907,11 @@
         "url": "https://www.omnipod.com/what-is-omnipod/omnipod-5",
         "description": "30-day free trial for new patients switching from injections or tubed pumps."
       }
+    ],
+    "google_scholar_search_terms": [
+      "insulin pump therapy glycemic control type 1",
+      "tubeless insulin pump Omnipod quality of life",
+      "insulin pump vs multiple daily injections outcomes"
     ]
   },
   "pep-denial-hiv-exposure": {
@@ -2704,9 +2980,13 @@
         "url": "https://nastad.org/prepcost-resources/state-prep-assistance-programs",
         "description": "State-level programs that may help with PEP and related lab costs for uninsured or under-insured people."
       }
+    ],
+    "google_scholar_search_terms": [
+      "HIV post exposure prophylaxis timing 72 hours 28 days regimen",
+      "nonoccupational HIV PEP guidelines United States",
+      "emergency HIV exposure prophylaxis clinical outcomes"
     ]
   },
-
   "doxy-pep-denial": {
     "slug": "doxy-pep-denial",
     "title": "Appealing Doxy-PEP (Doxycycline Post-Exposure Prophylaxis) Denials",
@@ -2748,6 +3028,11 @@
       "Guideline-based doxy-PEP uses targeted dosing after exposures, not continuous antibiotics, and includes regular STI screening and follow-up."
     ],
     "pubmed_search_terms": [
+      "doxycycline postexposure prophylaxis bacterial sexually transmitted infection MSM transgender women",
+      "CDC clinical guidelines doxy PEP 2024 syphilis chlamydia gonorrhea",
+      "doxy PEP randomized trial STI prevention"
+    ],
+    "google_scholar_search_terms": [
       "doxycycline postexposure prophylaxis bacterial sexually transmitted infection MSM transgender women",
       "CDC clinical guidelines doxy PEP 2024 syphilis chlamydia gonorrhea",
       "doxy PEP randomized trial STI prevention"
@@ -2795,6 +3080,11 @@
       "Advanced pneumatic compression devices are FDA-cleared for lymphedema treatment and are typically considered when standard garments and basic pumps are insufficient."
     ],
     "pubmed_search_terms": [
+      "advanced pneumatic compression device lymphedema Flexitouch randomized trial",
+      "home pneumatic compression lymphedema coverage criteria conservative therapy",
+      "head and neck lymphedema Flexitouch Plus clinical outcomes"
+    ],
+    "google_scholar_search_terms": [
       "advanced pneumatic compression device lymphedema Flexitouch randomized trial",
       "home pneumatic compression lymphedema coverage criteria conservative therapy",
       "head and neck lymphedema Flexitouch Plus clinical outcomes"
@@ -2846,6 +3136,11 @@
       "Clinical research shows that medication switching can lead to adverse outcomes, treatment failures, and increased healthcare costs — supporting the medical necessity of continuity of care."
     ],
     "pubmed_search_terms": [
+      "medication switching adverse outcomes treatment stability",
+      "formulary exclusion patient impact continuity care",
+      "non-medical switching legislation insurance coverage"
+    ],
+    "google_scholar_search_terms": [
       "medication switching adverse outcomes treatment stability",
       "formulary exclusion patient impact continuity care",
       "non-medical switching legislation insurance coverage"
@@ -2907,6 +3202,11 @@
         "url": "https://www.abbvie.com/patients/patient-assistance.html",
         "description": "Patient assistance for uninsured or underinsured patients who qualify based on income."
       }
+    ],
+    "google_scholar_search_terms": [
+      "adalimumab biosimilar switching efficacy safety",
+      "non-medical switching biologic therapy outcomes",
+      "humira biosimilar interchangeability patient outcomes"
     ]
   },
   "stelara-formulary-removal": {
@@ -2944,8 +3244,7 @@
         "answer": "Yes. Under 45 CFR § 156.122(c), you can request a non-formulary exception. However, some plans may require you to pay the difference in cost between Stelara and the preferred biosimilar."
       }
     ],
-    "evidence_snippets": [
-    ],
+    "evidence_snippets": [],
     "pubmed_search_terms": [
       "ustekinumab biosimilar switching efficacy safety",
       "non-medical switching biologic therapy inflammatory bowel disease",
@@ -2962,6 +3261,11 @@
         "url": "https://www.jnjpaf.org/",
         "description": "Patient assistance for uninsured or underinsured patients who meet income requirements."
       }
+    ],
+    "google_scholar_search_terms": [
+      "ustekinumab biosimilar switching efficacy safety",
+      "non-medical switching biologic therapy inflammatory bowel disease",
+      "stelara biosimilar interchangeability patient outcomes"
     ]
   },
   "entyvio-formulary-removal": {
@@ -3016,6 +3320,11 @@
         "url": "https://www.takeda.com/en-us/what-we-do/patient-services/",
         "description": "Patient assistance for uninsured or underinsured patients who qualify."
       }
+    ],
+    "google_scholar_search_terms": [
+      "vedolizumab inflammatory bowel disease switching biologics outcomes",
+      "IBD biologic switching disease flare anti-drug antibodies",
+      "vedolizumab gut selective mechanism ulcerative colitis Crohn"
     ]
   },
   "skyrizi-formulary-removal": {
@@ -3044,7 +3353,7 @@
     ],
     "evidence_snippets": [
       "Risankizumab (Skyrizi) selectively targets IL-23, showing high rates of skin clearance in plaque psoriasis and efficacy in psoriatic arthritis and Crohn's disease.",
-      "Switching biologics in psoriasis and psoriatic arthritis can result in disease flare and incomplete response to subsequent agents.",
+      "Switching biologics in psoriasis and psoriatic arthritis can result in disease flare and incomplete response to subsequent agents."
     ],
     "pubmed_search_terms": [
       "risankizumab plaque psoriasis IL-23 clinical trial",
@@ -3062,6 +3371,11 @@
         "url": "https://www.abbvie.com/patients/patient-assistance.html",
         "description": "Patient assistance for uninsured or underinsured patients who qualify based on income."
       }
+    ],
+    "google_scholar_search_terms": [
+      "risankizumab plaque psoriasis IL-23 clinical trial",
+      "biologic switching psoriasis loss of response",
+      "risankizumab psoriatic arthritis Crohn disease efficacy"
     ]
   },
   "tremfya-formulary-removal": {
@@ -3082,8 +3396,7 @@
     ],
     "how_we_help": "We help you document your treatment history with Tremfya, explain why switching biologics may trigger disease flares, and cite federal and state laws that protect stable patients from forced medication changes.",
     "cta": "Start your Tremfya continuity of care appeal.",
-    "faq": [
-    ],
+    "faq": [],
     "evidence_snippets": [
       "Guselkumab (Tremfya) selectively targets IL-23, showing high rates of skin clearance in plaque psoriasis and efficacy in psoriatic arthritis.",
       "Switching biologics in psoriasis can result in disease flare and may not achieve the same level of clearance as the original medication.",
@@ -3105,6 +3418,11 @@
         "url": "https://www.jnjpaf.org/",
         "description": "Patient assistance for uninsured or underinsured patients who meet income requirements."
       }
+    ],
+    "google_scholar_search_terms": [
+      "guselkumab plaque psoriasis IL-23 clinical trial",
+      "biologic switching psoriasis loss of response outcomes",
+      "guselkumab psoriatic arthritis efficacy safety"
     ]
   }
 }
