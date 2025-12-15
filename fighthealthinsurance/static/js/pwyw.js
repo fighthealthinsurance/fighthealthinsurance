@@ -87,6 +87,10 @@
             throw new Error(data.error || 'Unknown error');
           }
         } catch(e){
+          // Close the blank window if we opened one
+          if(checkoutWindow && !checkoutWindow.closed){
+            checkoutWindow.close();
+          }
           console.error('PWYW checkout error', e);
           alert('Sorry, there was an error processing your donation. Please try again.');
           submitBtn.disabled = false;
