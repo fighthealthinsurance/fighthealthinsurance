@@ -132,21 +132,26 @@ def safe_redirect(request, url):
         "checkout.stripe.com",
     ]
 
-    if not url.startswith("/"):
-        # For URLs, we need to validate the domain
-        from urllib.parse import urlparse
+    if url:
+        if url.startswith("//"):
+            raise SuspiciousOperation(f"Untrusted redirect: {url}")
+        elif not url.startswith("/"):
+            # For complete URLs, we need to validate the domain
+            from urllib.parse import urlparse
 
-        parsed_url = urlparse(url)
+            parsed_url = urlparse(url)
 
-        if parsed_url.netloc and parsed_url.netloc not in ALLOWED_HOSTS:
-            logger.warning(f"Suspicious redirect attempt to: {url}")
-            raise SuspiciousOperation(
-                f"Redirect to untrusted domain: {parsed_url.netloc}"
-            )
+            if parsed_url.netloc and parsed_url.netloc not in ALLOWED_HOSTS:
+                logger.warning(f"Suspicious redirect attempt to: {url}")
+                raise SuspiciousOperation(
+                    f"Redirect to untrusted domain: {parsed_url.netloc}"
+                )
 
         logger.info(f"Redirecting to: {url}")
 
         return HttpResponseRedirect(url)
+    else:
+        raise Exception(f"Asked to redirect to non-existing url.")
 
 
 class ProVersionView(generic.RedirectView):
@@ -1635,6 +1640,7 @@ def create_pwyw_checkout(request: HttpRequest) -> HttpResponse:
     try:
         data = json.loads(request.body)
         amount = int(data.get("amount", 0))
+        return_url = data.get("return_url", "")
 
         if amount <= 0:
             return HttpResponse(
@@ -1646,6 +1652,36 @@ def create_pwyw_checkout(request: HttpRequest) -> HttpResponse:
             )
 
         stripe.api_key = settings.STRIPE_API_SECRET_KEY
+
+        # Validate and construct success/cancel URLs
+        # Use return_url if provided and it's a relative path, otherwise use root
+        if (
+            return_url
+            and return_url.startswith("/")
+            and not return_url.startswith("//")
+        ):
+            base_url = request.build_absolute_uri(return_url)
+            # Add donation=success parameter
+            from urllib.parse import urlparse, urlunparse, parse_qs, urlencode
+
+            parsed = urlparse(base_url)
+            query_params = parse_qs(parsed.query)
+            query_params["donation"] = ["success"]
+            new_query = urlencode(query_params, doseq=True)
+            success_url = urlunparse(
+                (
+                    parsed.scheme,
+                    parsed.netloc,
+                    parsed.path,
+                    parsed.params,
+                    new_query,
+                    parsed.fragment,
+                )
+            )
+            cancel_url = base_url
+        else:
+            success_url = request.build_absolute_uri("/") + "?donation=success"
+            cancel_url = request.build_absolute_uri("/")
 
         # Create a checkout session with the specified amount
         checkout_session = stripe.checkout.Session.create(
@@ -1664,8 +1700,8 @@ def create_pwyw_checkout(request: HttpRequest) -> HttpResponse:
                 }
             ],
             mode="payment",
-            success_url=request.build_absolute_uri("/") + "?donation=success",
-            cancel_url=request.build_absolute_uri("/"),
+            success_url=success_url,
+            cancel_url=cancel_url,
             metadata={
                 "payment_type": "donation",
                 "donation_type": "pwyw",
