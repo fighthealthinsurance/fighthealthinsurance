@@ -37,6 +37,10 @@
           submitBtn.disabled = true;
           submitBtn.textContent = 'Processing...';
 
+          // Open window immediately (synchronously) to avoid popup blockers
+          // This works on both desktop and mobile Safari
+          const checkoutWindow = window.open('about:blank', '_blank');
+
           const response = await fetch('/v0/pwyw/checkout', {
             method: 'POST',
             headers: {
@@ -51,10 +55,24 @@
           const data = await response.json();
 
           if(data.success && data.url){
-            // Navigate to Stripe checkout - works on all browsers including mobile Safari
-            // User will return to this page after completing or canceling the checkout
-            window.location.href = data.url;
+            if(checkoutWindow && !checkoutWindow.closed){
+              // Navigate the already-opened window to the checkout URL
+              checkoutWindow.location.href = data.url;
+              if(thanks){
+                thanks.hidden = false;
+                thanks.textContent = 'Thanks! Complete your donation in the new tab, then close it to continue here.';
+              }
+              submitBtn.disabled = false;
+              submitBtn.textContent = 'Support (optional)';
+            } else {
+              // Fallback: if popup was blocked, navigate current window
+              window.location.href = data.url;
+            }
           } else if(data.success && data.message){
+            // Close the blank window if we opened one
+            if(checkoutWindow && !checkoutWindow.closed){
+              checkoutWindow.close();
+            }
             if(thanks){
               thanks.hidden = false;
               thanks.textContent = data.message;
@@ -62,6 +80,10 @@
             submitBtn.disabled = false;
             submitBtn.textContent = 'Support (optional)';
           } else {
+            // Close the blank window if we opened one
+            if(checkoutWindow && !checkoutWindow.closed){
+              checkoutWindow.close();
+            }
             throw new Error(data.error || 'Unknown error');
           }
         } catch(e){
