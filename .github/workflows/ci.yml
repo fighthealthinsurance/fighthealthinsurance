@@ -97,6 +97,13 @@ jobs:
       - name: Setup node
         uses: actions/setup-node@v3
 
+      - name: Cache npm dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.npm
+          key: npm-${{ hashFiles('fighthealthinsurance/static/js/package-lock.json') }}
+          restore-keys: npm-
+
       - name: Install system level packages
         run: sudo apt-get update && sudo apt-get install -y tesseract-ocr texlive libcairo2-dev libgirepository1.0-dev pkg-config python3-dev && sudo apt-get clean
 
@@ -107,13 +114,15 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v3
 
-      - name: Restore cached dependencies
+      - name: Cache uv dependencies
         uses: actions/cache@v3
         with:
-          path: .cache
-          key: .cache
+          path: |
+            ~/.cache/uv
+            .tox
+          key: uv-${{ matrix.python }}-${{ hashFiles('requirements.txt', 'requirements-dev.txt') }}
           restore-keys: |
-            .cache
+            uv-${{ matrix.python }}-
 
       - name: Install tox
         run: uv tool install tox --with tox-uv
@@ -158,6 +167,13 @@ jobs:
       - name: Setup node
         uses: actions/setup-node@v3
 
+      - name: Cache npm dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.npm
+          key: npm-${{ hashFiles('fighthealthinsurance/static/js/package-lock.json') }}
+          restore-keys: npm-
+
       - name: Install system level packages
         run: sudo apt-get update && sudo apt-get install -y tesseract-ocr texlive libcairo2-dev libgirepository1.0-dev pkg-config python3-dev && sudo apt-get clean
 
@@ -168,13 +184,15 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v3
 
-      - name: Restore cached dependencies
+      - name: Cache uv dependencies
         uses: actions/cache@v3
         with:
-          path: .cache
-          key: .cache
+          path: |
+            ~/.cache/uv
+            .tox
+          key: uv-${{ matrix.python }}-${{ hashFiles('requirements.txt', 'requirements-dev.txt') }}
           restore-keys: |
-            .cache
+            uv-${{ matrix.python }}-
 
       - name: Install tox
         run: uv tool install tox --with tox-uv
@@ -294,6 +312,13 @@ jobs:
       - name: Setup node
         uses: actions/setup-node@v3
 
+      - name: Cache npm dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.npm
+          key: npm-${{ hashFiles('fighthealthinsurance/static/js/package-lock.json') }}
+          restore-keys: npm-
+
       - name: Install system level packages
         run: sudo apt-get update && sudo apt-get install -y tesseract-ocr texlive libcairo2-dev libgirepository1.0-dev pkg-config python3-dev && sudo apt-get clean
 
@@ -304,13 +329,15 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v3
 
-      - name: Restore cached dependencies
+      - name: Cache uv dependencies
         uses: actions/cache@v3
         with:
-          path: .cache
-          key: .cache
+          path: |
+            ~/.cache/uv
+            .tox
+          key: uv-${{ matrix.python }}-${{ hashFiles('requirements.txt', 'requirements-dev.txt') }}
           restore-keys: |
-            .cache
+            uv-${{ matrix.python }}-
 
       - name: Install tox
         run: uv tool install tox --with tox-uv
