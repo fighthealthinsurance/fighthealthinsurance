@@ -44,23 +44,26 @@ class _HealthStatus:
         self._snapshot: HealthSnapshot = HealthSnapshot()
         self._timer: Optional[threading.Timer] = None
         self._initialized = False
+        self._lock = threading.Lock()  # Protect initialization and snapshot access
         # Fast mode for tests to avoid network stalls
         self._fast_mode = os.getenv("FHI_HEALTH_FAST", "0") == "1"
 
     def get_snapshot(self) -> Dict[str, Any]:
-        if not self._initialized:
-            self._refresh()
-            self._schedule_refresh()
-            self._initialized = True
+        # Use lock to prevent race condition on first access
+        with self._lock:
+            if not self._initialized:
+                self._refresh()
+                self._schedule_refresh()
+                self._initialized = True
 
-        return {
-            "alive_models": self._snapshot.alive_models,
-            "last_checked": self._snapshot.last_checked,
-            "details": [
-                {"name": d.name, "ok": d.ok, "error": d.error}
-                for d in self._snapshot.details
-            ],
-        }
+            return {
+                "alive_models": self._snapshot.alive_models,
+                "last_checked": self._snapshot.last_checked,
+                "details": [
+                    {"name": d.name, "ok": d.ok, "error": d.error}
+                    for d in self._snapshot.details
+                ],
+            }
 
     def _schedule_refresh(self):
         try:
@@ -137,7 +140,9 @@ class _HealthStatus:
             details=details,
         )
 
-        self._snapshot = snapshot
+        # Use lock to safely update snapshot from background thread
+        with self._lock:
+            self._snapshot = snapshot
 
         # Re-schedule next refresh
         self._schedule_refresh()
