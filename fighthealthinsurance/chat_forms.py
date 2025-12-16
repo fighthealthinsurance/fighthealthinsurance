@@ -118,3 +118,19 @@ class UserConsentForm(forms.Form):
             attrs={"class": "form-check-input", "id": "subscribe"}
         ),
     )
+
+    referral_source = forms.ChoiceField(
+        required=False,
+        choices=[
+            ("", "-- Please select --"),
+            ("Search Engine (Google, Bing, etc.)", "Search Engine (Google, Bing, etc.)"),
+            ("Social Media (Facebook, Twitter, etc.)", "Social Media (Facebook, Twitter, etc.)"),
+            ("Friend or Family", "Friend or Family"),
+            ("Healthcare Provider", "Healthcare Provider"),
+            ("News Article or Blog", "News Article or Blog"),
+            ("Other", "Other"),
+        ],
+        widget=forms.Select(
+            attrs={"class": "form-control", "id": "referral_source"}
+        ),
+    )

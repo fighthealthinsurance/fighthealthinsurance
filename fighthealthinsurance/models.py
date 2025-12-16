@@ -112,6 +112,7 @@ class MailingListSubscriber(models.Model):
     unsubscribe_token = models.CharField(
         max_length=100, default=sekret_gen, unique=False
     )
+    referral_source = models.CharField(max_length=300, default="", blank=True)
 
     def __str__(self):
         return self.email
@@ -1304,6 +1305,7 @@ class ChatLeads(ExportModelOperationsMixin("ChatLeads"), models.Model):  # type:
     microsite_slug = models.CharField(
         max_length=100, null=True, blank=True, db_index=True
     )
+    referral_source = models.CharField(max_length=300, null=True, blank=True)
 
     class Meta:
         verbose_name = "Chat Lead"

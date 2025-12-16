@@ -1007,9 +1007,12 @@ class InitialProcessView(generic.FormView):
             fname = self.request.POST.get("fname", "")
             lname = self.request.POST.get("lname", "")
             name = f"{fname} {lname}".strip()
+            referral_source = self.request.POST.get("referral_source", "")
             defaults = {"comments": "From appeal flow"}
             if len(name) > 2:
                 defaults["name"] = name
+            if referral_source:
+                defaults["referral_source"] = referral_source
             # Use get_or_create to avoid duplicate subscriptions
             try:
                 models.MailingListSubscriber.objects.get_or_create(
@@ -1613,12 +1616,14 @@ class ChatUserConsentView(FormView):
         self.request.session.save()
         if form.cleaned_data.get("subscribe"):
             name = f"{form.cleaned_data.get('first_name')} {form.cleaned_data.get('last_name')}"
+            referral_source = form.cleaned_data.get("referral_source", "")
             # Does the user want to subscribe to the newsletter?
             models.MailingListSubscriber.objects.create(
                 email=form.cleaned_data.get("email"),
                 phone=form.cleaned_data.get("phone"),
                 name=name,
                 comments="From chat consent form",
+                referral_source=referral_source,
             )
 
         # No need to save form data to database - it will be saved in browser localStorage via JavaScript
