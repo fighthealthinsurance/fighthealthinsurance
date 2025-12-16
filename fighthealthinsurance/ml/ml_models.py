@@ -2271,4 +2271,76 @@ class DeepInfra(RemoteFullOpenLike):
         ]
 
 
+class TailscaleModelBackend(RemoteFullOpenLike):
+    """
+    Backend that auto-discovers model servers via Tailscale DNS.
+
+    Looks for hosts named 'azure-{model-name}' in the Tailscale network
+    and adds them as available backends.
+    """
+
+    # Models we try to discover via Tailscale DNS
+    DISCOVERABLE_MODELS = [
+        ("fhi-legacy", "TotallyLegitCo/fighthealthinsurance_model_v0.5"),
+        ("fhi-new", "/models/fhi-2025-may-0.3-float16-q8-vllm-compressed"),
+        ("llama-scout", "meta-llama/Llama-4-Scout-17B-16E-Instruct"),
+    ]
+
+    _discovered_hosts: dict[str, str] = {}
+
+    def quality(self) -> int:
+        return 150  # Higher quality since these are dedicated hosts
+
+    def __init__(self, model: str, host: str, port: str = "80"):
+        self.host = host
+        self.port = port
+        self.url = f"http://{host}:{port}/v1"
+        super().__init__(
+            self.url,
+            token="",
+            model=model,
+            max_len=4096 * 20,
+        )
+
+    @property
+    def external(self):
+        return False
+
+    @classmethod
+    def _resolve_tailscale_host(cls, hostname: str) -> Optional[str]:
+        """Try to resolve a Tailscale hostname via DNS."""
+        import socket
+
+        try:
+            # Try to resolve the hostname
+            socket.gethostbyname(hostname)
+            return hostname
+        except socket.gaierror:
+            return None
+
+    @classmethod
+    def models(cls) -> List[ModelDescription]:
+        """Discover available models via Tailscale DNS."""
+        discovered = []
+
+        for friendly_name, model_path in cls.DISCOVERABLE_MODELS:
+            # Try azure-{name} pattern
+            hostname = f"azure-{friendly_name}"
+            if cls._resolve_tailscale_host(hostname):
+                logger.info(f"Discovered Tailscale model backend: {hostname}")
+                cls._discovered_hosts[friendly_name] = hostname
+                discovered.append(
+                    ModelDescription(
+                        cost=5,  # Low cost since it's our own infrastructure
+                        name=f"ts-{friendly_name}",
+                        internal_name=model_path,
+                        model=cls(model=model_path, host=hostname),
+                    )
+                )
+
+        if discovered:
+            logger.info(f"Tailscale discovery found {len(discovered)} model backends")
+        return discovered
+
+
 candidate_model_backends: list[type[RemoteModel]] = all_concrete_subclasses(RemoteModel)  # type: ignore[type-abstract]
