@@ -33,6 +33,7 @@ from fighthealthinsurance.utils import best_within_timelimit
 
 # Tool call regexes
 pubmed_query_terms_regex = r"[\[\*]{0,4}pubmed[ _]?query:{0,1}\s*(.*?)\s*[\*\]]{0,4}"
+scholar_query_terms_regex = r"[\[\*]{0,4}(?:google[ _]?)?scholar[ _]?query:{0,1}\s*(.*?)\s*[\*\]]{0,4}"
 # Updated regex to match both formats: **medicaid_info {JSON}** and medicaid_info {JSON}
 medicaid_info_lookup_regex = r"(?:\*\*)?medicaid_info\s*(\{[^}]*\})\s*(?:\*\*)?"
 # Medicaid eligibility info
@@ -48,6 +49,7 @@ create_or_update_prior_auth_regex = (
 )
 tools_regex = [
     pubmed_query_terms_regex,
+    scholar_query_terms_regex,
     medicaid_info_lookup_regex,
     medicaid_eligibility_regex,
     create_or_update_appeal_regex,
@@ -760,6 +762,78 @@ class ChatInterface:
         context = (
             context_part + pubmed_context_str if context_part else pubmed_context_str
         )
+        
+        # Handle Google Scholar separately (can be called independently or alongside PubMed)
+        try:
+            # Extract the Google Scholar query terms using regex
+            smatch: Optional[re.Match[str]] = re.search(
+                scholar_query_terms_regex, response_text, flags=re.IGNORECASE
+            )
+            # If we match on a tool call, remove the tool call from the result we give to the user
+            if smatch:
+                scholar_query_terms = smatch.group(1).strip()
+                # Remove the tool call from response if not already cleaned by PubMed handler
+                if smatch.group(0) in response_text:
+                    cleaned_response = response_text.replace(smatch.group(0), "").strip()
+                    response_text = cleaned_response
+                
+                if "your search terms" in scholar_query_terms:
+                    logger.debug(f"Got bad Google Scholar Query {scholar_query_terms}")
+                    return response_text, context
+                # Short circuit if no query terms
+                if len(scholar_query_terms.strip()) == 0:
+                    return (response_text, context)
+                    
+                await self.send_status_message(
+                    f"Searching Google Scholar for: {scholar_query_terms}..."
+                )
+                
+                scholar_article_ids_awaitable = (
+                    self.google_scholar_tools.find_google_scholar_article_ids_for_query(
+                        query=scholar_query_terms, timeout=30.0
+                    )
+                )
+                scholar_article_ids = await scholar_article_ids_awaitable
+                
+                if scholar_article_ids and len(scholar_article_ids) > 0:
+                    # Limit to top few results
+                    scholar_article_ids = scholar_article_ids[:6]
+                    await self.send_status_message(
+                        f"Found {len(scholar_article_ids)} Google Scholar articles."
+                    )
+                    scholar_articles_data = await self.google_scholar_tools.get_articles(scholar_article_ids)
+                    scholar_summaries = []
+                    for art in scholar_articles_data:
+                        summary_text = art.snippet if art.snippet else art.text
+                        if art.title and summary_text:
+                            await self.send_status_message(
+                                f"Found Google Scholar article: {art.title}"
+                            )
+                            citation_info = f" (Cited by {art.cited_by_count})" if art.cited_by_count else ""
+                            scholar_summaries.append(
+                                f"Title: {art.title}{citation_info}\\nSummary: {summary_text[:500]}..."
+                            )
+                    if scholar_summaries:
+                        scholar_context_str = (
+                            "\\n\\nGoogle Scholar results:\\n"
+                            + "\\n\\n".join(scholar_summaries)
+                            + "\\n"
+                        )
+                        context = (
+                            context + scholar_context_str if context else scholar_context_str
+                        )
+                else:
+                    await self.send_status_message(
+                        "No detailed information found from Google Scholar."
+                    )
+        except Exception as e:
+            logger.warning(
+                f"Error while processing Google Scholar query: {e}. Continuing with the original response."
+            )
+            await self.send_status_message(
+                "Error while processing Google Scholar query. Continuing with the original response."
+            )
+        
         logger.debug(f"Return with context {context}.")
         return response_text, context
 
