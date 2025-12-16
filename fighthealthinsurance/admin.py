@@ -57,8 +57,10 @@ class ChatLeadsAdmin(admin.ModelAdmin):
         "name",
         "company",
         "email",
+        "referral_source",
     )
-    search_fields = ("company", "name")
+    search_fields = ("company", "name", "referral_source")
+    list_filter = ("referral_source",)
     ordering = ("-created_at",)
 
 
@@ -176,9 +178,9 @@ class InterestedProfessionalAdmin(admin.ModelAdmin):
 class MailingListSubscriberAdmin(admin.ModelAdmin):
     """Admin configuration for MailingListSubscriber model."""
 
-    list_display = ("id", "email", "name", "signup_date")
-    search_fields = ("email", "name")
-    list_filter = ("signup_date",)
+    list_display = ("id", "email", "name", "signup_date", "referral_source")
+    search_fields = ("email", "name", "referral_source")
+    list_filter = ("signup_date", "referral_source")
     ordering = ("-signup_date",)
 
 
