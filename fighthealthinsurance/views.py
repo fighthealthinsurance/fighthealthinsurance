@@ -1008,11 +1008,12 @@ class InitialProcessView(generic.FormView):
             lname = self.request.POST.get("lname", "")
             name = f"{fname} {lname}".strip()
             referral_source = self.request.POST.get("referral_source", "")
-            defaults = {"comments": "From appeal flow"}
+            defaults = {
+                "comments": "From appeal flow",
+                "referral_source": referral_source,
+            }
             if len(name) > 2:
                 defaults["name"] = name
-            if referral_source:
-                defaults["referral_source"] = referral_source
             # Use get_or_create to avoid duplicate subscriptions
             try:
                 models.MailingListSubscriber.objects.get_or_create(

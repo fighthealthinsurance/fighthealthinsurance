@@ -1,4 +1,5 @@
 from django import forms
+from fighthealthinsurance.forms import REFERRAL_SOURCE_CHOICES
 
 
 class UserConsentForm(forms.Form):
@@ -121,15 +122,7 @@ class UserConsentForm(forms.Form):
 
     referral_source = forms.ChoiceField(
         required=False,
-        choices=[
-            ("", "-- Please select --"),
-            ("Search Engine (Google, Bing, etc.)", "Search Engine (Google, Bing, etc.)"),
-            ("Social Media (Facebook, Twitter, etc.)", "Social Media (Facebook, Twitter, etc.)"),
-            ("Friend or Family", "Friend or Family"),
-            ("Healthcare Provider", "Healthcare Provider"),
-            ("News Article or Blog", "News Article or Blog"),
-            ("Other", "Other"),
-        ],
+        choices=REFERRAL_SOURCE_CHOICES,
         widget=forms.Select(
             attrs={"class": "form-control", "id": "referral_source"}
         ),
