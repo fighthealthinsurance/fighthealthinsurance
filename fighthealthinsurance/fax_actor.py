@@ -104,7 +104,11 @@ class FaxActor:
         # Convert UUID object to string if needed
         if not isinstance(uuid_val, str):
             uuid_val = str(uuid_val)
-        fax = FaxesToSend.objects.filter(uuid=uuid_val, hashed_email=hashed_email).get()
+        try:
+            fax = FaxesToSend.objects.filter(uuid=uuid_val, hashed_email=hashed_email).get()
+        except FaxesToSend.DoesNotExist:
+            print(f"Fax not found for uuid={uuid_val}, hashed_email={hashed_email}")
+            return False
         return self.do_send_fax_object(fax)
 
     def _update_fax_for_sending(self, fax):
@@ -121,9 +125,12 @@ class FaxActor:
         print(f"Checking if we should notify user of result {fax_success}")
         if fax.professional:
             print(f"Professional fax, no need to notify user -- updating appeal")
-            appeal = fax.for_appeal.get()
-            appeal.sent = fax_success
-            appeal.save()
+            try:
+                appeal = fax.for_appeal.get()
+                appeal.sent = fax_success
+                appeal.save()
+            except Exception as e:
+                print(f"Could not update appeal for fax {fax}: {e}")
             return True
         fax_redo_link = "https://www.fighthealthinsurance.com" + reverse(
             "fax-followup",
