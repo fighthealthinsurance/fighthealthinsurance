@@ -1411,7 +1411,7 @@ class RemoteOpenLike(RemoteModel):
                             if result and result[0]:
                                 raw_response = result
                                 break
-                        except:
+                        except Exception:
                             pass
                     # If the first result was not valid grab the pending task.
                     for task in pending:
@@ -1420,7 +1420,7 @@ class RemoteOpenLike(RemoteModel):
                             if result and result[0]:
                                 raw_response = result
                                 break
-                        except:
+                        except Exception:
                             pass
                 else:
                     raw_response = await self.__timeout_infer(
