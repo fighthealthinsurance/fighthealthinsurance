@@ -4,6 +4,7 @@ import datetime
 import pytest
 from unittest.mock import patch, MagicMock
 from django.core import mail
+from django.template.loader import render_to_string
 from django.utils import timezone
 
 from fighthealthinsurance.models import Denial, FollowUpSched
@@ -171,3 +172,98 @@ class TestFollowUpEmailSender:
         mock_send_email.assert_called_once()
         call_kwargs = mock_send_email.call_args[1]
         assert call_kwargs["to_email"] == test_followup_sched.email
+
+
+@pytest.mark.django_db
+class TestFollowUpEmailTemplates:
+    """Test that follow-up email templates render correctly and contain expected content."""
+
+    def test_followup_html_contains_how_to_help_link(self):
+        """Test that the HTML follow-up email contains the how-to-help link."""
+        context = {
+            "followup_link": "https://example.com/followup/123",
+            "selected_appeal": True,
+        }
+        html_content = render_to_string("emails/followup.html", context)
+
+        assert "fighthealthinsurance.com/how-to-help" in html_content
+        assert "Thank you for being part of our community" in html_content
+        assert "Share your experience" in html_content
+        assert "Follow us on social media" in html_content
+
+    def test_followup_txt_contains_how_to_help_link(self):
+        """Test that the plain text follow-up email contains the how-to-help link."""
+        context = {
+            "followup_link": "https://example.com/followup/123",
+            "selected_appeal": True,
+        }
+        txt_content = render_to_string("emails/followup.txt", context)
+
+        assert "fighthealthinsurance.com/how-to-help" in txt_content
+        assert "Thank you for being part of our community" in txt_content
+
+    def test_fax_followup_html_contains_how_to_help_link(self):
+        """Test that the HTML fax follow-up email contains the how-to-help link."""
+        context = {
+            "name": "Test User",
+            "success": True,
+            "fax_redo_link": "https://example.com/fax/redo/123",
+        }
+        html_content = render_to_string("emails/fax_followup.html", context)
+
+        assert "fighthealthinsurance.com/how-to-help" in html_content
+        assert "Thank you for being part of our community" in html_content
+
+    def test_fax_followup_txt_contains_how_to_help_link(self):
+        """Test that the plain text fax follow-up email contains the how-to-help link."""
+        context = {
+            "name": "Test User",
+            "success": True,
+            "fax_redo_link": "https://example.com/fax/redo/123",
+        }
+        txt_content = render_to_string("emails/fax_followup.txt", context)
+
+        assert "fighthealthinsurance.com/how-to-help" in txt_content
+        assert "Thank you for being part of our community" in txt_content
+
+    def test_followup_html_shows_correct_message_for_selected_appeal(self):
+        """Test that the HTML email shows the correct message when appeal was selected."""
+        context = {
+            "followup_link": "https://example.com/followup/123",
+            "selected_appeal": True,
+        }
+        html_content = render_to_string("emails/followup.html", context)
+
+        assert "checking in to see if you were able to submit" in html_content
+
+    def test_followup_html_shows_correct_message_for_no_appeal(self):
+        """Test that the HTML email shows the correct message when no appeal was selected."""
+        context = {
+            "followup_link": "https://example.com/followup/123",
+            "selected_appeal": False,
+        }
+        html_content = render_to_string("emails/followup.html", context)
+
+        assert "didn't generate an appeal that worked" in html_content
+
+    def test_fax_followup_success_message(self):
+        """Test that the fax follow-up shows success message when fax succeeded."""
+        context = {
+            "name": "Test User",
+            "success": True,
+            "fax_redo_link": "https://example.com/fax/redo/123",
+        }
+        html_content = render_to_string("emails/fax_followup.html", context)
+
+        assert "fax was sent successfully" in html_content
+
+    def test_fax_followup_failure_message(self):
+        """Test that the fax follow-up shows failure message when fax failed."""
+        context = {
+            "name": "Test User",
+            "success": False,
+            "fax_redo_link": "https://example.com/fax/redo/123",
+        }
+        html_content = render_to_string("emails/fax_followup.html", context)
+
+        assert "problem sending the fax" in html_content
