@@ -321,9 +321,9 @@ class GoogleScholarTools(object):
     async def find_context_for_denial(self, denial: Denial, timeout=70.0) -> str:
         result = await self._find_context_for_denial(denial, timeout)
         if result is not None and len(result) > 1:
-            # Store in a new field if needed - for now we'll skip this
-            # Could add google_scholar_context field to Denial model
-            pass
+            await Denial.objects.filter(denial_id=denial.denial_id).aupdate(
+                scholar_context=result
+            )
         return result
 
     async def _find_context_for_denial(self, denial: Denial, timeout=70.0) -> str:
@@ -331,6 +331,8 @@ class GoogleScholarTools(object):
         Kind of hacky RAG routine that uses Google Scholar.
         Similar to PubMed version but for Google Scholar articles.
         """
+        if denial.scholar_context and len(denial.scholar_context) > 1:
+            return denial.scholar_context
         procedure_opt = denial.procedure if denial.procedure else ""
         diagnosis_opt = denial.diagnosis if denial.diagnosis else ""
         query = f"{procedure_opt} {diagnosis_opt}".strip()

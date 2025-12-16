@@ -691,6 +691,8 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     # pubmed articles to be used to create the input context to the appeal
     pubmed_ids_json = models.JSONField(null=True, blank=True)
     pubmed_context = models.TextField(null=True, blank=True)
+    # google scholar context for the appeal
+    scholar_context = models.TextField(null=True, blank=True)
     generated_questions = models.JSONField(null=True, blank=True)
     # ML-generated citations for the appeal
     ml_citation_context = models.JSONField(null=True, blank=True)

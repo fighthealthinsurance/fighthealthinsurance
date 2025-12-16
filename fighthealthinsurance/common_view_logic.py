@@ -51,6 +51,7 @@ from fighthealthinsurance import stripe_utils
 from fhi_users.models import ProfessionalUser, UserDomain
 from fhi_users import emails as fhi_emails
 from .pubmed_tools import PubMedTools
+from .google_scholar_tools import GoogleScholarTools
 from .utils import (
     check_call,
     send_fallback_email,
@@ -1374,9 +1375,40 @@ class DenialCreatorHelper:
                             f"Failed to find PubMed articles for denial {denial_id}: {e}"
                         )
 
-                # Fire and forget the PubMed search task
-                logger.debug("Starting pubmed search & building speculative context.")
+                async def find_google_scholar_articles():
+                    """
+                    Asynchronously searches for Google Scholar articles related to a denial's diagnosis and procedure.
+
+                    Attempts to find relevant articles using GoogleScholarTools with a 120-second timeout. Logs a warning if the search times out, is cancelled, or encounters an error.
+                    """
+                    try:
+                        scholar_tool = GoogleScholarTools()
+                        # Find related articles based on diagnosis and procedure
+                        # Adding proper timeout handling with asyncio.wait_for
+                        await asyncio.wait_for(
+                            scholar_tool.find_google_scholar_articles_for_denial(
+                                denial, timeout=110.0
+                            ),
+                            timeout=120.0,  # Enforce same timeout at asyncio level
+                        )
+
+                    except asyncio.TimeoutError:
+                        logger.warning(
+                            f"Google Scholar article search timed out for denial {denial_id} after 120s"
+                        )
+                    except asyncio.exceptions.CancelledError:
+                        logger.opt(exception=True).debug(
+                            f"Cancelled Google Scholar article search for denial {denial_id}"
+                        )
+                    except Exception as e:
+                        logger.opt(exception=True).warning(
+                            f"Failed to find Google Scholar articles for denial {denial_id}: {e}"
+                        )
+
+                # Fire and forget the PubMed and Google Scholar search tasks
+                logger.debug("Starting pubmed & google scholar search & building speculative context.")
                 await fire_and_forget_in_new_threadpool(find_pubmed_articles())
+                await fire_and_forget_in_new_threadpool(find_google_scholar_articles())
                 # Fire and forget the building the speculative context
                 await fire_and_forget_in_new_threadpool(
                     cls.build_speculative_context(denial_id)
@@ -1735,6 +1767,7 @@ class DenialCreatorHelper:
 class AppealsBackendHelper:
     regex_denial_processor = ProcessDenialRegex()
     pmt = PubMedTools()
+    gst = GoogleScholarTools()
 
     @classmethod
     async def generate_appeals(cls, parameters) -> AsyncIterator[str]:
@@ -2003,6 +2036,7 @@ class AppealsBackendHelper:
 
         # Get pubmed and ml citations context
         pubmed_context: Optional[str] = None
+        scholar_context: Optional[str] = None
         ml_citation_context: Optional[Any] = None
 
         # Get PubMed context
@@ -2021,6 +2055,10 @@ class AppealsBackendHelper:
             pubmed_context_awaitable = asyncio.wait_for(
                 cls.pmt.find_context_for_denial(denial), timeout=40
             )
+            
+            scholar_context_awaitable = asyncio.wait_for(
+                cls.gst.find_context_for_denial(denial), timeout=40
+            )
 
             ml_citation_context_awaitable = asyncio.wait_for(
                 MLCitationsHelper.generate_citations_for_denial(
@@ -2028,11 +2066,12 @@ class AppealsBackendHelper:
                 ),
                 timeout=40,
             )
-            # Await both contexts so we can use co-operative multitasking
+            # Await all three contexts so we can use co-operative multitasking
             try:
                 logger.debug("Gathering contexts")
                 results = await asyncio.gather(
                     pubmed_context_awaitable,
+                    scholar_context_awaitable,
                     ml_citation_context_awaitable,
                     return_exceptions=True,
                 )
@@ -2041,7 +2080,11 @@ class AppealsBackendHelper:
                 else:
                     pubmed_context = None
                 if isinstance(results[1], str):
-                    ml_citation_context = results[1]
+                    scholar_context = results[1]
+                else:
+                    scholar_context = None
+                if isinstance(results[2], str):
+                    ml_citation_context = results[2]
                 else:
                     ml_citation_context = None
                 logger.debug("Success")
@@ -2054,10 +2097,11 @@ class AppealsBackendHelper:
                 except:
                     denial = await denial_query.aget()
                 pubmed_context = denial.pubmed_context
+                scholar_context = denial.scholar_context
                 ml_citation_context = denial.ml_citation_context
                 logger.debug("Used saved contexts")
         else:
-            logger.debug("Too many retries, skipping ML/pubmed ctx")
+            logger.debug("Too many retries, skipping ML/pubmed/scholar ctx")
 
         async def save_appeal(appeal_text: str) -> dict[str, str]:
             # Save all of the proposed appeals, so we can use RL later.
