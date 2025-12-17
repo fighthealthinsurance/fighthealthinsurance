@@ -1213,8 +1213,9 @@ class DenialCreatorHelper:
             try:
                 your_state = cls.zip_engine.by_zipcode(zip).state
                 denial.your_state = your_state
-            except:
-                # Default to no state
+            except Exception as e:
+                # Default to no state - zip lookup can fail for invalid/unknown zips
+                logger.debug(f"Zip code lookup failed for {zip}: {e}")
                 your_state = None
         # Optionally:
         # Fire off some async requests to the model to extract info.
@@ -1656,8 +1657,9 @@ class DenialCreatorHelper:
                 await DenialTypesRelation.objects.acreate(
                     denial=denial, denial_type=dt, src=await cls.regex_src()
                 )
-            except:
-                logger.opt(exception=True).debug(f"Failed setting denial type")
+            except Exception as e:
+                # Can fail if relation already exists (duplicate)
+                logger.opt(exception=True).debug(f"Failed setting denial type: {e}")
         logger.debug(f"Done setting denial types")
 
     @classmethod
@@ -1886,9 +1888,9 @@ class AppealsBackendHelper:
                     ] = denial.primary_professional.get_full_name()
                 if denial.domain:
                     subs["[Professional Address]"] = denial.domain.get_address()
-            except:
+            except Exception as e:
                 logger.opt(exception=True).error(
-                    f"Error fetching info for denial sub {denial.denial_id}"
+                    f"Error fetching info for denial sub {denial.denial_id}: {e}"
                 )
             for k, v in subs.items():
                 if v and v != "" and v != "UNKNOWN":
@@ -2063,7 +2065,8 @@ class AppealsBackendHelper:
                 try:
                     # Added in Django 5.1
                     await denial.arefresh_from_db(from_queryset=denial_query)
-                except:
+                except AttributeError:
+                    # arefresh_from_db with from_queryset not available in older Django
                     denial = await denial_query.aget()
                 pubmed_context = denial.pubmed_context
                 ml_citation_context = denial.ml_citation_context
@@ -2142,9 +2145,10 @@ class StripeWebhookHelper:
     @staticmethod
     def handle_checkout_session_completed(request, session):
         try:
+            # Handle both Stripe object and dict access patterns
             try:
                 metadata = session.metadata
-            except:
+            except (AttributeError, TypeError):
                 metadata = session["metadata"]
 
             payment_type: Optional[str] = None
@@ -2196,9 +2200,10 @@ class StripeWebhookHelper:
         try:
             # TODO: More complete handling
             logger.debug(f"Checkout session expired: {session}")
+            # Handle both Stripe object and dict access patterns
             try:
                 metadata = session.metadata
-            except:
+            except (AttributeError, TypeError):
                 metadata = session["metadata"]
             payment_type = metadata.get("payment_type")
             item = "Fight Health Insurance / Fight paperwork"
@@ -2233,21 +2238,22 @@ class StripeWebhookHelper:
                     }
                 )
                 finish_link = f"{finish_base_link}?{params}"
+            # Try to extract email from various session locations
             email: Optional[str] = None
             try:
                 try:
                     email = session.customer_email
-                except:
+                except (AttributeError, TypeError):
                     email = session["customer_email"]
-            except:
+            except (KeyError, TypeError):
                 pass
             if email is None:
                 try:
                     try:
                         email = session.customer_details.email
-                    except:
+                    except (AttributeError, TypeError):
                         email = session["customer_details"]["email"]
-                except:
+                except (KeyError, TypeError, AttributeError):
                     pass
             if email is None:
                 logger.debug(

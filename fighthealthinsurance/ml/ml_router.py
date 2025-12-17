@@ -178,7 +178,7 @@ class MLRouter(object):
     def cheapest(self, name: str) -> list[RemoteModelLike]:
         try:
             return [self.models_by_name[name][0]]
-        except:
+        except (KeyError, IndexError):
             return []
 
     async def summarize(

@@ -8,12 +8,13 @@ https://docs.djangoproject.com/en/4.1/howto/deployment/asgi/
 """
 
 import os
+import sys
 from fighthealthinsurance.env_utils import get_env_variable
 
-
-print("Setting default envs")
+# Use stderr for startup messages since logging may not be configured yet
+print("Setting default envs", file=sys.stderr)
 env = get_env_variable("DJANGO_CONFIGURATION", get_env_variable("ENVIRONMENT", "Dev"))
-print(f"Using env {env}")
+print(f"Using env {env}", file=sys.stderr)
 
 os.environ.setdefault(
     "DJANGO_SETTINGS_MODULE",

@@ -10,7 +10,7 @@ import sys
 import traceback
 from concurrent.futures import Future
 from dataclasses import dataclass
-from typing import Callable, List, Optional, Tuple, Iterable, Union
+from typing import Callable, ClassVar, List, Optional, Tuple, Iterable, Union
 from loguru import logger
 import requests
 
@@ -33,7 +33,7 @@ class RemoteModelLike(DenialBase):
 
     # Keywords that indicate Medicaid/Medicare-related conversation
     # Note: All keywords should be lowercase for case-insensitive matching
-    MEDICAID_KEYWORDS = [
+    MEDICAID_KEYWORDS: ClassVar[List[str]] = [
         # Generic terms
         "medicaid",
         "medicare",
@@ -1429,7 +1429,7 @@ class RemoteOpenLike(RemoteModel):
                             if result and result[0]:
                                 raw_response = result
                                 break
-                        except:
+                        except Exception:
                             pass
                     # If the first result was not valid grab the pending task.
                     for task in pending:
@@ -1438,7 +1438,7 @@ class RemoteOpenLike(RemoteModel):
                             if result and result[0]:
                                 raw_response = result
                                 break
-                        except:
+                        except Exception:
                             pass
                 else:
                     raw_response = await self.__timeout_infer(
@@ -2228,6 +2228,10 @@ class RemotePerplexity(RemoteFullOpenLike):
             ),
         ]
 
+    def model_is_ok(self):
+        # Hack: perplexity doesn't list models so we're assuming it's up.
+        return True
+
 
 class DeepInfra(RemoteFullOpenLike):
     """Use DeepInfra."""
@@ -2287,6 +2291,113 @@ class DeepInfra(RemoteFullOpenLike):
                 internal_name="deepseek-ai/DeepSeek-R1-Turbo",
             ),
         ]
+
+
+class TailscaleModelBackend(RemoteFullOpenLike):
+    """
+    Backend that auto-discovers model servers via Tailscale DNS.
+
+    Looks for hosts named 'azure-{model-name}' in the Tailscale network
+    and adds them as available backends.
+    """
+
+    # Models we try to discover via Tailscale DNS
+    DISCOVERABLE_MODELS: ClassVar[List[Tuple[str, str]]] = [
+        ("fhi-legacy", "TotallyLegitCo/fighthealthinsurance_model_v0.5"),
+        ("fhi-new", "/models/fhi-2025-may-0.3-float16-q8-vllm-compressed"),
+        ("llama-scout", "meta-llama/Llama-4-Scout-17B-16E-Instruct"),
+    ]
+
+    _discovered_hosts: ClassVar[dict[str, str]] = {}
+
+    # DNS resolution timeout in seconds
+    DNS_TIMEOUT: ClassVar[float] = 2.0
+
+    def quality(self) -> int:
+        return 150  # Higher quality since these are dedicated hosts
+
+    def __init__(self, model: str, host: str, port: str = "80"):
+        self.host = host
+        self.port = port
+        self.url = f"http://{host}:{port}/v1"
+        super().__init__(
+            self.url,
+            token="",
+            model=model,
+            max_len=4096 * 20,
+        )
+
+    @property
+    def external(self):
+        return False
+
+    @classmethod
+    async def _resolve_tailscale_host_async(
+        cls, hostname: str, timeout: float = 2.0
+    ) -> Optional[str]:
+        """
+        Try to resolve a Tailscale hostname via DNS asynchronously with timeout.
+
+        Args:
+            hostname: The hostname to resolve
+            timeout: Maximum time to wait for DNS resolution in seconds
+
+        Returns:
+            The hostname if resolution succeeds, None otherwise
+        """
+        import socket
+
+        loop = asyncio.get_event_loop()
+        try:
+            # Run DNS resolution in executor with timeout
+            async with async_timeout(timeout):
+                await loop.run_in_executor(None, socket.gethostbyname, hostname)
+            return hostname
+        except (socket.gaierror, asyncio.TimeoutError, TimeoutError):
+            return None
+
+    @classmethod
+    def _resolve_tailscale_host(cls, hostname: str) -> Optional[str]:
+        """
+        Try to resolve a Tailscale hostname via DNS synchronously with timeout.
+
+        This is a sync wrapper for use in the models() classmethod.
+        """
+        import socket
+        import concurrent.futures
+
+        try:
+            # Use ThreadPoolExecutor to add timeout to blocking DNS call
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(socket.gethostbyname, hostname)
+                future.result(timeout=cls.DNS_TIMEOUT)
+            return hostname
+        except (socket.gaierror, concurrent.futures.TimeoutError, TimeoutError):
+            return None
+
+    @classmethod
+    def models(cls) -> List[ModelDescription]:
+        """Discover available models via Tailscale DNS."""
+        discovered = []
+
+        for friendly_name, model_path in cls.DISCOVERABLE_MODELS:
+            # Try azure-{name} pattern
+            hostname = f"azure-{friendly_name}"
+            if cls._resolve_tailscale_host(hostname):
+                logger.info(f"Discovered Tailscale model backend: {hostname}")
+                cls._discovered_hosts[friendly_name] = hostname
+                discovered.append(
+                    ModelDescription(
+                        cost=5,  # Low cost since it's our own infrastructure
+                        name=f"ts-{friendly_name}",
+                        internal_name=model_path,
+                        model=cls(model=model_path, host=hostname),
+                    )
+                )
+
+        if discovered:
+            logger.info(f"Tailscale discovery found {len(discovered)} model backends")
+        return discovered
 
 
 candidate_model_backends: list[type[RemoteModel]] = all_concrete_subclasses(RemoteModel)  # type: ignore[type-abstract]
