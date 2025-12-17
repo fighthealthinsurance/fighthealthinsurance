@@ -75,7 +75,7 @@ class FaxActor:
     def send_delayed_faxes(self) -> Tuple[int, int]:
         from fighthealthinsurance.models import FaxesToSend
 
-        target_time = timezone.now() - timedelta(hours=1)
+        target_time = timezone.now() - timedelta(hours=4)
         print(f"Sending faxes older than target: {target_time}")
 
         delayed_faxes = FaxesToSend.objects.filter(
@@ -125,13 +125,14 @@ class FaxActor:
         print(f"Checking if we should notify user of result {fax_success}")
         if fax.professional:
             print(f"Professional fax, no need to notify user -- updating appeal")
-            try:
-                appeal = fax.for_appeal.get()
+            appeal = fax.for_appeal
+            if appeal is not None:
                 appeal.sent = fax_success
                 appeal.save()
-            except Exception as e:
-                print(f"Could not update appeal for fax {fax}: {e}")
-            return True
+                return True
+            else:
+                print(f"No appeal found for professional {fax}?!?")
+                return True
         fax_redo_link = "https://www.fighthealthinsurance.com" + reverse(
             "fax-followup",
             kwargs={

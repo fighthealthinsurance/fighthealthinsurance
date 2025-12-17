@@ -381,6 +381,7 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
         except json.JSONDecodeError as e:
             logger.warning(f"Invalid JSON received in ongoing chat websocket: {e}")
             await self.send(json.dumps({"error": "Invalid JSON format"}))
+            await self.close()
             return
         logger.debug(f"Received message for ongoing chat {data}")
 
