@@ -58,11 +58,12 @@ class ChatLeadsAdmin(admin.ModelAdmin):
         "company",
         "email",
         "referral_source",
-        "referral_source_details",
     )
     search_fields = ("company", "name", "referral_source", "referral_source_details")
     list_filter = ("referral_source",)
     ordering = ("-created_at",)
+    fields = ("name", "email", "phone", "company", "drug", "microsite_slug", "referral_source", "referral_source_details", "consent_to_contact", "agreed_to_terms", "session_id", "created_at")
+    readonly_fields = ("session_id", "created_at")
 
 
 @admin.register(PriorAuthRequest)
@@ -179,10 +180,12 @@ class InterestedProfessionalAdmin(admin.ModelAdmin):
 class MailingListSubscriberAdmin(admin.ModelAdmin):
     """Admin configuration for MailingListSubscriber model."""
 
-    list_display = ("id", "email", "name", "signup_date", "referral_source", "referral_source_details")
+    list_display = ("id", "email", "name", "signup_date", "referral_source")
     search_fields = ("email", "name", "referral_source", "referral_source_details")
     list_filter = ("signup_date", "referral_source")
     ordering = ("-signup_date",)
+    fields = ("email", "name", "phone", "referral_source", "referral_source_details", "comments", "signup_date", "unsubscribe_token")
+    readonly_fields = ("signup_date", "unsubscribe_token")
 
 
 @admin.register(FollowUpType)
