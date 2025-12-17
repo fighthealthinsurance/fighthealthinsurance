@@ -1008,7 +1008,9 @@ class InitialProcessView(generic.FormView):
             lname = self.request.POST.get("lname", "")
             name = f"{fname} {lname}".strip()
             referral_source = self.request.POST.get("referral_source", "")
-            referral_source_details = self.request.POST.get("referral_source_details", "")
+            referral_source_details = self.request.POST.get(
+                "referral_source_details", ""
+            )
             defaults = {
                 "comments": "From appeal flow",
                 "referral_source": referral_source,
@@ -1620,7 +1622,9 @@ class ChatUserConsentView(FormView):
         if form.cleaned_data.get("subscribe"):
             name = f"{form.cleaned_data.get('first_name')} {form.cleaned_data.get('last_name')}"
             referral_source = form.cleaned_data.get("referral_source", "")
-            referral_source_details = form.cleaned_data.get("referral_source_details", "")
+            referral_source_details = form.cleaned_data.get(
+                "referral_source_details", ""
+            )
             # Does the user want to subscribe to the newsletter?
             models.MailingListSubscriber.objects.create(
                 email=form.cleaned_data.get("email"),

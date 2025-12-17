@@ -35,10 +35,17 @@ class RemoteModelLike(DenialBase):
     # Note: All keywords should be lowercase for case-insensitive matching
     MEDICAID_KEYWORDS = [
         # Generic terms
-        "medicaid", "medicare", "medi-cal", "medical assistance",
+        "medicaid",
+        "medicare",
+        "medi-cal",
+        "medical assistance",
         "medical assistance program",
-        "eligibility", "eligible", "enrollment", "enroll",
-        "work requirement", "80 hours",
+        "eligibility",
+        "eligible",
+        "enrollment",
+        "enroll",
+        "work requirement",
+        "80 hours",
         # State-specific Medicaid program names (comprehensive list)
         # Alaska
         "denalicare",
@@ -51,7 +58,8 @@ class RemoteModelLike(DenialBase):
         # Delaware
         "diamond state health plan",
         # Hawaii
-        "med-quest", "medquest",
+        "med-quest",
+        "medquest",
         # Illinois
         "healthchoice illinois",
         # Indiana
@@ -59,7 +67,8 @@ class RemoteModelLike(DenialBase):
         # Indiana
         "iowa medicaid",
         # Kansas
-        "kansas medical assistance", "kansas medical assistance program",
+        "kansas medical assistance",
+        "kansas medical assistance program",
         # Maine
         "mainecare",
         # Massachusetts
@@ -79,7 +88,10 @@ class RemoteModelLike(DenialBase):
         # Tennessee
         "tenncare",
         # Texas
-        "star+plus", "star plus", "star medicaid", "texas star",
+        "star+plus",
+        "star plus",
+        "star medicaid",
+        "texas star",
         # Vermont
         "green mountain care",
         # Virginia
@@ -91,10 +103,16 @@ class RemoteModelLike(DenialBase):
         # Wyoming
         "equality care",
         # Common questions and phrases
-        "qualify for medicaid", "qualify for medicare",
-        "am i eligible", "can i get medicaid", "can i get medicare",
-        "government insurance", "public insurance", "state insurance",
-        "government health", "public health insurance",
+        "qualify for medicaid",
+        "qualify for medicare",
+        "am i eligible",
+        "can i get medicaid",
+        "can i get medicare",
+        "government insurance",
+        "public insurance",
+        "state insurance",
+        "government health",
+        "public health insurance",
     ]
 
     def quality(self) -> int:

@@ -123,9 +123,7 @@ class UserConsentForm(forms.Form):
     referral_source = forms.ChoiceField(
         required=False,
         choices=REFERRAL_SOURCE_CHOICES,
-        widget=forms.Select(
-            attrs={"class": "form-control", "id": "referral_source"}
-        ),
+        widget=forms.Select(attrs={"class": "form-control", "id": "referral_source"}),
     )
 
     referral_source_details = forms.CharField(
