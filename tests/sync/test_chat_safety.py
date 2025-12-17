@@ -1,6 +1,5 @@
 """Tests for chat safety features including crisis detection and false promise filtering."""
 
-import pytest
 from django.test import TestCase
 
 from fighthealthinsurance.chat_interface import (
