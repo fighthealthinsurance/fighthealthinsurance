@@ -113,6 +113,7 @@ class MailingListSubscriber(models.Model):
         max_length=100, default=sekret_gen, unique=False
     )
     referral_source = models.CharField(max_length=300, default="", blank=True)
+    referral_source_details = models.TextField(default="", blank=True)
 
     def __str__(self):
         return self.email
@@ -1306,6 +1307,7 @@ class ChatLeads(ExportModelOperationsMixin("ChatLeads"), models.Model):  # type:
         max_length=100, null=True, blank=True, db_index=True
     )
     referral_source = models.CharField(max_length=300, null=True, blank=True)
+    referral_source_details = models.TextField(null=True, blank=True)
 
     class Meta:
         verbose_name = "Chat Lead"

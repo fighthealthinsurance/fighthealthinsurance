@@ -127,3 +127,15 @@ class UserConsentForm(forms.Form):
             attrs={"class": "form-control", "id": "referral_source"}
         ),
     )
+
+    referral_source_details = forms.CharField(
+        required=False,
+        max_length=500,
+        widget=forms.TextInput(
+            attrs={
+                "class": "form-control",
+                "id": "referral_source_details",
+                "placeholder": "E.g., which search engine, social media platform, or person's name",
+            }
+        ),
+    )

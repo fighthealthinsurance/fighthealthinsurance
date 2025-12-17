@@ -30,6 +30,7 @@ class ReferralSourceAppealFlowTest(TestCase):
                 "fname": "John",
                 "lname": "Doe",
                 "referral_source": "Search Engine (Google, Bing, etc.)",
+                "referral_source_details": "Google",
             },
             follow=True,
         )
@@ -37,9 +38,10 @@ class ReferralSourceAppealFlowTest(TestCase):
         # Check that we're redirected to the next step
         self.assertEqual(response.status_code, 200)
 
-        # Verify the subscriber data includes referral_source
+        # Verify the subscriber data includes referral_source and details
         subscriber = MailingListSubscriber.objects.get(email="test@example.com")
         self.assertEqual(subscriber.referral_source, "Search Engine (Google, Bing, etc.)")
+        self.assertEqual(subscriber.referral_source_details, "Google")
 
     def test_subscription_without_referral_source(self):
         """Test that submitting without referral_source works fine."""
@@ -62,9 +64,10 @@ class ReferralSourceAppealFlowTest(TestCase):
         # Check that we're redirected to the next step
         self.assertEqual(response.status_code, 200)
 
-        # Verify the subscriber data has empty referral_source
+        # Verify the subscriber data has empty referral_source and details
         subscriber = MailingListSubscriber.objects.get(email="test2@example.com")
         self.assertEqual(subscriber.referral_source, "")
+        self.assertEqual(subscriber.referral_source_details, "")
 
 
 class ReferralSourceChatLeadsTest(TestCase):
@@ -85,6 +88,7 @@ class ReferralSourceChatLeadsTest(TestCase):
             "consent_to_contact": True,
             "agreed_to_terms": True,
             "referral_source": "Friend or Family",
+            "referral_source_details": "My friend Jane",
         }
 
         response = self.client.post(self.url, data, format="json")
@@ -92,9 +96,10 @@ class ReferralSourceChatLeadsTest(TestCase):
         # Check that the request was successful
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
-        # Verify the chat lead data includes referral_source
+        # Verify the chat lead data includes referral_source and details
         chat_lead = ChatLeads.objects.get(email="test@example.com")
         self.assertEqual(chat_lead.referral_source, "Friend or Family")
+        self.assertEqual(chat_lead.referral_source_details, "My friend Jane")
 
     def test_chat_lead_without_referral_source(self):
         """Test that submitting without referral_source works fine."""
@@ -113,9 +118,10 @@ class ReferralSourceChatLeadsTest(TestCase):
         # Check that the request was successful
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
-        # Verify the chat lead data has null referral_source
+        # Verify the chat lead data has null referral_source and details
         chat_lead = ChatLeads.objects.get(email="test2@example.com")
         self.assertIsNone(chat_lead.referral_source)
+        self.assertIsNone(chat_lead.referral_source_details)
 
 
 class ReferralSourceChatConsentTest(TestCase):
@@ -137,6 +143,7 @@ class ReferralSourceChatConsentTest(TestCase):
                 "privacy_policy": "on",
                 "subscribe": "on",
                 "referral_source": "Healthcare Provider",
+                "referral_source_details": "Dr. Smith's office",
             },
             follow=True,
         )
@@ -144,9 +151,10 @@ class ReferralSourceChatConsentTest(TestCase):
         # Check that we're redirected to chat interface
         self.assertEqual(response.status_code, 200)
 
-        # Verify the subscriber data includes referral_source
+        # Verify the subscriber data includes referral_source and details
         subscriber = MailingListSubscriber.objects.get(email="chattest@example.com")
         self.assertEqual(subscriber.referral_source, "Healthcare Provider")
+        self.assertEqual(subscriber.referral_source_details, "Dr. Smith's office")
 
     def test_chat_consent_without_referral_source(self):
         """Test that chat consent form works without referral_source."""
@@ -167,6 +175,7 @@ class ReferralSourceChatConsentTest(TestCase):
         # Check that we're redirected to chat interface
         self.assertEqual(response.status_code, 200)
 
-        # Verify the subscriber data has empty referral_source
+        # Verify the subscriber data has empty referral_source and details
         subscriber = MailingListSubscriber.objects.get(email="chattest2@example.com")
         self.assertEqual(subscriber.referral_source, "")
+        self.assertEqual(subscriber.referral_source_details, "")
