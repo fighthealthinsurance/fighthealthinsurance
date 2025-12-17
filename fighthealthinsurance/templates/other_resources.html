@@ -144,14 +144,16 @@ Other Resources
         </div>
     </div>
 
-    <!-- Coping Resources Section with Bingo Board -->
+    <!-- Coping Resources Section with Link to Bingo -->
     <div class="row">
         <div class="col-12">
             <h4 class="text-fhi-green mb-3">Coping Resources</h4>
             <p class="mb-3">
                 Sometimes you need to vent about the frustrating reality of insurance denials. Here's a bit of humor to help you cope:
             </p>
-            {% include 'partials/bingo_board.html' %}
+            <ul class="mb-4">
+                <li><a href="{% url 'bingo' %}" class="link">Insurance Bullshit Bingo</a> - A humorous take on common denial reasons</li>
+            </ul>
         </div>
     </div>
 

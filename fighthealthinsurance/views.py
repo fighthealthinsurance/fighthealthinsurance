@@ -226,15 +226,16 @@ class PBSNewsHourView(generic.TemplateView):
     template_name = "as_seen_on_pbs.html"
 
 
-class OtherResourcesView(generic.TemplateView):
-    """Page showing external health policy resources including RSS feeds."""
+class BingoView(generic.TemplateView):
+    """Insurance Bullshit Bingo page - a humorous coping resource."""
 
-    template_name = "other_resources.html"
+    template_name = "bingo.html"
 
     def get_context_data(self, **kwargs):
+        """Add bingo board data to the context."""
         context = super().get_context_data(**kwargs)
-
-        # Generate a 5x5 bingo board with random phrases for coping resources
+        
+        # Generate a 5x5 bingo board with random phrases
         # Use 24 phrases (excluding center which is "FREE SPACE")
         selected_phrases = random.sample(BINGO_PHRASES, min(24, len(BINGO_PHRASES)))
         
@@ -253,6 +254,16 @@ class OtherResourcesView(generic.TemplateView):
             bingo_board.append(bingo_row)
         
         context['bingo_board'] = bingo_board
+        return context
+
+
+class OtherResourcesView(generic.TemplateView):
+    """Page showing external health policy resources including RSS feeds."""
+
+    template_name = "other_resources.html"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
 
         # Fetch RSS feeds synchronously to avoid async issues
         try:
