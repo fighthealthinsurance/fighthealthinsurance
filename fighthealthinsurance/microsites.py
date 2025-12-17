@@ -84,6 +84,9 @@ class Microsite:
         # Optional Medicare flag to indicate Medicare-specific content
         self.medicare: bool = data.get("medicare", False)
 
+        # Optional blog post URL to link to related blog content
+        self.blog_post_url: Optional[str] = data.get("blog_post_url")
+
     def __repr__(self) -> str:
         return f"<Microsite: {self.slug}>"
 

@@ -19,16 +19,25 @@
                     <h3 class="hero-tagline">{{ microsite.tagline }}</h3>
                     <h1 class="hero-headline">{{ microsite.hero_h1 }}</h1>
                     <p class="hero-subcopy">{{ microsite.hero_subhead }}</p>
+                    {% if microsite.blog_post_url %}
+                    <div class="hero-cta-group mb-3">
+                        <a href="{{ microsite.blog_post_url }}" class="btn btn-outline-primary">
+                            <i class="bi bi-book"></i> Read Our Guide
+                        </a>
+                    </div>
+                    {% endif %}
+                    {% if not microsite.medicare %}
                     <div class="hero-cta-group">
                         <a href="{% url 'scan' %}?default_procedure={{ microsite.default_procedure|urlencode }}&microsite_slug={{ microsite.slug|urlencode }}&microsite_title={{ microsite.title|urlencode }}{% if microsite.default_condition %}&default_condition={{ microsite.default_condition|urlencode }}{% endif %}"
                            class="section-btn btn btn-default smoothScroll primary-cta">
                             Start Your Appeal
                         </a>
                     </div>
+                    {% endif %}
                     <div class="hero-cta-group hero-cta-secondary">
                         <a href="{% url 'chat' %}?default_procedure={{ microsite.default_procedure|urlencode }}{% if microsite.default_condition %}&default_condition={{ microsite.default_condition|urlencode }}{% endif %}{% if microsite.medicare %}&medicare=true{% endif %}&microsite_slug={{ microsite.slug|urlencode }}"
-                           class="btn btn-outline-green smoothScroll secondary-cta">
-                            AI Chat
+                           class="btn {% if microsite.medicare %}btn-default section-btn primary-cta{% else %}btn-outline-green secondary-cta{% endif %} smoothScroll">
+                            Chat with AI Assistant
                         </a>
                     </div>
                     {% if microsite.image %}
@@ -224,17 +233,29 @@
     <div class="container">
         <div class="row">
             <div class="col-lg-8 mx-auto text-center">
+                {% if microsite.medicare %}
+                <h2 class="mb-3">Need Help Understanding Medicare Work Requirements?</h2>
+                <p class="lead mb-4">Chat with our AI assistant to get personalized guidance on navigating the new requirements.</p>
+                {% else %}
                 <h2 class="mb-3">Ready to Fight Your {{ microsite.default_procedure }} Denial?</h2>
                 <p class="lead mb-4">Our free AI-powered tool will help you generate a compelling appeal letter in minutes.</p>
+                {% endif %}
                 <div class="d-flex justify-content-center gap-3 flex-wrap">
+                    {% if not microsite.medicare %}
                     <a href="{% url 'scan' %}?default_procedure={{ microsite.default_procedure|urlencode }}&microsite_slug={{ microsite.slug|urlencode }}&microsite_title={{ microsite.title|urlencode }}{% if microsite.default_condition %}&default_condition={{ microsite.default_condition|urlencode }}{% endif %}"
                        class="btn btn-green btn-lg">
                         Start Your Appeal
                     </a>
+                    {% endif %}
                     <a href="{% url 'chat' %}?default_procedure={{ microsite.default_procedure|urlencode }}{% if microsite.default_condition %}&default_condition={{ microsite.default_condition|urlencode }}{% endif %}{% if microsite.medicare %}&medicare=true{% endif %}&microsite_slug={{ microsite.slug|urlencode }}"
-                       class="btn btn-outline-green btn-lg">
+                       class="btn {% if microsite.medicare %}btn-green{% else %}btn-outline-green{% endif %} btn-lg">
                         Chat with AI Assistant
                     </a>
+                    {% if microsite.blog_post_url %}
+                    <a href="{{ microsite.blog_post_url }}" class="btn btn-outline-primary btn-lg">
+                        <i class="bi bi-book"></i> Read Our Guide
+                    </a>
+                    {% endif %}
                 </div>
             </div>
         </div>

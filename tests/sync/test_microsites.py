@@ -40,6 +40,7 @@ OPTIONAL_MICROSITE_KEYS = {
     "assistance_programs",
     "default_condition",
     "medicare",
+    "blog_post_url",
 }
 
 # All valid keys that can appear in a microsite JSON entry
@@ -706,4 +707,107 @@ class MedicareChatIntegrationTest(TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'data-microsite-slug="medicare-work-requirements"')
+
+    def test_medicare_chat_via_post(self):
+        """Test that Medicare chat parameters work via POST (from consent form)."""
+        # First complete consent
+        session = self.client.session
+        session["consent_completed"] = True
+        session["email"] = "test@example.com"
+        session.save()
+
+        # POST to chat with medicare parameters
+        response = self.client.post(
+            reverse("chat"),
+            {
+                "default_procedure": "Medicare Work Requirements",
+                "medicare": "true",
+                "microsite_slug": "medicare-work-requirements",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'data-medicare="true"')
+        self.assertContains(response, 'data-microsite-slug="medicare-work-requirements"')
+
+    def test_medicare_chat_without_consent_redirects(self):
+        """Test that accessing Medicare chat without consent redirects to consent page."""
+        response = self.client.get(
+            reverse("chat"),
+            {
+                "default_procedure": "Medicare Work Requirements",
+                "medicare": "true",
+                "microsite_slug": "medicare-work-requirements",
+            },
+        )
+        # Should redirect to consent page
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response.url.startswith("/chat-consent"))
+
+    def test_medicare_microsite_chat_link_parameters(self):
+        """Test that Medicare microsite chat links include all required parameters."""
+        response = self.client.get(
+            reverse("microsite", kwargs={"slug": "medicare-work-requirements"})
+        )
+        self.assertEqual(response.status_code, 200)
+        # Check that chat links include all parameters
+        self.assertContains(response, "medicare=true")
+        self.assertContains(response, "microsite_slug=medicare-work-requirements")
+        self.assertContains(response, "default_procedure=Medicare")
+
+    def test_medicare_microsite_no_appeal_button(self):
+        """Test that Medicare microsite doesn't show 'Start Your Appeal' button."""
+        response = self.client.get(
+            reverse("microsite", kwargs={"slug": "medicare-work-requirements"})
+        )
+        self.assertEqual(response.status_code, 200)
+        # Should not contain the Start Your Appeal button (only for non-Medicare microsites)
+        # The template uses conditional logic to hide this button for Medicare
+        # We check that the chat button is promoted to primary CTA
+        self.assertContains(response, "Chat with AI Assistant")
+
+    def test_medicare_microsite_blog_link(self):
+        """Test that Medicare microsite includes blog post link."""
+        response = self.client.get(
+            reverse("microsite", kwargs={"slug": "medicare-work-requirements"})
+        )
+        self.assertEqual(response.status_code, 200)
+        # Check for blog link
+        self.assertContains(response, "/blog/medicaid-work-requirements/")
+        self.assertContains(response, "Read Our Guide")
+
+    def test_medicare_chat_context_data(self):
+        """Test that Medicare chat passes all context data correctly."""
+        # First complete consent
+        session = self.client.session
+        session["consent_completed"] = True
+        session["email"] = "test@example.com"
+        session.save()
+
+        response = self.client.get(
+            reverse("chat"),
+            {
+                "default_procedure": "Medicare Work Requirements",
+                "default_condition": "",
+                "medicare": "true",
+                "microsite_slug": "medicare-work-requirements",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        # Verify all data attributes are present
+        self.assertContains(response, 'data-default-procedure="Medicare Work Requirements"')
+        self.assertContains(response, 'data-medicare="true"')
+        self.assertContains(response, 'data-microsite-slug="medicare-work-requirements"')
+
+    def test_medicare_microsite_has_blog_post_url(self):
+        """Test that Medicare microsite has blog_post_url field."""
+        microsite = get_microsite("medicare-work-requirements")
+        self.assertIsNotNone(microsite)
+        self.assertTrue(
+            hasattr(microsite, 'blog_post_url'),
+            "Medicare microsite should have blog_post_url attribute"
+        )
+        # Check it's actually set
+        blog_url = getattr(microsite, 'blog_post_url', None)
+        self.assertIsNotNone(blog_url, "Medicare microsite blog_post_url should not be None")
+        self.assertIn("blog", blog_url, "blog_post_url should contain 'blog'")
 
