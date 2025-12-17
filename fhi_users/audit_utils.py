@@ -1,0 +1,503 @@
+"""
+Utilities for audit logging including IP geolocation, ASN lookup, and user agent parsing.
+
+This module provides:
+1. IP to ASN/ISP lookup (using geoip2fast for speed)
+2. IP to country/region lookup
+3. User agent parsing and simplification
+4. Network type classification (residential vs datacenter vs VPN)
+5. Helper functions for creating audit log entries
+
+Privacy considerations:
+- Consumer users: Only ASN and country stored (no IP, no state)
+- Professional users: Full details stored for audit compliance
+"""
+
+import re
+import typing
+from dataclasses import dataclass
+from functools import lru_cache
+from typing import Optional, Tuple
+
+from django.http import HttpRequest
+from loguru import logger
+
+# Try to import geoip2fast, fall back gracefully if not installed
+try:
+    from geoip2fast import GeoIP2Fast
+
+    GEOIP_AVAILABLE = True
+except ImportError:
+    GEOIP_AVAILABLE = False
+    logger.warning("geoip2fast not installed - IP geolocation will be unavailable")
+
+# Try to import user_agents for UA parsing
+try:
+    from user_agents import parse as parse_user_agent
+
+    USER_AGENTS_AVAILABLE = True
+except ImportError:
+    USER_AGENTS_AVAILABLE = False
+    logger.warning("user-agents not installed - user agent parsing will be limited")
+
+
+from .audit_models import (
+    NetworkType,
+    UserType,
+    KNOWN_DATACENTER_ASNS,
+    KNOWN_VPN_ASNS,
+)
+
+
+@dataclass
+class IPInfo:
+    """Information extracted from an IP address."""
+
+    ip_address: str
+    asn_number: Optional[int] = None
+    asn_org: Optional[str] = None
+    country_code: Optional[str] = None
+    state_region: Optional[str] = None
+    city: Optional[str] = None
+    network_type: NetworkType = NetworkType.UNKNOWN
+    is_datacenter: bool = False
+    is_vpn: bool = False
+
+
+@dataclass
+class UserAgentInfo:
+    """Parsed user agent information."""
+
+    full_user_agent: str
+    browser_family: Optional[str] = None
+    browser_version: Optional[str] = None
+    os_family: Optional[str] = None
+    os_version: Optional[str] = None
+    device_family: Optional[str] = None
+    is_mobile: bool = False
+    is_tablet: bool = False
+    is_bot: bool = False
+
+    @property
+    def simplified(self) -> str:
+        """Return simplified user agent string (browser/OS only)."""
+        parts = []
+        if self.browser_family:
+            parts.append(self.browser_family)
+        if self.os_family:
+            parts.append(self.os_family)
+        return "/".join(parts) if parts else "Unknown"
+
+
+# Singleton GeoIP reader - initialized lazily
+_geoip_reader: Optional["GeoIP2Fast"] = None
+
+
+def _get_geoip_reader() -> Optional["GeoIP2Fast"]:
+    """Get or create the GeoIP reader singleton."""
+    global _geoip_reader
+    if not GEOIP_AVAILABLE:
+        return None
+    if _geoip_reader is None:
+        try:
+            # GeoIP2Fast includes its own data file
+            _geoip_reader = GeoIP2Fast()
+            logger.info("GeoIP2Fast reader initialized")
+        except Exception as e:
+            logger.error(f"Failed to initialize GeoIP2Fast: {e}")
+            return None
+    return _geoip_reader
+
+
+def get_client_ip(request: HttpRequest) -> Optional[str]:
+    """
+    Extract the client IP address from a Django request.
+
+    Handles common proxy headers (X-Forwarded-For, X-Real-IP) and falls back
+    to REMOTE_ADDR.
+
+    Args:
+        request: Django HttpRequest object
+
+    Returns:
+        Client IP address string or None if not determinable
+    """
+    # Check for proxy headers first
+    x_forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
+    if x_forwarded_for:
+        # Take the first IP in the chain (original client)
+        ip = x_forwarded_for.split(",")[0].strip()
+        if ip:
+            return ip
+
+    x_real_ip = request.META.get("HTTP_X_REAL_IP")
+    if x_real_ip:
+        return x_real_ip.strip()
+
+    # Fall back to REMOTE_ADDR
+    return request.META.get("REMOTE_ADDR")
+
+
+def lookup_ip_info(ip_address: str) -> IPInfo:
+    """
+    Look up geographic and network information for an IP address.
+
+    Uses geoip2fast for fast lookups with built-in data.
+
+    Args:
+        ip_address: IPv4 or IPv6 address string
+
+    Returns:
+        IPInfo dataclass with available information
+    """
+    info = IPInfo(ip_address=ip_address)
+
+    if not ip_address:
+        return info
+
+    reader = _get_geoip_reader()
+    if reader is None:
+        return info
+
+    try:
+        result = reader.lookup(ip_address)
+        if result and not result.is_error:
+            info.country_code = result.country_code if hasattr(result, "country_code") else None
+            info.asn_number = result.asn if hasattr(result, "asn") else None
+            info.asn_org = result.asn_name if hasattr(result, "asn_name") else None
+
+            # Classify network type based on ASN
+            if info.asn_number:
+                info.network_type = classify_network_type(info.asn_number, info.asn_org)
+                info.is_datacenter = info.network_type == NetworkType.DATACENTER
+                info.is_vpn = info.network_type == NetworkType.VPN
+
+    except Exception as e:
+        logger.debug(f"GeoIP lookup failed for {ip_address}: {e}")
+
+    return info
+
+
+def classify_network_type(
+    asn_number: Optional[int], asn_org: Optional[str] = None
+) -> NetworkType:
+    """
+    Classify the network type based on ASN number and organization name.
+
+    Args:
+        asn_number: Autonomous System Number
+        asn_org: Organization name associated with the ASN
+
+    Returns:
+        NetworkType enum value
+    """
+    if not asn_number:
+        return NetworkType.UNKNOWN
+
+    # Check known lists first
+    if asn_number in KNOWN_VPN_ASNS:
+        return NetworkType.VPN
+    if asn_number in KNOWN_DATACENTER_ASNS:
+        return NetworkType.DATACENTER
+
+    # Heuristic classification based on org name
+    if asn_org:
+        org_lower = asn_org.lower()
+
+        # Datacenter/cloud indicators
+        datacenter_keywords = [
+            "amazon",
+            "aws",
+            "google",
+            "microsoft",
+            "azure",
+            "digitalocean",
+            "linode",
+            "vultr",
+            "hetzner",
+            "ovh",
+            "hosting",
+            "server",
+            "cloud",
+            "datacenter",
+            "data center",
+            "colocation",
+            "colo",
+        ]
+        if any(kw in org_lower for kw in datacenter_keywords):
+            return NetworkType.DATACENTER
+
+        # VPN indicators
+        vpn_keywords = [
+            "vpn",
+            "private internet",
+            "express vpn",
+            "nord",
+            "proton",
+            "mullvad",
+            "surfshark",
+        ]
+        if any(kw in org_lower for kw in vpn_keywords):
+            return NetworkType.VPN
+
+        # Mobile carrier indicators
+        mobile_keywords = [
+            "mobile",
+            "wireless",
+            "cellular",
+            "t-mobile",
+            "verizon wireless",
+            "at&t mobility",
+            "sprint",
+        ]
+        if any(kw in org_lower for kw in mobile_keywords):
+            return NetworkType.MOBILE
+
+        # ISP/Residential indicators (common ISPs)
+        residential_keywords = [
+            "comcast",
+            "verizon",
+            "at&t",
+            "charter",
+            "spectrum",
+            "cox",
+            "frontier",
+            "centurylink",
+            "lumen",
+            "xfinity",
+            "rogers",
+            "bell",
+            "telus",
+            "shaw",
+            "bt ",
+            "virgin media",
+            "sky ",
+            "deutsche telekom",
+            "orange",
+            "vodafone",
+        ]
+        if any(kw in org_lower for kw in residential_keywords):
+            return NetworkType.RESIDENTIAL
+
+        # Education indicators
+        education_keywords = [
+            "university",
+            "college",
+            "school",
+            "edu",
+            "academic",
+            "research",
+        ]
+        if any(kw in org_lower for kw in education_keywords):
+            return NetworkType.EDUCATION
+
+        # Government indicators
+        gov_keywords = ["government", "federal", "state of", "city of", "county of"]
+        if any(kw in org_lower for kw in gov_keywords):
+            return NetworkType.GOVERNMENT
+
+    return NetworkType.UNKNOWN
+
+
+def parse_user_agent_string(user_agent: Optional[str]) -> UserAgentInfo:
+    """
+    Parse a user agent string into structured information.
+
+    Args:
+        user_agent: Raw user agent string from HTTP headers
+
+    Returns:
+        UserAgentInfo dataclass with parsed information
+    """
+    if not user_agent:
+        return UserAgentInfo(full_user_agent="")
+
+    info = UserAgentInfo(full_user_agent=user_agent)
+
+    if USER_AGENTS_AVAILABLE:
+        try:
+            ua = parse_user_agent(user_agent)
+            info.browser_family = ua.browser.family
+            info.browser_version = ua.browser.version_string
+            info.os_family = ua.os.family
+            info.os_version = ua.os.version_string
+            info.device_family = ua.device.family
+            info.is_mobile = ua.is_mobile
+            info.is_tablet = ua.is_tablet
+            info.is_bot = ua.is_bot
+        except Exception as e:
+            logger.debug(f"User agent parsing failed: {e}")
+            # Fall back to basic parsing
+            info = _basic_ua_parse(user_agent)
+    else:
+        # Basic parsing without the library
+        info = _basic_ua_parse(user_agent)
+
+    return info
+
+
+def _basic_ua_parse(user_agent: str) -> UserAgentInfo:
+    """Basic user agent parsing without external library."""
+    info = UserAgentInfo(full_user_agent=user_agent)
+    ua_lower = user_agent.lower()
+
+    # Detect bots
+    bot_indicators = [
+        "bot",
+        "crawler",
+        "spider",
+        "scraper",
+        "curl",
+        "wget",
+        "python",
+        "java",
+        "httpclient",
+    ]
+    info.is_bot = any(ind in ua_lower for ind in bot_indicators)
+
+    # Basic browser detection
+    if "chrome" in ua_lower and "edg" not in ua_lower:
+        info.browser_family = "Chrome"
+    elif "firefox" in ua_lower:
+        info.browser_family = "Firefox"
+    elif "safari" in ua_lower and "chrome" not in ua_lower:
+        info.browser_family = "Safari"
+    elif "edg" in ua_lower:
+        info.browser_family = "Edge"
+    elif "msie" in ua_lower or "trident" in ua_lower:
+        info.browser_family = "Internet Explorer"
+
+    # Basic OS detection
+    if "windows" in ua_lower:
+        info.os_family = "Windows"
+    elif "mac os" in ua_lower or "macos" in ua_lower:
+        info.os_family = "macOS"
+    elif "linux" in ua_lower and "android" not in ua_lower:
+        info.os_family = "Linux"
+    elif "android" in ua_lower:
+        info.os_family = "Android"
+        info.is_mobile = True
+    elif "iphone" in ua_lower or "ipad" in ua_lower:
+        info.os_family = "iOS"
+        info.is_mobile = "iphone" in ua_lower
+        info.is_tablet = "ipad" in ua_lower
+
+    # Mobile detection
+    if not info.is_mobile:
+        mobile_indicators = ["mobile", "android", "iphone", "ipod", "blackberry"]
+        info.is_mobile = any(ind in ua_lower for ind in mobile_indicators)
+
+    return info
+
+
+def get_request_context(request: HttpRequest) -> dict:
+    """
+    Extract all relevant context from a Django request for audit logging.
+
+    Args:
+        request: Django HttpRequest object
+
+    Returns:
+        Dictionary with IP info, user agent info, and request metadata
+    """
+    ip = get_client_ip(request)
+    ip_info = lookup_ip_info(ip) if ip else IPInfo(ip_address="")
+
+    ua_string = request.META.get("HTTP_USER_AGENT", "")
+    ua_info = parse_user_agent_string(ua_string)
+
+    return {
+        "ip_info": ip_info,
+        "ua_info": ua_info,
+        "request_path": request.path,
+        "request_method": request.method,
+        "http_referer": request.META.get("HTTP_REFERER"),
+        "session_key": request.session.session_key if hasattr(request, "session") else None,
+    }
+
+
+def determine_user_type(request: HttpRequest) -> UserType:
+    """
+    Determine the type of user making the request for privacy-appropriate logging.
+
+    Args:
+        request: Django HttpRequest object
+
+    Returns:
+        UserType enum value
+    """
+    if not request.user or not request.user.is_authenticated:
+        return UserType.ANONYMOUS
+
+    # Check if user is a professional
+    try:
+        from .models import ProfessionalUser, ProfessionalDomainRelation
+
+        professional = ProfessionalUser.objects.filter(user=request.user).first()
+        if professional:
+            # Check if they have any active domain relation
+            has_active_relation = ProfessionalDomainRelation.objects.filter(
+                professional=professional, active_domain_relation=True
+            ).exists()
+            if has_active_relation:
+                return UserType.PROFESSIONAL
+    except Exception as e:
+        logger.debug(f"Error checking professional status: {e}")
+
+    return UserType.CONSUMER
+
+
+def sanitize_for_privacy(
+    context: dict, user_type: UserType
+) -> dict:
+    """
+    Sanitize request context based on user type for privacy compliance.
+
+    Professional users: Keep all data
+    Consumer users: Remove IP, keep only country, simplify user agent
+    Anonymous users: Same as consumer
+
+    Args:
+        context: Dictionary from get_request_context()
+        user_type: Type of user
+
+    Returns:
+        Sanitized context dictionary
+    """
+    if user_type == UserType.PROFESSIONAL:
+        # Professionals get full audit trail
+        return context
+
+    # Consumer/Anonymous: privacy-preserving
+    ip_info = context.get("ip_info", IPInfo(ip_address=""))
+    ua_info = context.get("ua_info", UserAgentInfo(full_user_agent=""))
+
+    sanitized_ip = IPInfo(
+        ip_address="",  # Don't store IP
+        asn_number=ip_info.asn_number,
+        asn_org=ip_info.asn_org,
+        country_code=ip_info.country_code,
+        state_region=None,  # Don't store state for consumers
+        city=None,
+        network_type=ip_info.network_type,
+        is_datacenter=ip_info.is_datacenter,
+        is_vpn=ip_info.is_vpn,
+    )
+
+    sanitized_ua = UserAgentInfo(
+        full_user_agent="",  # Don't store full UA
+        browser_family=ua_info.browser_family,
+        os_family=ua_info.os_family,
+        is_mobile=ua_info.is_mobile,
+        is_bot=ua_info.is_bot,
+    )
+
+    return {
+        "ip_info": sanitized_ip,
+        "ua_info": sanitized_ua,
+        "request_path": context.get("request_path"),
+        "request_method": context.get("request_method"),
+        # Don't store referer for consumers (could leak info)
+        "http_referer": None,
+        "session_key": context.get("session_key"),
+    }

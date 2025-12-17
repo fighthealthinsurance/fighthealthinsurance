@@ -10,6 +10,7 @@ from django.utils.http import urlsafe_base64_decode
 from django.utils.encoding import force_str
 from django.contrib.auth.tokens import default_token_generator
 from fhi_users.models import UserDomain
+from fhi_users.audit_service import audit_service
 
 
 User = get_user_model()
@@ -41,13 +42,30 @@ class LoginView(generic.FormView):
                 if user is None:
                     context["invalid"] = True
                     context["bad_credentials"] = True
+                    # Log failed login attempt
+                    audit_service.log_login_failure(
+                        request,
+                        attempted_email=raw_username,
+                        failure_reason="invalid_credentials",
+                        details={"domain_id": domain_id},
+                    )
                     return render(request, "login.html", context)
                 else:
                     request.session["domain_id"] = domain_id
                     login(request, user)
+                    # Log successful login
+                    user_domain = UserDomain.objects.filter(id=domain_id).first()
+                    audit_service.log_login_success(request, user, domain=user_domain)
                     return HttpResponseRedirect(reverse("root"))
         except UserDomain.DoesNotExist:
             context["domain_invalid"] = True
+            # Log failed login - domain not found
+            audit_service.log_login_failure(
+                request,
+                attempted_email=raw_username,
+                failure_reason="domain_not_found",
+                details={"domain_attempted": domain, "phone_attempted": phone_number},
+            )
             return render(request, "login.html", context)
 
 
@@ -55,6 +73,9 @@ class LogoutView(generic.TemplateView):
     template_name = "logout.html"
 
     def get(self, request, *args, **kwargs):
+        # Log logout before clearing session
+        if request.user.is_authenticated:
+            audit_service.log_logout(request, request.user)
         logout(request)
         response = super().get(request, *args, **kwargs)
         # Clear session cookies

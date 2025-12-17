@@ -42,6 +42,7 @@ drf-spectacular
 easy_thumbnails
 exceptionite
 flake8-django
+geoip2fast
 geopy
 git+https://github.com/holdenk/static-thumbnails.git
 git+https://github.com/jazzband/django-cookie-consent.git#egg=django-cookie-consent

@@ -60,6 +60,7 @@ from fhi_users.emails import (
     send_password_reset_email,
     send_professional_created_email,
 )
+from fhi_users.audit_service import audit_service
 
 from drf_spectacular.utils import extend_schema
 
@@ -1307,6 +1308,8 @@ class RestLoginView(ViewSet, SerializerMixin):
                 f"User {user.username} logged in setting domain id to {domain_id}"
             )
             login(request, user)
+            # Log successful login
+            audit_service.log_login_success(request, user, domain=user_domain)
             return Response(
                 serializers.StatusResponseSerializer({"status": "success"}).data
             )
@@ -1314,6 +1317,14 @@ class RestLoginView(ViewSet, SerializerMixin):
             user = User.objects.get(username=username)
             if not user.is_active:
                 send_verification_email(request, user)
+                # Log failed login - inactive user
+                audit_service.log_login_failure(
+                    request,
+                    attempted_email=raw_username,
+                    failure_reason="user_inactive",
+                    user=user,
+                    domain=user_domain,
+                )
                 return Response(
                     common_serializers.ErrorSerializer(
                         {
@@ -1324,6 +1335,13 @@ class RestLoginView(ViewSet, SerializerMixin):
                 )
         except User.DoesNotExist:
             pass
+        # Log failed login - invalid credentials
+        audit_service.log_login_failure(
+            request,
+            attempted_email=raw_username,
+            failure_reason="invalid_credentials",
+            domain=user_domain,
+        )
         return Response(
             common_serializers.ErrorSerializer({"error": f"Invalid credentials"}).data,
             status=status.HTTP_401_UNAUTHORIZED,
