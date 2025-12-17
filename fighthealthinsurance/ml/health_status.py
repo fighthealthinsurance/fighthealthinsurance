@@ -57,17 +57,17 @@ class _HealthStatus:
                 self._schedule_refresh()
                 self._initialized = True
 
-            return {
-                "alive_models": self._snapshot.alive_models,
-                "last_checked": self._snapshot.last_checked,
-                "details": [
-                    {"name": d.name, "ok": d.ok, "error": d.error}
-                    for d in self._snapshot.details
-                ],
-            }
+        return {
+            "alive_models": self._snapshot.alive_models,
+            "last_checked": self._snapshot.last_checked,
+            "details": [
+                {"name": d.name, "ok": d.ok, "error": d.error}
+                for d in self._snapshot.details
+            ],
+        }
 
     def _schedule_refresh(self):
-        """Schedule the next refresh. Must NOT hold the lock when calling."""
+        """Schedule the next refresh."""
         try:
             interval = 5 if self._fast_mode else REFRESH_INTERVAL_SECONDS
             self._timer = threading.Timer(interval, self._refresh)
@@ -158,7 +158,7 @@ class _HealthStatus:
         with self._lock:
             self._refresh_unlocked()
 
-        # Re-schedule next refresh OUTSIDE the lock to avoid holding it during timer setup
+        # Since only one timer no need to worry about lock.
         self._schedule_refresh()
 
 
