@@ -1825,3 +1825,129 @@ class MicrositeView(TemplateView):
             context["title"] = microsite.title
 
         return context
+
+
+class ExplainDenialView(TemplateView):
+    """View for the Explain my Denial page - helps users understand their denial letters."""
+
+    template_name = "explain_denial.html"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["title"] = "Explain My Denial"
+        return context
+
+    def post(self, request, *args, **kwargs):
+        """Process denial text and provide explanation."""
+        denial_text = request.POST.get("denial_text", "").strip()
+        
+        if not denial_text:
+            context = self.get_context_data(**kwargs)
+            context["error"] = "Please enter your denial letter text."
+            return render(request, self.template_name, context)
+        
+        # Extract information from the denial text
+        extracted_info = self._extract_denial_info(denial_text)
+        
+        context = self.get_context_data(**kwargs)
+        context["denial_text"] = denial_text
+        context["extracted_info"] = extracted_info
+        context["show_results"] = True
+        
+        return render(request, self.template_name, context)
+    
+    def _extract_denial_info(self, denial_text: str) -> dict:
+        """
+        Extract and categorize information from denial text.
+        Maps insurer language to plain English explanations.
+        """
+        import re
+        
+        denial_info = {
+            "detected_reasons": [],
+            "plain_english": [],
+            "extracted_phrases": [],
+            "suggestions": [],
+        }
+        
+        # Common denial reason patterns with plain English explanations
+        denial_patterns = [
+            {
+                "pattern": r"(not medically necessary|lacks medical necessity)",
+                "reason": "Medical Necessity",
+                "explanation": "Your insurance says the treatment isn't medically required. This is one of the most common denial reasons and can often be appealed with evidence from your doctor.",
+                "suggestion": "Get a letter from your doctor explaining why this treatment is medically necessary for your specific condition.",
+            },
+            {
+                "pattern": r"(experimental|investigational|not proven)",
+                "reason": "Experimental/Investigational",
+                "explanation": "Your insurance considers the treatment experimental or not yet proven effective. They may require more established alternatives to be tried first.",
+                "suggestion": "Look for published medical studies supporting your treatment. Your doctor can help find relevant research.",
+            },
+            {
+                "pattern": r"(prior authorization|pre-authorization|pre-auth|preauth)",
+                "reason": "Prior Authorization Missing",
+                "explanation": "Your doctor didn't get approval from insurance before providing the treatment. Some treatments require advance permission.",
+                "suggestion": "Contact your doctor's office to request a prior authorization. This can sometimes be done retroactively.",
+            },
+            {
+                "pattern": r"(out of network|non-participating provider|not in network)",
+                "reason": "Out of Network",
+                "explanation": "The provider who gave you care isn't in your insurance network, so coverage is limited or not available.",
+                "suggestion": "Check if you can appeal for out-of-network coverage, especially if no in-network providers were available for your needs.",
+            },
+            {
+                "pattern": r"(excluded|exclusion|not covered|plan does not cover)",
+                "reason": "Policy Exclusion",
+                "explanation": "Your insurance plan specifically excludes this type of treatment or service from coverage.",
+                "suggestion": "Review your policy documents. Sometimes exclusions can be challenged if the treatment is medically necessary.",
+            },
+            {
+                "pattern": r"(coding|wrong code|incorrect code|CPT|ICD-10)",
+                "reason": "Coding Issue",
+                "explanation": "The medical billing codes used don't match what your insurance will cover. This might be a paperwork error.",
+                "suggestion": "Ask your doctor's billing department to review the codes. A simple coding correction can often resolve the denial.",
+            },
+            {
+                "pattern": r"(cosmetic|aesthetic)",
+                "reason": "Cosmetic Procedure",
+                "explanation": "Your insurance classified this as a cosmetic procedure, which typically isn't covered.",
+                "suggestion": "If the procedure is medically necessary (not just cosmetic), get documentation from your doctor explaining the medical need.",
+            },
+            {
+                "pattern": r"(duplicate|already paid|previously processed)",
+                "reason": "Duplicate Claim",
+                "explanation": "Your insurance thinks this claim is a duplicate of one they've already processed.",
+                "suggestion": "Contact your provider's billing office and your insurance to verify which claims were submitted and processed.",
+            },
+            {
+                "pattern": r"(step therapy|fail first|try.{0,20}first)",
+                "reason": "Step Therapy Required",
+                "explanation": "Your insurance requires you to try less expensive or different treatments first before covering this one.",
+                "suggestion": "Document why other treatments haven't worked or aren't appropriate for you. Your doctor can request a step therapy exception.",
+            },
+        ]
+        
+        # Check for each pattern
+        for pattern_info in denial_patterns:
+            match = re.search(pattern_info["pattern"], denial_text, re.IGNORECASE)
+            if match:
+                denial_info["detected_reasons"].append(pattern_info["reason"])
+                denial_info["plain_english"].append(pattern_info["explanation"])
+                denial_info["extracted_phrases"].append(match.group(0))
+                denial_info["suggestions"].append(pattern_info["suggestion"])
+        
+        # If no specific patterns detected, provide general guidance
+        if not denial_info["detected_reasons"]:
+            denial_info["detected_reasons"].append("General Denial")
+            denial_info["plain_english"].append(
+                "We couldn't automatically identify the specific reason for your denial. "
+                "Insurance denials often contain complex language. Review your letter carefully "
+                "for key phrases about medical necessity, authorization, or coverage exclusions."
+            )
+            denial_info["suggestions"].append(
+                "Upload your denial letter and use our AI chat to get personalized help understanding "
+                "and appealing your specific denial."
+            )
+        
+        return denial_info

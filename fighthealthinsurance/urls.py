@@ -351,6 +351,12 @@ urlpatterns += [
         ),
         name="microsite",
     ),
+    # Explain my Denial page
+    path(
+        "explain-denial",
+        views.ExplainDenialView.as_view(),
+        name="explain_denial",
+    ),
 ]
 
 
