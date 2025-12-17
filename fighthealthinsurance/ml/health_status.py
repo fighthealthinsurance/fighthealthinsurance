@@ -44,7 +44,8 @@ class _HealthStatus:
         self._snapshot: HealthSnapshot = HealthSnapshot()
         self._timer: Optional[threading.Timer] = None
         self._initialized = False
-        self._lock = threading.Lock()  # Protect initialization and snapshot access
+        # Use RLock to allow reentrant locking and reduce deadlock chances
+        self._lock = threading.RLock()
         # Fast mode for tests to avoid network stalls
         self._fast_mode = os.getenv("FHI_HEALTH_FAST", "0") == "1"
 
@@ -52,7 +53,7 @@ class _HealthStatus:
         # Use lock to prevent race condition on first access
         with self._lock:
             if not self._initialized:
-                self._refresh()
+                self._refresh_unlocked()
                 self._schedule_refresh()
                 self._initialized = True
 
@@ -66,6 +67,7 @@ class _HealthStatus:
             }
 
     def _schedule_refresh(self):
+        """Schedule the next refresh. Must NOT hold the lock when calling."""
         try:
             interval = 5 if self._fast_mode else REFRESH_INTERVAL_SECONDS
             self._timer = threading.Timer(interval, self._refresh)
@@ -74,8 +76,13 @@ class _HealthStatus:
         except Exception as e:
             logger.warning(f"Failed to schedule health refresh: {e}")
 
-    def _refresh(self):
-        """Recalculate health snapshot using cheap checks and cache it."""
+    def _refresh_unlocked(self):
+        """
+        Recalculate health snapshot using cheap checks and cache it.
+
+        This method does NOT acquire the lock - caller must hold it if needed.
+        Used during initialization when we already hold the lock.
+        """
         alive_count = 0
 
         # Choose a small, representative set of backends
@@ -97,7 +104,7 @@ class _HealthStatus:
                 future_map = {ex.submit(m.model_is_ok): m for m in candidates}
                 try:
                     for future in concurrent.futures.as_completed(
-                        future_map, timeout=max(timeout_seconds, timeout_seconds)
+                        future_map, timeout=timeout_seconds
                     ):
                         m = future_map[future]
                         name = (
@@ -140,11 +147,18 @@ class _HealthStatus:
             details=details,
         )
 
-        # Use lock to safely update snapshot from background thread
-        with self._lock:
-            self._snapshot = snapshot
+        self._snapshot = snapshot
 
-        # Re-schedule next refresh
+    def _refresh(self):
+        """
+        Recalculate health snapshot (called from background timer).
+
+        Acquires lock, performs refresh, then schedules next refresh outside lock.
+        """
+        with self._lock:
+            self._refresh_unlocked()
+
+        # Re-schedule next refresh OUTSIDE the lock to avoid holding it during timer setup
         self._schedule_refresh()
 
 

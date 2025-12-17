@@ -10,7 +10,7 @@ import sys
 import traceback
 from concurrent.futures import Future
 from dataclasses import dataclass
-from typing import Callable, List, Optional, Tuple, Iterable, Union
+from typing import Callable, ClassVar, List, Optional, Tuple, Iterable, Union
 from loguru import logger
 import requests
 
@@ -33,7 +33,7 @@ class RemoteModelLike(DenialBase):
 
     # Keywords that indicate Medicaid/Medicare-related conversation
     # Note: All keywords should be lowercase for case-insensitive matching
-    MEDICAID_KEYWORDS = [
+    MEDICAID_KEYWORDS: ClassVar[List[str]] = [
         # Generic terms
         "medicaid", "medicare", "medi-cal", "medical assistance",
         "medical assistance program",
@@ -2284,13 +2284,16 @@ class TailscaleModelBackend(RemoteFullOpenLike):
     """
 
     # Models we try to discover via Tailscale DNS
-    DISCOVERABLE_MODELS = [
+    DISCOVERABLE_MODELS: ClassVar[List[Tuple[str, str]]] = [
         ("fhi-legacy", "TotallyLegitCo/fighthealthinsurance_model_v0.5"),
         ("fhi-new", "/models/fhi-2025-may-0.3-float16-q8-vllm-compressed"),
         ("llama-scout", "meta-llama/Llama-4-Scout-17B-16E-Instruct"),
     ]
 
-    _discovered_hosts: dict[str, str] = {}
+    _discovered_hosts: ClassVar[dict[str, str]] = {}
+
+    # DNS resolution timeout in seconds
+    DNS_TIMEOUT: ClassVar[float] = 2.0
 
     def quality(self) -> int:
         return 150  # Higher quality since these are dedicated hosts
@@ -2311,15 +2314,47 @@ class TailscaleModelBackend(RemoteFullOpenLike):
         return False
 
     @classmethod
-    def _resolve_tailscale_host(cls, hostname: str) -> Optional[str]:
-        """Try to resolve a Tailscale hostname via DNS."""
+    async def _resolve_tailscale_host_async(
+        cls, hostname: str, timeout: float = 2.0
+    ) -> Optional[str]:
+        """
+        Try to resolve a Tailscale hostname via DNS asynchronously with timeout.
+
+        Args:
+            hostname: The hostname to resolve
+            timeout: Maximum time to wait for DNS resolution in seconds
+
+        Returns:
+            The hostname if resolution succeeds, None otherwise
+        """
         import socket
 
+        loop = asyncio.get_event_loop()
         try:
-            # Try to resolve the hostname
-            socket.gethostbyname(hostname)
+            # Run DNS resolution in executor with timeout
+            async with async_timeout(timeout):
+                await loop.run_in_executor(None, socket.gethostbyname, hostname)
             return hostname
-        except socket.gaierror:
+        except (socket.gaierror, asyncio.TimeoutError, TimeoutError):
+            return None
+
+    @classmethod
+    def _resolve_tailscale_host(cls, hostname: str) -> Optional[str]:
+        """
+        Try to resolve a Tailscale hostname via DNS synchronously with timeout.
+
+        This is a sync wrapper for use in the models() classmethod.
+        """
+        import socket
+        import concurrent.futures
+
+        try:
+            # Use ThreadPoolExecutor to add timeout to blocking DNS call
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(socket.gethostbyname, hostname)
+                future.result(timeout=cls.DNS_TIMEOUT)
+            return hostname
+        except (socket.gaierror, concurrent.futures.TimeoutError, TimeoutError):
             return None
 
     @classmethod

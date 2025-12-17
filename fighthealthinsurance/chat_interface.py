@@ -13,7 +13,8 @@ from typing import (
     Tuple,
     Any,
     Union,
-)  # Added Any, Union
+    Pattern,
+)  # Added Any, Union, Pattern
 from fhi_users.models import User, ProfessionalUser
 
 from fighthealthinsurance.ml.ml_router import ml_router
@@ -39,25 +40,35 @@ from fighthealthinsurance.utils import best_within_timelimit
 # - References to denied mental health coverage
 # - Discussion of past mental health treatment
 # - Clinical terms in insurance/medical context
-CRISIS_KEYWORDS = [
+#
+# These are compiled into regexes with word boundaries to avoid partial matches
+# and case-insensitive matching to avoid having to lowercase input.
+_CRISIS_PHRASES = [
     # Active first-person crisis expressions (very specific)
-    "i want to kill myself",
-    "i'm going to kill myself",
-    "i want to end my life",
-    "i want to die",
-    "i don't want to live",
-    "i'd rather be dead",
-    "i'm better off dead",
-    "i have no reason to live",
-    "i'm going to take my own life",
-    "i want to hurt myself",
-    "i'm going to hurt myself",
-    "i've been cutting myself",
-    "i'm cutting myself",
-    "thinking about ending it",
-    "planning to end it all",
-    "writing a suicide note",
+    r"i want to kill myself",
+    r"i'm going to kill myself",
+    r"i want to end my life",
+    r"i want to die",
+    r"i don't want to live",
+    r"i'd rather be dead",
+    r"i'm better off dead",
+    r"i have no reason to live",
+    r"i'm going to take my own life",
+    r"i want to hurt myself",
+    r"i'm going to hurt myself",
+    r"i've been cutting myself",
+    r"i'm cutting myself",
+    r"thinking about ending it",
+    r"planning to end it all",
+    r"writing a suicide note",
 ]
+
+# Pre-compile crisis detection regex for performance
+# Uses word boundaries and case-insensitive matching
+_CRISIS_REGEX: Pattern[str] = re.compile(
+    r"|".join(rf"(?:{re.escape(phrase)})" for phrase in _CRISIS_PHRASES),
+    re.IGNORECASE,
+)
 
 # Crisis resources to provide when crisis keywords are detected
 CRISIS_RESOURCES = """If you or someone you know is struggling, please reach out for support:
@@ -69,7 +80,7 @@ CRISIS_RESOURCES = """If you or someone you know is struggling, please reach out
 You are not alone, and help is available 24/7."""
 
 # Patterns that indicate the AI is making promises it can't keep
-FALSE_PROMISE_PATTERNS = [
+_FALSE_PROMISE_PATTERNS = [
     r"guarantee.*(?:approval|success|win|approved)",
     r"(?:will|going to)\s+(?:definitely|certainly|surely)\s+(?:get|win|be approved)",
     r"100%\s+(?:chance|success|guaranteed)",
@@ -80,6 +91,13 @@ FALSE_PROMISE_PATTERNS = [
     r"will\s+certainly\s+(?:get|be|win)",
     r"will\s+definitely\s+(?:get|be|win)",
 ]
+
+# Pre-compile false promise regex for performance
+# Combined into single regex with case-insensitive matching
+_FALSE_PROMISE_REGEX: Pattern[str] = re.compile(
+    r"|".join(rf"(?:{pattern})" for pattern in _FALSE_PROMISE_PATTERNS),
+    re.IGNORECASE,
+)
 
 # Tool call regexes
 pubmed_query_terms_regex = r"[\[\*]{0,4}pubmed[ _]?query:{0,1}\s*(.*?)\s*[\*\]]{0,4}"
@@ -111,12 +129,10 @@ def _detect_crisis_keywords(text: str) -> bool:
 
     Returns True if crisis keywords are detected, indicating the user
     may need immediate support resources.
+
+    Uses pre-compiled regex with case-insensitive matching for performance.
     """
-    text_lower = text.lower()
-    for keyword in CRISIS_KEYWORDS:
-        if keyword in text_lower:
-            return True
-    return False
+    return bool(_CRISIS_REGEX.search(text))
 
 
 def _detect_false_promises(text: str) -> bool:
@@ -125,14 +141,12 @@ def _detect_false_promises(text: str) -> bool:
 
     Returns True if the response makes guarantees or promises that
     we cannot actually keep.
+
+    Uses pre-compiled regex with case-insensitive matching for performance.
     """
     if text is None:
         return False
-    text_lower = text.lower()
-    for pattern in FALSE_PROMISE_PATTERNS:
-        if re.search(pattern, text_lower, re.IGNORECASE):
-            return True
-    return False
+    return bool(_FALSE_PROMISE_REGEX.search(text))
 
 
 class ChatInterface:

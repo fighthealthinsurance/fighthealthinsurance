@@ -6,9 +6,9 @@ from django.test import TestCase
 from fighthealthinsurance.chat_interface import (
     _detect_crisis_keywords,
     _detect_false_promises,
-    CRISIS_KEYWORDS,
+    _CRISIS_PHRASES,
     CRISIS_RESOURCES,
-    FALSE_PROMISE_PATTERNS,
+    _FALSE_PROMISE_PATTERNS,
 )
 
 
@@ -207,38 +207,38 @@ class TestFalsePromiseDetection(TestCase):
         self.assertTrue(_detect_false_promises("This Will Definitely Get Approved"))
 
 
-class TestCrisisKeywordList(TestCase):
-    """Tests for the crisis keywords list completeness."""
+class TestCrisisPhraseList(TestCase):
+    """Tests for the crisis phrases list completeness."""
 
-    def test_keywords_are_lowercase(self):
-        """All keywords should be lowercase for consistent matching."""
-        for keyword in CRISIS_KEYWORDS:
+    def test_phrases_are_lowercase(self):
+        """All phrases should be lowercase for consistent matching."""
+        for phrase in _CRISIS_PHRASES:
             self.assertEqual(
-                keyword,
-                keyword.lower(),
-                f"Keyword '{keyword}' should be lowercase",
+                phrase,
+                phrase.lower(),
+                f"Phrase '{phrase}' should be lowercase",
             )
 
-    def test_keywords_are_unique(self):
-        """All keywords should be unique."""
+    def test_phrases_are_unique(self):
+        """All phrases should be unique."""
         self.assertEqual(
-            len(CRISIS_KEYWORDS),
-            len(set(CRISIS_KEYWORDS)),
-            "Crisis keywords list contains duplicates",
+            len(_CRISIS_PHRASES),
+            len(set(_CRISIS_PHRASES)),
+            "Crisis phrases list contains duplicates",
         )
 
-    def test_keywords_are_specific_first_person(self):
+    def test_phrases_are_specific_first_person(self):
         """
-        Keywords should be specific first-person expressions to avoid
+        Phrases should be specific first-person expressions to avoid
         false positives on clinical/insurance terms.
         """
-        # All keywords should contain "i" (first person) or be very specific phrases
-        for keyword in CRISIS_KEYWORDS:
-            has_first_person = "i " in keyword or "i'" in keyword or keyword.startswith("i ")
-            is_specific_phrase = len(keyword.split()) >= 3  # Multi-word phrases are more specific
+        # All phrases should contain "i" (first person) or be very specific phrases
+        for phrase in _CRISIS_PHRASES:
+            has_first_person = "i " in phrase or "i'" in phrase or phrase.startswith("i ")
+            is_specific_phrase = len(phrase.split()) >= 3  # Multi-word phrases are more specific
             self.assertTrue(
                 has_first_person or is_specific_phrase,
-                f"Keyword '{keyword}' may be too general - consider making it more specific",
+                f"Phrase '{phrase}' may be too general - consider making it more specific",
             )
 
 
@@ -249,7 +249,7 @@ class TestFalsePromisePatternList(TestCase):
         """All patterns should be valid regex."""
         import re
 
-        for pattern in FALSE_PROMISE_PATTERNS:
+        for pattern in _FALSE_PROMISE_PATTERNS:
             try:
                 re.compile(pattern)
             except re.error as e:
@@ -258,7 +258,7 @@ class TestFalsePromisePatternList(TestCase):
     def test_patterns_are_unique(self):
         """All patterns should be unique."""
         self.assertEqual(
-            len(FALSE_PROMISE_PATTERNS),
-            len(set(FALSE_PROMISE_PATTERNS)),
+            len(_FALSE_PROMISE_PATTERNS),
+            len(set(_FALSE_PROMISE_PATTERNS)),
             "False promise patterns list contains duplicates",
         )
