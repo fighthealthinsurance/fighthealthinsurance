@@ -207,31 +207,6 @@ class IndexView(generic.TemplateView):
 
     template_name = "index.html"
 
-    def get_context_data(self, **kwargs):
-        """Add bingo board data to the context."""
-        context = super().get_context_data(**kwargs)
-        
-        # Generate a 5x5 bingo board with random phrases
-        # Use 24 phrases (excluding center which is "FREE SPACE")
-        selected_phrases = random.sample(BINGO_PHRASES, min(24, len(BINGO_PHRASES)))
-        
-        # Create 5x5 grid with FREE SPACE in the center
-        bingo_board = []
-        phrase_index = 0
-        for row in range(5):
-            bingo_row = []
-            for col in range(5):
-                if row == 2 and col == 2:
-                    # Center square is FREE SPACE
-                    bingo_row.append("FREE SPACE")
-                else:
-                    bingo_row.append(selected_phrases[phrase_index])
-                    phrase_index += 1
-            bingo_board.append(bingo_row)
-        
-        context['bingo_board'] = bingo_board
-        return context
-
 
 class AboutView(generic.TemplateView):
     """About us page."""
@@ -258,6 +233,26 @@ class OtherResourcesView(generic.TemplateView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
+
+        # Generate a 5x5 bingo board with random phrases for coping resources
+        # Use 24 phrases (excluding center which is "FREE SPACE")
+        selected_phrases = random.sample(BINGO_PHRASES, min(24, len(BINGO_PHRASES)))
+        
+        # Create 5x5 grid with FREE SPACE in the center
+        bingo_board = []
+        phrase_index = 0
+        for row in range(5):
+            bingo_row = []
+            for col in range(5):
+                if row == 2 and col == 2:
+                    # Center square is FREE SPACE
+                    bingo_row.append("FREE SPACE")
+                else:
+                    bingo_row.append(selected_phrases[phrase_index])
+                    phrase_index += 1
+            bingo_board.append(bingo_row)
+        
+        context['bingo_board'] = bingo_board
 
         # Fetch RSS feeds synchronously to avoid async issues
         try:

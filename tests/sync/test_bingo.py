@@ -10,9 +10,9 @@ class BingoTests(TestCase):
     def setUp(self):
         self.client = Client()
 
-    def test_index_page_contains_bingo_board(self):
-        """Test that the index page includes bingo board data."""
-        response = self.client.get("/")
+    def test_other_resources_page_contains_bingo_board(self):
+        """Test that the other resources page includes bingo board data."""
+        response = self.client.get("/other-resources")
         self.assertEqual(response.status_code, 200)
         
         # Check that bingo_board is in the context
@@ -26,7 +26,7 @@ class BingoTests(TestCase):
 
     def test_bingo_board_contains_free_space(self):
         """Test that the center cell is FREE SPACE."""
-        response = self.client.get("/")
+        response = self.client.get("/other-resources")
         bingo_board = response.context["bingo_board"]
         
         # Center cell (row 2, col 2) should be FREE SPACE
@@ -38,7 +38,7 @@ class BingoTests(TestCase):
 
     def test_bingo_board_has_unique_phrases(self):
         """Test that bingo board phrases are unique (except FREE SPACE)."""
-        response = self.client.get("/")
+        response = self.client.get("/other-resources")
         bingo_board = response.context["bingo_board"]
         
         # Flatten the board and collect all phrases
@@ -59,11 +59,11 @@ class BingoTests(TestCase):
     def test_bingo_board_changes_on_reload(self):
         """Test that bingo board is different on each page load."""
         # Get first board
-        response1 = self.client.get("/")
+        response1 = self.client.get("/other-resources")
         board1 = response1.context["bingo_board"]
         
         # Get second board
-        response2 = self.client.get("/")
+        response2 = self.client.get("/other-resources")
         board2 = response2.context["bingo_board"]
         
         # Flatten both boards for comparison (excluding FREE SPACE position)
@@ -90,7 +90,7 @@ class BingoTests(TestCase):
 
     def test_bingo_template_renders(self):
         """Test that the bingo board HTML is rendered."""
-        response = self.client.get("/")
+        response = self.client.get("/other-resources")
         content = response.content.decode("utf-8")
         
         # Check for bingo section elements
@@ -103,7 +103,7 @@ class BingoTests(TestCase):
         """Test that all bingo phrases are from the predefined list."""
         from fighthealthinsurance.views import BINGO_PHRASES
         
-        response = self.client.get("/")
+        response = self.client.get("/other-resources")
         bingo_board = response.context["bingo_board"]
         
         # Collect all phrases except FREE SPACE
