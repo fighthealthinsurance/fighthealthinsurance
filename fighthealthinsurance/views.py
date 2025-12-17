@@ -1561,9 +1561,9 @@ def chat_interface_view(request):
         "microsite_slug", ""
     )
     
-    # Check if there's denial text from the explain denial page
-    denial_text = request.session.pop("denial_text_for_explanation", None)
-    initial_message = None
+    # Check for denial text from POST (from chat consent form) or session (from explain denial page)
+    denial_text = request.POST.get("denial_text", "") or request.session.pop("denial_text_for_explanation", "")
+    initial_message = ""
     if denial_text:
         # Format the initial message for the chat
         initial_message = (
@@ -1633,6 +1633,8 @@ class ChatUserConsentView(FormView):
         context["microsite_title"] = self.request.GET.get("microsite_title", "")
         # Check if coming from explain denial
         context["explain_denial"] = self.request.GET.get("explain_denial", "") == "true"
+        # Get denial text from session if available (from explain denial page)
+        context["denial_text"] = self.request.session.get("denial_text_for_explanation", "")
         return context
 
     def form_valid(self, form):
@@ -1658,6 +1660,23 @@ class ChatUserConsentView(FormView):
                 referral_source_details=referral_source_details,
             )
 
+        # Check if there's denial text to pass through
+        denial_text = self.request.POST.get("denial_text", "")
+        
+        # If we have denial text or other params, we need to POST them to chat
+        # Otherwise just redirect normally
+        if denial_text or self.request.POST.get("default_procedure") or self.request.POST.get("default_condition"):
+            # Render an auto-submit form to POST data to chat
+            context = {
+                "denial_text": denial_text,
+                "default_procedure": self.request.POST.get("default_procedure", ""),
+                "default_condition": self.request.POST.get("default_condition", ""),
+                "microsite_slug": self.request.POST.get("microsite_slug", ""),
+                "microsite_title": self.request.POST.get("microsite_title", ""),
+                "chat_url": reverse("chat"),
+            }
+            return render(self.request, "chat_redirect.html", context)
+        
         # No need to save form data to database - it will be saved in browser localStorage via JavaScript
         return super().form_valid(form)
 

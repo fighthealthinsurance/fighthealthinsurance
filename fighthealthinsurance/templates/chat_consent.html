@@ -106,6 +106,9 @@ Terms of Service & Setup - FightHealthInsurance Chat Assistant (Alpha)
               {% if microsite_title %}
               <input type="hidden" name="microsite_title" value="{{ microsite_title }}">
               {% endif %}
+              {% if denial_text %}
+              <input type="hidden" name="denial_text" value="{{ denial_text }}">
+              {% endif %}
 
               <div class="mb-4">
                 <h4>Your Information</h4>

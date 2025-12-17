@@ -357,9 +357,10 @@ interface ChatInterfaceProps {
   defaultProcedure?: string;
   defaultCondition?: string;
   micrositeSlug?: string;
+  initialMessage?: string;
 }
 
-const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, defaultCondition, micrositeSlug }) => {
+const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, defaultCondition, micrositeSlug, initialMessage }) => {
   // State for our chat interface
   const [state, setState] = useState<ChatState>({
     messages: [],
@@ -477,8 +478,33 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
           // If we don't have a chat ID no replay is needed
           console.log("Waiting for user input to start new chat");
 
-          // If we have a default procedure from a microsite, send an initial message
-          if (defaultProcedure && !hasSentInitialMessage.current) {
+          // If we have an initial message (e.g., from explain denial page), send it
+          // Otherwise, if we have a default procedure from a microsite, send an initial message
+          if (initialMessage && !hasSentInitialMessage.current) {
+            hasSentInitialMessage.current = true;
+            console.log("Sending initial message from explain denial page");
+
+            // Small delay to ensure welcome message is displayed first
+            setTimeout(() => {
+              // Add the user message to the UI
+              const userMessage: ChatMessage = {
+                role: "user",
+                content: initialMessage,
+                timestamp: new Date().toISOString(),
+                status: "done",
+              };
+
+              setState((prev) => ({
+                ...prev,
+                messages: [...prev.messages, userMessage],
+                isLoading: true,
+                requestStartTime: Date.now(),
+              }));
+
+              // Send the message to the backend
+              sendMessage(initialMessage);
+            }, 500);
+          } else if (defaultProcedure && !hasSentInitialMessage.current) {
             hasSentInitialMessage.current = true;
             console.log("Sending initial message for procedure:", defaultProcedure);
             if (defaultCondition) {
@@ -1219,6 +1245,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const defaultProcedure = chatRoot.dataset.defaultProcedure || undefined;
     const defaultCondition = chatRoot.dataset.defaultCondition || undefined;
     const micrositeSlug = chatRoot.dataset.micrositeSlug || undefined;
+    const initialMessage = chatRoot.dataset.initialMessage || undefined;
     if (defaultProcedure) {
       console.log("Default procedure from microsite:", defaultProcedure);
     }
@@ -1228,11 +1255,19 @@ document.addEventListener("DOMContentLoaded", () => {
     if (micrositeSlug) {
       console.log("Microsite slug:", micrositeSlug);
     }
+    if (initialMessage) {
+      console.log("Initial message provided:", initialMessage.substring(0, 100) + "...");
+    }
 
     const root = createRoot(chatRoot);
     root.render(
       <MantineProvider>
-        <ChatInterface defaultProcedure={defaultProcedure} defaultCondition={defaultCondition} micrositeSlug={micrositeSlug} />
+        <ChatInterface 
+          defaultProcedure={defaultProcedure} 
+          defaultCondition={defaultCondition} 
+          micrositeSlug={micrositeSlug}
+          initialMessage={initialMessage}
+        />
       </MantineProvider>,
     );
   } else {
