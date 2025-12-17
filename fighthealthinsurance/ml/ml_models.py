@@ -29,6 +29,74 @@ from fighthealthinsurance.process_denial import DenialBase
 
 
 class RemoteModelLike(DenialBase):
+    """Base class for remote ML model backends used for chat and appeal generation."""
+
+    # Keywords that indicate Medicaid/Medicare-related conversation
+    # Note: All keywords should be lowercase for case-insensitive matching
+    MEDICAID_KEYWORDS = [
+        # Generic terms
+        "medicaid", "medicare", "medi-cal", "medical assistance",
+        "medical assistance program",
+        "eligibility", "eligible", "enrollment", "enroll",
+        "work requirement", "80 hours",
+        # State-specific Medicaid program names (comprehensive list)
+        # Alaska
+        "denalicare",
+        # California
+        "medi-cal",
+        # Colorado
+        "health first colorado",
+        # Connecticut
+        "husky health",
+        # Delaware
+        "diamond state health plan",
+        # Hawaii
+        "med-quest", "medquest",
+        # Illinois
+        "healthchoice illinois",
+        # Indiana
+        "hoosier healthwise",
+        # Indiana
+        "iowa medicaid",
+        # Kansas
+        "kansas medical assistance", "kansas medical assistance program",
+        # Maine
+        "mainecare",
+        # Massachusetts
+        "masshealth",
+        # Missouri
+        "mo healthnet",
+        # New Jersey
+        "nj familycare",
+        # New Mexico
+        "turquoise care",
+        # New York
+        "new york state medicaid",
+        # Oklahoma
+        "soonercare",
+        # South Carolina
+        "healthy connections",
+        # Tennessee
+        "tenncare",
+        # Texas
+        "star+plus", "star plus", "star medicaid", "texas star",
+        # Vermont
+        "green mountain care",
+        # Virginia
+        "cardinal care",
+        # Washington
+        "apple health",
+        # Wisconsin
+        "forward health",
+        # Wyoming
+        "equality care",
+        # Common questions and phrases
+        "qualify for medicaid", "qualify for medicare",
+        "am i eligible", "can i get medicaid", "can i get medicare",
+        "government insurance", "public insurance", "state insurance",
+        "government health", "public health insurance",
+    ]
+
     def quality(self) -> int:
         return 100
 
@@ -57,6 +125,38 @@ class RemoteModelLike(DenialBase):
         """Checker to see if a result is "reasonable" may be used to retry."""
         if result is None or len(result) < 3:
             return True
+        return False
+
+    def _is_medicaid_related(
+        self,
+        current_message: str,
+        previous_context_summary: Optional[str],
+        history: Optional[List[dict[str, str]]],
+    ) -> bool:
+        """
+        Detect if the conversation is related to Medicaid/Medicare topics.
+
+        Checks the current message, context summary, and recent history for
+        Medicaid-related keywords to determine if Medicaid tools should be included.
+        """
+        # Combine text to search
+        text_to_check = current_message.lower()
+
+        if previous_context_summary:
+            text_to_check += " " + previous_context_summary.lower()
+
+        # Check recent-ish history (last 40 messages) for context
+        if history:
+            for msg in history[-40:]:
+                content = msg.get("content", "")
+                if content:
+                    text_to_check += " " + content.lower()
+
+        # Check for any Medicaid keywords
+        for keyword in self.MEDICAID_KEYWORDS:
+            if keyword in text_to_check:
+                return True
+
         return False
 
     @property
@@ -137,6 +237,7 @@ class RemoteModelLike(DenialBase):
         temperature: float = 0.7,
         is_professional: bool = True,
         is_logged_in: bool = True,
+        is_medicaid_related: Optional[bool] = None,
     ) -> tuple[Optional[str], Optional[str]]:
         """
         Generate a chat response from the model.
@@ -148,6 +249,8 @@ class RemoteModelLike(DenialBase):
             temperature: Temperature for the model
             is_professional: Whether the user is a healthcare professional or patient
             is_logged_in: Whether the user is logged in or anonymous
+            is_medicaid_related: Whether the chat involves Medicaid/Medicare topics.
+                If None, will be auto-detected from message and context.
 
         Returns:
             Generated response or None
@@ -157,6 +260,12 @@ class RemoteModelLike(DenialBase):
             if previous_context_summary
             else ""
         )
+
+        # Auto-detect if Medicaid-related if not explicitly specified
+        if is_medicaid_related is None:
+            is_medicaid_related = self._is_medicaid_related(
+                current_message, previous_context_summary, history
+            )
 
         # Determine the target audience based on whether user is professional or patient
         audience = "healthcare professionals" if is_professional else "patients"
@@ -175,12 +284,21 @@ Some important rules:
 You cannot submit claims or appeals yourself. You can draft, guide, or recommend — but actual submissions must be done by the user (you refuse to directly touch fax machines). You don't have to say this everytime just if they ask you to send a fax or similar.
 You can however create an appeal or prior auth request for the user to submit.
 
-If you want to look up something in PubMed (e.g., for clinical justification, or if the professional asks you to include a recent study), use the format **pubmedquery:[your search terms]**. Do not fabricate results, you'll need to have the user give you back pubmedcontext:[...].
+If you want to look up something in PubMed (e.g., for clinical justification, or if the professional asks you to include a recent study), use the format **pubmedquery:[your search terms]**. The system will return results as pubmedcontext:[...] which you can then cite.
 Note: you can send back a pubmed query as a standalone message or at the end of another message.
 It's possible the pubmed integration will be disabled, so if it doesn't work you'll just need to do your best without the pubmed information.
 Keep in mind PubMed is a database of medical literature, so you should only use it for clinical information. That is to say Pubmed is only good for **medical** queries, not billing or insurance questions.
 
 Similarly, you can also search Google Scholar for academic literature using **scholarquery:[your search terms]** or **google_scholar_query:[your search terms]**. This will search Google Scholar (alongside PubMed when both are used) and can provide additional research context including citation counts.
+**CRITICAL RULE ABOUT REFERENCES AND CITATIONS:**
+- NEVER invent, fabricate, or hallucinate citations, studies, PMIDs, journal names, or author names
+- You may ONLY cite references that have been provided to you in pubmedcontext:[...] responses
+- If you haven't received pubmedcontext results, do NOT cite any specific studies
+- If asked for references and you don't have any from pubmedcontext, either:
+  1. Use **pubmedquery:[search terms]** to look them up first, OR
+  2. Say "I can search PubMed for relevant studies if you'd like" instead of making up citations
+- When you DO have pubmedcontext results, cite them accurately using the title and journal provided
+- Generic medical knowledge is fine to share, but do NOT attach fake citations to it
 
 If your asked to do anything related to Fight Health Insurance or Fight Paperwork account billing (for example cancelling the Fight Paperwork subscription), tell them you can't and direct them to the billing page or suggest they e-mail support42@fightpaperwork.com (if professional) or support42@fighthealthinsurance.com (if patient).
 
@@ -301,7 +419,12 @@ When people ask about a state specific medicaid plan (e.g. medi-cal is californi
 
 You can and should consider using the medicaid information tool once we've done an initial assesment and point them to state specific resources.
 """
-        tools = f"""
+
+        # Build tools section conditionally based on whether the chat is Medicaid-related
+        medicaid_names_reminder = ""
+        if is_medicaid_related:
+            # Include full Medicaid tools when the conversation is about Medicaid/Medicare
+            tools = f"""
 ***TOOLS YOU SHOULD USE***
 We have a selection of tools to help you. You should try and use these tools whenever they are relevant.
 
@@ -313,11 +436,24 @@ For eligibility determinations if you have a tool you must use the tool rather t
 This means if someone asks if their eligible for medical, medicaid, medicare, or similar you must use the tool.
 You can call these tools, but not the person chatting with you. So, for example, you can offer to lookup more info for them.
 """
+            medicaid_names_reminder = """
+Remember that medicaid can go by many names, including but not limited to: DenaliCare, Medi-Cal, Health First Colorado, Husky Health, Diamond State Health Plan, Med-QUEST, Medical Assistance Program, HealthChoice Illinois, Hoosier Healthwise, Iowa Medicaid, Kansas Medical Assistance Program, MaineCare, MassHealth, MO HealthNet, NJ FamilyCare, Turquoise Care, New York State Medicaid, SoonerCare, Medical Assistance, Healthy Connections, TennCare, STAR+PLUS, Green Mountain Care, Cardinal Care, Apple Health, Forward Health, STAR, and Equality Care. You can use these names to infer which state a person is in (although confirming that theyr'e in the state can be good to do).
+"""
+        else:
+            # Only include PubMed tool for non-Medicaid conversations
+            tools = f"""
+***TOOLS YOU SHOULD USE***
+We have a selection of tools to help you. You should try and use these tools whenever they are relevant.
+
+{pubmed_tool}
+
+If the user asks about Medicaid or Medicare eligibility, let them know you can help with that and ask them to tell you more about their situation. You have specialized tools for Medicaid/Medicare questions that will activate when needed.
+"""
+            medicaid_names_reminder = ""
+
         base_system_prompt += f"""
 If a chat is linked to an appeal or prior authorization record, pay attention to that context and reference the specific details from that record. You should help the user iterate on that appeal or prior auth. When this happens, the system will tell you with a message like "Linked this chat to Appeal #123" or "Linked this chat to Prior Auth Request #456".
-
-Remember that medicaid can go by many names, including but not limited to: DenaliCare, Medi-Cal, Health First Colorado, Husky Health, Diamond State Health Plan, Med-QUEST, Medical Assistance Program, HealthChoice Illinois, Hoosier Healthwise, Iowa Medicaid, Kansas Medical Assistance Program, MaineCare, MassHealth, MO HealthNet, NJ FamilyCare, Turquoise Care, New York State Medicaid, SoonerCare, Medical Assistance, Healthy Connections, TennCare, STAR+PLUS, Green Mountain Care, Cardinal Care, Apple Health, Forward Health, STAR, and Equality Care. You can use these names to infer which state a person is in (although confirming that theyr'e in the state can be good to do).
-
+{medicaid_names_reminder}
 **Available Tools:**
 
 {tools}
@@ -342,8 +478,13 @@ Some important notes:
 
 - At the end of every response add the 🐼 emoji with the context of the chat so far necessary for answering the next turn of conversation.
 
+- Avoid any promises of success (although you can point to general information like it is believed the majourity of appeals are successful, but tracking is imperfect, etc.)
+
+- For queer folks needing immediate support (not health insurance related) PFLAG keeps a list of hotlines at https://pflag.org/resource/support-hotlines/ .
+
 So for example if a user asks a question and you have a follow up (like "How do I appeal a GLP-1 denial?") and your question is "What reason did they give you for your GLP-1 denied?" you would respond with:
 What reason did they give you for your GLP-1 denied?🐼Helping a patient appeal a GLP-1 denial.
+Remember in the last three sentences GLP-1 is just an _example_ check what the user is actually chatting about.
 """
         result: Optional[str] = None
         c = 0
@@ -715,7 +856,7 @@ class RemoteOpenLike(RemoteModel):
             The system prompt as a string, or the first prompt if multiple are available
         """
         key = prompt_type
-        prompt = "Your are a helpful assistant with extensive medical knowledge who loves helping patients."
+        prompt = "Your are a helpful assistant with extensive medical knowledge who loves helping patients. CRITICAL: Only cite medical literature, studies, PMIDs, journal names, or author names that are EXPLICITLY provided in the input. NEVER fabricate or hallucinate citations. If no citations are provided, do not include any specific study references."
         # If the prompt type is 'full' and the professional point of view is requested, use a different prompt.
         if prof_pov or (
             prof_pov and f"{prompt_type}_not_patient" in self.system_prompts_map
@@ -746,7 +887,7 @@ class RemoteOpenLike(RemoteModel):
                 "Emphasize medical necessity, clinical evidence, and patient benefit using precise, evidence-based language.\n"
                 "Do not express frustration or personal opinions about insurance companies.\n"
                 "Use appropriate professional sign-offs and titles (e.g., 'Sincerely, Dr. YourNameMagic, MD').\n"
-                "Only include references that are verifiable and provided in the input or from reliable sources.\n"
+                "CRITICAL: Only cite medical literature, studies, PMIDs, journal names, or author names that are EXPLICITLY provided in the input (e.g., ml_citations_context or pubmed_context). NEVER fabricate or hallucinate citations. If no citations are provided in the input, do not include any specific study references - general medical knowledge statements are fine without citations.\n"
                 "Do NOT use phrases such as 'as a patient', 'my condition', 'I am deeply concerned', or discuss the impact on 'my health' or 'my pain'. Do NOT write from the patient's perspective under any circumstances.\n"
                 "You are the healthcare professional, not the patient. Only write from the provider's perspective, never the patient's.\n\n"
                 "Here are several great example starters (use any style, do not copy the first one):\n"
