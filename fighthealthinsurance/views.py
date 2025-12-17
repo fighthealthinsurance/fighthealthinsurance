@@ -58,6 +58,7 @@ else:
 
 
 def render_ocr_error(request: HttpRequest, text: str) -> HttpResponseBase:
+    """Render an error page for OCR processing failures."""
     return render(
         request,
         "server_side_ocr_error.html",
@@ -68,12 +69,15 @@ def render_ocr_error(request: HttpRequest, text: str) -> HttpResponseBase:
 
 
 def csrf_failure(request, reason="", template_name="403_csrf.html"):
+    """Custom CSRF failure handler that renders a 403 page with the failure reason."""
     template = loader.get_template(template_name)
     logger.error(f"CSRF failure: {reason}")
     return HttpResponseForbidden(template.render({"reason": reason}, request))
 
 
 class FollowUpView(generic.FormView):
+    """View for recording follow-up outcomes on appeals via a form."""
+
     template_name = "followup.html"
     form_class = core_forms.FollowUpForm
 
@@ -93,10 +97,14 @@ class FollowUpView(generic.FormView):
 
 
 class ProVersionThankYouView(TemplateView):
+    """Thank you page displayed after professional version signup."""
+
     template_name = "professional_thankyou.html"
 
 
 class BRB(TemplateView):
+    """Service unavailable page returning HTTP 503 status."""
+
     template_name = "brb.html"
 
     def get(self, request, *args, **kwargs):
@@ -124,40 +132,61 @@ def safe_redirect(request, url):
         "checkout.stripe.com",
     ]
 
-    if not url.startswith("/"):
-        # For URLs, we need to validate the domain
-        from urllib.parse import urlparse
+    if url:
+        if url.startswith("//"):
+            raise SuspiciousOperation(f"Untrusted redirect: {url}")
+        elif not url.startswith("/"):
+            # For complete URLs, we need to validate the domain
+            from urllib.parse import urlparse
 
-        parsed_url = urlparse(url)
+            parsed_url = urlparse(url)
 
-        if parsed_url.netloc and parsed_url.netloc not in ALLOWED_HOSTS:
-            logger.warning(f"Suspicious redirect attempt to: {url}")
-            raise SuspiciousOperation(
-                f"Redirect to untrusted domain: {parsed_url.netloc}"
-            )
+            if parsed_url.netloc and parsed_url.netloc not in ALLOWED_HOSTS:
+                logger.warning(f"Suspicious redirect attempt to: {url}")
+                raise SuspiciousOperation(
+                    f"Redirect to untrusted domain: {parsed_url.netloc}"
+                )
 
         logger.info(f"Redirecting to: {url}")
 
         return HttpResponseRedirect(url)
+    else:
+        raise Exception(f"Asked to redirect to non-existing url.")
 
 
 class ProVersionView(generic.RedirectView):
+    """Redirect to the professional version site."""
+
     url = "https://www.fightpaperwork.com"
 
 
 class IndexView(generic.TemplateView):
+    """Homepage view."""
+
     template_name = "index.html"
 
 
 class AboutView(generic.TemplateView):
+    """About us page."""
+
     template_name = "about_us.html"
 
 
+class HowToHelpView(generic.TemplateView):
+    """Page describing ways to help the project."""
+
+    template_name = "how_to_help.html"
+
+
 class PBSNewsHourView(generic.TemplateView):
+    """Page about the PBS NewsHour feature."""
+
     template_name = "as_seen_on_pbs.html"
 
 
 class OtherResourcesView(generic.TemplateView):
+    """Page showing external health policy resources including RSS feeds."""
+
     template_name = "other_resources.html"
 
     def get_context_data(self, **kwargs):
@@ -261,6 +290,8 @@ class OtherResourcesView(generic.TemplateView):
 
 
 class BlogView(generic.TemplateView):
+    """Blog index page displaying list of blog posts."""
+
     template_name = "blog.html"
 
     def get_context_data(self, **kwargs):
@@ -290,6 +321,8 @@ class BlogView(generic.TemplateView):
 
 
 class BlogPostView(generic.TemplateView):
+    """Individual blog post page loaded from markdown files."""
+
     template_name = "blog_post.html"
 
     def get_context_data(self, **kwargs):
@@ -359,6 +392,8 @@ class BlogPostView(generic.TemplateView):
 
 
 class ScanView(generic.TemplateView):
+    """Initial scan/scrub page for uploading denial letters."""
+
     template_name = "scrub.html"
 
     def get_context_data(self, **kwargs):
@@ -366,6 +401,8 @@ class ScanView(generic.TemplateView):
 
 
 class PrivacyPolicyView(generic.TemplateView):
+    """Privacy policy page."""
+
     template_name = "privacy_policy.html"
 
     def get_context_data(self, **kwargs):
@@ -373,6 +410,8 @@ class PrivacyPolicyView(generic.TemplateView):
 
 
 class MHMDAView(generic.TemplateView):
+    """My Health My Data Act consumer privacy notice page."""
+
     template_name = "mhmda.html"
 
     def get_context_data(self, **kwargs):
@@ -380,6 +419,8 @@ class MHMDAView(generic.TemplateView):
 
 
 class TermsOfServiceView(generic.TemplateView):
+    """Terms of service page."""
+
     template_name = "tos.html"
 
     def get_context_data(self, **kwargs):
@@ -387,6 +428,8 @@ class TermsOfServiceView(generic.TemplateView):
 
 
 class ContactView(generic.TemplateView):
+    """Contact us page."""
+
     template_name = "contact.html"
 
     def get_context_data(self, **kwargs):
@@ -394,6 +437,8 @@ class ContactView(generic.TemplateView):
 
 
 class FAQView(generic.TemplateView):
+    """Frequently asked questions page."""
+
     template_name = "faq.html"
 
     def get_context_data(self, **kwargs):
@@ -401,6 +446,8 @@ class FAQView(generic.TemplateView):
 
 
 class MedicaidFAQView(generic.TemplateView):
+    """FAQ page specifically for Medicaid work requirements."""
+
     template_name = "faq_post.html"
 
     def get_context_data(self, **kwargs):
@@ -432,11 +479,15 @@ class MedicaidFAQView(generic.TemplateView):
 
 
 class ShareDenialView(View):
+    """View for sharing denial information."""
+
     def get(self, request):
         return render(request, "share_denial.html", context={"title": "Share Denial"})
 
 
 class ShareAppealView(View):
+    """View for sharing appeal text with the community."""
+
     def get(self, request):
         return render(request, "share_appeal.html", context={"title": "Share Appeal"})
 
@@ -466,6 +517,8 @@ class ShareAppealView(View):
 
 
 class RemoveDataView(View):
+    """View for users to request deletion of their data."""
+
     def get(self, request):
         return render(
             request,
@@ -501,6 +554,8 @@ class RemoveDataView(View):
 
 
 class RecommendAppeal(View):
+    """View for recommending appeal templates (placeholder)."""
+
     def post(self, request):
         return render(request, "")
 
@@ -574,6 +629,8 @@ class CategorizeReview(View):
 
 
 class FindNextSteps(View):
+    """View for determining and displaying next steps after denial categorization."""
+
     def get(self, request):
         """Handle GET requests for back navigation to outside_help/questions page."""
         denial_id = request.GET.get("denial_id")
@@ -665,6 +722,8 @@ class FindNextSteps(View):
 
 
 class ChooseAppeal(View):
+    """View for selecting and finalizing appeal text before sending."""
+
     def post(self, request):
         form = core_forms.ChooseAppealForm(request.POST)
 
@@ -727,6 +786,8 @@ class ChooseAppeal(View):
 
 
 class GenerateAppeal(View):
+    """View for generating appeal letters using ML models."""
+
     def get(self, request):
         """Handle GET requests for back navigation to appeals page."""
         denial_id = request.GET.get("denial_id")
@@ -831,6 +892,8 @@ class GenerateAppeal(View):
 
 
 class OCRView(View):
+    """View for server-side OCR processing of uploaded denial documents."""
+
     def __init__(self):
         # Load easy ocr reader if possible
         try:
@@ -880,6 +943,13 @@ class OCRView(View):
 
 
 class InitialProcessView(generic.FormView):
+    """
+    Initial denial processing view that creates a denial record and begins the appeal flow.
+
+    Handles the first step of the multi-step appeal process: collecting denial text,
+    user email, and basic information. Supports microsite integration for prefilled data.
+    """
+
     template_name = "scrub.html"
     form_class = core_forms.DenialForm
 
@@ -913,7 +983,9 @@ class InitialProcessView(generic.FormView):
                 elif default_procedure:
                     ocr_result = f"The patient was denied {default_procedure}."
                 elif default_condition:
-                    ocr_result = f"The patient with {default_condition} was denied treatment."
+                    ocr_result = (
+                        f"The patient with {default_condition} was denied treatment."
+                    )
 
         context["ocr_result"] = ocr_result
 
@@ -935,7 +1007,15 @@ class InitialProcessView(generic.FormView):
             fname = self.request.POST.get("fname", "")
             lname = self.request.POST.get("lname", "")
             name = f"{fname} {lname}".strip()
-            defaults = {"comments": "From appeal flow"}
+            referral_source = self.request.POST.get("referral_source", "")
+            referral_source_details = self.request.POST.get(
+                "referral_source_details", ""
+            )
+            defaults = {
+                "comments": "From appeal flow",
+                "referral_source": referral_source,
+                "referral_source_details": referral_source_details,
+            }
             if len(name) > 2:
                 defaults["name"] = name
             # Use get_or_create to avoid duplicate subscriptions
@@ -952,6 +1032,26 @@ class InitialProcessView(generic.FormView):
                     )
                 except Exception as e2:
                     logger.warning(f"Error updating subscriber? {email}!?!")
+
+        # Get microsite slug from request if available and validate it
+        microsite_slug = self.request.POST.get(
+            "microsite_slug"
+        ) or self.request.GET.get("microsite_slug", "")
+        if microsite_slug:
+            from fighthealthinsurance.microsites import get_microsite
+
+            if get_microsite(microsite_slug):
+                cleaned_data["microsite_slug"] = microsite_slug
+            else:
+                logger.warning(f"Invalid microsite_slug received: {microsite_slug}")
+
+        # Capture referral source information from POST data
+        referral_source = self.request.POST.get("referral_source", "")
+        referral_source_details = self.request.POST.get("referral_source_details", "")
+        if referral_source:
+            cleaned_data["referral_source"] = referral_source
+        if referral_source_details:
+            cleaned_data["referral_source_details"] = referral_source_details
 
         denial_response = common_view_logic.DenialCreatorHelper.create_or_update_denial(
             **cleaned_data,
@@ -1094,6 +1194,8 @@ class SessionRequiredMixin(View):
 
 
 class EntityExtractView(SessionRequiredMixin, generic.FormView):
+    """View for ML entity extraction from denial text (procedure, diagnosis, etc.)."""
+
     form_class = core_forms.EntityExtractForm
     template_name = "entity_extract.html"
 
@@ -1176,6 +1278,8 @@ class EntityExtractView(SessionRequiredMixin, generic.FormView):
 
 
 class PlanDocumentsView(SessionRequiredMixin, generic.FormView):
+    """View for collecting patient health history information."""
+
     form_class = core_forms.HealthHistory
     template_name = "health_history.html"
 
@@ -1225,6 +1329,8 @@ class PlanDocumentsView(SessionRequiredMixin, generic.FormView):
 
 
 class DenialCollectedView(SessionRequiredMixin, generic.FormView):
+    """View for collecting plan documents related to the denial."""
+
     form_class = core_forms.PlanDocumentsForm
     template_name = "plan_documents.html"
 
@@ -1279,6 +1385,8 @@ class DenialCollectedView(SessionRequiredMixin, generic.FormView):
 
 
 class AppealFileView(View):
+    """View for downloading encrypted appeal PDF documents."""
+
     def get(self, request, *args, **kwargs):
         if not request.user.is_authenticated:
             return HttpResponse(status=401)
@@ -1295,6 +1403,8 @@ class AppealFileView(View):
 
 
 class StripeWebhookView(View):
+    """Webhook handler for Stripe payment events."""
+
     def post(self, request):
         try:
             return self.do_post(request)
@@ -1322,6 +1432,8 @@ class StripeWebhookView(View):
 
 
 class CompletePaymentView(View):
+    """View for completing payment after Stripe checkout redirect."""
+
     def get(self, request):
         try:
             # Extract parameters from URL query string
@@ -1437,10 +1549,17 @@ def chat_interface_view(request):
         return redirect("chat_consent")
 
     # Check for default_procedure and default_condition from microsite URL params
-    default_procedure = request.GET.get("default_procedure", "")
-    default_condition = request.GET.get("default_condition", "")
-    medicare = request.GET.get("medicare", "")
-    microsite_slug = request.GET.get("microsite_slug", "")
+    # Check both GET and POST since consent form could send either way
+    default_procedure = request.GET.get("default_procedure") or request.POST.get(
+        "default_procedure", ""
+    )
+    default_condition = request.GET.get("default_condition") or request.POST.get(
+        "default_condition", ""
+    )
+    medicare = request.GET.get("medicare") or request.POST.get("medicare", "")
+    microsite_slug = request.GET.get("microsite_slug") or request.POST.get(
+        "microsite_slug", ""
+    )
 
     context = {
         "title": "Chat with FightHealthInsurance",
@@ -1467,6 +1586,42 @@ class ChatUserConsentView(FormView):
         "/chat/"  # Redirect to chat interface after successful form submission
     )
 
+    def get_success_url(self):
+        """Preserve query parameters when redirecting to chat."""
+        # Get the base success URL
+        url = self.success_url
+
+        # Preserve microsite-related query parameters
+        query_params = []
+        for param in [
+            "default_procedure",
+            "default_condition",
+            "microsite_slug",
+            "microsite_title",
+        ]:
+            value = self.request.GET.get(param) or self.request.POST.get(param)
+            if value:
+                from urllib.parse import urlencode
+
+                query_params.append((param, value))
+
+        if query_params:
+            from urllib.parse import urlencode
+
+            url = f"{url}?{urlencode(query_params)}"
+
+        return url
+
+    def get_context_data(self, **kwargs):
+        """Pass query parameters to template so they can be preserved in hidden fields."""
+        context = super().get_context_data(**kwargs)
+        # Add microsite params to context so they can be included as hidden fields
+        context["default_procedure"] = self.request.GET.get("default_procedure", "")
+        context["default_condition"] = self.request.GET.get("default_condition", "")
+        context["microsite_slug"] = self.request.GET.get("microsite_slug", "")
+        context["microsite_title"] = self.request.GET.get("microsite_title", "")
+        return context
+
     def form_valid(self, form):
         # Mark consent as completed in the session
         self.request.session["consent_completed"] = True
@@ -1476,12 +1631,18 @@ class ChatUserConsentView(FormView):
         self.request.session.save()
         if form.cleaned_data.get("subscribe"):
             name = f"{form.cleaned_data.get('first_name')} {form.cleaned_data.get('last_name')}"
+            referral_source = form.cleaned_data.get("referral_source", "")
+            referral_source_details = form.cleaned_data.get(
+                "referral_source_details", ""
+            )
             # Does the user want to subscribe to the newsletter?
             models.MailingListSubscriber.objects.create(
                 email=form.cleaned_data.get("email"),
                 phone=form.cleaned_data.get("phone"),
                 name=name,
                 comments="From chat consent form",
+                referral_source=referral_source,
+                referral_source_details=referral_source_details,
             )
 
         # No need to save form data to database - it will be saved in browser localStorage via JavaScript
@@ -1498,11 +1659,12 @@ class ChatUserConsentView(FormView):
 
 @csrf_exempt
 @require_http_methods(["POST"])
-def create_pwyw_checkout(request):
+def create_pwyw_checkout(request: HttpRequest) -> HttpResponse:
     """Create a Stripe checkout session for pay-what-you-want donations."""
     try:
         data = json.loads(request.body)
         amount = int(data.get("amount", 0))
+        return_url = data.get("return_url", "")
 
         if amount <= 0:
             return HttpResponse(
@@ -1514,6 +1676,36 @@ def create_pwyw_checkout(request):
             )
 
         stripe.api_key = settings.STRIPE_API_SECRET_KEY
+
+        # Validate and construct success/cancel URLs
+        # Use return_url if provided and it's a relative path, otherwise use root
+        if (
+            return_url
+            and return_url.startswith("/")
+            and not return_url.startswith("//")
+        ):
+            base_url = request.build_absolute_uri(return_url)
+            # Add donation=success parameter
+            from urllib.parse import urlparse, urlunparse, parse_qs, urlencode
+
+            parsed = urlparse(base_url)
+            query_params = parse_qs(parsed.query)
+            query_params["donation"] = ["success"]
+            new_query = urlencode(query_params, doseq=True)
+            success_url = urlunparse(
+                (
+                    parsed.scheme,
+                    parsed.netloc,
+                    parsed.path,
+                    parsed.params,
+                    new_query,
+                    parsed.fragment,
+                )
+            )
+            cancel_url = base_url
+        else:
+            success_url = request.build_absolute_uri("/") + "?donation=success"
+            cancel_url = request.build_absolute_uri("/")
 
         # Create a checkout session with the specified amount
         checkout_session = stripe.checkout.Session.create(
@@ -1532,8 +1724,8 @@ def create_pwyw_checkout(request):
                 }
             ],
             mode="payment",
-            success_url=request.build_absolute_uri("/") + "?donation=success",
-            cancel_url=request.build_absolute_uri("/"),
+            success_url=success_url,
+            cancel_url=cancel_url,
             metadata={
                 "payment_type": "donation",
                 "donation_type": "pwyw",

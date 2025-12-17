@@ -1086,9 +1086,39 @@ class DenialCreatorHelper:
         patient_user: Optional[PatientUser] = None,
         patient_visible: bool = False,
         subscribe: bool = False,  # Note: we don't handle this, but it's in the form so passed through.
+        microsite_slug: Optional[str] = None,
+        referral_source: Optional[str] = None,
+        referral_source_details: Optional[str] = None,
     ):
         """
         Create or update an existing denial.
+
+        Args:
+            email: The email address associated with the denial.
+            denial_text: The text of the denial.
+            zip: The ZIP code associated with the denial.
+            health_history: Optional health history information.
+            pii: Whether personally identifiable information is included.
+            tos: Whether terms of service have been accepted.
+            privacy: Whether privacy policy has been accepted.
+            use_external_models: Whether to use external models.
+            store_raw_email: Whether to store the raw email address.
+            plan_documents: Optional plan documents.
+            patient_id: Optional patient ID.
+            insurance_company: Optional insurance company name.
+            denial: Optional existing Denial object to update.
+            creating_professional: Optional ProfessionalUser creating the denial.
+            primary_professional: Optional ProfessionalUser as primary.
+            patient_user: Optional PatientUser associated with the denial.
+            patient_visible: Whether the denial is visible to the patient.
+            subscribe: Whether the user has subscribed (not handled in this function).
+            microsite_slug: Optional slug identifier for the microsite from which the denial was created.
+                           Should be a valid microsite slug or None.
+            referral_source: Optional referral source (e.g., "Search Engine", "Friend or Family").
+            referral_source_details: Optional free-text details about the referral source.
+
+        Returns:
+            The created or updated Denial object.
         """
         hashed_email = Denial.get_hashed_email(email)
         # If they ask us to store their raw e-mail we do
@@ -1117,6 +1147,9 @@ class DenialCreatorHelper:
                     insurance_company=insurance_company,
                     patient_visible=patient_visible,
                     professional_to_finish=professional_to_finish,
+                    microsite_slug=microsite_slug,
+                    referral_source=referral_source,
+                    referral_source_details=referral_source_details,
                 )
             except Exception as e:
                 # This is a temporary hack to drop non-ASCII characters
@@ -1137,6 +1170,9 @@ class DenialCreatorHelper:
                     insurance_company=insurance_company,
                     patient_visible=patient_visible,
                     professional_to_finish=professional_to_finish,
+                    microsite_slug=microsite_slug,
+                    referral_source=referral_source,
+                    referral_source_details=referral_source_details,
                 )
         else:
             # Directly update denial object fields instead of using denial.update()
@@ -1157,6 +1193,12 @@ class DenialCreatorHelper:
                 denial.insurance_company = insurance_company
             if patient_visible is not None:
                 denial.patient_visible = patient_visible
+            if microsite_slug is not None:
+                denial.microsite_slug = microsite_slug
+            if referral_source is not None:
+                denial.referral_source = referral_source
+            if referral_source_details is not None:
+                denial.referral_source_details = referral_source_details
 
             denial.save()
 
@@ -1171,8 +1213,9 @@ class DenialCreatorHelper:
             try:
                 your_state = cls.zip_engine.by_zipcode(zip).state
                 denial.your_state = your_state
-            except:
-                # Default to no state
+            except Exception as e:
+                # Default to no state - zip lookup can fail for invalid/unknown zips
+                logger.debug(f"Zip code lookup failed for {zip}: {e}")
                 your_state = None
         # Optionally:
         # Fire off some async requests to the model to extract info.
@@ -1614,8 +1657,9 @@ class DenialCreatorHelper:
                 await DenialTypesRelation.objects.acreate(
                     denial=denial, denial_type=dt, src=await cls.regex_src()
                 )
-            except:
-                logger.opt(exception=True).debug(f"Failed setting denial type")
+            except Exception as e:
+                # Can fail if relation already exists (duplicate)
+                logger.opt(exception=True).debug(f"Failed setting denial type: {e}")
         logger.debug(f"Done setting denial types")
 
     @classmethod
@@ -1844,9 +1888,9 @@ class AppealsBackendHelper:
                     ] = denial.primary_professional.get_full_name()
                 if denial.domain:
                     subs["[Professional Address]"] = denial.domain.get_address()
-            except:
+            except Exception as e:
                 logger.opt(exception=True).error(
-                    f"Error fetching info for denial sub {denial.denial_id}"
+                    f"Error fetching info for denial sub {denial.denial_id}: {e}"
                 )
             for k, v in subs.items():
                 if v and v != "" and v != "UNKNOWN":
@@ -2021,7 +2065,8 @@ class AppealsBackendHelper:
                 try:
                     # Added in Django 5.1
                     await denial.arefresh_from_db(from_queryset=denial_query)
-                except:
+                except AttributeError:
+                    # arefresh_from_db with from_queryset not available in older Django
                     denial = await denial_query.aget()
                 pubmed_context = denial.pubmed_context
                 ml_citation_context = denial.ml_citation_context
@@ -2100,9 +2145,10 @@ class StripeWebhookHelper:
     @staticmethod
     def handle_checkout_session_completed(request, session):
         try:
+            # Handle both Stripe object and dict access patterns
             try:
                 metadata = session.metadata
-            except:
+            except (AttributeError, TypeError):
                 metadata = session["metadata"]
 
             payment_type: Optional[str] = None
@@ -2154,9 +2200,10 @@ class StripeWebhookHelper:
         try:
             # TODO: More complete handling
             logger.debug(f"Checkout session expired: {session}")
+            # Handle both Stripe object and dict access patterns
             try:
                 metadata = session.metadata
-            except:
+            except (AttributeError, TypeError):
                 metadata = session["metadata"]
             payment_type = metadata.get("payment_type")
             item = "Fight Health Insurance / Fight paperwork"
@@ -2191,21 +2238,22 @@ class StripeWebhookHelper:
                     }
                 )
                 finish_link = f"{finish_base_link}?{params}"
+            # Try to extract email from various session locations
             email: Optional[str] = None
             try:
                 try:
                     email = session.customer_email
-                except:
+                except (AttributeError, TypeError):
                     email = session["customer_email"]
-            except:
+            except (KeyError, TypeError):
                 pass
             if email is None:
                 try:
                     try:
                         email = session.customer_details.email
-                    except:
+                    except (AttributeError, TypeError):
                         email = session["customer_details"]["email"]
-                except:
+                except (KeyError, TypeError, AttributeError):
                     pass
             if email is None:
                 logger.debug(

@@ -75,7 +75,7 @@ class FaxActor:
     def send_delayed_faxes(self) -> Tuple[int, int]:
         from fighthealthinsurance.models import FaxesToSend
 
-        target_time = timezone.now() - timedelta(hours=1)
+        target_time = timezone.now() - timedelta(hours=4)
         print(f"Sending faxes older than target: {target_time}")
 
         delayed_faxes = FaxesToSend.objects.filter(
@@ -104,7 +104,11 @@ class FaxActor:
         # Convert UUID object to string if needed
         if not isinstance(uuid_val, str):
             uuid_val = str(uuid_val)
-        fax = FaxesToSend.objects.filter(uuid=uuid_val, hashed_email=hashed_email).get()
+        try:
+            fax = FaxesToSend.objects.filter(uuid=uuid_val, hashed_email=hashed_email).get()
+        except FaxesToSend.DoesNotExist:
+            print(f"Fax not found for uuid={uuid_val}, hashed_email={hashed_email}")
+            return False
         return self.do_send_fax_object(fax)
 
     def _update_fax_for_sending(self, fax):
@@ -121,10 +125,14 @@ class FaxActor:
         print(f"Checking if we should notify user of result {fax_success}")
         if fax.professional:
             print(f"Professional fax, no need to notify user -- updating appeal")
-            appeal = fax.for_appeal.get()
-            appeal.sent = fax_success
-            appeal.save()
-            return True
+            appeal = fax.for_appeal
+            if appeal is not None:
+                appeal.sent = fax_success
+                appeal.save()
+                return True
+            else:
+                print(f"No appeal found for professional {fax}?!?")
+                return True
         fax_redo_link = "https://www.fighthealthinsurance.com" + reverse(
             "fax-followup",
             kwargs={

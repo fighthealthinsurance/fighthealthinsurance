@@ -1,0 +1,124 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}How to Help - Fight Health Insurance{% endblock title %}
+{% block metatitle %}How to Help - Fight Health Insurance{% endblock metatitle %}
+{% block metadescription %}There are many ways you can help Fight Health Insurance make a difference. Share, contribute, or donate to support our mission.{% endblock metadescription %}
+
+{% block content %}
+<div class="container mt-5">
+    <h2 style="margin-top: 10vh; text-align: center; margin-bottom: 2rem;">How You Can Help</h2>
+    <p style="text-align: center; font-size: 1.1rem; max-width: 800px; margin: 0 auto 3rem;">
+        Thank you for your interest in helping Fight Health Insurance! There are several ways you can make a difference
+        and help us support more people fighting unfair insurance denials.
+    </p>
+
+    <!-- Share Section -->
+    <section id="share-help" style="background-color: #f8f9fa; padding: 2rem; border-radius: 8px; margin-bottom: 2rem;">
+        <h3 style="margin-bottom: 1.5rem;">📢 Share With Your Network</h3>
+        <p style="margin-bottom: 1.5rem;">
+            One of the most powerful ways to help is by spreading the word. Know someone who's dealing with a health
+            insurance denial? Share this free tool and help them fight back!
+        </p>
+        {% include 'partials/share_buttons.html' %}
+    </section>
+
+    <!-- Contribute Data Section -->
+    <section id="contribute-data" style="background-color: #e8f5e9; padding: 2rem; border-radius: 8px; margin-bottom: 2rem;">
+        <h3 style="margin-bottom: 1.5rem;">📊 Help Us Learn & Improve</h3>
+        <p style="margin-bottom: 1.5rem;">
+            By using our chooser interface, you can help us collect anonymized data about insurance denials.
+            This information helps us improve our AI models and better serve everyone fighting insurance denials.
+        </p>
+        <a href="{% url 'chooser' %}" class="section-btn btn btn-default smoothScroll" style="display: inline-block;">
+            Try the Chooser Interface
+        </a>
+    </section>
+
+    <!-- Contribute Code Section -->
+    <section id="contribute-code" style="background-color: #e3f2fd; padding: 2rem; border-radius: 8px; margin-bottom: 2rem;">
+        <h3 style="margin-bottom: 1.5rem;">💻 Contribute on GitHub</h3>
+        <p style="margin-bottom: 1.5rem;">
+            Fight Health Insurance is open source! If you're a developer, designer, or just want to help improve
+            the project, we welcome contributions on GitHub. Check out our repositories, report issues, or submit
+            pull requests.
+        </p>
+        <a href="https://github.com/orgs/fighthealthinsurance/repositories" target="_blank" rel="noopener noreferrer" 
+           class="section-btn btn btn-default smoothScroll" style="display: inline-block;">
+            View on GitHub
+        </a>
+    </section>
+
+    <!-- Donate Section -->
+    <section id="donate-help" style="background-color: #fff8e1; padding: 2rem; border-radius: 8px; margin-bottom: 2rem;">
+        <h3 style="margin-bottom: 1.5rem;">💚 Support Our Development</h3>
+        <p style="margin-bottom: 1.5rem;">
+            Fight Health Insurance is free for patients. We believe everyone should have access to the tools
+            they need to fight unfair insurance denials. If you found this service helpful and can afford it, consider
+            making a donation to help us keep the service running and improving.
+        </p>
+        <p style="margin-bottom: 1.5rem; font-weight: bold;">
+            Pay what you can. $0 is totally fine.
+        </p>
+        <a href="https://buy.stripe.com/5kA03r2ZwbgebyE7ss" target="_blank" rel="noopener noreferrer"
+           class="section-btn btn btn-default smoothScroll" style="display: inline-block;">
+            Support Our Development
+        </a>
+    </section>
+
+    <!-- Additional Ways Section -->
+    <section id="other-ways" style="padding: 2rem 0;">
+        <h3 style="margin-bottom: 1.5rem; text-align: center;">Other Ways to Help</h3>
+        <div class="row">
+            <div class="col-md-6" style="margin-bottom: 1.5rem;">
+                <div style="padding: 1.5rem; background-color: #f5f5f5; border-radius: 8px; height: 100%;">
+                    <h4 style="margin-bottom: 1rem;">📝 Share Your Story</h4>
+                    <p>
+                        Your experience matters. Share your success stories or feedback to help us improve
+                        and inspire others who are fighting insurance denials. Contact us at <a href="mailto:support42@fighthealthinsurance.com">support42@fighthealthinsurance.com</a>.
+                    </p>
+                </div>
+            </div>
+            <div class="col-md-6" style="margin-bottom: 1.5rem;">
+                <div style="padding: 1.5rem; background-color: #f5f5f5; border-radius: 8px; height: 100%;">
+                    <h4 style="margin-bottom: 1rem;"><span aria-hidden="true">🤝</span> Spread Awareness</h4>
+                    <p>
+                        Follow us on social media and help raise awareness about the importance of appealing
+                        unfair insurance denials. Every voice makes a difference!
+                    </p>
+                    <p style="margin-top: 1rem;">
+                        <a href="https://x.com/fighthinsurance" target="_blank" rel="noopener noreferrer" title="Follow on X/Twitter" style="margin-right: 0.75rem;">
+                            <img src="{% static 'images/twitterlogo.png' %}" alt="X/Twitter" style="width: 28px; height: 28px;">
+                        </a>
+                        <a href="https://www.instagram.com/fighthealthinsurance/" target="_blank" rel="noopener noreferrer" title="Follow on Instagram" style="margin-right: 0.75rem;">
+			  <svg xmlns="http://www.w3.org/2000/svg" width="35" height="35" viewBox="0 0 24 24" fill="none" stroke="#888888" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="tabler-icon tabler-icon-brand-instagram ">
+                            <path d="M4 8a4 4 0 0 1 4 -4h8a4 4 0 0 1 4 4v8a4 4 0 0 1 -4 4h-8a4 4 0 0 1 -4 -4z"></path>
+                            <path d="M9 12a3 3 0 1 0 6 0a3 3 0 0 0 -6 0"></path>
+                            <path d="M16.5 7.5v.01"></path>
+                          </svg>
+                        </a>
+                        <a href="https://www.linkedin.com/company/fight-health-insurance" target="_blank" rel="noopener noreferrer" title="Follow on LinkedIn">
+                            <img src="{% static 'images/linkedinlogo.png' %}" alt="LinkedIn" style="width: 28px; height: 28px;">
+                        </a>
+			<a href="https://www.tiktok.com/@fightpaperwork" target="_blank" rel="noopener noreferrer" title="Follow on TikTok" style="margin-left: 0.75rem;"><img src="{% static 'images/TikTok_logo.svg' %}" alt="tiktok" style="width: 280px; height: 28px;"></a>
+                    </p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Call to Action -->
+    <div style="text-align: center; padding: 3rem 0; background-color: #f8f9fa; border-radius: 8px; margin-top: 3rem;">
+        <h3 style="margin-bottom: 1rem;">Ready to Get Started?</h3>
+        <p style="font-size: 1.1rem; margin-bottom: 2rem;">
+            Generate your healthcare claim appeal in minutes with AI.
+        </p>
+        <a href="{% url 'scan' %}" class="section-btn btn btn-default smoothScroll" style="display: inline-block; margin-right: 1rem;">
+            Generate an Appeal
+        </a>
+        <a href="{% url 'chat' %}" class="btn btn-outline-green smoothScroll" style="display: inline-block;">
+            AI Chat
+        </a>
+    </div>
+</div>
+{% endblock content %}

@@ -72,6 +72,11 @@ class GenericContextGeneration(ExportModelOperationsMixin("GenericContextGenerat
 
 # Money related :p
 class InterestedProfessional(ExportModelOperationsMixin("InterestedProfessional"), models.Model):  # type: ignore
+    """
+    Stores information about professionals interested in using the service.
+    Used for tracking professional signups and their payment status.
+    """
+
     id = models.AutoField(primary_key=True)
     name = models.CharField(max_length=300, default="", blank=True)
     business_name = models.CharField(max_length=300, default="", blank=True)
@@ -93,6 +98,11 @@ class InterestedProfessional(ExportModelOperationsMixin("InterestedProfessional"
 
 # Everyone else:
 class MailingListSubscriber(models.Model):
+    """
+    Stores mailing list subscribers for newsletters and updates.
+    Includes unsubscribe token for privacy-compliant unsubscription.
+    """
+
     id = models.AutoField(primary_key=True)
     email = models.EmailField()
     name = models.CharField(max_length=300, default="", blank=True)
@@ -102,6 +112,8 @@ class MailingListSubscriber(models.Model):
     unsubscribe_token = models.CharField(
         max_length=100, default=sekret_gen, unique=False
     )
+    referral_source = models.CharField(max_length=300, default="", blank=True)
+    referral_source_details = models.TextField(default="", blank=True)
 
     def __str__(self):
         return self.email
@@ -116,6 +128,11 @@ class MailingListSubscriber(models.Model):
 
 
 class DemoRequests(models.Model):
+    """
+    Stores demo requests from potential enterprise customers.
+    Tracks contact information and request source for sales follow-up.
+    """
+
     id = models.AutoField(primary_key=True)
     email = models.EmailField()
     name = models.CharField(max_length=300, default="", blank=True)
@@ -130,6 +147,11 @@ class DemoRequests(models.Model):
 
 
 class FollowUpType(models.Model):
+    """
+    Defines types of follow-up emails with their templates and timing.
+    Used to schedule automated follow-up communications with users.
+    """
+
     id = models.AutoField(primary_key=True)
     name = models.CharField(max_length=300, default="")
     subject = models.CharField(max_length=300, primary_key=False)
@@ -141,6 +163,11 @@ class FollowUpType(models.Model):
 
 
 class FollowUp(models.Model):
+    """
+    Stores user responses to follow-up emails about their appeals.
+    Captures appeal outcomes, user feedback, and testimonials.
+    """
+
     followup_result_id = models.AutoField(primary_key=True)
     hashed_email = models.CharField(max_length=200, null=True)
     denial_id = models.ForeignKey("Denial", on_delete=models.CASCADE)
@@ -156,6 +183,11 @@ class FollowUp(models.Model):
 
 
 class FollowUpSched(models.Model):
+    """
+    Schedules follow-up emails to be sent to users after their denial submission.
+    Tracks sending status and handles cascade deletion when denials are removed.
+    """
+
     follow_up_id = models.AutoField(primary_key=True)
     email = models.CharField(max_length=300, primary_key=False)
     follow_up_type = models.ForeignKey(
@@ -177,6 +209,11 @@ class FollowUpSched(models.Model):
 
 
 class PlanType(models.Model):
+    """
+    Categorizes insurance plan types (e.g., HMO, PPO, Medicare).
+    Uses regex patterns to automatically classify plans from denial text.
+    """
+
     id = models.AutoField(primary_key=True)
     name = models.CharField(max_length=300, primary_key=False)
     alt_name = models.CharField(max_length=300, blank=True)
@@ -192,6 +229,11 @@ class PlanType(models.Model):
 
 
 class Regulator(models.Model):
+    """
+    Stores information about insurance regulators (e.g., state insurance departments).
+    Used to provide users with contact information for filing complaints.
+    """
+
     id = models.AutoField(primary_key=True)
     name = models.CharField(max_length=300, primary_key=False)
     website = models.CharField(max_length=300, primary_key=False)
@@ -206,6 +248,11 @@ class Regulator(models.Model):
 
 
 class PlanSource(models.Model):
+    """
+    Identifies the source/origin of insurance plans (e.g., employer, marketplace, Medicaid).
+    Uses regex patterns to classify plan sources from denial text.
+    """
+
     id = models.AutoField(primary_key=True)
     name = models.CharField(max_length=300, primary_key=False)
     regex = RegexField(max_length=400, re_flags=re.IGNORECASE | re.UNICODE | re.M)
@@ -246,6 +293,12 @@ class Procedures(models.Model):
 
 
 class DenialTypes(models.Model):
+    """
+    Categorizes types of insurance denials (e.g., medical necessity, prior auth).
+    Supports hierarchical categorization with parent types and custom appeal text.
+    Uses regex patterns for automatic classification from denial letters.
+    """
+
     id = models.AutoField(primary_key=True)
     # for the many different sub-variants.
     parent = models.ForeignKey(
@@ -298,6 +351,11 @@ class DenialTypes(models.Model):
 
 
 class AppealTemplates(models.Model):
+    """
+    Stores appeal letter templates for specific denial/diagnosis combinations.
+    Templates are matched using regex patterns and included in generated appeals.
+    """
+
     id = models.AutoField(primary_key=True)
     name = models.CharField(max_length=300, primary_key=False)
     regex = RegexField(max_length=400, re_flags=re.IGNORECASE | re.UNICODE | re.M)
@@ -314,6 +372,11 @@ class AppealTemplates(models.Model):
 
 
 class DataSource(models.Model):
+    """
+    Tracks the origin of data entries (e.g., user input, ML model, expert system).
+    Used for auditing and understanding how information was classified.
+    """
+
     id = models.AutoField(primary_key=True)
     name = models.CharField(max_length=100)
 
@@ -322,6 +385,11 @@ class DataSource(models.Model):
 
 
 class PlanDocuments(models.Model):
+    """
+    Stores uploaded insurance plan documents associated with denials.
+    Supports both encrypted and unencrypted file storage.
+    """
+
     plan_document_id = models.AutoField(primary_key=True)
     plan_document = models.FileField(null=True, storage=settings.COMBINED_STORAGE)
     plan_document_enc = EncryptedFileField(null=True, storage=settings.COMBINED_STORAGE)
@@ -331,6 +399,11 @@ class PlanDocuments(models.Model):
 
 
 class FollowUpDocuments(models.Model):
+    """
+    Stores documents uploaded during follow-up responses (e.g., appeal outcome letters).
+    Supports both encrypted and unencrypted file storage.
+    """
+
     document_id = models.AutoField(primary_key=True)
     follow_up_document = models.FileField(null=True, storage=settings.COMBINED_STORAGE)
     follow_up_document_enc = EncryptedFileField(
@@ -372,6 +445,11 @@ class PubMedMiniArticle(models.Model):
 
 
 class PubMedQueryData(models.Model):
+    """
+    Caches PubMed search results for medical literature queries.
+    Used to avoid redundant API calls and speed up appeal generation.
+    """
+
     internal_id = models.AutoField(primary_key=True)
     query = models.TextField(null=False, max_length=300)
     since = models.TextField(null=True)  # text date for the since query
@@ -382,6 +460,12 @@ class PubMedQueryData(models.Model):
 
 
 class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # type: ignore
+    """
+    Queues faxes to be sent with appeal documents.
+    Tracks payment status, sending attempts, and success/failure.
+    Supports both encrypted and unencrypted document storage.
+    """
+
     fax_id = models.AutoField(primary_key=True)
     hashed_email = models.CharField(max_length=300, primary_key=False)
     date = models.DateTimeField(auto_now=False, auto_now_add=True)
@@ -450,24 +534,37 @@ class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # t
 
 
 class DenialTypesRelation(models.Model):
+    """Many-to-many through table linking denials to their denial types with source tracking."""
+
     denial = models.ForeignKey("Denial", on_delete=models.CASCADE)
     denial_type = models.ForeignKey(DenialTypes, on_delete=models.CASCADE)
     src = models.ForeignKey(DataSource, on_delete=models.SET_NULL, null=True)
 
 
 class PlanTypesRelation(models.Model):
+    """Many-to-many through table linking denials to their plan types with source tracking."""
+
     denial = models.ForeignKey("Denial", on_delete=models.CASCADE)
     plan_type = models.ForeignKey(PlanType, on_delete=models.CASCADE)
     src = models.ForeignKey(DataSource, on_delete=models.SET_NULL, null=True)
 
 
 class PlanSourceRelation(models.Model):
+    """Many-to-many through table linking denials to their plan sources with source tracking."""
+
     denial = models.ForeignKey("Denial", on_delete=models.CASCADE)
     plan_source = models.ForeignKey(PlanSource, on_delete=models.CASCADE)
     src = models.ForeignKey(DataSource, on_delete=models.SET_NULL, null=True)
 
 
 class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignore
+    """
+    Core model representing an insurance denial submitted by a user.
+    Stores denial text, extracted entities (procedure, diagnosis), user information,
+    and links to generated appeals, PubMed references, and professional associations.
+    Supports access control filtering for patients, professionals, and domain admins.
+    """
+
     denial_id = models.AutoField(primary_key=True, null=False)
     uuid = models.CharField(max_length=300, default=uuid.uuid4, editable=False)
     hashed_email = models.CharField(max_length=300, primary_key=False)
@@ -577,6 +674,13 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     candidate_generated_questions = models.JSONField(null=True, blank=True)
     candidate_ml_citation_context = models.JSONField(null=True, blank=True)
     gen_attempts = models.IntegerField(null=True, default=0)
+    # Track which microsite the user came from (if any)
+    microsite_slug = models.CharField(
+        max_length=100, null=True, blank=True, db_index=True
+    )
+    # Track where the user heard about the service
+    referral_source = models.CharField(max_length=300, null=True, blank=True)
+    referral_source_details = models.TextField(null=True, blank=True)
 
     @classmethod
     def filter_to_allowed_denials(cls, current_user: User):
@@ -636,6 +740,11 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
 
 
 class DenialQA(models.Model):
+    """
+    Stores question-answer pairs for a denial.
+    Used to capture additional context gathered during the appeal generation process.
+    """
+
     id = models.AutoField(primary_key=True)
     denial = models.ForeignKey("Denial", on_delete=models.CASCADE)
     question = models.TextField(max_length=3000, primary_key=False)
@@ -644,6 +753,11 @@ class DenialQA(models.Model):
 
 
 class ProposedAppeal(ExportModelOperationsMixin("ProposedAppeal"), models.Model):  # type: ignore
+    """
+    Stores AI-generated appeal letter proposals for users to review and select.
+    Multiple proposals may be generated for a single denial.
+    """
+
     appeal_text = models.TextField(max_length=3000000000, null=True, blank=True)
     for_denial = models.ForeignKey(
         Denial, on_delete=models.CASCADE, null=True, blank=True
@@ -659,6 +773,12 @@ class ProposedAppeal(ExportModelOperationsMixin("ProposedAppeal"), models.Model)
 
 
 class Appeal(ExportModelOperationsMixin("Appeal"), models.Model):  # type: ignore
+    """
+    Represents a finalized appeal letter that has been or will be submitted.
+    Links to the original denial, associated chat, and fax sending records.
+    Supports access control filtering similar to Denial model.
+    """
+
     id = models.AutoField(primary_key=True)
     uuid = models.CharField(
         default=uuid.uuid4,
@@ -815,12 +935,16 @@ class Appeal(ExportModelOperationsMixin("Appeal"), models.Model):  # type: ignor
 # Secondary relations for denials and appeals
 # Secondary Appeal Relations
 class SecondaryAppealProfessionalRelation(models.Model):
+    """Links additional professionals to appeals beyond the primary/creating professional."""
+
     appeal = models.ForeignKey(Appeal, on_delete=models.CASCADE)
     professional = models.ForeignKey(ProfessionalUser, on_delete=models.CASCADE)
 
 
 # Seconday Denial Relations
 class SecondaryDenialProfessionalRelation(models.Model):
+    """Links additional professionals to denials beyond the primary/creating professional."""
+
     denial = models.ForeignKey(Denial, on_delete=models.CASCADE)
     professional = models.ForeignKey(ProfessionalUser, on_delete=models.CASCADE)
 
@@ -829,6 +953,8 @@ class SecondaryDenialProfessionalRelation(models.Model):
 
 
 class StripeProduct(models.Model):
+    """Stores Stripe product information for billing integration."""
+
     id = models.AutoField(primary_key=True)
     name = models.CharField(max_length=300)
     stripe_id = models.CharField(max_length=300)
@@ -836,6 +962,8 @@ class StripeProduct(models.Model):
 
 
 class StripePrice(models.Model):
+    """Stores Stripe price information linked to products."""
+
     id = models.AutoField(primary_key=True)
     product = models.ForeignKey(StripeProduct, on_delete=models.CASCADE)
     stripe_id = models.CharField(max_length=300)
@@ -845,6 +973,8 @@ class StripePrice(models.Model):
 
 
 class StripeMeter(models.Model):
+    """Stores Stripe meter information for usage-based billing."""
+
     id = models.AutoField(primary_key=True)
     stripe_meter_id = models.CharField(max_length=300)
     name = models.CharField(max_length=300)
@@ -852,6 +982,11 @@ class StripeMeter(models.Model):
 
 
 class AppealAttachment(models.Model):
+    """
+    Stores file attachments for appeals (e.g., medical records, supporting documents).
+    Files are encrypted at rest for privacy protection.
+    """
+
     appeal = models.ForeignKey(
         Appeal, on_delete=models.CASCADE, related_name="attachments"
     )
@@ -868,12 +1003,16 @@ class AppealAttachment(models.Model):
 
 
 class StripeRecoveryInfo(models.Model):
+    """Stores recovery information for failed Stripe transactions."""
+
     id = models.AutoField(primary_key=True)
     items = models.JSONField()
     created_at = models.DateTimeField(auto_now_add=True)
 
 
 class LostStripeSession(models.Model):
+    """Tracks Stripe checkout sessions that were started but not completed."""
+
     id = models.AutoField(primary_key=True)
     session_id = models.CharField(max_length=255, null=True, blank=True)
     payment_type = models.CharField(max_length=255, null=True, blank=True)
@@ -885,6 +1024,8 @@ class LostStripeSession(models.Model):
 
 
 class LostStripeMeters(models.Model):
+    """Tracks Stripe meter events that failed to be recorded for later retry."""
+
     id = models.AutoField(primary_key=True)
     created_at = models.DateTimeField(auto_now_add=True, blank=True)
     payload = models.JSONField(null=True, blank=True)
@@ -893,6 +1034,8 @@ class LostStripeMeters(models.Model):
 
 
 class StripeWebhookEvents(models.Model):
+    """Logs Stripe webhook events for idempotency and debugging."""
+
     internal_id = models.AutoField(primary_key=True)
     event_stripe_id = models.CharField(max_length=255, null=False)
     created_at = models.DateTimeField(auto_now_add=True, blank=True)
@@ -901,6 +1044,12 @@ class StripeWebhookEvents(models.Model):
 
 
 class PriorAuthRequest(ExportModelOperationsMixin("PriorAuthRequest"), models.Model):  # type: ignore
+    """
+    Stores information about a prior authorization request.
+    Used to track the status of the request and store the questions and answers.
+    Supports guided and raw modes with status tracking through the workflow.
+    """
+
     chat = models.ForeignKey(
         "OngoingChat",
         null=True,
@@ -909,10 +1058,6 @@ class PriorAuthRequest(ExportModelOperationsMixin("PriorAuthRequest"), models.Mo
         related_name="prior_auths",
         db_index=True,
     )
-    """
-    Stores information about a prior authorization request.
-    Used to track the status of the request and store the questions and answers.
-    """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     creator_professional_user = models.ForeignKey(
@@ -1083,6 +1228,10 @@ class OngoingChat(models.Model):
     hashed_email = models.CharField(
         max_length=300, null=True, blank=True, help_text="Hashed email of the user"
     )
+    # Track which microsite the user came from (if any)
+    microsite_slug = models.CharField(
+        max_length=100, null=True, blank=True, db_index=True
+    )
 
     @staticmethod
     def find_chats_by_email(email: str):
@@ -1156,6 +1305,12 @@ class ChatLeads(ExportModelOperationsMixin("ChatLeads"), models.Model):  # type:
     session_id = models.CharField(max_length=255, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     drug = models.CharField(max_length=255, null=True, blank=True)
+    # Track which microsite the user came from (if any)
+    microsite_slug = models.CharField(
+        max_length=100, null=True, blank=True, db_index=True
+    )
+    referral_source = models.CharField(max_length=300, null=True, blank=True)
+    referral_source_details = models.TextField(null=True, blank=True)
 
     class Meta:
         verbose_name = "Chat Lead"
@@ -1272,4 +1427,43 @@ class ChooserVote(ExportModelOperationsMixin("ChooserVote"), models.Model):  # t
         verbose_name_plural = "Chooser Votes"
 
     def __str__(self):
+        """
+        Return a human-readable label for the vote that includes the chosen candidate ID and the task ID.
+
+        Returns:
+            str: A string in the form "Vote for Candidate {chosen_candidate_id} on Task {task_id}".
+        """
         return f"Vote for Candidate {self.chosen_candidate_id} on Task {self.task_id}"
+
+
+class ChooserSkip(ExportModelOperationsMixin("ChooserSkip"), models.Model):  # type: ignore
+    """
+    Model to track tasks that users have skipped.
+    This helps ensure users don't see the same task repeatedly.
+    """
+
+    id = models.AutoField(primary_key=True)
+    task = models.ForeignKey(
+        ChooserTask, on_delete=models.CASCADE, related_name="skips"
+    )
+    session_key = models.CharField(max_length=100, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        # Prevent same session from skipping same task multiple times
+        unique_together = [["task", "session_key"]]
+        indexes = [
+            models.Index(fields=["task"]),
+            models.Index(fields=["session_key"]),
+        ]
+        verbose_name = "Chooser Skip"
+        verbose_name_plural = "Chooser Skips"
+
+    def __str__(self):
+        """
+        Human-readable representation of this ChooserSkip showing the associated task and session.
+
+        Returns:
+            str: A string in the form "Skip of Task {task_id} by {session_key}".
+        """
+        return f"Skip of Task {self.task_id} by {self.session_key}"

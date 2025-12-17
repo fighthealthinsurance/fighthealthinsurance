@@ -92,6 +92,20 @@ Terms of Service & Setup - FightHealthInsurance Chat Assistant (Alpha)
 
             <form method="post" id="user_consent_form">
               {% csrf_token %}
+              
+              <!-- Hidden fields to preserve microsite parameters -->
+              {% if default_procedure %}
+              <input type="hidden" name="default_procedure" value="{{ default_procedure }}">
+              {% endif %}
+              {% if default_condition %}
+              <input type="hidden" name="default_condition" value="{{ default_condition }}">
+              {% endif %}
+              {% if microsite_slug %}
+              <input type="hidden" name="microsite_slug" value="{{ microsite_slug }}">
+              {% endif %}
+              {% if microsite_title %}
+              <input type="hidden" name="microsite_title" value="{{ microsite_title }}">
+              {% endif %}
 
               <div class="mb-4">
                 <h4>Your Information</h4>
@@ -162,6 +176,17 @@ Terms of Service & Setup - FightHealthInsurance Chat Assistant (Alpha)
                     I wish to subscribe for updates and news from Fight Health Insurance and Fight Paperwork (our pro-version).
                     Choosing to subscribe will not affect your experience, but we do appreciate it!
                   </label>
+                </div>
+
+                <div class="mb-3">
+                  <label for="referral_source" class="form-label">How did you hear about us? (Optional)</label>
+                  {{ form.referral_source }}
+                </div>
+
+                <div class="mb-3">
+                  <label for="referral_source_details" class="form-label">Details (Optional)</label>
+                  {{ form.referral_source_details }}
+                  <small class="form-text text-muted">Please provide specific details about your referral source if applicable</small>
                 </div>
               </div>
 

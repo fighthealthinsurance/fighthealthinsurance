@@ -13,7 +13,8 @@ from typing import (
     Tuple,
     Any,
     Union,
-)  # Added Any, Union
+    Pattern,
+)  # Added Any, Union, Pattern
 from fhi_users.models import User, ProfessionalUser
 
 from fighthealthinsurance.ml.ml_router import ml_router
@@ -29,6 +30,74 @@ from fighthealthinsurance.pubmed_tools import PubMedTools
 from fighthealthinsurance import settings
 from fighthealthinsurance.prompt_templates import get_intro_template
 from fighthealthinsurance.utils import best_within_timelimit
+
+# Crisis/self-harm detection - phrases indicating the user may need immediate help
+# IMPORTANT: These must be specific enough to NOT block legitimate mental health
+# insurance denial appeals. Someone saying "my coverage for suicidal ideation
+# treatment was denied" is NOT in crisis - they're seeking help with insurance.
+#
+# We only trigger on first-person expressions of active crisis, NOT:
+# - References to denied mental health coverage
+# - Discussion of past mental health treatment
+# - Clinical terms in insurance/medical context
+#
+# These are compiled into regexes with word boundaries to avoid partial matches
+# and case-insensitive matching to avoid having to lowercase input.
+_CRISIS_PHRASES = [
+    # Active first-person crisis expressions (very specific)
+    r"i want to kill myself",
+    r"i'm going to kill myself",
+    r"i want to end my life",
+    r"i want to die",
+    r"i don't want to live",
+    r"i'd rather be dead",
+    r"i'm better off dead",
+    r"i have no reason to live",
+    r"i'm going to take my own life",
+    r"i want to hurt myself",
+    r"i'm going to hurt myself",
+    r"i've been cutting myself",
+    r"i'm cutting myself",
+    r"thinking about ending it",
+    r"planning to end it all",
+    r"writing a suicide note",
+]
+
+# Pre-compile crisis detection regex for performance
+# Uses word boundaries and case-insensitive matching
+_CRISIS_REGEX: Pattern[str] = re.compile(
+    r"|".join(rf"(?:{re.escape(phrase)})" for phrase in _CRISIS_PHRASES),
+    re.IGNORECASE,
+)
+
+# Crisis resources to provide when crisis keywords are detected
+CRISIS_RESOURCES = """If you or someone you know is struggling, please reach out for support:
+- **988 Suicide & Crisis Lifeline**: Call or text **988** (US)
+- **Crisis Text Line**: Text **HOME** to **741741**
+- **PFLAG Support Hotlines**: https://pflag.org/resource/support-hotlines/
+- **Trans Lifeline**: 1-877-565-8860
+
+You are not alone, and help is available 24/7."""
+
+# Patterns that indicate the AI is making promises it can't keep
+_FALSE_PROMISE_PATTERNS = [
+    r"guarantee.*(?:approval|success|win|approved)",
+    r"(?:will|going to)\s+(?:definitely|certainly|surely)\s+(?:get|win|be approved)",
+    r"100%\s+(?:chance|success|guaranteed)",
+    r"promise.*(?:you|will|approval|win|success|approved|be)",
+    r"certain\s+to\s+(?:win|be approved|succeed)",
+    r"(?:you're|you are)\s+certain\s+to\s+win",
+    r"always\s+(?:works|succeeds|wins|succeed)",
+    r"will\s+certainly\s+(?:get|be|win)",
+    r"will\s+definitely\s+(?:get|be|win)",
+]
+
+# Pre-compile false promise regex for performance
+# Combined into single regex with case-insensitive matching
+_FALSE_PROMISE_REGEX: Pattern[str] = re.compile(
+    r"|".join(rf"(?:{pattern})" for pattern in _FALSE_PROMISE_PATTERNS),
+    re.IGNORECASE,
+)
 
 # Tool call regexes
 pubmed_query_terms_regex = r"[\[\*]{0,4}pubmed[ _]?query:{0,1}\s*(.*?)\s*[\*\]]{0,4}"
@@ -52,6 +121,32 @@ tools_regex = [
     create_or_update_appeal_regex,
     create_or_update_prior_auth_regex,
 ]
+
+
+def _detect_crisis_keywords(text: str) -> bool:
+    """
+    Check if text contains crisis/self-harm related keywords.
+
+    Returns True if crisis keywords are detected, indicating the user
+    may need immediate support resources.
+
+    Uses pre-compiled regex with case-insensitive matching for performance.
+    """
+    return bool(_CRISIS_REGEX.search(text))
+
+
+def _detect_false_promises(text: str) -> bool:
+    """
+    Check if the AI response contains false promises about appeal success.
+
+    Returns True if the response makes guarantees or promises that
+    we cannot actually keep.
+
+    Uses pre-compiled regex with case-insensitive matching for performance.
+    """
+    if text is None:
+        return False
+    return bool(_FALSE_PROMISE_REGEX.search(text))
 
 
 class ChatInterface:
@@ -174,6 +269,13 @@ class ChatInterface:
                 for r in tools_regex:
                     if re.match(r, result[0]):
                         score += 100
+                # SAFETY: Penalize responses that make false promises
+                # We can't guarantee appeal success, so avoid overconfident language
+                if _detect_false_promises(result[0]):
+                    score -= 200
+                    logger.warning(
+                        f"Detected false promise in response, penalizing score"
+                    )
             if result[1] and result[0]:
                 score += call_scores[original_task]
             else:
@@ -184,7 +286,7 @@ class ChatInterface:
         response_text, context_part = await best_within_timelimit(
             calls,
             score_fn,
-            timeout=50.0,
+            timeout=30.0,
         )
 
         response_text = response_text or ""
@@ -479,11 +581,11 @@ class ChatInterface:
                             context_part += additional_context_part
                     else:
                         context_part = additional_context_part
-                except:
+                except Exception as e:
                     logger.opt(exception=True).debug(
-                        f"Error parsing params for medicaid eligibility tool."
+                        f"Error parsing params for medicaid eligibility tool: {e}"
                     )
-                    response_text = f"Something went wrong trying to figure out eligibility. Please contact your state for more info."
+                    response_text = "Something went wrong trying to figure out eligibility. Please contact your state for more info."
         except Exception as e:
             logger.opt(exception=True).debug(
                 f"Error in medicaid eligibility tool call {e}"
@@ -726,6 +828,41 @@ class ChatInterface:
         Handles an incoming chat message, interacts with LLMs, and manages chat history.
         """
         chat = self.chat
+
+        # SAFETY: Check for crisis/self-harm indicators first
+        # If detected, provide crisis resources immediately alongside any response
+        crisis_detected = _detect_crisis_keywords(user_message)
+        if crisis_detected:
+            logger.warning(
+                f"Crisis keywords detected in chat {chat.id}, providing resources"
+            )
+            # Send crisis resources as a status/system message first
+            # This ensures the user sees help resources immediately
+            crisis_response = f"I noticed you might be going through a difficult time. Before we continue, I want to make sure you have access to support:\n\n{CRISIS_RESOURCES}\n\nI'm here to help with health insurance questions, but please reach out to these resources if you need immediate support."
+            await self.send_message_to_client(crisis_response)
+            # Log the crisis detection for monitoring
+            logger.info(f"Crisis resources provided for chat {chat.id}")
+            # Add to chat history
+            if not chat.chat_history:
+                chat.chat_history = []
+            chat.chat_history.append(
+                {
+                    "role": "user",
+                    "content": user_message,
+                    "timestamp": timezone.now().isoformat(),
+                }
+            )
+            chat.chat_history.append(
+                {
+                    "role": "assistant",
+                    "content": crisis_response,
+                    "timestamp": timezone.now().isoformat(),
+                }
+            )
+            await chat.asave()
+            # Don't continue with normal processing - let the user respond
+            return
+
         # Handle chat ↔ appeal/prior auth linking if requested
 
         link_message = None
@@ -806,6 +943,13 @@ class ChatInterface:
         current_llm_context = None
         if chat.summary_for_next_call and len(chat.summary_for_next_call) > 0:
             current_llm_context = chat.summary_for_next_call[-1]
+            # If we had a pubmed result in between carry it forward.
+            if len(chat.summary_for_next_call) > 1:
+                if (
+                    "PubMed search results" in chat.summary_for_next_call[-2]
+                    or "PubMed search results" in current_llm_context
+                ):
+                    current_llm_context += chat.summary_for_next_call[-2]
 
         is_new_chat = not bool(chat.chat_history)
         llm_input_message = user_message
@@ -835,6 +979,99 @@ class ChatInterface:
 
         is_patient = self.is_patient
         if is_new_chat:
+            # If this chat is from a microsite, automatically search PubMed with microsite search terms
+            if chat.microsite_slug:
+                try:
+                    from fighthealthinsurance.microsites import get_microsite
+                    from fighthealthinsurance.utils import (
+                        fire_and_forget_in_new_threadpool,
+                    )
+
+                    microsite = get_microsite(chat.microsite_slug)
+                    if microsite and microsite.pubmed_search_terms:
+                        logger.info(
+                            f"Triggering background PubMed searches for microsite {chat.microsite_slug}"
+                        )
+
+                        # Create background task for PubMed searches
+                        async def search_and_store_pubmed():
+                            """Search PubMed in background and append results to chat context."""
+                            try:
+                                # Sanitize the procedure name for display
+                                safe_procedure = str(microsite.default_procedure)[:100]
+                                await self.send_status_message(
+                                    f"Searching medical literature for {safe_procedure}..."
+                                )
+
+                                all_articles = []
+                                # Trigger PubMed searches for each search term
+                                for search_term in microsite.pubmed_search_terms[:3]:
+                                    try:
+                                        # Sanitize search term for display
+                                        safe_search_term = str(search_term)[:50]
+                                        await self.send_status_message(
+                                            f"Searching: {safe_search_term}..."
+                                        )
+                                        articles = await self.pubmed_tools.find_pubmed_article_ids_for_query(
+                                            search_term, since="2020"
+                                        )
+                                        if articles:
+                                            logger.info(
+                                                f"Found {len(articles)} articles for search term: {search_term}"
+                                            )
+                                            all_articles.extend(
+                                                articles[:5]
+                                            )  # Limit to 5 per search term
+                                    except Exception as e:
+                                        logger.warning(
+                                            f"Error searching PubMed for '{search_term}': {e}"
+                                        )
+
+                                # Store the results in chat context
+                                if all_articles:
+                                    # Build context string from articles
+                                    context_parts = [
+                                        f"PubMed search results for {microsite.default_procedure}:"
+                                    ]
+                                    for pmid in all_articles[:10]:  # Limit total to 10
+                                        context_parts.append(f"- PMID: {pmid}")
+
+                                    pubmed_context = "\n".join(context_parts)
+
+                                    # Append to chat summary
+                                    chat_obj = await OngoingChat.objects.aget(
+                                        id=chat.id
+                                    )
+                                    if not chat_obj.summary_for_next_call:
+                                        chat_obj.summary_for_next_call = []
+                                    chat_obj.summary_for_next_call.append(
+                                        pubmed_context
+                                    )
+                                    await chat_obj.asave()
+
+                                    logger.info(
+                                        f"Stored {len(all_articles)} PubMed articles in chat context"
+                                    )
+                                    await self.send_status_message(
+                                        f"Medical literature search complete - found {len(all_articles)} relevant articles"
+                                    )
+                                else:
+                                    await self.send_status_message(
+                                        "Medical literature search complete"
+                                    )
+                            except Exception as e:
+                                logger.opt(exception=True).warning(
+                                    f"Error in background PubMed search: {e}"
+                                )
+
+                        # Fire off the search in the background (non-blocking)
+                        await fire_and_forget_in_new_threadpool(
+                            search_and_store_pubmed()
+                        )
+
+                except Exception as e:
+                    logger.warning(f"Error loading microsite data for chat: {e}")
+
             # If this is a trial professional user, add a banner message to the chat history
             if is_trial_professional:
                 trial_banner = {

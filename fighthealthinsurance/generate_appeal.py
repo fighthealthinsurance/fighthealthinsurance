@@ -593,10 +593,19 @@ class AppealGenerator(object):
             base = f"{base}. Please include and fill in the professionals info {professional}."
         if plan_id is not None and plan_id != "" and plan_id != "UNKNOWN":
             base = f"{base}. Please include and fill in any references to the plan id as {plan_id}."
-        if ml_context is not None and ml_context != "":
-            base = f"{base}. Please include any relevant citations from: {ml_context}."
-        if pubmed_context is not None and pubmed_context != "":
-            base = f"{base}. Please include any relevant citations from PubMed, the ones we found are: {pubmed_context}."
+        # Add citation instructions - be explicit about not hallucinating
+        has_citations = (ml_context is not None and ml_context != "") or (
+            pubmed_context is not None and pubmed_context != ""
+        )
+        if has_citations:
+            base = f"{base}\n\nCITATION INSTRUCTIONS: You may ONLY cite medical literature, studies, or references that are explicitly provided below. Do NOT invent, fabricate, or hallucinate any citations, PMIDs, journal names, author names, or study details. If you want to make a medical claim, either cite from the provided references or state it as general medical knowledge without a specific citation."
+            if ml_context is not None and ml_context != "":
+                base = f"{base}\n\nProvided citations (use these): {ml_context}"
+            if pubmed_context is not None and pubmed_context != "":
+                base = f"{base}\n\nPubMed references (use these): {pubmed_context}"
+        else:
+            # No citations provided - explicitly tell the model not to make any up
+            base = f"{base}\n\nIMPORTANT: No specific medical citations have been provided. Do NOT invent or hallucinate any citations, PMIDs, journal names, or study references. You may state general medical knowledge without citations, but do not fabricate specific study references."
         if (
             insurance_company is not None
             and insurance_company != ""

@@ -5,6 +5,7 @@ from fighthealthinsurance.models import (
 )
 from asgiref.sync import sync_to_async, async_to_sync
 from fighthealthinsurance.utils import pubmed_fetcher
+from fighthealthinsurance.microsites import get_microsite
 from .utils import markdown_escape
 from concurrent.futures import Future
 from metapub import FindIt
@@ -120,6 +121,8 @@ class PubMedTools(object):
         Asynchronously retrieves and returns a list of PubMedMiniArticle objects relevant to a medical denial.
 
         Constructs a PubMed search query from the denial's procedure and diagnosis, searches for recent articles across multiple years, and limits the number of articles per query. For each unique PubMed ID found, attempts to retrieve a cached article from the database or fetches metadata from PubMed and stores it if not present. Handles timeouts and logs errors, returning all successfully retrieved articles.
+
+        If the denial has a microsite_slug, also uses the microsite's pubmed_search_terms.
         """
         pmids: List[str] = []
         articles: List[PubMedMiniArticle] = []
@@ -134,6 +137,22 @@ class PubMedTools(object):
                 queries: Set[str] = {
                     query,
                 }
+
+                # Add microsite pubmed search terms if available
+                if denial.microsite_slug:
+                    try:
+                        microsite = get_microsite(denial.microsite_slug)
+                        if microsite and microsite.pubmed_search_terms:
+                            if len(microsite.pubmed_search_terms) > 0:
+                                logger.debug(
+                                    f"Adding {len(microsite.pubmed_search_terms)} microsite search terms for {denial.microsite_slug}"
+                                )
+                                queries.update(microsite.pubmed_search_terms)
+                    except Exception as e:
+                        logger.opt(exception=True).warning(
+                            f"Failed to load microsite search terms: {e}"
+                        )
+
                 for since in self.since_list:
                     for query in queries:
                         count = 0

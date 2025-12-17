@@ -194,6 +194,13 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         name="about",
     ),
     path(
+        "how-to-help",
+        cache_control(public=True)(
+            cache_page(60 * 60 * 2)(views.HowToHelpView.as_view())
+        ),
+        name="how-to-help",
+    ),
+    path(
         "as-seen-on-pbs",
         cache_control(public=True)(
             cache_page(60 * 60 * 2)(views.PBSNewsHourView.as_view())

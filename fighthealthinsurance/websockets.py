@@ -39,7 +39,13 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
 
     async def receive(self, text_data):
         logger.debug("Waiting for message....")
-        data = json.loads(text_data)
+        try:
+            data = json.loads(text_data)
+        except json.JSONDecodeError as e:
+            logger.warning(f"Invalid JSON received in appeals websocket: {e}")
+            await self.send(json.dumps({"error": "Invalid JSON format"}))
+            await self.close()
+            return
         logger.debug("Starting generation of appeals...")
         aitr: AsyncIterator[
             str
@@ -86,7 +92,18 @@ class StreamingEntityBackend(AsyncWebsocketConsumer):
         pass
 
     async def receive(self, text_data):
-        data = json.loads(text_data)
+        try:
+            data = json.loads(text_data)
+        except json.JSONDecodeError as e:
+            logger.warning(f"Invalid JSON received in entity extraction websocket: {e}")
+            await self.send(json.dumps({"error": "Invalid JSON format"}))
+            await self.close()
+            return
+        if "denial_id" not in data:
+            logger.warning("Missing denial_id in entity extraction request")
+            await self.send(json.dumps({"error": "Missing denial_id"}))
+            await self.close()
+            return
         aitr = common_view_logic.DenialCreatorHelper.extract_entity(data["denial_id"])
 
         try:
@@ -128,7 +145,13 @@ class PriorAuthConsumer(AsyncWebsocketConsumer):
         pass
 
     async def receive(self, text_data):
-        data = json.loads(text_data)
+        try:
+            data = json.loads(text_data)
+        except json.JSONDecodeError as e:
+            logger.warning(f"Invalid JSON received in prior auth websocket: {e}")
+            await self.send(json.dumps({"error": "Invalid JSON format"}))
+            await self.close()
+            return
         logger.debug("Starting generation of prior auth proposals...")
 
         # Validate the token and ID
@@ -353,7 +376,13 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
             )
 
     async def receive(self, text_data):
-        data = json.loads(text_data)
+        try:
+            data = json.loads(text_data)
+        except json.JSONDecodeError as e:
+            logger.warning(f"Invalid JSON received in ongoing chat websocket: {e}")
+            await self.send(json.dumps({"error": "Invalid JSON format"}))
+            await self.close()
+            return
         logger.debug(f"Received message for ongoing chat {data}")
 
         # Get the required data -- note the message should be sent as "content"
@@ -368,11 +397,22 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
         )  # New parameter to identify patient users
         email = data.get("email", None)  # Email for patient users so we can delete data
         session_key = data.get("session_key", None)  # Session key for anonymous users
+        microsite_slug = data.get(
+            "microsite_slug", None
+        )  # Microsite slug if coming from a microsite
+
+        # Validate microsite_slug if provided
+        if microsite_slug:
+            from fighthealthinsurance.microsites import get_microsite
+
+            if not get_microsite(microsite_slug):
+                logger.warning(f"Invalid microsite_slug received: {microsite_slug}")
+                microsite_slug = None
 
         logger.debug(
             f"Message: {message} replay {replay_requested} chat_id {chat_id} "
             f"iterate_on_appeal {iterate_on_appeal} iterate_on_prior_auth {iterate_on_prior_auth} "
-            f"is_patient {is_patient} session_key {session_key}"
+            f"is_patient {is_patient} session_key {session_key} microsite_slug {microsite_slug}"
         )
 
         # Validate we have the required data
@@ -436,7 +476,13 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                     professional_user = None
                     is_patient = True
             chat = await self._get_or_create_chat(
-                user, professional_user, is_patient, chat_id, session_key, email=email
+                user,
+                professional_user,
+                is_patient,
+                chat_id,
+                session_key,
+                email=email,
+                microsite_slug=microsite_slug,
             )
             self.chat_id = chat.id
             if (
@@ -491,6 +537,7 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
         chat_id=None,
         session_key=None,
         email=None,  # Email for patient users so we can handle data deletion later
+        microsite_slug=None,  # Microsite slug if coming from a microsite
     ):
         """Get an existing chat or create a new one."""
         if chat_id:
@@ -506,6 +553,16 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                     raise OngoingChat.DoesNotExist("Session key mismatch")
                 if chat.user and chat.user != user:
                     raise OngoingChat.DoesNotExist("User mismatch")
+
+                # Update microsite_slug if provided and not already set
+                # Only save on first message to avoid excessive database writes
+                if microsite_slug and not chat.microsite_slug:
+                    await OngoingChat.objects.filter(id=chat.id).aupdate(
+                        microsite_slug=microsite_slug
+                    )
+                    # Refresh the chat object to ensure consistency
+                    await chat.arefresh_from_db()
+
                 return chat
             except OngoingChat.DoesNotExist as e:
                 logger.warning(
@@ -532,6 +589,7 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                 chat_history=[],
                 summary_for_next_call=[],
                 is_patient=not is_trial_professional,  # Not a patient if it's a trial professional
+                microsite_slug=microsite_slug,
             )
         elif is_patient and user and user.is_authenticated:
             # Patient user
@@ -542,6 +600,7 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                 chat_history=[],
                 summary_for_next_call=[],
                 hashed_email=Denial.get_hashed_email(email) if email else None,
+                microsite_slug=microsite_slug,
             )
         else:
             # Professional user
@@ -552,4 +611,5 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                 professional_user=professional_user,
                 chat_history=[],
                 summary_for_next_call=[],
+                microsite_slug=microsite_slug,
             )

@@ -193,6 +193,20 @@
   pk: 23
   fields:
     name: Other
+- model: fighthealthinsurance.denialtypes
+  pk: 24
+  fields:
+    name: Formulary Change / Drug Removed
+    regex: "(removed from formulary|no longer covered|preferred alternative|drug list|NDC|tier change|step therapy|switch to|preferred medication)"
+    form: FormularyChangeQuestions
+    appeal_text: "Health plans must generally provide both notice of formulary changes and reasonable provisions for continuity of care."
+- model: fighthealthinsurance.denialtypes
+  pk: 25
+  fields:
+    name: Not On Formulary
+    regex: "(not on the formulary|non-formulary|excluded from formulary)"
+    form: FormularyChangeQuestions
+    appeal_text: "Under federal regulations (45 CFR § 156.122), A health plan providing essential health benefits must allow you to request and gain access to clinically appropriate drugs not otherwise covered by the health plan (a request for exception). Similar regulations often exist for state regulated plans."
 - model: fighthealthinsurance.diagnosis
   pk: 1
   fields:

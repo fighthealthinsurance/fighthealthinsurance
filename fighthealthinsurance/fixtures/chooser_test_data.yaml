@@ -1,0 +1,120 @@
+# Test data for Chooser Selenium tests
+# These tasks and candidates are used in the UI tests
+
+- model: fighthealthinsurance.choosertask
+  pk: 9001
+  fields:
+    task_type: appeal
+    status: READY
+    context_json:
+      procedure: MRI Scan
+      diagnosis: Lower back pain
+      insurance_company: Test Insurance
+      denial_text_preview: Not medically necessary
+    source: test_fixture
+    num_candidates_expected: 2
+    num_candidates_generated: 2
+    created_at: "2024-01-01T00:00:00Z"
+    updated_at: "2024-01-01T00:00:00Z"
+
+- model: fighthealthinsurance.choosercandidate
+  pk: 9001
+  fields:
+    task: 9001
+    candidate_index: 0
+    kind: appeal_letter
+    model_name: model-a
+    content: "Dear Insurance Company,\n\nI am writing to appeal the denial of my MRI scan. This test was ordered by my physician due to chronic lower back pain that has not responded to conservative treatment. The MRI is medically necessary to diagnose the underlying cause.\n\nSincerely,\nPatient"
+    is_active: true
+    created_at: "2024-01-01T00:00:01Z"
+
+- model: fighthealthinsurance.choosercandidate
+  pk: 9002
+  fields:
+    task: 9001
+    candidate_index: 1
+    kind: appeal_letter
+    model_name: model-b
+    content: "To Whom It May Concern,\n\nThis letter serves as a formal appeal for the denied MRI scan. My doctor has determined this imaging study is essential for proper diagnosis and treatment planning. Please reconsider this decision.\n\nThank you,\nPatient"
+    is_active: true
+    created_at: "2024-01-01T00:00:02Z"
+
+# Second appeal task for skip testing
+- model: fighthealthinsurance.choosertask
+  pk: 9002
+  fields:
+    task_type: appeal
+    status: READY
+    context_json:
+      procedure: CT Scan
+      diagnosis: Abdominal pain
+      insurance_company: Another Insurance
+      denial_text_preview: Prior authorization required
+    source: test_fixture
+    num_candidates_expected: 2
+    num_candidates_generated: 2
+    created_at: "2024-01-01T00:00:03Z"
+    updated_at: "2024-01-01T00:00:03Z"
+
+- model: fighthealthinsurance.choosercandidate
+  pk: 9003
+  fields:
+    task: 9002
+    candidate_index: 0
+    kind: appeal_letter
+    model_name: model-a
+    content: "Dear Insurance Company,\n\nI am writing to appeal the denial of my CT scan. This test was ordered urgently due to severe abdominal pain.\n\nSincerely,\nPatient"
+    is_active: true
+    created_at: "2024-01-01T00:00:04Z"
+
+- model: fighthealthinsurance.choosercandidate
+  pk: 9004
+  fields:
+    task: 9002
+    candidate_index: 1
+    kind: appeal_letter
+    model_name: model-b
+    content: "To Whom It May Concern,\n\nThis letter serves as a formal appeal for the denied CT scan. Immediate imaging is required for proper diagnosis.\n\nThank you,\nPatient"
+    is_active: true
+    created_at: "2024-01-01T00:00:05Z"
+
+# Chat task
+- model: fighthealthinsurance.choosertask
+  pk: 9003
+  fields:
+    task_type: chat
+    status: READY
+    context_json:
+      prompt: What documents do I need for my appeal?
+      history:
+        - role: user
+          content: My MRI was denied.
+        - role: assistant
+          content: I can help you appeal that decision.
+    source: test_fixture
+    num_candidates_expected: 2
+    num_candidates_generated: 2
+    created_at: "2024-01-01T00:00:06Z"
+    updated_at: "2024-01-01T00:00:06Z"
+
+- model: fighthealthinsurance.choosercandidate
+  pk: 9005
+  fields:
+    task: 9003
+    candidate_index: 0
+    kind: chat_response
+    model_name: model-a
+    content: "For your appeal, you'll need: 1) The denial letter, 2) Your doctor's notes, 3) Medical records supporting the need for the MRI, and 4) Any relevant test results."
+    is_active: true
+    created_at: "2024-01-01T00:00:07Z"
+
+- model: fighthealthinsurance.choosercandidate
+  pk: 9006
+  fields:
+    task: 9003
+    candidate_index: 1
+    kind: chat_response
+    model_name: model-b
+    content: "You'll want to gather: your denial letter, Explanation of Benefits (EOB), supporting medical documentation from your provider, and a letter of medical necessity from your doctor."
+    is_active: true
+    created_at: "2024-01-01T00:00:08Z"

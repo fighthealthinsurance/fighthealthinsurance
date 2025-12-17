@@ -35,6 +35,7 @@ from fighthealthinsurance.models import (
     Appeal,
     AppealAttachment,
     ChooserCandidate,
+    ChooserSkip,
     ChooserTask,
     ChooserVote,
     DemoRequests,
@@ -180,6 +181,11 @@ class ChatViewSet(viewsets.ViewSet):
 
 
 class DataRemovalViewSet(viewsets.ViewSet, DeleteMixin, DeleteOnlyMixin):
+    """
+    ViewSet for handling data removal requests.
+    Allows users to request deletion of all their data by email address.
+    """
+
     serializer_class = serializers.DeleteDataFormSerializer
 
     @extend_schema(
@@ -197,6 +203,12 @@ class DataRemovalViewSet(viewsets.ViewSet, DeleteMixin, DeleteOnlyMixin):
 
 
 class HealthHistoryViewSet(viewsets.ViewSet, CreateMixin):
+    """
+    ViewSet for updating patient health history on a denial.
+
+    Accepts health context information and updates the associated denial record.
+    """
+
     serializer_class = serializers.HealthHistoryFormSerializer
 
     @extend_schema(responses=serializers.StatusResponseSerializer)
@@ -217,6 +229,13 @@ class HealthHistoryViewSet(viewsets.ViewSet, CreateMixin):
 
 
 class NextStepsViewSet(viewsets.ViewSet, CreateMixin):
+    """
+    ViewSet for determining next steps after denial information is collected.
+
+    Analyzes the denial data and returns recommended actions, appeal options,
+    and relevant regulatory information.
+    """
+
     serializer_class = serializers.PostInferedFormSerializer
 
     @extend_schema(
@@ -243,6 +262,14 @@ class NextStepsViewSet(viewsets.ViewSet, CreateMixin):
 
 
 class DenialViewSet(viewsets.ViewSet, CreateMixin):
+    """
+    ViewSet for creating and managing insurance denial records.
+
+    Supports creating new denials, retrieving existing ones, and managing
+    associated PubMed articles for evidence. Handles professional-created
+    denials with patient associations and mailing list subscriptions.
+    """
+
     serializer_class = serializers.DenialFormSerializer
 
     def get_serializer_class(self):
@@ -404,6 +431,13 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
 
 
 class QAResponseViewSet(viewsets.ViewSet, CreateMixin):
+    """
+    ViewSet for storing question-and-answer responses related to a denial.
+
+    Saves user-provided answers to appeal-related questions, which are used
+    to provide context for appeal generation.
+    """
+
     serializer_class = serializers.QAResponsesSerializer
 
     @extend_schema(responses=serializers.StatusResponseSerializer)
@@ -440,6 +474,13 @@ class QAResponseViewSet(viewsets.ViewSet, CreateMixin):
 
 
 class FollowUpViewSet(viewsets.ViewSet, CreateMixin):
+    """
+    ViewSet for recording follow-up outcomes on appeals.
+
+    Stores user-reported results of their appeal (success, denial, etc.)
+    to track appeal effectiveness and outcomes.
+    """
+
     serializer_class = serializers.FollowUpFormSerializer
 
     @extend_schema(responses=serializers.StatusResponseSerializer)
@@ -455,12 +496,16 @@ class FollowUpViewSet(viewsets.ViewSet, CreateMixin):
 
 
 class Ping(APIView):
+    """Simple health check endpoint that returns 204 No Content."""
+
     @extend_schema(responses=serializers.StatusResponseSerializer)
     def get(self, request: Request) -> Response:
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class CheckStorage(APIView):
+    """Health check endpoint that verifies external storage is accessible."""
+
     @extend_schema(responses=serializers.StatusResponseSerializer)
     def get(self, request: Request) -> Response:
         es = settings.EXTERNAL_STORAGE
@@ -471,6 +516,8 @@ class CheckStorage(APIView):
 
 
 class CheckMlBackend(APIView):
+    """Health check endpoint that verifies ML backend models are operational."""
+
     @extend_schema(responses=serializers.StatusResponseSerializer)
     def get(self, request: Request) -> Response:
         if ml_router.working():
@@ -510,6 +557,14 @@ class LiveModelsStatus(APIView):
 
 
 class AppealViewSet(viewsets.ViewSet, SerializerMixin):
+    """
+    ViewSet for managing appeals and related operations.
+
+    Provides endpoints for listing, retrieving, assembling, and sending appeals.
+    Supports fax transmission, patient notifications, provider invitations,
+    PubMed article selection, search, and appeal statistics (both relative and absolute).
+    """
+
     appeal_assembly_helper = AppealAssemblyHelper()
 
     def get_serializer_class(self):
@@ -1052,6 +1107,12 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
 
 
 class MailingListSubscriberViewSet(viewsets.ViewSet, CreateMixin, DeleteMixin):
+    """
+    ViewSet for managing mailing list subscriptions.
+
+    Allows users to subscribe to or unsubscribe from the mailing list by email.
+    """
+
     serializer_class = serializers.MailingListSubscriberSerializer
 
     @extend_schema(responses=serializers.StatusResponseSerializer)
@@ -1074,6 +1135,13 @@ class MailingListSubscriberViewSet(viewsets.ViewSet, CreateMixin, DeleteMixin):
 
 
 class DemoRequestsViewSet(viewsets.ViewSet, CreateMixin, DeleteMixin):
+    """
+    ViewSet for managing demo requests.
+
+    Allows users to submit requests for product demonstrations or remove
+    existing demo requests by email.
+    """
+
     serializer_class = serializers.DemoRequestsSerializer
 
     @extend_schema(responses=serializers.StatusResponseSerializer)
@@ -1112,6 +1180,13 @@ class SendToUserViewSet(viewsets.ViewSet, SerializerMixin):
 
 
 class AppealAttachmentViewSet(viewsets.ViewSet):
+    """
+    ViewSet for managing file attachments on appeals.
+
+    Supports listing, uploading, downloading (with decryption), and deleting
+    attachments. Files are encrypted at rest and decrypted on retrieval.
+    """
+
     serializer_class = serializers.AppealAttachmentSerializer
 
     @extend_schema(
@@ -1671,19 +1746,23 @@ class ChooserViewSet(viewsets.ViewSet):
         Selection logic:
         1. Prefer tasks with zero votes
         2. If none, select tasks with the fewest total votes
-        3. Exclude tasks where this session key has already voted
+        3. Exclude tasks where this session key has already voted or skipped
         """
         session_key = self._get_session_key(request)
 
-        # Get tasks that this session hasn't voted on yet
+        # Get tasks that this session has already voted on or skipped
         voted_task_ids = ChooserVote.objects.filter(
             session_key=session_key
         ).values_list("task_id", flat=True)
+        skipped_task_ids = ChooserSkip.objects.filter(
+            session_key=session_key
+        ).values_list("task_id", flat=True)
+        excluded_task_ids = set(voted_task_ids) | set(skipped_task_ids)
 
-        # Find READY tasks of the requested type that haven't been voted on by this session
+        # Find READY tasks of the requested type that haven't been voted on or skipped
         available_tasks = (
             ChooserTask.objects.filter(task_type=task_type, status="READY")
-            .exclude(id__in=voted_task_ids)
+            .exclude(id__in=excluded_task_ids)
             .annotate(vote_count=Count("votes"))
             .order_by("vote_count", "created_at")
         )
@@ -1709,7 +1788,7 @@ class ChooserViewSet(viewsets.ViewSet):
             # Try to get the task again
             task = (
                 ChooserTask.objects.filter(task_type=task_type, status="READY")
-                .exclude(id__in=voted_task_ids)
+                .exclude(id__in=excluded_task_ids)
                 .first()
             )
 
@@ -1782,7 +1861,14 @@ class ChooserViewSet(viewsets.ViewSet):
     )
     @action(detail=False, methods=["post"])
     def vote(self, request: Request) -> Response:
-        """Submit a vote for a chooser task."""
+        """
+        Register a user's vote for a chooser task.
+
+        Validates the task exists and is in a votable state, the chosen candidate belongs to the task and was presented, and the session has not already voted on the task; then creates a ChooserVote.
+
+        Returns:
+            response (Response): On success, a 200 response containing {"success": True, "message": "Vote recorded successfully", "vote_id": <id>}. On failure, a 4xx response with an error message.
+        """
         serializer = serializers.ChooserVoteRequestSerializer(data=request.data)
         if not serializer.is_valid():
             return Response(
@@ -1865,6 +1951,68 @@ class ChooserViewSet(viewsets.ViewSet):
                     "success": True,
                     "message": "Vote recorded successfully",
                     "vote_id": vote.id,
+                }
+            ).data,
+            status=status.HTTP_200_OK,
+        )
+
+    @extend_schema(
+        request=serializers.ChooserSkipRequestSerializer,
+        responses={
+            200: serializers.ChooserSkipResponseSerializer,
+            400: serializers.ErrorSerializer,
+            404: serializers.ErrorSerializer,
+        },
+    )
+    @action(detail=False, methods=["post"])
+    def skip(self, request: Request) -> Response:
+        """
+        Mark a chooser task as skipped for the current session so it will not be presented again.
+
+        Validates the request payload and session, ensures the task exists, prevents skipping if the session has already voted on the task, and records the skip idempotently.
+
+        Returns:
+            Response: HTTP 200 with a success message when the task is skipped; HTTP 400 with error details for invalid input or if the task was already voted on; HTTP 404 if the task does not exist.
+        """
+        serializer = serializers.ChooserSkipRequestSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(
+                serializers.ErrorSerializer({"error": str(serializer.errors)}).data,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        session_key = self._get_session_key(request)
+        task_id = serializer.validated_data["task_id"]
+
+        # Validate task exists
+        try:
+            task = ChooserTask.objects.get(id=task_id)
+        except ChooserTask.DoesNotExist:
+            return Response(
+                serializers.ErrorSerializer({"error": "Task not found"}).data,
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Check if already voted on this task (can't skip if already voted)
+        if ChooserVote.objects.filter(task=task, session_key=session_key).exists():
+            return Response(
+                serializers.ErrorSerializer(
+                    {"error": "You have already voted on this task"}
+                ).data,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Create the skip record (or ignore if already skipped)
+        ChooserSkip.objects.get_or_create(
+            task=task,
+            session_key=session_key,
+        )
+
+        return Response(
+            serializers.ChooserSkipResponseSerializer(
+                {
+                    "success": True,
+                    "message": "Task skipped successfully",
                 }
             ).data,
             status=status.HTTP_200_OK,

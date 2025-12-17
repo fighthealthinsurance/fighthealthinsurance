@@ -118,6 +118,8 @@ interface ChatState {
   isProcessingFile: boolean;
   showPWYW: boolean;
   messageCount: number;
+  statusMessage: string | null;
+  requestStartTime: number | null;
 }
 
 interface UserInfo {
@@ -131,22 +133,66 @@ interface UserInfo {
   acceptedTerms: boolean;
 }
 
-// Typing animation component for loading state
-const TypingAnimation: React.FC = () => {
+// Typing animation component for loading state with elapsed time
+const TypingAnimation: React.FC<{ startTime?: number | null }> = ({ startTime }) => {
   const [dots, setDots] = useState(".");
+  const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => {
-    const interval = setInterval(() => {
+    const dotsInterval = setInterval(() => {
       setDots((prevDots) => {
         if (prevDots.length >= 3) return ".";
         return prevDots + ".";
       });
     }, 500);
 
-    return () => clearInterval(interval);
+    return () => clearInterval(dotsInterval);
   }, []);
 
-  return <span style={{ marginLeft: 4 }}>Typing{dots}</span>;
+  useEffect(() => {
+    if (!startTime) return;
+
+    const updateElapsed = () => {
+      const now = Date.now();
+      const elapsedSeconds = Math.floor((now - startTime) / 1000);
+      setElapsed(elapsedSeconds);
+    };
+
+    // Update immediately
+    updateElapsed();
+
+    // Update every second
+    const elapsedInterval = setInterval(updateElapsed, 1000);
+
+    return () => clearInterval(elapsedInterval);
+  }, [startTime]);
+
+  const getStatusMessage = () => {
+    if (!startTime) return null;
+    
+    if (elapsed < 45) {
+      return `Most responses come in 45 seconds${elapsed > 0 ? ` (${elapsed}s elapsed)` : ""}`;
+    } else if (elapsed < 60) {
+      return `Still working on your response... Most responses complete within 60 seconds (${elapsed}s elapsed)`;
+    } else if (elapsed < 360) {
+      return `Still working on your response... Some can take up to 6 minutes (${elapsed}s elapsed). You can retry if needed.`;
+    } else {
+      return `This is taking longer than expected (${elapsed}s elapsed). Please try the retry button below.`;
+    }
+  };
+
+  const statusMsg = getStatusMessage();
+
+  return (
+    <Box>
+      <span style={{ marginLeft: 4 }}>Typing{dots}</span>
+      {statusMsg && (
+        <MantineText size="xs" c="dimmed" mt="xs" style={{ fontStyle: "italic" }}>
+          {statusMsg}
+        </MantineText>
+      )}
+    </Box>
+  );
 };
 
 // Get a session key or use an existing one from localStorage
@@ -325,13 +371,39 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
     isProcessingFile: false,
     showPWYW: false,
     messageCount: 0,
+    statusMessage: null,
+    requestStartTime: null,
   });
+
+  // Track when to show retry button (separate state to avoid re-render issues)
+  const [showRetryButton, setShowRetryButton] = useState(false);
 
   // Track if we've sent the initial procedure message
   const hasSentInitialMessage = useRef(false);
 
   // Check if user has dismissed PWYW before
   const hasDismissedPWYW = localStorage.getItem("fhi_pwyw_dismissed") === "true";
+
+  // Update retry button visibility based on elapsed time
+  useEffect(() => {
+    if (!state.requestStartTime || !state.isLoading) {
+      setShowRetryButton(false);
+      return;
+    }
+
+    const checkRetryButton = () => {
+      const elapsed = Date.now() - state.requestStartTime!;
+      setShowRetryButton(elapsed > 60000); // Show after 60 seconds
+    };
+
+    // Check immediately
+    checkRetryButton();
+
+    // Check every second
+    const interval = setInterval(checkRetryButton, 1000);
+
+    return () => clearInterval(interval);
+  }, [state.requestStartTime, state.isLoading]);
 
   // Show PWYW after a few exchanges (to not be intrusive)
   useEffect(() => {
@@ -386,6 +458,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
           session_key: getSessionKey(),
           email: userInfo?.email, // Send email if available
           is_patient: true, // Indicate this is a patient session
+          microsite_slug: micrositeSlug || undefined, // Include microsite slug if available
         };
 
         // If we have a chat ID, request the chat history we explicitily refresh from local storage
@@ -451,6 +524,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
                 ...prev,
                 messages: [...prev.messages, userMessage],
                 isLoading: true,
+                requestStartTime: Date.now(),
               }));
 
               // Get user info for scrubbing
@@ -467,6 +541,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
                   content: scrubbedContent,
                   is_patient: true,
                   session_key: getSessionKey(),
+                  microsite_slug: micrositeSlug || undefined,
                 }),
               );
             }, 500);
@@ -494,6 +569,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
             ...prev,
             isLoading: false,
             error: data.error,
+            // Keep requestStartTime so retry button remains visible with error
           }));
         } else if (data.messages) {
           // This is a history replay
@@ -542,12 +618,15 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
               },
             ],
             isLoading: false,
+            requestStartTime: null, // Clear the timer when we get a response
+            statusMessage: null,
           }));
         } else if (data.status) {
           // This is a status update (typing, etc.)
           setState((prev) => ({
             ...prev,
             isLoading: true,
+            statusMessage: data.status,
           }));
         }
       };
@@ -605,6 +684,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
           ...prev,
           messages: [...prev.messages, userMessage],
           isLoading: true,
+          requestStartTime: Date.now(),
         }));
 
         // Get user info for scrubbing
@@ -663,6 +743,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
       messages: [...prev.messages, userMessage],
       input: "",
       isLoading: true,
+      requestStartTime: Date.now(), // Track when the request started
+      statusMessage: null,
     }));
 
     // Scrub personal information before sending
@@ -676,6 +758,47 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
       email: userInfo?.email, // Include email for server-side processing
       content: scrubbedContent,
       is_patient: true, // This is for the patient-facing version
+      session_key: getSessionKey(),
+    };
+
+    wsRef.current.send(JSON.stringify(messageToSend));
+  };
+
+  // Handle retrying the last message
+  const handleRetryLastMessage = () => {
+    if (!wsRef.current) return;
+    // Allow retry if there's an error OR if currently loading
+    if (state.isLoading && !state.error) return;
+
+    // Find the last user message
+    const lastUserMessage = [...state.messages]
+      .reverse()
+      .find((msg) => msg.role === "user");
+
+    if (!lastUserMessage) return;
+
+    // Get user info for scrubbing
+    const userInfo = getUserInfo();
+
+    setState((prev) => ({
+      ...prev,
+      isLoading: true,
+      requestStartTime: Date.now(),
+      statusMessage: null,
+      error: null,
+    }));
+
+    // Scrub personal information before sending
+    const scrubbedContent = userInfo
+      ? scrubPersonalInfo(lastUserMessage.content, userInfo)
+      : lastUserMessage.content;
+
+    // Send the message to the server
+    const messageToSend = {
+      chat_id: state.chatId,
+      email: userInfo?.email,
+      content: scrubbedContent,
+      is_patient: true,
       session_key: getSessionKey(),
     };
 
@@ -706,6 +829,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
       isProcessingFile: false,
       showPWYW: false,
       messageCount: 0,
+      statusMessage: null,
+      requestStartTime: null,
     });
 
     // Handle WebSocket for a new chat
@@ -770,7 +895,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
               {isUser ? "You" : "FightHealthInsurance Assistant"}
             </MantineText>
             {message.status === "typing" ? (
-              <TypingAnimation />
+              <TypingAnimation startTime={state.requestStartTime} />
             ) : (
               <ReactMarkdown>{message.content}</ReactMarkdown>
             )}
@@ -908,7 +1033,66 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
                   </MantineText>
                 </Flex>
                 <Box mt="xs">
-                  <TypingAnimation />
+                  <TypingAnimation startTime={state.requestStartTime} />
+                </Box>
+                {/* Display server status messages if available */}
+                {state.statusMessage && (
+                  <Box mt="xs">
+                    <MantineText size="xs" c="dimmed" style={{ fontStyle: "italic" }}>
+                      {state.statusMessage}
+                    </MantineText>
+                  </Box>
+                )}
+                {/* Show retry button after 60 seconds */}
+                {showRetryButton && (
+                  <Box mt="sm">
+                    <Button
+                      size="xs"
+                      onClick={handleRetryLastMessage}
+                      disabled={!state.isLoading}
+                      style={{
+                        ...THEME.buttonSharedStyles,
+                        borderRadius: THEME.borderRadius.buttonDefault,
+                      }}
+                      leftSection={<IconRefresh size={13} />}
+                      aria-label="Retry sending message"
+                    >
+                      Retry
+                    </Button>
+                  </Box>
+                )}
+              </Paper>
+            )}
+
+            {/* Display error message with retry button */}
+            {state.error && (
+              <Paper
+                shadow="xs"
+                style={{ backgroundColor: "#fff5f5", marginBottom: 10, padding: 10, borderRadius: 12, border: "1px solid #feb2b2" }}
+              >
+                <Flex align="center" gap="xs">
+                  <MantineText fw={500} size="sm" c="red">
+                    ⚠️ Error
+                  </MantineText>
+                </Flex>
+                <Box mt="xs">
+                  <MantineText size="sm" c="red">
+                    {state.error}
+                  </MantineText>
+                </Box>
+                <Box mt="sm">
+                  <Button
+                    size="xs"
+                    onClick={handleRetryLastMessage}
+                    style={{
+                      ...THEME.buttonSharedStyles,
+                      borderRadius: THEME.borderRadius.buttonDefault,
+                    }}
+                    leftSection={<IconRefresh size={13} />}
+                    aria-label="Retry sending message after error"
+                  >
+                    Retry
+                  </Button>
                 </Box>
               </Paper>
             )}
