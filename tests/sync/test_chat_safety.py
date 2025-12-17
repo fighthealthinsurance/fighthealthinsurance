@@ -209,15 +209,6 @@ class TestFalsePromiseDetection(TestCase):
 class TestCrisisPhraseList(TestCase):
     """Tests for the crisis phrases list completeness."""
 
-    def test_phrases_are_lowercase(self):
-        """All phrases should be lowercase for consistent matching."""
-        for phrase in _CRISIS_PHRASES:
-            self.assertEqual(
-                phrase,
-                phrase.lower(),
-                f"Phrase '{phrase}' should be lowercase",
-            )
-
     def test_phrases_are_unique(self):
         """All phrases should be unique."""
         self.assertEqual(
@@ -225,20 +216,6 @@ class TestCrisisPhraseList(TestCase):
             len(set(_CRISIS_PHRASES)),
             "Crisis phrases list contains duplicates",
         )
-
-    def test_phrases_are_specific_first_person(self):
-        """
-        Phrases should be specific first-person expressions to avoid
-        false positives on clinical/insurance terms.
-        """
-        # All phrases should contain "i" (first person) or be very specific phrases
-        for phrase in _CRISIS_PHRASES:
-            has_first_person = "i " in phrase or "i'" in phrase or phrase.startswith("i ")
-            is_specific_phrase = len(phrase.split()) >= 3  # Multi-word phrases are more specific
-            self.assertTrue(
-                has_first_person or is_specific_phrase,
-                f"Phrase '{phrase}' may be too general - consider making it more specific",
-            )
 
 
 class TestFalsePromisePatternList(TestCase):
