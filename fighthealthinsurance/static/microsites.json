@@ -1990,7 +1990,7 @@
       },
       {
         "question": "What if my plan is removing Dupixent from formulary or switching to another biologic?",
-        "answer": "If you're already stable on Dupixent and your insurer wants you to switch, you have continuity of care rights under 45 CFR § 156.122(c). You can request a medical exception showing that switching biologics may destabilize your condition. See our continuity of care page for more information."
+        "answer": "If you're already stable on Dupixent and your insurer wants you to switch, you may have continuity of care rights. You can request a medical exception showing that switching biologics may destabilize your condition. See our continuity of care page for more information."
       }
     ],
     "evidence_snippets": [
@@ -2145,7 +2145,7 @@
       },
       {
         "question": "What if my plan is removing Dupixent from formulary or switching me to another medication?",
-        "answer": "If you're already stable on Dupixent and your insurer wants you to switch, you have continuity of care rights under 45 CFR § 156.122(c). Switching biologics or systemic therapies in atopic dermatitis can destabilize skin control. See our continuity of care page for more information."
+        "answer": "If you're already stable on Dupixent and your insurer wants you to switch, you may have continuity of care rights. Switching biologics or systemic therapies in atopic dermatitis can destabilize skin control. See our continuity of care page for more information."
       }
     ],
     "evidence_snippets": [
@@ -2807,7 +2807,7 @@
     "tagline": "When your medication worked and the plan changes, you have rights.",
     "hero_h1": "Appeal Your Formulary Change Denial",
     "hero_subhead": "If your medication is removed from formulary or moved to a higher tier, you can request an exception to continue your treatment.",
-    "intro": "Insurance plans frequently change their formularies (drug lists), sometimes removing medications that patients are already taking or moving them to higher cost-sharing tiers. Federal regulations (45 CFR § 156.122) and many state laws protect patients by requiring insurers to grant continuity of care exceptions when a formulary change would disrupt ongoing treatment. This page helps you understand your rights and appeal for continued coverage.",
+    "intro": "Insurance plans frequently change their formularies (drug lists), sometimes removing medications that patients are already taking or moving them to higher cost-sharing tiers. Federal regulations and many state laws protect patients by requiring insurers to grant continuity of care exceptions when a formulary change would disrupt ongoing treatment. This page helps you understand your rights and appeal for continued coverage.",
     "common_denial_reasons": [
       "Drug removed from formulary — preferred alternative available",
       "Drug moved to non-preferred or specialty tier with higher cost-sharing",
@@ -2941,10 +2941,12 @@
       },
       {
         "question": "Can I get Stelara covered even after it's removed from formulary?",
-        "answer": "Yes. Under 45 CFR § 156.122(c), you can request a non-formulary exception. However, some plans may require you to pay the difference in cost between Stelara and the preferred biosimilar."
+        "answer": "Yes. You can request a non-formulary exception. However, some plans may require you to pay the difference in cost between Stelara and the preferred biosimilar."
       }
     ],
     "evidence_snippets": [
+      "Ustekinumab (Stelara) has demonstrated long-term efficacy and safety in psoriasis, psoriatic arthritis, and inflammatory bowel disease.",
+      "Non-medical switching of stable patients from biologic originators to biosimilars may carry risks of altered efficacy or immunogenicity."
     ],
     "pubmed_search_terms": [
       "ustekinumab biosimilar switching efficacy safety",
@@ -2998,7 +3000,6 @@
     "evidence_snippets": [
       "Vedolizumab (Entyvio) has a gut-selective mechanism of action, which may offer advantages for patients who have failed or are intolerant to systemic immunosuppressants.",
       "Switching biologics in IBD carries risk of disease flare, loss of response, and development of anti-drug antibodies.",
-      "Under 45 CFR § 156.122(c), health plans must provide a transition process when drugs are removed from formulary."
     ],
     "pubmed_search_terms": [
       "vedolizumab inflammatory bowel disease switching biologics outcomes",
@@ -3044,7 +3045,7 @@
     ],
     "evidence_snippets": [
       "Risankizumab (Skyrizi) selectively targets IL-23, showing high rates of skin clearance in plaque psoriasis and efficacy in psoriatic arthritis and Crohn's disease.",
-      "Switching biologics in psoriasis and psoriatic arthritis can result in disease flare and incomplete response to subsequent agents.",
+      "Switching biologics in psoriasis and psoriatic arthritis can result in disease flare and incomplete response to subsequent agents."
     ],
     "pubmed_search_terms": [
       "risankizumab plaque psoriasis IL-23 clinical trial",
@@ -3087,7 +3088,6 @@
     "evidence_snippets": [
       "Guselkumab (Tremfya) selectively targets IL-23, showing high rates of skin clearance in plaque psoriasis and efficacy in psoriatic arthritis.",
       "Switching biologics in psoriasis can result in disease flare and may not achieve the same level of clearance as the original medication.",
-      "Under 45 CFR § 156.122(c), health plans must provide a transition process when drugs are removed from formulary."
     ],
     "pubmed_search_terms": [
       "guselkumab plaque psoriasis IL-23 clinical trial",
@@ -3105,6 +3105,179 @@
         "url": "https://www.jnjpaf.org/",
         "description": "Patient assistance for uninsured or underinsured patients who meet income requirements."
       }
+    ]
+  },
+  "skilled-nursing-denial": {
+    "slug": "skilled-nursing-denial",
+    "title": "Appealing Skilled Nursing Facility Denials",
+    "default_procedure": "Skilled Nursing Facility (SNF) Care",
+    "tagline": "UHC Medicare Advantage SNF denials increased 9x from 2019 to 2022: fight back.",
+    "hero_h1": "Appeal Your Skilled Nursing Facility Denial",
+    "hero_subhead": "Post-hospital care is essential for recovery. Don't be discharged too early.",
+    "intro": "Skilled nursing facility denials have exploded, especially in Medicare Advantage plans. Between 2019 and 2022, SNF denials increased 9-fold, often driven by AI algorithms rather than clinical judgment. The good news: studies suggest the majority of appealed SNF denials are overturned, but few patients appeal. You have rights — use them.",
+    "common_denial_reasons": [
+      "Patient no longer meets skilled care criteria",
+      "Custodial care only — not skilled nursing",
+      "Discharge to home is appropriate",
+      "Maximum benefit reached",
+      "Prior authorization expired"
+    ],
+    "how_we_help": "We help you document why skilled nursing care remains medically necessary, including specific skilled services needed (wound care, IV medications, PT/OT, complex medication management) and risks of premature discharge.",
+    "cta": "Start your SNF appeal before you're discharged.",
+    "faq": [
+      {
+        "question": "Can I stay in the SNF while I appeal?",
+          "answer": "Often, under Medicare, you can request a 'fast appeal' and remain in the facility while your case is reviewed. Ask for a written denial notice and file immediately."
+      },
+      {
+        "question": "What if the insurer says I can continue care at home?",
+        "answer": "Your appeal should document why home care isn't safe or feasible: caregiver limitations, home environment issues, or medical complexity requiring 24/7 skilled oversight."
+      }
+    ],
+    "evidence_snippets": [
+      "Premature discharge from skilled nursing facilities is associated with higher hospital readmission rates.",
+      "Medicare guidelines require coverage when skilled nursing or rehabilitation services are needed on a daily basis.",
+      "Continued SNF care is medically necessary when the patient requires skilled services that cannot safely be provided in a less intensive setting.",	
+      "Refusal of Recovery: How Medicare Advantage Insurers Have Denied Patients Access to Post-Acute Care"
+    ],
+    "pubmed_search_terms": [
+      "skilled nursing facility discharge outcomes readmission",
+      "Medicare SNF coverage criteria medical necessity",
+      "post-acute care denial Medicare Advantage"
+    ],
+    "alternatives": [
+      "Home health care with visiting nurses may be an option if you have adequate support at home.",
+      "Some long-term acute care hospitals (LTACHs) provide a higher level of care if SNF isn't sufficient.",
+      "Ask about swing bed programs at community hospitals which combine acute and SNF-level care."
+    ]
+  },
+  "home-health-denial": {
+    "slug": "home-health-denial",
+    "title": "Appealing Home Health Care Denials",
+    "default_procedure": "Home Health Care / Home Nursing Services",
+    "tagline": "Medicare's 'homebound' requirement trips up many patients — learn how to appeal.",
+    "hero_h1": "Appeal Your Home Health Care Denial",
+    "hero_subhead": "You shouldn't have to choose between leaving home and losing coverage.",
+    "intro": "Home health care denials often hinge on the 'homebound' requirement and whether you need 'skilled' nursing care. Medicare Advantage plans are increasingly using narrow interpretations to deny home health services, even when your doctor has ordered them. Understanding what qualifies as homebound and skilled care is key to winning your appeal.",
+    "common_denial_reasons": [
+      "Patient not homebound",
+      "Skilled care not required",
+      "Services are maintenance only",
+      "Caregiver can provide this care",
+      "Frequency of visits not justified"
+    ],
+    "how_we_help": "We help you document your homebound status (leaving home requires considerable effort, assistance, or poses medical risk) and why skilled nursing or therapy services are medically necessary.",
+    "cta": "Start your home health appeal.",
+    "faq": [
+    ],
+    "evidence_snippets": [
+      "Home health services reduce hospital readmissions and improve outcomes for patients recovering from illness, injury, or surgery.",
+      "The homebound requirement is met when leaving home requires considerable effort or assistance, not complete inability to leave.",
+      "Skilled nursing services are medically necessary when the complexity of the patient's condition requires professional assessment and intervention."
+    ],
+    "pubmed_search_terms": [
+      "home health care outcomes hospital readmission prevention",
+      "Medicare home health homebound criteria definition",
+      "skilled nursing home health medical necessity"
+    ],
+    "alternatives": [
+      "Adult day programs may provide supervision and therapy while preserving home health eligibility.",
+      "Telehealth visits may supplement in-person home health for some services.",
+      "Community-based waiver programs may provide additional home care services in some states."
+    ]
+  },
+  "joint-replacement-denial": {
+    "slug": "joint-replacement-denial",
+    "title": "Appealing Knee and Hip Replacement Denials",
+    "default_procedure": "Total Knee or Hip Replacement",
+    "tagline": "Joint replacement is one of the most successful surgeries — insurers shouldn't block it.",
+    "hero_h1": "Appeal Your Joint Replacement Denial",
+    "hero_subhead": "When conservative treatment fails, surgery is the answer.",
+    "intro": "Knee and hip replacements are among the most successful surgeries performed, with high satisfaction rates and dramatic quality-of-life improvements. Yet insurers frequently deny them, claiming you haven't tried enough conservative treatments or the surgery isn't 'medically necessary.' If you're living with severe joint pain that limits your daily activities, you deserve surgery.",
+    "common_denial_reasons": [
+      "Insufficient conservative treatment trial",
+      "BMI too high for surgery",
+      "Not medically necessary",
+      "Imaging doesn't show severe enough damage",
+      "Must try injections or physical therapy first"
+    ],
+    "how_we_help": "We help you document your pain level, functional limitations, failed conservative treatments (PT, injections, medications), and imaging results that support surgical intervention.",
+    "cta": "Start your joint replacement appeal.",
+    "faq": [
+      {
+        "question": "How much conservative treatment is 'enough'?",
+        "answer": "Most guidelines suggest 3-6 months of conservative treatment including PT, anti-inflammatory medications, and possibly injections. Your appeal should list everything you've tried, how long you tried it, and why it didn't work."
+      },
+      {
+        "question": "What if my BMI is above their cutoff?",
+        "answer": "BMI cutoffs vary and are controversial. Your appeal can cite studies showing successful outcomes at higher BMIs, your surgeon's assessment of surgical risk, and why delaying surgery may worsen outcomes."
+      },
+      {
+        "question": "Do I need X-rays showing 'bone-on-bone'?",
+        "answer": "Not necessarily. Imaging is one factor, but clinical symptoms matter too. Your appeal should describe your pain, functional limitations, and your surgeon's assessment, not just imaging findings."
+      }
+    ],
+    "evidence_snippets": [
+      "Total joint replacement is a cost-effective intervention that significantly improves quality of life and functional status.",
+      "Delaying medically necessary joint replacement can lead to muscle atrophy, deconditioning, and poorer surgical outcomes.",
+      "Patient-reported pain and functional limitation are important indicators for joint replacement, independent of radiographic severity."
+    ],
+    "pubmed_search_terms": [
+      "total knee replacement outcomes quality of life",
+      "joint replacement surgical criteria medical necessity",
+      "delay hip replacement outcomes deconditioning"
+    ],
+    "alternatives": [
+      "Partial knee replacement may be an option for some patients with localized arthritis.",
+      "Joint preservation procedures like osteotomy may delay the need for replacement in younger patients.",
+      "Ask about outpatient joint replacement programs which may have different coverage criteria."
+    ]
+  },
+  "out-of-network-emergency-denial": {
+    "slug": "out-of-network-emergency-denial",
+    "title": "Appealing Out-of-Network Emergency Room Denials",
+    "default_procedure": "Emergency Room Services",
+    "tagline": "Federal law protects you from surprise ER bills — insurers must comply.",
+    "hero_h1": "Appeal Your Out-of-Network ER Denial",
+    "hero_subhead": "The No Surprises Act protects you. Make your insurer follow the law.",
+    "intro": "Since 2022, the No Surprises Act helps protect patients from surprise bills when they receive emergency care at out-of-network facilities. Yet insurers continue to improperly deny or underpay these claims. You normally cannot be balance-billed more than your in-network cost-sharing, and your insurer must pay the emergency facility appropriately. If your claim was denied or you received a surprise bill, you have strong appeal rights.",
+    "common_denial_reasons": [
+      "Out-of-network provider",
+      "Emergency not verified",
+      "Post-stabilization care not covered",
+      "Claim filed incorrectly",
+      "Balance billing by provider"
+    ],
+    "how_we_help": "We help you document the emergency nature of your visit, cite the No Surprises Act protections, and explain why your insurer must cover the claim at in-network cost-sharing levels.",
+    "cta": "Start your emergency care appeal.",
+    "faq": [
+      {
+        "question": "What is the No Surprises Act?",
+        "answer": "Federal law since January 2022 that protects patients from surprise bills when receiving emergency care, even at out-of-network facilities. Your insurer must cover the claim and you only owe in-network cost-sharing."
+      },
+      {
+        "question": "Can I be balance-billed for emergency care?",
+          "answer": "Normally no. Under the No Surprises Act, out-of-network emergency providers cannot balance bill you for more than your in-network deductible and coinsurance. Report violations to your state insurance department. Unfortunately there are exceptions (including ground ambulances)."
+      },
+      {
+        "question": "What about care after I was stabilized?",
+        "answer": "Some post-stabilization care at out-of-network facilities can be protected until you can safely be transferred. Your appeal should document that you were not stable enough to transfer."
+      }
+    ],
+    "evidence_snippets": [
+      "The No Surprises Act requires insurers to cover emergency services at out-of-network facilities without requiring prior authorization.",
+      "Patients cannot be charged more than in-network cost-sharing for emergency services regardless of network status.",
+      "Emergency medical conditions are defined as those requiring immediate medical attention to prevent serious health consequences."
+    ],
+    "pubmed_search_terms": [
+      "surprise medical billing emergency department policy",
+      "out of network emergency care patient protections",
+      "No Surprises Act emergency services implementation"
+    ],
+    "alternatives": [
+      "File a complaint with your state insurance department if you receive a surprise balance bill.",
+      "Request the Independent Dispute Resolution process if your insurer and provider can't agree on payment.",
+      "Contact the CMS No Surprises Help Desk at 1-800-985-3059 for assistance."
     ]
   }
 }
