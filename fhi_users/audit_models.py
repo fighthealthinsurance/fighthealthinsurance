@@ -436,6 +436,121 @@ class SuspiciousActivityLog(models.Model):
         return f"{self.severity} - {self.trigger_type} - {user_str} at {self.timestamp}"
 
 
+class ObjectActivityContext(models.Model):
+    """
+    Links request context (IP, user agent, etc.) to business objects like Denials.
+
+    This allows viewing who created/modified a denial and from where, without
+    cluttering the Denial model itself. Uses Django's ContentType framework
+    for generic relations to any model.
+
+    Privacy rules:
+    - Professional users: Full details stored
+    - Consumer users: Privacy-preserving (no IP, simplified UA)
+    """
+
+    id = models.BigAutoField(primary_key=True)
+    timestamp = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    # Generic relation to any model (Denial, Appeal, etc.)
+    content_type = models.ForeignKey(
+        "contenttypes.ContentType",
+        on_delete=models.CASCADE,
+        related_name="activity_contexts",
+    )
+    object_id = models.CharField(max_length=100, db_index=True)
+
+    # Action type
+    action = models.CharField(
+        max_length=20,
+        choices=[
+            ("create", "Created"),
+            ("update", "Updated"),
+            ("view", "Viewed"),
+            ("delete", "Deleted"),
+            ("export", "Exported"),
+        ],
+        default="create",
+    )
+
+    # User info
+    user = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="object_activity_contexts",
+    )
+    user_type = models.CharField(
+        max_length=20,
+        choices=[(t.value, t.value) for t in UserType],
+        default=UserType.ANONYMOUS.value,
+    )
+    professional_user = models.ForeignKey(
+        "fhi_users.ProfessionalUser",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="object_activity_contexts",
+    )
+    domain = models.ForeignKey(
+        "fhi_users.UserDomain",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="object_activity_contexts",
+    )
+
+    # Network info (stored based on user_type - see privacy rules)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    asn_number = models.PositiveIntegerField(null=True, blank=True)
+    asn_org = models.CharField(max_length=255, null=True, blank=True)
+    network_type = models.CharField(
+        max_length=20,
+        choices=[(t.value, t.value) for t in NetworkType],
+        default=NetworkType.UNKNOWN.value,
+    )
+    country_code = models.CharField(max_length=2, null=True, blank=True)
+    state_region = models.CharField(max_length=100, null=True, blank=True)
+
+    # User agent info (stored based on user_type)
+    user_agent_full = models.TextField(null=True, blank=True)
+    user_agent_browser = models.CharField(max_length=50, null=True, blank=True)
+    user_agent_os = models.CharField(max_length=50, null=True, blank=True)
+    is_mobile = models.BooleanField(null=True, blank=True)
+    is_bot = models.BooleanField(default=False)
+
+    # Session tracking
+    session_key = models.CharField(max_length=40, null=True, blank=True)
+
+    class Meta:
+        verbose_name = "Object Activity Context"
+        verbose_name_plural = "Object Activity Contexts"
+        indexes = [
+            models.Index(fields=["content_type", "object_id"]),
+            models.Index(fields=["user", "timestamp"]),
+            models.Index(fields=["timestamp"]),
+            models.Index(fields=["action", "timestamp"]),
+        ]
+
+    def __str__(self) -> str:
+        user_str = self.user.email if self.user else "anonymous"
+        return f"{self.action} by {user_str} at {self.timestamp}"
+
+    @classmethod
+    def get_for_object(cls, obj) -> models.QuerySet["ObjectActivityContext"]:
+        """Get all activity contexts for a given object."""
+        from django.contrib.contenttypes.models import ContentType
+
+        ct = ContentType.objects.get_for_model(obj)
+        return cls.objects.filter(content_type=ct, object_id=str(obj.pk))
+
+    @classmethod
+    def get_creation_context(cls, obj) -> typing.Optional["ObjectActivityContext"]:
+        """Get the creation context for an object (first 'create' action)."""
+        return cls.get_for_object(obj).filter(action="create").order_by("timestamp").first()
+
+
 # Known datacenter/cloud provider ASNs for flagging non-residential traffic
 KNOWN_DATACENTER_ASNS: set[int] = {
     # Major cloud providers

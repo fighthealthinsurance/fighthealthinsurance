@@ -27,6 +27,7 @@ from rest_framework.views import APIView
 from stopit import ThreadingTimeout as Timeout
 
 from fhi_users.auth import auth_utils
+from fhi_users.audit_service import audit_service
 from fhi_users.models import PatientUser, ProfessionalUser, UserDomain
 from fighthealthinsurance import common_view_logic, rest_serializers as serializers
 from fighthealthinsurance.ml.health_status import health_status
@@ -367,6 +368,11 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
             except Exception as e:
                 logger.warning(f"Failed to subscribe email to mailing list: {e}")
         denial = Denial.objects.get(uuid=denial_response_info.uuid)
+        # Log the denial creation/update with request context
+        is_new = denial_response_info.denial_id == denial.denial_id  # Rough check if newly created
+        audit_service.log_object_activity(
+            request, denial, action="create" if is_new else "update"
+        )
         # Creating a pending appeal
         try:
             Appeal.objects.get(for_denial=denial)
@@ -379,6 +385,8 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
                 pending=True,
             )
             denial_response_info.appeal_id = appeal.id
+            # Log appeal creation too
+            audit_service.log_object_activity(request, appeal, action="create")
         return Response(
             serializers.DenialResponseInfoSerializer(
                 instance=denial_response_info
@@ -422,6 +430,8 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
         pmids = serializer.validated_data["pmids"]
         denial.pubmed_ids_json = pmids
         denial.save()
+        # Log the denial update
+        audit_service.log_object_activity(request, denial, action="update")
         return Response(
             serializers.SuccessSerializer(
                 {"message": f"Selected {len(pmids)} articles for this context"}

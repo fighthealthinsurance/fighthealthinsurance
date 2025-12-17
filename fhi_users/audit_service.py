@@ -40,6 +40,7 @@ from .audit_models import (
     APIAccessLog,
     ProfessionalActivityLog,
     SuspiciousActivityLog,
+    ObjectActivityContext,
     UserType,
     NetworkType,
 )
@@ -576,6 +577,103 @@ class AuditService:
         except Exception as e:
             logger.error(f"Failed to create suspicious activity log: {e}")
             return None
+
+    # ==================== Object Activity Context ====================
+
+    def log_object_activity(
+        self,
+        request: HttpRequest,
+        obj: Any,
+        action: str = "create",
+    ) -> Optional[ObjectActivityContext]:
+        """
+        Log activity context for a business object (Denial, Appeal, etc.).
+
+        This creates a link between the object and the request context,
+        allowing you to see who created/modified it and from where.
+
+        Args:
+            request: Django HttpRequest
+            obj: The business object (must have a pk attribute)
+            action: One of "create", "update", "view", "delete", "export"
+
+        Returns:
+            Created ObjectActivityContext entry
+
+        Usage:
+            # After creating a denial
+            denial = Denial.objects.create(...)
+            audit_service.log_object_activity(request, denial, action="create")
+
+            # After updating
+            denial.save()
+            audit_service.log_object_activity(request, denial, action="update")
+        """
+        try:
+            from django.contrib.contenttypes.models import ContentType
+
+            user = request.user if request.user.is_authenticated else None
+            user_type = determine_user_type(request)
+
+            # Get full context
+            context = get_request_context(request)
+            # Sanitize based on user type
+            sanitized = sanitize_for_privacy(context, user_type)
+
+            ip_info = sanitized["ip_info"]
+            ua_info = sanitized["ua_info"]
+
+            # Get content type for the object
+            ct = ContentType.objects.get_for_model(obj)
+
+            return ObjectActivityContext.objects.create(
+                content_type=ct,
+                object_id=str(obj.pk),
+                action=action,
+                user=user,
+                user_type=user_type.value,
+                professional_user=self._get_professional_user(user),
+                domain=self._get_domain_from_request(request),
+                ip_address=ip_info.ip_address if ip_info.ip_address else None,
+                asn_number=ip_info.asn_number,
+                asn_org=ip_info.asn_org,
+                network_type=ip_info.network_type.value,
+                country_code=ip_info.country_code,
+                state_region=ip_info.state_region,
+                user_agent_full=ua_info.full_user_agent if ua_info.full_user_agent else None,
+                user_agent_browser=ua_info.browser_family,
+                user_agent_os=ua_info.os_family,
+                is_mobile=ua_info.is_mobile,
+                is_bot=ua_info.is_bot,
+                session_key=sanitized.get("session_key"),
+            )
+        except Exception as e:
+            logger.error(f"Failed to create object activity context: {e}")
+            return None
+
+    def get_object_context(self, obj: Any) -> Optional[ObjectActivityContext]:
+        """
+        Get the creation context for a business object.
+
+        Args:
+            obj: The business object
+
+        Returns:
+            The ObjectActivityContext for when the object was created, or None
+        """
+        return ObjectActivityContext.get_creation_context(obj)
+
+    def get_object_history(self, obj: Any) -> list[ObjectActivityContext]:
+        """
+        Get full activity history for a business object.
+
+        Args:
+            obj: The business object
+
+        Returns:
+            List of ObjectActivityContext entries ordered by timestamp
+        """
+        return list(ObjectActivityContext.get_for_object(obj).order_by("timestamp"))
 
 
 # Singleton instance

@@ -180,6 +180,7 @@ class Base(Configuration):
         "django.middleware.common.CommonMiddleware",
         "django.middleware.csrf.CsrfViewMiddleware",
         "django.middleware.security.SecurityMiddleware",
+        "fighthealthinsurance.middleware.AuditLoggingMiddleware.AuditLoggingMiddleware",
         "django_prometheus.middleware.PrometheusAfterMiddleware",
     ]
 
