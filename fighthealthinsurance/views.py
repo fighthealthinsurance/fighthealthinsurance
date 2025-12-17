@@ -1007,7 +1007,15 @@ class InitialProcessView(generic.FormView):
             fname = self.request.POST.get("fname", "")
             lname = self.request.POST.get("lname", "")
             name = f"{fname} {lname}".strip()
-            defaults = {"comments": "From appeal flow"}
+            referral_source = self.request.POST.get("referral_source", "")
+            referral_source_details = self.request.POST.get(
+                "referral_source_details", ""
+            )
+            defaults = {
+                "comments": "From appeal flow",
+                "referral_source": referral_source,
+                "referral_source_details": referral_source_details,
+            }
             if len(name) > 2:
                 defaults["name"] = name
             # Use get_or_create to avoid duplicate subscriptions
@@ -1036,6 +1044,14 @@ class InitialProcessView(generic.FormView):
                 cleaned_data["microsite_slug"] = microsite_slug
             else:
                 logger.warning(f"Invalid microsite_slug received: {microsite_slug}")
+
+        # Capture referral source information from POST data
+        referral_source = self.request.POST.get("referral_source", "")
+        referral_source_details = self.request.POST.get("referral_source_details", "")
+        if referral_source:
+            cleaned_data["referral_source"] = referral_source
+        if referral_source_details:
+            cleaned_data["referral_source_details"] = referral_source_details
 
         denial_response = common_view_logic.DenialCreatorHelper.create_or_update_denial(
             **cleaned_data,
@@ -1613,12 +1629,18 @@ class ChatUserConsentView(FormView):
         self.request.session.save()
         if form.cleaned_data.get("subscribe"):
             name = f"{form.cleaned_data.get('first_name')} {form.cleaned_data.get('last_name')}"
+            referral_source = form.cleaned_data.get("referral_source", "")
+            referral_source_details = form.cleaned_data.get(
+                "referral_source_details", ""
+            )
             # Does the user want to subscribe to the newsletter?
             models.MailingListSubscriber.objects.create(
                 email=form.cleaned_data.get("email"),
                 phone=form.cleaned_data.get("phone"),
                 name=name,
                 comments="From chat consent form",
+                referral_source=referral_source,
+                referral_source_details=referral_source_details,
             )
 
         # No need to save form data to database - it will be saved in browser localStorage via JavaScript
