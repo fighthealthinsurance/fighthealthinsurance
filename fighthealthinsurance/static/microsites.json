@@ -3114,7 +3114,7 @@
     "tagline": "UHC Medicare Advantage SNF denials increased 9x from 2019 to 2022: fight back.",
     "hero_h1": "Appeal Your Skilled Nursing Facility Denial",
     "hero_subhead": "Post-hospital care is essential for recovery. Don't be discharged too early.",
-    "intro": "Skilled nursing facility denials have exploded, especially in Medicare Advantage plans. Between 2019 and 2022, SNF denials increased 9-fold, often driven by AI algorithms rather than clinical judgment. The good news: over 80% of appealed SNF denials are overturned, but fewer than 1% of patients appeal. You have rights — use them.",
+    "intro": "Skilled nursing facility denials have exploded, especially in Medicare Advantage plans. Between 2019 and 2022, SNF denials increased 9-fold, often driven by AI algorithms rather than clinical judgment. The good news: studies suggest the majority of appealed SNF denials are overturned, but few patients appeal. You have rights — use them.",
     "common_denial_reasons": [
       "Patient no longer meets skilled care criteria",
       "Custodial care only — not skilled nursing",
@@ -3137,7 +3137,7 @@
     "evidence_snippets": [
       "Premature discharge from skilled nursing facilities is associated with higher hospital readmission rates.",
       "Medicare guidelines require coverage when skilled nursing or rehabilitation services are needed on a daily basis.",
-      "Continued SNF care is medically necessary when the patient requires skilled services that cannot safely be provided in a less intensive setting.",
+      "Continued SNF care is medically necessary when the patient requires skilled services that cannot safely be provided in a less intensive setting.",	
       "Refusal of Recovery: How Medicare Advantage Insurers Have Denied Patients Access to Post-Acute Care"
     ],
     "pubmed_search_terms": [
