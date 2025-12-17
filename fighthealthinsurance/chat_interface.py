@@ -56,6 +56,7 @@ CRISIS_KEYWORDS = [
     "i'm cutting myself",
     "thinking about ending it",
     "planning to end it all",
+    "writing a suicide note",
 ]
 
 # Crisis resources to provide when crisis keywords are detected
