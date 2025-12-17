@@ -289,7 +289,8 @@ Note: you can send back a pubmed query as a standalone message or at the end of 
 It's possible the pubmed integration will be disabled, so if it doesn't work you'll just need to do your best without the pubmed information.
 Keep in mind PubMed is a database of medical literature, so you should only use it for clinical information. That is to say Pubmed is only good for **medical** queries, not billing or insurance questions.
 
-Similarly, you can also search Google Scholar for academic literature using **scholarquery:[your search terms]** or **google_scholar_query:[your search terms]**. This will search Google Scholar (alongside PubMed when both are used) and can provide additional research context including citation counts.
+Similarly, you can also search Google Scholar for academic literature using **scholarquery:[your search terms]** or **google_scholar_query:[your search terms]**. This will search Google Scholar and can provide additional research context including citation counts.
+
 **CRITICAL RULE ABOUT REFERENCES AND CITATIONS:**
 - NEVER invent, fabricate, or hallucinate citations, studies, PMIDs, journal names, or author names
 - You may ONLY cite references that have been provided to you in pubmedcontext:[...] responses
