@@ -46,6 +46,13 @@ from fhi_users.models import (
     UserDomain,
     ProfessionalDomainRelation,
 )
+from fhi_users.audit_models import (
+    AuthAuditLog,
+    APIAccessLog,
+    ProfessionalActivityLog,
+    SuspiciousActivityLog,
+    ObjectActivityContext,
+)
 from django.contrib.auth.admin import UserAdmin
 
 
@@ -551,3 +558,353 @@ class ChooserVoteAdmin(admin.ModelAdmin):
     list_filter = ("created_at",)
     ordering = ("-created_at",)
     readonly_fields = ("id", "created_at")
+
+
+# =============================================================================
+# Audit Log Admin Classes
+# =============================================================================
+
+
+@admin.register(AuthAuditLog)
+class AuthAuditLogAdmin(admin.ModelAdmin):
+    """Admin configuration for authentication audit logs."""
+
+    list_display = (
+        "timestamp",
+        "event_type",
+        "user",
+        "success",
+        "ip_address",
+        "asn_org",
+        "network_type",
+        "country_code",
+        "user_agent_browser",
+    )
+    list_filter = (
+        "event_type",
+        "success",
+        "network_type",
+        "country_code",
+        "timestamp",
+    )
+    search_fields = (
+        "user__email",
+        "user__username",
+        "attempted_email",
+        "ip_address",
+        "asn_org",
+    )
+    ordering = ("-timestamp",)
+    readonly_fields = (
+        "id",
+        "timestamp",
+        "user",
+        "user_type",
+        "professional_user",
+        "domain",
+        "event_type",
+        "success",
+        "ip_address",
+        "asn_number",
+        "asn_org",
+        "network_type",
+        "country_code",
+        "state_region",
+        "user_agent_full",
+        "user_agent_browser",
+        "user_agent_os",
+        "is_mobile",
+        "is_bot",
+        "request_path",
+        "request_method",
+        "http_referer",
+        "session_key",
+        "attempted_email",
+        "failure_reason",
+        "details",
+    )
+    date_hierarchy = "timestamp"
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        # Allow superusers to delete for data retention
+        return request.user.is_superuser
+
+
+@admin.register(APIAccessLog)
+class APIAccessLogAdmin(admin.ModelAdmin):
+    """Admin configuration for API access audit logs."""
+
+    list_display = (
+        "timestamp",
+        "user",
+        "endpoint",
+        "request_method",
+        "http_status",
+        "response_time_ms",
+        "network_type",
+        "ip_address",
+    )
+    list_filter = (
+        "request_method",
+        "http_status",
+        "network_type",
+        "timestamp",
+    )
+    search_fields = (
+        "user__email",
+        "endpoint",
+        "ip_address",
+        "asn_org",
+        "resource_type",
+        "search_query",
+    )
+    ordering = ("-timestamp",)
+    readonly_fields = (
+        "id",
+        "timestamp",
+        "user",
+        "user_type",
+        "professional_user",
+        "domain",
+        "event_type",
+        "success",
+        "ip_address",
+        "asn_number",
+        "asn_org",
+        "network_type",
+        "country_code",
+        "state_region",
+        "user_agent_full",
+        "user_agent_browser",
+        "user_agent_os",
+        "is_mobile",
+        "is_bot",
+        "request_path",
+        "request_method",
+        "http_referer",
+        "session_key",
+        "endpoint",
+        "http_status",
+        "response_time_ms",
+        "resource_type",
+        "resource_id",
+        "resource_count",
+        "search_query",
+        "details",
+    )
+    date_hierarchy = "timestamp"
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return request.user.is_superuser
+
+
+@admin.register(ProfessionalActivityLog)
+class ProfessionalActivityLogAdmin(admin.ModelAdmin):
+    """Admin configuration for professional activity audit logs."""
+
+    list_display = (
+        "timestamp",
+        "event_type",
+        "performed_by_user",
+        "target_user",
+        "domain",
+        "success",
+        "ip_address",
+    )
+    list_filter = (
+        "event_type",
+        "success",
+        "timestamp",
+    )
+    search_fields = (
+        "performed_by_user__email",
+        "target_user__email",
+        "domain__name",
+        "ip_address",
+    )
+    ordering = ("-timestamp",)
+    readonly_fields = (
+        "id",
+        "timestamp",
+        "user",
+        "user_type",
+        "professional_user",
+        "domain",
+        "event_type",
+        "success",
+        "ip_address",
+        "asn_number",
+        "asn_org",
+        "network_type",
+        "country_code",
+        "state_region",
+        "user_agent_full",
+        "user_agent_browser",
+        "user_agent_os",
+        "is_mobile",
+        "is_bot",
+        "request_path",
+        "request_method",
+        "http_referer",
+        "session_key",
+        "performed_by_user",
+        "performed_by_professional",
+        "target_user",
+        "target_professional",
+        "old_values",
+        "new_values",
+        "details",
+    )
+    date_hierarchy = "timestamp"
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return request.user.is_superuser
+
+
+@admin.register(SuspiciousActivityLog)
+class SuspiciousActivityLogAdmin(admin.ModelAdmin):
+    """Admin configuration for suspicious activity flags."""
+
+    list_display = (
+        "timestamp",
+        "severity",
+        "trigger_type",
+        "user",
+        "ip_address",
+        "asn_org",
+        "reviewed",
+    )
+    list_filter = (
+        "severity",
+        "trigger_type",
+        "reviewed",
+        "timestamp",
+    )
+    search_fields = (
+        "user__email",
+        "ip_address",
+        "asn_org",
+        "description",
+    )
+    ordering = ("-timestamp",)
+    readonly_fields = (
+        "id",
+        "timestamp",
+        "trigger_type",
+        "severity",
+        "user",
+        "professional_user",
+        "domain",
+        "ip_address",
+        "asn_number",
+        "asn_org",
+        "description",
+        "evidence",
+    )
+    # These fields can be edited for resolution tracking
+    fields = (
+        "timestamp",
+        "severity",
+        "trigger_type",
+        "user",
+        "professional_user",
+        "domain",
+        "ip_address",
+        "asn_number",
+        "asn_org",
+        "description",
+        "evidence",
+        "reviewed",
+        "reviewed_by",
+        "reviewed_at",
+        "resolution_notes",
+    )
+    date_hierarchy = "timestamp"
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return request.user.is_superuser
+
+
+@admin.register(ObjectActivityContext)
+class ObjectActivityContextAdmin(admin.ModelAdmin):
+    """Admin configuration for object activity context (linked to Denials, Appeals, etc.)."""
+
+    list_display = (
+        "timestamp",
+        "action",
+        "content_type",
+        "object_id",
+        "user",
+        "user_type",
+        "ip_address",
+        "user_agent_browser",
+        "network_type",
+    )
+    list_filter = (
+        "action",
+        "user_type",
+        "network_type",
+        "content_type",
+        "timestamp",
+    )
+    search_fields = (
+        "user__email",
+        "object_id",
+        "ip_address",
+        "asn_org",
+    )
+    ordering = ("-timestamp",)
+    readonly_fields = (
+        "id",
+        "timestamp",
+        "content_type",
+        "object_id",
+        "action",
+        "user",
+        "user_type",
+        "professional_user",
+        "domain",
+        "ip_address",
+        "asn_number",
+        "asn_org",
+        "network_type",
+        "country_code",
+        "state_region",
+        "user_agent_full",
+        "user_agent_browser",
+        "user_agent_os",
+        "is_mobile",
+        "is_bot",
+        "session_key",
+    )
+    date_hierarchy = "timestamp"
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return request.user.is_superuser
