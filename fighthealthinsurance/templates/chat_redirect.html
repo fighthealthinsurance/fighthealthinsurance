@@ -8,7 +8,7 @@
     <form id="chatRedirectForm" method="POST" action="{{ chat_url }}">
         {% csrf_token %}
         {% if denial_text %}
-        <input type="hidden" name="denial_text" value="{{ denial_text }}">
+        <textarea name="denial_text" style="display:none;">{{ denial_text }}</textarea>
         {% endif %}
         {% if default_procedure %}
         <input type="hidden" name="default_procedure" value="{{ default_procedure }}">

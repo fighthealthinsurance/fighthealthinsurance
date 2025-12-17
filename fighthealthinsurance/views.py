@@ -1562,7 +1562,13 @@ def chat_interface_view(request):
     )
     
     # Check for denial text from POST (from chat consent form) or session (from explain denial page)
-    denial_text = request.POST.get("denial_text", "") or request.session.pop("denial_text_for_explanation", "")
+    # Check POST first to avoid popping session unnecessarily
+    denial_text = ""
+    if request.method == "POST":
+        denial_text = request.POST.get("denial_text", "")
+    if not denial_text:
+        denial_text = request.session.pop("denial_text_for_explanation", "")
+    
     initial_message = ""
     if denial_text:
         # Format the initial message for the chat
