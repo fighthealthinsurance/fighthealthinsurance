@@ -115,14 +115,14 @@
                         </h3>
                     </div>
                     <div class="card-body">
-                        {% if extracted_info.detected_reasons %}
+                        {% if denial_details %}
                         <div class="list-group">
-                            {% for reason in extracted_info.detected_reasons %}
+                            {% for detail in denial_details %}
                             <div class="list-group-item">
-                                <h5 class="mb-2">{{ reason }}</h5>
-                                {% if extracted_info.extracted_phrases|length > forloop.counter0 %}
+                                <h5 class="mb-2">{{ detail.reason }}</h5>
+                                {% if detail.phrase %}
                                 <p class="mb-1 text-muted">
-                                    <strong>Found in your letter:</strong> "{{ extracted_info.extracted_phrases|slice:forloop.counter0|first }}"
+                                    <strong>Found in your letter:</strong> "{{ detail.phrase }}"
                                 </p>
                                 {% endif %}
                             </div>
@@ -142,9 +142,10 @@
                         </h3>
                     </div>
                     <div class="card-body">
-                        {% for explanation in extracted_info.plain_english %}
+                        {% for detail in denial_details %}
                         <div class="explanation-item {% if not forloop.last %}mb-3 pb-3 border-bottom{% endif %}">
-                            <p>{{ explanation }}</p>
+                            <h5 class="mb-2">{{ detail.reason }}</h5>
+                            <p>{{ detail.explanation }}</p>
                         </div>
                         {% endfor %}
                     </div>
@@ -158,14 +159,15 @@
                         </h3>
                     </div>
                     <div class="card-body">
-                        {% for suggestion in extracted_info.suggestions %}
+                        {% for detail in denial_details %}
                         <div class="suggestion-item {% if not forloop.last %}mb-3 pb-3 border-bottom{% endif %}">
                             <div class="d-flex">
                                 <div class="flex-shrink-0">
                                     <span class="badge bg-success rounded-pill me-2">{{ forloop.counter }}</span>
                                 </div>
                                 <div class="flex-grow-1">
-                                    <p class="mb-0">{{ suggestion }}</p>
+                                    <h5 class="mb-2">{{ detail.reason }}</h5>
+                                    <p class="mb-0">{{ detail.suggestion }}</p>
                                 </div>
                             </div>
                         </div>

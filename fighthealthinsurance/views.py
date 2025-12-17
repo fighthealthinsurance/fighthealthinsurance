@@ -1849,9 +1849,20 @@ class ExplainDenialView(TemplateView):
         # Extract information from the denial text
         extracted_info = self._extract_denial_info(denial_text)
         
+        # Zip the parallel lists for easier template iteration
+        denial_details = []
+        for i in range(len(extracted_info["detected_reasons"])):
+            detail = {
+                "reason": extracted_info["detected_reasons"][i],
+                "explanation": extracted_info["plain_english"][i] if i < len(extracted_info["plain_english"]) else "",
+                "phrase": extracted_info["extracted_phrases"][i] if i < len(extracted_info["extracted_phrases"]) else "",
+                "suggestion": extracted_info["suggestions"][i] if i < len(extracted_info["suggestions"]) else "",
+            }
+            denial_details.append(detail)
+        
         context = self.get_context_data(**kwargs)
         context["denial_text"] = denial_text
-        context["extracted_info"] = extracted_info
+        context["denial_details"] = denial_details
         context["show_results"] = True
         
         return render(request, self.template_name, context)
@@ -1861,7 +1872,6 @@ class ExplainDenialView(TemplateView):
         Extract and categorize information from denial text.
         Maps insurer language to plain English explanations.
         """
-        import re
         
         denial_info = {
             "detected_reasons": [],
