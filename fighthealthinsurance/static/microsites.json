@@ -2945,6 +2945,9 @@
       }
     ],
     "evidence_snippets": [
+      "Ustekinumab (Stelara) has demonstrated long-term efficacy and safety in psoriasis, psoriatic arthritis, and inflammatory bowel disease.",
+      "Non-medical switching of stable patients from biologic originators to biosimilars may carry risks of altered efficacy or immunogenicity.",
+      "Federal continuity of care regulations under 45 CFR § 156.122(c) require health plans to provide transition processes when drugs are removed from formulary."
     ],
     "pubmed_search_terms": [
       "ustekinumab biosimilar switching efficacy safety",
@@ -3044,7 +3047,7 @@
     ],
     "evidence_snippets": [
       "Risankizumab (Skyrizi) selectively targets IL-23, showing high rates of skin clearance in plaque psoriasis and efficacy in psoriatic arthritis and Crohn's disease.",
-      "Switching biologics in psoriasis and psoriatic arthritis can result in disease flare and incomplete response to subsequent agents.",
+      "Switching biologics in psoriasis and psoriatic arthritis can result in disease flare and incomplete response to subsequent agents."
     ],
     "pubmed_search_terms": [
       "risankizumab plaque psoriasis IL-23 clinical trial",
@@ -3105,6 +3108,425 @@
         "url": "https://www.jnjpaf.org/",
         "description": "Patient assistance for uninsured or underinsured patients who meet income requirements."
       }
+    ]
+  },
+  "cancer-immunotherapy-denial": {
+    "slug": "cancer-immunotherapy-denial",
+    "title": "Appealing Cancer Immunotherapy Denials",
+    "default_procedure": "Cancer Immunotherapy (Keytruda, Opdivo, Yervoy, or other checkpoint inhibitors)",
+    "default_condition": "Cancer",
+    "tagline": "Immunotherapy denials have high overturn rates — don't give up on life-saving treatment.",
+    "hero_h1": "Appeal Your Cancer Immunotherapy Denial",
+    "hero_subhead": "When insurers deny checkpoint inhibitors, a strong appeal can save your life.",
+    "intro": "Cancer immunotherapy drugs like Keytruda (pembrolizumab), Opdivo (nivolumab), and Yervoy (ipilimumab) are frequently denied despite FDA approval and strong clinical evidence. Insurers often claim the treatment is 'experimental,' 'off-label,' or requires prior authorization that wasn't obtained. With denial rates around 41% but appeal success rates of 60-70%, fighting back is worth it.",
+    "common_denial_reasons": [
+      "Treatment deemed experimental or investigational",
+      "Off-label use not covered",
+      "Prior authorization not obtained",
+      "Preferred alternative required first",
+      "Insufficient documentation of biomarkers"
+    ],
+    "how_we_help": "We help you document your cancer diagnosis, biomarker results (PD-L1, MSI-H, TMB), prior treatments, and why immunotherapy is the appropriate next step based on clinical guidelines and your oncologist's recommendation.",
+    "cta": "Start your immunotherapy appeal — time matters.",
+    "faq": [
+      {
+        "question": "Why do insurers deny immunotherapy when it's FDA-approved?",
+        "answer": "Even FDA-approved drugs can be denied for specific cancer types, dosing schedules, or when used in combination. Insurers may also claim your biomarker results don't meet their criteria. Your appeal should address the specific denial reason with supporting evidence."
+      },
+      {
+        "question": "What biomarker information should I include?",
+        "answer": "Include PD-L1 expression levels, microsatellite instability (MSI) status, tumor mutational burden (TMB), and any other relevant genetic testing. If your results are borderline, your oncologist can explain why immunotherapy is still appropriate."
+      },
+      {
+        "question": "Can I appeal if my cancer type isn't on the FDA-approved list?",
+        "answer": "Yes. Many immunotherapies have compendia support for additional cancer types, and insurers are often required to cover compendia-listed uses. Your appeal should cite relevant clinical trials and NCCN guidelines."
+      }
+    ],
+    "evidence_snippets": [
+      "Checkpoint inhibitors have demonstrated significant survival benefits across multiple cancer types and are included in NCCN guidelines.",
+      "Delays in initiating immunotherapy can allow disease progression and reduce treatment effectiveness.",
+      "FDA approval combined with appropriate biomarker testing supports medical necessity for checkpoint inhibitor therapy."
+    ],
+    "pubmed_search_terms": [
+      "pembrolizumab survival outcomes solid tumors",
+      "checkpoint inhibitor guidelines NCCN recommendations",
+      "immunotherapy access barriers insurance denial cancer"
+    ],
+    "alternatives": [
+      "Ask your oncologist about clinical trials that may provide access to immunotherapy at no cost.",
+      "Some cancer centers have financial counselors who can help navigate insurance appeals.",
+      "Manufacturer patient assistance programs may provide free medication while you appeal."
+    ],
+    "assistance_programs": [
+      {
+        "name": "Merck Patient Assistance (Keytruda)",
+        "url": "https://www.merckhelps.com/",
+        "description": "Eligible uninsured or underinsured patients may receive Keytruda at no cost."
+      },
+      {
+        "name": "Bristol-Myers Squibb Access Support (Opdivo, Yervoy)",
+        "url": "https://www.bmsaccesssupport.bmscustomerconnect.com/",
+        "description": "Patient assistance and copay support for BMS immunotherapy medications."
+      },
+      {
+        "name": "CancerCare Financial Assistance",
+        "url": "https://www.cancercare.org/financial",
+        "description": "Grants to help with treatment-related costs including copays and transportation."
+      },
+      {
+        "name": "Patient Advocate Foundation",
+        "url": "https://www.patientadvocate.org/",
+        "description": "Case managers who can help navigate insurance denials and appeals for cancer treatment."
+      }
+    ]
+  },
+  "aba-therapy-denial": {
+    "slug": "aba-therapy-denial",
+    "title": "Appealing ABA Therapy Denials for Autism",
+    "default_procedure": "Applied Behavior Analysis (ABA) Therapy",
+    "default_condition": "Autism Spectrum Disorder",
+    "tagline": "ABA therapy is legally mandated in most states — know your rights and appeal.",
+    "hero_h1": "Appeal Your ABA Therapy Denial",
+    "hero_subhead": "Most states require autism therapy coverage. Don't accept 'no' without a fight.",
+    "intro": "Applied Behavior Analysis (ABA) therapy is the gold-standard treatment for autism spectrum disorder, yet insurers frequently deny or limit coverage. With 1 in 36 children diagnosed with autism and state mandates requiring coverage in most states, you have strong grounds for appeal. Studies show up to 65% of ABA denials are never appealed — don't be one of them.",
+    "common_denial_reasons": [
+      "Not medically necessary",
+      "Exceeded visit or hour limits",
+      "Missing prior authorization",
+      "Provider not in network",
+      "Child too old for services",
+      "Insufficient progress documentation"
+    ],
+    "how_we_help": "We help you document your child's diagnosis, treatment plan, measurable progress goals, and why the requested hours are clinically appropriate based on your BCBA's recommendations and your state's autism mandate.",
+    "cta": "Start your ABA therapy appeal.",
+    "faq": [
+      {
+        "question": "Does my state require autism therapy coverage?",
+        "answer": "Most states have autism insurance mandates, though requirements vary. Your appeal should cite your state's specific law and how your child's treatment qualifies under it."
+      },
+      {
+        "question": "What if they say my child has had 'enough' therapy?",
+        "answer": "ABA therapy often requires intensive hours, especially in early intervention. Your appeal should include your BCBA's assessment of why continued therapy at the recommended intensity is medically necessary."
+      },
+      {
+        "question": "Can I appeal if they want fewer hours than recommended?",
+        "answer": "Yes. Include your BCBA's treatment plan with specific goals and the clinical rationale for the recommended hours. Research supports intensive early intervention for best outcomes."
+      }
+    ],
+    "evidence_snippets": [
+      "ABA therapy is recognized as an evidence-based treatment for autism spectrum disorder by the American Academy of Pediatrics.",
+      "Early intensive behavioral intervention has demonstrated significant improvements in cognitive and adaptive functioning.",
+      "State autism mandates require coverage of ABA therapy as a medically necessary treatment."
+    ],
+    "pubmed_search_terms": [
+      "applied behavior analysis autism spectrum disorder outcomes",
+      "early intensive behavioral intervention autism effectiveness",
+      "ABA therapy insurance coverage autism mandate"
+    ],
+    "alternatives": [
+      "Some school districts provide ABA services through special education — this doesn't replace insurance coverage but may supplement it.",
+      "Regional autism centers may offer sliding-scale fees or grants while you appeal.",
+      "Ask about telehealth ABA options which may have different coverage criteria."
+    ],
+    "assistance_programs": [
+      {
+        "name": "Autism Speaks Resource Guide",
+        "url": "https://www.autismspeaks.org/financial-autism-support",
+        "description": "Comprehensive guide to financial assistance, grants, and state-specific resources."
+      },
+      {
+        "name": "Organization for Autism Research",
+        "url": "https://researchautism.org/resources/",
+        "description": "Resources for families including guides to navigating insurance."
+      },
+      {
+        "name": "State Developmental Disabilities Council",
+        "url": "https://www.acl.gov/programs/aging-and-disability-networks/state-councils-developmental-disabilities",
+        "description": "Your state council can provide local resources and advocacy support."
+      }
+    ]
+  },
+  "skilled-nursing-denial": {
+    "slug": "skilled-nursing-denial",
+    "title": "Appealing Skilled Nursing Facility Denials",
+    "default_procedure": "Skilled Nursing Facility (SNF) Care",
+    "tagline": "Medicare Advantage SNF denials increased 9x since 2019 — fight back.",
+    "hero_h1": "Appeal Your Skilled Nursing Facility Denial",
+    "hero_subhead": "Post-hospital care is essential for recovery. Don't be discharged too early.",
+    "intro": "Skilled nursing facility denials have exploded, especially in Medicare Advantage plans. Between 2019 and 2022, SNF denials increased 9-fold, often driven by AI algorithms rather than clinical judgment. The good news: over 80% of appealed SNF denials are overturned, but fewer than 1% of patients appeal. You have rights — use them.",
+    "common_denial_reasons": [
+      "Patient no longer meets skilled care criteria",
+      "Custodial care only — not skilled nursing",
+      "Discharge to home is appropriate",
+      "Maximum benefit reached",
+      "Prior authorization expired"
+    ],
+    "how_we_help": "We help you document why skilled nursing care remains medically necessary, including specific skilled services needed (wound care, IV medications, PT/OT, complex medication management) and risks of premature discharge.",
+    "cta": "Start your SNF appeal before you're discharged.",
+    "faq": [
+      {
+        "question": "Can I stay in the SNF while I appeal?",
+        "answer": "Yes! Under Medicare, you can request a 'fast appeal' and remain in the facility while your case is reviewed. Ask for a written denial notice and file immediately."
+      },
+      {
+        "question": "What's the difference between skilled and custodial care?",
+        "answer": "Skilled care requires trained medical professionals (nurses, therapists). Your appeal should list specific skilled services you're receiving: wound care, PT/OT, IV medications, injections, complex medication management."
+      },
+      {
+        "question": "What if the insurer says I can continue care at home?",
+        "answer": "Your appeal should document why home care isn't safe or feasible: caregiver limitations, home environment issues, or medical complexity requiring 24/7 skilled oversight."
+      }
+    ],
+    "evidence_snippets": [
+      "Premature discharge from skilled nursing facilities is associated with higher hospital readmission rates.",
+      "Medicare guidelines require coverage when skilled nursing or rehabilitation services are needed on a daily basis.",
+      "Continued SNF care is medically necessary when the patient requires skilled services that cannot safely be provided in a less intensive setting."
+    ],
+    "pubmed_search_terms": [
+      "skilled nursing facility discharge outcomes readmission",
+      "Medicare SNF coverage criteria medical necessity",
+      "post-acute care denial Medicare Advantage"
+    ],
+    "alternatives": [
+      "Home health care with visiting nurses may be an option if you have adequate support at home.",
+      "Some long-term acute care hospitals (LTACHs) provide a higher level of care if SNF isn't sufficient.",
+      "Ask about swing bed programs at community hospitals which combine acute and SNF-level care."
+    ]
+  },
+  "home-health-denial": {
+    "slug": "home-health-denial",
+    "title": "Appealing Home Health Care Denials",
+    "default_procedure": "Home Health Care / Home Nursing Services",
+    "tagline": "Medicare's 'homebound' requirement trips up many patients — learn how to appeal.",
+    "hero_h1": "Appeal Your Home Health Care Denial",
+    "hero_subhead": "You shouldn't have to choose between leaving home and losing coverage.",
+    "intro": "Home health care denials often hinge on the 'homebound' requirement and whether you need 'skilled' nursing care. Medicare Advantage plans are increasingly using narrow interpretations to deny home health services, even when your doctor has ordered them. Understanding what qualifies as homebound and skilled care is key to winning your appeal.",
+    "common_denial_reasons": [
+      "Patient not homebound",
+      "Skilled care not required",
+      "Services are maintenance only",
+      "Caregiver can provide this care",
+      "Frequency of visits not justified"
+    ],
+    "how_we_help": "We help you document your homebound status (leaving home requires considerable effort, assistance, or poses medical risk) and why skilled nursing or therapy services are medically necessary.",
+    "cta": "Start your home health appeal.",
+    "faq": [
+      {
+        "question": "What does 'homebound' actually mean?",
+        "answer": "You're homebound if leaving home requires considerable and taxing effort. You can still leave for medical appointments, religious services, or occasional events. Needing a wheelchair, walker, or assistance qualifies."
+      },
+      {
+        "question": "What counts as skilled care vs. custodial care?",
+        "answer": "Skilled care includes wound care, injections, catheter care, PT/OT, teaching caregivers, and medication management by a nurse. Basic bathing, feeding, and companionship are custodial. Your appeal should emphasize the skilled components."
+      },
+      {
+        "question": "Can I appeal if they say I've reached 'maintenance' status?",
+        "answer": "Yes. Even maintenance programs require skilled care when a professional assessment is needed to maintain function safely. Your appeal should explain why a skilled professional is necessary to prevent decline."
+      }
+    ],
+    "evidence_snippets": [
+      "Home health services reduce hospital readmissions and improve outcomes for patients recovering from illness, injury, or surgery.",
+      "The homebound requirement is met when leaving home requires considerable effort or assistance, not complete inability to leave.",
+      "Skilled nursing services are medically necessary when the complexity of the patient's condition requires professional assessment and intervention."
+    ],
+    "pubmed_search_terms": [
+      "home health care outcomes hospital readmission prevention",
+      "Medicare home health homebound criteria definition",
+      "skilled nursing home health medical necessity"
+    ],
+    "alternatives": [
+      "Adult day programs may provide supervision and therapy while preserving home health eligibility.",
+      "Telehealth visits may supplement in-person home health for some services.",
+      "Community-based waiver programs may provide additional home care services in some states."
+    ]
+  },
+  "joint-replacement-denial": {
+    "slug": "joint-replacement-denial",
+    "title": "Appealing Knee and Hip Replacement Denials",
+    "default_procedure": "Total Knee or Hip Replacement",
+    "tagline": "Joint replacement is one of the most successful surgeries — insurers shouldn't block it.",
+    "hero_h1": "Appeal Your Joint Replacement Denial",
+    "hero_subhead": "When conservative treatment fails, surgery is the answer.",
+    "intro": "Knee and hip replacements are among the most successful surgeries performed, with high satisfaction rates and dramatic quality-of-life improvements. Yet insurers frequently deny them, claiming you haven't tried enough conservative treatments or the surgery isn't 'medically necessary.' If you're living with severe joint pain that limits your daily activities, you deserve surgery.",
+    "common_denial_reasons": [
+      "Insufficient conservative treatment trial",
+      "BMI too high for surgery",
+      "Not medically necessary",
+      "Imaging doesn't show severe enough damage",
+      "Must try injections or physical therapy first"
+    ],
+    "how_we_help": "We help you document your pain level, functional limitations, failed conservative treatments (PT, injections, medications), and imaging results that support surgical intervention.",
+    "cta": "Start your joint replacement appeal.",
+    "faq": [
+      {
+        "question": "How much conservative treatment is 'enough'?",
+        "answer": "Most guidelines suggest 3-6 months of conservative treatment including PT, anti-inflammatory medications, and possibly injections. Your appeal should list everything you've tried, how long you tried it, and why it didn't work."
+      },
+      {
+        "question": "What if my BMI is above their cutoff?",
+        "answer": "BMI cutoffs vary and are controversial. Your appeal can cite studies showing successful outcomes at higher BMIs, your surgeon's assessment of surgical risk, and why delaying surgery may worsen outcomes."
+      },
+      {
+        "question": "Do I need X-rays showing 'bone-on-bone'?",
+        "answer": "Not necessarily. Imaging is one factor, but clinical symptoms matter too. Your appeal should describe your pain, functional limitations, and your surgeon's assessment, not just imaging findings."
+      }
+    ],
+    "evidence_snippets": [
+      "Total joint replacement is a cost-effective intervention that significantly improves quality of life and functional status.",
+      "Delaying medically necessary joint replacement can lead to muscle atrophy, deconditioning, and poorer surgical outcomes.",
+      "Patient-reported pain and functional limitation are important indicators for joint replacement, independent of radiographic severity."
+    ],
+    "pubmed_search_terms": [
+      "total knee replacement outcomes quality of life",
+      "joint replacement surgical criteria medical necessity",
+      "delay hip replacement outcomes deconditioning"
+    ],
+    "alternatives": [
+      "Partial knee replacement may be an option for some patients with localized arthritis.",
+      "Joint preservation procedures like osteotomy may delay the need for replacement in younger patients.",
+      "Ask about outpatient joint replacement programs which may have different coverage criteria."
+    ]
+  },
+  "spinal-fusion-denial": {
+    "slug": "spinal-fusion-denial",
+    "title": "Appealing Spinal Fusion Surgery Denials",
+    "default_procedure": "Spinal Fusion Surgery",
+    "tagline": "Back surgery denials are common — but so are successful appeals.",
+    "hero_h1": "Appeal Your Spinal Fusion Denial",
+    "hero_subhead": "When conservative treatment fails, don't let insurers keep you in pain.",
+    "intro": "Spinal fusion surgery is frequently denied, often with claims that you need more conservative treatment or that your imaging doesn't justify surgery. With average costs over $100,000, insurers have strong financial incentives to deny these procedures. But if your spine surgeon has determined fusion is necessary, you can build a strong appeal.",
+    "common_denial_reasons": [
+      "Insufficient conservative treatment (need 6+ months)",
+      "Not medically necessary",
+      "Imaging doesn't support surgical intervention",
+      "Psychological evaluation required",
+      "Alternative procedure recommended"
+    ],
+    "how_we_help": "We help you document your failed conservative treatments, specific imaging findings, neurological symptoms, and why your surgeon recommends fusion over other options.",
+    "cta": "Start your spinal fusion appeal.",
+    "faq": [
+      {
+        "question": "How long must I try conservative treatment before surgery?",
+        "answer": "Most insurers require 6 months of documented conservative care (PT, medications, injections). Your appeal should detail exactly what you've tried, for how long, and the results."
+      },
+      {
+        "question": "Do I need a psychological evaluation?",
+        "answer": "Some insurers require psych clearance for spine surgery. If you've completed one, include the results. If denied for this reason, request clarification on what evaluation is needed."
+      },
+      {
+        "question": "What if they recommend a less invasive procedure?",
+        "answer": "Your surgeon's rationale for fusion over other options is key. The appeal should explain why fusion is the appropriate procedure for your specific pathology and symptoms."
+      }
+    ],
+    "evidence_snippets": [
+      "Spinal fusion is indicated for instability, degenerative disc disease with failed conservative care, and structural abnormalities causing neurological symptoms.",
+      "Delayed surgical intervention for appropriate candidates can lead to progressive neurological deficits and chronic pain.",
+      "Guidelines support surgical intervention when conservative measures have failed and imaging correlates with clinical symptoms."
+    ],
+    "pubmed_search_terms": [
+      "spinal fusion surgery outcomes indications",
+      "lumbar fusion medical necessity criteria guidelines",
+      "conservative treatment failure back surgery timing"
+    ],
+    "alternatives": [
+      "Spinal cord stimulator may be an option for chronic pain without structural instability.",
+      "Minimally invasive spine procedures may have different coverage criteria.",
+      "Artificial disc replacement may be an alternative to fusion for some patients."
+    ]
+  },
+  "tmj-surgery-denial": {
+    "slug": "tmj-surgery-denial",
+    "title": "Appealing TMJ Surgery Denials",
+    "default_procedure": "Temporomandibular Joint (TMJ) Surgery",
+    "default_condition": "TMJ Disorder",
+    "tagline": "TMJ treatment falls between medical and dental — don't let insurers use that against you.",
+    "hero_h1": "Appeal Your TMJ Surgery Denial",
+    "hero_subhead": "TMJ disorders are medical conditions that deserve medical coverage.",
+    "intro": "TMJ surgery denials are frustrating because insurers often play hot potato — medical insurance calls it dental, dental insurance calls it medical. The truth is that TMJ disorders are legitimate medical conditions that can cause severe pain, jaw dysfunction, and reduced quality of life. With proper documentation, you can appeal successfully.",
+    "common_denial_reasons": [
+      "Considered dental, not medical",
+      "Conservative treatment not exhausted",
+      "Not medically necessary",
+      "Procedure is experimental",
+      "Documentation insufficient"
+    ],
+    "how_we_help": "We help you document the medical nature of your TMJ disorder, your functional impairment, failed conservative treatments, and imaging findings that support surgical intervention.",
+    "cta": "Start your TMJ surgery appeal.",
+    "faq": [
+      {
+        "question": "Is TMJ surgery covered by medical or dental insurance?",
+        "answer": "TMJ surgery is typically a medical benefit because it addresses joint dysfunction, not teeth. Your appeal should emphasize the medical diagnosis and functional impairment, not dental problems."
+      },
+      {
+        "question": "What conservative treatments should I try first?",
+        "answer": "Most insurers expect trials of splints, physical therapy, medications, and possibly injections. Document everything you've tried and why it didn't resolve your symptoms."
+      },
+      {
+        "question": "What imaging do I need for a TMJ appeal?",
+        "answer": "MRI or CT scans showing joint damage, disc displacement, or structural abnormalities support your case. Include reports from your oral surgeon or TMJ specialist."
+      }
+    ],
+    "evidence_snippets": [
+      "TMJ disorders are recognized medical conditions affecting the temporomandibular joint and surrounding structures.",
+      "Surgical intervention for TMJ disorders is indicated when conservative management has failed and significant functional impairment exists.",
+      "TMJ surgery is a medical procedure addressing joint pathology, distinct from dental procedures addressing teeth and gums."
+    ],
+    "pubmed_search_terms": [
+      "temporomandibular joint surgery outcomes indications",
+      "TMJ disorder treatment guidelines surgical criteria",
+      "TMJ arthroscopy arthroplasty medical necessity"
+    ],
+    "alternatives": [
+      "TMJ arthrocentesis (joint lavage) is a less invasive option that may be covered differently.",
+      "Botox injections for TMJ may have different coverage criteria.",
+      "Some dental schools offer reduced-cost TMJ treatment and evaluations."
+    ]
+  },
+  "out-of-network-emergency-denial": {
+    "slug": "out-of-network-emergency-denial",
+    "title": "Appealing Out-of-Network Emergency Room Denials",
+    "default_procedure": "Emergency Room Services",
+    "tagline": "Federal law protects you from surprise ER bills — insurers must comply.",
+    "hero_h1": "Appeal Your Out-of-Network ER Denial",
+    "hero_subhead": "The No Surprises Act protects you. Make your insurer follow the law.",
+    "intro": "Since 2022, the No Surprises Act protects patients from surprise bills when they receive emergency care at out-of-network facilities. Yet insurers continue to improperly deny or underpay these claims. You cannot be balance-billed more than your in-network cost-sharing, and your insurer must pay the emergency facility appropriately. If your claim was denied or you received a surprise bill, you have strong appeal rights.",
+    "common_denial_reasons": [
+      "Out-of-network provider",
+      "Emergency not verified",
+      "Post-stabilization care not covered",
+      "Claim filed incorrectly",
+      "Balance billing by provider"
+    ],
+    "how_we_help": "We help you document the emergency nature of your visit, cite the No Surprises Act protections, and explain why your insurer must cover the claim at in-network cost-sharing levels.",
+    "cta": "Start your emergency care appeal.",
+    "faq": [
+      {
+        "question": "What is the No Surprises Act?",
+        "answer": "Federal law since January 2022 that protects patients from surprise bills when receiving emergency care, even at out-of-network facilities. Your insurer must cover the claim and you only owe in-network cost-sharing."
+      },
+      {
+        "question": "Can I be balance-billed for emergency care?",
+        "answer": "No. Under the No Surprises Act, out-of-network emergency providers cannot balance bill you for more than your in-network deductible and coinsurance. Report violations to your state insurance department."
+      },
+      {
+        "question": "What about care after I was stabilized?",
+        "answer": "Post-stabilization care at out-of-network facilities is also protected until you can safely be transferred. Your appeal should document that you were not stable enough to transfer."
+      }
+    ],
+    "evidence_snippets": [
+      "The No Surprises Act requires insurers to cover emergency services at out-of-network facilities without requiring prior authorization.",
+      "Patients cannot be charged more than in-network cost-sharing for emergency services regardless of network status.",
+      "Emergency medical conditions are defined as those requiring immediate medical attention to prevent serious health consequences."
+    ],
+    "pubmed_search_terms": [
+      "surprise medical billing emergency department policy",
+      "out of network emergency care patient protections",
+      "No Surprises Act emergency services implementation"
+    ],
+    "alternatives": [
+      "File a complaint with your state insurance department if you receive a surprise balance bill.",
+      "Request the Independent Dispute Resolution process if your insurer and provider can't agree on payment.",
+      "Contact the No Surprises Help Desk at 1-800-985-3059 for assistance."
     ]
   }
 }
