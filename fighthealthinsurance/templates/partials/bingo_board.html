@@ -1,0 +1,19 @@
+<!-- Insurance Bullshit Bingo Board -->
+<section id="bingo" class="bingo-section">
+    <div class="container">
+        <h3 class="bingo-title">Insurance Bullshit Bingo</h3>
+        <p class="bingo-description">Common insurance denial reasons. Sound familiar?</p>
+        <div class="bingo-board">
+            {% for row in bingo_board %}
+            <div class="bingo-row">
+                {% for phrase in row %}
+                <div class="bingo-cell{% if phrase == 'FREE SPACE' %} bingo-free-space{% endif %}">
+                    {{ phrase }}
+                </div>
+                {% endfor %}
+            </div>
+            {% endfor %}
+        </div>
+        <p class="bingo-footnote">Refresh the page for a new board!</p>
+    </div>
+</section>

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import random
 import re
 import typing
 from typing import TypedDict
@@ -55,6 +56,47 @@ if typing.TYPE_CHECKING:
     from django.contrib.auth.models import User
 else:
     User = get_user_model()
+
+
+# Insurance Bullshit Bingo phrases - humorous but factual common denial reasons
+BINGO_PHRASES = [
+    "Not medically necessary",
+    "Out of network exception denied",
+    "Experimental",
+    "Prior authorization required",
+    "Pre-existing condition",
+    "Not covered under your plan",
+    "Lacks documentation",
+    "Investigational treatment",
+    "Cosmetic procedure",
+    "Administrative error",
+    "Off-label use",
+    "Step therapy required",
+    "Exceeds plan limits",
+    "Service not approved",
+    "Missing referral",
+    "Network restrictions apply",
+    "Treatment not FDA-approved",
+    "Alternative therapy available",
+    "Claim submitted incorrectly",
+    "Policy exclusion applies",
+    "Needs peer review",
+    "Insufficient medical evidence",
+    "Out of pocket maximum met",
+    "Benefit period expired",
+    "Duplicate claim",
+    "Timing of request",
+    "Inappropriate setting",
+    "Coding error",
+    "Frequency limits exceeded",
+    "Not a covered benefit",
+    "Documentation incomplete",
+    "Medical records unavailable",
+    "Exceeds annual maximum",
+    "Requires specialist review",
+    "Outside coverage period",
+    "Service bundled with another",
+]
 
 
 def render_ocr_error(request: HttpRequest, text: str) -> HttpResponseBase:
@@ -182,6 +224,37 @@ class PBSNewsHourView(generic.TemplateView):
     """Page about the PBS NewsHour feature."""
 
     template_name = "as_seen_on_pbs.html"
+
+
+class BingoView(generic.TemplateView):
+    """Insurance Bullshit Bingo page - a humorous coping resource."""
+
+    template_name = "bingo.html"
+
+    def get_context_data(self, **kwargs):
+        """Add bingo board data to the context."""
+        context = super().get_context_data(**kwargs)
+        
+        # Generate a 5x5 bingo board with random phrases
+        # Use 24 phrases (excluding center which is "FREE SPACE")
+        selected_phrases = random.sample(BINGO_PHRASES, min(24, len(BINGO_PHRASES)))
+        
+        # Create 5x5 grid with FREE SPACE in the center
+        bingo_board = []
+        phrase_index = 0
+        for row in range(5):
+            bingo_row = []
+            for col in range(5):
+                if row == 2 and col == 2:
+                    # Center square is FREE SPACE
+                    bingo_row.append("FREE SPACE")
+                else:
+                    bingo_row.append(selected_phrases[phrase_index])
+                    phrase_index += 1
+            bingo_board.append(bingo_row)
+        
+        context['bingo_board'] = bingo_board
+        return context
 
 
 class OtherResourcesView(generic.TemplateView):

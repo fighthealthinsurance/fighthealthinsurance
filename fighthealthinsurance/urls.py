@@ -208,6 +208,11 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         name="pbs-newshour",
     ),
     path(
+        "bingo",
+        cache_control(public=True)(cache_page(60 * 60 * 2)(views.BingoView.as_view())),
+        name="bingo",
+    ),
+    path(
         "other-resources",
         sensitive_post_parameters("email")(views.OtherResourcesView.as_view()),
         name="other-resources",
