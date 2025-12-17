@@ -1559,6 +1559,17 @@ def chat_interface_view(request):
     microsite_slug = request.GET.get("microsite_slug") or request.POST.get(
         "microsite_slug", ""
     )
+    
+    # Check if there's denial text from the explain denial page
+    denial_text = request.session.pop("denial_text_for_explanation", None)
+    initial_message = None
+    if denial_text:
+        # Format the initial message for the chat
+        initial_message = (
+            "I received this denial letter from my insurance and need help understanding it:\n\n"
+            f"{denial_text}\n\n"
+            "Can you explain what this means in plain English and help me understand my options?"
+        )
 
     context = {
         "title": "Chat with FightHealthInsurance",
@@ -1566,6 +1577,7 @@ def chat_interface_view(request):
         "default_procedure": default_procedure,
         "default_condition": default_condition,
         "microsite_slug": microsite_slug,
+        "initial_message": initial_message,
     }
     logger.debug(f"Rendering chat interface with context: {context}")
     return render(request, "chat_interface.html", context)
@@ -1618,6 +1630,8 @@ class ChatUserConsentView(FormView):
         context["default_condition"] = self.request.GET.get("default_condition", "")
         context["microsite_slug"] = self.request.GET.get("microsite_slug", "")
         context["microsite_title"] = self.request.GET.get("microsite_title", "")
+        # Check if coming from explain denial
+        context["explain_denial"] = self.request.GET.get("explain_denial", "") == "true"
         return context
 
     def form_valid(self, form):
@@ -1827,69 +1841,14 @@ class MicrositeView(TemplateView):
         return context
 
 
-class ExplainDenialView(TemplateView):
-    """View for the Explain my Denial page - helps users understand their denial letters."""
+class ExplainDenialView(FormView):
+    """
+    View for the Explain my Denial page - collects denial text and redirects to chat.
+    This provides a simplified entry point for users to understand their denials through AI chat.
+    """
 
     template_name = "explain_denial.html"
-    
-    # Common denial reason patterns with plain English explanations
-    # Pre-compiled for performance
-    DENIAL_PATTERNS = [
-        {
-            "pattern": re.compile(r"(not medically necessary|lacks medical necessity)", re.IGNORECASE),
-            "reason": "Medical Necessity",
-            "explanation": "Your insurance says the treatment isn't medically required. This is one of the most common denial reasons and can often be appealed with evidence from your doctor.",
-            "suggestion": "Get a letter from your doctor explaining why this treatment is medically necessary for your specific condition.",
-        },
-        {
-            "pattern": re.compile(r"(experimental|investigational|not proven)", re.IGNORECASE),
-            "reason": "Experimental/Investigational",
-            "explanation": "Your insurance considers the treatment experimental or not yet proven effective. They may require more established alternatives to be tried first.",
-            "suggestion": "Look for published medical studies supporting your treatment. Your doctor can help find relevant research.",
-        },
-        {
-            "pattern": re.compile(r"(prior authorization|pre-authorization|pre-auth|preauth)", re.IGNORECASE),
-            "reason": "Prior Authorization Missing",
-            "explanation": "Your doctor didn't get approval from insurance before providing the treatment. Some treatments require advance permission.",
-            "suggestion": "Contact your doctor's office to request a prior authorization. This can sometimes be done retroactively.",
-        },
-        {
-            "pattern": re.compile(r"(out of network|non-participating provider|not in network)", re.IGNORECASE),
-            "reason": "Out of Network",
-            "explanation": "The provider who gave you care isn't in your insurance network, so coverage is limited or not available.",
-            "suggestion": "Check if you can appeal for out-of-network coverage, especially if no in-network providers were available for your needs.",
-        },
-        {
-            "pattern": re.compile(r"(excluded|exclusion|not covered|plan does not cover)", re.IGNORECASE),
-            "reason": "Policy Exclusion",
-            "explanation": "Your insurance plan specifically excludes this type of treatment or service from coverage.",
-            "suggestion": "Review your policy documents. Sometimes exclusions can be challenged if the treatment is medically necessary.",
-        },
-        {
-            "pattern": re.compile(r"(coding|wrong code|incorrect code|CPT|ICD-10)", re.IGNORECASE),
-            "reason": "Coding Issue",
-            "explanation": "The medical billing codes used don't match what your insurance will cover. This might be a paperwork error.",
-            "suggestion": "Ask your doctor's billing department to review the codes. A simple coding correction can often resolve the denial.",
-        },
-        {
-            "pattern": re.compile(r"(cosmetic|aesthetic)", re.IGNORECASE),
-            "reason": "Cosmetic Procedure",
-            "explanation": "Your insurance classified this as a cosmetic procedure, which typically isn't covered.",
-            "suggestion": "If the procedure is medically necessary (not just cosmetic), get documentation from your doctor explaining the medical need.",
-        },
-        {
-            "pattern": re.compile(r"(duplicate|already paid|previously processed)", re.IGNORECASE),
-            "reason": "Duplicate Claim",
-            "explanation": "Your insurance thinks this claim is a duplicate of one they've already processed.",
-            "suggestion": "Contact your provider's billing office and your insurance to verify which claims were submitted and processed.",
-        },
-        {
-            "pattern": re.compile(r"(step therapy|fail first|try.{0,20}first)", re.IGNORECASE),
-            "reason": "Step Therapy Required",
-            "explanation": "Your insurance requires you to try less expensive or different treatments first before covering this one.",
-            "suggestion": "Document why other treatments haven't worked or aren't appropriate for you. Your doctor can request a step therapy exception.",
-        },
-    ]
+    form_class = core_forms.Form  # We'll use a simple form
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -1897,7 +1856,7 @@ class ExplainDenialView(TemplateView):
         return context
 
     def post(self, request, *args, **kwargs):
-        """Process denial text and provide explanation."""
+        """Process denial text and redirect to chat with context."""
         denial_text = request.POST.get("denial_text", "").strip()
         
         if not denial_text:
@@ -1905,73 +1864,12 @@ class ExplainDenialView(TemplateView):
             context["error"] = "Please enter your denial letter text."
             return render(request, self.template_name, context)
         
-        # Extract information from the denial text
-        extracted_info = self._extract_denial_info(denial_text)
+        # Store the denial text in the session for the chat to pick up
+        request.session["denial_text_for_explanation"] = denial_text
+        request.session.save()
         
-        # Zip the parallel lists for easier template iteration
-        denial_details = []
-        for i in range(len(extracted_info["detected_reasons"])):
-            detail = {
-                "reason": extracted_info["detected_reasons"][i],
-                "explanation": extracted_info["plain_english"][i] if i < len(extracted_info["plain_english"]) else "",
-                "phrase": extracted_info["extracted_phrases"][i] if i < len(extracted_info["extracted_phrases"]) else "",
-                "suggestion": extracted_info["suggestions"][i] if i < len(extracted_info["suggestions"]) else "",
-            }
-            denial_details.append(detail)
-        
-        context = self.get_context_data(**kwargs)
-        context["denial_text"] = denial_text
-        context["denial_details"] = denial_details
-        context["show_results"] = True
-        
-        return render(request, self.template_name, context)
-    
-    def _extract_denial_info(self, denial_text: str) -> dict:
-        """
-        Extract and categorize information from denial text.
-        Maps insurer language to plain English explanations.
-        
-        Args:
-            denial_text: The full text of the denial letter
-            
-        Returns:
-            Dictionary with keys:
-            - detected_reasons: List of denial reason names (e.g., "Medical Necessity")
-            - plain_english: List of explanations in plain English
-            - extracted_phrases: List of actual phrases found in the denial text
-            - suggestions: List of actionable next steps for each reason
-            
-            All lists are parallel - same index refers to same denial reason.
-        """
-        
-        denial_info = {
-            "detected_reasons": [],
-            "plain_english": [],
-            "extracted_phrases": [],
-            "suggestions": [],
-        }
-        
-        # Check for each pre-compiled pattern
-        for pattern_info in self.DENIAL_PATTERNS:
-            match = pattern_info["pattern"].search(denial_text)
-            if match:
-                denial_info["detected_reasons"].append(pattern_info["reason"])
-                denial_info["plain_english"].append(pattern_info["explanation"])
-                denial_info["extracted_phrases"].append(match.group(0))
-                denial_info["suggestions"].append(pattern_info["suggestion"])
-        
-        # If no specific patterns detected, provide general guidance
-        if not denial_info["detected_reasons"]:
-            denial_info["detected_reasons"].append("General Denial")
-            denial_info["plain_english"].append(
-                "We couldn't automatically identify the specific reason for your denial. "
-                "Insurance denials often contain complex language. Review your letter carefully "
-                "for key phrases about medical necessity, authorization, or coverage exclusions."
-            )
-            denial_info["extracted_phrases"].append("")
-            denial_info["suggestions"].append(
-                "Upload your denial letter and use our AI chat to get personalized help understanding "
-                "and appealing your specific denial."
-            )
-        
-        return denial_info
+        # Redirect to chat consent (which will then redirect to chat)
+        # Add a parameter to indicate this is coming from explain denial
+        from urllib.parse import urlencode
+        params = urlencode({"explain_denial": "true"})
+        return redirect(f"/chat-consent?{params}")
