@@ -98,7 +98,7 @@ jobs:
         uses: actions/setup-node@v3
 
       - name: Cache npm dependencies
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ~/.npm
           key: npm-${{ hashFiles('fighthealthinsurance/static/js/package-lock.json') }}
@@ -115,7 +115,7 @@ jobs:
         uses: astral-sh/setup-uv@v3
 
       - name: Cache uv dependencies
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cache/uv
@@ -168,7 +168,7 @@ jobs:
         uses: actions/setup-node@v3
 
       - name: Cache npm dependencies
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ~/.npm
           key: npm-${{ hashFiles('fighthealthinsurance/static/js/package-lock.json') }}
@@ -185,7 +185,7 @@ jobs:
         uses: astral-sh/setup-uv@v3
 
       - name: Cache uv dependencies
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cache/uv
@@ -313,7 +313,7 @@ jobs:
         uses: actions/setup-node@v3
 
       - name: Cache npm dependencies
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ~/.npm
           key: npm-${{ hashFiles('fighthealthinsurance/static/js/package-lock.json') }}
