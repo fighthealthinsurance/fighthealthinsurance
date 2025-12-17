@@ -4,6 +4,7 @@ import os
 import re
 import typing
 from typing import TypedDict
+from urllib.parse import urlencode
 
 from django import forms
 from django.conf import settings
@@ -1841,14 +1842,13 @@ class MicrositeView(TemplateView):
         return context
 
 
-class ExplainDenialView(FormView):
+class ExplainDenialView(TemplateView):
     """
     View for the Explain my Denial page - collects denial text and redirects to chat.
     This provides a simplified entry point for users to understand their denials through AI chat.
     """
 
     template_name = "explain_denial.html"
-    form_class = core_forms.Form  # We'll use a simple form
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -1862,6 +1862,7 @@ class ExplainDenialView(FormView):
         if not denial_text:
             context = self.get_context_data(**kwargs)
             context["error"] = "Please enter your denial letter text."
+            context["denial_text"] = denial_text  # Preserve input on error
             return render(request, self.template_name, context)
         
         # Store the denial text in the session for the chat to pick up
@@ -1870,6 +1871,5 @@ class ExplainDenialView(FormView):
         
         # Redirect to chat consent (which will then redirect to chat)
         # Add a parameter to indicate this is coming from explain denial
-        from urllib.parse import urlencode
         params = urlencode({"explain_denial": "true"})
-        return redirect(f"/chat-consent?{params}")
+        return redirect(f"{reverse('chat_consent')}?{params}")

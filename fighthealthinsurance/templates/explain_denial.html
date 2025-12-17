@@ -49,7 +49,7 @@
                                     name="denial_text" 
                                     rows="12" 
                                     placeholder="Paste your denial letter here. Include as much detail as possible..."
-                                    required></textarea>
+                                    required>{{ denial_text|default:"" }}</textarea>
                                 <div class="form-text">
                                     Tip: Include the entire denial letter for best results. Look for sections about reasons for denial, medical necessity, or coverage exclusions.
                                 </div>
