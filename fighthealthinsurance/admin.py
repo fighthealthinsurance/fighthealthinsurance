@@ -160,8 +160,15 @@ class DenialAdmin(admin.ModelAdmin):
         "raw_email",
         "patient_visible",
         "appeal_result",
+        "referral_source",
     )
-    search_fields = ("raw_email", "denial_text", "insurance_company")
+    search_fields = (
+        "raw_email",
+        "denial_text",
+        "insurance_company",
+        "referral_source",
+        "referral_source_details",
+    )
     list_filter = (
         ("raw_email", admin.EmptyFieldListFilter),
         "plan_source__name",
@@ -169,6 +176,7 @@ class DenialAdmin(admin.ModelAdmin):
         "denial_type__name",
         "date",
         ("appeal_text", admin.EmptyFieldListFilter),
+        "referral_source",
     )
     ordering = ("-date",)
 

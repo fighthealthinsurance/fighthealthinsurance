@@ -678,6 +678,9 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     microsite_slug = models.CharField(
         max_length=100, null=True, blank=True, db_index=True
     )
+    # Track where the user heard about the service
+    referral_source = models.CharField(max_length=300, null=True, blank=True)
+    referral_source_details = models.TextField(null=True, blank=True)
 
     @classmethod
     def filter_to_allowed_denials(cls, current_user: User):

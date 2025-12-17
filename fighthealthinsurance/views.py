@@ -1045,6 +1045,14 @@ class InitialProcessView(generic.FormView):
             else:
                 logger.warning(f"Invalid microsite_slug received: {microsite_slug}")
 
+        # Capture referral source information from POST data
+        referral_source = self.request.POST.get("referral_source", "")
+        referral_source_details = self.request.POST.get("referral_source_details", "")
+        if referral_source:
+            cleaned_data["referral_source"] = referral_source
+        if referral_source_details:
+            cleaned_data["referral_source_details"] = referral_source_details
+
         denial_response = common_view_logic.DenialCreatorHelper.create_or_update_denial(
             **cleaned_data,
         )

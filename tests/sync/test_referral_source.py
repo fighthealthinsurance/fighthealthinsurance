@@ -4,7 +4,7 @@ from django.test import TestCase, Client
 from django.urls import reverse
 from rest_framework.test import APIClient
 from rest_framework import status
-from fighthealthinsurance.models import MailingListSubscriber, ChatLeads
+from fighthealthinsurance.models import MailingListSubscriber, ChatLeads, Denial
 
 
 class ReferralSourceAppealFlowTest(TestCase):
@@ -16,7 +16,7 @@ class ReferralSourceAppealFlowTest(TestCase):
         self.client = Client()
 
     def test_subscription_with_referral_source(self):
-        """Test that submitting with referral_source saves it to MailingListSubscriber."""
+        """Test that submitting with referral_source saves it to MailingListSubscriber and Denial."""
         # Submit form data with referral_source
         response = self.client.post(
             reverse("process"),
@@ -42,6 +42,48 @@ class ReferralSourceAppealFlowTest(TestCase):
         subscriber = MailingListSubscriber.objects.get(email="test@example.com")
         self.assertEqual(subscriber.referral_source, "Search Engine (Google, Bing, etc.)")
         self.assertEqual(subscriber.referral_source_details, "Google")
+
+        # Verify the denial object also has referral_source and details
+        denial = Denial.objects.filter(
+            hashed_email=Denial.get_hashed_email("test@example.com")
+        ).first()
+        self.assertIsNotNone(denial)
+        self.assertEqual(denial.referral_source, "Search Engine (Google, Bing, etc.)")
+        self.assertEqual(denial.referral_source_details, "Google")
+
+    def test_submission_without_subscribe_still_captures_referral(self):
+        """Test that referral source is captured on Denial even without subscribe."""
+        # Submit form data with referral_source but without subscribe
+        response = self.client.post(
+            reverse("process"),
+            {
+                "email": "nosubscribe@example.com",
+                "denial_text": "Your claim has been denied.",
+                "pii": "on",
+                "tos": "on",
+                "privacy": "on",
+                # subscribe not included
+                "referral_source": "Friend or Family",
+                "referral_source_details": "My friend Sarah",
+            },
+            follow=True,
+        )
+
+        # Check that we're redirected to the next step
+        self.assertEqual(response.status_code, 200)
+
+        # No mailing list subscriber should be created
+        self.assertFalse(
+            MailingListSubscriber.objects.filter(email="nosubscribe@example.com").exists()
+        )
+
+        # But the denial should have the referral source
+        denial = Denial.objects.filter(
+            hashed_email=Denial.get_hashed_email("nosubscribe@example.com")
+        ).first()
+        self.assertIsNotNone(denial)
+        self.assertEqual(denial.referral_source, "Friend or Family")
+        self.assertEqual(denial.referral_source_details, "My friend Sarah")
 
     def test_subscription_without_referral_source(self):
         """Test that submitting without referral_source works fine."""

@@ -1087,6 +1087,8 @@ class DenialCreatorHelper:
         patient_visible: bool = False,
         subscribe: bool = False,  # Note: we don't handle this, but it's in the form so passed through.
         microsite_slug: Optional[str] = None,
+        referral_source: Optional[str] = None,
+        referral_source_details: Optional[str] = None,
     ):
         """
         Create or update an existing denial.
@@ -1112,6 +1114,8 @@ class DenialCreatorHelper:
             subscribe: Whether the user has subscribed (not handled in this function).
             microsite_slug: Optional slug identifier for the microsite from which the denial was created.
                            Should be a valid microsite slug or None.
+            referral_source: Optional referral source (e.g., "Search Engine", "Friend or Family").
+            referral_source_details: Optional free-text details about the referral source.
 
         Returns:
             The created or updated Denial object.
@@ -1144,6 +1148,8 @@ class DenialCreatorHelper:
                     patient_visible=patient_visible,
                     professional_to_finish=professional_to_finish,
                     microsite_slug=microsite_slug,
+                    referral_source=referral_source,
+                    referral_source_details=referral_source_details,
                 )
             except Exception as e:
                 # This is a temporary hack to drop non-ASCII characters
@@ -1165,6 +1171,8 @@ class DenialCreatorHelper:
                     patient_visible=patient_visible,
                     professional_to_finish=professional_to_finish,
                     microsite_slug=microsite_slug,
+                    referral_source=referral_source,
+                    referral_source_details=referral_source_details,
                 )
         else:
             # Directly update denial object fields instead of using denial.update()
@@ -1187,6 +1195,10 @@ class DenialCreatorHelper:
                 denial.patient_visible = patient_visible
             if microsite_slug is not None:
                 denial.microsite_slug = microsite_slug
+            if referral_source is not None:
+                denial.referral_source = referral_source
+            if referral_source_details is not None:
+                denial.referral_source_details = referral_source_details
 
             denial.save()
 
