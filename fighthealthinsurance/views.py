@@ -85,6 +85,17 @@ BINGO_PHRASES = [
     "Out of pocket maximum met",
     "Benefit period expired",
     "Duplicate claim",
+    "Timing of request",
+    "Inappropriate setting",
+    "Coding error",
+    "Frequency limits exceeded",
+    "Not a covered benefit",
+    "Documentation incomplete",
+    "Medical records unavailable",
+    "Exceeds annual maximum",
+    "Requires specialist review",
+    "Outside coverage period",
+    "Service bundled with another",
 ]
 
 
