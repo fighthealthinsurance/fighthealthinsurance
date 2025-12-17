@@ -12,7 +12,9 @@ from fighthealthinsurance.models import (
     InterestedProfessional,
     PlanSource,
 )
+from django.core.validators import FileExtensionValidator
 
+ALLOWED_EXTENSIONS = ["pdf", "jpg", "jpeg", "png", "docx"]
 
 # Referral source choices used across multiple forms
 REFERRAL_SOURCE_CHOICES = [
@@ -117,7 +119,10 @@ class HealthHistory(DenialRefForm):
 
 
 class PlanDocumentsForm(DenialRefForm):
-    plan_documents = MultipleFileField(required=False)
+    plan_documents = MultipleFileField(
+        required=False, 
+        validators=[FileExtensionValidator(allowed_extensions=ALLOWED_EXTENSIONS)]
+    )
 
 
 class ChooseAppealForm(DenialRefForm):
@@ -325,6 +330,7 @@ class FollowUpForm(forms.Form):
     followup_documents = MultipleFileField(
         required=False,
         label="Optional: Any documents you wish to share",
+        validators=[FileExtensionValidator(allowed_extensions=ALLOWED_EXTENSIONS)]
     )
 
 

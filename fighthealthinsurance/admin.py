@@ -120,6 +120,8 @@ class UserDomainAdmin(admin.ModelAdmin):
     """User domains"""
 
     list_display = ("id", "name", "visible_phone_number")
+    search_fields = ("name", "visible_phone_number", "state", "city")
+    list_filter = ("active", "country", "state")
 
 
 @admin.register(ProfessionalUser)
@@ -127,6 +129,8 @@ class ProfessionalUserAdmin(admin.ModelAdmin):
     """User domains"""
 
     list_display = ("id", "user", "user__first_name", "user__email")
+    search_fields = ("user__username", "npi_number", "display_name")
+    list_filter = ("active", "provider_type")
 
 
 @admin.register(ProfessionalDomainRelation)

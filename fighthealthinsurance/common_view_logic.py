@@ -623,11 +623,15 @@ class FollowUpHelper:
     ):
         denial = Denial.objects.filter(
             uuid=uuid, follow_up_semi_sekret=follow_up_semi_sekret
-        ).get()
-        if denial is None:
-            raise Exception(
-                f"Failed to find denial for {uuid} & {follow_up_semi_sekret}"
-            )
+        ).first()
+        if not denial:
+            logger.info(f"No denial record found for given UUID.")
+            return None
+
+        if denial.hashed_email != hashed_email:
+            logger.warning("Email mismatch for denial record.")
+            return None
+
         return denial
 
     @classmethod
@@ -651,6 +655,9 @@ class FollowUpHelper:
             follow_up_semi_sekret=follow_up_semi_sekret,
             hashed_email=hashed_email,
         )
+        if not denial:
+            logger.error(f"Cannot store follow-up result: Denial record not found for UUID {uuid}")
+            raise ValueError("Denial record not found")
         # Store the follow up response returns nothing but may raise
         denial_id = denial.denial_id
         follow_up = FollowUp.objects.create(

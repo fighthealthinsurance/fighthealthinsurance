@@ -3,7 +3,6 @@ from django.contrib.sites.shortcuts import get_current_site
 from typing import TYPE_CHECKING, Optional
 from fhi_users.models import VerificationToken
 from fighthealthinsurance.utils import send_fallback_email
-from django.utils.html import strip_tags
 from django.utils import timezone
 from datetime import timedelta
 from urllib.parse import urlencode
@@ -83,9 +82,19 @@ def send_verification_email(request, user: "User", first_only: bool = False) -> 
             VerificationToken.objects.filter(user=user).delete()
     mail_subject = "Activate your account."
     verification_token = default_token_generator.make_token(user)
-    VerificationToken.objects.create(user=user, token=verification_token)
-    params = urlencode({"token": verification_token, "uid": user.pk})
-    activation_link = f"https://www.fightpaperwork.com/activate-account/?{params}"
+    
+    try:
+        VerificationToken.objects.create(user=user, token=verification_token)
+    except Exception as e:
+        logger.error(f"Failed to create verification token for user {user.pk}: {e}")
+        raise Exception(f"Could not create verification token for user {user.pk}") from e
+
+    activation_link = (
+        "https://www.fightpaperwork.com/activate-account/?token={}&uid={}".format(
+            verification_token, user.pk
+        )
+    )
+
     send_fallback_email(
         mail_subject,
         "acc_active_email",

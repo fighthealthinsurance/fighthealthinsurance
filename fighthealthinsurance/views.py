@@ -130,7 +130,9 @@ class FollowUpView(generic.FormView):
         # NOTE: Potential security issue here
         denial = common_view_logic.FollowUpHelper.fetch_denial(**self.kwargs)
         if denial is None:
+            logger.warning(f"Denial not found for params: {self.kwargs}")
             raise Exception(f"Could not find denial for {self.kwargs}")
+        
         return self.kwargs
 
     def form_valid(self, form):
