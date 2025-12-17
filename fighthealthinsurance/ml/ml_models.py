@@ -2210,6 +2210,10 @@ class RemotePerplexity(RemoteFullOpenLike):
             ),
         ]
 
+    def model_is_ok(self):
+        # Hack: perplexity doesn't list models so we're assuming it's up.
+        return True
+
 
 class DeepInfra(RemoteFullOpenLike):
     """Use DeepInfra."""
