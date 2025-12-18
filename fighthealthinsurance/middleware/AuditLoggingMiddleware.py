@@ -11,10 +11,14 @@ This middleware:
 import time
 import re
 from typing import Callable, Optional
+from concurrent.futures import Future
 
 from django.http import HttpRequest, HttpResponse
 from django.utils.deprecation import MiddlewareMixin
 from loguru import logger
+
+# Import the shared thread pool executor for background tasks
+from fighthealthinsurance.exec import executor
 
 
 # Endpoints to exclude from logging (health checks, static files, etc.)
@@ -160,52 +164,84 @@ class AuditLoggingMiddleware(MiddlewareMixin):
             return response
 
         try:
-            self._log_api_access(request, response)
+            # Calculate response time before dispatching to background thread
+            start_time = getattr(request, "_audit_start_time", None)
+            response_time_ms = None
+            if start_time:
+                response_time_ms = int((time.time() - start_time) * 1000)
+            
+            # Extract resource info before dispatching to background thread
+            resource_info = _extract_resource_info(request.path, response)
+            
+            # Extract search query before dispatching to background thread
+            search_query = None
+            if request.method == "GET":
+                search_query = request.GET.get("search") or request.GET.get("q")
+            elif request.method == "POST":
+                # Note: request.data is for DRF requests, request.POST for standard Django
+                search_query = request.POST.get("search") or request.POST.get("q")
+            
+            # Extract all needed data from request/response before dispatching
+            endpoint = request.path
+            http_status = response.status_code
+            
+            # Dispatch logging to background thread to avoid blocking request
+            # Note: We pass the request object for user/session/IP/UA context.
+            # This is safe because we only read from it and the request is no longer
+            # being modified after process_response.
+            future = executor.submit(
+                self._log_api_access, 
+                request,
+                endpoint,
+                http_status,
+                response_time_ms,
+                resource_info,
+                search_query,
+            )
+            # Add callback to log any unhandled exceptions in background task
+            future.add_done_callback(self._log_task_exception)
         except Exception as e:
             # Never let audit logging break the request
-            logger.debug(f"Audit logging failed: {e}")
+            logger.debug(f"Failed to submit audit logging task: {e}")
 
         return response
 
+    def _log_task_exception(self, future: Future) -> None:
+        """Log any exceptions that occurred in the background logging task."""
+        try:
+            future.result()  # This will raise if the task failed
+        except Exception as e:
+            logger.debug(f"Background audit logging task failed: {e}")
+
     def _log_api_access(
-        self, request: HttpRequest, response: HttpResponse
+        self,
+        request: HttpRequest,
+        endpoint: str,
+        http_status: int,
+        response_time_ms: Optional[int],
+        resource_info: dict,
+        search_query: Optional[str],
     ) -> None:
         """
         Log an API access event to the audit service.
         
         Records an audit entry for the given HTTP request/response pair by assembling and sending the following observable fields to the audit service: endpoint (request.path), HTTP status, response time in milliseconds (computed from request._audit_start_time when available), resource_type/resource_id/resource_count (derived from the request path and response payload), and an optional search query (from GET parameters 'search' or 'q', or POST body 'search').
-        
-        Parameters:
-            request (HttpRequest): The incoming HTTP request; may contain `_audit_start_time` set by process_request.
-            response (HttpResponse): The HTTP response whose status and payload are used for the audit entry.
         """
-        # Import here to avoid circular imports and allow lazy loading
-        from fhi_users.audit_service import audit_service
+        try:
+            # Import here to avoid circular imports and allow lazy loading
+            from fhi_users.audit_service import audit_service
 
-        # Calculate response time
-        start_time = getattr(request, "_audit_start_time", None)
-        response_time_ms = None
-        if start_time:
-            response_time_ms = int((time.time() - start_time) * 1000)
-
-        # Extract resource info
-        resource_info = _extract_resource_info(request.path, response)
-
-        # Extract search query if present
-        search_query = None
-        if request.method == "GET":
-            search_query = request.GET.get("search") or request.GET.get("q")
-        elif request.method == "POST" and hasattr(request, "data"):
-            search_query = getattr(request.data, "get", lambda x: None)("search")
-
-        # Create the log entry
-        audit_service.log_api_access(
-            request=request,
-            endpoint=request.path,
-            http_status=response.status_code,
-            response_time_ms=response_time_ms,
-            resource_type=resource_info.get("resource_type"),
-            resource_id=resource_info.get("resource_id"),
-            resource_count=resource_info.get("resource_count"),
-            search_query=search_query,
-        )
+            # Create the log entry
+            audit_service.log_api_access(
+                request=request,
+                endpoint=endpoint,
+                http_status=http_status,
+                response_time_ms=response_time_ms,
+                resource_type=resource_info.get("resource_type"),
+                resource_id=resource_info.get("resource_id"),
+                resource_count=resource_info.get("resource_count"),
+                search_query=search_query,
+            )
+        except Exception as e:
+            # Catch any exceptions to prevent them from crashing the background task
+            logger.debug(f"Audit logging failed: {e}")
