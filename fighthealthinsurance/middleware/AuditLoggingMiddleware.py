@@ -16,6 +16,9 @@ from django.http import HttpRequest, HttpResponse
 from django.utils.deprecation import MiddlewareMixin
 from loguru import logger
 
+# Import the shared thread pool executor for background tasks
+from fighthealthinsurance.exec import executor
+
 
 # Endpoints to exclude from logging (health checks, static files, etc.)
 EXCLUDED_PATH_PATTERNS = [
@@ -124,10 +127,11 @@ class AuditLoggingMiddleware(MiddlewareMixin):
             return response
 
         try:
-            self._log_api_access(request, response)
+            # Dispatch logging to background thread to avoid blocking request
+            executor.submit(self._log_api_access, request, response)
         except Exception as e:
             # Never let audit logging break the request
-            logger.debug(f"Audit logging failed: {e}")
+            logger.debug(f"Failed to submit audit logging task: {e}")
 
         return response
 
