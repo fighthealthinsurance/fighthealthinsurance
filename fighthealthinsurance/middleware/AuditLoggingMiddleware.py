@@ -6,13 +6,15 @@ This middleware:
 2. Captures response time, status code, and resource information
 3. Applies privacy rules based on user type (professional vs consumer)
 4. Avoids logging sensitive internal endpoints
+5. Respects the ENABLE_AUDIT_LOGGING feature flag
 """
 
 import time
 import re
-from typing import Callable, Optional
+from typing import Callable, Optional, Union
 from concurrent.futures import Future
 
+from django.conf import settings
 from django.http import HttpRequest, HttpResponse
 from django.utils.deprecation import MiddlewareMixin
 from loguru import logger
@@ -63,7 +65,7 @@ def _should_log_request(path: str) -> bool:
     return True
 
 
-def _extract_resource_info(path: str, response: HttpResponse) -> dict:
+def _extract_resource_info(path: str, response: HttpResponse) -> dict[str, Optional[Union[str, int]]]:
     """
     Extract resource metadata (type, identifier, and count) from a request path and HTTP response.
 
@@ -77,7 +79,7 @@ def _extract_resource_info(path: str, response: HttpResponse) -> dict:
             - resource_id (str|None): The resource identifier as a string (numeric or UUID) if present in the path, otherwise `None`.
             - resource_count (int|None): The number of items for list endpoints derived from `response.data["count"]` or the length of `response.data["results"]`, or `None` if unavailable.
     """
-    info = {
+    info: dict[str, Optional[Union[str, int]]] = {
         "resource_type": None,
         "resource_id": None,
         "resource_count": None,
@@ -152,7 +154,11 @@ class AuditLoggingMiddleware(MiddlewareMixin):
 
         Sets request._audit_start_time to the current epoch time in seconds (float) for later response-time calculation.
         """
-        request._audit_start_time = time.time()
+        # Skip if audit logging is disabled
+        if not getattr(settings, 'ENABLE_AUDIT_LOGGING', False):
+            return
+        
+        request._audit_start_time = time.time()  # type: ignore[attr-defined]
 
     def process_response(
         self, request: HttpRequest, response: HttpResponse
@@ -169,6 +175,10 @@ class AuditLoggingMiddleware(MiddlewareMixin):
         Returns:
             HttpResponse: The original response object.
         """
+        # Skip if audit logging is disabled
+        if not getattr(settings, 'ENABLE_AUDIT_LOGGING', False):
+            return response
+        
         # Skip if path shouldn't be logged
         if not _should_log_request(request.path):
             return response

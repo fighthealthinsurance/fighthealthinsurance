@@ -24,8 +24,10 @@ import typing
 from datetime import datetime
 from typing import Optional, Any, Union
 
+from django.conf import settings
 from django.http import HttpRequest
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import AbstractBaseUser, AnonymousUser
 from loguru import logger
 
 if typing.TYPE_CHECKING:
@@ -38,6 +40,9 @@ else:
 # Type alias for request objects (Django HttpRequest or DRF Request)
 # Both have compatible .META, .user, .session, .path, .method attributes
 RequestType = Union[HttpRequest, "DRFRequest"]
+
+# Type alias for user objects that can come from request.user
+UserOrAbstract = Union["User", AbstractBaseUser, AnonymousUser, None]
 
 from .audit_models import (
     AuditEventType,
@@ -64,10 +69,20 @@ class AuditService:
     Service class for creating audit log entries.
 
     Handles privacy considerations automatically based on user type.
+    Respects the ENABLE_AUDIT_LOGGING feature flag.
     """
 
+    def _is_enabled(self) -> bool:
+        """
+        Check if audit logging is enabled via the feature flag.
+
+        Returns:
+            bool: True if audit logging is enabled, False otherwise.
+        """
+        return getattr(settings, 'ENABLE_AUDIT_LOGGING', False)
+
     def _get_professional_user(
-        self, user: Optional["User"]
+        self, user: UserOrAbstract
     ) -> Optional["ProfessionalUser"]:
         """
         Return the ProfessionalUser associated with the given Django User if present.
@@ -75,12 +90,15 @@ class AuditService:
         Returns:
             The matching `ProfessionalUser` instance, or `None` if no user is provided or no associated professional user exists.
         """
-        if not user:
+        if not user or isinstance(user, AnonymousUser):
             return None
         try:
             from .models import ProfessionalUser
 
-            return ProfessionalUser.objects.filter(user=user).first()
+            # ProfessionalUser is NOT a User - it's a separate model with a OneToOneField to User
+            # We're filtering ProfessionalUser records by their associated User via the 'user' field
+            # typing.cast is for mypy: user param is UserOrAbstract type, but after AnonymousUser check it's a User
+            return ProfessionalUser.objects.filter(user=typing.cast("User", user)).first()
         except Exception:
             return None
 
@@ -109,7 +127,7 @@ class AuditService:
         self,
         request: HttpRequest,
         event_type: AuditEventType,
-        user: Optional["User"] = None,
+        user: UserOrAbstract = None,
         success: bool = True,
     ) -> dict:
         """
@@ -118,16 +136,17 @@ class AuditService:
         Parameters:
             request (HttpRequest): Request used to derive client, session, IP, and user-agent context.
             event_type (AuditEventType): Audit event type to record.
-            user (Optional[User]): Associated Django user; only included in output if authenticated.
+            user (UserOrAbstract): Associated Django user; only included in output if authenticated.
             success (bool): Whether the audited event succeeded.
 
         Returns:
             dict: Mapping of audit model field names to values. Includes sanitized session_key, IP and ASN fields (IP may be None when redacted), network_type, country/state, user agent fields, request_path, request_method, http_referer, event_type, user (authenticated only), user_type, and success.
         """
         # Determine user type for privacy handling
-        if user and user.is_authenticated:
+        if user and hasattr(user, 'is_authenticated') and user.is_authenticated:
             user_type = determine_user_type(request)
         else:
+            user = None
             user_type = UserType.ANONYMOUS
 
         # Get full context
@@ -141,7 +160,7 @@ class AuditService:
 
         return {
             "event_type": event_type.value,
-            "user": user if user and user.is_authenticated else None,
+            "user": user if user and hasattr(user, 'is_authenticated') and user.is_authenticated else None,
             "user_type": user_type.value,
             "success": success,
             "session_key": sanitized.get("session_key"),
@@ -183,8 +202,11 @@ class AuditService:
             details (dict, optional): Arbitrary additional metadata to include in the audit entry.
 
         Returns:
-            AuthAuditLog | None: The created AuthAuditLog entry, or `None` if logging failed.
+            AuthAuditLog | None: The created AuthAuditLog entry, or `None` if logging failed or is disabled.
         """
+        if not self._is_enabled():
+            return None
+        
         try:
             data = self._create_base_log_data(
                 request, AuditEventType.LOGIN_SUCCESS, user, success=True
@@ -226,8 +248,11 @@ class AuditService:
             details (Optional[dict]): Arbitrary additional information to store with the log (debug or contextual data).
 
         Returns:
-            AuthAuditLog | None: The created AuthAuditLog instance on success, or `None` if log creation failed.
+            AuthAuditLog | None: The created AuthAuditLog instance on success, or `None` if log creation failed or is disabled.
         """
+        if not self._is_enabled():
+            return None
+        
         try:
             data = self._create_base_log_data(
                 request, AuditEventType.LOGIN_FAILED, user, success=False
@@ -269,8 +294,11 @@ class AuditService:
             domain (Optional[UserDomain]): The professional domain associated with the logout, if applicable.
 
         Returns:
-            AuthAuditLog | None: The created `AuthAuditLog` for the logout event, or `None` if the log could not be created.
+            AuthAuditLog | None: The created `AuthAuditLog` for the logout event, or `None` if the log could not be created or is disabled.
         """
+        if not self._is_enabled():
+            return None
+        
         try:
             data = self._create_base_log_data(
                 request, AuditEventType.LOGOUT, user, success=True
@@ -381,8 +409,11 @@ class AuditService:
                 details (Optional[dict]): Arbitrary additional metadata to include in the log.
 
         Returns:
-                APIAccessLog | None: The created APIAccessLog instance, or `None` if log creation failed.
+                APIAccessLog | None: The created APIAccessLog instance, or `None` if log creation failed or is disabled.
         """
+        if not self._is_enabled():
+            return None
+        
         try:
             user = request.user if request.user.is_authenticated else None
             data = self._create_base_log_data(
@@ -736,8 +767,11 @@ class AuditService:
             action (str): One of "create", "update", "view", "delete", or "export" describing the operation performed.
 
         Returns:
-            ObjectActivityContext or None: The created ObjectActivityContext entry, or `None` if creation failed.
+            ObjectActivityContext or None: The created ObjectActivityContext entry, or `None` if creation failed or is disabled.
         """
+        if not self._is_enabled():
+            return None
+        
         try:
             from django.contrib.contenttypes.models import ContentType
 
