@@ -306,14 +306,14 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
     def perform_create(self, request: Request, serializer) -> Response:
         """
         Create or update a Denial from request data, ensure a pending Appeal exists for it, optionally subscribe the patient to the mailing list, and return serialized denial response info.
-        
+
         Parameters:
             request (Request): HTTP request whose authenticated user is used as the creating professional and whose context is passed to the denial creation helper (used for audit logging).
             serializer: Serializer-like object (or serializer class) used to validate and extract input fields for denial creation or update; expected validated fields include optional `primary_professional`, `patient_id`, `email`, `subscribe`, and other denial attributes.
-        
+
         Returns:
             dict: Serialized DenialResponseInfo data (as produced by DenialResponseInfoSerializer) representing the created or updated denial, returned with HTTP 201 Created.
-        
+
         Side effects:
             - May create or update a Denial and associated Pending Appeal.
             - May create a MailingListSubscriber when `subscribe` is true and an email is provided.
@@ -431,14 +431,14 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
     def select_articles(self, request: Request) -> Response:
         """
         Set the selected PubMed article IDs for a denial and persist the change.
-        
+
         The request must include `denial_id` and `pmids` (a list of PubMed IDs). The denial's `pubmed_ids_json` is updated, saved, and an audit log entry is created for the update.
-        
+
         Parameters:
-        	request (Request): HTTP request containing validated data with keys `denial_id` (str/int) and `pmids` (list of str/int).
-        
+                request (Request): HTTP request containing validated data with keys `denial_id` (str/int) and `pmids` (list of str/int).
+
         Returns:
-        	HTTP 200 response with a success message stating how many articles were selected.
+                HTTP 200 response with a success message stating how many articles were selected.
         """
         serializer = self.deserialize(data=request.data)
         serializer.is_valid(raise_exception=True)

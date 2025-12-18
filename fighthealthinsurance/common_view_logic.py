@@ -1099,7 +1099,7 @@ class DenialCreatorHelper:
     ):
         """
         Create a new Denial or update an existing one with provided complaint text and metadata.
-        
+
         Parameters:
             email (str): Email address associated with the denial; used to compute a hashed identifier.
             denial_text (str): Raw denial text submitted by the user.
@@ -1121,7 +1121,7 @@ class DenialCreatorHelper:
             subscribe (bool): Form field propagated through but not handled by this function.
             microsite_slug (Optional[str]): Microsite identifier to record where the denial originated.
             request (Optional[Union[HttpRequest, "DRFRequest"]]): Optional request used for audit logging.
-        
+
         Returns:
             Denial: The created or updated Denial object.
         """
@@ -1208,7 +1208,6 @@ class DenialCreatorHelper:
             if referral_source_details is not None:
                 denial.referral_source_details = referral_source_details
 
-
             denial.save()
 
         if possible_email is not None:
@@ -1254,7 +1253,9 @@ class DenialCreatorHelper:
                 )
             except Exception as e:
                 # Don't let audit logging failures break denial creation
-                logger.warning(f"Failed to log audit activity for denial {denial_id}: {e}")
+                logger.warning(
+                    f"Failed to log audit activity for denial {denial_id}: {e}"
+                )
 
         return cls._update_denial(
             denial=denial, health_history=health_history, plan_documents=plan_documents

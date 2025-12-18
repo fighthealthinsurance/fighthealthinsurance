@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import random
 import re
 import typing
 from typing import TypedDict
@@ -36,6 +37,47 @@ from PIL import Image
 from fighthealthinsurance import common_view_logic, forms as core_forms, models
 from fighthealthinsurance.chat_forms import UserConsentForm
 from fighthealthinsurance.models import StripeRecoveryInfo
+
+
+# Insurance Bullshit Bingo phrases - humorous but factual common denial reasons
+BINGO_PHRASES = [
+    "Not medically necessary",
+    "Out of network exception denied",
+    "Experimental",
+    "Prior authorization required",
+    "Pre-existing condition",
+    "Not covered under your plan",
+    "Lacks documentation",
+    "Investigational treatment",
+    "Cosmetic procedure",
+    "Administrative error",
+    "Off-label use",
+    "Step therapy required",
+    "Exceeds plan limits",
+    "Service not approved",
+    "Missing referral",
+    "Network restrictions apply",
+    "Treatment not FDA-approved",
+    "Alternative therapy available",
+    "Claim submitted incorrectly",
+    "Policy exclusion applies",
+    "Needs peer review",
+    "Insufficient medical evidence",
+    "Out of pocket maximum met",
+    "Benefit period expired",
+    "Duplicate claim",
+    "Timing of request",
+    "Inappropriate setting",
+    "Coding error",
+    "Frequency limits exceeded",
+    "Not a covered benefit",
+    "Documentation incomplete",
+    "Medical records unavailable",
+    "Exceeds annual maximum",
+    "Requires specialist review",
+    "Outside coverage period",
+    "Service bundled with another",
+]
 
 
 class BlogPostMetadata(TypedDict, total=False):
@@ -188,6 +230,37 @@ class PBSNewsHourView(generic.TemplateView):
     """Page about the PBS NewsHour feature."""
 
     template_name = "as_seen_on_pbs.html"
+
+
+class BingoView(generic.TemplateView):
+    """Insurance Bullshit Bingo page - a humorous coping resource."""
+
+    template_name = "bingo.html"
+
+    def get_context_data(self, **kwargs):
+        """Add bingo board data to the context."""
+        context = super().get_context_data(**kwargs)
+
+        # Generate a 5x5 bingo board with random phrases
+        # Use 24 phrases (excluding center which is "FREE SPACE")
+        selected_phrases = random.sample(BINGO_PHRASES, min(24, len(BINGO_PHRASES)))
+
+        # Create 5x5 grid with FREE SPACE in the center
+        bingo_board = []
+        phrase_index = 0
+        for row in range(5):
+            bingo_row = []
+            for col in range(5):
+                if row == 2 and col == 2:
+                    # Center square is FREE SPACE
+                    bingo_row.append("FREE SPACE")
+                else:
+                    bingo_row.append(selected_phrases[phrase_index])
+                    phrase_index += 1
+            bingo_board.append(bingo_row)
+
+        context["bingo_board"] = bingo_board
+        return context
 
 
 class OtherResourcesView(generic.TemplateView):
@@ -1004,12 +1077,12 @@ class InitialProcessView(generic.FormView):
         # Legacy doesn't have denial id
         """
         Process a submitted initial denial form, persist the denial, and advance the multi-step flow to the health-history step.
-        
+
         This validates and uses the form.cleaned_data to create or update a Denial (audit context from the current request is passed), optionally subscribes the provided email to the mailing list, validates and persists microsite prefills, stores denial and microsite metadata in the session, and renders the prefilled health history page for the next step.
-        
+
         Parameters:
             form: The validated initial denial form instance (expects cleaned_data to contain at least `email` and other denial fields).
-        
+
         Returns:
             HttpResponse: A rendered response for "health_history.html" containing a HealthHistory form prefilled with the created denial's `denial_id`, the provided `email`, and the denial's `semi_sekret`.
         """
@@ -1024,7 +1097,15 @@ class InitialProcessView(generic.FormView):
             fname = self.request.POST.get("fname", "")
             lname = self.request.POST.get("lname", "")
             name = f"{fname} {lname}".strip()
-            defaults = {"comments": "From appeal flow"}
+            referral_source = self.request.POST.get("referral_source", "")
+            referral_source_details = self.request.POST.get(
+                "referral_source_details", ""
+            )
+            defaults = {
+                "comments": "From appeal flow",
+                "referral_source": referral_source,
+                "referral_source_details": referral_source_details,
+            }
             if len(name) > 2:
                 defaults["name"] = name
             # Use get_or_create to avoid duplicate subscriptions
@@ -1631,12 +1712,18 @@ class ChatUserConsentView(FormView):
         self.request.session.save()
         if form.cleaned_data.get("subscribe"):
             name = f"{form.cleaned_data.get('first_name')} {form.cleaned_data.get('last_name')}"
+            referral_source = form.cleaned_data.get("referral_source", "")
+            referral_source_details = form.cleaned_data.get(
+                "referral_source_details", ""
+            )
             # Does the user want to subscribe to the newsletter?
             models.MailingListSubscriber.objects.create(
                 email=form.cleaned_data.get("email"),
                 phone=form.cleaned_data.get("phone"),
                 name=name,
                 comments="From chat consent form",
+                referral_source=referral_source,
+                referral_source_details=referral_source_details,
             )
 
         # No need to save form data to database - it will be saved in browser localStorage via JavaScript

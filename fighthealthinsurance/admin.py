@@ -64,9 +64,26 @@ class ChatLeadsAdmin(admin.ModelAdmin):
         "name",
         "company",
         "email",
+        "referral_source",
     )
-    search_fields = ("company", "name")
+    search_fields = ("company", "name", "referral_source", "referral_source_details")
+    list_filter = ("referral_source",)
     ordering = ("-created_at",)
+    fields = (
+        "name",
+        "email",
+        "phone",
+        "company",
+        "drug",
+        "microsite_slug",
+        "referral_source",
+        "referral_source_details",
+        "consent_to_contact",
+        "agreed_to_terms",
+        "session_id",
+        "created_at",
+    )
+    readonly_fields = ("session_id", "created_at")
 
 
 @admin.register(PriorAuthRequest)
@@ -150,8 +167,15 @@ class DenialAdmin(admin.ModelAdmin):
         "raw_email",
         "patient_visible",
         "appeal_result",
+        "referral_source",
     )
-    search_fields = ("raw_email", "denial_text", "insurance_company")
+    search_fields = (
+        "raw_email",
+        "denial_text",
+        "insurance_company",
+        "referral_source",
+        "referral_source_details",
+     )
     list_filter = (
         ("raw_email", admin.EmptyFieldListFilter),
         "plan_source__name",
@@ -159,6 +183,7 @@ class DenialAdmin(admin.ModelAdmin):
         "denial_type__name",
         "date",
         ("appeal_text", admin.EmptyFieldListFilter),
+        "referral_source",
     )
     ordering = ("-date",)
 
@@ -182,11 +207,21 @@ class InterestedProfessionalAdmin(admin.ModelAdmin):
 @admin.register(MailingListSubscriber)
 class MailingListSubscriberAdmin(admin.ModelAdmin):
     """Admin configuration for MailingListSubscriber model."""
-
-    list_display = ("id", "email", "name", "signup_date")
-    search_fields = ("email", "name")
-    list_filter = ("signup_date",)
+    list_display = ("id", "email", "name", "signup_date", "referral_source")
+    search_fields = ("email", "name", "referral_source", "referral_source_details")
+    list_filter = ("signup_date", "referral_source")
     ordering = ("-signup_date",)
+    fields = (
+        "email",
+        "name",
+        "phone",
+        "referral_source",
+        "referral_source_details",
+        "comments",
+        "signup_date",
+        "unsubscribe_token",
+    )
+    readonly_fields = ("signup_date", "unsubscribe_token")
 
 
 @admin.register(FollowUpType)
@@ -628,7 +663,7 @@ class AuthAuditLogAdmin(admin.ModelAdmin):
     def has_add_permission(self, request):
         """
         Prevent creation of new model instances via the admin interface.
-        
+
         Returns:
             `False` to disallow adding objects through the admin.
         """
@@ -637,11 +672,11 @@ class AuthAuditLogAdmin(admin.ModelAdmin):
     def has_change_permission(self, request, obj=None):
         """
         Prevent all change operations through the admin interface.
-        
+
         Parameters:
             request: The current HttpRequest (ignored).
             obj: The model instance to check permission for; may be None.
-        
+
         Returns:
             False: Always denies change permission.
         """
@@ -651,11 +686,11 @@ class AuthAuditLogAdmin(admin.ModelAdmin):
         # Allow superusers to delete for data retention
         """
         Determine whether the requesting user is permitted to delete the given object.
-        
+
         Parameters:
             request (HttpRequest): The current request used to inspect the requesting user.
             obj (Model | None): The object to check permission for (unused).
-        
+
         Returns:
             bool: True if the requesting user is a superuser, False otherwise.
         """
@@ -729,7 +764,7 @@ class APIAccessLogAdmin(admin.ModelAdmin):
     def has_add_permission(self, request):
         """
         Prevent creation of new model instances via the admin interface.
-        
+
         Returns:
             `False` to disallow adding objects through the admin.
         """
@@ -738,11 +773,11 @@ class APIAccessLogAdmin(admin.ModelAdmin):
     def has_change_permission(self, request, obj=None):
         """
         Prevent all change operations through the admin interface.
-        
+
         Parameters:
             request: The current HttpRequest (ignored).
             obj: The model instance to check permission for; may be None.
-        
+
         Returns:
             False: Always denies change permission.
         """
@@ -751,11 +786,11 @@ class APIAccessLogAdmin(admin.ModelAdmin):
     def has_delete_permission(self, request, obj=None):
         """
         Allow deletion only for superusers.
-        
+
         Parameters:
             request (HttpRequest): The incoming admin request from the user attempting the action.
             obj (Model, optional): The model instance targeted for deletion, if any.
-        
+
         Returns:
             bool: `true` if the requesting user is a superuser, `false` otherwise.
         """
@@ -824,7 +859,7 @@ class ProfessionalActivityLogAdmin(admin.ModelAdmin):
     def has_add_permission(self, request):
         """
         Prevent creation of new model instances via the admin interface.
-        
+
         Returns:
             `False` to disallow adding objects through the admin.
         """
@@ -833,11 +868,11 @@ class ProfessionalActivityLogAdmin(admin.ModelAdmin):
     def has_change_permission(self, request, obj=None):
         """
         Prevent all change operations through the admin interface.
-        
+
         Parameters:
             request: The current HttpRequest (ignored).
             obj: The model instance to check permission for; may be None.
-        
+
         Returns:
             False: Always denies change permission.
         """
@@ -846,11 +881,11 @@ class ProfessionalActivityLogAdmin(admin.ModelAdmin):
     def has_delete_permission(self, request, obj=None):
         """
         Allow deletion only for superusers.
-        
+
         Parameters:
             request (HttpRequest): The incoming admin request from the user attempting the action.
             obj (Model, optional): The model instance targeted for deletion, if any.
-        
+
         Returns:
             bool: `true` if the requesting user is a superuser, `false` otherwise.
         """
@@ -920,7 +955,7 @@ class SuspiciousActivityLogAdmin(admin.ModelAdmin):
     def has_add_permission(self, request):
         """
         Prevent creation of new model instances via the admin interface.
-        
+
         Returns:
             `False` to disallow adding objects through the admin.
         """
@@ -929,11 +964,11 @@ class SuspiciousActivityLogAdmin(admin.ModelAdmin):
     def has_delete_permission(self, request, obj=None):
         """
         Allow deletion only for superusers.
-        
+
         Parameters:
             request (HttpRequest): The incoming admin request from the user attempting the action.
             obj (Model, optional): The model instance targeted for deletion, if any.
-        
+
         Returns:
             bool: `true` if the requesting user is a superuser, `false` otherwise.
         """
@@ -997,7 +1032,7 @@ class ObjectActivityContextAdmin(admin.ModelAdmin):
     def has_add_permission(self, request):
         """
         Prevent creation of new model instances via the admin interface.
-        
+
         Returns:
             `False` to disallow adding objects through the admin.
         """
@@ -1006,11 +1041,11 @@ class ObjectActivityContextAdmin(admin.ModelAdmin):
     def has_change_permission(self, request, obj=None):
         """
         Prevent all change operations through the admin interface.
-        
+
         Parameters:
             request: The current HttpRequest (ignored).
             obj: The model instance to check permission for; may be None.
-        
+
         Returns:
             False: Always denies change permission.
         """
@@ -1019,11 +1054,11 @@ class ObjectActivityContextAdmin(admin.ModelAdmin):
     def has_delete_permission(self, request, obj=None):
         """
         Allow deletion only for superusers.
-        
+
         Parameters:
             request (HttpRequest): The incoming admin request from the user attempting the action.
             obj (Model, optional): The model instance targeted for deletion, if any.
-        
+
         Returns:
             bool: `true` if the requesting user is a superuser, `false` otherwise.
         """

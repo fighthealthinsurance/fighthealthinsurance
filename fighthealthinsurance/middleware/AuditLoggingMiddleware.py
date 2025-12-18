@@ -45,10 +45,10 @@ _EXCLUDED_PATTERNS = [re.compile(p) for p in EXCLUDED_PATH_PATTERNS]
 def _should_log_request(path: str) -> bool:
     """
     Determine whether a request path should be recorded in the audit log.
-    
+
     Parameters:
         path (str): The request path to evaluate.
-    
+
     Returns:
         bool: `true` if the path should be logged, `false` otherwise.
     """
@@ -66,11 +66,11 @@ def _should_log_request(path: str) -> bool:
 def _extract_resource_info(path: str, response: HttpResponse) -> dict:
     """
     Extract resource metadata (type, identifier, and count) from a request path and HTTP response.
-    
+
     Parameters:
         path (str): The request path (e.g., "/api/v1/denials/123/") used to infer resource type and identifier.
         response (HttpResponse): The response object which may contain a `.data` mapping with pagination or results.
-    
+
     Returns:
         dict: A mapping with keys:
             - resource_type (str|None): The inferred resource name in singular form (e.g., "denial"), or `None` if not found.
@@ -123,10 +123,10 @@ def _extract_resource_info(path: str, response: HttpResponse) -> dict:
 def _is_uuid(s: str) -> bool:
     """
     Determine whether a string is a UUID in the canonical 8-4-4-4-12 hexadecimal format.
-    
+
     Parameters:
         s (str): String to test; hexadecimal digits may be upper- or lower-case.
-    
+
     Returns:
         bool: True if `s` matches the UUID pattern, False otherwise.
     """
@@ -146,10 +146,10 @@ class AuditLoggingMiddleware(MiddlewareMixin):
     def process_request(self, request: HttpRequest) -> None:
         """
         Record the request start time on the request object.
-        
+
         Parameters:
             request (HttpRequest): The incoming HTTP request.
-        
+
         Sets request._audit_start_time to the current epoch time in seconds (float) for later response-time calculation.
         """
         request._audit_start_time = time.time()
@@ -159,13 +159,13 @@ class AuditLoggingMiddleware(MiddlewareMixin):
     ) -> HttpResponse:
         """
         Log an API access entry when the response is produced, failing silently if logging errors occur.
-        
+
         This method records an audit entry only for request paths that qualify for logging; any exceptions raised while attempting to log are caught and suppressed (a debug message is emitted).
-        
+
         Parameters:
             request (HttpRequest): The incoming HTTP request.
             response (HttpResponse): The HTTP response to be returned.
-        
+
         Returns:
             HttpResponse: The original response object.
         """
@@ -179,10 +179,10 @@ class AuditLoggingMiddleware(MiddlewareMixin):
             response_time_ms = None
             if start_time:
                 response_time_ms = int((time.time() - start_time) * 1000)
-            
+
             # Extract resource info before dispatching to background thread
             resource_info = _extract_resource_info(request.path, response)
-            
+
             # Extract search query before dispatching to background thread
             search_query = None
             if request.method == "GET":
@@ -190,17 +190,17 @@ class AuditLoggingMiddleware(MiddlewareMixin):
             elif request.method == "POST":
                 # Note: request.data is for DRF requests, request.POST for standard Django
                 search_query = request.POST.get("search") or request.POST.get("q")
-            
+
             # Extract all needed data from request/response before dispatching
             endpoint = request.path
             http_status = response.status_code
-            
+
             # Dispatch logging to background thread to avoid blocking request
             # Note: We pass the request object for user/session/IP/UA context.
             # This is safe because we only read from it and the request is no longer
             # being modified after process_response.
             future = executor.submit(
-                self._log_api_access, 
+                self._log_api_access,
                 request,
                 endpoint,
                 http_status,
@@ -219,7 +219,7 @@ class AuditLoggingMiddleware(MiddlewareMixin):
     def _log_task_exception(self, future: Future) -> None:
         """
         Log any exceptions that occurred in the background logging task.
-        
+
         Parameters:
             future (Future): The completed Future object from the background task.
         """
@@ -239,9 +239,9 @@ class AuditLoggingMiddleware(MiddlewareMixin):
     ) -> None:
         """
         Log an API access event to the audit service.
-        
+
         Records an audit entry for the given HTTP request by assembling and sending the following observable fields to the audit service: endpoint, HTTP status, response time in milliseconds, resource_type/resource_id/resource_count (derived from the request path and response payload), and an optional search query.
-        
+
         Parameters:
             request (HttpRequest): The incoming HTTP request; used for user/session/IP/UA context.
             endpoint (str): The API endpoint path that was accessed.

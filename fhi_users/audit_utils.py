@@ -89,7 +89,7 @@ class UserAgentInfo:
     def simplified(self) -> str:
         """
         Return a compact representation of the user agent combining browser and OS.
-        
+
         Returns:
             A string in the form "Browser/OS" when one or both are present, or "Unknown" when neither is available.
         """
@@ -108,7 +108,7 @@ _geoip_reader: Optional["GeoIP2Fast"] = None
 def _get_geoip_reader() -> Optional["GeoIP2Fast"]:
     """
     Return the singleton GeoIP2Fast reader, initializing it on first call.
-    
+
     Returns:
         GeoIP2Fast or None: The initialized GeoIP2Fast reader, or `None` if GeoIP support is unavailable or initialization failed.
     """
@@ -158,15 +158,15 @@ def get_client_ip(request: RequestType) -> Optional[str]:
 def lookup_ip_info(ip_address: str) -> IPInfo:
     """
     Look up geographic, ASN, and network-type information for an IP address.
-    
+
     Performs a best-effort GeoIP lookup and populates an IPInfo instance with any available fields:
     country_code, asn_number, asn_org, network_type, is_datacenter, and is_vpn. If `ip_address` is falsy
     or a GeoIP reader is unavailable, returns an IPInfo containing only the provided ip_address (no exception
     is raised). Lookup failures are handled internally and result in a partially populated IPInfo.
-    
+
     Parameters:
         ip_address (str): IPv4 or IPv6 address string to look up.
-    
+
     Returns:
         IPInfo: Dataclass with populated fields where available; fields remain default/None when lookup data is missing.
     """
@@ -203,14 +203,14 @@ def classify_network_type(
 ) -> NetworkType:
     """
     Determine the network category inferred from an Autonomous System Number (ASN) and its organization name.
-    
+
     Parameters:
         asn_number (Optional[int]): The Autonomous System Number associated with the IP address; may be None.
         asn_org (Optional[str]): The organization name associated with the ASN; may be None or empty.
-    
+
     Returns:
         NetworkType: The inferred network type (e.g., DATACENTER, VPN, MOBILE, RESIDENTIAL, EDUCATION, GOVERNMENT, or UNKNOWN).
-        
+
     Notes:
         Returns NetworkType.UNKNOWN when no ASN is provided or when the inputs do not indicate a specific category.
     """
@@ -325,10 +325,10 @@ def classify_network_type(
 def parse_user_agent_string(user_agent: Optional[str]) -> UserAgentInfo:
     """
     Parse a raw HTTP User-Agent string into a UserAgentInfo object.
-    
+
     Parameters:
         user_agent (Optional[str]): Raw User-Agent header value.
-    
+
     Returns:
         UserAgentInfo: Parsed browser, OS, device families and versions, and flags for `is_mobile`, `is_tablet`, and `is_bot`. If `user_agent` is falsy returns a UserAgentInfo with `full_user_agent` set to an empty string. When available, the external `user_agents` library is used; otherwise a conservative internal parser is used.
     """
@@ -362,10 +362,10 @@ def parse_user_agent_string(user_agent: Optional[str]) -> UserAgentInfo:
 def _basic_ua_parse(user_agent: str) -> UserAgentInfo:
     """
     Parse a raw User-Agent string into a lightweight UserAgentInfo using conservative, heuristic rules.
-    
+
     Parameters:
         user_agent (str): Raw User-Agent header value to analyze.
-    
+
     Returns:
         UserAgentInfo: Object with `full_user_agent` preserved and inferred fields populated:
             - `browser_family` and `os_family` when identifiable,
@@ -427,10 +427,10 @@ def _basic_ua_parse(user_agent: str) -> UserAgentInfo:
 def get_request_context(request: RequestType) -> dict:
     """
     Collect audit-relevant context from an HTTP request.
-    
+
     Parameters:
         request: Django HttpRequest or DRF Request object used to extract headers, path, method, and session.
-    
+
     Returns:
         dict: Context with keys:
             - ip_info: IPInfo populated from the client's IP address (may be partially populated if lookup fails).
@@ -468,12 +468,12 @@ def get_request_context(request: RequestType) -> dict:
 def determine_user_type(request: RequestType) -> UserType:
     """
     Determine the user's privacy classification for audit logging.
-    
+
     Inspects the request's authenticated user and, when possible, checks for an associated ProfessionalUser with an active ProfessionalDomainRelation to decide whether the user should be treated as PROFESSIONAL. Falls back to CONSUMER if checks cannot be completed or no professional relation is found.
-    
+
     Parameters:
         request: Django HttpRequest or DRF Request object used to examine authentication and related professional records.
-    
+
     Returns:
         UserType: `ANONYMOUS` if the request is unauthenticated, `PROFESSIONAL` if an active professional-domain relation is found for the user, `CONSUMER` otherwise.
     """
@@ -503,13 +503,13 @@ def sanitize_for_privacy(
 ) -> dict:
     """
     Sanitize an audit request context to retain or remove sensitive fields based on the user's privacy level.
-    
+
     For UserType.PROFESSIONAL the input context is returned unchanged. For consumer or anonymous users the function removes the raw IP and granular location (state, city), clears the full user-agent string and http_referer, and preserves non-identifying metadata such as ASN, country_code, network_type, is_datacenter, is_vpn, request_path, request_method, and session_key.
-    
+
     Parameters:
         context (dict): Audit context produced by get_request_context().
         user_type (UserType): Determines privacy level (PROFESSIONAL preserves full data; CONSUMER/ANONYMOUS are sanitized).
-    
+
     Returns:
         dict: A sanitized context dictionary suitable for audit logging.
     """
