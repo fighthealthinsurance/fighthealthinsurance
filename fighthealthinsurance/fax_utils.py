@@ -11,6 +11,7 @@ import asyncio, asyncssh
 import requests
 from requests import Session
 from PyPDF2 import PdfReader, PdfWriter
+from .utils import _try_pandoc_engines
 
 FROM_FAX = os.getenv("FROM_FAX", "4158407591")
 FROM_VOICE = os.getenv("FROM_VOICE", "2029383266")
@@ -502,7 +503,7 @@ class FlexibleFaxMagic(object):
     def professional_backends(self) -> list[FaxSenderBase]:
         return list(filter(lambda backend: backend.professional, self.backends))
 
-    def assemble_outputs(
+    async def assemble_outputs(
         self, user_header: str, extra: str, input_paths: list[str]
     ) -> list[str]:
         """Assemble the outputs into chunks of max_pages length"""
@@ -512,7 +513,9 @@ class FlexibleFaxMagic(object):
         total_input_pages = 0
         modified_paths = []
         # Start with converting everything into pdf & counting the pages
-        for input_path in input_paths:
+        tasks = []
+
+        async def _convert_path(input_path: str) -> Tuple[Optional[str], int]:
             reader = None
             pages = 0
             try:
@@ -520,7 +523,7 @@ class FlexibleFaxMagic(object):
                 if input_path.endswith(".pdf"):
                     reader = PdfReader(input_path)
                     pages = len(reader.pages)
-                    modified_paths.append(input_path)
+                    return (input_path, pages)
                 else:
                     command = [
                         "pandoc",
@@ -528,13 +531,22 @@ class FlexibleFaxMagic(object):
                         input_path,
                         f"-o{input_path}.pdf",
                     ]
-                    result = subprocess.run(command)
+                    await _try_pandoc_engines(command)
                     reader = PdfReader(f"{input_path}.pdf")
                     pages = len(reader.pages)
-                    modified_paths.append(f"{input_path}.pdf")
-                total_input_pages += pages
+                    return (f"{input_path}.pdf", pages)
             except Exception as e:
                 print(f"Skipping input {input_path} {e}")
+                return (None, 0)
+
+        for input_path in input_paths:
+            task = asyncio.create_task(_convert_path(input_path))
+            tasks.append(task)
+        modified_paths_and_counts = await asyncio.gather(*tasks)
+        for modified_path, page_count in modified_paths_and_counts:
+            if page_count > 0 and modified_path:
+                modified_paths.append(modified_path)
+                total_input_pages += page_count
         if len(modified_paths) == 0:
             raise Exception(f"Rejected all inputs from {input_paths}")
         # How many chunks do we need to make + 1
@@ -558,7 +570,7 @@ class FlexibleFaxMagic(object):
                 t.write(header)
                 t.flush()
                 command = ["pandoc", t.name, f"-o{t.name}.pdf"]
-                subprocess.run(command)
+                await _try_pandoc_engines(command)
                 header_path = f"{t.name}.pdf"
             with tempfile.NamedTemporaryFile(
                 suffix=".pdf", prefix="combined", mode="w+t", delete=False
@@ -594,7 +606,7 @@ class FlexibleFaxMagic(object):
 
         myuuid = uuid.uuid4()
         myuuidStr = str(myuuid)
-        transmission_files = self.assemble_outputs(myuuidStr, extra, input_paths)
+        transmission_files = await self.assemble_outputs(myuuidStr, extra, input_paths)
         for transmission in transmission_files:
             r = await self._send_fax(
                 path=transmission,
