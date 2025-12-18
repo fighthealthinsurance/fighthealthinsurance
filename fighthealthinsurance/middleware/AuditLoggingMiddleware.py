@@ -11,6 +11,7 @@ This middleware:
 import time
 import re
 from typing import Callable, Optional
+from concurrent.futures import Future
 
 from django.http import HttpRequest, HttpResponse
 from django.utils.deprecation import MiddlewareMixin
@@ -138,7 +139,7 @@ class AuditLoggingMiddleware(MiddlewareMixin):
         return response
 
     @staticmethod
-    def _log_task_exception(future) -> None:
+    def _log_task_exception(future: Future) -> None:
         """Log any exceptions that occurred in the background logging task."""
         try:
             future.result()  # This will raise if the task failed
