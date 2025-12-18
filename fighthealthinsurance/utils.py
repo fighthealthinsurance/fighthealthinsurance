@@ -613,9 +613,11 @@ def generate_random_unsupported_filename() -> str:
 
 
 async def _try_pandoc_engines(command: list[str]):
-    engines = ["pdflatex", "xelatex", "laulatex", "wkhtmltopdf"]
+    engines = [None, "pdflatex", "xelatex", "laulatex", "wkhtmltopdf", "weasyprint"]
     for engine in engines:
-        command_with_engine = command + ["--pdf-engine=" + engine]
+        command_with_engine = command
+        if engine is not None:
+            command_with_engine = command + ["--pdf-engine=" + engine]
         try:
             await check_call(command_with_engine)
             return
