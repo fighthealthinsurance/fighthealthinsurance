@@ -1904,14 +1904,18 @@ class ExplainDenialView(FormView):
             referral_source = form.cleaned_data.get("referral_source", "")
             referral_source_details = form.cleaned_data.get("referral_source_details", "")
             
-            models.MailingListSubscriber.objects.create(
-                email=form.cleaned_data.get("email"),
-                phone=form.cleaned_data.get("phone"),
-                name=name,
-                comments="From explain denial page",
-                referral_source=referral_source,
-                referral_source_details=referral_source_details,
-            )
+            try:
+                models.MailingListSubscriber.objects.create(
+                    email=form.cleaned_data.get("email"),
+                    phone=form.cleaned_data.get("phone"),
+                    name=name,
+                    comments="From explain denial page",
+                    referral_source=referral_source,
+                    referral_source_details=referral_source_details,
+                )
+            except Exception as e:
+                # Log the error but don't fail the form submission
+                logger.warning(f"Failed to create mailing list subscriber: {e}")
         
         # Render auto-submit form to POST to chat
         context = {

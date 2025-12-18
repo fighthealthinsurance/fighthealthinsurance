@@ -54,14 +54,22 @@
       try {
         const userInfo = JSON.parse(storedInfo);
 
-        // Fill in the form fields
-        if (userInfo.firstName) document.getElementById('store_fname').value = userInfo.firstName;
-        if (userInfo.lastName) document.getElementById('store_lname').value = userInfo.lastName;
-        if (userInfo.email) document.getElementById('email').value = userInfo.email;
-        if (userInfo.address) document.getElementById('store_street').value = userInfo.address;
-        if (userInfo.city) document.getElementById('store_city').value = userInfo.city;
-        if (userInfo.state) document.getElementById('store_state').value = userInfo.state;
-        if (userInfo.zipCode) document.getElementById('store_zip').value = userInfo.zipCode;
+        // Fill in the form fields with null checks
+        const fnameElem = document.getElementById('store_fname');
+        const lnameElem = document.getElementById('store_lname');
+        const emailElem = document.getElementById('email');
+        const addressElem = document.getElementById('store_street');
+        const cityElem = document.getElementById('store_city');
+        const stateElem = document.getElementById('store_state');
+        const zipElem = document.getElementById('store_zip');
+
+        if (fnameElem && userInfo.firstName) fnameElem.value = userInfo.firstName;
+        if (lnameElem && userInfo.lastName) lnameElem.value = userInfo.lastName;
+        if (emailElem && userInfo.email) emailElem.value = userInfo.email;
+        if (addressElem && userInfo.address) addressElem.value = userInfo.address;
+        if (cityElem && userInfo.city) cityElem.value = userInfo.city;
+        if (stateElem && userInfo.state) stateElem.value = userInfo.state;
+        if (zipElem && userInfo.zipCode) zipElem.value = userInfo.zipCode;
       } catch (e) {
         console.error('Error parsing stored user info:', e);
       }
