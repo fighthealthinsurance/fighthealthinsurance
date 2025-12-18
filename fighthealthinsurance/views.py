@@ -1135,6 +1135,13 @@ class InitialProcessView(generic.FormView):
             else:
                 logger.warning(f"Invalid microsite_slug received: {microsite_slug}")
 
+        # Capture referral source information from POST data
+        referral_source = self.request.POST.get("referral_source", "")
+        referral_source_details = self.request.POST.get("referral_source_details", "")
+        if referral_source:
+            cleaned_data["referral_source"] = referral_source
+        if referral_source_details:
+            cleaned_data["referral_source_details"] = referral_source_details
         denial_response = common_view_logic.DenialCreatorHelper.create_or_update_denial(
             **cleaned_data,
             request=self.request,  # Pass request for audit logging
@@ -1906,5 +1913,43 @@ class MicrositeView(TemplateView):
         if microsite:
             context["microsite"] = microsite
             context["title"] = microsite.title
+
+        return context
+
+class DenialLanguageLibraryView(TemplateView):
+    """View for the public denial language library."""
+
+    template_name = "denial_language_library.html"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+
+        # Load denial language data
+        import json
+        from django.contrib.staticfiles.storage import staticfiles_storage
+
+        try:
+            with staticfiles_storage.open("denial_language.json", "r") as f:
+                contents = f.read()
+                if not isinstance(contents, str):
+                    contents = contents.decode("utf-8")
+                denial_data = json.loads(contents)
+
+            # Sort by related_appeals count (most common first)
+            sorted_denials = sorted(
+                denial_data.items(),
+                key=lambda x: x[1].get('related_appeals', 0),
+                reverse=True
+            )
+
+            context["denial_phrases"] = sorted_denials
+            context["total_phrases"] = len(denial_data)
+            context["title"] = "Denial Language Library - What Your Denial Really Means"
+
+        except Exception as e:
+            logger.error(f"Error loading denial language data: {e}")
+            context["denial_phrases"] = []
+            context["total_phrases"] = 0
+            context["title"] = "Denial Language Library"
 
         return context
