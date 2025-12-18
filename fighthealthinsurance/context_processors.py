@@ -29,9 +29,10 @@ def canonical_url_context(request):
       https://www.fighthealthinsurance.com regardless of the domain used to access
       the site. Preserves the full path and query string from the original request.
 
-    This handles pages with multiple routes (e.g., with/without trailing slash)
-    by using the actual requested URL path, ensuring the canonical URL matches
-    what the user accessed.
+    For pages with multiple routes (e.g., with/without trailing slash), this
+    normalizes to a single canonical version by ensuring paths have trailing slashes
+    (following Django convention), except for paths that look like files or specific
+    API endpoints.
     """
     # Get the full current URL
     current_url = request.build_absolute_uri()
@@ -39,11 +40,20 @@ def canonical_url_context(request):
     # Parse the URL to replace just the scheme and netloc (domain)
     parsed = urlparse(current_url)
     
-    # Rebuild URL with canonical domain
+    # Normalize the path to ensure consistent canonical URLs
+    # Add trailing slash if not present and path doesn't look like a file
+    path = parsed.path
+    if path and not path.endswith('/'):
+        # Don't add trailing slash if it looks like a file (has extension)
+        # or if it's an API endpoint that shouldn't have one
+        if '.' not in path.split('/')[-1]:
+            path = path + '/'
+    
+    # Rebuild URL with canonical domain and normalized path
     canonical = urlunparse((
         'https',                           # scheme
         'www.fighthealthinsurance.com',   # netloc (domain)
-        parsed.path,                       # path
+        path,                              # normalized path
         parsed.params,                     # params
         parsed.query,                      # query string
         ''                                 # fragment (not included in canonical)

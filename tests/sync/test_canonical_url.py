@@ -30,11 +30,12 @@ class CanonicalUrlTests(TestCase):
 
         content = response.content.decode("utf-8")
 
-        # Check for canonical URL pointing to www.fighthealthinsurance.com/about-us
+        # Check for canonical URL pointing to www.fighthealthinsurance.com/about-us/
+        # Normalized to have trailing slash
         self.assertIn(
-            '<link rel="canonical" href="https://www.fighthealthinsurance.com/about-us">',
+            '<link rel="canonical" href="https://www.fighthealthinsurance.com/about-us/">',
             content,
-            "About page should have canonical URL with path"
+            "About page should have canonical URL with trailing slash"
         )
 
     def test_bingo_page_has_canonical_url(self):
@@ -44,11 +45,12 @@ class CanonicalUrlTests(TestCase):
 
         content = response.content.decode("utf-8")
 
-        # Check for canonical URL pointing to www.fighthealthinsurance.com/bingo
+        # Check for canonical URL pointing to www.fighthealthinsurance.com/bingo/
+        # Normalized to have trailing slash
         self.assertIn(
-            '<link rel="canonical" href="https://www.fighthealthinsurance.com/bingo">',
+            '<link rel="canonical" href="https://www.fighthealthinsurance.com/bingo/">',
             content,
-            "Bingo page should have canonical URL with path"
+            "Bingo page should have canonical URL with trailing slash"
         )
 
     def test_other_resources_has_canonical_url(self):
@@ -58,11 +60,11 @@ class CanonicalUrlTests(TestCase):
 
         content = response.content.decode("utf-8")
 
-        # Check for canonical URL pointing to www.fighthealthinsurance.com
+        # Check for canonical URL with trailing slash
         self.assertIn(
-            '<link rel="canonical" href="https://www.fighthealthinsurance.com/other-resources">',
+            '<link rel="canonical" href="https://www.fighthealthinsurance.com/other-resources/">',
             content,
-            "Other resources page should have canonical URL with path"
+            "Other resources page should have canonical URL with trailing slash"
         )
 
     def test_canonical_url_uses_www_subdomain(self):
@@ -87,33 +89,54 @@ class CanonicalUrlTests(TestCase):
                 f"Page {page} should not have canonical URL without www"
             )
 
-    def test_chat_page_with_trailing_slash(self):
-        """Test that /chat/ has canonical URL with trailing slash."""
-        response = self.client.get("/chat/", follow=True)
-        
-        # The page might redirect or render directly
-        if response.status_code == 200:
-            content = response.content.decode("utf-8")
-            
-            # Should have canonical URL with the trailing slash
-            self.assertIn(
-                "https://www.fighthealthinsurance.com/chat/",
-                content,
-                "Chat page with trailing slash should preserve trailing slash in canonical"
-            )
-
-    def test_chat_page_without_trailing_slash(self):
-        """Test that /chat has canonical URL without trailing slash."""
+    def test_chat_page_normalized_to_trailing_slash(self):
+        """Test that /chat normalizes to /chat/ in canonical URL."""
         response = self.client.get("/chat", follow=True)
         
         # The page might redirect or render directly
         if response.status_code == 200:
             content = response.content.decode("utf-8")
             
-            # Should have canonical URL matching the accessed URL
-            # This test verifies that we preserve the actual requested path
+            # Should normalize to trailing slash version
             self.assertIn(
-                "https://www.fighthealthinsurance.com/chat",
+                "https://www.fighthealthinsurance.com/chat/",
                 content,
-                "Chat page should have canonical URL"
+                "Chat page without trailing slash should canonicalize to /chat/"
+            )
+
+    def test_chat_page_with_trailing_slash_stays_normalized(self):
+        """Test that /chat/ keeps trailing slash in canonical URL."""
+        response = self.client.get("/chat/", follow=True)
+        
+        # The page might redirect or render directly
+        if response.status_code == 200:
+            content = response.content.decode("utf-8")
+            
+            # Should have canonical URL with trailing slash
+            self.assertIn(
+                "https://www.fighthealthinsurance.com/chat/",
+                content,
+                "Chat page with trailing slash should have /chat/ canonical"
+            )
+
+    def test_file_like_paths_no_trailing_slash(self):
+        """Test that paths that look like files don't get trailing slash."""
+        # Test with sitemap.xml as example
+        response = self.client.get("/sitemap.xml")
+        
+        if response.status_code == 200:
+            content = response.content.decode("utf-8")
+            
+            # Should NOT add trailing slash to file-like paths
+            self.assertIn(
+                "https://www.fighthealthinsurance.com/sitemap.xml",
+                content,
+                "File-like paths should not get trailing slash in canonical URL"
+            )
+            
+            # Make sure it didn't add a trailing slash
+            self.assertNotIn(
+                "https://www.fighthealthinsurance.com/sitemap.xml/",
+                content,
+                "File paths should not have trailing slash"
             )
