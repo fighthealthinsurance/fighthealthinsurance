@@ -530,6 +530,13 @@ class PubMedTools(object):
         ) as my_data:
             my_data.write(markdown_text)
             my_data.flush()
+            command = [
+                "pandoc",
+                "--read=markdown",
+                "--wrap=auto",
+                my_data.name,
+                f"-o{my_data.name}.pdf",
+            ]
             try:
                 await _try_pandoc_engines(command)
                 return f"{my_data.name}.pdf"

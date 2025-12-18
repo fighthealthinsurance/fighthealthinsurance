@@ -613,7 +613,7 @@ def generate_random_unsupported_filename() -> str:
 
 
 async def _try_pandoc_engines(command: list[str]):
-    engines = [None, "pdflatex", "xelatex", "lualatex", "wkhtmltopdf", "weasyprint"]
+    engines = [None, "xelatex", "lualatex", "wkhtmltopdf", "weasyprint", "pdflatex"]
     if "--sandbox" not in command:
         command = command + ["--sandbox"]
     for engine in engines:
