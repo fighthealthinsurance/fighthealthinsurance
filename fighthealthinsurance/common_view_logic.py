@@ -181,7 +181,7 @@ class AppealAssemblyHelper:
                             input_path,
                         ]
                         await check_call(command)
-                        new_input_path = f"{input_path}.u8.txt"
+                        new_input_path = f"{input_path}.magic.u8.txt"
                         return await self._convert_input(new_input_path)
                     except:
                         pass
