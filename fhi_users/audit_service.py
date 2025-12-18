@@ -95,8 +95,9 @@ class AuditService:
         try:
             from .models import ProfessionalUser
 
-            # ProfessionalUser has a OneToOneField to User, so we filter by the user field
-            # Cast is needed because user param is UserOrAbstract, but at runtime it's always a User instance
+            # ProfessionalUser is NOT a User - it's a separate model with a OneToOneField to User
+            # We're filtering ProfessionalUser records by their associated User via the 'user' field
+            # typing.cast is for mypy: user param is UserOrAbstract type, but after AnonymousUser check it's a User
             return ProfessionalUser.objects.filter(user=typing.cast("User", user)).first()
         except Exception:
             return None
