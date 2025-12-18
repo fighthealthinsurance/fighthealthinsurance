@@ -45,8 +45,17 @@ def canonical_url_context(request):
     path = parsed.path
     if path and not path.endswith('/'):
         # Don't add trailing slash if it looks like a file (has extension)
-        # or if it's an API endpoint that shouldn't have one
-        if '.' not in path.split('/')[-1]:
+        last_segment = path.split('/')[-1]
+        # Check if last segment has an extension (e.g., .xml, .pdf, .ico)
+        if '.' in last_segment:
+            # Split on the last dot to check if there's an extension
+            _, ext = last_segment.rsplit('.', 1)
+            # Only skip trailing slash if extension looks valid (2-4 chars)
+            if len(ext) >= 2 and len(ext) <= 4 and ext.isalnum():
+                pass  # Don't add trailing slash for file-like paths
+            else:
+                path = path + '/'
+        else:
             path = path + '/'
     
     # Rebuild URL with canonical domain and normalized path
