@@ -1,9 +1,11 @@
 import asyncio
 import json
 import os
+import random
 import re
 import typing
 from typing import TypedDict
+from urllib.parse import urlencode
 
 from django import forms
 from django.conf import settings
@@ -55,6 +57,47 @@ if typing.TYPE_CHECKING:
     from django.contrib.auth.models import User
 else:
     User = get_user_model()
+
+
+# Insurance Bullshit Bingo phrases - humorous but factual common denial reasons
+BINGO_PHRASES = [
+    "Not medically necessary",
+    "Out of network exception denied",
+    "Experimental",
+    "Prior authorization required",
+    "Pre-existing condition",
+    "Not covered under your plan",
+    "Lacks documentation",
+    "Investigational treatment",
+    "Cosmetic procedure",
+    "Administrative error",
+    "Off-label use",
+    "Step therapy required",
+    "Exceeds plan limits",
+    "Service not approved",
+    "Missing referral",
+    "Network restrictions apply",
+    "Treatment not FDA-approved",
+    "Alternative therapy available",
+    "Claim submitted incorrectly",
+    "Policy exclusion applies",
+    "Needs peer review",
+    "Insufficient medical evidence",
+    "Out of pocket maximum met",
+    "Benefit period expired",
+    "Duplicate claim",
+    "Timing of request",
+    "Inappropriate setting",
+    "Coding error",
+    "Frequency limits exceeded",
+    "Not a covered benefit",
+    "Documentation incomplete",
+    "Medical records unavailable",
+    "Exceeds annual maximum",
+    "Requires specialist review",
+    "Outside coverage period",
+    "Service bundled with another",
+]
 
 
 def render_ocr_error(request: HttpRequest, text: str) -> HttpResponseBase:
@@ -178,10 +221,47 @@ class HowToHelpView(generic.TemplateView):
     template_name = "how_to_help.html"
 
 
+class Preparing2026View(generic.TemplateView):
+    """Landing page helping users prepare for 2026 insurance changes."""
+
+    template_name = "preparing_2026.html"
+
+
 class PBSNewsHourView(generic.TemplateView):
     """Page about the PBS NewsHour feature."""
 
     template_name = "as_seen_on_pbs.html"
+
+
+class BingoView(generic.TemplateView):
+    """Insurance Bullshit Bingo page - a humorous coping resource."""
+
+    template_name = "bingo.html"
+
+    def get_context_data(self, **kwargs):
+        """Add bingo board data to the context."""
+        context = super().get_context_data(**kwargs)
+
+        # Generate a 5x5 bingo board with random phrases
+        # Use 24 phrases (excluding center which is "FREE SPACE")
+        selected_phrases = random.sample(BINGO_PHRASES, min(24, len(BINGO_PHRASES)))
+
+        # Create 5x5 grid with FREE SPACE in the center
+        bingo_board = []
+        phrase_index = 0
+        for row in range(5):
+            bingo_row = []
+            for col in range(5):
+                if row == 2 and col == 2:
+                    # Center square is FREE SPACE
+                    bingo_row.append("FREE SPACE")
+                else:
+                    bingo_row.append(selected_phrases[phrase_index])
+                    phrase_index += 1
+            bingo_board.append(bingo_row)
+
+        context["bingo_board"] = bingo_board
+        return context
 
 
 class OtherResourcesView(generic.TemplateView):
@@ -1561,6 +1641,23 @@ def chat_interface_view(request):
         "microsite_slug", ""
     )
 
+    # Check for denial text from POST (from chat consent form) or session (from explain denial page)
+    # Check POST first to avoid popping session unnecessarily
+    denial_text = ""
+    if request.method == "POST":
+        denial_text = request.POST.get("denial_text", "")
+    if not denial_text:
+        denial_text = request.session.pop("denial_text_for_explanation", "")
+
+    initial_message = ""
+    if denial_text:
+        # Format the initial message for the chat
+        initial_message = (
+            "I received this denial letter from my insurance and need help understanding it:\n\n"
+            f"{denial_text}\n\n"
+            "Can you explain what this means in plain English and help me understand my options?"
+        )
+
     context = {
         "title": "Chat with FightHealthInsurance",
         "email": email,
@@ -1568,6 +1665,7 @@ def chat_interface_view(request):
         "default_condition": default_condition,
         "medicare": medicare,
         "microsite_slug": microsite_slug,
+        "initial_message": initial_message,
     }
     logger.debug(f"Rendering chat interface with context: {context}")
     return render(request, "chat_interface.html", context)
@@ -1620,6 +1718,12 @@ class ChatUserConsentView(FormView):
         context["default_condition"] = self.request.GET.get("default_condition", "")
         context["microsite_slug"] = self.request.GET.get("microsite_slug", "")
         context["microsite_title"] = self.request.GET.get("microsite_title", "")
+        # Check if coming from explain denial
+        context["explain_denial"] = self.request.GET.get("explain_denial", "") == "true"
+        # Get denial text from session if available (from explain denial page)
+        context["denial_text"] = self.request.session.get(
+            "denial_text_for_explanation", ""
+        )
         return context
 
     def form_valid(self, form):
@@ -1644,6 +1748,27 @@ class ChatUserConsentView(FormView):
                 referral_source=referral_source,
                 referral_source_details=referral_source_details,
             )
+
+        # Check if there's denial text to pass through
+        denial_text = self.request.POST.get("denial_text", "")
+
+        # If we have denial text or other params, we need to POST them to chat
+        # Otherwise just redirect normally
+        if (
+            denial_text
+            or self.request.POST.get("default_procedure")
+            or self.request.POST.get("default_condition")
+        ):
+            # Render an auto-submit form to POST data to chat
+            context = {
+                "denial_text": denial_text,
+                "default_procedure": self.request.POST.get("default_procedure", ""),
+                "default_condition": self.request.POST.get("default_condition", ""),
+                "microsite_slug": self.request.POST.get("microsite_slug", ""),
+                "microsite_title": self.request.POST.get("microsite_title", ""),
+                "chat_url": reverse("chat"),
+            }
+            return render(self.request, "chat_redirect.html", context)
 
         # No need to save form data to database - it will be saved in browser localStorage via JavaScript
         return super().form_valid(form)
@@ -1825,5 +1950,104 @@ class MicrositeView(TemplateView):
         if microsite:
             context["microsite"] = microsite
             context["title"] = microsite.title
+
+        return context
+
+
+class ExplainDenialView(FormView):
+    """
+    View for the Explain my Denial page - collects denial text with TOS consent and redirects to chat.
+    This provides a simplified entry point for users to understand their denials through AI chat.
+    Includes TOS agreement since we're posting data server-side.
+    """
+
+    template_name = "explain_denial.html"
+    form_class = UserConsentForm
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["title"] = "Explain My Denial"
+        # Preserve denial text if there was an error
+        context["denial_text"] = self.request.POST.get("denial_text", "")
+        return context
+
+    def form_valid(self, form):
+        """Process the form and redirect to chat with denial text."""
+        denial_text = self.request.POST.get("denial_text", "").strip()
+
+        if not denial_text:
+            # Add error to form and re-render
+            form.add_error(None, "Please enter your denial letter text.")
+            return self.form_invalid(form)
+
+        # Mark consent as completed in the session
+        self.request.session["consent_completed"] = True
+        self.request.session["email"] = form.cleaned_data.get("email")
+        self.request.session.save()
+
+        # Handle mailing list subscription
+        if form.cleaned_data.get("subscribe"):
+            name = f"{form.cleaned_data.get('first_name')} {form.cleaned_data.get('last_name')}"
+            referral_source = form.cleaned_data.get("referral_source", "")
+            referral_source_details = form.cleaned_data.get(
+                "referral_source_details", ""
+            )
+
+            try:
+                models.MailingListSubscriber.objects.create(
+                    email=form.cleaned_data.get("email"),
+                    phone=form.cleaned_data.get("phone"),
+                    name=name,
+                    comments="From explain denial page",
+                    referral_source=referral_source,
+                    referral_source_details=referral_source_details,
+                )
+            except Exception as e:
+                # Log the error but don't fail the form submission
+                logger.warning(f"Failed to create mailing list subscriber: {e}")
+
+        # Render auto-submit form to POST to chat
+        context = {
+            "denial_text": denial_text,
+            "chat_url": reverse("chat"),
+        }
+        return render(self.request, "chat_redirect.html", context)
+
+
+class DenialLanguageLibraryView(TemplateView):
+    """View for the public denial language library."""
+
+    template_name = "denial_language_library.html"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+
+        # Load denial language data
+        import json
+        from django.contrib.staticfiles.storage import staticfiles_storage
+
+        try:
+            with staticfiles_storage.open("denial_language.json", "r") as f:
+                contents = f.read()
+                if not isinstance(contents, str):
+                    contents = contents.decode("utf-8")
+                denial_data = json.loads(contents)
+
+            # Sort by related_appeals count (most common first)
+            sorted_denials = sorted(
+                denial_data.items(),
+                key=lambda x: x[1].get("related_appeals", 0),
+                reverse=True,
+            )
+
+            context["denial_phrases"] = sorted_denials
+            context["total_phrases"] = len(denial_data)
+            context["title"] = "Denial Language Library - What Your Denial Really Means"
+
+        except Exception as e:
+            logger.error(f"Error loading denial language data: {e}")
+            context["denial_phrases"] = []
+            context["total_phrases"] = 0
+            context["title"] = "Denial Language Library"
 
         return context

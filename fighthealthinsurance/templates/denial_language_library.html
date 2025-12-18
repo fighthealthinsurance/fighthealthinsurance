@@ -1,0 +1,379 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}{{ title }} - Fight Health Insurance{% endblock title %}
+{% block metatitle %}{{ title }}{% endblock metatitle %}
+{% block metadescription %}Decode your insurance denial. Learn what common denial language really means and how to counter it. Free resource from Fight Health Insurance.{% endblock metadescription %}
+
+{% block content %}
+<!-- Hero Section -->
+<section id="denial-library-hero" class="slider" data-stellar-background-ratio="0.5">
+    <div class="row">
+        <div class="item item-first">
+            <div class="caption d-flex flex-column align-items-center justify-content-center">
+                <div class="hero-inner">
+                    <h3 class="hero-tagline">Knowledge is Power</h3>
+                    <h1 class="hero-headline">What Your Denial Really Means</h1>
+                    <p class="hero-subcopy">Insurance companies use confusing language to deny claims. We decode it for you.</p>
+                    <div class="hero-stats">
+                        <div class="stat-item">
+                            <div class="stat-number">{{ total_phrases }}</div>
+                            <div class="stat-label">Common Denial Phrases</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Introduction Section -->
+<section id="library-intro" class="py-5">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-10 mx-auto">
+                <div class="about-info text-center">
+                    <h2>Understanding Denial Language</h2>
+                    <p class="lead">
+                        Insurance denials often use vague, technical, or misleading language designed to discourage appeals.
+                        This library translates common denial phrases into plain English and shows you how to fight back.
+                    </p>
+                    <p>
+                        Each entry includes what the phrase really means, why insurers use it, and specific strategies to counter it in your appeal.
+                        <strong>Knowledge empowers you to challenge unfair denials.</strong>
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Denial Phrases Library -->
+<section id="denial-phrases" class="py-5 bg-light">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-10 mx-auto">
+                <h2 class="text-center mb-5">Common Denial Phrases Decoded</h2>
+                
+                {% if denial_phrases %}
+                <div class="denial-library">
+                    {% for phrase, data in denial_phrases %}
+                    <div class="denial-card card mb-4 shadow-sm">
+                        <div class="card-header bg-primary text-white">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <h3 class="denial-phrase mb-0">"{{ phrase }}"</h3>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <!-- What It Means -->
+                            <div class="denial-section mb-4">
+                                <h4 class="section-title">
+                                    <span class="section-icon">💡</span>
+                                    What It Really Means
+                                </h4>
+                                <p class="section-content">{{ data.what_it_means }}</p>
+                            </div>
+
+                            <!-- Why Insurers Use It -->
+                            <div class="denial-section mb-4">
+                                <h4 class="section-title">
+                                    <span class="section-icon">⚠️</span>
+                                    Why Insurers Use This
+                                </h4>
+                                <p class="section-content text-muted">{{ data.why_insurers_use_it }}</p>
+                            </div>
+
+                            <!-- How to Counter -->
+                            <div class="denial-section">
+                                <h4 class="section-title">
+                                    <span class="section-icon">✊</span>
+                                    How to Counter This Denial
+                                </h4>
+                                <ul class="counter-strategies">
+                                    {% for strategy in data.how_to_counter %}
+                                    <li>{{ strategy }}</li>
+                                    {% endfor %}
+                                </ul>
+                            </div>
+
+                            <!-- Success Rate -->
+                            <div class="denial-footer mt-4 pt-3 border-top">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <div class="success-rate">
+                                        <strong>Appeal Success Rate:</strong> 
+                                        <span class="badge bg-success">{{ data.success_rate }}</span>
+                                    </div>
+                                    <a href="{% url 'scan' %}?denial_reason={{ phrase|urlencode }}" 
+                                       class="btn btn-sm btn-primary">
+                                        Start Your Appeal
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="alert alert-warning text-center">
+                    <p class="mb-0">Denial language library is currently unavailable. Please try again later.</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Call to Action -->
+<section id="library-cta" class="py-5">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto text-center">
+                <h2 class="mb-4">Got a Denial?</h2>
+                <p class="lead mb-4">
+                    Use our free AI-powered tool to generate a compelling appeal letter that addresses your specific denial reason.
+                </p>
+                <div class="d-flex justify-content-center gap-3 flex-wrap">
+                    <a href="{% url 'scan' %}" class="btn btn-green btn-lg">
+                        <i class="bi bi-file-earmark-text"></i> Generate Appeal Letter
+                    </a>
+                    <a href="{% url 'chat' %}" class="btn btn-outline-green btn-lg">
+                        <i class="bi bi-chat-dots"></i> Chat with AI Assistant
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Additional Resources -->
+<section id="additional-resources" class="py-5 bg-light">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-10 mx-auto">
+                <h2 class="text-center mb-4">Additional Resources</h2>
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <h5 class="card-title">❓ FAQ</h5>
+                                <p class="card-text">Common questions about appealing insurance denials.</p>
+                                <a href="{% url 'faq' %}" class="btn btn-sm btn-outline-primary">Read FAQ</a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- SEO-Friendly FAQ Section -->
+<section id="library-faq" class="py-5">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-10 mx-auto">
+                <h2 class="text-center mb-4">Frequently Asked Questions</h2>
+                <div class="accordion" id="libraryFAQ">
+                    <div class="accordion-item">
+                        <h3 class="accordion-header">
+                            <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#faq1">
+                                Why do insurance companies use confusing language in denials?
+                            </button>
+                        </h3>
+                        <div id="faq1" class="accordion-collapse collapse show" data-bs-parent="#libraryFAQ">
+                            <div class="accordion-body">
+                                Insurance companies often use vague or technical language to make denials seem more legitimate and to discourage appeals. 
+                                Terms like "not medically necessary" sound official but are often subjective. Understanding what these phrases really mean 
+                                helps you craft a stronger appeal.
+                            </div>
+                        </div>
+                    </div>
+                    <div class="accordion-item">
+                        <h3 class="accordion-header">
+                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#faq2">
+                                Can I appeal even if the denial seems final?
+                            </button>
+                        </h3>
+                        <div id="faq2" class="accordion-collapse collapse" data-bs-parent="#libraryFAQ">
+                            <div class="accordion-body">
+                                Yes! Most insurance denials can and should be appealed. You typically have the right to an internal appeal with your insurer, 
+                                and often an external appeal with an independent reviewer. Many denials are overturned on appeal, especially with proper documentation.
+                            </div>
+                        </div>
+                    </div>
+                    <div class="accordion-item">
+                        <h3 class="accordion-header">
+                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#faq3">
+                                How long do I have to appeal a denial?
+                            </button>
+                        </h3>
+                        <div id="faq3" class="accordion-collapse collapse" data-bs-parent="#libraryFAQ">
+                            <div class="accordion-body">
+                                Deadlines vary by plan and state, but typically you have 180 days for a standard appeal. Urgent or expedited appeals may have 
+                                shorter deadlines. Always check your denial letter for specific timelines and don't delay - the sooner you appeal, the better.
+                            </div>
+                        </div>
+                    </div>
+                    <div class="accordion-item">
+                        <h3 class="accordion-header">
+                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#faq4">
+                                What's the success rate of insurance appeals?
+                            </button>
+                        </h3>
+                        <div id="faq4" class="accordion-collapse collapse" data-bs-parent="#libraryFAQ">
+                            <div class="accordion-body">
+                                Success rates vary by denial type and plan, but many appeals succeed - especially with proper documentation. Studies show that 
+                                patients who appeal have a significant chance of overturning denials, yet most people don't appeal at all. Don't give up - 
+                                insurers count on you not fighting back.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+{% endblock content %}
+
+{% block extra_style %}
+<style>
+    #denial-library-hero .hero-inner {
+        max-width: 900px;
+        padding: 3rem 2rem;
+        text-align: center;
+    }
+
+    .hero-stats {
+        margin-top: 2rem;
+        display: flex;
+        justify-content: center;
+        gap: 3rem;
+    }
+
+    .stat-item {
+        text-align: center;
+    }
+
+    .stat-number {
+        font-size: 3rem;
+        font-weight: bold;
+        color: #28a745;
+    }
+
+    .stat-label {
+        font-size: 1rem;
+        color: #6c757d;
+        margin-top: 0.5rem;
+    }
+
+    .denial-card {
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+        border-left: 5px solid #007bff;
+    }
+
+    .denial-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15) !important;
+    }
+
+    .denial-phrase {
+        font-size: 1.5rem;
+        font-weight: 600;
+    }
+
+    .denial-section {
+        margin-bottom: 1.5rem;
+    }
+
+    .section-title {
+        font-size: 1.1rem;
+        font-weight: 600;
+        margin-bottom: 0.75rem;
+        color: #333;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
+    .section-icon {
+        font-size: 1.3rem;
+    }
+
+    .section-content {
+        font-size: 1rem;
+        line-height: 1.6;
+    }
+
+    .counter-strategies {
+        list-style: none;
+        padding-left: 0;
+    }
+
+    .counter-strategies li {
+        padding: 0.75rem;
+        margin-bottom: 0.5rem;
+        background-color: #f8f9fa;
+        border-left: 3px solid #28a745;
+        border-radius: 4px;
+        position: relative;
+        padding-left: 2.5rem;
+    }
+
+    .counter-strategies li::before {
+        content: "→";
+        position: absolute;
+        left: 1rem;
+        color: #28a745;
+        font-weight: bold;
+    }
+
+    .denial-footer {
+        background-color: #f8f9fa;
+        margin: -1rem -1rem -1rem -1rem;
+        padding: 1rem 1rem 0.5rem 1rem;
+    }
+
+    .btn-green {
+        background-color: #28a745;
+        border-color: #28a745;
+        color: white;
+    }
+
+    .btn-green:hover {
+        background-color: #218838;
+        border-color: #1e7e34;
+        color: white;
+    }
+
+    .btn-outline-green {
+        color: #28a745;
+        border-color: #28a745;
+    }
+
+    .btn-outline-green:hover {
+        background-color: #28a745;
+        color: white;
+    }
+
+    #library-intro .about-info {
+        max-width: 800px;
+        margin: 0 auto;
+    }
+
+    @media (max-width: 768px) {
+        .denial-phrase {
+            font-size: 1.2rem;
+        }
+
+        .hero-stats {
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+
+        .stat-number {
+            font-size: 2rem;
+        }
+    }
+</style>
+{% endblock extra_style %}

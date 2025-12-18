@@ -201,11 +201,23 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         name="how-to-help",
     ),
     path(
+        "preparing-for-2026",
+        cache_control(public=True)(
+            cache_page(60 * 60 * 2)(views.Preparing2026View.as_view())
+        ),
+        name="preparing-2026",
+    ),
+    path(
         "as-seen-on-pbs",
         cache_control(public=True)(
             cache_page(60 * 60 * 2)(views.PBSNewsHourView.as_view())
         ),
         name="pbs-newshour",
+    ),
+    path(
+        "bingo",
+        cache_control(public=True)(cache_page(60 * 60 * 2)(views.BingoView.as_view())),
+        name="bingo",
     ),
     path(
         "other-resources",
@@ -235,6 +247,13 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
             cache_page(60 * 60 * 2)(views.MedicaidFAQView.as_view())
         ),
         name="medicaid-faq",
+    ),
+    path(
+        "denial-language/",
+        cache_control(public=True)(
+            cache_page(60 * 60 * 2)(views.DenialLanguageLibraryView.as_view())
+        ),
+        name="denial-language-library",
     ),
     path(
         "pro_version", csrf_exempt(views.ProVersionView.as_view()), name="pro_version"
@@ -350,6 +369,12 @@ urlpatterns += [
             cache_page(60 * 60 * 2)(views.MicrositeView.as_view())
         ),
         name="microsite",
+    ),
+    # Explain my Denial page
+    path(
+        "explain-denial",
+        views.ExplainDenialView.as_view(),
+        name="explain_denial",
     ),
 ]
 
