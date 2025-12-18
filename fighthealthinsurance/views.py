@@ -1867,34 +1867,55 @@ class MicrositeView(TemplateView):
         return context
 
 
-class ExplainDenialView(TemplateView):
+class ExplainDenialView(FormView):
     """
-    View for the Explain my Denial page - collects denial text and redirects to chat.
+    View for the Explain my Denial page - collects denial text with TOS consent and redirects to chat.
     This provides a simplified entry point for users to understand their denials through AI chat.
+    Includes TOS agreement since we're posting data server-side.
     """
 
     template_name = "explain_denial.html"
-
+    form_class = UserConsentForm
+    
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context["title"] = "Explain My Denial"
+        # Preserve denial text if there was an error
+        context["denial_text"] = self.request.POST.get("denial_text", "")
         return context
 
-    def post(self, request, *args, **kwargs):
-        """Process denial text and redirect to chat with context."""
-        denial_text = request.POST.get("denial_text", "").strip()
+    def form_valid(self, form):
+        """Process the form and redirect to chat with denial text."""
+        denial_text = self.request.POST.get("denial_text", "").strip()
         
         if not denial_text:
-            context = self.get_context_data(**kwargs)
-            context["error"] = "Please enter your denial letter text."
-            context["denial_text"] = denial_text  # Preserve input on error
-            return render(request, self.template_name, context)
+            # Add error to form and re-render
+            form.add_error(None, "Please enter your denial letter text.")
+            return self.form_invalid(form)
         
-        # Store the denial text in the session for the chat to pick up
-        request.session["denial_text_for_explanation"] = denial_text
-        request.session.save()
+        # Mark consent as completed in the session
+        self.request.session["consent_completed"] = True
+        self.request.session["email"] = form.cleaned_data.get("email")
+        self.request.session.save()
         
-        # Redirect to chat consent (which will then redirect to chat)
-        # Add a parameter to indicate this is coming from explain denial
-        params = urlencode({"explain_denial": "true"})
-        return redirect(f"{reverse('chat_consent')}?{params}")
+        # Handle mailing list subscription
+        if form.cleaned_data.get("subscribe"):
+            name = f"{form.cleaned_data.get('first_name')} {form.cleaned_data.get('last_name')}"
+            referral_source = form.cleaned_data.get("referral_source", "")
+            referral_source_details = form.cleaned_data.get("referral_source_details", "")
+            
+            models.MailingListSubscriber.objects.create(
+                email=form.cleaned_data.get("email"),
+                phone=form.cleaned_data.get("phone"),
+                name=name,
+                comments="From explain denial page",
+                referral_source=referral_source,
+                referral_source_details=referral_source_details,
+            )
+        
+        # Render auto-submit form to POST to chat
+        context = {
+            "denial_text": denial_text,
+            "chat_url": reverse("chat"),
+        }
+        return render(self.request, "chat_redirect.html", context)
