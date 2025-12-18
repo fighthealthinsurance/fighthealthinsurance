@@ -570,7 +570,7 @@ class FlexibleFaxMagic(object):
                 t.write(header)
                 t.flush()
                 command = ["pandoc", t.name, f"-o{t.name}.pdf"]
-                _try_pandoc_engines(command)
+                await _try_pandoc_engines(command)
                 header_path = f"{t.name}.pdf"
             with tempfile.NamedTemporaryFile(
                 suffix=".pdf", prefix="combined", mode="w+t", delete=False
