@@ -128,44 +128,58 @@ class AuditLoggingMiddleware(MiddlewareMixin):
 
         try:
             # Dispatch logging to background thread to avoid blocking request
-            executor.submit(self._log_api_access, request, response)
+            future = executor.submit(self._log_api_access, request, response)
+            # Add callback to log any unhandled exceptions in background task
+            future.add_done_callback(self._log_task_exception)
         except Exception as e:
             # Never let audit logging break the request
             logger.debug(f"Failed to submit audit logging task: {e}")
 
         return response
 
+    @staticmethod
+    def _log_task_exception(future) -> None:
+        """Log any exceptions that occurred in the background logging task."""
+        try:
+            future.result()  # This will raise if the task failed
+        except Exception as e:
+            logger.debug(f"Background audit logging task failed: {e}")
+
     def _log_api_access(
         self, request: HttpRequest, response: HttpResponse
     ) -> None:
         """Create the API access log entry."""
-        # Import here to avoid circular imports and allow lazy loading
-        from fhi_users.audit_service import audit_service
+        try:
+            # Import here to avoid circular imports and allow lazy loading
+            from fhi_users.audit_service import audit_service
 
-        # Calculate response time
-        start_time = getattr(request, "_audit_start_time", None)
-        response_time_ms = None
-        if start_time:
-            response_time_ms = int((time.time() - start_time) * 1000)
+            # Calculate response time
+            start_time = getattr(request, "_audit_start_time", None)
+            response_time_ms = None
+            if start_time:
+                response_time_ms = int((time.time() - start_time) * 1000)
 
-        # Extract resource info
-        resource_info = _extract_resource_info(request.path, response)
+            # Extract resource info
+            resource_info = _extract_resource_info(request.path, response)
 
-        # Extract search query if present
-        search_query = None
-        if request.method == "GET":
-            search_query = request.GET.get("search") or request.GET.get("q")
-        elif request.method == "POST" and hasattr(request, "data"):
-            search_query = getattr(request.data, "get", lambda x: None)("search")
+            # Extract search query if present
+            search_query = None
+            if request.method == "GET":
+                search_query = request.GET.get("search") or request.GET.get("q")
+            elif request.method == "POST" and hasattr(request, "data"):
+                search_query = getattr(request.data, "get", lambda x: None)("search")
 
-        # Create the log entry
-        audit_service.log_api_access(
-            request=request,
-            endpoint=request.path,
-            http_status=response.status_code,
-            response_time_ms=response_time_ms,
-            resource_type=resource_info.get("resource_type"),
-            resource_id=resource_info.get("resource_id"),
-            resource_count=resource_info.get("resource_count"),
-            search_query=search_query,
-        )
+            # Create the log entry
+            audit_service.log_api_access(
+                request=request,
+                endpoint=request.path,
+                http_status=response.status_code,
+                response_time_ms=response_time_ms,
+                resource_type=resource_info.get("resource_type"),
+                resource_id=resource_info.get("resource_id"),
+                resource_count=resource_info.get("resource_count"),
+                search_query=search_query,
+            )
+        except Exception as e:
+            # Catch any exceptions to prevent them from crashing the background task
+            logger.debug(f"Audit logging failed: {e}")
