@@ -90,6 +90,9 @@ Other Resources
                 <form action="{% url 'blog' %}" method="get" style="display:inline;">
                     <button type="submit" class="fhi-btn">Blog</button>
                 </form>
+                <form action="{% url 'blog' %}" method="get" style="display:inline;">
+                    <button type="submit" class="fhi-btn">Denial Language Library</button>
+                </form>
             </div>
         </div>
     </div>
@@ -140,6 +143,19 @@ Other Resources
             <ul class="mb-4">
                 <li><a href="https://www.webmd.com/health-insurance/how-and-when-to-appeal-insurance-claims" class="link">WebMD</a> - General appeal guidance</li>
                 <li>Fight Health Insurance (this site) - AI-powered appeal assistance</li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- Coping Resources Section with Link to Bingo -->
+    <div class="row">
+        <div class="col-12">
+            <h4 class="text-fhi-green mb-3">Coping Resources</h4>
+            <p class="mb-3">
+                Sometimes you need to vent about the frustrating reality of insurance denials. Here's a bit of humor to help you cope:
+            </p>
+            <ul class="mb-4">
+                <li><a href="{% url 'bingo' %}" class="link">Insurance Bullshit Bingo</a> - A humorous take on common denial reasons</li>
             </ul>
         </div>
     </div>

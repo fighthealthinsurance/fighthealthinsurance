@@ -953,3 +953,126 @@ section:not(.slider) .share-subcopy {
         justify-content: center;
     }
 }
+
+/* Insurance Bullshit Bingo Styles */
+.bingo-section {
+    background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+    padding: 4rem 0;
+    margin: 2rem 0;
+}
+
+.bingo-title {
+    text-align: center;
+    font-size: 2.5rem;
+    font-weight: bold;
+    color: #2c3e50;
+    margin-bottom: 0.5rem;
+}
+
+.bingo-description {
+    text-align: center;
+    font-size: 1.1rem;
+    color: #555;
+    margin-bottom: 2rem;
+}
+
+.bingo-board {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-width: 700px;
+    margin: 0 auto;
+    padding: 20px;
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+}
+
+.bingo-row {
+    display: flex;
+    gap: 8px;
+    justify-content: center;
+}
+
+.bingo-cell {
+    flex: 1;
+    aspect-ratio: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #fff;
+    border: 2px solid #a5c422;
+    border-radius: 8px;
+    padding: 0.5rem;
+    font-size: 0.85rem;
+    font-weight: 500;
+    text-align: center;
+    color: #333;
+    transition: all 0.3s ease;
+    cursor: pointer;
+    min-height: 80px;
+}
+
+.bingo-cell:hover {
+    background: #f0f8e8;
+    transform: scale(1.05);
+    box-shadow: 0 4px 12px rgba(165, 196, 34, 0.3);
+}
+
+.bingo-free-space {
+    background: #a5c422 !important;
+    color: white !important;
+    font-weight: bold;
+    font-size: 1rem;
+}
+
+.bingo-free-space:hover {
+    background: #8ba81c !important;
+    transform: scale(1.05);
+}
+
+.bingo-footnote {
+    text-align: center;
+    margin-top: 1.5rem;
+    font-size: 0.95rem;
+    color: #666;
+    font-style: italic;
+}
+
+/* Responsive design for smaller screens */
+@media (max-width: 768px) {
+    .bingo-title {
+        font-size: 2rem;
+    }
+    
+    .bingo-board {
+        max-width: 100%;
+        padding: 10px;
+    }
+    
+    .bingo-cell {
+        font-size: 0.7rem;
+        padding: 0.3rem;
+        min-height: 60px;
+    }
+    
+    .bingo-free-space {
+        font-size: 0.85rem;
+    }
+}
+
+@media (max-width: 480px) {
+    .bingo-title {
+        font-size: 1.5rem;
+    }
+    
+    .bingo-cell {
+        font-size: 0.6rem;
+        padding: 0.2rem;
+        min-height: 50px;
+    }
+    
+    .bingo-free-space {
+        font-size: 0.75rem;
+    }
+}

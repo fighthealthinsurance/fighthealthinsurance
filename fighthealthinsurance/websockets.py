@@ -39,11 +39,17 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
 
     async def receive(self, text_data):
         logger.debug("Waiting for message....")
-        data = json.loads(text_data)
+        try:
+            data = json.loads(text_data)
+        except json.JSONDecodeError as e:
+            logger.warning(f"Invalid JSON received in appeals websocket: {e}")
+            await self.send(json.dumps({"error": "Invalid JSON format"}))
+            await self.close()
+            return
         logger.debug("Starting generation of appeals...")
-        aitr: AsyncIterator[str] = (
-            common_view_logic.AppealsBackendHelper.generate_appeals(data)
-        )
+        aitr: AsyncIterator[
+            str
+        ] = common_view_logic.AppealsBackendHelper.generate_appeals(data)
         # We do a try/except here to log since the WS framework swallow exceptions sometimes
         try:
             await asyncio.sleep(1)
@@ -86,7 +92,18 @@ class StreamingEntityBackend(AsyncWebsocketConsumer):
         pass
 
     async def receive(self, text_data):
-        data = json.loads(text_data)
+        try:
+            data = json.loads(text_data)
+        except json.JSONDecodeError as e:
+            logger.warning(f"Invalid JSON received in entity extraction websocket: {e}")
+            await self.send(json.dumps({"error": "Invalid JSON format"}))
+            await self.close()
+            return
+        if "denial_id" not in data:
+            logger.warning("Missing denial_id in entity extraction request")
+            await self.send(json.dumps({"error": "Missing denial_id"}))
+            await self.close()
+            return
         aitr = common_view_logic.DenialCreatorHelper.extract_entity(data["denial_id"])
 
         try:
@@ -128,7 +145,13 @@ class PriorAuthConsumer(AsyncWebsocketConsumer):
         pass
 
     async def receive(self, text_data):
-        data = json.loads(text_data)
+        try:
+            data = json.loads(text_data)
+        except json.JSONDecodeError as e:
+            logger.warning(f"Invalid JSON received in prior auth websocket: {e}")
+            await self.send(json.dumps({"error": "Invalid JSON format"}))
+            await self.close()
+            return
         logger.debug("Starting generation of prior auth proposals...")
 
         # Validate the token and ID
@@ -353,7 +376,13 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
             )
 
     async def receive(self, text_data):
-        data = json.loads(text_data)
+        try:
+            data = json.loads(text_data)
+        except json.JSONDecodeError as e:
+            logger.warning(f"Invalid JSON received in ongoing chat websocket: {e}")
+            await self.send(json.dumps({"error": "Invalid JSON format"}))
+            await self.close()
+            return
         logger.debug(f"Received message for ongoing chat {data}")
 
         # Get the required data -- note the message should be sent as "content"

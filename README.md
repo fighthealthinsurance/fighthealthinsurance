@@ -10,7 +10,7 @@ The [ML model is generated using this repo](https://github.com/fighthealthinsura
 
 ### Prerequisites
 
-- Python 3.10, 3.11, or 3.12
+- Python 3.11, or 3.12
 - System dependencies: `tesseract-ocr`, `texlive`, `libcairo2-dev`
 
 On Ubuntu/Debian:

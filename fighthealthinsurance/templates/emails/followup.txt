@@ -10,7 +10,10 @@ It seems like we maybe didn't generate an appeal that worked for you and we'd lo
 
 If you can fill-out the follow up form at {{ followup_link }} that would be greatly appreciated (alternatively, you can also respond to this e-mail and I'll take a look at your response :))
 
-We'd love it if you continued to share us with others who might need help with their insurance, especially professionals.
+Thank you for being part of our community! If you found Fight Health Insurance helpful, there are many ways you can help us and others fighting unfair denials:
+- Share your experience with friends and family who might need help
+- Follow us on social media to help spread awareness
+- Learn more at: https://www.fighthealthinsurance.com/how-to-help
 
 Wishing you the best of luck with your fight with insurance,
 

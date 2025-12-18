@@ -106,9 +106,9 @@ class PriorAuthTextSubstituter:
             context["insurance_company"] = insurance_company
             context["insurance company"] = insurance_company
             context["health plan name"] = insurance_company
-            context["Esteemed Members of the Health Plan Review Board"] = (
-                insurance_company
-            )
+            context[
+                "Esteemed Members of the Health Plan Review Board"
+            ] = insurance_company
 
             # Insurance information
             insurance_information = f"Plan ID: {plan_id}, Member ID: {member_id}, Insurance Company: {insurance_company}"

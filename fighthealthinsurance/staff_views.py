@@ -103,7 +103,12 @@ class ActivateProUserView(generic.FormView):
 
     def form_valid(self, form):
         phonenumber = form.cleaned_data.get("phonenumber")
-        domain = UserDomain.objects.get(visible_phone_number=phonenumber)
+        try:
+            domain = UserDomain.objects.get(visible_phone_number=phonenumber)
+        except UserDomain.DoesNotExist:
+            return HttpResponse(
+                f"No domain found with phone number {phonenumber}", status=404
+            )
         domain.active = True
         domain.save()
         # Correctly update all professionals associated with the domain.
@@ -129,9 +134,9 @@ class EnableBetaForDomainView(generic.FormView):
         context = super().get_context_data(**kwargs)
         context["title"] = "Enable Beta Features"
         context["heading"] = "Enable Beta Features for Domain"
-        context["description"] = (
-            "Enter the phone number of the domain to enable beta features."
-        )
+        context[
+            "description"
+        ] = "Enter the phone number of the domain to enable beta features."
         context["button_text"] = "Enable Beta"
         return context
 

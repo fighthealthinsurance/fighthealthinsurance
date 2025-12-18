@@ -1,0 +1,183 @@
+{
+  "Not medically necessary": {
+    "what_it_means": "The insurer claims your doctor's treatment recommendation doesn't meet their criteria for coverage, even though your doctor believes it's necessary for your health.",
+    "why_insurers_use_it": "This is one of the most common denial reasons because it's vague and shifts the burden of proof to you. Insurers use it to avoid paying for expensive treatments.",
+    "how_to_counter": [
+      "Get a detailed letter from your doctor explaining exactly why this treatment is necessary for your specific condition",
+      "Request the insurer's specific medical policy or criteria they used to make the denial",
+      "Cite medical guidelines and research supporting the treatment",
+      "Document how other treatments have failed or are inappropriate",
+      "Explain how delaying treatment could worsen your condition"
+    ],
+    "success_rate": "High - many denials are overturned with proper documentation"
+  },
+  "Non-formulary exception denied": {
+    "what_it_means": "Your medication isn't on the insurer's approved drug list (formulary), and they rejected your request to cover it anyway.",
+    "why_insurers_use_it": "Insurers negotiate lower prices for drugs on their formulary. They deny exceptions to push you toward cheaper alternatives.",
+    "how_to_counter": [
+      "Document why formulary alternatives don't work for you (tried and failed, allergies, side effects)",
+      "Get your doctor to explain why this specific medication is medically necessary",
+      "Cite continuity of care protections if you were already taking this medication",
+      "Appeal using medical necessity and patient safety arguments",
+      "Consider filing a complaint with your state insurance department"
+    ],
+    "success_rate": "Moderate - depends on documentation of failed alternatives"
+  },
+  "Provider out-of-network": {
+    "what_it_means": "Your doctor or facility isn't in the insurer's network, so they won't pay (or will pay less) for services.",
+    "why_insurers_use_it": "Networks are how insurers control costs. They want you to use providers they've negotiated lower rates with.",
+    "how_to_counter": [
+      "Check if the service qualifies as emergency care (No Surprises Act protections apply)",
+      "Request a single-case agreement for in-network rates if no in-network specialist is available",
+      "Document lack of in-network providers in your area with your condition expertise",
+      "Appeal based on continuity of care if you're mid-treatment",
+      "File a network adequacy complaint with your state if appropriate specialists aren't available"
+    ],
+    "success_rate": "Moderate - stronger for emergencies and specialist care"
+  },
+  "Prior authorization now required": {
+    "what_it_means": "The insurer changed their rules and now requires approval before providing a service or medication you were already receiving.",
+    "why_insurers_use_it": "Insurers add prior authorization requirements to create administrative hurdles that reduce utilization and costs.",
+    "how_to_counter": [
+      "Request an expedited prior authorization if treatment is urgent",
+      "Cite continuity of care protections, especially if you're mid-treatment",
+      "Document how delays could harm your health",
+      "Check if your state has non-medical switching protections",
+      "Appeal the denial of the prior authorization with medical necessity documentation"
+    ],
+    "success_rate": "High - especially with continuity of care arguments"
+  },
+  "Experimental or investigational": {
+    "what_it_means": "The insurer claims the treatment isn't proven effective or is still being researched, even if it's FDA-approved or guideline-recommended.",
+    "why_insurers_use_it": "It sounds scientific but is often outdated. Insurers may not update their policies when new evidence emerges.",
+    "how_to_counter": [
+      "Show the treatment is FDA-approved for your condition",
+      "Cite medical society guidelines that recommend the treatment",
+      "Provide recent peer-reviewed studies demonstrating effectiveness",
+      "Get your doctor to explain why this is standard of care, not experimental",
+      "Request the insurer's specific policy and show it's outdated"
+    ],
+    "success_rate": "High - often based on outdated policies"
+  },
+  "Step therapy required": {
+    "what_it_means": "You must try (and fail) cheaper treatments before the insurer will cover what your doctor prescribed.",
+    "why_insurers_use_it": "Cost control - they want you to exhaust cheaper options first, even if your doctor thinks they won't work.",
+    "how_to_counter": [
+      "Document all previous treatments you've already tried and how they failed",
+      "Get your doctor to explain why those alternatives are medically inappropriate",
+      "Show that step therapy would cause harmful delays",
+      "Cite contraindications or drug interactions with required step therapies",
+      "Check if your state has step therapy exception laws"
+    ],
+    "success_rate": "High - if you've already tried alternatives or they're contraindicated"
+  },
+  "Insufficient documentation": {
+    "what_it_means": "The insurer claims they don't have enough medical records or information to approve the treatment.",
+    "why_insurers_use_it": "It's a way to delay or deny without saying 'no' outright. Sometimes documentation was submitted but 'lost.'",
+    "how_to_counter": [
+      "Request exactly what documentation they need in writing",
+      "Work with your doctor's office to submit comprehensive medical records",
+      "Send documentation via certified mail or with delivery confirmation",
+      "Include: diagnosis codes, treatment history, test results, doctor's notes, letter of medical necessity",
+      "Keep copies of everything you submit with dates and confirmation numbers"
+    ],
+    "success_rate": "Very High - most succeed once proper documentation is submitted"
+  },
+  "Off-label use not covered": {
+    "what_it_means": "Your doctor prescribed a medication for a condition it's not FDA-approved to treat (though this is common and legal in medicine).",
+    "why_insurers_use_it": "Many effective treatments are used off-label. Insurers use this to avoid paying for expensive medications.",
+    "how_to_counter": [
+      "Cite medical literature showing the off-label use is effective",
+      "Get your doctor to explain why on-label alternatives aren't appropriate",
+      "Reference major medical compendia (AHFS, DRUGDEX, NCCN) that support the use",
+      "Show this is standard of care in your medical community",
+      "Document that FDA-approved treatments for your condition have failed"
+    ],
+    "success_rate": "Moderate - depends on strength of medical evidence"
+  },
+  "Cosmetic exclusion": {
+    "what_it_means": "The insurer claims the procedure is for appearance only, not medical necessity.",
+    "why_insurers_use_it": "To deny expensive procedures like reconstructive surgery, gender-affirming care, or dermatology treatments.",
+    "how_to_counter": [
+      "Document functional impairments, not just appearance concerns",
+      "Show how the condition affects your daily life, work, or safety",
+      "Get mental health documentation if applicable (dysphoria, depression)",
+      "Cite medical guidelines showing the treatment is medically necessary",
+      "Distinguish between cosmetic and reconstructive/functional procedures"
+    ],
+    "success_rate": "Moderate - stronger with functional impairment documentation"
+  },
+  "Maintenance care only": {
+    "what_it_means": "The insurer claims you're just maintaining your current condition, not improving, so they won't cover ongoing therapy.",
+    "why_insurers_use_it": "To cut off physical therapy, occupational therapy, or chronic condition management.",
+    "how_to_counter": [
+      "Show objective measures of ongoing improvement (strength, range of motion, function)",
+      "Document that stopping therapy would lead to decline",
+      "Distinguish between maintenance and preventing deterioration",
+      "Get your therapist to explain why continued treatment is restorative",
+      "Cite Medicare and medical guidelines that support coverage"
+    ],
+    "success_rate": "Moderate - requires documenting functional goals and progress"
+  },
+  "Exceeds benefit limits": {
+    "what_it_means": "You've hit a cap on visits, days, or dollar amount for a service this year.",
+    "why_insurers_use_it": "Arbitrary limits that may not reflect medical necessity or state/federal requirements.",
+    "how_to_counter": [
+      "Check if the limit violates state or federal parity laws (especially mental health)",
+      "Request an exception based on medical necessity",
+      "Document why additional services are critical for your recovery",
+      "Compare to coverage of similar medical conditions",
+      "File a parity complaint if mental health/substance use limits are stricter than medical"
+    ],
+    "success_rate": "Complex - higher for parity violations"
+  },
+  "Not an emergency": {
+    "what_it_means": "The insurer claims your ER visit or urgent treatment wasn't truly an emergency, so they won't pay.",
+    "why_insurers_use_it": "To avoid paying high ER costs based on hindsight, not what you reasonably believed at the time.",
+    "how_to_counter": [
+      "Cite the 'prudent layperson' standard - would a reasonable person think this was an emergency?",
+      "Document your symptoms at the time (chest pain, severe bleeding, difficulty breathing, etc.)",
+      "Show you couldn't have known the final diagnosis without emergency evaluation",
+      "Reference emergency medicine guidelines supporting evaluation of your symptoms",
+      "Some states prohibit retrospective ER denials"
+    ],
+    "success_rate": "High - prudent layperson standard protects patients"
+  },
+  "Pre-existing condition exclusion": {
+    "what_it_means": "The insurer claims your condition existed before your coverage started, so they won't pay.",
+    "why_insurers_use_it": "Mostly illegal now under the ACA for major medical plans, but may appear in limited plans.",
+    "how_to_counter": [
+      "Confirm this is illegal for ACA-compliant plans and most employer plans",
+      "If a short-term or excepted benefit plan, review the specific exclusion language",
+      "Document that the condition was not diagnosed or treated before coverage",
+      "Show this is a new manifestation or complication, not the original condition",
+      "File a complaint with your state insurance department if ACA applies"
+    ],
+    "success_rate": "Depends on insurance type, 2026 may be complicated by people switching to non-ACA plans."
+  },
+  "Timely filing limit exceeded": {
+    "what_it_means": "The claim was submitted too late according to the insurer's deadline.",
+    "why_insurers_use_it": "A technicality to avoid paying claims, even if the delay wasn't your fault.",
+    "how_to_counter": [
+      "Check if your state has laws limiting how short timely filing periods can be",
+      "Document if the delay was due to the provider, insurer error, or coordination of benefits issues",
+      "Request an exception if you had good cause for the delay",
+      "Show you submitted claims as soon as you knew coverage was denied",
+      "File a complaint with your state if the insurer didn't provide adequate notice of the requirement",
+      "If an in-network provider failed to submit on time, it may be the providers responsibility instead of the patient; this can be complicated but may be a case where your insurance company can actually help.",
+    ],
+    "success_rate": "Lower - depends on reason for delay"
+  },
+  "Gender dysphoria not documented": {
+    "what_it_means": "The insurer claims there's insufficient evidence you have a gender dysphoria diagnosis requiring treatment.",
+    "why_insurers_use_it": "To deny gender-affirming care by imposing arbitrary documentation requirements.",
+    "how_to_counter": [
+      "Provide letters from mental health providers confirming gender dysphoria diagnosis",
+      "Reference WPATH Standards of Care that support the treatment",
+      "Document persistent gender dysphoria and impact on functioning",
+      "Show treatment plan is consistent with medical guidelines",
+      "Challenge any requirements that exceed WPATH/medical standards"
+    ],
+    "success_rate": "High - with proper clinical documentation. May change as laws evolve."
+  }
+}

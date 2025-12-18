@@ -112,6 +112,8 @@ class MailingListSubscriber(models.Model):
     unsubscribe_token = models.CharField(
         max_length=100, default=sekret_gen, unique=False
     )
+    referral_source = models.CharField(max_length=300, default="", blank=True)
+    referral_source_details = models.TextField(default="", blank=True)
 
     def __str__(self):
         return self.email
@@ -676,6 +678,9 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     microsite_slug = models.CharField(
         max_length=100, null=True, blank=True, db_index=True
     )
+    # Track where the user heard about the service
+    referral_source = models.CharField(max_length=300, null=True, blank=True)
+    referral_source_details = models.TextField(null=True, blank=True)
 
     @classmethod
     def filter_to_allowed_denials(cls, current_user: User):
@@ -1304,6 +1309,8 @@ class ChatLeads(ExportModelOperationsMixin("ChatLeads"), models.Model):  # type:
     microsite_slug = models.CharField(
         max_length=100, null=True, blank=True, db_index=True
     )
+    referral_source = models.CharField(max_length=300, null=True, blank=True)
+    referral_source_details = models.TextField(null=True, blank=True)
 
     class Meta:
         verbose_name = "Chat Lead"
