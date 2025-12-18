@@ -32,7 +32,7 @@ CACHES = {
 #### Favicon Optimization
 - **Before:** 3.0 MB PNG file misnamed as `.ico`
 - **After:** 984 bytes proper ICO file with 16x16 and 32x32 sizes
-- **Savings:** 99.97% reduction (3 MB → 1 KB)
+- **Savings:** 99.97% reduction (3 MB → 984 bytes)
 - **Files:** 
   - Created `favicon-optimized.ico`
   - Created `favicon-32.png`

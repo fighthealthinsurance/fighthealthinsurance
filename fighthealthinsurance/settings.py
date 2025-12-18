@@ -286,7 +286,7 @@ class Base(Configuration):
     CACHES = {
         "default": {
             "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
-            "LOCATION": "unique-snowflake",
+            "LOCATION": "fhi-cache",
             "OPTIONS": {
                 "MAX_ENTRIES": 1000,
             },
