@@ -186,8 +186,7 @@ class AppealAssemblyHelper:
                     except:
                         pass
                 if input_path.endswith(".html") or input_path.endswith(".htm"):
-                    html_command = base_convert_command
-                    html_command.extend(["-thtml"])
+                    html_command = base_convert_command + ["-thtml"]
                     try:
                         await _try_pandoc_engines(html_command)
                         return f"{input_path}.pdf"
