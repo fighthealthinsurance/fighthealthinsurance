@@ -11,7 +11,7 @@ This middleware:
 
 import time
 import re
-from typing import Callable, Optional
+from typing import Callable, Optional, Union
 from concurrent.futures import Future
 
 from django.conf import settings
@@ -65,7 +65,7 @@ def _should_log_request(path: str) -> bool:
     return True
 
 
-def _extract_resource_info(path: str, response: HttpResponse) -> dict[str, Optional[str | int]]:
+def _extract_resource_info(path: str, response: HttpResponse) -> dict[str, Optional[Union[str, int]]]:
     """
     Extract resource metadata (type, identifier, and count) from a request path and HTTP response.
 
@@ -79,7 +79,7 @@ def _extract_resource_info(path: str, response: HttpResponse) -> dict[str, Optio
             - resource_id (str|None): The resource identifier as a string (numeric or UUID) if present in the path, otherwise `None`.
             - resource_count (int|None): The number of items for list endpoints derived from `response.data["count"]` or the length of `response.data["results"]`, or `None` if unavailable.
     """
-    info: dict[str, Optional[str | int]] = {
+    info: dict[str, Optional[Union[str, int]]] = {
         "resource_type": None,
         "resource_id": None,
         "resource_count": None,

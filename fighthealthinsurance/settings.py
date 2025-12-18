@@ -92,8 +92,6 @@ class Base(Configuration):
     ALLOWED_HOSTS: list[str] = ["*"]
     USE_X_FORWARDED_HOST = True
 
-    SENTRY_ENDPOINT = os.getenv("SENTRY_ENDPOINT")
-    
     # Audit logging feature flag - disabled by default for privacy
     # Enable in specific environments (like Staging) to test before full rollout
     ENABLE_AUDIT_LOGGING = os.getenv("ENABLE_AUDIT_LOGGING", "false").lower() in ("true", "1", "yes")
