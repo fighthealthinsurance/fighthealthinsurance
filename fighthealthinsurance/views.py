@@ -5,6 +5,7 @@ import random
 import re
 import typing
 from typing import TypedDict
+from urllib.parse import urlencode
 
 from django import forms
 from django.conf import settings
@@ -1638,6 +1639,23 @@ def chat_interface_view(request):
     microsite_slug = request.GET.get("microsite_slug") or request.POST.get(
         "microsite_slug", ""
     )
+    
+    # Check for denial text from POST (from chat consent form) or session (from explain denial page)
+    # Check POST first to avoid popping session unnecessarily
+    denial_text = ""
+    if request.method == "POST":
+        denial_text = request.POST.get("denial_text", "")
+    if not denial_text:
+        denial_text = request.session.pop("denial_text_for_explanation", "")
+    
+    initial_message = ""
+    if denial_text:
+        # Format the initial message for the chat
+        initial_message = (
+            "I received this denial letter from my insurance and need help understanding it:\n\n"
+            f"{denial_text}\n\n"
+            "Can you explain what this means in plain English and help me understand my options?"
+        )
 
     context = {
         "title": "Chat with FightHealthInsurance",
@@ -1645,6 +1663,7 @@ def chat_interface_view(request):
         "default_procedure": default_procedure,
         "default_condition": default_condition,
         "microsite_slug": microsite_slug,
+        "initial_message": initial_message,
     }
     logger.debug(f"Rendering chat interface with context: {context}")
     return render(request, "chat_interface.html", context)
@@ -1697,6 +1716,10 @@ class ChatUserConsentView(FormView):
         context["default_condition"] = self.request.GET.get("default_condition", "")
         context["microsite_slug"] = self.request.GET.get("microsite_slug", "")
         context["microsite_title"] = self.request.GET.get("microsite_title", "")
+        # Check if coming from explain denial
+        context["explain_denial"] = self.request.GET.get("explain_denial", "") == "true"
+        # Get denial text from session if available (from explain denial page)
+        context["denial_text"] = self.request.session.get("denial_text_for_explanation", "")
         return context
 
     def form_valid(self, form):
@@ -1722,6 +1745,23 @@ class ChatUserConsentView(FormView):
                 referral_source_details=referral_source_details,
             )
 
+        # Check if there's denial text to pass through
+        denial_text = self.request.POST.get("denial_text", "")
+        
+        # If we have denial text or other params, we need to POST them to chat
+        # Otherwise just redirect normally
+        if denial_text or self.request.POST.get("default_procedure") or self.request.POST.get("default_condition"):
+            # Render an auto-submit form to POST data to chat
+            context = {
+                "denial_text": denial_text,
+                "default_procedure": self.request.POST.get("default_procedure", ""),
+                "default_condition": self.request.POST.get("default_condition", ""),
+                "microsite_slug": self.request.POST.get("microsite_slug", ""),
+                "microsite_title": self.request.POST.get("microsite_title", ""),
+                "chat_url": reverse("chat"),
+            }
+            return render(self.request, "chat_redirect.html", context)
+        
         # No need to save form data to database - it will be saved in browser localStorage via JavaScript
         return super().form_valid(form)
 
@@ -1904,6 +1944,64 @@ class MicrositeView(TemplateView):
             context["title"] = microsite.title
 
         return context
+
+
+class ExplainDenialView(FormView):
+    """
+    View for the Explain my Denial page - collects denial text with TOS consent and redirects to chat.
+    This provides a simplified entry point for users to understand their denials through AI chat.
+    Includes TOS agreement since we're posting data server-side.
+    """
+
+    template_name = "explain_denial.html"
+    form_class = UserConsentForm
+    
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["title"] = "Explain My Denial"
+        # Preserve denial text if there was an error
+        context["denial_text"] = self.request.POST.get("denial_text", "")
+        return context
+
+    def form_valid(self, form):
+        """Process the form and redirect to chat with denial text."""
+        denial_text = self.request.POST.get("denial_text", "").strip()
+        
+        if not denial_text:
+            # Add error to form and re-render
+            form.add_error(None, "Please enter your denial letter text.")
+            return self.form_invalid(form)
+        
+        # Mark consent as completed in the session
+        self.request.session["consent_completed"] = True
+        self.request.session["email"] = form.cleaned_data.get("email")
+        self.request.session.save()
+        
+        # Handle mailing list subscription
+        if form.cleaned_data.get("subscribe"):
+            name = f"{form.cleaned_data.get('first_name')} {form.cleaned_data.get('last_name')}"
+            referral_source = form.cleaned_data.get("referral_source", "")
+            referral_source_details = form.cleaned_data.get("referral_source_details", "")
+            
+            try:
+                models.MailingListSubscriber.objects.create(
+                    email=form.cleaned_data.get("email"),
+                    phone=form.cleaned_data.get("phone"),
+                    name=name,
+                    comments="From explain denial page",
+                    referral_source=referral_source,
+                    referral_source_details=referral_source_details,
+                )
+            except Exception as e:
+                # Log the error but don't fail the form submission
+                logger.warning(f"Failed to create mailing list subscriber: {e}")
+        
+        # Render auto-submit form to POST to chat
+        context = {
+            "denial_text": denial_text,
+            "chat_url": reverse("chat"),
+        }
+        return render(self.request, "chat_redirect.html", context)
 
 
 class DenialLanguageLibraryView(TemplateView):
