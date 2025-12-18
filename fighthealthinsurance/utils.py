@@ -400,7 +400,7 @@ async def best_within_timelimit(
         return best_result_option
     # Ok somehow things are still _bad_
     raise Exception(
-        "No good answers found and we waitied way past the expected time {timeout}"
+        f"No good answers found and we waitied way past the expected time {timeout}"
     )
 
 
