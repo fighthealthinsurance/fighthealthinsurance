@@ -584,11 +584,17 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                 # Regular anonymous chat
                 pass
 
+            # For patient chats (not trial professional), store hashed email for data deletion
+            hashed_email = None
+            if not is_trial_professional and email:
+                hashed_email = Denial.get_hashed_email(email)
+
             return await OngoingChat.objects.acreate(
                 session_key=session_key,
                 chat_history=[],
                 summary_for_next_call=[],
                 is_patient=not is_trial_professional,  # Not a patient if it's a trial professional
+                hashed_email=hashed_email,
                 microsite_slug=microsite_slug,
             )
         elif is_patient and user and user.is_authenticated:
