@@ -141,22 +141,23 @@ class AuditLoggingMiddleware(MiddlewareMixin):
             search_query = None
             if request.method == "GET":
                 search_query = request.GET.get("search") or request.GET.get("q")
-            elif request.method == "POST" and hasattr(request, "data"):
-                search_query = getattr(request.data, "get", lambda x: None)("search")
+            elif request.method == "POST":
+                # Note: request.data is for DRF requests, request.POST for standard Django
+                search_query = request.POST.get("search") or request.POST.get("q")
             
             # Extract all needed data from request/response before dispatching
             endpoint = request.path
             http_status = response.status_code
-            http_method = request.method
             
             # Dispatch logging to background thread to avoid blocking request
-            # Pass extracted data instead of request/response objects for thread safety
+            # Note: We pass the request object for user/session/IP/UA context.
+            # This is safe because we only read from it and the request is no longer
+            # being modified after process_response.
             future = executor.submit(
                 self._log_api_access, 
-                request,  # Still need request for user/session context
+                request,
                 endpoint,
                 http_status,
-                http_method,
                 response_time_ms,
                 resource_info,
                 search_query,
@@ -181,7 +182,6 @@ class AuditLoggingMiddleware(MiddlewareMixin):
         request: HttpRequest,
         endpoint: str,
         http_status: int,
-        http_method: str,
         response_time_ms: Optional[int],
         resource_info: dict,
         search_query: Optional[str],
