@@ -36,11 +36,10 @@ else
   fi
 fi
 
-./manage.py migrate
-./manage.py makemigrations
-./manage.py migrate
-./manage.py validate_templates
-./manage.py collectstatic --no-input
+./manage.py makemigrations --check || (./manage.py makemigrations && ./manage.py migrate)
+./manage.py validate_templates &
+./manage.py collectstatic --no-input &
+wait
 
 pushd ./static/js
 npm i
