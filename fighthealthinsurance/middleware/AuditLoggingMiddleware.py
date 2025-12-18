@@ -128,8 +128,14 @@ class AuditLoggingMiddleware(MiddlewareMixin):
             return response
 
         try:
+            # Calculate response time before dispatching to background thread
+            start_time = getattr(request, "_audit_start_time", None)
+            response_time_ms = None
+            if start_time:
+                response_time_ms = int((time.time() - start_time) * 1000)
+            
             # Dispatch logging to background thread to avoid blocking request
-            future = executor.submit(self._log_api_access, request, response)
+            future = executor.submit(self._log_api_access, request, response, response_time_ms)
             # Add callback to log any unhandled exceptions in background task
             future.add_done_callback(self._log_task_exception)
         except Exception as e:
@@ -147,18 +153,12 @@ class AuditLoggingMiddleware(MiddlewareMixin):
             logger.debug(f"Background audit logging task failed: {e}")
 
     def _log_api_access(
-        self, request: HttpRequest, response: HttpResponse
+        self, request: HttpRequest, response: HttpResponse, response_time_ms: Optional[int]
     ) -> None:
         """Create the API access log entry."""
         try:
             # Import here to avoid circular imports and allow lazy loading
             from fhi_users.audit_service import audit_service
-
-            # Calculate response time
-            start_time = getattr(request, "_audit_start_time", None)
-            response_time_ms = None
-            if start_time:
-                response_time_ms = int((time.time() - start_time) * 1000)
 
             # Extract resource info
             resource_info = _extract_resource_info(request.path, response)
