@@ -241,11 +241,11 @@ class BingoView(generic.TemplateView):
     def get_context_data(self, **kwargs):
         """Add bingo board data to the context."""
         context = super().get_context_data(**kwargs)
-        
+
         # Generate a 5x5 bingo board with random phrases
         # Use 24 phrases (excluding center which is "FREE SPACE")
         selected_phrases = random.sample(BINGO_PHRASES, min(24, len(BINGO_PHRASES)))
-        
+
         # Create 5x5 grid with FREE SPACE in the center
         bingo_board = []
         phrase_index = 0
@@ -259,8 +259,8 @@ class BingoView(generic.TemplateView):
                     bingo_row.append(selected_phrases[phrase_index])
                     phrase_index += 1
             bingo_board.append(bingo_row)
-        
-        context['bingo_board'] = bingo_board
+
+        context["bingo_board"] = bingo_board
         return context
 
 
@@ -1639,7 +1639,7 @@ def chat_interface_view(request):
     microsite_slug = request.GET.get("microsite_slug") or request.POST.get(
         "microsite_slug", ""
     )
-    
+
     # Check for denial text from POST (from chat consent form) or session (from explain denial page)
     # Check POST first to avoid popping session unnecessarily
     denial_text = ""
@@ -1647,7 +1647,7 @@ def chat_interface_view(request):
         denial_text = request.POST.get("denial_text", "")
     if not denial_text:
         denial_text = request.session.pop("denial_text_for_explanation", "")
-    
+
     initial_message = ""
     if denial_text:
         # Format the initial message for the chat
@@ -1719,7 +1719,9 @@ class ChatUserConsentView(FormView):
         # Check if coming from explain denial
         context["explain_denial"] = self.request.GET.get("explain_denial", "") == "true"
         # Get denial text from session if available (from explain denial page)
-        context["denial_text"] = self.request.session.get("denial_text_for_explanation", "")
+        context["denial_text"] = self.request.session.get(
+            "denial_text_for_explanation", ""
+        )
         return context
 
     def form_valid(self, form):
@@ -1747,10 +1749,14 @@ class ChatUserConsentView(FormView):
 
         # Check if there's denial text to pass through
         denial_text = self.request.POST.get("denial_text", "")
-        
+
         # If we have denial text or other params, we need to POST them to chat
         # Otherwise just redirect normally
-        if denial_text or self.request.POST.get("default_procedure") or self.request.POST.get("default_condition"):
+        if (
+            denial_text
+            or self.request.POST.get("default_procedure")
+            or self.request.POST.get("default_condition")
+        ):
             # Render an auto-submit form to POST data to chat
             context = {
                 "denial_text": denial_text,
@@ -1761,7 +1767,7 @@ class ChatUserConsentView(FormView):
                 "chat_url": reverse("chat"),
             }
             return render(self.request, "chat_redirect.html", context)
-        
+
         # No need to save form data to database - it will be saved in browser localStorage via JavaScript
         return super().form_valid(form)
 
@@ -1955,7 +1961,7 @@ class ExplainDenialView(FormView):
 
     template_name = "explain_denial.html"
     form_class = UserConsentForm
-    
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context["title"] = "Explain My Denial"
@@ -1966,23 +1972,25 @@ class ExplainDenialView(FormView):
     def form_valid(self, form):
         """Process the form and redirect to chat with denial text."""
         denial_text = self.request.POST.get("denial_text", "").strip()
-        
+
         if not denial_text:
             # Add error to form and re-render
             form.add_error(None, "Please enter your denial letter text.")
             return self.form_invalid(form)
-        
+
         # Mark consent as completed in the session
         self.request.session["consent_completed"] = True
         self.request.session["email"] = form.cleaned_data.get("email")
         self.request.session.save()
-        
+
         # Handle mailing list subscription
         if form.cleaned_data.get("subscribe"):
             name = f"{form.cleaned_data.get('first_name')} {form.cleaned_data.get('last_name')}"
             referral_source = form.cleaned_data.get("referral_source", "")
-            referral_source_details = form.cleaned_data.get("referral_source_details", "")
-            
+            referral_source_details = form.cleaned_data.get(
+                "referral_source_details", ""
+            )
+
             try:
                 models.MailingListSubscriber.objects.create(
                     email=form.cleaned_data.get("email"),
@@ -1995,7 +2003,7 @@ class ExplainDenialView(FormView):
             except Exception as e:
                 # Log the error but don't fail the form submission
                 logger.warning(f"Failed to create mailing list subscriber: {e}")
-        
+
         # Render auto-submit form to POST to chat
         context = {
             "denial_text": denial_text,
@@ -2011,33 +2019,33 @@ class DenialLanguageLibraryView(TemplateView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        
+
         # Load denial language data
         import json
         from django.contrib.staticfiles.storage import staticfiles_storage
-        
+
         try:
             with staticfiles_storage.open("denial_language.json", "r") as f:
                 contents = f.read()
                 if not isinstance(contents, str):
                     contents = contents.decode("utf-8")
                 denial_data = json.loads(contents)
-            
+
             # Sort by related_appeals count (most common first)
             sorted_denials = sorted(
                 denial_data.items(),
-                key=lambda x: x[1].get('related_appeals', 0),
-                reverse=True
+                key=lambda x: x[1].get("related_appeals", 0),
+                reverse=True,
             )
-            
+
             context["denial_phrases"] = sorted_denials
             context["total_phrases"] = len(denial_data)
             context["title"] = "Denial Language Library - What Your Denial Really Means"
-            
+
         except Exception as e:
             logger.error(f"Error loading denial language data: {e}")
             context["denial_phrases"] = []
             context["total_phrases"] = 0
             context["title"] = "Denial Language Library"
-        
+
         return context

@@ -105,7 +105,9 @@ class FaxActor:
         if not isinstance(uuid_val, str):
             uuid_val = str(uuid_val)
         try:
-            fax = FaxesToSend.objects.filter(uuid=uuid_val, hashed_email=hashed_email).get()
+            fax = FaxesToSend.objects.filter(
+                uuid=uuid_val, hashed_email=hashed_email
+            ).get()
         except FaxesToSend.DoesNotExist:
             print(f"Fax not found for uuid={uuid_val}, hashed_email={hashed_email}")
             return False
