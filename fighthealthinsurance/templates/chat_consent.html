@@ -6,65 +6,11 @@ Terms of Service & Setup - FightHealthInsurance Chat Assistant (Alpha)
 {% load static %}
 
 {% block scriptmagic %}
+<script src="{% static 'js/dist/user_info_storage.js' %}"></script>
 <script>
-  console.log("Chat consent loaded...");
-  // Function to save user information to localStorage
-  function saveUserInfoToLocalStorage() {
-    console.log('Saving user info to localStorage');
-    const firstName = document.getElementById('store_fname').value;
-    const lastName = document.getElementById('store_lname').value;
-    const email = document.getElementById('email').value;
-    const address = document.getElementById('store_street').value;
-    const city = document.getElementById('store_city').value;
-    const state = document.getElementById('store_state').value;
-    const zipCode = document.getElementById('store_zip').value;
-
-    const userInfo = {
-      firstName: firstName,
-      lastName: lastName,
-      email: email,
-      address: address,
-      city: city,
-      state: state,
-      zipCode: zipCode,
-      acceptedTerms: true
-    };
-
-    localStorage.setItem('fhi_user_info', JSON.stringify(userInfo));
-    return true;
-  }
-
-  // Wait for the DOM to be fully loaded before attaching event listeners
   document.addEventListener('DOMContentLoaded', function() {
-    console.log('Document loaded and ready.');
-    // Link form submission to localStorage saving
-    const form = document.getElementById('user_consent_form');
-    if (!form) {
-      console.error('Form not found?');
-    } else {
-      form.addEventListener('submit', function(e) {
-        saveUserInfoToLocalStorage();
-        // Continue with form submission
-      });
-    }
-
-    // Pre-populate form if data exists in localStorage
-    const storedInfo = localStorage.getItem('fhi_user_info');
-    if (storedInfo) {
-      try {
-        const userInfo = JSON.parse(storedInfo);
-
-        // Fill in the form fields
-        if (userInfo.firstName) document.getElementById('store_fname').value = userInfo.firstName;
-        if (userInfo.lastName) document.getElementById('store_lname').value = userInfo.lastName;
-        if (userInfo.email) document.getElementById('email').value = userInfo.email;
-        if (userInfo.address) document.getElementById('store_street').value = userInfo.address;
-        if (userInfo.city) document.getElementById('store_city').value = userInfo.city;
-        if (userInfo.state) document.getElementById('store_state').value = userInfo.state;
-        if (userInfo.zipCode) document.getElementById('store_zip').value = userInfo.zipCode;
-      } catch (e) {
-        console.error('Error parsing stored user info:', e);
-      }
+    if (window.userInfoStorage) {
+      window.userInfoStorage.setupFormPersistence('user_consent_form');
     }
   });
 </script>
@@ -110,88 +56,7 @@ Terms of Service & Setup - FightHealthInsurance Chat Assistant (Alpha)
               <textarea name="denial_text" style="display:none;">{{ denial_text }}</textarea>
               {% endif %}
 
-              <div class="mb-4">
-                <h4>Your Information</h4>
-                <p class="text-muted small">This information is saved in your browser to protect your privacy. It's used to replace personal details before sending messages to our AI service.</p>
-
-                <div class="row">
-                  <div class="col-md-6 mb-3">
-                    <label for="store_fname" class="form-label">First Name*</label>
-                    {{ form.first_name }}
-                  </div>
-                  <div class="col-md-6 mb-3">
-                    <label for="store_lname" class="form-label">Last Name*</label>
-                    {{ form.last_name }}
-                  </div>
-                </div>
-
-                <div class="mb-3">
-                  <label for="email" class="form-label">Email*</label>
-                  {{ form.email }}
-                </div>
-
-                <div class="mb-3">
-                  <label for="phone" class="form-label">Phone</label>
-                  {{ form.phone }}
-                </div>
-
-                <div class="mb-3">
-                  <label for="store_street" class="form-label">Street Address</label>
-                  {{ form.address }}
-                </div>
-
-                <div class="row">
-                  <div class="col-md-4 mb-3">
-                    <label for="store_city" class="form-label">City</label>
-                    {{ form.city }}
-                  </div>
-                  <div class="col-md-4 mb-3">
-                    <label for="store_state" class="form-label">State</label>
-                    {{ form.state }}
-                  </div>
-                  <div class="col-md-4 mb-3">
-                    <label for="store_zip" class="form-label">ZIP Code</label>
-                    {{ form.zip_code }}
-                  </div>
-                </div>
-              </div>
-
-              <div class="mb-4">
-                <h4>Terms & Agreements</h4>
-
-                <div class="form-check mb-3">
-                  {{ form.tos_agreement }}
-                  <label for="tos" class="form-check-label">
-                    I agree to the <a href="{% url 'tos' %}" target="_blank">Terms of Service</a> and will only use this website to generate my own health insurance appeals. I will not use this website to treat and diagnose any disease or condition or assist in either of those.
-                  </label>
-                </div>
-
-                <div class="form-check mb-3">
-                  {{ form.privacy_policy }}
-                  <label for="privacy" class="form-check-label">
-                    I have read and understand the <a href="{% url 'privacy_policy' %}" target="_blank">Privacy Policy</a>.
-                  </label>
-                </div>
-
-                <div class="form-check mb-3">
-                  {{ form.subscribe }}
-                  <label for="subscribe" class="form-check-label">
-                    I wish to subscribe for updates and news from Fight Health Insurance and Fight Paperwork (our pro-version).
-                    Choosing to subscribe will not affect your experience, but we do appreciate it!
-                  </label>
-                </div>
-
-                <div class="mb-3">
-                  <label for="referral_source" class="form-label">How did you hear about us? (Optional)</label>
-                  {{ form.referral_source }}
-                </div>
-
-                <div class="mb-3">
-                  <label for="referral_source_details" class="form-label">Details (Optional)</label>
-                  {{ form.referral_source_details }}
-                  <small class="form-text text-muted">Please provide specific details about your referral source if applicable</small>
-                </div>
-              </div>
+              {% include 'partials/user_consent_form_fields.html' %}
 
               <div class="d-grid gap-2">
                 <button type="submit" class="btn btn-primary">Continue to Chat</button>

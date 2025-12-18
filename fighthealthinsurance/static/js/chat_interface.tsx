@@ -21,31 +21,14 @@ import {
 
 import { IconPaperclip, IconSend, IconUser, IconRefresh } from "./icons";
 import { recognize } from "./scrub_ocr";
-
-const THEME = {
-  colors: {
-    background: '#f4f6fb',
-    buttonBackground: '#e6f4c2',
-    buttonText: '#5a6b1b',
-  },
-  spacing: {
-    headerMargin: 16,
-  },
-  borderRadius: {
-    small: 3,
-    medium: 'xl', // Changed from 30 to 'xl' for very rounded edges
-    large: 24,
-    extraLarge: 'xl',
-    buttonDefault: '7px', // Added for default button border radius
-  },
-  buttonSharedStyles: { // Added for common button styles
-    background: '#a5c422', // Corresponds to colors.buttonBackground
-    color: "#ffffff",
-    border: 'none',
-    boxShadow: 'none',
-    transition: 'background 0.2s',
-  },
-} as const;
+import { THEME } from "./theme";
+import {
+  getUserInfo,
+  saveUserInfo,
+  scrubPersonalInfo,
+  restorePersonalInfo,
+  type UserInfo,
+} from "./user_info_storage";
 
 // PWYW Component for the chat interface
 const PWYWBanner: React.FC<{ onDismiss: () => void }> = ({ onDismiss }) => {
@@ -120,17 +103,6 @@ interface ChatState {
   messageCount: number;
   statusMessage: string | null;
   requestStartTime: number | null;
-}
-
-interface UserInfo {
-  firstName: string;
-  lastName: string;
-  email: string;
-  address: string;
-  city: string;
-  state: string;
-  zipCode: string;
-  acceptedTerms: boolean;
 }
 
 // Typing animation component for loading state with elapsed time
@@ -208,149 +180,6 @@ const getSessionKey = (): string => {
     Math.random().toString(36).substring(2, 15);
   localStorage.setItem("fhi_chat_session_key", newKey);
   return newKey;
-};
-
-// Save user info to local storage
-const saveUserInfo = (userInfo: UserInfo): void => {
-  localStorage.setItem("fhi_user_info", JSON.stringify(userInfo));
-};
-
-// Get user info from local storage
-const getUserInfo = (): UserInfo | null => {
-  const storedInfo = localStorage.getItem("fhi_user_info");
-  if (storedInfo) {
-    try {
-      return JSON.parse(storedInfo) as UserInfo;
-    } catch (e) {
-      console.error("Error parsing stored user info:", e);
-      return null;
-    }
-  }
-  return null;
-};
-
-// Helper function to escape special regex characters in a string
-const escapeRegExp = (string: string): string => {
-  // Escapes special characters in a string to safely use it inside a RegExp
-  // $& inserts the matched character, and \\ escapes it
-  return string.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-};
-
-// Replace personal info in a message with placeholders
-const scrubPersonalInfo = (message: string, userInfo: UserInfo): string => {
-  if (!userInfo) return message;
-
-  let scrubbedMessage = message;
-
-  // Replace name - use word boundaries to avoid partial matches
-  if (userInfo.firstName) {
-    scrubbedMessage = scrubbedMessage.replace(
-      new RegExp(`\\b${escapeRegExp(userInfo.firstName)}\\b`, "gi"),
-      "[FIRST_NAME]",
-    );
-  }
-
-  if (userInfo.lastName) {
-    scrubbedMessage = scrubbedMessage.replace(
-      new RegExp(`\\b${escapeRegExp(userInfo.lastName)}\\b`, "gi"),
-      "[LAST_NAME]",
-    );
-  }
-
-  // Replace address
-  if (userInfo.address) {
-    scrubbedMessage = scrubbedMessage.replace(
-      new RegExp(escapeRegExp(userInfo.address), "gi"),
-      "[ADDRESS]",
-    );
-  }
-
-  // Replace city
-  if (userInfo.city) {
-    scrubbedMessage = scrubbedMessage.replace(
-      new RegExp(`\\b${escapeRegExp(userInfo.city)}\\b`, "gi"),
-      "[CITY]",
-    );
-  }
-
-  // Replace state
-  if (userInfo.state) {
-    scrubbedMessage = scrubbedMessage.replace(
-      new RegExp(`\\b${escapeRegExp(userInfo.state)}\\b`, "gi"),
-      "[STATE]",
-    );
-  }
-
-  // Replace zip code
-  if (userInfo.zipCode) {
-    scrubbedMessage = scrubbedMessage.replace(
-      new RegExp(`\\b${escapeRegExp(userInfo.zipCode)}\\b`, "gi"),
-      "[ZIP_CODE]",
-    );
-  }
-
-  // Replace email
-  if (userInfo.email) {
-    // Email regex to avoid partial matches
-    scrubbedMessage = scrubbedMessage.replace(
-      new RegExp(escapeRegExp(userInfo.email), "gi"),
-      "[EMAIL]",
-    );
-  }
-
-  return scrubbedMessage;
-};
-
-// Replace placeholders in a message with actual personal info
-const restorePersonalInfo = (message: string, userInfo: UserInfo): string => {
-  if (!userInfo) return message;
-
-  let restoredMessage = message;
-
-  // Restore name
-  if (userInfo.firstName) {
-    restoredMessage = restoredMessage.replace(
-      /\[FIRST_NAME\]/g,
-      userInfo.firstName,
-    );
-  }
-
-  if (userInfo.lastName) {
-    restoredMessage = restoredMessage.replace(
-      /\[LAST_NAME\]/g,
-      userInfo.lastName,
-    );
-  }
-
-  // Restore address
-  if (userInfo.address) {
-    restoredMessage = restoredMessage.replace(/\[ADDRESS\]/g, userInfo.address);
-  }
-
-  // Restore city
-  if (userInfo.city) {
-    restoredMessage = restoredMessage.replace(/\[CITY\]/g, userInfo.city);
-  }
-
-  // Restore state
-  if (userInfo.state) {
-    restoredMessage = restoredMessage.replace(/\[STATE\]/g, userInfo.state);
-  }
-
-  // Restore zip code
-  if (userInfo.zipCode) {
-    restoredMessage = restoredMessage.replace(
-      /\[ZIP_CODE\]/g,
-      userInfo.zipCode,
-    );
-  }
-
-  // Restore email
-  if (userInfo.email) {
-    restoredMessage = restoredMessage.replace(/\[EMAIL\]/g, userInfo.email);
-  }
-
-  return restoredMessage;
 };
 
 interface ChatInterfaceProps {
@@ -501,8 +330,23 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
                 requestStartTime: Date.now(),
               }));
 
-              // Send the message to the backend
-              sendMessage(initialMessage);
+              // Get user info for scrubbing
+              const userInfo = getUserInfo();
+              const scrubbedContent = userInfo
+                ? scrubPersonalInfo(initialMessage, userInfo)
+                : initialMessage;
+
+              // Send to server
+              ws.send(
+                JSON.stringify({
+                  chat_id: null,
+                  email: userInfo?.email,
+                  content: scrubbedContent,
+                  is_patient: true,
+                  session_key: getSessionKey(),
+                  microsite_slug: micrositeSlug || undefined,
+                }),
+              );
             }, 500);
           } else if (defaultProcedure && !hasSentInitialMessage.current) {
             hasSentInitialMessage.current = true;
