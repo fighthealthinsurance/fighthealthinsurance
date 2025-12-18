@@ -6,7 +6,7 @@ from fighthealthinsurance.models import (
 from asgiref.sync import sync_to_async, async_to_sync
 from fighthealthinsurance.utils import pubmed_fetcher
 from fighthealthinsurance.microsites import get_microsite
-from .utils import markdown_escape
+from .utils import markdown_escape, _try_pandoc_engines
 from concurrent.futures import Future
 from metapub import FindIt
 
