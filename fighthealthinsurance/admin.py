@@ -175,7 +175,7 @@ class DenialAdmin(admin.ModelAdmin):
         "insurance_company",
         "referral_source",
         "referral_source_details",
-     )
+    )
     list_filter = (
         ("raw_email", admin.EmptyFieldListFilter),
         "plan_source__name",
@@ -207,6 +207,7 @@ class InterestedProfessionalAdmin(admin.ModelAdmin):
 @admin.register(MailingListSubscriber)
 class MailingListSubscriberAdmin(admin.ModelAdmin):
     """Admin configuration for MailingListSubscriber model."""
+
     list_display = ("id", "email", "name", "signup_date", "referral_source")
     search_fields = ("email", "name", "referral_source", "referral_source_details")
     list_filter = ("signup_date", "referral_source")

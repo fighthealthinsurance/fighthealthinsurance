@@ -1916,6 +1916,7 @@ class MicrositeView(TemplateView):
 
         return context
 
+
 class DenialLanguageLibraryView(TemplateView):
     """View for the public denial language library."""
 
@@ -1938,8 +1939,8 @@ class DenialLanguageLibraryView(TemplateView):
             # Sort by related_appeals count (most common first)
             sorted_denials = sorted(
                 denial_data.items(),
-                key=lambda x: x[1].get('related_appeals', 0),
-                reverse=True
+                key=lambda x: x[1].get("related_appeals", 0),
+                reverse=True,
             )
 
             context["denial_phrases"] = sorted_denials
