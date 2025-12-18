@@ -208,6 +208,11 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         name="pbs-newshour",
     ),
     path(
+        "bingo",
+        cache_control(public=True)(cache_page(60 * 60 * 2)(views.BingoView.as_view())),
+        name="bingo",
+    ),
+    path(
         "other-resources",
         sensitive_post_parameters("email")(views.OtherResourcesView.as_view()),
         name="other-resources",
@@ -235,6 +240,13 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
             cache_page(60 * 60 * 2)(views.MedicaidFAQView.as_view())
         ),
         name="medicaid-faq",
+    ),
+    path(
+        "denial-language/",
+        cache_control(public=True)(
+            cache_page(60 * 60 * 2)(views.DenialLanguageLibraryView.as_view())
+        ),
+        name="denial-language-library",
     ),
     path(
         "pro_version", csrf_exempt(views.ProVersionView.as_view()), name="pro_version"

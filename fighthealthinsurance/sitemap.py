@@ -38,6 +38,7 @@ class StaticViewSitemap(Sitemap):
             "other-resources",
             "faq",
             "medicaid-faq",
+            "denial-language-library",
             "tos",
             "privacy_policy",
             "mhmda",
