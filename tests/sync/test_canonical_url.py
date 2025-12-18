@@ -13,9 +13,9 @@ class CanonicalUrlTests(TestCase):
         """Test that the homepage includes the canonical URL."""
         response = self.client.get("/")
         self.assertEqual(response.status_code, 200)
-        
+
         content = response.content.decode("utf-8")
-        
+
         # Check for canonical URL pointing to www.fighthealthinsurance.com
         self.assertIn(
             '<link rel="canonical" href="https://www.fighthealthinsurance.com/">',
@@ -27,9 +27,9 @@ class CanonicalUrlTests(TestCase):
         """Test that the about page includes the canonical URL."""
         response = self.client.get("/about")
         self.assertEqual(response.status_code, 200)
-        
+
         content = response.content.decode("utf-8")
-        
+
         # Check for canonical URL pointing to www.fighthealthinsurance.com/about
         self.assertIn(
             '<link rel="canonical" href="https://www.fighthealthinsurance.com/about">',
@@ -41,9 +41,9 @@ class CanonicalUrlTests(TestCase):
         """Test that the bingo page includes the canonical URL."""
         response = self.client.get("/bingo")
         self.assertEqual(response.status_code, 200)
-        
+
         content = response.content.decode("utf-8")
-        
+
         # Check for canonical URL pointing to www.fighthealthinsurance.com/bingo
         self.assertIn(
             '<link rel="canonical" href="https://www.fighthealthinsurance.com/bingo">',
@@ -55,9 +55,9 @@ class CanonicalUrlTests(TestCase):
         """Test that the other resources page includes the canonical URL."""
         response = self.client.get("/other-resources")
         self.assertEqual(response.status_code, 200)
-        
+
         content = response.content.decode("utf-8")
-        
+
         # Check for canonical URL pointing to www.fighthealthinsurance.com
         self.assertIn(
             '<link rel="canonical" href="https://www.fighthealthinsurance.com/other-resources">',
@@ -68,18 +68,18 @@ class CanonicalUrlTests(TestCase):
     def test_canonical_url_uses_www_subdomain(self):
         """Test that canonical URLs always use www subdomain."""
         pages = ["/", "/about", "/bingo", "/other-resources"]
-        
+
         for page in pages:
             response = self.client.get(page)
             content = response.content.decode("utf-8")
-            
+
             # Ensure canonical URL uses www.fighthealthinsurance.com
             self.assertIn(
                 "https://www.fighthealthinsurance.com",
                 content,
                 f"Page {page} should have canonical URL with www subdomain"
             )
-            
+
             # Ensure it doesn't use non-www version
             self.assertNotIn(
                 '<link rel="canonical" href="https://fighthealthinsurance.com',
