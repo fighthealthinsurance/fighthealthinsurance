@@ -145,14 +145,15 @@ def get_client_ip(request: RequestType) -> Optional[str]:
         # Take the first IP in the chain (original client)
         ip = x_forwarded_for.split(",")[0].strip()
         if ip:
-            return ip
+            return str(ip)
 
     x_real_ip = request.META.get("HTTP_X_REAL_IP")
     if x_real_ip:
-        return x_real_ip.strip()
+        return str(x_real_ip.strip())
 
     # Fall back to REMOTE_ADDR
-    return request.META.get("REMOTE_ADDR")
+    remote_addr = request.META.get("REMOTE_ADDR")
+    return str(remote_addr) if remote_addr is not None else None
 
 
 def lookup_ip_info(ip_address: str) -> IPInfo:

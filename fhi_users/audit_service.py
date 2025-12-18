@@ -95,7 +95,8 @@ class AuditService:
         try:
             from .models import ProfessionalUser
 
-            return ProfessionalUser.objects.filter(user=user).first()
+            # Cast to User type for ORM compatibility - at runtime, get_user_model() returns the actual User model
+            return ProfessionalUser.objects.filter(user=typing.cast("User", user)).first()
         except Exception:
             return None
 
