@@ -185,7 +185,7 @@ class AppealAssemblyHelper:
                         return await self._convert_input(new_input_path)
                     except:
                         pass
-                if input_path.endswith(".html"):
+                if input_path.endswith(".html") or input_path.endswith(".htm"):
                     html_command = base_convert_command
                     html_command.extend(["-thtml"])
                     try:
