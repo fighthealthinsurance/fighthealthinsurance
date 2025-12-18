@@ -46,6 +46,9 @@ def _should_log_request(path: str) -> bool:
     """
     Determine whether a request path should be recorded in the audit log.
     
+    Parameters:
+        path (str): The request path to evaluate.
+    
     Returns:
         bool: `true` if the path should be logged, `false` otherwise.
     """
@@ -144,6 +147,9 @@ class AuditLoggingMiddleware(MiddlewareMixin):
         """
         Record the request start time on the request object.
         
+        Parameters:
+            request (HttpRequest): The incoming HTTP request.
+        
         Sets request._audit_start_time to the current epoch time in seconds (float) for later response-time calculation.
         """
         request._audit_start_time = time.time()
@@ -155,6 +161,10 @@ class AuditLoggingMiddleware(MiddlewareMixin):
         Log an API access entry when the response is produced, failing silently if logging errors occur.
         
         This method records an audit entry only for request paths that qualify for logging; any exceptions raised while attempting to log are caught and suppressed (a debug message is emitted).
+        
+        Parameters:
+            request (HttpRequest): The incoming HTTP request.
+            response (HttpResponse): The HTTP response to be returned.
         
         Returns:
             HttpResponse: The original response object.
@@ -207,7 +217,12 @@ class AuditLoggingMiddleware(MiddlewareMixin):
         return response
 
     def _log_task_exception(self, future: Future) -> None:
-        """Log any exceptions that occurred in the background logging task."""
+        """
+        Log any exceptions that occurred in the background logging task.
+        
+        Parameters:
+            future (Future): The completed Future object from the background task.
+        """
         try:
             future.result()  # This will raise if the task failed
         except Exception as e:
@@ -225,7 +240,15 @@ class AuditLoggingMiddleware(MiddlewareMixin):
         """
         Log an API access event to the audit service.
         
-        Records an audit entry for the given HTTP request/response pair by assembling and sending the following observable fields to the audit service: endpoint (request.path), HTTP status, response time in milliseconds (computed from request._audit_start_time when available), resource_type/resource_id/resource_count (derived from the request path and response payload), and an optional search query (from GET parameters 'search' or 'q', or POST body 'search').
+        Records an audit entry for the given HTTP request by assembling and sending the following observable fields to the audit service: endpoint, HTTP status, response time in milliseconds, resource_type/resource_id/resource_count (derived from the request path and response payload), and an optional search query.
+        
+        Parameters:
+            request (HttpRequest): The incoming HTTP request; used for user/session/IP/UA context.
+            endpoint (str): The API endpoint path that was accessed.
+            http_status (int): HTTP response status code.
+            response_time_ms (Optional[int]): Response time in milliseconds, or None if not available.
+            resource_info (dict): Dictionary containing resource_type, resource_id, and resource_count extracted from the request path and response.
+            search_query (Optional[str]): Search query string if applicable (from GET/POST parameters 'search' or 'q'), or None.
         """
         try:
             # Import here to avoid circular imports and allow lazy loading

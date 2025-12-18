@@ -718,6 +718,7 @@ class AuditService:
         Records the actor (user/professional), domain, IP/ASN/network info, geolocation, user-agent details, and session key associated with the specified object and action.
         
         Parameters:
+            request (RequestType): The incoming HTTP request (Django HttpRequest or DRF Request) used to derive context.
             obj: The target business object; must have a `pk` attribute used as the object identifier.
             action (str): One of "create", "update", "view", "delete", or "export" describing the operation performed.
         
