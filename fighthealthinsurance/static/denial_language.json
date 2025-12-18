@@ -9,7 +9,6 @@
       "Document how other treatments have failed or are inappropriate",
       "Explain how delaying treatment could worsen your condition"
     ],
-    "related_appeals": 10,
     "success_rate": "High - many denials are overturned with proper documentation"
   },
   "Non-formulary exception denied": {
@@ -22,7 +21,6 @@
       "Appeal using medical necessity and patient safety arguments",
       "Consider filing a complaint with your state insurance department"
     ],
-    "related_appeals": 5,
     "success_rate": "Moderate - depends on documentation of failed alternatives"
   },
   "Provider out-of-network": {
@@ -35,7 +33,6 @@
       "Appeal based on continuity of care if you're mid-treatment",
       "File a network adequacy complaint with your state if appropriate specialists aren't available"
     ],
-    "related_appeals": 4,
     "success_rate": "Moderate - stronger for emergencies and specialist care"
   },
   "Prior authorization now required": {
@@ -48,7 +45,6 @@
       "Check if your state has non-medical switching protections",
       "Appeal the denial of the prior authorization with medical necessity documentation"
     ],
-    "related_appeals": 3,
     "success_rate": "High - especially with continuity of care arguments"
   },
   "Experimental or investigational": {
@@ -61,7 +57,6 @@
       "Get your doctor to explain why this is standard of care, not experimental",
       "Request the insurer's specific policy and show it's outdated"
     ],
-    "related_appeals": 8,
     "success_rate": "High - often based on outdated policies"
   },
   "Step therapy required": {
@@ -74,7 +69,6 @@
       "Cite contraindications or drug interactions with required step therapies",
       "Check if your state has step therapy exception laws"
     ],
-    "related_appeals": 12,
     "success_rate": "High - if you've already tried alternatives or they're contraindicated"
   },
   "Insufficient documentation": {
@@ -87,7 +81,6 @@
       "Include: diagnosis codes, treatment history, test results, doctor's notes, letter of medical necessity",
       "Keep copies of everything you submit with dates and confirmation numbers"
     ],
-    "related_appeals": 15,
     "success_rate": "Very High - most succeed once proper documentation is submitted"
   },
   "Off-label use not covered": {
@@ -100,7 +93,6 @@
       "Show this is standard of care in your medical community",
       "Document that FDA-approved treatments for your condition have failed"
     ],
-    "related_appeals": 2,
     "success_rate": "Moderate - depends on strength of medical evidence"
   },
   "Cosmetic exclusion": {
@@ -113,7 +105,6 @@
       "Cite medical guidelines showing the treatment is medically necessary",
       "Distinguish between cosmetic and reconstructive/functional procedures"
     ],
-    "related_appeals": 8,
     "success_rate": "Moderate - stronger with functional impairment documentation"
   },
   "Maintenance care only": {
@@ -126,7 +117,6 @@
       "Get your therapist to explain why continued treatment is restorative",
       "Cite Medicare and medical guidelines that support coverage"
     ],
-    "related_appeals": 3,
     "success_rate": "Moderate - requires documenting functional goals and progress"
   },
   "Exceeds benefit limits": {
@@ -139,8 +129,7 @@
       "Compare to coverage of similar medical conditions",
       "File a parity complaint if mental health/substance use limits are stricter than medical"
     ],
-    "related_appeals": 4,
-    "success_rate": "Moderate - higher for parity violations"
+    "success_rate": "Complex - higher for parity violations"
   },
   "Not an emergency": {
     "what_it_means": "The insurer claims your ER visit or urgent treatment wasn't truly an emergency, so they won't pay.",
@@ -152,7 +141,6 @@
       "Reference emergency medicine guidelines supporting evaluation of your symptoms",
       "Some states prohibit retrospective ER denials"
     ],
-    "related_appeals": 2,
     "success_rate": "High - prudent layperson standard protects patients"
   },
   "Pre-existing condition exclusion": {
@@ -165,8 +153,7 @@
       "Show this is a new manifestation or complication, not the original condition",
       "File a complaint with your state insurance department if ACA applies"
     ],
-    "related_appeals": 1,
-    "success_rate": "Very High - often illegal"
+    "success_rate": "Depends on insurance type, 2026 may be complicated by people switching to non-ACA plans."
   },
   "Timely filing limit exceeded": {
     "what_it_means": "The claim was submitted too late according to the insurer's deadline.",
@@ -176,10 +163,10 @@
       "Document if the delay was due to the provider, insurer error, or coordination of benefits issues",
       "Request an exception if you had good cause for the delay",
       "Show you submitted claims as soon as you knew coverage was denied",
-      "File a complaint with your state if the insurer didn't provide adequate notice of the requirement"
+      "File a complaint with your state if the insurer didn't provide adequate notice of the requirement",
+      "If an in-network provider failed to submit on time, it may be the providers responsibility instead of the patient; this can be complicated but may be a case where your insurance company can actually help.",
     ],
-    "related_appeals": 1,
-    "success_rate": "Moderate - depends on reason for delay"
+    "success_rate": "Lower - depends on reason for delay"
   },
   "Gender dysphoria not documented": {
     "what_it_means": "The insurer claims there's insufficient evidence you have a gender dysphoria diagnosis requiring treatment.",
@@ -191,7 +178,6 @@
       "Show treatment plan is consistent with medical guidelines",
       "Challenge any requirements that exceed WPATH/medical standards"
     ],
-    "related_appeals": 5,
-    "success_rate": "High - with proper clinical documentation"
+    "success_rate": "High - with proper clinical documentation. May change as laws evolve."
   }
 }
