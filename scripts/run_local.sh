@@ -1,4 +1,13 @@
 #!/bin/bash
+# Run local development server
+#
+# Optimizations:
+# - Checksums requirements.txt and requirements-dev.txt to skip pip install when unchanged
+# - Checksums JS source files to skip webpack build when unchanged (via build_static.sh)
+# - Combines Python version and dependency checks into a single invocation
+# - Parallelizes network connectivity checks (kubectl and ping commands)
+# - All optimizations maintain full compatibility and don't skip necessary operations
+#
 # shellcheck disable=SC2068
 
 

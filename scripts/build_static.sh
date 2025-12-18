@@ -1,4 +1,11 @@
 #!/bin/bash
+# Build static assets for the application
+# 
+# Optimizations:
+# - Uses checksum-based caching to skip JS builds when source files haven't changed
+# - Checksum includes .ts, .tsx, .js, .jsx files (excluding .min.js), package.json, and webpack.config.js
+# - This can save 8-10 seconds on subsequent runs when no changes are made
+#
 # We expect npm depcheck to _maybe_ fail
 set +ex
 
