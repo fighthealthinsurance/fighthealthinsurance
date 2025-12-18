@@ -21,6 +21,17 @@ class LoginView(generic.FormView):
     form_class = LoginForm
 
     def form_valid(self, form):
+        """
+        Handle a validated login form by authenticating the user, establishing a session, and rendering or redirecting accordingly.
+        
+        Processes cleaned form data (username, domain, phone, password). If neither domain nor phone is provided, or authentication fails, renders the login template with context flags indicating the failure reason. If the domain is not found, renders the login template with a domain-specific error. On successful authentication, stores the resolved domain ID in the session, logs the successful login, and redirects to the application root.
+        
+        Parameters:
+            form (django.forms.Form): The validated login form with `username`, `domain`, `phone`, and `password` in `cleaned_data`.
+        
+        Returns:
+            django.http.HttpResponse or django.http.HttpResponseRedirect: A rendered login page response on error, or a redirect to the root URL on successful login.
+        """
         context: dict[str, bool] = {}
         raw_username = form.cleaned_data["username"]
         request = self.request
@@ -74,6 +85,14 @@ class LogoutView(generic.TemplateView):
 
     def get(self, request, *args, **kwargs):
         # Log logout before clearing session
+        """
+        Handle a GET request for logout by recording the logout, ending the user's session, and clearing session cookies.
+        
+        The view logs the logout for authenticated users, performs Django logout, flushes server-side session data, and removes the session cookie before returning the response used to render the logout page.
+        
+        Returns:
+            HttpResponse: Response for the logout page with the session cleared and the session cookie removed.
+        """
         if request.user.is_authenticated:
             audit_service.log_logout(request, request.user)
         logout(request)

@@ -1094,39 +1094,34 @@ class DenialCreatorHelper:
         subscribe: bool = False,  # Note: we don't handle this, but it's in the form so passed through.
         microsite_slug: Optional[str] = None,
         request: Optional[Union[HttpRequest, "DRFRequest"]] = None,  # For audit logging
-        referral_source: Optional[str] = None,
-        referral_source_details: Optional[str] = None,
     ):
         """
-        Create or update an existing denial.
-
-        Args:
-            email: The email address associated with the denial.
-            denial_text: The text of the denial.
-            zip: The ZIP code associated with the denial.
-            health_history: Optional health history information.
-            pii: Whether personally identifiable information is included.
-            tos: Whether terms of service have been accepted.
-            privacy: Whether privacy policy has been accepted.
-            use_external_models: Whether to use external models.
-            store_raw_email: Whether to store the raw email address.
-            plan_documents: Optional plan documents.
-            patient_id: Optional patient ID.
-            insurance_company: Optional insurance company name.
-            denial: Optional existing Denial object to update.
-            creating_professional: Optional ProfessionalUser creating the denial.
-            primary_professional: Optional ProfessionalUser as primary.
-            patient_user: Optional PatientUser associated with the denial.
-            patient_visible: Whether the denial is visible to the patient.
-            subscribe: Whether the user has subscribed (not handled in this function).
-            microsite_slug: Optional slug identifier for the microsite from which the denial was created.
-                           Should be a valid microsite slug or None.
-            request: Optional HttpRequest for audit logging (captures IP, user agent, etc.)
-            referral_source: Optional referral source (e.g., "Search Engine", "Friend or Family").
-            referral_source_details: Optional free-text details about the referral source.
-
+        Create a new Denial or update an existing one with provided complaint text and metadata.
+        
+        Parameters:
+            email (str): Email address associated with the denial; used to compute a hashed identifier.
+            denial_text (str): Raw denial text submitted by the user.
+            zip (str | int): ZIP code used to infer state for the denial record.
+            health_history (Optional[str]): Optional patient health history to store with the denial.
+            pii (bool): Whether the submission contains personally identifiable information.
+            tos (bool): Whether the submitter accepted terms of service.
+            privacy (bool): Whether the submitter accepted the privacy policy.
+            use_external_models (bool): Flag indicating whether external ML models may be used for extraction.
+            store_raw_email (bool): If true, the raw email will be stored on the denial record (in addition to a hashed email).
+            plan_documents (Optional[Iterable]): Optional iterable of plan document files to attach to the denial.
+            patient_id (Optional[int]): Optional external patient identifier.
+            insurance_company (Optional[str]): Optional insurance company name to set on the denial.
+            denial (Optional[Denial]): Existing Denial instance to update; if None a new record is created.
+            creating_professional (Optional[ProfessionalUser]): Professional creating the denial (sets creating_professional).
+            primary_professional (Optional[ProfessionalUser]): Primary professional associated with the denial.
+            patient_user (Optional[PatientUser]): PatientUser to associate with the denial.
+            patient_visible (bool): Whether the denial should be visible to the patient user account.
+            subscribe (bool): Form field propagated through but not handled by this function.
+            microsite_slug (Optional[str]): Microsite identifier to record where the denial originated.
+            request (Optional[Union[HttpRequest, "DRFRequest"]]): Optional request used for audit logging.
+        
         Returns:
-            The created or updated Denial object.
+            Denial: The created or updated Denial object.
         """
         hashed_email = Denial.get_hashed_email(email)
         # Track whether this is a new denial for audit logging
@@ -1159,8 +1154,6 @@ class DenialCreatorHelper:
                     patient_visible=patient_visible,
                     professional_to_finish=professional_to_finish,
                     microsite_slug=microsite_slug,
-                    referral_source=referral_source,
-                    referral_source_details=referral_source_details,
                 )
             except Exception as e:
                 # This is a temporary hack to drop non-ASCII characters
@@ -1182,8 +1175,6 @@ class DenialCreatorHelper:
                     patient_visible=patient_visible,
                     professional_to_finish=professional_to_finish,
                     microsite_slug=microsite_slug,
-                    referral_source=referral_source,
-                    referral_source_details=referral_source_details,
                 )
         else:
             # Directly update denial object fields instead of using denial.update()
@@ -1206,10 +1197,6 @@ class DenialCreatorHelper:
                 denial.patient_visible = patient_visible
             if microsite_slug is not None:
                 denial.microsite_slug = microsite_slug
-            if referral_source is not None:
-                denial.referral_source = referral_source
-            if referral_source_details is not None:
-                denial.referral_source_details = referral_source_details
 
             denial.save()
 
@@ -1224,9 +1211,8 @@ class DenialCreatorHelper:
             try:
                 your_state = cls.zip_engine.by_zipcode(zip).state
                 denial.your_state = your_state
-            except Exception as e:
-                # Default to no state - zip lookup can fail for invalid/unknown zips
-                logger.debug(f"Zip code lookup failed for {zip}: {e}")
+            except:
+                # Default to no state
                 your_state = None
         # Optionally:
         # Fire off some async requests to the model to extract info.
@@ -1683,9 +1669,8 @@ class DenialCreatorHelper:
                 await DenialTypesRelation.objects.acreate(
                     denial=denial, denial_type=dt, src=await cls.regex_src()
                 )
-            except Exception as e:
-                # Can fail if relation already exists (duplicate)
-                logger.opt(exception=True).debug(f"Failed setting denial type: {e}")
+            except:
+                logger.opt(exception=True).debug(f"Failed setting denial type")
         logger.debug(f"Done setting denial types")
 
     @classmethod
@@ -1909,14 +1894,14 @@ class AppealsBackendHelper:
                     subs["[Patient Name]"] = denial.patient_user.get_legal_name()
                     subs["[patient name]"] = denial.patient_user.get_legal_name()
                 if denial and denial.primary_professional is not None:
-                    subs[
-                        "[Professional Name]"
-                    ] = denial.primary_professional.get_full_name()
+                    subs["[Professional Name]"] = (
+                        denial.primary_professional.get_full_name()
+                    )
                 if denial.domain:
                     subs["[Professional Address]"] = denial.domain.get_address()
-            except Exception as e:
+            except:
                 logger.opt(exception=True).error(
-                    f"Error fetching info for denial sub {denial.denial_id}: {e}"
+                    f"Error fetching info for denial sub {denial.denial_id}"
                 )
             for k, v in subs.items():
                 if v and v != "" and v != "UNKNOWN":
@@ -2091,8 +2076,7 @@ class AppealsBackendHelper:
                 try:
                     # Added in Django 5.1
                     await denial.arefresh_from_db(from_queryset=denial_query)
-                except AttributeError:
-                    # arefresh_from_db with from_queryset not available in older Django
+                except:
                     denial = await denial_query.aget()
                 pubmed_context = denial.pubmed_context
                 ml_citation_context = denial.ml_citation_context
@@ -2171,10 +2155,9 @@ class StripeWebhookHelper:
     @staticmethod
     def handle_checkout_session_completed(request, session):
         try:
-            # Handle both Stripe object and dict access patterns
             try:
                 metadata = session.metadata
-            except (AttributeError, TypeError):
+            except:
                 metadata = session["metadata"]
 
             payment_type: Optional[str] = None
@@ -2226,10 +2209,9 @@ class StripeWebhookHelper:
         try:
             # TODO: More complete handling
             logger.debug(f"Checkout session expired: {session}")
-            # Handle both Stripe object and dict access patterns
             try:
                 metadata = session.metadata
-            except (AttributeError, TypeError):
+            except:
                 metadata = session["metadata"]
             payment_type = metadata.get("payment_type")
             item = "Fight Health Insurance / Fight paperwork"
@@ -2264,22 +2246,21 @@ class StripeWebhookHelper:
                     }
                 )
                 finish_link = f"{finish_base_link}?{params}"
-            # Try to extract email from various session locations
             email: Optional[str] = None
             try:
                 try:
                     email = session.customer_email
-                except (AttributeError, TypeError):
+                except:
                     email = session["customer_email"]
-            except (KeyError, TypeError):
+            except:
                 pass
             if email is None:
                 try:
                     try:
                         email = session.customer_details.email
-                    except (AttributeError, TypeError):
+                    except:
                         email = session["customer_details"]["email"]
-                except (KeyError, TypeError, AttributeError):
+                except:
                     pass
             if email is None:
                 logger.debug(

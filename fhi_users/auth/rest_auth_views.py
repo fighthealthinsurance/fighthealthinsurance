@@ -1266,6 +1266,14 @@ class RestLoginView(ViewSet, SerializerMixin):
     @extend_schema(responses=serializers.StatusResponseSerializer)
     @action(detail=False, methods=["post"])
     def login(self, request: Request) -> Response:
+        """
+        Authenticate a user within a domain context, establish the session domain, and record audit logs for success or failure.
+        
+        Validates input, resolves the target domain by name or phone, attempts authentication using a domain-qualified username, and on success stores `domain_id` in session and logs the user in. If the domain is unpaid the request is rejected with an appropriate error. If the account exists but is inactive, a verification email is sent. All authentication outcomes produce audit events.
+        
+        Returns:
+            Response: A DRF Response containing a success status on successful login, or an error payload with an appropriate HTTP status for failures.
+        """
         serializer = self.deserialize(request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
