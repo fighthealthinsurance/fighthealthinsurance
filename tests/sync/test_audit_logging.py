@@ -240,6 +240,11 @@ class TestAuditServiceLogObjectActivity(TestCase):
     """Tests for audit_service.log_object_activity()."""
 
     def setUp(self):
+        """
+        Prepare a RequestFactory and create a reusable test user for each test.
+        
+        The created user has username "testuser", email "test@example.com", and password "testpass123", and is available as self.user for test cases. The RequestFactory instance is available as self.factory.
+        """
         self.factory = RequestFactory()
         # Create a test user
         self.user = User.objects.create_user(
@@ -250,6 +255,11 @@ class TestAuditServiceLogObjectActivity(TestCase):
 
     def tearDown(self):
         # Clean up
+        """
+        Remove ObjectActivityContext entries created during the test run and delete the test user.
+        
+        This ensures database state is cleaned up after each test by deleting all ObjectActivityContext records and removing the user created in setUp.
+        """
         from fhi_users.audit_models import ObjectActivityContext
         ObjectActivityContext.objects.all().delete()
         self.user.delete()
@@ -466,6 +476,13 @@ class TestDenialCreationAuditLogging(TestCase):
     """Integration tests for audit logging during denial creation."""
 
     def setUp(self):
+        """
+        Prepare test fixtures: initialize a RequestFactory and create a persistent test user.
+        
+        Creates:
+        - self.factory: a Django RequestFactory instance for building test requests.
+        - self.user: a User created with username "testuser2", email "testdenial@example.com", and password "testpass123".
+        """
         self.factory = RequestFactory()
         self.user = User.objects.create_user(
             username="testuser2",
@@ -474,6 +491,11 @@ class TestDenialCreationAuditLogging(TestCase):
         )
 
     def tearDown(self):
+        """
+        Clean up test artifacts created by the test case.
+        
+        Deletes all ObjectActivityContext records, removes Denial records whose hashed_email starts with "integrationtest", and deletes the test user stored on self.user.
+        """
         from fhi_users.audit_models import ObjectActivityContext
         from fighthealthinsurance.models import Denial
         ObjectActivityContext.objects.all().delete()

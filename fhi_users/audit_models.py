@@ -211,6 +211,12 @@ class AuthAuditLog(BaseAuditLog):
         ]
 
     def __str__(self) -> str:
+        """
+        Human-readable representation combining the event type, user (or attempted email), and timestamp.
+        
+        Returns:
+            str: A string formatted as "<event_type> - <user_email_or_attempted_email_or_unknown> at <timestamp>".
+        """
         user_str = self.user.email if self.user else self.attempted_email or "unknown"
         return f"{self.event_type} - {user_str} at {self.timestamp}"
 
@@ -269,6 +275,14 @@ class APIAccessLog(BaseAuditLog):
         ]
 
     def __str__(self) -> str:
+        """
+        Return a concise human-readable representation of the API access log entry.
+        
+        Includes the HTTP method, endpoint, the user's email or "anonymous" when no user is associated, and the timestamp.
+        
+        Returns:
+            A string combining method, endpoint, user identifier, and timestamp.
+        """
         user_str = self.user.email if self.user else "anonymous"
         return f"{self.request_method} {self.endpoint} - {user_str} at {self.timestamp}"
 
@@ -344,6 +358,12 @@ class ProfessionalActivityLog(BaseAuditLog):
         ]
 
     def __str__(self) -> str:
+        """
+        Provide a human-readable description of the activity log entry.
+        
+        Returns:
+            A string containing the event type, the performer email (or "system" if absent), and the timestamp in the format: "<event_type> by <performer> at <timestamp>".
+        """
         performer = (
             self.performed_by_user.email if self.performed_by_user else "system"
         )
@@ -432,6 +452,12 @@ class SuspiciousActivityLog(models.Model):
         ]
 
     def __str__(self) -> str:
+        """
+        Return a human-readable summary of the suspicious activity log entry.
+        
+        Returns:
+            str: A string containing severity, trigger type, the user's email (or "unknown" if no user), and the timestamp.
+        """
         user_str = self.user.email if self.user else "unknown"
         return f"{self.severity} - {self.trigger_type} - {user_str} at {self.timestamp}"
 
@@ -534,12 +560,26 @@ class ObjectActivityContext(models.Model):
         ]
 
     def __str__(self) -> str:
+        """
+        Return a concise, human-readable description of the activity action, actor, and timestamp.
+        
+        Returns:
+            str: Description in the form "<action> by <user email or 'anonymous'> at <timestamp>".
+        """
         user_str = self.user.email if self.user else "anonymous"
         return f"{self.action} by {user_str} at {self.timestamp}"
 
     @classmethod
     def get_for_object(cls, obj) -> models.QuerySet["ObjectActivityContext"]:
-        """Get all activity contexts for a given object."""
+        """
+        Retrieve all ObjectActivityContext records associated with the given model instance.
+        
+        Parameters:
+            obj (django.db.models.Model): The model instance whose activity contexts should be returned.
+        
+        Returns:
+            django.db.models.QuerySet[ObjectActivityContext]: QuerySet of context records linked to the provided object.
+        """
         from django.contrib.contenttypes.models import ContentType
 
         ct = ContentType.objects.get_for_model(obj)
@@ -547,7 +587,15 @@ class ObjectActivityContext(models.Model):
 
     @classmethod
     def get_creation_context(cls, obj) -> typing.Optional["ObjectActivityContext"]:
-        """Get the creation context for an object (first 'create' action)."""
+        """
+        Retrieve the creation context associated with a model instance.
+        
+        Parameters:
+            obj: The model instance (object) whose creation context to find.
+        
+        Returns:
+            ObjectActivityContext or `None`: the earliest context record with action "create" for the given object, or `None` if no such record exists.
+        """
         return cls.get_for_object(obj).filter(action="create").order_by("timestamp").first()
 
 

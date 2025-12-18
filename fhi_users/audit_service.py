@@ -69,7 +69,12 @@ class AuditService:
     def _get_professional_user(
         self, user: Optional["User"]
     ) -> Optional["ProfessionalUser"]:
-        """Get ProfessionalUser for a Django User if one exists."""
+        """
+        Return the ProfessionalUser associated with the given Django User if present.
+        
+        Returns:
+            The matching `ProfessionalUser` instance, or `None` if no user is provided or no associated professional user exists.
+        """
         if not user:
             return None
         try:
@@ -82,7 +87,14 @@ class AuditService:
     def _get_domain_from_request(
         self, request: HttpRequest
     ) -> Optional["UserDomain"]:
-        """Extract UserDomain from request session."""
+        """
+        Retrieve the UserDomain referenced in the request session, if present.
+        
+        Checks the request session for a "domain_id" and returns the corresponding `UserDomain` instance when found and resolvable.
+        
+        Returns:
+            UserDomain: The matching `UserDomain` instance if `domain_id` exists and a record is found, `None` otherwise.
+        """
         try:
             from .models import UserDomain
 
@@ -101,16 +113,16 @@ class AuditService:
         success: bool = True,
     ) -> dict:
         """
-        Create base audit log data with privacy considerations.
-
-        Args:
-            request: Django HttpRequest
-            event_type: Type of event being logged
-            user: User associated with the event (may be None for failed auth)
-            success: Whether the event was successful
-
+        Assemble the base field values for an audit log entry, applying user-type aware privacy sanitization.
+        
+        Parameters:
+            request (HttpRequest): Request used to derive client, session, IP, and user-agent context.
+            event_type (AuditEventType): Audit event type to record.
+            user (Optional[User]): Associated Django user; only included in output if authenticated.
+            success (bool): Whether the audited event succeeded.
+        
         Returns:
-            Dictionary of field values for audit log creation
+            dict: Mapping of audit model field names to values. Includes sanitized session_key, IP and ASN fields (IP may be None when redacted), network_type, country/state, user agent fields, request_path, request_method, http_referer, event_type, user (authenticated only), user_type, and success.
         """
         # Determine user type for privacy handling
         if user and user.is_authenticated:
@@ -162,16 +174,16 @@ class AuditService:
         details: Optional[dict] = None,
     ) -> Optional[AuthAuditLog]:
         """
-        Log a successful login event.
-
-        Args:
-            request: Django HttpRequest
-            user: User who logged in
-            domain: UserDomain they logged into (for professionals)
-            details: Additional details to store
-
+        Log a successful login event for the given user and request.
+        
+        Parameters:
+            request (HttpRequest): The incoming HTTP request associated with the login.
+            user (User): The user who successfully authenticated.
+            domain (UserDomain, optional): The professional domain associated with the login (used for professional accounts).
+            details (dict, optional): Arbitrary additional metadata to include in the audit entry.
+        
         Returns:
-            Created AuthAuditLog entry
+            AuthAuditLog | None: The created AuthAuditLog entry, or `None` if logging failed.
         """
         try:
             data = self._create_base_log_data(
@@ -201,18 +213,20 @@ class AuditService:
         details: Optional[dict] = None,
     ) -> Optional[AuthAuditLog]:
         """
-        Log a failed login attempt.
-
-        Args:
-            request: Django HttpRequest
-            attempted_email: Email address that was attempted
-            failure_reason: Why the login failed (invalid_password, user_not_found, etc.)
-            user: User if found but password wrong
-            domain: Domain attempted
-            details: Additional details
-
+        Record a failed login attempt as an audit entry.
+        
+        Creates an AuthAuditLog populated with the provided context, attempted email, failure reason, optional user and domain, and any additional details. For security, the request IP address is always stored for failed logins even if privacy rules would normally remove it. This action may trigger suspicious-activity detection for brute-force patterns.
+        
+        Parameters:
+            request (HttpRequest): The incoming Django request associated with the attempt.
+            attempted_email (Optional[str]): The email address used in the failed attempt, if any.
+            failure_reason (str): Short identifier describing why authentication failed (e.g., "invalid_password", "user_not_found").
+            user (Optional[User]): The resolved User when the account exists but authentication failed; omit if unknown.
+            domain (Optional[UserDomain]): The UserDomain targeted by the attempt, if applicable.
+            details (Optional[dict]): Arbitrary additional information to store with the log (debug or contextual data).
+        
         Returns:
-            Created AuthAuditLog entry
+            AuthAuditLog | None: The created AuthAuditLog instance on success, or `None` if log creation failed.
         """
         try:
             data = self._create_base_log_data(
@@ -246,7 +260,12 @@ class AuditService:
         user: "User",
         domain: Optional["UserDomain"] = None,
     ) -> Optional[AuthAuditLog]:
-        """Log a logout event."""
+        """
+        Create an audit log entry for a user logout.
+        
+        Returns:
+            AuthAuditLog | None: The created `AuthAuditLog` for the logout event, or `None` if the log could not be created.
+        """
         try:
             data = self._create_base_log_data(
                 request, AuditEventType.LOGOUT, user, success=True
@@ -265,7 +284,17 @@ class AuditService:
         user: "User",
         changed_by_self: bool = True,
     ) -> Optional[AuthAuditLog]:
-        """Log a password change event."""
+        """
+        Record an audit entry for a user's password change.
+        
+        Includes the professional user and request domain and records whether the change was self-initiated.
+        
+        Parameters:
+            changed_by_self (bool): `True` if the user changed their own password, `False` if changed by another actor.
+        
+        Returns:
+            AuthAuditLog | None: The created AuthAuditLog instance if successful, `None` if log creation failed.
+        """
         try:
             data = self._create_base_log_data(
                 request, AuditEventType.PASSWORD_CHANGED, user, success=True
@@ -287,7 +316,19 @@ class AuditService:
         domain: Optional["UserDomain"] = None,
         details: Optional[dict] = None,
     ) -> Optional[AuthAuditLog]:
-        """Log account creation."""
+        """
+        Record an account creation audit entry using request context and user information.
+        
+        Parameters:
+            request (HttpRequest): The originating HTTP request used to derive context (IP, user agent, session, etc.).
+            user (User): The Django user whose account was created.
+            account_type (str): A string describing the type of account created (e.g., "professional", "patient").
+            domain (Optional[UserDomain]): Optional domain associated with the account; when omitted, domain may be derived from the request if available.
+            details (Optional[dict]): Additional arbitrary details to include in the log; merged into the stored `details` with `account_type`.
+        
+        Returns:
+            AuthAuditLog | None: The created AuthAuditLog instance on success, or `None` if log creation failed.
+        """
         try:
             data = self._create_base_log_data(
                 request, AuditEventType.ACCOUNT_CREATED, user, success=True
@@ -319,21 +360,21 @@ class AuditService:
         details: Optional[dict] = None,
     ) -> Optional[APIAccessLog]:
         """
-        Log an API access event.
-
-        Args:
-            request: Django HttpRequest
-            endpoint: API endpoint accessed
-            http_status: HTTP response status code
-            response_time_ms: Response time in milliseconds
-            resource_type: Type of resource accessed
-            resource_id: ID of specific resource
-            resource_count: Number of resources returned (for list endpoints)
-            search_query: Search query if applicable
-            details: Additional details
-
+        Record an API access event with request context and optional metadata.
+        
+        Parameters:
+        	request (HttpRequest): The incoming Django request associated with the API call.
+        	endpoint (str): The API endpoint path or identifier that was accessed.
+        	http_status (Optional[int]): HTTP response status code; values < 400 are treated as successful.
+        	response_time_ms (Optional[int]): Response time in milliseconds.
+        	resource_type (Optional[str]): Logical type of the resource accessed (e.g., "user", "appointment").
+        	resource_id (Optional[str]): Identifier of the specific resource affected or returned.
+        	resource_count (Optional[int]): Number of resources returned for list endpoints.
+        	search_query (Optional[str]): Search or filter query string used with the request, if any.
+        	details (Optional[dict]): Arbitrary additional metadata to include in the log.
+        
         Returns:
-            Created APIAccessLog entry
+        	APIAccessLog | None: The created APIAccessLog instance, or `None` if log creation failed.
         """
         try:
             user = request.user if request.user.is_authenticated else None
@@ -372,7 +413,19 @@ class AuditService:
         created_by: Optional["User"] = None,
         details: Optional[dict] = None,
     ) -> Optional[ProfessionalActivityLog]:
-        """Log professional user creation."""
+        """
+        Record creation of a professional user along with the actor and request context.
+        
+        Parameters:
+            request (HttpRequest): The originating HTTP request whose context will be recorded.
+            professional_user (ProfessionalUser): The professional user that was created.
+            domain (UserDomain): The domain/account associated with the created professional user.
+            created_by (Optional[User]): The user who performed the creation; if omitted, the authenticated request user is used when available.
+            details (Optional[dict]): Optional additional metadata about the creation event.
+        
+        Returns:
+            ProfessionalActivityLog or None: The created ProfessionalActivityLog instance on success, `None` if log creation fails.
+        """
         try:
             user = request.user if request.user.is_authenticated else None
             data = self._create_base_log_data(
@@ -399,7 +452,12 @@ class AuditService:
         domain: "UserDomain",
         accepted_by: "User",
     ) -> Optional[ProfessionalActivityLog]:
-        """Log professional user acceptance."""
+        """
+        Record that a professional user was accepted into a domain by another user.
+        
+        Returns:
+            ProfessionalActivityLog: The created audit log entry, or `None` if creation failed.
+        """
         try:
             data = self._create_base_log_data(
                 request, AuditEventType.PROFESSIONAL_ACCEPTED, accepted_by, success=True
@@ -424,7 +482,18 @@ class AuditService:
         domain: "UserDomain",
         granted_by: "User",
     ) -> Optional[ProfessionalActivityLog]:
-        """Log admin role grant."""
+        """
+        Record that a professional user was granted administrative privileges.
+        
+        Parameters:
+        	request (HttpRequest): The HTTP request that initiated the action.
+        	professional_user (ProfessionalUser): The professional user who received admin privileges.
+        	domain (UserDomain): The domain/context where the admin role was granted.
+        	granted_by (User): The user who granted the admin role.
+        
+        Returns:
+        	ProfessionalActivityLog | None: The created ProfessionalActivityLog instance, or `None` if creation failed.
+        """
         try:
             data = self._create_base_log_data(
                 request, AuditEventType.ADMIN_GRANTED, granted_by, success=True
@@ -451,7 +520,18 @@ class AuditService:
         resource: Optional[str] = None,
         details: Optional[dict] = None,
     ) -> Optional[ProfessionalActivityLog]:
-        """Log permission denied event."""
+        """
+        Record a permission-denied professional activity for the current request.
+        
+        Parameters:
+            request (HttpRequest): The incoming HTTP request that triggered the permission denial; the authenticated user (if any) is taken from this request.
+            action (str): The action that was attempted and denied.
+            resource (Optional[str]): Optional identifier or description of the resource on which the action was attempted.
+            details (Optional[dict]): Optional additional metadata to include in the log; merged into the stored `details` field.
+        
+        Returns:
+            ProfessionalActivityLog | None: The created ProfessionalActivityLog instance, or `None` if the log could not be created.
+        """
         try:
             user = request.user if request.user.is_authenticated else None
             data = self._create_base_log_data(
@@ -475,7 +555,14 @@ class AuditService:
     # ==================== Suspicious Activity Detection ====================
 
     def _check_login_patterns(self, log_entry: AuthAuditLog) -> None:
-        """Check for suspicious login patterns."""
+        """
+        Detects and flags suspicious login events based on known login patterns.
+        
+        If the provided authentication log indicates the IP belongs to a datacenter or VPN network, creates a corresponding SuspiciousActivityLog entry containing network and ASN details as evidence.
+        
+        Parameters:
+            log_entry (AuthAuditLog): The authentication log entry to evaluate; its network_type, asn, user, professional_user, domain, and ip_address fields are used when creating a suspicious activity record.
+        """
         # Check for datacenter/VPN login
         if log_entry.network_type in [NetworkType.DATACENTER.value, NetworkType.VPN.value]:
             self._flag_suspicious(
@@ -494,7 +581,17 @@ class AuditService:
     def _check_failed_login_patterns(
         self, log_entry: AuthAuditLog, attempted_email: Optional[str]
     ) -> None:
-        """Check for brute force/credential stuffing patterns."""
+        """
+        Detects and flags brute-force-like failed login patterns from the same IP.
+        
+        If five or more failed login attempts from the same IP are recorded within the past hour,
+        creates a suspicious activity entry with trigger_type "brute_force_attempt" and includes
+        the failed count, the provided attempted_email (when available), and the auth log id in the evidence.
+        
+        Parameters:
+            log_entry (AuthAuditLog): The failed authentication log entry to evaluate.
+            attempted_email (Optional[str]): The email address used in the failed attempt, included in the suspicious-evidence payload.
+        """
         from datetime import timedelta
         from django.utils import timezone
 
@@ -523,7 +620,14 @@ class AuditService:
             )
 
     def _check_api_patterns(self, log_entry: APIAccessLog) -> None:
-        """Check for suspicious API access patterns."""
+        """
+        Detects high-volume API requests from datacenter or VPN IPs and creates a suspicious-activity record when a threshold is exceeded.
+        
+        If the provided API access log indicates the request originated from a datacenter or VPN, counts APIAccessLog entries from the same IP in the last hour; if that count is 100 or greater, creates a SuspiciousActivityLog with severity "high" and evidence containing the request count and the triggering log's id. The created suspicious record will include user, professional_user, domain, IP and ASN details copied from the triggering log entry.
+        
+        Parameters:
+            log_entry (APIAccessLog): The API access log entry that triggered the check; its network_type and ip_address are used to evaluate the pattern.
+        """
         from datetime import timedelta
         from django.utils import timezone
 
@@ -565,7 +669,24 @@ class AuditService:
         asn_org: Optional[str] = None,
         evidence: Optional[dict] = None,
     ) -> Optional[SuspiciousActivityLog]:
-        """Create a suspicious activity flag."""
+        """
+        Create a SuspiciousActivityLog record describing a detected suspicious event.
+        
+        Parameters:
+            trigger_type (str): Short identifier for the detection trigger (e.g., "brute_force_attempt").
+            severity (str): Severity classification for the event (e.g., "low", "medium", "high").
+            description (str): Human-readable description of the suspicious activity.
+            user (Optional[User]): Associated Django user, if applicable.
+            professional_user (Optional[ProfessionalUser]): Associated professional user, if applicable.
+            domain (Optional[UserDomain]): Associated user domain/context, if applicable.
+            ip_address (Optional[str]): IP address related to the event.
+            asn_number (Optional[int]): Autonomous System Number associated with the IP, if known.
+            asn_org (Optional[str]): Autonomous System organization name, if known.
+            evidence (Optional[dict]): Structured evidence or metadata supporting the flag (arbitrary key/value data).
+        
+        Returns:
+            SuspiciousActivityLog | None: The created SuspiciousActivityLog instance, or `None` if creation failed.
+        """
         try:
             return SuspiciousActivityLog.objects.create(
                 trigger_type=trigger_type,
@@ -592,27 +713,16 @@ class AuditService:
         action: str = "create",
     ) -> Optional[ObjectActivityContext]:
         """
-        Log activity context for a business object (Denial, Appeal, etc.).
-
-        This creates a link between the object and the request context,
-        allowing you to see who created/modified it and from where.
-
-        Args:
-            request: Django HttpRequest
-            obj: The business object (must have a pk attribute)
-            action: One of "create", "update", "view", "delete", "export"
-
+        Create an ObjectActivityContext linking a business object to the current request context.
+        
+        Records the actor (user/professional), domain, IP/ASN/network info, geolocation, user-agent details, and session key associated with the specified object and action.
+        
+        Parameters:
+            obj: The target business object; must have a `pk` attribute used as the object identifier.
+            action (str): One of "create", "update", "view", "delete", or "export" describing the operation performed.
+        
         Returns:
-            Created ObjectActivityContext entry
-
-        Usage:
-            # After creating a denial
-            denial = Denial.objects.create(...)
-            audit_service.log_object_activity(request, denial, action="create")
-
-            # After updating
-            denial.save()
-            audit_service.log_object_activity(request, denial, action="update")
+            ObjectActivityContext or None: The created ObjectActivityContext entry, or `None` if creation failed.
         """
         try:
             from django.contrib.contenttypes.models import ContentType
@@ -658,25 +768,25 @@ class AuditService:
 
     def get_object_context(self, obj: Any) -> Optional[ObjectActivityContext]:
         """
-        Get the creation context for a business object.
-
-        Args:
-            obj: The business object
-
+        Retrieve the ObjectActivityContext that records the creation event for the given business object.
+        
+        Parameters:
+            obj (Any): The business object (typically a Django model instance) whose creation context is requested.
+        
         Returns:
-            The ObjectActivityContext for when the object was created, or None
+            ObjectActivityContext | None: The creation context for `obj`, or `None` if no creation context exists.
         """
         return ObjectActivityContext.get_creation_context(obj)
 
     def get_object_history(self, obj: Any) -> list[ObjectActivityContext]:
         """
-        Get full activity history for a business object.
-
-        Args:
-            obj: The business object
-
+        Retrieve the chronological activity history for a business object.
+        
+        Parameters:
+            obj (Any): The business object whose activity history to retrieve.
+        
         Returns:
-            List of ObjectActivityContext entries ordered by timestamp
+            list[ObjectActivityContext]: Activity context entries for the object ordered by timestamp (oldest first).
         """
         return list(ObjectActivityContext.get_for_object(obj).order_by("timestamp"))
 

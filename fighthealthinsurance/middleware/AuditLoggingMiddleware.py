@@ -39,7 +39,12 @@ _EXCLUDED_PATTERNS = [re.compile(p) for p in EXCLUDED_PATH_PATTERNS]
 
 
 def _should_log_request(path: str) -> bool:
-    """Determine if a request should be logged based on its path."""
+    """
+    Determine whether a request path should be recorded in the audit log.
+    
+    Returns:
+        bool: `true` if the path should be logged, `false` otherwise.
+    """
     # Check if path matches logged prefixes
     if not any(path.startswith(prefix) for prefix in LOGGED_PATH_PREFIXES):
         return False
@@ -52,7 +57,19 @@ def _should_log_request(path: str) -> bool:
 
 
 def _extract_resource_info(path: str, response: HttpResponse) -> dict:
-    """Extract resource type and ID from the request path."""
+    """
+    Extract resource metadata (type, identifier, and count) from a request path and HTTP response.
+    
+    Parameters:
+        path (str): The request path (e.g., "/api/v1/denials/123/") used to infer resource type and identifier.
+        response (HttpResponse): The response object which may contain a `.data` mapping with pagination or results.
+    
+    Returns:
+        dict: A mapping with keys:
+            - resource_type (str|None): The inferred resource name in singular form (e.g., "denial"), or `None` if not found.
+            - resource_id (str|None): The resource identifier as a string (numeric or UUID) if present in the path, otherwise `None`.
+            - resource_count (int|None): The number of items for list endpoints derived from `response.data["count"]` or the length of `response.data["results"]`, or `None` if unavailable.
+    """
     info = {
         "resource_type": None,
         "resource_id": None,
@@ -97,7 +114,15 @@ def _extract_resource_info(path: str, response: HttpResponse) -> dict:
 
 
 def _is_uuid(s: str) -> bool:
-    """Check if string looks like a UUID."""
+    """
+    Determine whether a string is a UUID in the canonical 8-4-4-4-12 hexadecimal format.
+    
+    Parameters:
+        s (str): String to test; hexadecimal digits may be upper- or lower-case.
+    
+    Returns:
+        bool: True if `s` matches the UUID pattern, False otherwise.
+    """
     uuid_pattern = re.compile(
         r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I
     )
@@ -112,13 +137,24 @@ class AuditLoggingMiddleware(MiddlewareMixin):
     """
 
     def process_request(self, request: HttpRequest) -> None:
-        """Store request start time."""
+        """
+        Record the request start time on the request object.
+        
+        Sets request._audit_start_time to the current epoch time in seconds (float) for later response-time calculation.
+        """
         request._audit_start_time = time.time()
 
     def process_response(
         self, request: HttpRequest, response: HttpResponse
     ) -> HttpResponse:
-        """Log the API access after response is generated."""
+        """
+        Log an API access entry when the response is produced, failing silently if logging errors occur.
+        
+        This method records an audit entry only for request paths that qualify for logging; any exceptions raised while attempting to log are caught and suppressed (a debug message is emitted).
+        
+        Returns:
+            HttpResponse: The original response object.
+        """
         # Skip if path shouldn't be logged
         if not _should_log_request(request.path):
             return response
@@ -134,7 +170,15 @@ class AuditLoggingMiddleware(MiddlewareMixin):
     def _log_api_access(
         self, request: HttpRequest, response: HttpResponse
     ) -> None:
-        """Create the API access log entry."""
+        """
+        Log an API access event to the audit service.
+        
+        Records an audit entry for the given HTTP request/response pair by assembling and sending the following observable fields to the audit service: endpoint (request.path), HTTP status, response time in milliseconds (computed from request._audit_start_time when available), resource_type/resource_id/resource_count (derived from the request path and response payload), and an optional search query (from GET parameters 'search' or 'q', or POST body 'search').
+        
+        Parameters:
+            request (HttpRequest): The incoming HTTP request; may contain `_audit_start_time` set by process_request.
+            response (HttpResponse): The HTTP response whose status and payload are used for the audit entry.
+        """
         # Import here to avoid circular imports and allow lazy loading
         from fhi_users.audit_service import audit_service
 
