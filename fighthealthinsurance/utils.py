@@ -613,7 +613,7 @@ def generate_random_unsupported_filename() -> str:
 
 
 async def _try_pandoc_engines(command: list[str]):
-    engines = [None, "pdflatex", "xelatex", "laulatex", "wkhtmltopdf", "weasyprint"]
+    engines = [None, "pdflatex", "xelatex", "lualatex", "wkhtmltopdf", "weasyprint"]
     if "--sandbox" not in command:
         command = command + ["--sandbox"]
     for engine in engines:
@@ -624,5 +624,5 @@ async def _try_pandoc_engines(command: list[str]):
             await check_call(command_with_engine)
             return
         except CalledProcessError as e:
-            logger.debug(f"Error with engine {engine}")
+            logger.debug(f"Error with engine {engine}: {e}")
     raise Exception(f"Failed {command} with all engines {engines}")
