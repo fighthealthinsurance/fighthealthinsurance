@@ -22,7 +22,7 @@ Usage:
 
 import typing
 from datetime import datetime
-from typing import Optional, Any
+from typing import Optional, Any, Union
 
 from django.http import HttpRequest
 from django.contrib.auth import get_user_model
@@ -30,9 +30,14 @@ from loguru import logger
 
 if typing.TYPE_CHECKING:
     from django.contrib.auth.models import User
+    from rest_framework.request import Request as DRFRequest
     from .models import ProfessionalUser, UserDomain
 else:
     User = get_user_model()
+
+# Type alias for request objects (Django HttpRequest or DRF Request)
+# Both have compatible .META, .user, .session, .path, .method attributes
+RequestType = Union[HttpRequest, "DRFRequest"]
 
 from .audit_models import (
     AuditEventType,
@@ -582,7 +587,7 @@ class AuditService:
 
     def log_object_activity(
         self,
-        request: HttpRequest,
+        request: RequestType,
         obj: Any,
         action: str = "create",
     ) -> Optional[ObjectActivityContext]:

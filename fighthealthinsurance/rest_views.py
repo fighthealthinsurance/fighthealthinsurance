@@ -353,6 +353,7 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
             common_view_logic.DenialCreatorHelper.create_or_update_denial(
                 denial=denial,
                 creating_professional=creating_professional,
+                request=request,  # Pass request for audit logging
                 **serializer_data,
             )
         )
@@ -368,11 +369,7 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
             except Exception as e:
                 logger.warning(f"Failed to subscribe email to mailing list: {e}")
         denial = Denial.objects.get(uuid=denial_response_info.uuid)
-        # Log the denial creation/update with request context
-        is_new = denial_response_info.denial_id == denial.denial_id  # Rough check if newly created
-        audit_service.log_object_activity(
-            request, denial, action="create" if is_new else "update"
-        )
+        # Note: Denial audit logging now handled in common_view_logic.create_or_update_denial()
         # Creating a pending appeal
         try:
             Appeal.objects.get(for_denial=denial)

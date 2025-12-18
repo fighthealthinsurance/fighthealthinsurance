@@ -17,10 +17,17 @@ import re
 import typing
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 
 from django.http import HttpRequest
 from loguru import logger
+
+if typing.TYPE_CHECKING:
+    from rest_framework.request import Request as DRFRequest
+
+# Type alias for request objects (Django HttpRequest or DRF Request)
+# Both have compatible .META, .user, .session, .path, .method attributes
+RequestType = Union[HttpRequest, "DRFRequest"]
 
 # Try to import geoip2fast, fall back gracefully if not installed
 try:
@@ -109,15 +116,15 @@ def _get_geoip_reader() -> Optional["GeoIP2Fast"]:
     return _geoip_reader
 
 
-def get_client_ip(request: HttpRequest) -> Optional[str]:
+def get_client_ip(request: RequestType) -> Optional[str]:
     """
-    Extract the client IP address from a Django request.
+    Extract the client IP address from a request.
 
     Handles common proxy headers (X-Forwarded-For, X-Real-IP) and falls back
     to REMOTE_ADDR.
 
     Args:
-        request: Django HttpRequest object
+        request: Django HttpRequest or DRF Request object
 
     Returns:
         Client IP address string or None if not determinable
@@ -390,12 +397,12 @@ def _basic_ua_parse(user_agent: str) -> UserAgentInfo:
     return info
 
 
-def get_request_context(request: HttpRequest) -> dict:
+def get_request_context(request: RequestType) -> dict:
     """
-    Extract all relevant context from a Django request for audit logging.
+    Extract all relevant context from a request for audit logging.
 
     Args:
-        request: Django HttpRequest object
+        request: Django HttpRequest or DRF Request object
 
     Returns:
         Dictionary with IP info, user agent info, and request metadata
@@ -406,22 +413,31 @@ def get_request_context(request: HttpRequest) -> dict:
     ua_string = request.META.get("HTTP_USER_AGENT", "")
     ua_info = parse_user_agent_string(ua_string)
 
+    # Get session key safely - session could be a dict (in tests) or a SessionBase object
+    session_key = None
+    if hasattr(request, "session"):
+        session = request.session
+        if hasattr(session, "session_key"):
+            session_key = session.session_key
+        elif isinstance(session, dict):
+            session_key = session.get("session_key")
+
     return {
         "ip_info": ip_info,
         "ua_info": ua_info,
         "request_path": request.path,
         "request_method": request.method,
         "http_referer": request.META.get("HTTP_REFERER"),
-        "session_key": request.session.session_key if hasattr(request, "session") else None,
+        "session_key": session_key,
     }
 
 
-def determine_user_type(request: HttpRequest) -> UserType:
+def determine_user_type(request: RequestType) -> UserType:
     """
     Determine the type of user making the request for privacy-appropriate logging.
 
     Args:
-        request: Django HttpRequest object
+        request: Django HttpRequest or DRF Request object
 
     Returns:
         UserType enum value

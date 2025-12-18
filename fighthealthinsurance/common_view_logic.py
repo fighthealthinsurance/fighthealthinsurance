@@ -17,6 +17,7 @@ from typing import (
     Iterable,
     List,
     Iterator,
+    Union,
 )
 from loguru import logger
 from PyPDF2 import PdfMerger
@@ -32,9 +33,13 @@ from stopit.utils import TimeoutException
 from django.core.files import File
 from django.core.validators import validate_email
 from django.forms import Form
+from django.http import HttpRequest
 from django.template.loader import render_to_string
 from django.db.models import QuerySet
 from django.urls import reverse
+
+if typing.TYPE_CHECKING:
+    from rest_framework.request import Request as DRFRequest
 
 
 import uszipcode
@@ -48,6 +53,7 @@ from fighthealthinsurance.ml.ml_citations_helper import MLCitationsHelper
 from fighthealthinsurance.ml.ml_appeal_questions_helper import MLAppealQuestionsHelper
 from fighthealthinsurance.ml.ml_plan_doc_helper import MLPlanDocHelper
 from fighthealthinsurance import stripe_utils
+from fhi_users.audit_service import audit_service
 from fhi_users.models import ProfessionalUser, UserDomain
 from fhi_users import emails as fhi_emails
 from .pubmed_tools import PubMedTools
@@ -1087,6 +1093,7 @@ class DenialCreatorHelper:
         patient_visible: bool = False,
         subscribe: bool = False,  # Note: we don't handle this, but it's in the form so passed through.
         microsite_slug: Optional[str] = None,
+        request: Optional[Union[HttpRequest, "DRFRequest"]] = None,  # For audit logging
     ):
         """
         Create or update an existing denial.
@@ -1112,11 +1119,15 @@ class DenialCreatorHelper:
             subscribe: Whether the user has subscribed (not handled in this function).
             microsite_slug: Optional slug identifier for the microsite from which the denial was created.
                            Should be a valid microsite slug or None.
+            request: Optional HttpRequest for audit logging (captures IP, user agent, etc.)
 
         Returns:
             The created or updated Denial object.
         """
         hashed_email = Denial.get_hashed_email(email)
+        # Track whether this is a new denial for audit logging
+        # Must check before any DB operations since denial param may be None
+        is_new_denial = denial is None
         # If they ask us to store their raw e-mail we do
         possible_email = None
         validate_email(email)
@@ -1220,6 +1231,21 @@ class DenialCreatorHelper:
 
         denial_id = denial.denial_id
         semi_sekret = denial.semi_sekret
+
+        # Log the denial creation/update activity for audit purposes
+        if request is not None:
+            try:
+                # Use is_new_denial which was set before any DB operations
+                action = "create" if is_new_denial else "update"
+                audit_service.log_object_activity(
+                    request=request,
+                    obj=denial,
+                    action=action,
+                )
+            except Exception as e:
+                # Don't let audit logging failures break denial creation
+                logger.warning(f"Failed to log audit activity for denial {denial_id}: {e}")
+
         return cls._update_denial(
             denial=denial, health_history=health_history, plan_documents=plan_documents
         )

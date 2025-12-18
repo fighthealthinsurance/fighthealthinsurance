@@ -1039,6 +1039,7 @@ class InitialProcessView(generic.FormView):
 
         denial_response = common_view_logic.DenialCreatorHelper.create_or_update_denial(
             **cleaned_data,
+            request=self.request,  # Pass request for audit logging
         )
 
         # Store the denial ID in the session to maintain state across the multi-step form process
