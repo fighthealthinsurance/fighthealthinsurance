@@ -95,7 +95,8 @@ class AuditService:
         try:
             from .models import ProfessionalUser
 
-            # Cast to User type for ORM compatibility - at runtime, get_user_model() returns the actual User model
+            # ProfessionalUser has a OneToOneField to User, so we filter by the user field
+            # Cast is needed because user param is UserOrAbstract, but at runtime it's always a User instance
             return ProfessionalUser.objects.filter(user=typing.cast("User", user)).first()
         except Exception:
             return None
