@@ -295,6 +295,8 @@ class AuditService:
         Includes the professional user and request domain and records whether the change was self-initiated.
         
         Parameters:
+            request (HttpRequest): The incoming HTTP request associated with the password change.
+            user (User): The user whose password was changed.
             changed_by_self (bool): `True` if the user changed their own password, `False` if changed by another actor.
         
         Returns:
