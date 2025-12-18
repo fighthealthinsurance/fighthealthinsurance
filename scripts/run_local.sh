@@ -8,7 +8,7 @@
 # - Parallelizes network connectivity checks (kubectl and ping commands)
 # - All optimizations maintain full compatibility and don't skip necessary operations
 #
-# shellcheck disable=SC2068
+# shellcheck disable=SC2068,SC1090
 
 
 SCRIPT_DIR="$(dirname "$0")"
@@ -113,7 +113,7 @@ check_and_fix_inotify_limit
 # Run network checks in parallel for speed
 # Create a temp directory for storing check results
 TMPDIR=$(mktemp -d)
-trap "rm -rf $TMPDIR" EXIT
+trap 'rm -rf "${TMPDIR}"' EXIT
 
 check_vllm_health() {
   if kubectl get service -n totallylegitco vllm-health-svc >/dev/null 2>&1; then
