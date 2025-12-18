@@ -134,8 +134,33 @@ class AuditLoggingMiddleware(MiddlewareMixin):
             if start_time:
                 response_time_ms = int((time.time() - start_time) * 1000)
             
+            # Extract resource info before dispatching to background thread
+            resource_info = _extract_resource_info(request.path, response)
+            
+            # Extract search query before dispatching to background thread
+            search_query = None
+            if request.method == "GET":
+                search_query = request.GET.get("search") or request.GET.get("q")
+            elif request.method == "POST" and hasattr(request, "data"):
+                search_query = getattr(request.data, "get", lambda x: None)("search")
+            
+            # Extract all needed data from request/response before dispatching
+            endpoint = request.path
+            http_status = response.status_code
+            http_method = request.method
+            
             # Dispatch logging to background thread to avoid blocking request
-            future = executor.submit(self._log_api_access, request, response, response_time_ms)
+            # Pass extracted data instead of request/response objects for thread safety
+            future = executor.submit(
+                self._log_api_access, 
+                request,  # Still need request for user/session context
+                endpoint,
+                http_status,
+                http_method,
+                response_time_ms,
+                resource_info,
+                search_query,
+            )
             # Add callback to log any unhandled exceptions in background task
             future.add_done_callback(self._log_task_exception)
         except Exception as e:
@@ -144,8 +169,7 @@ class AuditLoggingMiddleware(MiddlewareMixin):
 
         return response
 
-    @staticmethod
-    def _log_task_exception(future: Future) -> None:
+    def _log_task_exception(self, future: Future) -> None:
         """Log any exceptions that occurred in the background logging task."""
         try:
             future.result()  # This will raise if the task failed
@@ -153,28 +177,25 @@ class AuditLoggingMiddleware(MiddlewareMixin):
             logger.debug(f"Background audit logging task failed: {e}")
 
     def _log_api_access(
-        self, request: HttpRequest, response: HttpResponse, response_time_ms: Optional[int]
+        self,
+        request: HttpRequest,
+        endpoint: str,
+        http_status: int,
+        http_method: str,
+        response_time_ms: Optional[int],
+        resource_info: dict,
+        search_query: Optional[str],
     ) -> None:
         """Create the API access log entry."""
         try:
             # Import here to avoid circular imports and allow lazy loading
             from fhi_users.audit_service import audit_service
 
-            # Extract resource info
-            resource_info = _extract_resource_info(request.path, response)
-
-            # Extract search query if present
-            search_query = None
-            if request.method == "GET":
-                search_query = request.GET.get("search") or request.GET.get("q")
-            elif request.method == "POST" and hasattr(request, "data"):
-                search_query = getattr(request.data, "get", lambda x: None)("search")
-
             # Create the log entry
             audit_service.log_api_access(
                 request=request,
-                endpoint=request.path,
-                http_status=response.status_code,
+                endpoint=endpoint,
+                http_status=http_status,
                 response_time_ms=response_time_ms,
                 resource_type=resource_info.get("resource_type"),
                 resource_id=resource_info.get("resource_id"),
