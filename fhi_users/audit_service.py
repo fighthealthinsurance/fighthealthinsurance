@@ -263,6 +263,11 @@ class AuditService:
         """
         Create an audit log entry for a user logout.
         
+        Parameters:
+            request (HttpRequest): The incoming HTTP request associated with the logout.
+            user (User): The user who is logging out.
+            domain (Optional[UserDomain]): The professional domain associated with the logout, if applicable.
+        
         Returns:
             AuthAuditLog | None: The created `AuthAuditLog` for the logout event, or `None` if the log could not be created.
         """
@@ -290,6 +295,8 @@ class AuditService:
         Includes the professional user and request domain and records whether the change was self-initiated.
         
         Parameters:
+            request (HttpRequest): The incoming HTTP request associated with the password change.
+            user (User): The user whose password was changed.
             changed_by_self (bool): `True` if the user changed their own password, `False` if changed by another actor.
         
         Returns:
@@ -454,6 +461,12 @@ class AuditService:
     ) -> Optional[ProfessionalActivityLog]:
         """
         Record that a professional user was accepted into a domain by another user.
+        
+        Parameters:
+            request (HttpRequest): The HTTP request that initiated the acceptance action.
+            professional_user (ProfessionalUser): The professional user who was accepted.
+            domain (UserDomain): The domain/context where the professional was accepted.
+            accepted_by (User): The user who performed the acceptance action.
         
         Returns:
             ProfessionalActivityLog: The created audit log entry, or `None` if creation failed.
@@ -718,6 +731,7 @@ class AuditService:
         Records the actor (user/professional), domain, IP/ASN/network info, geolocation, user-agent details, and session key associated with the specified object and action.
         
         Parameters:
+            request (RequestType): The incoming HTTP request (Django HttpRequest or DRF Request) used to derive context.
             obj: The target business object; must have a `pk` attribute used as the object identifier.
             action (str): One of "create", "update", "view", "delete", or "export" describing the operation performed.
         
