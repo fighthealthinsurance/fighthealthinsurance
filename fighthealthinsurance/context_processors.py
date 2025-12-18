@@ -2,6 +2,13 @@
 
 from urllib.parse import urlparse, urlunparse
 
+# Common file extensions that should not have trailing slashes in canonical URLs
+FILE_EXTENSIONS = {
+    'xml', 'pdf', 'ico', 'png', 'jpg', 'jpeg', 'gif', 'svg', 'webp',
+    'css', 'js', 'json', 'txt', 'html', 'htm', 'zip', 'gz', 'tar',
+    'doc', 'docx', 'xls', 'xlsx', 'csv', 'mp4', 'mp3', 'wav', 'avi'
+}
+
 
 def form_persistence_context(request):
     """
@@ -33,13 +40,6 @@ def canonical_url_context(request):
     normalizes to a single canonical version by ensuring paths have trailing slashes
     (following Django convention), except for paths that look like files.
     """
-    # Common file extensions that should not have trailing slashes
-    FILE_EXTENSIONS = {
-        'xml', 'pdf', 'ico', 'png', 'jpg', 'jpeg', 'gif', 'svg', 'webp',
-        'css', 'js', 'json', 'txt', 'html', 'htm', 'zip', 'gz', 'tar',
-        'doc', 'docx', 'xls', 'xlsx', 'csv', 'mp4', 'mp3', 'wav', 'avi'
-    }
-    
     # Get the full current URL
     current_url = request.build_absolute_uri()
     
@@ -56,9 +56,11 @@ def canonical_url_context(request):
         
         if '.' in last_segment and not last_segment.startswith('.'):
             # Get the extension (everything after the last dot)
-            ext = last_segment.rsplit('.', 1)[-1].lower()
-            if ext in FILE_EXTENSIONS:
-                has_file_extension = True
+            parts = last_segment.rsplit('.', 1)
+            if len(parts) == 2 and parts[1]:
+                ext = parts[1].lower()
+                if ext in FILE_EXTENSIONS:
+                    has_file_extension = True
         
         # Add trailing slash if it's not a file
         if not has_file_extension:
