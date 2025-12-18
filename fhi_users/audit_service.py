@@ -263,6 +263,11 @@ class AuditService:
         """
         Create an audit log entry for a user logout.
         
+        Parameters:
+            request (HttpRequest): The incoming HTTP request associated with the logout.
+            user (User): The user who is logging out.
+            domain (Optional[UserDomain]): The professional domain associated with the logout, if applicable.
+        
         Returns:
             AuthAuditLog | None: The created `AuthAuditLog` for the logout event, or `None` if the log could not be created.
         """
@@ -454,6 +459,12 @@ class AuditService:
     ) -> Optional[ProfessionalActivityLog]:
         """
         Record that a professional user was accepted into a domain by another user.
+        
+        Parameters:
+            request (HttpRequest): The HTTP request that initiated the acceptance action.
+            professional_user (ProfessionalUser): The professional user who was accepted.
+            domain (UserDomain): The domain/context where the professional was accepted.
+            accepted_by (User): The user who performed the acceptance action.
         
         Returns:
             ProfessionalActivityLog: The created audit log entry, or `None` if creation failed.
