@@ -185,11 +185,12 @@ const getSessionKey = (): string => {
 interface ChatInterfaceProps {
   defaultProcedure?: string;
   defaultCondition?: string;
+  medicare?: string;
   micrositeSlug?: string;
   initialMessage?: string;
 }
 
-const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, defaultCondition, micrositeSlug, initialMessage }) => {
+const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, defaultCondition, medicare, micrositeSlug, initialMessage }) => {
   // State for our chat interface
   const [state, setState] = useState<ChatState>({
     messages: [],
@@ -354,15 +355,32 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
             if (defaultCondition) {
               console.log("Default condition from microsite:", defaultCondition);
             }
+            if (medicare) {
+              console.log("Medicare flag set:", medicare);
+            }
+            if (micrositeSlug) {
+              console.log("Microsite slug:", micrositeSlug);
+            }
 
             // Small delay to ensure welcome message is displayed first
             setTimeout(() => {
               // Build initial message with procedure and optionally condition
-              let initialMessage = `I'm working on an appeal for ${defaultProcedure}`;
-              if (defaultCondition) {
-                initialMessage += ` for ${defaultCondition}`;
+              let initialMessage = "";
+              
+              // Special message for medicare-work-requirements microsite
+              if (micrositeSlug === "medicare-work-requirements") {
+                initialMessage = `I need help understanding the new Medicare work requirements. Can you explain what I need to know?`;
+              } else {
+                // Default message for appeals
+                initialMessage = `I'm working on an appeal for ${defaultProcedure}`;
+                if (defaultCondition) {
+                  initialMessage += ` for ${defaultCondition}`;
+                }
+                if (medicare === "true") {
+                  initialMessage += ` through Medicare`;
+                }
+                initialMessage += `. Can you help me understand what I need to do?`;
               }
-              initialMessage += `. Can you help me understand what I need to do?`;
 
               // Add the user message to the UI
               const userMessage: ChatMessage = {
@@ -1088,6 +1106,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // Get default procedure and condition from data attributes (from microsite)
     const defaultProcedure = chatRoot.dataset.defaultProcedure || undefined;
     const defaultCondition = chatRoot.dataset.defaultCondition || undefined;
+    const medicare = chatRoot.dataset.medicare || undefined;
     const micrositeSlug = chatRoot.dataset.micrositeSlug || undefined;
     const initialMessage = chatRoot.dataset.initialMessage || undefined;
     if (defaultProcedure) {
@@ -1096,8 +1115,11 @@ document.addEventListener("DOMContentLoaded", () => {
     if (defaultCondition) {
       console.log("Default condition from microsite:", defaultCondition);
     }
+    if (medicare) {
+      console.log("Medicare flag from microsite:", medicare);
+    }
     if (micrositeSlug) {
-      console.log("Microsite slug:", micrositeSlug);
+      console.log("Microsite slug from microsite:", micrositeSlug);
     }
     if (initialMessage) {
       console.log("Initial message provided:", initialMessage.substring(0, 100) + "...");
@@ -1108,7 +1130,8 @@ document.addEventListener("DOMContentLoaded", () => {
       <MantineProvider>
         <ChatInterface 
           defaultProcedure={defaultProcedure} 
-          defaultCondition={defaultCondition} 
+          defaultCondition={defaultCondition}
+          medicare={medicare}
           micrositeSlug={micrositeSlug}
           initialMessage={initialMessage}
         />

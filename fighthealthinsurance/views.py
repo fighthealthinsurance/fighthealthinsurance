@@ -1636,6 +1636,7 @@ def chat_interface_view(request):
     default_condition = request.GET.get("default_condition") or request.POST.get(
         "default_condition", ""
     )
+    medicare = request.GET.get("medicare") or request.POST.get("medicare", "")
     microsite_slug = request.GET.get("microsite_slug") or request.POST.get(
         "microsite_slug", ""
     )
@@ -1662,6 +1663,7 @@ def chat_interface_view(request):
         "email": email,
         "default_procedure": default_procedure,
         "default_condition": default_condition,
+        "medicare": medicare,
         "microsite_slug": microsite_slug,
         "initial_message": initial_message,
     }
