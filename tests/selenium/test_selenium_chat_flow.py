@@ -14,7 +14,6 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
-from fighthealthinsurance.models import OngoingChat, Denial
 from .fhi_selenium_base import FHISeleniumBase
 
 BaseCase.main(__name__, __file__)
@@ -268,6 +267,7 @@ class SeleniumExplainDenialChatFlowTest(FHISeleniumBase, StaticLiveServerTestCas
             "return localStorage.getItem('fhi_user_info');"
         )
         assert user_info_json is not None, "User info should be stored"
+        assert has_denial_context, "Denial context should be present in chat"
 
         print("✓ Denial context passed to chat interface")
 

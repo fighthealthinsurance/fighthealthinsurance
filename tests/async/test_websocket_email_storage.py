@@ -7,7 +7,6 @@ for anonymous patient users, which is critical for GDPR data deletion support.
 
 import pytest
 from django.test import TestCase
-from unittest.mock import AsyncMock, MagicMock, patch
 import uuid
 
 from fighthealthinsurance.models import OngoingChat, Denial

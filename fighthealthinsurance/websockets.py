@@ -584,7 +584,7 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                 # Regular anonymous chat
                 pass
 
-            # For patient chats (not trial professional), store hashed email for data deletion
+            # Also store hashed_email for trial professionals
             hashed_email = None
             if not is_trial_professional and email:
                 hashed_email = Denial.get_hashed_email(email)
