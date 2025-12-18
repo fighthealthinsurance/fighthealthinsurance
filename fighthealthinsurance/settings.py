@@ -201,6 +201,7 @@ class Base(Configuration):
                     "django.contrib.auth.context_processors.auth",
                     "django.contrib.messages.context_processors.messages",
                     "fighthealthinsurance.context_processors.form_persistence_context",
+                    "fighthealthinsurance.context_processors.canonical_url_context",
                 ],
             },
         },
