@@ -242,6 +242,13 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         name="medicaid-faq",
     ),
     path(
+        "denial-language/",
+        cache_control(public=True)(
+            cache_page(60 * 60 * 2)(views.DenialLanguageLibraryView.as_view())
+        ),
+        name="denial-language-library",
+    ),
+    path(
         "pro_version", csrf_exempt(views.ProVersionView.as_view()), name="pro_version"
     ),
     path(
