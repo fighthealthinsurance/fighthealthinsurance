@@ -220,6 +220,12 @@ class HowToHelpView(generic.TemplateView):
     template_name = "how_to_help.html"
 
 
+class Preparing2026View(generic.TemplateView):
+    """Landing page helping users prepare for 2026 insurance changes."""
+
+    template_name = "preparing_2026.html"
+
+
 class PBSNewsHourView(generic.TemplateView):
     """Page about the PBS NewsHour feature."""
 
