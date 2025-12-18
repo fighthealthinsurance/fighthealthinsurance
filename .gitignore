@@ -162,6 +162,7 @@ a.tr
 
 # tracking the requirements hashes
 .requirements_checksum
+.js_build_checksum
 
 # Node.js dependencies
 node_modules/
