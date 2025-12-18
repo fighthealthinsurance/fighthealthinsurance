@@ -31,9 +31,15 @@ def canonical_url_context(request):
 
     For pages with multiple routes (e.g., with/without trailing slash), this
     normalizes to a single canonical version by ensuring paths have trailing slashes
-    (following Django convention), except for paths that look like files or specific
-    API endpoints.
+    (following Django convention), except for paths that look like files.
     """
+    # Common file extensions that should not have trailing slashes
+    FILE_EXTENSIONS = {
+        'xml', 'pdf', 'ico', 'png', 'jpg', 'jpeg', 'gif', 'svg', 'webp',
+        'css', 'js', 'json', 'txt', 'html', 'htm', 'zip', 'gz', 'tar',
+        'doc', 'docx', 'xls', 'xlsx', 'csv', 'mp4', 'mp3', 'wav', 'avi'
+    }
+    
     # Get the full current URL
     current_url = request.build_absolute_uri()
     
@@ -44,18 +50,18 @@ def canonical_url_context(request):
     # Add trailing slash if not present and path doesn't look like a file
     path = parsed.path
     if path and not path.endswith('/'):
-        # Don't add trailing slash if it looks like a file (has extension)
+        # Check if last segment has a known file extension
         last_segment = path.split('/')[-1]
-        # Check if last segment has an extension (e.g., .xml, .pdf, .ico)
-        if '.' in last_segment:
-            # Split on the last dot to check if there's an extension
-            _, ext = last_segment.rsplit('.', 1)
-            # Only skip trailing slash if extension looks valid (2-4 chars)
-            if len(ext) >= 2 and len(ext) <= 4 and ext.isalnum():
-                pass  # Don't add trailing slash for file-like paths
-            else:
-                path = path + '/'
-        else:
+        has_file_extension = False
+        
+        if '.' in last_segment and not last_segment.startswith('.'):
+            # Get the extension (everything after the last dot)
+            ext = last_segment.rsplit('.', 1)[-1].lower()
+            if ext in FILE_EXTENSIONS:
+                has_file_extension = True
+        
+        # Add trailing slash if it's not a file
+        if not has_file_extension:
             path = path + '/'
     
     # Rebuild URL with canonical domain and normalized path
