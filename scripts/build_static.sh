@@ -3,7 +3,7 @@
 # 
 # Optimizations:
 # - Uses checksum-based caching to skip JS builds when source files haven't changed
-# - Checksum includes .ts, .tsx, .js, .jsx files (excluding .min.js), package.json, and webpack.config.js
+# - Checksum includes .ts, .tsx, .js, .jsx files (excluding .min.js & .bundle.js), package.json, and webpack.config.js
 # - This can save 8-10 seconds on subsequent runs when no changes are made
 #
 # We expect npm depcheck to _maybe_ fail
@@ -21,7 +21,7 @@ if [ -d "${JS_PATH}" ]; then
   # Calculate checksum of JS/TS source files
   # Using -maxdepth 1 because source files are in the js directory, not subdirectories
   # (node_modules and dist are excluded by design)
-  CURRENT_JS_CHECKSUM=$(find "${JS_PATH}" -maxdepth 1 -type f \( -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" \) ! -name "*.min.js" -exec md5sum {} \; 2>/dev/null | sort | md5sum | cut -d ' ' -f 1)
+  CURRENT_JS_CHECKSUM=$(find "${JS_PATH}" -maxdepth 1 -type f \( -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" \) ! -name "*.bundle.js"! -name "*.min.js" -exec md5sum {} \; 2>/dev/null | sort | md5sum | cut -d ' ' -f 1)
   
   # Add checksums of package.json and webpack config if they exist
   if [ -f "${JS_PATH}/package.json" ]; then
