@@ -56,6 +56,7 @@ from .utils import (
     send_fallback_email,
     fire_and_forget_in_new_threadpool,
     execute_critical_optional_fireandforget,
+    _try_pandoc_engines,
 )
 
 
@@ -162,39 +163,33 @@ class AppealAssemblyHelper:
                 f"-o{input_path}.pdf",
             ]
             try:
-                await check_call(base_convert_command)
+                await _try_pandoc_engines(base_convert_command)
                 return f"{input_path}.pdf"
             # pandoc failures are often character encoding issues
             except Exception as e:
                 # try to convert if we've got txt input
                 new_input_path = input_path
-                if input_path.endswith(".txt"):
+                if input_path.endswith(".txt") and not input_path.endswith(
+                    ".magic.u8.txt"
+                ):
                     try:
                         command = [
                             "iconv",
                             "-c",
                             "-t utf8",
-                            f"-o{input_path}.u8.txt",
+                            f"-o{input_path}.magic.u8.txt",
                             input_path,
                         ]
                         await check_call(command)
                         new_input_path = f"{input_path}.u8.txt"
+                        return await self._convert_input(new_input_path)
                     except:
                         pass
                 if input_path.endswith(".html"):
                     html_command = base_convert_command
                     html_command.extend(["-thtml"])
                     try:
-                        await check_call(html_command)
-                        return f"{input_path}.pdf"
-                    except:
-                        pass
-                # Try a different engine
-                for engine in ["lualatex", "xelatex"]:
-                    convert_command = base_convert_command
-                    convert_command.extend([f"--pdf-engine={engine}"])
-                    try:
-                        await check_call(convert_command)
+                        await _try_pandoc_engines(html_command)
                         return f"{input_path}.pdf"
                     except:
                         pass
