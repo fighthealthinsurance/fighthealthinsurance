@@ -576,3 +576,137 @@ class TestDenialCreationAuditLogging(TestCase):
             object_id=str(result.denial_id)
         )
         self.assertEqual(contexts.count(), 0)
+
+
+class TestAuditLoggingFeatureFlag(TestCase):
+    """Tests for the ENABLE_AUDIT_LOGGING feature flag."""
+
+    def setUp(self):
+        """Prepare test fixtures."""
+        self.factory = RequestFactory()
+        self.user = User.objects.create_user(
+            username="flagtestuser",
+            email="flagtest@example.com",
+            password="testpass123",
+        )
+
+    def tearDown(self):
+        """Clean up test artifacts."""
+        from fhi_users.audit_models import AuthAuditLog, APIAccessLog, ObjectActivityContext
+        AuthAuditLog.objects.all().delete()
+        APIAccessLog.objects.all().delete()
+        ObjectActivityContext.objects.all().delete()
+        self.user.delete()
+
+    def test_feature_flag_disabled_no_login_audit(self):
+        """When feature flag is disabled, login events should not be logged."""
+        from django.conf import settings
+        from fhi_users.audit_service import audit_service
+        from fhi_users.audit_models import AuthAuditLog
+
+        # Temporarily disable the feature flag
+        original_value = getattr(settings, 'ENABLE_AUDIT_LOGGING', False)
+        settings.ENABLE_AUDIT_LOGGING = False
+
+        try:
+            request = self.factory.post("/login/")
+            request.user = self.user
+            request.session = {}
+
+            # Try to log a login
+            result = audit_service.log_login_success(request, self.user)
+
+            # Should return None and not create a log entry
+            self.assertIsNone(result)
+            self.assertEqual(AuthAuditLog.objects.count(), 0)
+        finally:
+            # Restore original value
+            settings.ENABLE_AUDIT_LOGGING = original_value
+
+    def test_feature_flag_enabled_logs_login(self):
+        """When feature flag is enabled, login events should be logged."""
+        from django.conf import settings
+        from fhi_users.audit_service import audit_service
+        from fhi_users.audit_models import AuthAuditLog
+
+        # Temporarily enable the feature flag
+        original_value = getattr(settings, 'ENABLE_AUDIT_LOGGING', False)
+        settings.ENABLE_AUDIT_LOGGING = True
+
+        try:
+            request = self.factory.post("/login/")
+            request.user = self.user
+            request.session = {}
+
+            # Log a login
+            result = audit_service.log_login_success(request, self.user)
+
+            # Should create a log entry
+            self.assertIsNotNone(result)
+            self.assertEqual(AuthAuditLog.objects.count(), 1)
+        finally:
+            # Restore original value
+            settings.ENABLE_AUDIT_LOGGING = original_value
+
+    def test_feature_flag_disabled_no_api_audit(self):
+        """When feature flag is disabled, API access should not be logged."""
+        from django.conf import settings
+        from fhi_users.audit_service import audit_service
+        from fhi_users.audit_models import APIAccessLog
+
+        # Temporarily disable the feature flag
+        original_value = getattr(settings, 'ENABLE_AUDIT_LOGGING', False)
+        settings.ENABLE_AUDIT_LOGGING = False
+
+        try:
+            request = self.factory.get("/api/v1/test/")
+            request.user = self.user
+            request.session = {}
+
+            # Try to log API access
+            result = audit_service.log_api_access(
+                request, endpoint="/api/v1/test/", http_status=200
+            )
+
+            # Should return None and not create a log entry
+            self.assertIsNone(result)
+            self.assertEqual(APIAccessLog.objects.count(), 0)
+        finally:
+            # Restore original value
+            settings.ENABLE_AUDIT_LOGGING = original_value
+
+    def test_feature_flag_disabled_no_object_activity(self):
+        """When feature flag is disabled, object activity should not be logged."""
+        from django.conf import settings
+        from fhi_users.audit_service import audit_service
+        from fhi_users.audit_models import ObjectActivityContext
+        from fighthealthinsurance.models import Denial
+
+        # Temporarily disable the feature flag
+        original_value = getattr(settings, 'ENABLE_AUDIT_LOGGING', False)
+        settings.ENABLE_AUDIT_LOGGING = False
+
+        try:
+            denial = Denial.objects.create(
+                denial_text="Test denial",
+                hashed_email="flagtest@example.com",
+            )
+
+            request = self.factory.post("/test/")
+            request.user = self.user
+            request.session = {}
+
+            # Try to log object activity
+            result = audit_service.log_object_activity(
+                request=request, obj=denial, action="create"
+            )
+
+            # Should return None and not create a log entry
+            self.assertIsNone(result)
+            self.assertEqual(ObjectActivityContext.objects.count(), 0)
+
+            # Cleanup
+            denial.delete()
+        finally:
+            # Restore original value
+            settings.ENABLE_AUDIT_LOGGING = original_value
