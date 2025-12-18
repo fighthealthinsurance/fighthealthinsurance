@@ -93,6 +93,11 @@ class Base(Configuration):
     USE_X_FORWARDED_HOST = True
 
     SENTRY_ENDPOINT = os.getenv("SENTRY_ENDPOINT")
+    
+    # Audit logging feature flag - disabled by default for privacy
+    # Enable in specific environments (like Staging) to test before full rollout
+    ENABLE_AUDIT_LOGGING = os.getenv("ENABLE_AUDIT_LOGGING", "false").lower() in ("true", "1", "yes")
+    
     # Application definition
 
     # Ensure Django finds static/blog/ for .mdx blog posts
@@ -539,6 +544,37 @@ class TestActor(Dev):
             },
         },
     }
+
+
+class Staging(Base):
+    """
+    Staging environment configuration.
+    
+    Similar to Prod but with audit logging enabled for testing.
+    """
+    # Enable audit logging in staging for testing
+    ENABLE_AUDIT_LOGGING = True
+    
+    DEBUG = False
+    
+    @property
+    def SECRET_KEY(self):  # type: ignore
+        return os.getenv("SECRET_KEY", "")
+    
+    @property
+    def DATABASES(self):  # type: ignore
+        postgres_engine = "django_prometheus.db.backends.postgresql"
+        return {
+            "default": {
+                "ENGINE": postgres_engine,
+                "NAME": os.getenv("PDBNAME"),
+                "USER": os.getenv("PDBUSER"),
+                "PASSWORD": os.getenv("PDBPASSWORD"),
+                "HOST": os.getenv("PDBHOST"),
+                "ATOMIC_REQUESTS": False,
+                "pool": True,
+            },
+        }
 
 
 class Prod(Base):
