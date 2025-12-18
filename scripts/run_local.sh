@@ -49,7 +49,7 @@ fi
 
 check_python_environment() {
 	# Combine both checks in a single Python invocation for speed
-	python -c 'import sys; import configurations; sys.exit(0 if sys.version >= "3.10" else -1)' >/dev/null 2>&1
+	python -c 'import sys; import configurations; sys.exit(0 if sys.version_info >= (3, 10) else -1)' >/dev/null 2>&1
 	python_dep_check=$?
 	if [ ${python_dep_check} != 0 ]; then
 		set +x

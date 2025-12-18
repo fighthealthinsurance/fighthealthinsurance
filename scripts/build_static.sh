@@ -18,10 +18,20 @@ STORED_JS_CHECKSUM=""
 SKIP_JS_BUILD=false
 
 if [ -d "${JS_PATH}" ]; then
-  # Calculate checksum of JS/TS source files, package.json, and webpack config
+  # Calculate checksum of JS/TS source files
+  # Using -maxdepth 1 because source files are in the js directory, not subdirectories
+  # (node_modules and dist are excluded by design)
   CURRENT_JS_CHECKSUM=$(find "${JS_PATH}" -maxdepth 1 -type f \( -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" \) ! -name "*.min.js" -exec md5sum {} \; 2>/dev/null | sort | md5sum | cut -d ' ' -f 1)
-  PACKAGE_JSON_SUM=$(md5sum "${JS_PATH}/package.json" "${JS_PATH}/webpack.config.js" 2>/dev/null | sort | md5sum | cut -d ' ' -f 1)
-  CURRENT_JS_CHECKSUM="${CURRENT_JS_CHECKSUM}${PACKAGE_JSON_SUM}"
+  
+  # Add checksums of package.json and webpack config if they exist
+  if [ -f "${JS_PATH}/package.json" ]; then
+    PACKAGE_JSON_SUM=$(md5sum "${JS_PATH}/package.json" 2>/dev/null | cut -d ' ' -f 1)
+    CURRENT_JS_CHECKSUM="${CURRENT_JS_CHECKSUM}${PACKAGE_JSON_SUM}"
+  fi
+  if [ -f "${JS_PATH}/webpack.config.js" ]; then
+    WEBPACK_SUM=$(md5sum "${JS_PATH}/webpack.config.js" 2>/dev/null | cut -d ' ' -f 1)
+    CURRENT_JS_CHECKSUM="${CURRENT_JS_CHECKSUM}${WEBPACK_SUM}"
+  fi
   
   if [ -f "$JS_CHECKSUM_FILE" ]; then
     STORED_JS_CHECKSUM=$(cat "$JS_CHECKSUM_FILE")
