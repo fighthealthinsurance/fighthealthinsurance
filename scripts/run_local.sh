@@ -203,5 +203,5 @@ fi
 # - Test files and artifacts (tests/*, .tox/*, *.sqlite*)
 # - Large data files (*.csv, *.m4a, *.pdf in static)
 # - Migration files (migrations/* - only changed intentionally, not during normal dev)
-RELOAD_EXCLUDE="*.pyc,__pycache__/*,*.pyo,*~,#*#,.#*,node_modules/*,static/*,dist/*,.tox/*,*sqlite*,./tox/*,./tests/*,fhi-0.1.0/*,migrations/*,*.csv,*.m4a,*.pdf,*.png,*.jpg,*.jpeg,*.gif,*.svg,*.woff,*.woff2,*.ttf,*.eot,*.ico"
+RELOAD_EXCLUDE="*.pyc,__pycache__/*,*.pyo,*~,#*#,.#*,node_modules/*,dist/*,.tox/*,*sqlite*,./tox/*,./tests/*,fhi-0.1.0/*,migrations/*,*.csv,*.m4a,*.pdf,*.png,*.jpg,*.jpeg,*.gif,*.svg,*.woff,*.woff2,*.ttf,*.eot,*.ico"
 RECAPTCHA_TESTING=true OAUTHLIB_RELAX_TOKEN_SCOPE=1 uvicorn fighthealthinsurance.asgi:application --reload --reload-dir fighthealthinsurance --reload-exclude "$RELOAD_EXCLUDE" --access-log --log-config conf/uvlog_config.yaml --port 8000 --ssl-keyfile key.pem --ssl-certfile cert.pem "$@" --host 0.0.0.0
