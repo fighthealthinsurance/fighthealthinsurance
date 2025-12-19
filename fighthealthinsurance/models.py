@@ -112,8 +112,8 @@ class MailingListSubscriber(models.Model):
     unsubscribe_token = models.CharField(
         max_length=100, default=sekret_gen, unique=False
     )
-    referral_source = models.CharField(max_length=300, default="", blank=True)
-    referral_source_details = models.TextField(default="", blank=True)
+    referral_source = models.CharField(max_length=300, default="", blank=True, null=True)
+    referral_source_details = models.TextField(default="", blank=True, null=True)
 
     def __str__(self):
         return self.email
