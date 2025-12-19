@@ -180,7 +180,7 @@ class FaxActor:
             return False
         if fax.destination is None:
             print(f"Fax {fax} has no destination")
-            self._update_fax_for_sent(fax, False, False)
+            self._update_fax_for_sent(fax, False, missing_destination = True)
             return False
         extra = ""
         if denial.claim_id is not None and len(denial.claim_id) > 2:
