@@ -10,6 +10,9 @@ time.sleep(60)
 success = False
 attempt = 0
 
+epar = None
+fpar = None
+cpar = None
 while not success and attempt < 10:
     attempt = attempt + 1
     try:
