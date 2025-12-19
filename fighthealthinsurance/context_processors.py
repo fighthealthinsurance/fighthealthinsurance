@@ -2,13 +2,6 @@
 
 from urllib.parse import urlparse, urlunparse
 
-# Common file extensions that should not have trailing slashes in canonical URLs
-FILE_EXTENSIONS = {
-    'xml', 'pdf', 'ico', 'png', 'jpg', 'jpeg', 'gif', 'svg', 'webp',
-    'css', 'js', 'json', 'txt', 'html', 'htm', 'zip', 'gz', 'tar',
-    'doc', 'docx', 'xls', 'xlsx', 'csv', 'mp4', 'mp3', 'wav', 'avi'
-}
-
 
 def form_persistence_context(request):
     """
@@ -36,9 +29,8 @@ def canonical_url_context(request):
       https://www.fighthealthinsurance.com regardless of the domain used to access
       the site. Preserves the full path and query string from the original request.
 
-    For pages with multiple routes (e.g., with/without trailing slash), this
-    normalizes to a single canonical version by ensuring paths have trailing slashes
-    (following Django convention), except for paths that look like files.
+    The canonical URL uses the exact path that was successfully resolved by Django,
+    ensuring the canonical URL points to a valid, working URL.
     """
     # Get the full current URL
     current_url = request.build_absolute_uri()
@@ -46,31 +38,15 @@ def canonical_url_context(request):
     # Parse the URL to replace just the scheme and netloc (domain)
     parsed = urlparse(current_url)
     
-    # Normalize the path to ensure consistent canonical URLs
-    # Add trailing slash if not present and path doesn't look like a file
+    # Use the path as-is - it's already been validated by Django's URL resolver
+    # This ensures the canonical URL points to a URL that actually works
     path = parsed.path
-    if path and not path.endswith('/'):
-        # Check if last segment has a known file extension
-        last_segment = path.split('/')[-1]
-        has_file_extension = False
-        
-        if '.' in last_segment and not last_segment.startswith('.'):
-            # Get the extension (everything after the last dot)
-            parts = last_segment.rsplit('.', 1)
-            if len(parts) == 2 and parts[1]:
-                ext = parts[1].lower()
-                if ext in FILE_EXTENSIONS:
-                    has_file_extension = True
-        
-        # Add trailing slash if it's not a file
-        if not has_file_extension:
-            path = path + '/'
     
-    # Rebuild URL with canonical domain and normalized path
+    # Rebuild URL with canonical domain
     canonical = urlunparse((
         'https',                           # scheme
         'www.fighthealthinsurance.com',   # netloc (domain)
-        path,                              # normalized path
+        path,                              # path as resolved by Django
         parsed.params,                     # params
         parsed.query,                      # query string
         ''                                 # fragment (not included in canonical)
