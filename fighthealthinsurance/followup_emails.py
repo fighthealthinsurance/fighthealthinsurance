@@ -57,7 +57,7 @@ class ThankyouEmailSender(object):
 
 
 class FollowUpEmailSender(object):
-    def find_candidates(self) -> QuerySet[FollowUpSched, FollowUpSched]:
+    def find_candidates(self) -> List[FollowUpSched]:
         try:
             candidates = list(
                 FollowUpSched.objects.filter(follow_up_sent=False)
