@@ -180,7 +180,7 @@ class FaxActor:
             return False
         if fax.destination is None:
             print(f"Fax {fax} has no destination")
-            self._update_fax_for_sent(fax, False, missing_destination = True)
+            self._update_fax_for_sent(fax, False, missing_destination=True)
             return False
         extra = ""
         if denial.claim_id is not None and len(denial.claim_id) > 2:
@@ -202,5 +202,5 @@ class FaxActor:
             )
         except Exception as e:
             print(f"Error running async send_fax {e}")
-        self._update_fax_for_sent(fax, fax_sent, missing_destination = False)
+        self._update_fax_for_sent(fax, fax_sent, missing_destination=False)
         return True
