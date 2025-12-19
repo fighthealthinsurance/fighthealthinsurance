@@ -158,7 +158,7 @@ class Base(Configuration):
         "compressor.finders.CompressorFinder",
     )
     COMPRESS_ENABLED = True
-    COMPRESS_OFFLINE = True
+    COMPRESS_OFFLINE = False
     COMPRESS_YUGLIFY_BINARY = "yuglify"
     COMPRESS_YUGLIFY_JS_ARGUMENTS = "--mangle"
     COMPRESS_PRECOMPILERS = (
@@ -565,6 +565,8 @@ class Prod(Base):
     CORS_ALLOW_ALL_ORIGINS = False
     CORS_ALLOW_PRIVATE_NETWORK = False
     CORS_ALLOW_CREDENTIALS = True
+
+    COMPRESS_OFFLINE = True
 
     # Domain dynamic overrides the built in domain, we only need to do this for fight paperwork
     # fight health insurance is already on the vanilla domain.
