@@ -163,7 +163,7 @@ class FaxActor:
         )
         # Then, create a multipart email instance.
         msg = EmailMultiAlternatives(
-            "Following up from Fight Health Insurance",
+            "Following up from Fight Health Insurance Fax Service",
             text_content,
             "support42@fighthealthinsurance.com",
             [email],
