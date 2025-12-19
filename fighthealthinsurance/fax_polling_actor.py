@@ -40,7 +40,7 @@ class FaxPollingActor:
             finally:
                 # Success or failure we wait.
                 print(f"Waiting for next run")
-                await asyncio.sleep(5)
+                await asyncio.sleep(60 * 60)
         print(f"Done running? what?")
         return True
 

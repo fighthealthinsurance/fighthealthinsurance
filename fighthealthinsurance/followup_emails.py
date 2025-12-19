@@ -10,14 +10,18 @@ from loguru import logger
 
 
 class ThankyouEmailSender(object):
+    def _find_candidates(self):
+        return InterestedProfessional.objects.filter(thankyou_email_sent=False)
+
     def find_candidates(
         self,
-    ) -> QuerySet[InterestedProfessional, InterestedProfessional]:
-        candidates = InterestedProfessional.objects.filter(thankyou_email_sent=False)
-        return candidates
+    ) -> list[InterestedProfessional]:
+        candidates = self._find_candidates()
+        # Grab the top 100 candidates.
+        return list(candidates[0:100])
 
     def send_all(self, count: Optional[int] = None) -> int:
-        candidates = self.find_candidates()
+        candidates = self._find_candidates()
         selected_candidates = candidates
         if count is not None:
             selected_candidates = candidates[:count]
@@ -56,11 +60,22 @@ class ThankyouEmailSender(object):
 
 
 class FollowUpEmailSender(object):
-    def find_candidates(self) -> QuerySet[FollowUpSched, FollowUpSched]:
-        candidates = FollowUpSched.objects.filter(follow_up_sent=False).filter(
-            follow_up_date__lt=datetime.date.today()
-        )
-        return candidates
+    def _find_candidates(self):
+        try:
+            candidates = (
+                FollowUpSched.objects.filter(follow_up_sent=False)
+                .filter(follow_up_date__lt=datetime.date.today())
+                .distinct("email")
+            )
+            return candidates
+        except:
+            candidates = FollowUpSched.objects.filter(follow_up_sent=False).filter(
+                follow_up_date__lt=datetime.date.today()
+            )
+            return candidates
+
+    def find_candidates(self):
+        return list(self._find_candidates())
 
     def send_all(self, count: Optional[int] = None) -> int:
         candidates = self.find_candidates()

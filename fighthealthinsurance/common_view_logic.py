@@ -485,6 +485,7 @@ class SendFaxHelper:
         appeal: Appeal,
         email: str,
         professional: bool = False,
+        fax_number: Optional[str] = None,
     ):
         denial = appeal.for_denial
         if denial is None:
@@ -503,7 +504,7 @@ class SendFaxHelper:
             denial_id=denial,
             # This should work but idk why it does not
             combined_document_enc=appeal.document_enc,
-            destination=appeal_fax_number,
+            destination=appeal_fax_number or fax_number,
             professional=professional,
         )
         appeal.fax = fts
@@ -1877,9 +1878,9 @@ class AppealsBackendHelper:
                     subs["[Patient Name]"] = denial.patient_user.get_legal_name()
                     subs["[patient name]"] = denial.patient_user.get_legal_name()
                 if denial and denial.primary_professional is not None:
-                    subs[
-                        "[Professional Name]"
-                    ] = denial.primary_professional.get_full_name()
+                    subs["[Professional Name]"] = (
+                        denial.primary_professional.get_full_name()
+                    )
                 if denial.domain:
                     subs["[Professional Address]"] = denial.domain.get_address()
             except Exception as e:

@@ -75,14 +75,13 @@ class FaxActor:
     def send_delayed_faxes(self) -> Tuple[int, int]:
         from fighthealthinsurance.models import FaxesToSend
 
-        target_time = timezone.now() - timedelta(hours=4)
+        target_time = timezone.now() - timedelta(hours=1)
         print(f"Sending faxes older than target: {target_time}")
 
         delayed_faxes = FaxesToSend.objects.filter(
             should_send=True,
             sent=False,
             date__lt=target_time,
-            destination__isnull=False,
         )
         t = 0
         f = 0
@@ -95,6 +94,10 @@ class FaxActor:
             except Exception as e:
                 print(f"Error sending fax {fax}: {e}")
                 f = f + 1
+        if t > 0:
+            print(f"Tried sending {t} faxes with {f} failures")
+        else:
+            print("No old faxes found to send")
         return (t, f)
 
     def do_send_fax(self, hashed_email: str, uuid_val: Union[str, uuid.UUID]) -> bool:
@@ -118,7 +121,7 @@ class FaxActor:
         fax.attempting_to_send_as_of = timezone.now()
         fax.save()
 
-    def _update_fax_for_sent(self, fax, fax_success):
+    def _update_fax_for_sent(self, fax, fax_success, missing_destination):
         print(f"Fax send command returned :)")
         email = fax.email
         fax.sent = True
@@ -146,6 +149,7 @@ class FaxActor:
             "name": fax.name,
             "success": fax_success,
             "fax_redo_link": fax_redo_link,
+            "missing_destination": missing_destination,
         }
         # First, render the plain text content.
         text_content = render_to_string(
@@ -160,7 +164,7 @@ class FaxActor:
         )
         # Then, create a multipart email instance.
         msg = EmailMultiAlternatives(
-            "Following up from Fight Health Insurance",
+            "Following up from Fight Health Insurance Fax Service",
             text_content,
             "support42@fighthealthinsurance.com",
             [email],
@@ -176,6 +180,7 @@ class FaxActor:
             return False
         if fax.destination is None:
             print(f"Fax {fax} has no destination")
+            self._update_fax_for_sent(fax, False, missing_destination=True)
             return False
         extra = ""
         if denial.claim_id is not None and len(denial.claim_id) > 2:
@@ -197,5 +202,5 @@ class FaxActor:
             )
         except Exception as e:
             print(f"Error running async send_fax {e}")
-        self._update_fax_for_sent(fax, fax_sent)
+        self._update_fax_for_sent(fax, fax_sent, missing_destination=False)
         return True

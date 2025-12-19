@@ -30,10 +30,10 @@ spec:
             resources:
               limits:
                 cpu: "1"
-                memory: 13G
+                memory: 6G
               requests:
                 cpu: "1"
-                memory: 12G
+                memory: 6G
             volumeMounts:
               - mountPath: /tmp/ray
                 name: log-volume
@@ -51,7 +51,7 @@ spec:
   workerGroupSpecs:
   - groupName: workergroup
     maxReplicas: 4
-    minReplicas: 1
+    minReplicas: 2
     rayStartParams: {}
     replicas: 1
     template:
@@ -64,7 +64,7 @@ spec:
           - image: ${RAY_BASE}:${FHI_VERSION}
             env:
               - name: RAY_gcs_server_request_timeout_seconds
-                value: "20"
+                value: "30"
             envFrom:
               - secretRef:
                   name: fight-health-insurance-secret
@@ -73,10 +73,10 @@ spec:
             resources:
               limits:
                 cpu: "1"
-                memory: 13G
+                memory: 7G
               requests:
                 cpu: "1"
-                memory: 12G
+                memory: 6G
             volumeMounts:
             - mountPath: /tmp/ray
               name: log-volume

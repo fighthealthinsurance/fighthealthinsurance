@@ -677,7 +677,7 @@ class Prod(Base):
     @cached_property
     def EXTERNAL_STORAGE_B(self):
         try:
-            with Timeout(60.0) as _timeout_ctx:
+            with Timeout(30.0) as _timeout_ctx:
                 if (
                     self.MINIO_STORAGE_ENDPOINT is not None
                     and self.MINIO_STORAGE_ACCESS_KEY is not None
@@ -715,7 +715,7 @@ class Prod(Base):
     @cached_property
     def EXTERNAL_STORAGE_C(self) -> Optional[Storage]:
         try:
-            with Timeout(60.0) as _timeout_ctx:
+            with Timeout(30.0) as _timeout_ctx:
                 if (
                     self.BB_STORAGE_ENDPOINT is not None
                     and self.BB_STORAGE_ACCESS_KEY is not None

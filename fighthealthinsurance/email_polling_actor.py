@@ -42,8 +42,11 @@ class EmailPollingActor:
     async def run(self) -> None:
         print(f"Starting run")
         self.running = True
+        error_count = 0
         while self.running:
+            await asyncio.sleep(1)  # Yield
             try:
+                print(f"Gettting follow up candidates.")
                 # Send follow-up emails
                 followup_candidates = await sync_to_async(
                     self.followup_sender.find_candidates
@@ -60,7 +63,7 @@ class EmailPollingActor:
                     self.thankyou_sender.find_candidates
                 )()
                 print(f"Top thank you candidates: {thankyou_candidates[0:4]}")
-                if thankyou_candidates.count() > 0:
+                if len(thankyou_candidates) > 0:
                     sent_count = await sync_to_async(self.thankyou_sender.send_all)(
                         count=10
                     )
@@ -73,8 +76,11 @@ class EmailPollingActor:
                     self.last_email_clear_check = now
 
                 await asyncio.sleep(10)
+                error_count = 0
             except Exception as e:
+                error_count += 1
                 print(f"Error {e} while checking messages.")
+                await asyncio.sleep(60)
 
         print(f"Done running? what?")
         return None
