@@ -10,7 +10,7 @@ time.sleep(60)
 success = False
 attempt = 0
 
-while not success and attempt < 5:
+while not success and attempt < 10:
     attempt = attempt + 1
     try:
         epar, etask = email_polling_actor_ref.get
@@ -28,6 +28,9 @@ while not success and attempt < 5:
         success = True
     except Exception as e:
         print(f"Error {e} trying to launch")
+        time.sleep(60)
 
+if not success:
+    print(f"No successes?!?")
 
 __all__ = ["epar", "fpar", "cpar"]

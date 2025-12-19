@@ -75,7 +75,7 @@ class FaxActor:
     def send_delayed_faxes(self) -> Tuple[int, int]:
         from fighthealthinsurance.models import FaxesToSend
 
-        target_time = timezone.now() - timedelta(hours=4)
+        target_time = timezone.now() - timedelta(hours=1)
         print(f"Sending faxes older than target: {target_time}")
 
         delayed_faxes = FaxesToSend.objects.filter(
@@ -95,6 +95,8 @@ class FaxActor:
             except Exception as e:
                 print(f"Error sending fax {fax}: {e}")
                 f = f + 1
+        if t > 0:
+            print(f"Tried sending {t} faxes with {f} failures")
         return (t, f)
 
     def do_send_fax(self, hashed_email: str, uuid_val: Union[str, uuid.UUID]) -> bool:
