@@ -12,7 +12,7 @@ from loguru import logger
 class ThankyouEmailSender(object):
     def find_candidates(
         self,
-    ) -> QuerySet[InterestedProfessional, InterestedProfessional]:
+    ) -> list[InterestedProfessional]:
         candidates = InterestedProfessional.objects.filter(thankyou_email_sent=False)
         # Grab the top 100 candidates.
         return list(candidates[0:100])
