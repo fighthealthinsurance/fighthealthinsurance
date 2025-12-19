@@ -82,7 +82,6 @@ class FaxActor:
             should_send=True,
             sent=False,
             date__lt=target_time,
-            destination__isnull=False,
         )
         t = 0
         f = 0
@@ -97,6 +96,8 @@ class FaxActor:
                 f = f + 1
         if t > 0:
             print(f"Tried sending {t} faxes with {f} failures")
+        else:
+            print("No old faxes found to send")
         return (t, f)
 
     def do_send_fax(self, hashed_email: str, uuid_val: Union[str, uuid.UUID]) -> bool:
