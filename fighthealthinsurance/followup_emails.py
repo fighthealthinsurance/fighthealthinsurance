@@ -14,7 +14,8 @@ class ThankyouEmailSender(object):
         self,
     ) -> QuerySet[InterestedProfessional, InterestedProfessional]:
         candidates = InterestedProfessional.objects.filter(thankyou_email_sent=False)
-        return candidates
+        # Grab the top 100 candidates.
+        return list(candidates[0:100])
 
     def send_all(self, count: Optional[int] = None) -> int:
         candidates = self.find_candidates()
@@ -57,8 +58,10 @@ class ThankyouEmailSender(object):
 
 class FollowUpEmailSender(object):
     def find_candidates(self) -> QuerySet[FollowUpSched, FollowUpSched]:
-        candidates = FollowUpSched.objects.filter(follow_up_sent=False).filter(
-            follow_up_date__lt=datetime.date.today()
+        candidates = list(
+            FollowUpSched.objects.filter(follow_up_sent=False)
+            .filter(follow_up_date__lt=datetime.date.today())
+            .distinct("email")
         )
         return candidates
 
