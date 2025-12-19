@@ -121,7 +121,7 @@ class FaxActor:
         fax.attempting_to_send_as_of = timezone.now()
         fax.save()
 
-    def _update_fax_for_sent(self, fax, fax_success):
+    def _update_fax_for_sent(self, fax, fax_success, missing_destination):
         print(f"Fax send command returned :)")
         email = fax.email
         fax.sent = True
@@ -149,6 +149,7 @@ class FaxActor:
             "name": fax.name,
             "success": fax_success,
             "fax_redo_link": fax_redo_link,
+            "missing_destination": missing_destination,
         }
         # First, render the plain text content.
         text_content = render_to_string(
@@ -179,6 +180,7 @@ class FaxActor:
             return False
         if fax.destination is None:
             print(f"Fax {fax} has no destination")
+            self._update_fax_for_sent(fax, False, False)
             return False
         extra = ""
         if denial.claim_id is not None and len(denial.claim_id) > 2:

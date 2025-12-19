@@ -485,6 +485,7 @@ class SendFaxHelper:
         appeal: Appeal,
         email: str,
         professional: bool = False,
+        fax_number: Optional[str] = None,
     ):
         denial = appeal.for_denial
         if denial is None:
@@ -503,7 +504,7 @@ class SendFaxHelper:
             denial_id=denial,
             # This should work but idk why it does not
             combined_document_enc=appeal.document_enc,
-            destination=appeal_fax_number,
+            destination=appeal_fax_number or fax_number,
             professional=professional,
         )
         appeal.fax = fts

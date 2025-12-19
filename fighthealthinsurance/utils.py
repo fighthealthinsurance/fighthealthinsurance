@@ -375,11 +375,13 @@ async def best_within_timelimit(
     if best_result_option:
         asyncio.create_task(cancel_tasks(list(pending)))
         return best_result_option
+    elif len(pending) == 0:
+        raise Exception(f"No good answers found, ran out of all possibilities.")
 
     # If nothing is done in the length of normal timeout we try again but short
     # circuit on first.
     done, pending = await asyncio.wait(
-        wrapped_tasks, timeout=(timeout + 1) * 20, return_when=asyncio.FIRST_COMPLETED
+        pending, timeout=(timeout + 1) * 20, return_when=asyncio.FIRST_COMPLETED
     )
 
     for task in done:
