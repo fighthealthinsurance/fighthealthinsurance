@@ -58,12 +58,20 @@ class ThankyouEmailSender(object):
 
 class FollowUpEmailSender(object):
     def find_candidates(self) -> QuerySet[FollowUpSched, FollowUpSched]:
-        candidates = list(
-            FollowUpSched.objects.filter(follow_up_sent=False)
-            .filter(follow_up_date__lt=datetime.date.today())
-            .distinct("email")
-        )
-        return candidates
+        try:
+            candidates = list(
+                FollowUpSched.objects.filter(follow_up_sent=False)
+                .filter(follow_up_date__lt=datetime.date.today())
+                .distinct("email")
+            )[0:100]
+            return candidates
+        except:
+            candidates = list(
+                FollowUpSched.objects.filter(follow_up_sent=False).filter(
+                    follow_up_date__lt=datetime.date.today()
+                )
+            )[0:100]
+            return candidates
 
     def send_all(self, count: Optional[int] = None) -> int:
         candidates = self.find_candidates()
