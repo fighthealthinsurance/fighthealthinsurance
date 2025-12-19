@@ -57,7 +57,7 @@ class ThankyouEmailSender(object):
 
 
 class FollowUpEmailSender(object):
-    def find_candidates(self) -> List[FollowUpSched]:
+    def find_candidates(self) -> list[FollowUpSched]:
         try:
             candidates = list(
                 FollowUpSched.objects.filter(follow_up_sent=False)
