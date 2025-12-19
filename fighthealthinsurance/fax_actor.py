@@ -202,5 +202,5 @@ class FaxActor:
             )
         except Exception as e:
             print(f"Error running async send_fax {e}")
-        self._update_fax_for_sent(fax, fax_sent)
+        self._update_fax_for_sent(fax, fax_sent, missing_destination = False)
         return True

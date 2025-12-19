@@ -63,7 +63,7 @@ class EmailPollingActor:
                     self.thankyou_sender.find_candidates
                 )()
                 print(f"Top thank you candidates: {thankyou_candidates[0:4]}")
-                if thankyou_candidates.count() > 0:
+                if len(thankyou_candidates) > 0:
                     sent_count = await sync_to_async(self.thankyou_sender.send_all)(
                         count=10
                     )
