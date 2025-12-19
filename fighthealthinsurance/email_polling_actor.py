@@ -76,7 +76,9 @@ class EmailPollingActor:
                     self.last_email_clear_check = now
 
                 await asyncio.sleep(10)
+                error_count = 0
             except Exception as e:
+                error_count += 1
                 print(f"Error {e} while checking messages.")
                 await asyncio.sleep(60)
 
