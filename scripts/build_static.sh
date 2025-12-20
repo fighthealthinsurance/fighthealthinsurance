@@ -67,7 +67,7 @@ fi
 if [ "$FAST" != "FAST" ]; then
   rm -rf static
   ./manage.py collectstatic
-  ./manage.py compress
+  ./manage.py compress --force
   # Generate the blog metadata so it's included in the container.
   ./manage.py generate_blog_metadata || echo "Warning: Failed to generate blog metadata. Continuing build without it."
 fi
