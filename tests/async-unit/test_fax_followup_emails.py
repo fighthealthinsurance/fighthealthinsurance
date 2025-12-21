@@ -161,6 +161,68 @@ class TestFaxActorEmailSending:
         assert fax.destination != ""
         print("✓ Fax with destination has valid destination field")
 
+    def test_fax_actor_passes_missing_destination_to_template(
+        self, test_fax_without_destination
+    ):
+        """Test that FaxActor._update_fax_for_sent passes missing_destination to template.
+
+        This test verifies the actual context dict built in fax_actor.py
+        includes the missing_destination key, which is required for the template
+        to show the correct message.
+        """
+        # Import and inspect the actual fax_actor code
+        import inspect
+        import re
+        from fighthealthinsurance import fax_actor
+
+        # Get the source code of _update_fax_for_sent
+        source = inspect.getsource(fax_actor.FaxActor._update_fax_for_sent)
+
+        # Find the context dict assignment - look for lines that are NOT comments
+        # and contain the key assignment
+        lines = source.split('\n')
+        found_missing_destination = False
+        for line in lines:
+            stripped = line.strip()
+            # Skip comments
+            if stripped.startswith('#'):
+                continue
+            # Check for the key in dict context (not commented out)
+            if '"missing_destination":' in stripped or "'missing_destination':" in stripped:
+                found_missing_destination = True
+                break
+
+        assert found_missing_destination, \
+            "FaxActor._update_fax_for_sent must include 'missing_destination' in the email context (not commented out)"
+        print("✓ FaxActor passes missing_destination to email template")
+
+    def test_fax_actor_context_dict_structure(self, test_fax_with_destination):
+        """Test that the context dict has all required keys for the template."""
+        # The template requires these keys
+        required_context_keys = ["name", "success", "fax_redo_link", "missing_destination"]
+
+        import inspect
+        from fighthealthinsurance import fax_actor
+
+        source = inspect.getsource(fax_actor.FaxActor._update_fax_for_sent)
+
+        # Check each key is present and not commented out
+        lines = source.split('\n')
+        for key in required_context_keys:
+            found = False
+            for line in lines:
+                stripped = line.strip()
+                # Skip comments
+                if stripped.startswith('#'):
+                    continue
+                if f'"{key}"' in stripped or f"'{key}'" in stripped:
+                    found = True
+                    break
+            assert found, \
+                f"FaxActor._update_fax_for_sent must include '{key}' in the email context (not commented out)"
+
+        print("✓ FaxActor context dict has all required keys")
+
 
 @pytest.mark.django_db
 class TestFaxRedoLink:
@@ -375,3 +437,41 @@ class TestMissingFaxNumberScenarios:
         assert fax.destination == test_denial.appeal_fax_number
         fax.delete()
         print("✓ Denial fax number correctly propagates to FaxesToSend")
+
+
+@pytest.mark.django_db
+class TestFaxViewsSavesDenialFaxNumber:
+    """Test that fax_views.py saves the fax number to the Denial model."""
+
+    def test_stage_fax_view_saves_fax_number_to_denial(self):
+        """Test that StageFaxView saves fax number to denial.appeal_fax_number.
+
+        This is a code inspection test that verifies the StageFaxView
+        properly saves the fax number to the denial before staging.
+        """
+        import inspect
+        from fighthealthinsurance import fax_views
+
+        # Get the source of StageFaxView.form_valid
+        source = inspect.getsource(fax_views.StageFaxView.form_valid)
+
+        # Check that appeal_fax_number is set AND denial.save() is called
+        lines = source.split('\n')
+        found_fax_number_assignment = False
+        found_denial_save = False
+
+        for line in lines:
+            stripped = line.strip()
+            # Skip comments
+            if stripped.startswith('#'):
+                continue
+            if 'appeal_fax_number' in stripped and '=' in stripped:
+                found_fax_number_assignment = True
+            if 'denial.save()' in stripped:
+                found_denial_save = True
+
+        assert found_fax_number_assignment, \
+            "StageFaxView.form_valid must set denial.appeal_fax_number"
+        assert found_denial_save, \
+            "StageFaxView.form_valid must call denial.save() to persist fax number"
+        print("✓ StageFaxView correctly saves fax number to denial")
