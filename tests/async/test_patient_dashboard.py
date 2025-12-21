@@ -135,9 +135,7 @@ class PatientDashboardViewTests(TestCase):
 
         # Should succeed and create a PatientUser
         self.assertEqual(response.status_code, 200)
-        self.assertTrue(
-            PatientUser.objects.filter(user=new_user, active=True).exists()
-        )
+        self.assertTrue(PatientUser.objects.filter(user=new_user, active=True).exists())
 
 
 class CallLogViewTests(TestCase):
@@ -264,9 +262,7 @@ class CallLogViewTests(TestCase):
         self.assertEqual(response.status_code, 302)
 
         # Verify deletion
-        self.assertFalse(
-            InsuranceCallLog.objects.filter(id=call_log.id).exists()
-        )
+        self.assertFalse(InsuranceCallLog.objects.filter(id=call_log.id).exists())
 
 
 class EvidenceViewTests(TestCase):
@@ -378,9 +374,7 @@ class EvidenceViewTests(TestCase):
         response = self.client.post(url, {"delete": "true"})
         self.assertEqual(response.status_code, 302)
 
-        self.assertFalse(
-            PatientEvidence.objects.filter(id=evidence.id).exists()
-        )
+        self.assertFalse(PatientEvidence.objects.filter(id=evidence.id).exists())
 
     def test_evidence_download_no_file(self) -> None:
         """Test downloading evidence when no file is attached returns 404."""

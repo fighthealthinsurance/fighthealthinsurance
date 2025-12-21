@@ -748,7 +748,11 @@ class EvidenceFilterForm(forms.Form):
         widget=forms.Select(attrs={"class": "form-select form-select-sm"}),
     )
     include_in_appeal = forms.ChoiceField(
-        choices=[("", "All"), ("true", "Included in Appeal"), ("false", "Not Included")],
+        choices=[
+            ("", "All"),
+            ("true", "Included in Appeal"),
+            ("false", "Not Included"),
+        ],
         required=False,
         widget=forms.Select(attrs={"class": "form-select form-select-sm"}),
     )

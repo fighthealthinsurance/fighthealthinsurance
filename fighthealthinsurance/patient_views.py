@@ -42,9 +42,7 @@ class PatientRequiredMixin(LoginRequiredMixin):
 
         # Check if user has a PatientUser record
         try:
-            self.patient_user = PatientUser.objects.get(
-                user=request.user, active=True
-            )
+            self.patient_user = PatientUser.objects.get(user=request.user, active=True)
         except PatientUser.DoesNotExist:
             # User is logged in but doesn't have a patient account
             # They might be a professional or need to create a patient profile
@@ -74,9 +72,11 @@ class PatientDashboardView(PatientRequiredMixin, TemplateView):
         user = self.request.user
 
         # Get patient's appeals
-        appeals = Appeal.filter_to_allowed_appeals(user).select_related(
-            "for_denial"
-        ).order_by("-creation_date")[:20]
+        appeals = (
+            Appeal.filter_to_allowed_appeals(user)
+            .select_related("for_denial")
+            .order_by("-creation_date")[:20]
+        )
 
         # Get patient's call logs
         call_logs = InsuranceCallLog.filter_to_allowed_call_logs(user).order_by(
@@ -91,22 +91,30 @@ class PatientDashboardView(PatientRequiredMixin, TemplateView):
         # Get upcoming follow-ups (next 14 days)
         today = date.today()
         two_weeks = today + timedelta(days=14)
-        upcoming_followups = InsuranceCallLog.filter_to_allowed_call_logs(
-            user
-        ).filter(
-            follow_up_date__gte=today,
-            follow_up_date__lte=two_weeks,
-        ).order_by("follow_up_date")[:5]
+        upcoming_followups = (
+            InsuranceCallLog.filter_to_allowed_call_logs(user)
+            .filter(
+                follow_up_date__gte=today,
+                follow_up_date__lte=two_weeks,
+            )
+            .order_by("follow_up_date")[:5]
+        )
 
-        context.update({
-            "appeals": appeals,
-            "appeals_count": appeals.count(),
-            "call_logs": call_logs,
-            "call_logs_count": InsuranceCallLog.filter_to_allowed_call_logs(user).count(),
-            "evidence": evidence,
-            "evidence_count": PatientEvidence.filter_to_allowed_evidence(user).count(),
-            "upcoming_followups": upcoming_followups,
-        })
+        context.update(
+            {
+                "appeals": appeals,
+                "appeals_count": appeals.count(),
+                "call_logs": call_logs,
+                "call_logs_count": InsuranceCallLog.filter_to_allowed_call_logs(
+                    user
+                ).count(),
+                "evidence": evidence,
+                "evidence_count": PatientEvidence.filter_to_allowed_evidence(
+                    user
+                ).count(),
+                "upcoming_followups": upcoming_followups,
+            }
+        )
 
         return context
 

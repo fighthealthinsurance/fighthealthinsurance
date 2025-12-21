@@ -1900,20 +1900,18 @@ class PatientEvidence(ExportModelOperationsMixin("PatientEvidence"), models.Mode
         blank=True, help_text="Description of what this evidence shows"
     )
     date_of_evidence = models.DateField(
-        null=True, blank=True, help_text="Date on the document or when evidence was created"
+        null=True,
+        blank=True,
+        help_text="Date on the document or when evidence was created",
     )
 
     # File storage (encrypted)
-    file = EncryptedFileField(
-        null=True, blank=True, storage=settings.COMBINED_STORAGE
-    )
+    file = EncryptedFileField(null=True, blank=True, storage=settings.COMBINED_STORAGE)
     filename = models.CharField(max_length=255, blank=True)
     mime_type = models.CharField(max_length=127, blank=True)
 
     # Text content for notes or extracted text
-    text_content = models.TextField(
-        blank=True, help_text="Text content or notes"
-    )
+    text_content = models.TextField(blank=True, help_text="Text content or notes")
 
     # Source information
     source = models.CharField(
