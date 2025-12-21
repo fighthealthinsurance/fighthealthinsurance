@@ -46,6 +46,7 @@ from fhi_users.models import (
     UserDomain,
     ProfessionalDomainRelation,
 )
+from fhi_users.audit import AuditLog
 from django.contrib.auth.admin import UserAdmin
 
 
@@ -587,3 +588,49 @@ class ChooserVoteAdmin(admin.ModelAdmin):
     list_filter = ("created_at",)
     ordering = ("-created_at",)
     readonly_fields = ("id", "created_at")
+
+
+@admin.register(AuditLog)
+class AuditLogAdmin(admin.ModelAdmin):
+    """Admin configuration for AuditLog model (read-only)."""
+
+    list_display = (
+        "id",
+        "timestamp",
+        "event_type",
+        "username",
+        "is_professional",
+        "path",
+        "method",
+        "status_code",
+        "response_time_ms",
+    )
+    search_fields = ("username", "path", "event_type", "description")
+    list_filter = ("event_type", "is_professional", "method", "timestamp")
+    ordering = ("-timestamp",)
+    readonly_fields = (
+        "id",
+        "timestamp",
+        "event_type",
+        "description",
+        "user",
+        "username",
+        "is_professional",
+        "ip_address",
+        "user_agent",
+        "path",
+        "method",
+        "status_code",
+        "response_time_ms",
+        "extra_data",
+    )
+    date_hierarchy = "timestamp"
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False

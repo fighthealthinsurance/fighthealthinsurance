@@ -43,6 +43,9 @@ class Base(Configuration):
     SENTRY_ENDPOINT = os.getenv("SENTRY_ENDPOINT")
     COOKIE_CONSENT_ENABLED = False
     COOKIE_CONSENT_LOG_ENABLED = False
+
+    # Audit logging - disabled by default, enable via environment variable
+    ENABLE_AUDIT_LOGGING = os.getenv("ENABLE_AUDIT_LOGGING", "false").lower() == "true"
     LOGIN_URL = "login"
     LOGIN_REDIRECT_URL = "/"
     THUMBNAIL_DEBUG = True
@@ -180,6 +183,7 @@ class Base(Configuration):
         "django.middleware.common.CommonMiddleware",
         "django.middleware.csrf.CsrfViewMiddleware",
         "django.middleware.security.SecurityMiddleware",
+        "fighthealthinsurance.middleware.AuditMiddleware",
         "django_prometheus.middleware.PrometheusAfterMiddleware",
     ]
 

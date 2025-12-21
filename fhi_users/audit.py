@@ -1,0 +1,234 @@
+"""
+Simple audit logging for security and analytics.
+
+This module provides a straightforward audit logging system that tracks:
+- Authentication events (login, logout, failed attempts)
+- API access patterns
+- Important user actions
+
+Design goals:
+- Simple: One model, minimal dependencies
+- Privacy-aware: Professionals get full logs, consumers get minimal logs
+- Optional: Controlled by ENABLE_AUDIT_LOGGING setting
+"""
+
+from enum import Enum
+from typing import Optional, Union
+import typing
+
+from django.conf import settings
+from django.db import models
+from django.http import HttpRequest
+from django.contrib.auth import get_user_model
+from django.contrib.auth.models import AnonymousUser
+from loguru import logger
+
+if typing.TYPE_CHECKING:
+    from rest_framework.request import Request as DRFRequest
+
+
+class EventType(str, Enum):
+    """Types of events we track."""
+
+    # Authentication
+    LOGIN_SUCCESS = "login_success"
+    LOGIN_FAILED = "login_failed"
+    LOGOUT = "logout"
+    PASSWORD_CHANGED = "password_changed"
+
+    # Account
+    ACCOUNT_CREATED = "account_created"
+
+    # API access
+    API_ACCESS = "api_access"
+
+    # Security
+    PERMISSION_DENIED = "permission_denied"
+    SUSPICIOUS_ACTIVITY = "suspicious_activity"
+
+
+class AuditLog(models.Model):
+    """
+    Simple audit log entry.
+
+    Stores essential information about user actions for security and analytics.
+    """
+
+    id = models.BigAutoField(primary_key=True)
+    timestamp = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    # What happened
+    event_type = models.CharField(max_length=50, db_index=True)
+    description = models.TextField(blank=True, default="")
+
+    # Who did it
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="audit_logs",
+    )
+    username = models.CharField(max_length=255, blank=True, default="")
+    is_professional = models.BooleanField(default=False)
+
+    # Where from (privacy-aware: only store for professionals)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.TextField(blank=True, default="")
+
+    # Request context
+    path = models.CharField(max_length=2048, blank=True, default="")
+    method = models.CharField(max_length=10, blank=True, default="")
+    status_code = models.PositiveSmallIntegerField(null=True, blank=True)
+    response_time_ms = models.PositiveIntegerField(null=True, blank=True)
+
+    # Extra data (JSON)
+    extra_data = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        ordering = ["-timestamp"]
+        indexes = [
+            models.Index(fields=["user", "timestamp"]),
+            models.Index(fields=["event_type", "timestamp"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.event_type} by {self.username or 'anonymous'} at {self.timestamp}"
+
+
+def is_audit_enabled() -> bool:
+    """Check if audit logging is enabled."""
+    return getattr(settings, "ENABLE_AUDIT_LOGGING", False)
+
+
+def get_client_ip(request: Union[HttpRequest, "DRFRequest"]) -> Optional[str]:
+    """Extract client IP from request, handling proxies."""
+    x_forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
+    if x_forwarded_for:
+        ip = str(x_forwarded_for).split(",")[0].strip()
+        if ip:
+            return ip
+
+    x_real_ip = request.META.get("HTTP_X_REAL_IP")
+    if x_real_ip:
+        return str(x_real_ip).strip()
+
+    remote_addr = request.META.get("REMOTE_ADDR")
+    return str(remote_addr) if remote_addr else None
+
+
+def is_professional_user(user) -> bool:
+    """Check if user is a professional (for determining data retention level)."""
+    if not user or isinstance(user, AnonymousUser):
+        return False
+    try:
+        from .models import ProfessionalUser
+
+        return ProfessionalUser.objects.filter(user=user).exists()
+    except Exception:
+        return False
+
+
+def log_event(
+    event_type: Union[EventType, str],
+    request: Optional[Union[HttpRequest, "DRFRequest"]] = None,
+    user=None,
+    description: str = "",
+    status_code: Optional[int] = None,
+    response_time_ms: Optional[int] = None,
+    extra_data: Optional[dict] = None,
+) -> Optional[AuditLog]:
+    """
+    Log an audit event.
+
+    Args:
+        event_type: Type of event (use EventType enum)
+        request: HTTP request object (optional)
+        user: User object (optional, extracted from request if not provided)
+        description: Human-readable description
+        status_code: HTTP status code (for API events)
+        response_time_ms: Response time in milliseconds
+        extra_data: Additional JSON data to store
+
+    Returns:
+        Created AuditLog or None if logging is disabled
+    """
+    if not is_audit_enabled():
+        return None
+
+    try:
+        # Get user from request if not provided
+        if user is None and request is not None:
+            user = getattr(request, "user", None)
+            if isinstance(user, AnonymousUser):
+                user = None
+
+        # Determine if professional (affects what we store)
+        is_pro = is_professional_user(user)
+
+        # Build log entry
+        log_entry = AuditLog(
+            event_type=str(event_type.value if isinstance(event_type, EventType) else event_type),
+            description=description,
+            user=user if user and not isinstance(user, AnonymousUser) else None,
+            username=getattr(user, "username", "") if user else "",
+            is_professional=is_pro,
+            extra_data=extra_data or {},
+        )
+
+        # Add request context
+        if request is not None:
+            log_entry.path = request.path[:2048] if request.path else ""
+            log_entry.method = request.method or ""
+
+            # Only store IP/UA for professionals (privacy)
+            if is_pro:
+                log_entry.ip_address = get_client_ip(request)
+                log_entry.user_agent = request.META.get("HTTP_USER_AGENT", "")[:500]
+
+        if status_code is not None:
+            log_entry.status_code = status_code
+        if response_time_ms is not None:
+            log_entry.response_time_ms = response_time_ms
+
+        log_entry.save()
+        return log_entry
+
+    except Exception as e:
+        logger.opt(exception=True).warning(f"Failed to create audit log: {e}")
+        return None
+
+
+# Convenience functions
+def log_login_success(request, user) -> Optional[AuditLog]:
+    """Log successful login."""
+    return log_event(EventType.LOGIN_SUCCESS, request=request, user=user)
+
+
+def log_login_failure(request, username: str = "", reason: str = "") -> Optional[AuditLog]:
+    """Log failed login attempt."""
+    return log_event(
+        EventType.LOGIN_FAILED,
+        request=request,
+        description=f"Failed login for {username}: {reason}" if reason else f"Failed login for {username}",
+        extra_data={"attempted_username": username, "reason": reason},
+    )
+
+
+def log_logout(request, user) -> Optional[AuditLog]:
+    """Log user logout."""
+    return log_event(EventType.LOGOUT, request=request, user=user)
+
+
+def log_api_access(
+    request,
+    status_code: Optional[int] = None,
+    response_time_ms: Optional[int] = None,
+) -> Optional[AuditLog]:
+    """Log API endpoint access."""
+    return log_event(
+        EventType.API_ACCESS,
+        request=request,
+        status_code=status_code,
+        response_time_ms=response_time_ms,
+    )
