@@ -9,7 +9,9 @@ from django_recaptcha.fields import ReCaptchaField, ReCaptchaV2Checkbox
 from fighthealthinsurance.form_utils import *
 from fighthealthinsurance.models import (
     DenialTypes,
+    InsuranceCallLog,
     InterestedProfessional,
+    PatientEvidence,
     PlanSource,
     InsuranceCompany,
     InsurancePlan,
@@ -398,4 +400,355 @@ class SendMailingListMailForm(forms.Form):
         ),
         label="Test Email (optional)",
         help_text="If provided, the email will only be sent to this address for testing.",
+    )
+
+
+# Patient Dashboard Forms - Call Log & Evidence Tracking
+
+
+class InsuranceCallLogForm(forms.ModelForm):
+    """Form for patients to log phone calls with their insurance company."""
+
+    call_date = forms.DateTimeField(
+        required=True,
+        widget=forms.DateTimeInput(
+            attrs={
+                "class": "form-control",
+                "type": "datetime-local",
+            }
+        ),
+        label="Date and Time of Call",
+    )
+    call_type = forms.ChoiceField(
+        choices=InsuranceCallLog.CALL_TYPE_CHOICES,
+        required=True,
+        widget=forms.Select(attrs={"class": "form-select"}),
+        label="Type of Call",
+    )
+    department = forms.CharField(
+        required=False,
+        max_length=200,
+        widget=forms.TextInput(
+            attrs={
+                "class": "form-control",
+                "placeholder": "e.g., Claims, Appeals, Member Services",
+            }
+        ),
+        label="Department Contacted",
+    )
+    representative_name = forms.CharField(
+        required=False,
+        max_length=200,
+        widget=forms.TextInput(
+            attrs={
+                "class": "form-control",
+                "placeholder": "Name of the person you spoke with",
+            }
+        ),
+        label="Representative Name",
+    )
+    representative_id = forms.CharField(
+        required=False,
+        max_length=100,
+        widget=forms.TextInput(
+            attrs={
+                "class": "form-control",
+                "placeholder": "Employee ID or badge number if provided",
+            }
+        ),
+        label="Representative ID",
+    )
+    reference_number = forms.CharField(
+        required=False,
+        max_length=100,
+        widget=forms.TextInput(
+            attrs={
+                "class": "form-control",
+                "placeholder": "Call reference or confirmation number",
+            }
+        ),
+        label="Reference Number",
+        help_text="This is crucial - always ask for a reference number!",
+    )
+    case_number = forms.CharField(
+        required=False,
+        max_length=100,
+        widget=forms.TextInput(
+            attrs={
+                "class": "form-control",
+                "placeholder": "Case or ticket number if assigned",
+            }
+        ),
+        label="Case/Ticket Number",
+    )
+    reason_for_call = forms.CharField(
+        required=True,
+        widget=forms.Textarea(
+            attrs={
+                "class": "form-control",
+                "rows": 3,
+                "placeholder": "Why did you call? What question or issue did you need to address?",
+            }
+        ),
+        label="Reason for Call",
+    )
+    key_statements = forms.CharField(
+        required=False,
+        widget=forms.Textarea(
+            attrs={
+                "class": "form-control",
+                "rows": 4,
+                "placeholder": 'Important things the representative said. Use quotes when possible: "They told me..."',
+            }
+        ),
+        label="Key Statements",
+        help_text="Document exactly what they told you - this can be used in appeals.",
+    )
+    promises_made = forms.CharField(
+        required=False,
+        widget=forms.Textarea(
+            attrs={
+                "class": "form-control",
+                "rows": 3,
+                "placeholder": "Any commitments or promises made (e.g., callback, approval timeline)",
+            }
+        ),
+        label="Promises/Commitments Made",
+    )
+    call_notes = forms.CharField(
+        required=False,
+        widget=forms.Textarea(
+            attrs={
+                "class": "form-control",
+                "rows": 3,
+                "placeholder": "Any other notes about the call",
+            }
+        ),
+        label="Additional Notes",
+    )
+    outcome = forms.ChoiceField(
+        choices=InsuranceCallLog.OUTCOME_CHOICES,
+        required=True,
+        widget=forms.Select(attrs={"class": "form-select"}),
+        label="Call Outcome",
+    )
+    follow_up_date = forms.DateField(
+        required=False,
+        widget=forms.DateInput(
+            attrs={
+                "class": "form-control",
+                "type": "date",
+            }
+        ),
+        label="Follow-up Date",
+        help_text="When should you follow up on this?",
+    )
+    follow_up_notes = forms.CharField(
+        required=False,
+        widget=forms.Textarea(
+            attrs={
+                "class": "form-control",
+                "rows": 2,
+                "placeholder": "What do you need to do or check on the follow-up date?",
+            }
+        ),
+        label="Follow-up Notes",
+    )
+    call_duration_minutes = forms.IntegerField(
+        required=False,
+        min_value=0,
+        widget=forms.NumberInput(
+            attrs={
+                "class": "form-control",
+                "placeholder": "Minutes",
+            }
+        ),
+        label="Call Duration (minutes)",
+    )
+    wait_time_minutes = forms.IntegerField(
+        required=False,
+        min_value=0,
+        widget=forms.NumberInput(
+            attrs={
+                "class": "form-control",
+                "placeholder": "Minutes on hold",
+            }
+        ),
+        label="Wait/Hold Time (minutes)",
+    )
+    include_in_appeal = forms.BooleanField(
+        required=False,
+        initial=False,
+        widget=forms.CheckboxInput(attrs={"class": "form-check-input"}),
+        label="Include in appeal documentation",
+        help_text="Check this if you want to reference this call in your appeal letter.",
+    )
+
+    class Meta:
+        model = InsuranceCallLog
+        fields = [
+            "call_date",
+            "call_type",
+            "department",
+            "representative_name",
+            "representative_id",
+            "reference_number",
+            "case_number",
+            "reason_for_call",
+            "key_statements",
+            "promises_made",
+            "call_notes",
+            "outcome",
+            "follow_up_date",
+            "follow_up_notes",
+            "call_duration_minutes",
+            "wait_time_minutes",
+            "include_in_appeal",
+        ]
+
+
+class PatientEvidenceForm(forms.ModelForm):
+    """Form for patients to upload and track evidence for their appeals."""
+
+    evidence_type = forms.ChoiceField(
+        choices=PatientEvidence.EVIDENCE_TYPE_CHOICES,
+        required=True,
+        widget=forms.Select(attrs={"class": "form-select"}),
+        label="Type of Evidence",
+    )
+    title = forms.CharField(
+        required=True,
+        max_length=300,
+        widget=forms.TextInput(
+            attrs={
+                "class": "form-control",
+                "placeholder": "Brief title for this evidence",
+            }
+        ),
+        label="Title",
+    )
+    description = forms.CharField(
+        required=False,
+        widget=forms.Textarea(
+            attrs={
+                "class": "form-control",
+                "rows": 3,
+                "placeholder": "Describe what this evidence shows and why it's relevant",
+            }
+        ),
+        label="Description",
+    )
+    date_of_evidence = forms.DateField(
+        required=False,
+        widget=forms.DateInput(
+            attrs={
+                "class": "form-control",
+                "type": "date",
+            }
+        ),
+        label="Date of Document/Evidence",
+        help_text="The date on the document or when it was created",
+    )
+    file = forms.FileField(
+        required=False,
+        widget=forms.FileInput(
+            attrs={
+                "class": "form-control",
+                "accept": ".pdf,.png,.jpg,.jpeg,.doc,.docx,.txt",
+            }
+        ),
+        label="Upload File",
+        help_text="Supported formats: PDF, images, Word documents, text files",
+    )
+    text_content = forms.CharField(
+        required=False,
+        widget=forms.Textarea(
+            attrs={
+                "class": "form-control",
+                "rows": 5,
+                "placeholder": "Enter text content, notes, or paste copied information here",
+            }
+        ),
+        label="Text Content/Notes",
+        help_text="You can paste text directly or add your own notes",
+    )
+    source = forms.CharField(
+        required=False,
+        max_length=300,
+        widget=forms.TextInput(
+            attrs={
+                "class": "form-control",
+                "placeholder": "e.g., MyChart portal, Insurance website, Email",
+            }
+        ),
+        label="Source",
+        help_text="Where did you get this document or information?",
+    )
+    include_in_appeal = forms.BooleanField(
+        required=False,
+        initial=False,
+        widget=forms.CheckboxInput(attrs={"class": "form-check-input"}),
+        label="Include in appeal documentation",
+        help_text="Check this to include this evidence when building your appeal.",
+    )
+
+    class Meta:
+        model = PatientEvidence
+        fields = [
+            "evidence_type",
+            "title",
+            "description",
+            "date_of_evidence",
+            "file",
+            "text_content",
+            "source",
+            "include_in_appeal",
+        ]
+
+
+class CallLogFilterForm(forms.Form):
+    """Form for filtering call logs in the patient dashboard."""
+
+    call_type = forms.ChoiceField(
+        choices=[("", "All Types")] + list(InsuranceCallLog.CALL_TYPE_CHOICES),
+        required=False,
+        widget=forms.Select(attrs={"class": "form-select form-select-sm"}),
+    )
+    outcome = forms.ChoiceField(
+        choices=[("", "All Outcomes")] + list(InsuranceCallLog.OUTCOME_CHOICES),
+        required=False,
+        widget=forms.Select(attrs={"class": "form-select form-select-sm"}),
+    )
+    date_from = forms.DateField(
+        required=False,
+        widget=forms.DateInput(
+            attrs={
+                "class": "form-control form-control-sm",
+                "type": "date",
+            }
+        ),
+    )
+    date_to = forms.DateField(
+        required=False,
+        widget=forms.DateInput(
+            attrs={
+                "class": "form-control form-control-sm",
+                "type": "date",
+            }
+        ),
+    )
+
+
+class EvidenceFilterForm(forms.Form):
+    """Form for filtering evidence in the patient dashboard."""
+
+    evidence_type = forms.ChoiceField(
+        choices=[("", "All Types")] + list(PatientEvidence.EVIDENCE_TYPE_CHOICES),
+        required=False,
+        widget=forms.Select(attrs={"class": "form-select form-select-sm"}),
+    )
+    include_in_appeal = forms.ChoiceField(
+        choices=[("", "All"), ("true", "Included in Appeal"), ("false", "Not Included")],
+        required=False,
+        widget=forms.Select(attrs={"class": "form-select form-select-sm"}),
     )

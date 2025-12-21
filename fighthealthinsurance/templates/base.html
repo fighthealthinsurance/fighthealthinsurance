@@ -138,6 +138,9 @@
             <!-- MENU LINKS -->
             <div class="collapse navbar-collapse justify-content-end" id="navbar">
                 <ul class="nav navbar-nav navbar-right">
+                    {% if user.is_authenticated %}
+                    <li class="nav-item"><a href="{% url 'patient-dashboard' %}" class="nav-link">My Dashboard</a></li>
+                    {% endif %}
                     <li class="nav-item"><a href="{% url 'chat' %}" class="nav-link">Chat</a></li>
                     <li class="nav-item"><a href="{% url 'explain_denial' %}" class="nav-link">Explain Denial</a></li>
                     <li class="nav-item"><a href="{% url 'how-to-help' %}" class="nav-link">How to Help</a></li>
