@@ -55,7 +55,9 @@ def canonical_url_context(request):
             url_name = resolver_match.url_name
             if namespace:
                 url_name = f"{namespace}:{url_name}"
-            path = reverse(url_name, args=resolver_match.args, kwargs=resolver_match.kwargs)
+            path = reverse(
+                url_name, args=resolver_match.args, kwargs=resolver_match.kwargs
+            )
         except Exception:
             # Fall back to the request path if reverse fails
             path = request.path
