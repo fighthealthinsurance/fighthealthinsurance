@@ -5,17 +5,13 @@ description = "Fight Health Insurance"
 requires-python = ">=3.11"
 
 [tool.ty]
-# Enable type checking
-line-length = 100
-
-# Target Python version
-target-version = "3.11"
-
-# Ignore missing imports (similar to mypy's ignore_missing_imports)
+# Rules configuration - ignore unresolved imports
 [tool.ty.rules]
 unresolved-import = "ignore"
 
-# File exclusions (similar to the patterns in .gitignore and mypy config)
+# Source files configuration
+[tool.ty.src]
+# Exclude patterns (similar to .gitignore)
 exclude = [
     ".tox",
     ".eggs",
