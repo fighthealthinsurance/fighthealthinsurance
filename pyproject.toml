@@ -1,0 +1,28 @@
+[project]
+name = "fighthealthinsurance"
+version = "0.0.1"
+description = "Fight Health Insurance"
+requires-python = ">=3.11"
+
+[tool.ty]
+# Enable type checking
+line-length = 100
+
+# Target Python version
+target-version = "3.11"
+
+# Ignore missing imports (similar to mypy's ignore_missing_imports)
+[tool.ty.rules]
+unresolved-import = "ignore"
+
+# File exclusions (similar to the patterns in .gitignore and mypy config)
+exclude = [
+    ".tox",
+    ".eggs",
+    ".history",
+    "env",
+    "build",
+    "dist",
+    "*.egg-info",
+    "__pycache__",
+]

@@ -11,28 +11,28 @@ elif [ -f ./.venv/bin/activate ]; then
 fi
 
 if command -v tox >/dev/null 2>&1; then
-  # Check if fhi_users directory exists for mypy
+  # Check if fhi_users directory exists for ty
   if [ -d "./fhi_users" ]; then
-    # Try interpreter-matched mypy first (py310-mypy/py311-mypy/py312-mypy), then generic, then plain mypy.
+    # Try interpreter-matched ty first (py310-ty/py311-ty/py312-ty), then generic, then plain ty.
     ENV_NAME="py$(python - <<'PY'
 import sys; print(f"{sys.version_info.major}{sys.version_info.minor}")
 PY
-)-mypy"
-    tox -vv -e "${ENV_NAME}" || tox -vv -e mypy || mypy -p fighthealthinsurance -p fhi_users
+)-ty"
+    tox -vv -e "${ENV_NAME}" || tox -vv -e ty || ty check fighthealthinsurance fhi_users
   else
     # fhi_users not present, only check fighthealthinsurance
     ENV_NAME="py$(python - <<'PY'
 import sys; print(f"{sys.version_info.major}{sys.version_info.minor}")
 PY
-)-mypy"
-    tox -vv -e "${ENV_NAME}" || tox -vv -e mypy || mypy -p fighthealthinsurance
+)-ty"
+    tox -vv -e "${ENV_NAME}" || tox -vv -e ty || ty check fighthealthinsurance
   fi
 else
-  # Direct mypy call - check for fhi_users
+  # Direct ty call - check for fhi_users
   if [ -d "./fhi_users" ]; then
-    mypy -p fighthealthinsurance -p fhi_users
+    ty check fighthealthinsurance fhi_users
   else
-    mypy -p fighthealthinsurance
+    ty check fighthealthinsurance
   fi
 fi
 

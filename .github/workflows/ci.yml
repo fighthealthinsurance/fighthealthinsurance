@@ -61,7 +61,7 @@ jobs:
 
       - name: Check types
         run:
-          tox -e mypy
+          tox -e ty
 
   npm-build:
     runs-on: ubuntu-latest
