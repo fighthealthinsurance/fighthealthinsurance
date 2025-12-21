@@ -30,7 +30,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.debug import sensitive_post_parameters
 from django.views.generic.base import RedirectView
 
-from fighthealthinsurance import fax_views, staff_views, views
+from fighthealthinsurance import fax_views, patient_views, staff_views, views
 from fighthealthinsurance.sitemap import sitemap_view
 
 
@@ -401,6 +401,37 @@ urlpatterns += [
         "explain-denial",
         views.ExplainDenialView.as_view(),
         name="explain_denial",
+    ),
+    # Patient Dashboard - Logged-in patient views
+    path(
+        "my/dashboard",
+        patient_views.PatientDashboardView.as_view(),
+        name="patient-dashboard",
+    ),
+    path(
+        "my/call-log/new",
+        patient_views.CallLogCreateView.as_view(),
+        name="patient-call-log-create",
+    ),
+    path(
+        "my/call-log/<uuid:uuid>/edit",
+        patient_views.CallLogEditView.as_view(),
+        name="patient-call-log-edit",
+    ),
+    path(
+        "my/evidence/new",
+        patient_views.EvidenceCreateView.as_view(),
+        name="patient-evidence-create",
+    ),
+    path(
+        "my/evidence/<uuid:uuid>/edit",
+        patient_views.EvidenceEditView.as_view(),
+        name="patient-evidence-edit",
+    ),
+    path(
+        "my/evidence/<uuid:uuid>/download",
+        patient_views.EvidenceDownloadView.as_view(),
+        name="patient-evidence-download",
     ),
 ]
 
