@@ -1,0 +1,277 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Understand My Policy - Fight Health Insurance{% endblock title %}
+{% block metatitle %}Understand My Policy - Fight Health Insurance{% endblock metatitle %}
+{% block metadescription %}Upload your insurance policy document and get AI-powered analysis of coverage, exclusions, and appeal-relevant clauses.{% endblock metadescription %}
+
+{% block scriptmagic %}
+<script src="{% static 'js/dist/user_info_storage.bundle.js' %}"></script>
+<script>
+  document.addEventListener('DOMContentLoaded', function() {
+    if (window.userInfoStorage) {
+      window.userInfoStorage.setupFormPersistence('understand_policy_form');
+    }
+  });
+</script>
+{% endblock scriptmagic %}
+
+{% block content %}
+<!-- Hero Section -->
+<section id="understand-policy-hero" class="slider" data-stellar-background-ratio="0.5">
+    <div class="row">
+        <div class="item item-first">
+            <div class="caption d-flex flex-column align-items-center justify-content-center">
+                <div class="hero-inner">
+                    <h3 class="hero-tagline">Know Your Coverage</h3>
+                    <h1 class="hero-headline">Understand My Policy</h1>
+                    <p class="hero-subcopy">Upload your insurance policy document and our AI will help you understand what's covered, what's excluded, and find useful clauses for appeals.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Main Form Section -->
+<section id="policy-form" class="py-5">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-10 mx-auto">
+                <div class="card shadow-sm">
+                    <div class="card-body p-4">
+                        <h2 class="card-title mb-4">Upload Your Policy Document</h2>
+
+                        {% if form.errors or form.non_field_errors %}
+                        <div class="alert alert-danger">
+                            {% if form.non_field_errors %}
+                                {{ form.non_field_errors }}
+                            {% endif %}
+                            {% if form.errors %}
+                                <ul class="mb-0">
+                                {% for field, errors in form.errors.items %}
+                                    {% for error in errors %}
+                                    <li>{{ field }}: {{ error }}</li>
+                                    {% endfor %}
+                                {% endfor %}
+                                </ul>
+                            {% endif %}
+                        </div>
+                        {% endif %}
+
+                        <form method="post" action="{% url 'understand_policy' %}" id="understand_policy_form" enctype="multipart/form-data">
+                            {% csrf_token %}
+
+                            <!-- Document Upload Section -->
+                            <div class="mb-4">
+                                <div class="alert alert-info">
+                                    <i class="bi bi-info-circle"></i>
+                                    <strong>Tip:</strong> Upload your Summary of Benefits and Coverage (SBC) or Medical Policy document. These are typically available from your insurance company's website or your HR department.
+                                </div>
+
+                                <div class="mb-3">
+                                    <label for="document_type" class="form-label fw-bold">Document Type*</label>
+                                    {{ form.document_type }}
+                                    <div class="form-text">
+                                        Select the type of document you're uploading.
+                                    </div>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label for="policy_document" class="form-label fw-bold">Policy Document (PDF)*</label>
+                                    {{ form.policy_document }}
+                                    <div class="form-text">
+                                        Upload a PDF file (max 20MB). Your document will be analyzed securely.
+                                    </div>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label for="user_question" class="form-label fw-bold">Your Question (Optional)</label>
+                                    {{ form.user_question }}
+                                    <div class="form-text">
+                                        Have a specific question? Enter it here and we'll pay special attention to finding relevant information.
+                                    </div>
+                                </div>
+                            </div>
+
+                            <hr class="my-4">
+
+                            <!-- User Information Section -->
+                            <div class="mb-4">
+                                <h4>Your Information</h4>
+                                <p class="text-muted small">This information is saved in your browser to protect your privacy.</p>
+
+                                <div class="row">
+                                    <div class="col-md-6 mb-3">
+                                        <label for="store_fname" class="form-label">First Name*</label>
+                                        {{ form.first_name }}
+                                    </div>
+                                    <div class="col-md-6 mb-3">
+                                        <label for="store_lname" class="form-label">Last Name*</label>
+                                        {{ form.last_name }}
+                                    </div>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label for="email" class="form-label">Email*</label>
+                                    {{ form.email }}
+                                </div>
+                            </div>
+
+                            <hr class="my-4">
+
+                            <!-- Terms & Agreements Section -->
+                            <div class="mb-4">
+                                <h4>Terms & Agreements</h4>
+
+                                <div class="form-check mb-3">
+                                    {{ form.tos_agreement }}
+                                    <label for="tos" class="form-check-label">
+                                        I agree to the <a href="{% url 'tos' %}" target="_blank">Terms of Service</a>. I understand this analysis is for informational purposes only and is not legal or professional advice.*
+                                    </label>
+                                </div>
+
+                                <div class="form-check mb-3">
+                                    {{ form.privacy_policy }}
+                                    <label for="privacy" class="form-check-label">
+                                        I have read and understand the <a href="{% url 'privacy_policy' %}" target="_blank">Privacy Policy</a>.*
+                                    </label>
+                                </div>
+
+                                <div class="form-check mb-3">
+                                    {{ form.subscribe }}
+                                    <label for="subscribe" class="form-check-label">
+                                        I wish to subscribe for updates and news from Fight Health Insurance.
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div class="d-grid gap-2">
+                                <button type="submit" class="btn btn-green btn-lg">
+                                    <i class="bi bi-file-earmark-text"></i> Analyze My Policy
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- What We Analyze Section -->
+<section id="what-we-analyze" class="py-5 bg-light">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <h2 class="text-center mb-4">What Our AI Will Find For You</h2>
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <h5 class="card-title"><i class="bi bi-check-circle text-success"></i> Coverage (Inclusions)</h5>
+                                <p class="card-text text-muted">Identify what treatments, procedures, and services are covered by your plan.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <h5 class="card-title"><i class="bi bi-x-circle text-danger"></i> Exclusions</h5>
+                                <p class="card-text text-muted">Find what's explicitly not covered and understand the limitations.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <h5 class="card-title"><i class="bi bi-file-earmark-ruled"></i> Appeal-Relevant Clauses</h5>
+                                <p class="card-text text-muted">Locate deadlines, procedures, and medical necessity definitions for appeals.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <h5 class="card-title"><i class="bi bi-quote"></i> Quotable Sections</h5>
+                                <p class="card-text text-muted">Get exact quotes with page numbers that you can use in appeal letters.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Disclaimer -->
+<section id="disclaimer" class="py-4">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <div class="disclaimer-box p-3 bg-warning-subtle border border-warning rounded">
+                    <p class="text-dark mb-0">
+                        <strong><i class="bi bi-exclamation-triangle"></i> Important Disclaimer:</strong> This AI analysis is provided for informational purposes only and is not legal or professional advice. Insurance policies are complex documents, and this analysis may not capture all nuances. For definitive interpretations, contact your insurance company directly or consult with a qualified professional.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+{% endblock content %}
+
+{% block extra_style %}
+<style>
+    #understand-policy-hero .hero-inner {
+        max-width: 800px;
+        padding: 2rem;
+    }
+
+    #understand-policy-hero .hero-tagline {
+        color: #a5c422;
+        font-size: 1.2rem;
+        margin-bottom: 0.5rem;
+    }
+
+    #understand-policy-hero .hero-headline {
+        font-size: 2.5rem;
+        font-weight: bold;
+        color: white;
+        margin-bottom: 1rem;
+    }
+
+    #understand-policy-hero .hero-subcopy {
+        font-size: 1.1rem;
+        color: rgba(255, 255, 255, 0.9);
+    }
+
+    .btn-green {
+        background-color: #28a745;
+        border-color: #28a745;
+        color: white;
+    }
+
+    .btn-green:hover {
+        background-color: #218838;
+        border-color: #1e7e34;
+        color: white;
+    }
+
+    .disclaimer-box {
+        border-color: #ffc107 !important;
+    }
+
+    #what-we-analyze .card {
+        border-left: 4px solid #a5c422;
+        transition: box-shadow 0.2s ease;
+    }
+
+    #what-we-analyze .card:hover {
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    }
+
+    #what-we-analyze .card-title i {
+        margin-right: 0.5rem;
+    }
+</style>
+{% endblock extra_style %}
