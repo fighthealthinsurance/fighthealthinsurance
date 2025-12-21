@@ -2,6 +2,123 @@ from django import forms
 from fighthealthinsurance.forms import REFERRAL_SOURCE_CHOICES
 
 
+class UnderstandPolicyForm(forms.Form):
+    """Form for uploading policy documents with consent"""
+
+    DOCUMENT_TYPE_CHOICES = [
+        ("summary_of_benefits", "Summary of Benefits"),
+        ("medical_policy", "Medical Policy"),
+        ("other", "Other Policy Document"),
+    ]
+
+    policy_document = forms.FileField(
+        required=True,
+        widget=forms.FileInput(
+            attrs={
+                "class": "form-control",
+                "id": "policy_document",
+                "accept": ".pdf",
+            }
+        ),
+    )
+
+    document_type = forms.ChoiceField(
+        required=True,
+        choices=DOCUMENT_TYPE_CHOICES,
+        initial="summary_of_benefits",
+        widget=forms.Select(
+            attrs={
+                "class": "form-control",
+                "id": "document_type",
+            }
+        ),
+    )
+
+    user_question = forms.CharField(
+        required=False,
+        max_length=1000,
+        widget=forms.Textarea(
+            attrs={
+                "class": "form-control",
+                "id": "user_question",
+                "rows": 3,
+                "placeholder": "Optional: What specific question do you have about your policy? (e.g., 'Is my MRI covered?' or 'What are the exclusions for mental health?')",
+            }
+        ),
+    )
+
+    first_name = forms.CharField(
+        max_length=100,
+        required=True,
+        widget=forms.TextInput(
+            attrs={
+                "class": "form-control",
+                "id": "store_fname",
+                "placeholder": "Enter your first name",
+            }
+        ),
+    )
+
+    last_name = forms.CharField(
+        max_length=100,
+        required=True,
+        widget=forms.TextInput(
+            attrs={
+                "class": "form-control",
+                "id": "store_lname",
+                "placeholder": "Enter your last name",
+            }
+        ),
+    )
+
+    email = forms.EmailField(
+        required=True,
+        widget=forms.EmailInput(
+            attrs={
+                "class": "form-control",
+                "id": "email",
+                "placeholder": "Enter your email address",
+            }
+        ),
+    )
+
+    tos_agreement = forms.BooleanField(
+        required=True,
+        widget=forms.CheckboxInput(attrs={"class": "form-check-input", "id": "tos"}),
+    )
+
+    privacy_policy = forms.BooleanField(
+        required=True,
+        widget=forms.CheckboxInput(
+            attrs={"class": "form-check-input", "id": "privacy"}
+        ),
+    )
+
+    subscribe = forms.BooleanField(
+        required=False,
+        initial=True,
+        widget=forms.CheckboxInput(
+            attrs={"class": "form-check-input", "id": "subscribe"}
+        ),
+    )
+
+    def clean_policy_document(self):
+        """Validate the uploaded file is a PDF and not too large"""
+        file = self.cleaned_data.get("policy_document")
+        if file:
+            # Check file size (max 20MB)
+            if file.size > 20 * 1024 * 1024:
+                raise forms.ValidationError(
+                    "File size must be less than 20MB. Please upload a smaller file."
+                )
+            # Check file type
+            if not file.name.lower().endswith(".pdf"):
+                raise forms.ValidationError(
+                    "Only PDF files are supported. Please upload a PDF document."
+                )
+        return file
+
+
 class UserConsentForm(forms.Form):
     """Form for user TOS consent and personal information collection"""
 

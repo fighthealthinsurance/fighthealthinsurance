@@ -36,8 +36,8 @@ from loguru import logger
 from PIL import Image
 
 from fighthealthinsurance import common_view_logic, forms as core_forms, models
-from fighthealthinsurance.chat_forms import UserConsentForm
-from fighthealthinsurance.models import StripeRecoveryInfo
+from fighthealthinsurance.chat_forms import UserConsentForm, UnderstandPolicyForm
+from fighthealthinsurance.models import StripeRecoveryInfo, PolicyDocument
 
 
 class BlogPostMetadata(TypedDict, total=False):
@@ -2009,6 +2009,102 @@ class ExplainDenialView(FormView):
         # Render auto-submit form to POST to chat
         context = {
             "denial_text": denial_text,
+            "chat_url": reverse("chat"),
+        }
+        return render(self.request, "chat_redirect.html", context)
+
+
+class UnderstandPolicyView(FormView):
+    """
+    View for the Understand My Policy page - allows users to upload insurance policy
+    documents (Summary of Benefits, Medical Policy PDFs) for AI analysis.
+    The AI will extract exclusions, inclusions, and appeal-relevant clauses.
+    """
+
+    template_name = "understand_policy.html"
+    form_class = UnderstandPolicyForm
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["title"] = "Understand My Policy"
+        return context
+
+    def form_valid(self, form):
+        """Process the uploaded policy document and redirect to chat."""
+        email = form.cleaned_data.get("email")
+        document_type = form.cleaned_data.get("document_type")
+        user_question = form.cleaned_data.get("user_question", "")
+        uploaded_file = form.cleaned_data.get("policy_document")
+
+        # Mark consent as completed in the session
+        self.request.session["consent_completed"] = True
+        self.request.session["email"] = email
+        self.request.session.save()
+
+        # Create PolicyDocument record
+        try:
+            from fighthealthinsurance.models import Denial
+
+            hashed_email = Denial.get_hashed_email(email) if email else ""
+            session_key = self.request.session.session_key or ""
+
+            policy_doc = PolicyDocument.objects.create(
+                document=uploaded_file,
+                document_type=document_type,
+                filename=uploaded_file.name,
+                hashed_email=hashed_email,
+                session_key=session_key,
+            )
+
+            logger.info(f"Created PolicyDocument {policy_doc.id} for {uploaded_file.name}")
+
+            # Store the document ID in session for chat to pick up
+            self.request.session["policy_document_id"] = str(policy_doc.id)
+            self.request.session["policy_document_question"] = user_question
+            self.request.session.save()
+
+        except Exception as e:
+            logger.opt(exception=True).error(f"Failed to save policy document: {e}")
+            form.add_error(None, "Failed to upload document. Please try again.")
+            return self.form_invalid(form)
+
+        # Handle mailing list subscription
+        if form.cleaned_data.get("subscribe"):
+            name = f"{form.cleaned_data.get('first_name')} {form.cleaned_data.get('last_name')}"
+            try:
+                models.MailingListSubscriber.objects.create(
+                    email=email,
+                    name=name,
+                    comments="From understand policy page",
+                )
+            except Exception as e:
+                logger.warning(f"Failed to create mailing list subscriber: {e}")
+
+        # Build initial message for chat
+        doc_type_display = dict(UnderstandPolicyForm.DOCUMENT_TYPE_CHOICES).get(
+            document_type, "policy document"
+        )
+
+        initial_message = f"I've uploaded my insurance {doc_type_display}: {uploaded_file.name}\n\n"
+
+        if user_question:
+            initial_message += f"My question: {user_question}\n\n"
+
+        initial_message += (
+            "Please analyze this document and help me understand:\n"
+            "1. What is covered (inclusions)\n"
+            "2. What is NOT covered (exclusions)\n"
+            "3. Any clauses that would be useful if I need to appeal a denial\n"
+            "4. Key quotes I could use in an appeal letter"
+        )
+
+        # Store initial message in session for chat to use
+        self.request.session["policy_initial_message"] = initial_message
+        self.request.session.save()
+
+        # Render auto-submit form to POST to chat
+        context = {
+            "denial_text": initial_message,  # Reuse the existing chat_redirect template
             "chat_url": reverse("chat"),
         }
         return render(self.request, "chat_redirect.html", context)
