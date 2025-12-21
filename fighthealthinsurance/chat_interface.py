@@ -39,6 +39,8 @@ from fighthealthinsurance.models import (
     ChatLeads,
     Denial,
     OngoingChat,
+    PolicyDocument,
+    PolicyDocumentAnalysis,
     PriorAuthRequest,
 )
 from fighthealthinsurance.microsites import get_microsite
@@ -48,6 +50,33 @@ from fighthealthinsurance.utils import (
     best_within_timelimit,
     fire_and_forget_in_new_threadpool,
 )
+from fighthealthinsurance.ml.ml_policy_doc_helper import MLPolicyDocHelper
+
+# Policy document analysis keywords - detect when user wants to analyze a policy document
+POLICY_ANALYSIS_KEYWORDS = [
+    r"I've uploaded my insurance",
+    r"analyze this document",
+    r"understand my policy",
+    r"summary of benefits",
+    r"medical policy",
+    r"what is covered",
+    r"what is not covered",
+    r"what.{0,10}excluded",
+    r"what.{0,10}included",
+    r"policy document",
+    r"insurance document",
+]
+
+# Pre-compile policy analysis regex
+_POLICY_ANALYSIS_REGEX: Pattern[str] = re.compile(
+    r"|".join(rf"(?:{phrase})" for phrase in POLICY_ANALYSIS_KEYWORDS),
+    re.IGNORECASE,
+)
+
+
+def _detect_policy_analysis_request(text: str) -> bool:
+    """Check if the message is requesting policy document analysis."""
+    return bool(_POLICY_ANALYSIS_REGEX.search(text))
 
 
 class ChatInterface:
@@ -933,6 +962,16 @@ class ChatInterface:
             except Exception as e:
                 logger.warning(f"Error loading microsite for chat {chat.id}: {e}")
 
+        # Check for policy document analysis request (Issue #570)
+        # If the message looks like it's about analyzing a policy document,
+        # try to find and analyze any associated policy document
+        if _detect_policy_analysis_request(user_message):
+            handled = await self._handle_policy_analysis(chat, user_message)
+            if handled:
+                # Policy analysis was performed and response was sent
+                # Don't continue with normal LLM processing for this message
+                return
+
         # Handle chat ↔ appeal/prior auth linking if requested
 
         link_message = None
@@ -1206,3 +1245,105 @@ class ChatInterface:
         chat = self.chat
         history: Optional[List[Dict[str, Any]]] = chat.chat_history
         await self.send_json_message_func({"messages": chat.chat_history})
+
+    async def _handle_policy_analysis(
+        self, chat: OngoingChat, user_message: str
+    ) -> bool:
+        """
+        Handle policy document analysis request.
+        Looks for associated policy documents and triggers analysis.
+
+        This is called when the user's message indicates they want to analyze
+        a policy document (e.g., from the /understand-policy page).
+
+        Returns:
+            True if policy analysis was performed and handled, False otherwise.
+        """
+        try:
+            # Try to find a policy document associated with this session
+            session_key = chat.session_key
+            if not session_key:
+                logger.debug("No session key for policy document lookup")
+                return False
+
+            # Look for the most recent policy document for this session
+            policy_doc = await PolicyDocument.objects.filter(
+                session_key=session_key
+            ).order_by("-created_at").afirst()
+
+            if not policy_doc:
+                logger.debug(f"No policy document found for session {session_key}")
+                return False
+
+            logger.info(f"Found policy document {policy_doc.id} for analysis")
+            await self.send_status_message(
+                f"Analyzing your policy document: {policy_doc.filename}..."
+            )
+
+            # Extract user's specific question from the message if present
+            user_question = None
+            question_match = re.search(r"My question:\s*(.+?)(?:\n|$)", user_message)
+            if question_match:
+                user_question = question_match.group(1).strip()
+
+            # Get or create analysis
+            analysis = await MLPolicyDocHelper.get_or_create_analysis(
+                policy_doc, user_question
+            )
+
+            if analysis:
+                # Link the analysis to this chat
+                analysis.chat = chat
+                await analysis.asave()
+
+                # Format the analysis for the chat
+                formatted_analysis = MLPolicyDocHelper.format_analysis_for_chat(analysis)
+
+                # Add the analysis as context to the chat's summary
+                if not chat.summary_for_next_call:
+                    chat.summary_for_next_call = []
+                chat.summary_for_next_call.append(
+                    f"Policy document analysis for {policy_doc.filename}:\n{formatted_analysis[:4000]}"
+                )
+                await chat.asave()
+
+                # Send the analysis to the user
+                await self.send_status_message("Policy analysis complete!")
+                await self.send_message_to_client(formatted_analysis)
+
+                # Add to chat history
+                if not chat.chat_history:
+                    chat.chat_history = []
+                chat.chat_history.append(
+                    {
+                        "role": "user",
+                        "content": user_message,
+                        "timestamp": timezone.now().isoformat(),
+                    }
+                )
+                chat.chat_history.append(
+                    {
+                        "role": "assistant",
+                        "content": formatted_analysis,
+                        "timestamp": timezone.now().isoformat(),
+                    }
+                )
+                await chat.asave()
+
+                logger.info(f"Policy analysis completed for chat {chat.id}")
+                return True
+            else:
+                await self.send_status_message(
+                    "Could not analyze the policy document. Please try again or contact support."
+                )
+                return False
+
+        except Exception as e:
+            logger.opt(exception=True).warning(
+                f"Error handling policy analysis for chat {chat.id}: {e}"
+            )
+            await self.send_status_message(
+                "There was an error analyzing your policy document. "
+                "Please try again or continue with your question."
+            )
+            return False
