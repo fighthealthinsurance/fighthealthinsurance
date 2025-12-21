@@ -6,9 +6,12 @@ This provides a "pure FHI patient view" distinct from professional/provider inte
 """
 
 from datetime import date, timedelta
+import typing
 
+from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.mixins import LoginRequiredMixin
+from django.core.files.uploadedfile import UploadedFile
 from django.http import FileResponse, Http404, HttpResponseRedirect
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse, reverse_lazy
@@ -28,6 +31,11 @@ from fighthealthinsurance.models import (
     PatientEvidence,
 )
 from fhi_users.models import PatientUser
+
+if typing.TYPE_CHECKING:
+    from django.contrib.auth.models import User
+else:
+    User = get_user_model()
 
 
 class PatientRequiredMixin(LoginRequiredMixin):
@@ -69,7 +77,8 @@ class PatientDashboardView(PatientRequiredMixin, TemplateView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        user = self.request.user
+        # User is guaranteed to be authenticated by PatientRequiredMixin
+        user: User = self.request.user  # type: ignore
 
         # Get patient's appeals
         appeals = (
@@ -150,7 +159,8 @@ class CallLogEditView(PatientRequiredMixin, UpdateView):
 
     def get_queryset(self):
         # Only allow editing own call logs
-        return InsuranceCallLog.filter_to_allowed_call_logs(self.request.user)
+        user: User = self.request.user  # type: ignore
+        return InsuranceCallLog.filter_to_allowed_call_logs(user)
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -186,10 +196,11 @@ class EvidenceCreateView(PatientRequiredMixin, CreateView):
         # Handle file upload
         if "file" in self.request.FILES:
             uploaded_file = self.request.FILES["file"]
-            form.instance.filename = uploaded_file.name
-            form.instance.mime_type = (
-                uploaded_file.content_type or "application/octet-stream"
-            )
+            if isinstance(uploaded_file, UploadedFile):
+                form.instance.filename = uploaded_file.name
+                form.instance.mime_type = (
+                    uploaded_file.content_type or "application/octet-stream"
+                )
 
         return super().form_valid(form)
 
@@ -206,7 +217,8 @@ class EvidenceEditView(PatientRequiredMixin, UpdateView):
 
     def get_queryset(self):
         # Only allow editing own evidence
-        return PatientEvidence.filter_to_allowed_evidence(self.request.user)
+        user: User = self.request.user  # type: ignore
+        return PatientEvidence.filter_to_allowed_evidence(user)
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -218,10 +230,11 @@ class EvidenceEditView(PatientRequiredMixin, UpdateView):
         # Handle file upload
         if "file" in self.request.FILES:
             uploaded_file = self.request.FILES["file"]
-            form.instance.filename = uploaded_file.name
-            form.instance.mime_type = (
-                uploaded_file.content_type or "application/octet-stream"
-            )
+            if isinstance(uploaded_file, UploadedFile):
+                form.instance.filename = uploaded_file.name
+                form.instance.mime_type = (
+                    uploaded_file.content_type or "application/octet-stream"
+                )
 
         return super().form_valid(form)
 
@@ -239,8 +252,9 @@ class EvidenceDownloadView(PatientRequiredMixin, View):
 
     def get(self, request, uuid):
         # Get the evidence, ensuring user has access
+        user: User = request.user  # type: ignore
         evidence = get_object_or_404(
-            PatientEvidence.filter_to_allowed_evidence(request.user),
+            PatientEvidence.filter_to_allowed_evidence(user),
             uuid=uuid,
         )
 
