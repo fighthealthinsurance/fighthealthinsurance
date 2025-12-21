@@ -6,12 +6,18 @@ from typing import Tuple, Optional, Dict, Any
 class MockChatModel:
     """A mock model that returns predefined responses for chat."""
 
-    def __init__(self):
+    def __init__(self, external: bool = False):
         """Initialize the mock model with a default response."""
         self._next_response = (
             "This is a standard mock response to your question.",
             str({"summary": "Standard mock response context."}),
         )
+        self._external = external
+
+    @property
+    def external(self) -> bool:
+        """Return whether this is an external model."""
+        return self._external
 
     def quality(self):
         return 100
