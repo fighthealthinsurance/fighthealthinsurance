@@ -5,7 +5,7 @@ First off, thank you for using Fight Health Insurance to generate an appeal and 
 {% if success %}
 Our records indicate the fax was sent successfully. You should still call your insurance company to confirm receipt as they love to try and weasel out of it.
 {% elif missing_destination %}
-It looks like we don't have a fax number on file for your appeal. This can happen if the fax number wasn't entered during checkout. Don't worry - you can enter the fax number now and we'll send your appeal right away!
+It looks like we don't have a fax number on file for your appeal. This can happen if there was an issue in out system or the fax number wasn't entered during checkout. Don't worry - you can enter the fax number now and we'll send your appeal right away!
 
 ENTER YOUR FAX NUMBER HERE: {{fax_redo_link}}
 {% else %}
