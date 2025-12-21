@@ -1,0 +1,391 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}{{ state.name }} Health Insurance Help - Fight Health Insurance{% endblock title %}
+{% block metatitle %}{{ state.name }} Health Insurance Help - Fight Health Insurance{% endblock metatitle %}
+{% block metadescription %}Find {{ state.name }} health insurance resources including consumer assistance programs, insurance department contacts, Medicaid information, and legal aid resources.{% endblock metadescription %}
+
+{% block content %}
+<!-- Hero Section -->
+<section id="state-help-hero" class="slider" data-stellar-background-ratio="0.5">
+    <div class="row">
+        <div class="item item-first">
+            <div class="caption d-flex flex-column align-items-center justify-content-center">
+                <div class="hero-inner">
+                    <h3 class="hero-tagline">State Health Insurance Resources</h3>
+                    <h1 class="hero-headline">{{ state.name }} ({{ state.abbreviation }})</h1>
+                    <p class="hero-subcopy">Find help with health insurance problems, appeal denials, and access assistance programs in {{ state.name }}.</p>
+                    <div class="hero-cta-group">
+                        <a href="{% url 'scan' %}" class="section-btn btn btn-default smoothScroll primary-cta">
+                            Start Your Appeal
+                        </a>
+                    </div>
+                    <div class="hero-cta-group hero-cta-secondary">
+                        <a href="{% url 'chat' %}" class="btn btn-outline-green secondary-cta smoothScroll">
+                            Chat with AI Assistant
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Insurance Department Section -->
+<section id="insurance-department" class="py-5">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <div class="resource-card">
+                    <h2 class="mb-4"><i class="bi bi-building me-2"></i>{{ state.insurance_department.name }}</h2>
+                    <p class="lead mb-4">Your state insurance department can help you understand your rights, file complaints against insurers, and access external review processes.</p>
+
+                    <div class="contact-info">
+                        {% if state.insurance_department.url %}
+                        <div class="contact-item mb-3">
+                            <strong><i class="bi bi-globe me-2"></i>Website:</strong>
+                            <a href="{{ state.insurance_department.url }}" target="_blank" rel="noopener noreferrer">
+                                {{ state.insurance_department.url }}
+                            </a>
+                        </div>
+                        {% endif %}
+
+                        {% if state.insurance_department.consumer_line %}
+                        <div class="contact-item mb-3">
+                            <strong><i class="bi bi-telephone me-2"></i>Consumer Hotline:</strong>
+                            <a href="tel:{{ state.insurance_department.consumer_line }}">{{ state.insurance_department.consumer_line }}</a>
+                        </div>
+                        {% elif state.insurance_department.phone %}
+                        <div class="contact-item mb-3">
+                            <strong><i class="bi bi-telephone me-2"></i>Phone:</strong>
+                            <a href="tel:{{ state.insurance_department.phone }}">{{ state.insurance_department.phone }}</a>
+                        </div>
+                        {% endif %}
+
+                        {% if state.insurance_department.complaint_url %}
+                        <div class="contact-item mb-3">
+                            <strong><i class="bi bi-exclamation-triangle me-2"></i>File a Complaint:</strong>
+                            <a href="{{ state.insurance_department.complaint_url }}" target="_blank" rel="noopener noreferrer">
+                                File a complaint online
+                            </a>
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Consumer Assistance Section -->
+<section id="consumer-assistance" class="py-5 bg-light">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <h2 class="text-center mb-4">Consumer Assistance Programs</h2>
+                <p class="text-center text-muted mb-4">Free programs that can help you understand your health coverage options and resolve insurance problems.</p>
+
+                <div class="row">
+                    {% if state.consumer_assistance.cap_name %}
+                    <div class="col-md-6 mb-4">
+                        <div class="card h-100 assistance-card cap-card">
+                            <div class="card-body">
+                                <h5 class="card-title"><i class="bi bi-shield-check me-2"></i>Consumer Assistance</h5>
+                                <h6 class="card-subtitle mb-2 text-muted">{{ state.consumer_assistance.cap_name }}</h6>
+                                {% if state.consumer_assistance.cap_phone %}
+                                <p class="mb-2">
+                                    <strong>Phone:</strong>
+                                    <a href="tel:{{ state.consumer_assistance.cap_phone }}">{{ state.consumer_assistance.cap_phone }}</a>
+                                </p>
+                                {% endif %}
+                                {% if state.consumer_assistance.cap_url %}
+                                <a href="{{ state.consumer_assistance.cap_url }}" target="_blank" rel="noopener noreferrer" class="btn btn-outline-primary btn-sm">
+                                    Visit Website <i class="bi bi-box-arrow-up-right ms-1"></i>
+                                </a>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                    {% endif %}
+
+                    {% if state.consumer_assistance.ship_name %}
+                    <div class="col-md-6 mb-4">
+                        <div class="card h-100 assistance-card ship-card">
+                            <div class="card-body">
+                                <h5 class="card-title"><i class="bi bi-heart-pulse me-2"></i>SHIP (Medicare Assistance)</h5>
+                                <h6 class="card-subtitle mb-2 text-muted">{{ state.consumer_assistance.ship_name }}</h6>
+                                {% if state.consumer_assistance.ship_phone %}
+                                <p class="mb-2">
+                                    <strong>Phone:</strong>
+                                    <a href="tel:{{ state.consumer_assistance.ship_phone }}">{{ state.consumer_assistance.ship_phone }}</a>
+                                </p>
+                                {% endif %}
+                                {% if state.consumer_assistance.ship_url %}
+                                <a href="{{ state.consumer_assistance.ship_url }}" target="_blank" rel="noopener noreferrer" class="btn btn-outline-primary btn-sm">
+                                    Visit Website <i class="bi bi-box-arrow-up-right ms-1"></i>
+                                </a>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Medicaid Section -->
+<section id="medicaid" class="py-5">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <h2 class="text-center mb-4">Medicaid Resources</h2>
+
+                <div class="card medicaid-card">
+                    <div class="card-body">
+                        <h5 class="card-title"><i class="bi bi-hospital me-2"></i>{{ state.medicaid.agency_name }}</h5>
+
+                        <div class="row mt-3">
+                            <div class="col-md-6">
+                                {% if state.medicaid.agency_phone %}
+                                <p class="mb-2">
+                                    <strong><i class="bi bi-telephone me-2"></i>Phone:</strong><br>
+                                    <a href="tel:{{ state.medicaid.agency_phone }}">{{ state.medicaid.agency_phone }}</a>
+                                </p>
+                                {% endif %}
+                                {% if state.medicaid.agency_url %}
+                                <p class="mb-2">
+                                    <strong><i class="bi bi-globe me-2"></i>Website:</strong><br>
+                                    <a href="{{ state.medicaid.agency_url }}" target="_blank" rel="noopener noreferrer">
+                                        Visit Medicaid Website <i class="bi bi-box-arrow-up-right ms-1"></i>
+                                    </a>
+                                </p>
+                                {% endif %}
+                            </div>
+
+                            {% if state.medicaid.managed_care_ombudsman %}
+                            <div class="col-md-6">
+                                <div class="ombudsman-info p-3 bg-light rounded">
+                                    <h6><i class="bi bi-person-badge me-2"></i>Medicaid Ombudsman</h6>
+                                    <p class="mb-1 small text-muted">{{ state.medicaid.managed_care_ombudsman.name }}</p>
+                                    {% if state.medicaid.managed_care_ombudsman.phone %}
+                                    <p class="mb-1">
+                                        <strong>Phone:</strong>
+                                        <a href="tel:{{ state.medicaid.managed_care_ombudsman.phone }}">{{ state.medicaid.managed_care_ombudsman.phone }}</a>
+                                    </p>
+                                    {% endif %}
+                                    {% if state.medicaid.managed_care_ombudsman.url %}
+                                    <a href="{{ state.medicaid.managed_care_ombudsman.url }}" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-outline-secondary">
+                                        Learn More
+                                    </a>
+                                    {% endif %}
+                                </div>
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- External Review Section -->
+{% if state.external_review and state.external_review.available %}
+<section id="external-review" class="py-5 bg-light">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <div class="card external-review-card">
+                    <div class="card-body text-center">
+                        <h2 class="mb-3"><i class="bi bi-clipboard-check me-2"></i>External Review Available</h2>
+                        <p class="lead">{{ state.name }} offers an independent external review process for health insurance denials. This is a free or low-cost way to have your denial reviewed by an independent third party.</p>
+                        {% if state.external_review.info_url %}
+                        <a href="{{ state.external_review.info_url }}" target="_blank" rel="noopener noreferrer" class="btn btn-primary btn-lg">
+                            Learn About External Review <i class="bi bi-box-arrow-up-right ms-1"></i>
+                        </a>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+{% endif %}
+
+<!-- Additional Resources Section -->
+{% if state.additional_resources %}
+<section id="additional-resources" class="py-5">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <h2 class="text-center mb-4">Additional Resources</h2>
+                <p class="text-center text-muted mb-4">Other organizations that may be able to help with health coverage issues.</p>
+
+                <div class="additional-resources-list">
+                    {% for resource in state.additional_resources %}
+                    <div class="card mb-3 resource-item">
+                        <div class="card-body">
+                            <h5 class="card-title">
+                                {% if resource.url %}
+                                <a href="{{ resource.url }}" target="_blank" rel="noopener noreferrer">
+                                    {{ resource.name }} <i class="bi bi-box-arrow-up-right ms-1 small"></i>
+                                </a>
+                                {% else %}
+                                {{ resource.name }}
+                                {% endif %}
+                            </h5>
+                            {% if resource.description %}
+                            <p class="card-text text-muted mb-0">{{ resource.description }}</p>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+{% endif %}
+
+<!-- Final CTA Section -->
+<section id="final-cta" class="py-5 bg-light">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto text-center">
+                <h2 class="mb-3">Need Help With a Health Insurance Denial?</h2>
+                <p class="lead mb-4">Our free AI-powered tool can help you generate a compelling appeal letter in minutes.</p>
+                <div class="d-flex justify-content-center gap-3 flex-wrap">
+                    <a href="{% url 'scan' %}" class="btn btn-green btn-lg">
+                        Start Your Appeal
+                    </a>
+                    <a href="{% url 'chat' %}" class="btn btn-outline-green btn-lg">
+                        Chat with AI Assistant
+                    </a>
+                    <a href="{% url 'state_help_index' %}" class="btn btn-outline-secondary btn-lg">
+                        View All States
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Disclaimer Section -->
+<section id="disclaimer" class="py-4">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <div class="disclaimer-box p-3 bg-light border rounded">
+                    <p class="text-muted small mb-0">
+                        <strong>Disclaimer:</strong> The information on this page is provided for informational purposes only and may not be current. Contact information and program details change frequently. Please verify current details directly with each organization. Fight Health Insurance is not affiliated with any government agency or the organizations listed on this page. This is not legal advice.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock content %}
+
+{% block extra_style %}
+<style>
+    #state-help-hero .hero-inner {
+        max-width: 800px;
+        padding: 2rem;
+    }
+
+    .resource-card {
+        background: #fff;
+        padding: 2rem;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+
+    .contact-item a {
+        color: #28a745;
+        text-decoration: none;
+    }
+
+    .contact-item a:hover {
+        text-decoration: underline;
+    }
+
+    .assistance-card {
+        transition: box-shadow 0.2s ease;
+    }
+
+    .assistance-card:hover {
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    }
+
+    .cap-card {
+        border-left: 4px solid #28a745;
+    }
+
+    .ship-card {
+        border-left: 4px solid #17a2b8;
+    }
+
+    .medicaid-card {
+        border-left: 4px solid #6f42c1;
+    }
+
+    .external-review-card {
+        border: 2px solid #28a745;
+        background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+    }
+
+    .resource-item {
+        border-left: 4px solid #ffc107;
+        transition: box-shadow 0.2s ease;
+    }
+
+    .resource-item:hover {
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    }
+
+    .resource-item a {
+        color: #28a745;
+        text-decoration: none;
+    }
+
+    .resource-item a:hover {
+        text-decoration: underline;
+    }
+
+    .ombudsman-info {
+        border-left: 3px solid #6f42c1;
+    }
+
+    .disclaimer-box {
+        border-color: #dee2e6 !important;
+    }
+
+    #final-cta {
+        background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+    }
+
+    .btn-green {
+        background-color: #28a745;
+        border-color: #28a745;
+        color: white;
+    }
+
+    .btn-green:hover {
+        background-color: #218838;
+        border-color: #1e7e34;
+        color: white;
+    }
+
+    .btn-outline-green {
+        color: #28a745;
+        border-color: #28a745;
+    }
+
+    .btn-outline-green:hover {
+        background-color: #28a745;
+        color: white;
+    }
+</style>
+{% endblock extra_style %}
