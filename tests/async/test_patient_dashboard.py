@@ -4,9 +4,10 @@ Tests call log and evidence tracking features for logged-in patients.
 """
 
 from datetime import date, datetime, timedelta
-from django.test import TestCase, Client
-from django.urls import reverse
+
 from django.contrib.auth import get_user_model
+from django.test import Client, TestCase
+from django.urls import reverse
 from django.utils import timezone
 
 from fhi_users.models import PatientUser

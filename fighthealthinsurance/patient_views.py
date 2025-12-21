@@ -5,8 +5,8 @@ Views for logged-in patients to manage their appeals, call logs, and evidence.
 This provides a "pure FHI patient view" distinct from professional/provider interfaces.
 """
 
-from datetime import date, timedelta
 import typing
+from datetime import date, timedelta
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required
@@ -18,19 +18,15 @@ from django.urls import reverse, reverse_lazy
 from django.views import View
 from django.views.generic import CreateView, DeleteView, TemplateView, UpdateView
 
-from loguru import logger
-
-from fighthealthinsurance.forms import (
-    InsuranceCallLogForm,
-    PatientEvidenceForm,
-)
+from fhi_users.models import PatientUser
+from fighthealthinsurance.forms import InsuranceCallLogForm, PatientEvidenceForm
 from fighthealthinsurance.models import (
     Appeal,
     Denial,
     InsuranceCallLog,
     PatientEvidence,
 )
-from fhi_users.models import PatientUser
+from loguru import logger
 
 if typing.TYPE_CHECKING:
     from django.contrib.auth.models import User
