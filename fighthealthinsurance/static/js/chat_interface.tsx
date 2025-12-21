@@ -17,6 +17,7 @@ import {
   ActionIcon,
   FileButton,
   Tooltip,
+  Switch,
 } from "@mantine/core";
 
 import { IconPaperclip, IconSend, IconUser, IconRefresh } from "./icons";
@@ -120,6 +121,7 @@ interface ChatState {
   messageCount: number;
   statusMessage: string | null;
   requestStartTime: number | null;
+  useExternalModels: boolean;
 }
 
 interface UserInfo {
@@ -372,6 +374,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
     messageCount: 0,
     statusMessage: null,
     requestStartTime: null,
+    useExternalModels: localStorage.getItem("fhi_use_external_models") === "true",
   });
 
   // Track when to show retry button (separate state to avoid re-render issues)
@@ -463,6 +466,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
         // If we have a chat ID, request the chat history we explicitily refresh from local storage
         // so reconnect does not capture the old state.
         let chatId = localStorage.getItem("fhi_chat_id");
+        const useExternalModels = localStorage.getItem("fhi_use_external_models") === "true";
 
         if (chatId) {
           console.log("Replaying chat history for chat ID:", chatId);
@@ -471,6 +475,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
               ...messageData,
               chat_id: chatId,
               replay: true,
+              use_external_models: useExternalModels,
             }),
           );
         } else {
@@ -524,6 +529,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
                   is_patient: true,
                   session_key: getSessionKey(),
                   microsite_slug: micrositeSlug || undefined,
+                  use_external_models: useExternalModels,
                 }),
               );
             }, 500);
@@ -687,6 +693,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
             email: userInfo?.email, // Include email for server-side processing
             is_document: true,
             document_name: file.name,
+            use_external_models: state.useExternalModels,
           };
 
           wsRef.current.send(JSON.stringify(messageToSend));
@@ -741,6 +748,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
       content: scrubbedContent,
       is_patient: true, // This is for the patient-facing version
       session_key: getSessionKey(),
+      use_external_models: state.useExternalModels,
     };
 
     wsRef.current.send(JSON.stringify(messageToSend));
@@ -782,9 +790,16 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
       content: scrubbedContent,
       is_patient: true,
       session_key: getSessionKey(),
+      use_external_models: state.useExternalModels,
     };
 
     wsRef.current.send(JSON.stringify(messageToSend));
+  };
+
+  // Handle toggling external models
+  const handleToggleExternalModels = (checked: boolean) => {
+    localStorage.setItem("fhi_use_external_models", checked.toString());
+    setState((prev) => ({ ...prev, useExternalModels: checked }));
   };
 
   // Handle starting a new chat
@@ -801,7 +816,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
     let chatId = localStorage.getItem("fhi_chat_id");
 
     console.log("Reseting the chat state");
-    // Reset the chat state
+    // Reset the chat state but preserve useExternalModels setting
+    const useExternalModels = localStorage.getItem("fhi_use_external_models") === "true";
     setState({
       messages: [],
       isLoading: false,
@@ -813,6 +829,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
       messageCount: 0,
       statusMessage: null,
       requestStartTime: null,
+      useExternalModels: useExternalModels,
     });
 
     // Handle WebSocket for a new chat
@@ -952,6 +969,25 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
             Update Personal Info
           </Button>
         </MantineGroup>
+        <Tooltip
+          label="Enable backup models when primary models are slow or unavailable. This may use third-party AI providers."
+          position="bottom"
+          multiline
+          w={250}
+        >
+          <MantineGroup gap="xs" mt="sm" justify="center">
+            <Switch
+              id="use-external-models"
+              checked={state.useExternalModels}
+              onChange={(event) => handleToggleExternalModels(event.currentTarget.checked)}
+              label="Use backup models"
+              size="sm"
+              styles={{
+                label: { fontSize: 12, color: '#666' },
+              }}
+            />
+          </MantineGroup>
+        </Tooltip>
         {state.error && (
           <MantineText c="red" size="sm" mt="xs">
             {state.error}
