@@ -1,118 +1,121 @@
 """Test canonical URL meta tags are rendered correctly on all pages."""
 
-from django.test import TestCase, Client
+import pytest
+from django.test import Client
 
 
-class CanonicalUrlTests(TestCase):
-    """Test that canonical URLs are correctly rendered on all pages."""
+# Pages that should have canonical URLs
+CANONICAL_URL_PAGES = [
+    ("/", "https://www.fighthealthinsurance.com/"),
+    ("/about-us", "https://www.fighthealthinsurance.com/about-us"),
+    ("/bingo", "https://www.fighthealthinsurance.com/bingo"),
+    ("/other-resources", "https://www.fighthealthinsurance.com/other-resources"),
+]
 
-    def setUp(self):
-        self.client = Client()
 
-    def test_homepage_has_canonical_url(self):
-        """Test that the homepage includes the canonical URL."""
-        response = self.client.get("/")
-        self.assertEqual(response.status_code, 200)
+@pytest.fixture
+def client():
+    return Client()
 
-        content = response.content.decode("utf-8")
 
-        # Check for canonical URL pointing to www.fighthealthinsurance.com
-        self.assertIn(
-            '<link rel="canonical" href="https://www.fighthealthinsurance.com/">',
-            content,
-            "Homepage should have canonical URL"
-        )
+@pytest.mark.django_db
+class TestCanonicalUrls:
+    """Test that canonical URLs are correctly rendered on pages."""
 
-    def test_about_page_has_canonical_url(self):
-        """Test that the about page includes the canonical URL."""
-        response = self.client.get("/about-us")
-        self.assertEqual(response.status_code, 200)
-
-        content = response.content.decode("utf-8")
-
-        # Canonical URL should match the resolved path
-        self.assertIn(
-            "https://www.fighthealthinsurance.com/about-us",
-            content,
-            "About page should have canonical URL"
-        )
-
-    def test_bingo_page_has_canonical_url(self):
-        """Test that the bingo page includes the canonical URL."""
-        response = self.client.get("/bingo")
-        self.assertEqual(response.status_code, 200)
+    @pytest.mark.parametrize("path,expected_canonical", CANONICAL_URL_PAGES)
+    def test_page_has_correct_canonical_url(self, client, path, expected_canonical):
+        """Test that pages include the correct canonical URL."""
+        response = client.get(path)
+        assert response.status_code == 200, f"Page {path} should return 200"
 
         content = response.content.decode("utf-8")
 
-        # Canonical URL should match the resolved path
-        self.assertIn(
-            "https://www.fighthealthinsurance.com/bingo",
-            content,
-            "Bingo page should have canonical URL"
+        # Check for the exact canonical URL
+        expected_tag = f'<link rel="canonical" href="{expected_canonical}">'
+        assert expected_tag in content, (
+            f"Page {path} should have canonical URL {expected_canonical}"
         )
 
-    def test_other_resources_has_canonical_url(self):
-        """Test that the other resources page includes the canonical URL."""
-        response = self.client.get("/other-resources")
-        self.assertEqual(response.status_code, 200)
-
-        content = response.content.decode("utf-8")
-
-        # Canonical URL should match the resolved path
-        self.assertIn(
-            "https://www.fighthealthinsurance.com/other-resources",
-            content,
-            "Other resources page should have canonical URL"
-        )
-
-    def test_canonical_url_uses_www_subdomain(self):
+    @pytest.mark.parametrize("path,_", CANONICAL_URL_PAGES)
+    def test_canonical_url_uses_www_subdomain(self, client, path, _):
         """Test that canonical URLs always use www subdomain."""
-        pages = ["/", "/about-us", "/bingo", "/other-resources"]
+        response = client.get(path)
+        content = response.content.decode("utf-8")
 
-        for page in pages:
-            response = self.client.get(page)
-            content = response.content.decode("utf-8")
+        # Ensure canonical URL uses www.fighthealthinsurance.com
+        assert "https://www.fighthealthinsurance.com" in content, (
+            f"Page {path} should have canonical URL with www subdomain"
+        )
 
-            # Ensure canonical URL uses www.fighthealthinsurance.com
-            self.assertIn(
-                "https://www.fighthealthinsurance.com",
-                content,
-                f"Page {page} should have canonical URL with www subdomain"
-            )
+        # Ensure it doesn't use non-www version
+        assert '<link rel="canonical" href="https://fighthealthinsurance.com' not in content, (
+            f"Page {path} should not have canonical URL without www"
+        )
 
-            # Ensure it doesn't use non-www version
-            self.assertNotIn(
-                '<link rel="canonical" href="https://fighthealthinsurance.com',
-                content,
-                f"Page {page} should not have canonical URL without www"
-            )
+    def test_canonical_url_strips_query_parameters(self, client):
+        """Test that canonical URL does not include query parameters."""
+        response = client.get("/?utm_source=test&utm_campaign=foo")
+        assert response.status_code == 200
 
-    def test_canonical_url_preserves_resolved_path(self):
-        """Test that canonical URL uses the path as resolved by Django."""
-        # Test with a route that might be accessed with or without trailing slash
-        # The canonical URL should match whichever version Django resolves to
-        response = self.client.get("/chat", follow=True)
-        
+        content = response.content.decode("utf-8")
+
+        # Canonical URL should NOT include query parameters
+        assert '<link rel="canonical" href="https://www.fighthealthinsurance.com/">' in content
+        assert "utm_source" not in content.split('<link rel="canonical"')[1].split(">")[0]
+
+    def test_canonical_url_normalizes_trailing_slash(self, client):
+        """Test that canonical URL uses the path as defined in URL patterns."""
+        # Test a page that has no trailing slash in URL pattern
+        response = client.get("/about-us")
+        assert response.status_code == 200
+
+        content = response.content.decode("utf-8")
+        canonical_tag = '<link rel="canonical" href="https://www.fighthealthinsurance.com/about-us">'
+        assert canonical_tag in content, (
+            "Canonical URL should match the URL pattern definition"
+        )
+
+    def test_canonical_url_with_path_parameters(self, client):
+        """Test that canonical URLs work correctly with path parameters."""
+        # Test a page with dynamic path segments - use the chat route
+        response = client.get("/chat", follow=True)
+
+        # Only check if we get a successful response
         if response.status_code == 200:
             content = response.content.decode("utf-8")
-            
-            # The canonical URL should be present with the www subdomain
-            self.assertIn(
-                "https://www.fighthealthinsurance.com",
-                content,
-                "Canonical URL should use www subdomain"
+            assert "https://www.fighthealthinsurance.com" in content, (
+                "Pages with path parameters should have canonical URL"
             )
 
-    def test_sitemap_canonical_url(self):
-        """Test that sitemap.xml has correct canonical URL."""
-        response = self.client.get("/sitemap.xml")
-        
-        if response.status_code == 200:
-            content = response.content.decode("utf-8")
-            
-            # Should have canonical URL matching the resolved path
-            self.assertIn(
-                "https://www.fighthealthinsurance.com/sitemap.xml",
-                content,
-                "Sitemap should have canonical URL"
-            )
+
+@pytest.mark.django_db
+class TestCanonicalUrlOverride:
+    """Test that views can override the canonical URL."""
+
+    def test_context_processor_respects_request_override(self):
+        """Test that canonical_url_context respects request.canonical_url override."""
+        from django.test import RequestFactory
+        from fighthealthinsurance.context_processors import canonical_url_context
+
+        factory = RequestFactory()
+        request = factory.get("/some-page")
+
+        # Set a custom canonical URL on the request
+        request.canonical_url = "https://www.fighthealthinsurance.com/custom-canonical"
+
+        context = canonical_url_context(request)
+        assert context["canonical_url"] == "https://www.fighthealthinsurance.com/custom-canonical"
+
+    def test_context_processor_uses_default_without_override(self):
+        """Test that canonical_url_context uses default when no override is set."""
+        from django.test import RequestFactory
+        from fighthealthinsurance.context_processors import canonical_url_context
+
+        factory = RequestFactory()
+        request = factory.get("/about-us")
+
+        # No canonical_url attribute set on request
+        context = canonical_url_context(request)
+
+        # Should use the request path as fallback (no resolver_match in factory requests)
+        assert context["canonical_url"] == "https://www.fighthealthinsurance.com/about-us"

@@ -11,7 +11,7 @@
   <meta name="author" content="">
 
   <title>Login</title>
-  <link rel="canonical" href="{{ canonical_url }}">
+  {% if canonical_url %}<link rel="canonical" href="{{ canonical_url }}">{% endif %}
 
   <!-- Custom fonts for this template-->
   <link href="{% static  'vendor/fontawesome-free/css/all.min.css'%}" rel="stylesheet" type="text/css">

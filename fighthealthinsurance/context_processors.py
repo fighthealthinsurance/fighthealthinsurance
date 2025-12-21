@@ -1,6 +1,6 @@
 """Custom context processors for Fight Health Insurance."""
 
-from urllib.parse import urlparse, urlunparse
+from django.urls import reverse
 
 
 def form_persistence_context(request):
@@ -27,31 +27,45 @@ def canonical_url_context(request):
     This provides:
     - canonical_url: The canonical URL for the current page, always pointing to
       https://www.fighthealthinsurance.com regardless of the domain used to access
-      the site. Preserves the full path and query string from the original request.
+      the site.
 
-    The canonical URL uses the exact path that was successfully resolved by Django,
-    ensuring the canonical URL points to a valid, working URL.
+    Views can override the canonical URL by setting request.canonical_url before
+    this context processor runs (e.g., in middleware or view code).
+
+    The canonical URL uses Django's reverse() function with the resolver_match
+    to get the path exactly as defined in URL patterns, ensuring consistent
+    trailing slash handling.
+
+    Query parameters are stripped from canonical URLs to prevent duplicate content
+    issues from tracking parameters and other query string variations.
     """
-    # Get the full current URL
-    current_url = request.build_absolute_uri()
-    
-    # Parse the URL to replace just the scheme and netloc (domain)
-    parsed = urlparse(current_url)
-    
-    # Use the path as-is - it's already been validated by Django's URL resolver
-    # This ensures the canonical URL points to a URL that actually works
-    path = parsed.path
-    
-    # Rebuild URL with canonical domain
-    canonical = urlunparse((
-        'https',                           # scheme
-        'www.fighthealthinsurance.com',   # netloc (domain)
-        path,                              # path as resolved by Django
-        parsed.params,                     # params
-        parsed.query,                      # query string
-        ''                                 # fragment (not included in canonical)
-    ))
-    
+    # Allow views to override the canonical URL by setting it on the request
+    if hasattr(request, "canonical_url") and request.canonical_url:
+        return {"canonical_url": request.canonical_url}
+
+    canonical_domain = "https://www.fighthealthinsurance.com"
+
+    # Try to use resolver_match to get the canonical path from URL patterns
+    resolver_match = getattr(request, "resolver_match", None)
+    if resolver_match and resolver_match.url_name:
+        try:
+            # Use reverse() to get the path exactly as defined in urlpatterns
+            # This ensures consistent trailing slash handling
+            namespace = resolver_match.namespace
+            url_name = resolver_match.url_name
+            if namespace:
+                url_name = f"{namespace}:{url_name}"
+            path = reverse(url_name, args=resolver_match.args, kwargs=resolver_match.kwargs)
+        except Exception:
+            # Fall back to the request path if reverse fails
+            path = request.path
+    else:
+        # Fall back to the request path if no resolver_match
+        path = request.path
+
+    # Build the canonical URL without query parameters
+    canonical = f"{canonical_domain}{path}"
+
     return {
         "canonical_url": canonical,
     }
