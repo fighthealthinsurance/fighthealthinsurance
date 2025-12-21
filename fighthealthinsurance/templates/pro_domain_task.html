@@ -2,6 +2,7 @@
 <html>
 <head>
   <title>{{ title|default:"Domain Task" }}</title>
+  {% if canonical_url %}<link rel="canonical" href="{{ canonical_url }}">{% endif %}
 </head>
 <body>
   <h1>{{ heading|default:"Manage Domain" }}</h1>
