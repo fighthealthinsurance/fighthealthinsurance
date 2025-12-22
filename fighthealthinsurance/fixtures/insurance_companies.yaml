@@ -1,0 +1,299 @@
+# Initial insurance companies and plans
+# These cover major U.S. health insurance carriers and state-specific Medicaid plans
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 1
+  fields:
+    name: Anthem Blue Cross Blue Shield
+    alt_names: |
+      Anthem
+      BCBS
+      Blue Cross Blue Shield
+      Anthem BCBS
+    regex: (anthem|blue\s*cross\s*blue\s*shield|bcbs)
+    website: https://www.anthem.com
+    notes: Major national health insurance company with state-specific Medicaid plans
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 2
+  fields:
+    name: UnitedHealthcare
+    alt_names: |
+      UHC
+      United Healthcare
+      United Health
+      UnitedHealth
+    regex: (united\s*health\s*care|united\s*health|uhc)
+    website: https://www.uhc.com
+    notes: One of the largest health insurance providers in the U.S.
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 3
+  fields:
+    name: Aetna
+    alt_names: |
+      Aetna Inc
+      CVS Health Aetna
+    regex: aetna
+    website: https://www.aetna.com
+    notes: Major health insurance company, now part of CVS Health
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 4
+  fields:
+    name: Cigna
+    alt_names: |
+      Cigna Health
+      Cigna Healthcare
+    regex: cigna
+    website: https://www.cigna.com
+    notes: Global health insurance and services company
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 5
+  fields:
+    name: Humana
+    alt_names: |
+      Humana Inc
+    regex: humana
+    website: https://www.humana.com
+    notes: Focuses on Medicare Advantage plans
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 6
+  fields:
+    name: Kaiser Permanente
+    alt_names: |
+      Kaiser
+      KP
+    regex: kaiser\s*permanente|kaiser
+    website: https://www.kp.org
+    notes: Integrated managed care consortium
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 7
+  fields:
+    name: Molina Healthcare
+    alt_names: |
+      Molina
+    regex: molina
+    website: https://www.molinahealthcare.com
+    notes: Specializes in government-sponsored healthcare programs
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 8
+  fields:
+    name: Centene Corporation
+    alt_names: |
+      Centene
+      Ambetter
+      WellCare
+      Health Net
+    regex: (centene|ambetter|wellcare|health\s*net)
+    website: https://www.centene.com
+    notes: Operates under multiple brand names, focuses on Medicaid and marketplace
+
+# State-specific Medicaid plans for Anthem
+- model: fighthealthinsurance.insuranceplan
+  pk: 1
+  fields:
+    insurance_company: 1
+    plan_name: Medicaid
+    state: CA
+    plan_source: 300
+    regex: anthem.*medicaid.*california|california.*anthem.*medicaid
+    notes: Anthem Blue Cross Medi-Cal (California Medicaid)
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 2
+  fields:
+    insurance_company: 1
+    plan_name: Medicaid
+    state: NY
+    plan_source: 300
+    regex: anthem.*medicaid.*new\s*york|new\s*york.*anthem.*medicaid
+    notes: Anthem Blue Cross Blue Shield Medicaid (New York)
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 3
+  fields:
+    insurance_company: 1
+    plan_name: Medicaid
+    state: VA
+    plan_source: 300
+    regex: anthem.*medicaid.*virginia|virginia.*anthem.*medicaid
+    notes: Anthem HealthKeepers Plus (Virginia Medicaid)
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 4
+  fields:
+    insurance_company: 1
+    plan_name: Medicaid
+    state: IN
+    plan_source: 300
+    regex: anthem.*medicaid.*indiana|indiana.*anthem.*medicaid
+    notes: Anthem Hoosier Healthwise (Indiana Medicaid)
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 5
+  fields:
+    insurance_company: 1
+    plan_name: Medicaid
+    state: KY
+    plan_source: 300
+    regex: anthem.*medicaid.*kentucky|kentucky.*anthem.*medicaid
+    notes: Anthem Kentucky Medicaid
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 6
+  fields:
+    insurance_company: 1
+    plan_name: Medicaid
+    state: OH
+    plan_source: 300
+    regex: anthem.*medicaid.*ohio|ohio.*anthem.*medicaid
+    notes: Anthem Blue Cross and Blue Shield Medicaid (Ohio)
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 7
+  fields:
+    insurance_company: 1
+    plan_name: Medicaid
+    state: WI
+    plan_source: 300
+    regex: anthem.*medicaid.*wisconsin|wisconsin.*anthem.*medicaid
+    notes: Anthem Blue Cross Blue Shield Medicaid (Wisconsin)
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 8
+  fields:
+    insurance_company: 1
+    plan_name: Medicaid
+    state: GA
+    plan_source: 300
+    regex: anthem.*medicaid.*georgia|georgia.*anthem.*medicaid
+    notes: Anthem Blue Cross Blue Shield Medicaid (Georgia)
+
+# UnitedHealthcare Medicaid plans
+- model: fighthealthinsurance.insuranceplan
+  pk: 9
+  fields:
+    insurance_company: 2
+    plan_name: Medicaid
+    state: CA
+    plan_source: 300
+    regex: united.*medicaid.*california|california.*united.*medicaid
+    notes: UnitedHealthcare Community Plan (California Medicaid)
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 10
+  fields:
+    insurance_company: 2
+    plan_name: Medicaid
+    state: TX
+    plan_source: 300
+    regex: united.*medicaid.*texas|texas.*united.*medicaid
+    notes: UnitedHealthcare Community Plan (Texas Medicaid)
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 11
+  fields:
+    insurance_company: 2
+    plan_name: Medicaid
+    state: FL
+    plan_source: 300
+    regex: united.*medicaid.*florida|florida.*united.*medicaid
+    notes: UnitedHealthcare Community Plan (Florida Medicaid)
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 12
+  fields:
+    insurance_company: 2
+    plan_name: Medicaid
+    state: NY
+    plan_source: 300
+    regex: united.*medicaid.*new\s*york|new\s*york.*united.*medicaid
+    notes: UnitedHealthcare Community Plan (New York Medicaid)
+
+# Medicare Advantage plans
+- model: fighthealthinsurance.insuranceplan
+  pk: 13
+  fields:
+    insurance_company: 2
+    plan_name: Medicare Advantage
+    state: ""
+    plan_source: 100
+    regex: united.*medicare\s*advantage
+    notes: UnitedHealthcare Medicare Advantage plans
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 14
+  fields:
+    insurance_company: 5
+    plan_name: Medicare Advantage
+    state: ""
+    plan_source: 100
+    regex: humana.*medicare\s*advantage
+    notes: Humana Medicare Advantage plans
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 15
+  fields:
+    insurance_company: 1
+    plan_name: Medicare Advantage
+    state: ""
+    plan_source: 100
+    regex: anthem.*medicare\s*advantage
+    notes: Anthem Medicare Advantage plans
+
+# Molina Healthcare state plans
+- model: fighthealthinsurance.insuranceplan
+  pk: 16
+  fields:
+    insurance_company: 7
+    plan_name: Medicaid
+    state: CA
+    plan_source: 300
+    regex: molina.*medicaid.*california|california.*molina.*medicaid
+    notes: Molina Healthcare of California (Medicaid)
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 17
+  fields:
+    insurance_company: 7
+    plan_name: Medicaid
+    state: WA
+    plan_source: 300
+    regex: molina.*medicaid.*washington|washington.*molina.*medicaid
+    notes: Molina Healthcare of Washington (Medicaid)
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 18
+  fields:
+    insurance_company: 7
+    plan_name: Medicaid
+    state: MI
+    plan_source: 300
+    regex: molina.*medicaid.*michigan|michigan.*molina.*medicaid
+    notes: Molina Healthcare of Michigan (Medicaid)
+
+# Centene/Ambetter marketplace plans
+- model: fighthealthinsurance.insuranceplan
+  pk: 19
+  fields:
+    insurance_company: 8
+    plan_name: Ambetter
+    state: ""
+    plan_source: 1100
+    regex: ambetter
+    notes: Ambetter marketplace plans by Centene
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 20
+  fields:
+    insurance_company: 8
+    plan_name: Medicaid
+    state: CA
+    plan_source: 300
+    regex: (health\s*net|centene).*medicaid.*california|california.*(health\s*net|centene).*medicaid
+    notes: Health Net (Centene) California Medicaid

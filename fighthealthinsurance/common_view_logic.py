@@ -1079,6 +1079,8 @@ class DenialCreatorHelper:
         plan_documents=None,
         patient_id=None,
         insurance_company: Optional[str] = None,
+        insurance_company_obj=None,
+        insurance_plan_obj=None,
         denial: Optional[Denial] = None,
         creating_professional: Optional[ProfessionalUser] = None,
         primary_professional: Optional[ProfessionalUser] = None,
@@ -1106,6 +1108,8 @@ class DenialCreatorHelper:
             plan_documents: Optional plan documents.
             patient_id: Optional patient ID.
             insurance_company: Optional insurance company name.
+            insurance_company_obj: Optional InsuranceCompany model instance.
+            insurance_plan_obj: Optional InsurancePlan model instance.
             denial: Optional existing Denial object to update.
             creating_professional: Optional ProfessionalUser creating the denial.
             primary_professional: Optional ProfessionalUser as primary.
@@ -1149,6 +1153,8 @@ class DenialCreatorHelper:
                     primary_professional=primary_professional,
                     patient_user=patient_user,
                     insurance_company=insurance_company,
+                    insurance_company_obj=insurance_company_obj,
+                    insurance_plan_obj=insurance_plan_obj,
                     patient_visible=patient_visible,
                     professional_to_finish=professional_to_finish,
                     microsite_slug=microsite_slug,
@@ -1173,6 +1179,8 @@ class DenialCreatorHelper:
                     primary_professional=primary_professional,
                     patient_user=patient_user,
                     insurance_company=insurance_company,
+                    insurance_company_obj=insurance_company_obj,
+                    insurance_plan_obj=insurance_plan_obj,
                     patient_visible=patient_visible,
                     professional_to_finish=professional_to_finish,
                     microsite_slug=microsite_slug,
@@ -1197,6 +1205,10 @@ class DenialCreatorHelper:
                 denial.patient_user = patient_user
             if insurance_company is not None:
                 denial.insurance_company = insurance_company
+            if insurance_company_obj is not None:
+                denial.insurance_company_obj = insurance_company_obj
+            if insurance_plan_obj is not None:
+                denial.insurance_plan_obj = insurance_plan_obj
             if patient_visible is not None:
                 denial.patient_visible = patient_visible
             if microsite_slug is not None:
