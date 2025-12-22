@@ -538,7 +538,7 @@ class SendFaxHelper:
         f = FaxesToSend.objects.filter(hashed_email=hashed_email, uuid=uuid).get()
         f.destination = fax_phone
         f.should_send = True
-        # Technically not necessary but incase the live actor fails.
+        # Technically not necessary, but set in case the live actor fails.
         f.sent = False
         f.save()
         future = fax_actor_ref.get.do_send_fax.remote(hashed_email, uuid)
