@@ -1,4 +1,95 @@
 {
+  "national": {
+    "slug": "national",
+    "name": "National Resources",
+    "description": "Federal and national resources for health insurance assistance",
+    "federal_resources": [
+      {
+        "name": "Medicare (CMS)",
+        "phone": "800-633-4227",
+        "url": "https://www.medicare.gov/",
+        "description": "Official Medicare information, enrollment, and claims assistance"
+      },
+      {
+        "name": "HealthCare.gov Marketplace",
+        "phone": "800-318-2596",
+        "url": "https://www.healthcare.gov/",
+        "description": "Federal health insurance marketplace for ACA plans"
+      },
+      {
+        "name": "Medicaid.gov",
+        "phone": null,
+        "url": "https://www.medicaid.gov/",
+        "description": "Federal Medicaid information and state program links"
+      }
+    ],
+    "consumer_advocacy": [
+      {
+        "name": "Patient Advocate Foundation",
+        "phone": "800-532-5274",
+        "url": "https://www.patientadvocate.org/",
+        "description": "Free case management for insurance denials and appeals"
+      },
+      {
+        "name": "Medicare Rights Center",
+        "phone": "800-333-4114",
+        "url": "https://www.medicarerights.org/",
+        "description": "Free Medicare counseling and advocacy"
+      },
+      {
+        "name": "Families USA",
+        "phone": null,
+        "url": "https://familiesusa.org/",
+        "description": "National health care consumer advocacy organization"
+      },
+      {
+        "name": "National Association of Insurance Commissioners",
+        "phone": null,
+        "url": "https://content.naic.org/consumer.htm",
+        "description": "Consumer insurance information and state regulator directory"
+      }
+    ],
+    "legal_resources": [
+      {
+        "name": "National Health Law Program",
+        "phone": null,
+        "url": "https://healthlaw.org/",
+        "description": "Legal advocacy for health rights of low-income individuals"
+      },
+      {
+        "name": "LawHelp.org",
+        "phone": null,
+        "url": "https://www.lawhelp.org/",
+        "description": "Directory of free legal aid programs by state"
+      },
+      {
+        "name": "Legal Services Corporation",
+        "phone": null,
+        "url": "https://www.lsc.gov/about-lsc/what-legal-aid/get-legal-help",
+        "description": "Find local legal aid offices for low-income individuals"
+      }
+    ],
+    "specialized_assistance": [
+      {
+        "name": "SHIP National Technical Assistance Center",
+        "phone": "877-839-2675",
+        "url": "https://www.shiphelp.org/",
+        "description": "Find your state's Medicare counseling program"
+      },
+      {
+        "name": "Benefits.gov",
+        "phone": null,
+        "url": "https://www.benefits.gov/",
+        "description": "Federal benefit eligibility screening tool"
+      },
+      {
+        "name": "Social Security Administration",
+        "phone": "800-772-1213",
+        "url": "https://www.ssa.gov/",
+        "description": "Medicare enrollment and disability benefits"
+      }
+    ]
+  },
   "alabama": {
     "slug": "alabama",
     "name": "Alabama",
