@@ -184,7 +184,7 @@ def log_event(
 
             # Always store user_agent (not privacy-sensitive)
             log_entry.user_agent = request.META.get("HTTP_USER_AGENT", "")[:500]
-            
+
             # Only store IP for professionals (privacy-sensitive)
             if is_pro:
                 log_entry.ip_address = get_client_ip(request)
