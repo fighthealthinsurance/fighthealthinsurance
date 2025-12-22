@@ -134,9 +134,9 @@ class EnableBetaForDomainView(generic.FormView):
         context = super().get_context_data(**kwargs)
         context["title"] = "Enable Beta Features"
         context["heading"] = "Enable Beta Features for Domain"
-        context["description"] = (
-            "Enter the phone number of the domain to enable beta features."
-        )
+        context[
+            "description"
+        ] = "Enter the phone number of the domain to enable beta features."
         context["button_text"] = "Enable Beta"
         return context
 

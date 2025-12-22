@@ -404,12 +404,12 @@ class PubMedTools(object):
         return pubmed_docs
 
     async def do_article_summary(self, article_id) -> Optional[PubMedArticleSummarized]:
-        article: Optional[PubMedArticleSummarized] = (
-            await PubMedArticleSummarized.objects.filter(
-                pmid=article_id,
-                basic_summary__isnull=False,
-            ).afirst()
-        )
+        article: Optional[
+            PubMedArticleSummarized
+        ] = await PubMedArticleSummarized.objects.filter(
+            pmid=article_id,
+            basic_summary__isnull=False,
+        ).afirst()
 
         if article is None:
             try:
