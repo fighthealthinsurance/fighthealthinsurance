@@ -38,7 +38,7 @@ class InsuranceDepartment:
     def __init__(self, data: dict[str, Any]):
         """
         Initialize an InsuranceDepartment from a dictionary of raw data.
-        
+
         Parameters:
             data (dict[str, Any]): Mapping containing insurance department fields. Recognized keys:
                 - "name": department name (defaults to an empty string).
@@ -56,7 +56,7 @@ class InsuranceDepartment:
     def __repr__(self) -> str:
         """
         Return a concise developer-facing identifier for the InsuranceDepartment instance.
-        
+
         Returns:
             A string of the form "<InsuranceDepartment: {name}>" where {name} is the department's name.
         """
@@ -69,7 +69,7 @@ class ConsumerAssistance:
     def __init__(self, data: dict[str, Any]):
         """
         Initialize a ConsumerAssistance from a dictionary of state consumer assistance fields.
-        
+
         Parameters:
             data (dict[str, Any]): Mapping containing optional consumer assistance keys:
                 - "cap_name": name of the Consumer Assistance Program (CAP)
@@ -78,7 +78,7 @@ class ConsumerAssistance:
                 - "ship_name": name of the State Health Insurance Assistance Program (SHIP)
                 - "ship_url": URL for the SHIP
                 - "ship_phone": phone number for the SHIP
-        
+
         The constructor sets corresponding attributes to the values found in `data` or `None` if a key is absent.
         """
         self.cap_name: Optional[str] = data.get("cap_name")
@@ -91,7 +91,7 @@ class ConsumerAssistance:
     def __repr__(self) -> str:
         """
         Return a concise identifier for the ConsumerAssistance instance.
-        
+
         Returns:
             str: A string of the form "<ConsumerAssistance: NAME>" where NAME is `cap_name` if present, otherwise `ship_name`.
         """
@@ -104,7 +104,7 @@ class MedicaidOmbudsman:
     def __init__(self, data: dict[str, Any]):
         """
         Create a MedicaidOmbudsman from a raw mapping of values.
-        
+
         Parameters:
             data (dict[str, Any]): Source mapping. Expected keys:
                 - "name": ombudsman name (defaults to empty string if missing)
@@ -118,7 +118,7 @@ class MedicaidOmbudsman:
     def __repr__(self) -> str:
         """
         Provide a concise developer-facing representation of the MedicaidOmbudsman.
-        
+
         Returns:
             str: A string formatted as "<MedicaidOmbudsman: {name}>" where {name} is the ombudsman's name.
         """
@@ -131,7 +131,7 @@ class MedicaidInfo:
     def __init__(self, data: dict[str, Any]):
         """
         Initialize a MedicaidInfo object from a dictionary of Medicaid-related fields.
-        
+
         Parameters:
             data (dict[str, Any]): Mapping containing Medicaid info. Recognized keys:
                 - "agency_name": display name of the Medicaid agency; defaults to "" if missing.
@@ -150,7 +150,7 @@ class MedicaidInfo:
     def __repr__(self) -> str:
         """
         Provide a concise, developer-focused string identifying the MedicaidInfo instance.
-        
+
         Returns:
             str: A representation in the form "<MedicaidInfo: {agency_name}>", where `{agency_name}` is the Medicaid agency's name.
         """
@@ -163,7 +163,7 @@ class ExternalReviewInfo:
     def __init__(self, data: dict[str, Any]):
         """
         Initialize an ExternalReviewInfo from a parsed state-help mapping.
-        
+
         Parameters:
             data (dict[str, Any]): Source mapping, expected to contain optional keys:
                 - "available" (bool): whether external review is available.
@@ -175,7 +175,7 @@ class ExternalReviewInfo:
     def __repr__(self) -> str:
         """
         Return a concise representation of the ExternalReviewInfo instance indicating availability.
-        
+
         Returns:
             A string of the form "<ExternalReviewInfo: available=True>" or "<ExternalReviewInfo: available=False>".
         """
@@ -188,7 +188,7 @@ class AdditionalResource:
     def __init__(self, data: dict[str, Any]):
         """
         Initialize an AdditionalResource from a raw mapping.
-        
+
         Parameters:
             data (dict[str, Any]): Source mapping with keys:
                 - "name" (str): Resource name (required; falls back to empty string if missing).
@@ -202,7 +202,7 @@ class AdditionalResource:
     def __repr__(self) -> str:
         """
         Provide a concise developer-facing string identifying the AdditionalResource.
-        
+
         Returns:
             str: Angle-bracketed identifier that includes the resource name (e.g., "<AdditionalResource: Resource Name>").
         """
@@ -216,10 +216,10 @@ class StateHelp:
         # Validate required keys are present
         """
         Create a StateHelp object from a raw dictionary representation and validate required keys.
-        
+
         Parameters:
             data (dict[str, Any]): Parsed JSON mapping for a single state's help configuration. Must include the keys: "slug", "name", "abbreviation", "insurance_department", "consumer_assistance", and "medicaid". Optional keys: "external_review", "additional_resources".
-        
+
         Description:
             On success, sets the following attributes on the instance:
             - slug, name, abbreviation
@@ -228,7 +228,7 @@ class StateHelp:
             - medicaid (MedicaidInfo)
             - external_review (ExternalReviewInfo or None)
             - additional_resources (list[AdditionalResource])
-        
+
         Raises:
             StateHelpValidationError: If any required keys are missing from `data`.
         """
@@ -266,7 +266,7 @@ class StateHelp:
     def __repr__(self) -> str:
         """
         Return a concise, human-readable identifier for the StateHelp instance.
-        
+
         Returns:
             str: A short identifying string containing the state's name and abbreviation in angle brackets, e.g. "<StateHelp: California (CA)>".
         """
@@ -277,7 +277,7 @@ class StateHelp:
 def _load_state_help_cached() -> tuple[tuple[str, StateHelp], ...]:
     """
     Load state help definitions from the static "state_help.json" file.
-    
+
     Returns:
         tuple[tuple[str, StateHelp], ...]: A tuple of `(slug, StateHelp)` pairs parsed from the file.
             Returns an empty tuple if the file is missing, malformed, or entries fail validation.
@@ -337,10 +337,10 @@ def load_state_help() -> dict[str, StateHelp]:
 def get_state_help(slug: str) -> Optional[StateHelp]:
     """
     Retrieve a state's help configuration by its slug.
-    
+
     Parameters:
         slug (str): State URL slug (e.g., "california", "new-york").
-    
+
     Returns:
         StateHelp or None: The matching StateHelp if found, `None` otherwise.
     """
@@ -351,10 +351,10 @@ def get_state_help(slug: str) -> Optional[StateHelp]:
 def get_state_help_by_abbreviation(abbreviation: str) -> Optional[StateHelp]:
     """
     Finds the StateHelp entry for a U.S. state given its two-letter postal abbreviation.
-    
+
     Parameters:
         abbreviation (str): Two-letter state abbreviation (case-insensitive), e.g. "CA" or "ny".
-    
+
     Returns:
         The matching StateHelp if found, `None` otherwise.
     """
@@ -378,7 +378,7 @@ def get_all_state_help() -> dict[str, StateHelp]:
 def get_state_help_slugs() -> list[str]:
     """
     List all available state help slugs.
-    
+
     Returns:
         list[str]: A list of state slug strings.
     """
@@ -388,7 +388,7 @@ def get_state_help_slugs() -> list[str]:
 def get_states_sorted_by_name() -> list[StateHelp]:
     """
     Return StateHelp entries sorted alphabetically by state name.
-    
+
     Returns:
         A list of StateHelp objects sorted alphabetically by their `name` attribute.
     """
