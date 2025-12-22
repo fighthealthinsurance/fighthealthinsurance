@@ -598,14 +598,7 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                 hashed_email = Denial.get_hashed_email(email)
 
             # Build tracking kwargs
-            tracking_kwargs = {}
-            if tracking_info:
-                tracking_kwargs = {
-                    "user_agent": tracking_info.user_agent,
-                    "asn": tracking_info.asn,
-                    "asn_name": tracking_info.asn_name,
-                    "ip_address": tracking_info.ip_address,
-                }
+            tracking_kwargs = tracking_info.to_model_kwargs() if tracking_info else {}
 
             return await OngoingChat.objects.acreate(
                 session_key=session_key,
@@ -620,14 +613,7 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
             # Patient user
             logger.info(f"Creating new patient chat for user {user.id}")
             # Build tracking kwargs
-            tracking_kwargs = {}
-            if tracking_info:
-                tracking_kwargs = {
-                    "user_agent": tracking_info.user_agent,
-                    "asn": tracking_info.asn,
-                    "asn_name": tracking_info.asn_name,
-                    "ip_address": tracking_info.ip_address,
-                }
+            tracking_kwargs = tracking_info.to_model_kwargs() if tracking_info else {}
             return await OngoingChat.objects.acreate(
                 user=user,
                 is_patient=True,
@@ -643,14 +629,7 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                 f"Creating new professional chat for user {professional_user.id}"
             )
             # Build tracking kwargs
-            tracking_kwargs = {}
-            if tracking_info:
-                tracking_kwargs = {
-                    "user_agent": tracking_info.user_agent,
-                    "asn": tracking_info.asn,
-                    "asn_name": tracking_info.asn_name,
-                    "ip_address": tracking_info.ip_address,
-                }
+            tracking_kwargs = tracking_info.to_model_kwargs() if tracking_info else {}
             return await OngoingChat.objects.acreate(
                 professional_user=professional_user,
                 chat_history=[],

@@ -2,6 +2,8 @@
 Tests for the simplified audit logging system.
 """
 
+from typing import Optional
+
 from django.test import TestCase, RequestFactory, override_settings
 from django.contrib.auth import get_user_model
 
@@ -24,6 +26,22 @@ from fhi_users.models import ProfessionalUser
 
 
 User = get_user_model()
+
+
+# Mock model for testing TrackingInfo methods
+class MockModelWithTrackingFields:
+    """Mock model with tracking fields for testing."""
+
+    user_agent: str
+    asn: str
+    asn_name: str
+    ip_address: Optional[str]
+
+    def __init__(self):
+        self.user_agent = ""
+        self.asn = ""
+        self.asn_name = ""
+        self.ip_address = None
 
 
 class AuditLoggingDisabledTest(TestCase):
@@ -327,3 +345,46 @@ class TrackingInfoFromScopeTest(TestCase):
         self.assertIsInstance(info, TrackingInfo)
         self.assertEqual(info.user_agent, "")
         self.assertIsNone(info.ip_address)
+
+    def test_tracking_info_to_model_kwargs(self):
+        """Test conversion of TrackingInfo to model kwargs."""
+        info = TrackingInfo(
+            user_agent="TestAgent/1.0",
+            ip_address="192.168.1.1",
+            asn="AS12345",
+            asn_name="Test ISP",
+        )
+        kwargs = info.to_model_kwargs()
+
+        self.assertIsInstance(kwargs, dict)
+        self.assertEqual(kwargs["user_agent"], "TestAgent/1.0")
+        self.assertEqual(kwargs["ip_address"], "192.168.1.1")
+        self.assertEqual(kwargs["asn"], "AS12345")
+        self.assertEqual(kwargs["asn_name"], "Test ISP")
+
+    def test_tracking_info_to_model_kwargs_defaults(self):
+        """Test conversion with default values."""
+        info = TrackingInfo()
+        kwargs = info.to_model_kwargs()
+
+        self.assertEqual(kwargs["user_agent"], "")
+        self.assertIsNone(kwargs["ip_address"])
+        self.assertEqual(kwargs["asn"], "")
+        self.assertEqual(kwargs["asn_name"], "")
+
+    def test_tracking_info_update_model_fields(self):
+        """Test updating model instance fields with tracking info."""
+        info = TrackingInfo(
+            user_agent="TestAgent/2.0",
+            ip_address="10.0.0.1",
+            asn="AS9999",
+            asn_name="Test ASN",
+        )
+        model = MockModelWithTrackingFields()
+        info.update_model_fields(model)
+
+        self.assertEqual(model.user_agent, "TestAgent/2.0")
+        self.assertEqual(model.ip_address, "10.0.0.1")
+        self.assertEqual(model.asn, "AS9999")
+        self.assertEqual(model.asn_name, "Test ASN")
+

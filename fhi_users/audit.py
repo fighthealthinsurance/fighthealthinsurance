@@ -14,7 +14,7 @@ Design goals:
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional, Union
+from typing import Optional, Union, Protocol, Any
 import typing
 
 from django.conf import settings
@@ -26,6 +26,15 @@ from loguru import logger
 
 if typing.TYPE_CHECKING:
     from rest_framework.request import Request as DRFRequest
+
+
+class HasTrackingFields(Protocol):
+    """Protocol for objects that have tracking fields."""
+
+    user_agent: str
+    asn: str
+    asn_name: str
+    ip_address: Optional[str]
 
 
 class EventType(str, Enum):
@@ -289,6 +298,32 @@ class TrackingInfo:
     ip_address: Optional[str] = None
     asn: str = ""
     asn_name: str = ""
+
+    def to_model_kwargs(self) -> dict[str, Any]:
+        """Convert tracking information to kwargs for model creation.
+
+        Returns:
+            Dictionary with keys: 'user_agent' (str), 'asn' (str),
+            'asn_name' (str), 'ip_address' (Optional[str])
+        """
+        return {
+            "user_agent": self.user_agent,
+            "asn": self.asn,
+            "asn_name": self.asn_name,
+            "ip_address": self.ip_address,
+        }
+
+    def update_model_fields(self, model_instance: HasTrackingFields) -> None:
+        """Update tracking fields on a model instance.
+
+        Args:
+            model_instance: Object with user_agent, asn, asn_name, and
+                ip_address attributes to update
+        """
+        model_instance.user_agent = self.user_agent
+        model_instance.asn = self.asn
+        model_instance.asn_name = self.asn_name
+        model_instance.ip_address = self.ip_address
 
 
 def extract_tracking_info(
