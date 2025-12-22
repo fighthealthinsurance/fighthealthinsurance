@@ -20,6 +20,7 @@ from fhi_users.audit import (
     extract_tracking_info_from_scope,
     TrackingInfo,
 )
+from fhi_users.models import ProfessionalUser
 
 
 User = get_user_model()
@@ -130,6 +131,47 @@ class AuditLoggingEnabledTest(TestCase):
         self.assertIsNotNone(log)
         self.assertEqual(log.extra_data["endpoint"], "/api/v1/test")
         self.assertEqual(log.extra_data["query_count"], 5)
+
+    def test_user_agent_stored_for_non_professional(self):
+        """Test that user_agent is always stored, even for non-professional users."""
+        request = self.factory.get(
+            "/", HTTP_USER_AGENT="TestBrowser/1.0", HTTP_X_FORWARDED_FOR="1.2.3.4"
+        )
+        request.user = self.user
+
+        log = log_event(EventType.LOGIN_SUCCESS, request=request, user=self.user)
+
+        self.assertIsNotNone(log)
+        # User agent should be stored for all users
+        self.assertEqual(log.user_agent, "TestBrowser/1.0")
+        # IP should NOT be stored for non-professional users
+        self.assertIsNone(log.ip_address)
+
+    def test_user_agent_and_ip_stored_for_professional(self):
+        """Test that both user_agent and IP are stored for professional users."""
+        # Create a professional user
+        pro_user = User.objects.create_user(
+            username="prouser",
+            email="pro@example.com",
+            password="testpass123",
+        )
+        ProfessionalUser.objects.create(
+            user=pro_user,
+            active=True,
+        )
+
+        request = self.factory.get(
+            "/", HTTP_USER_AGENT="TestBrowser/2.0", HTTP_X_FORWARDED_FOR="5.6.7.8"
+        )
+        request.user = pro_user
+
+        log = log_event(EventType.LOGIN_SUCCESS, request=request, user=pro_user)
+
+        self.assertIsNotNone(log)
+        # User agent should be stored
+        self.assertEqual(log.user_agent, "TestBrowser/2.0")
+        # IP should be stored for professional users
+        self.assertEqual(log.ip_address, "5.6.7.8")
 
 
 class GetClientIPTest(TestCase):
