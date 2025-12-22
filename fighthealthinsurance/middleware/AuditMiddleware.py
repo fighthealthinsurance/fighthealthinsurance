@@ -5,7 +5,7 @@ Logs API access with timing information. Only active when ENABLE_AUDIT_LOGGING i
 """
 
 import time
-from typing import Callable, Optional
+from typing import Callable
 
 from django.http import HttpRequest, HttpResponse
 from loguru import logger

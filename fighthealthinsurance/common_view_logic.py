@@ -50,7 +50,7 @@ from fighthealthinsurance.ml.ml_plan_doc_helper import MLPlanDocHelper
 from fighthealthinsurance import stripe_utils
 from fhi_users.models import ProfessionalUser, UserDomain
 from fhi_users import emails as fhi_emails
-from fhi_users.audit import extract_tracking_info, TrackingInfo
+from fhi_users.audit import TrackingInfo
 from .pubmed_tools import PubMedTools
 from .utils import (
     check_call,

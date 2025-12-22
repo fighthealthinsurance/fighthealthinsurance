@@ -20,7 +20,7 @@ import typing
 from django.conf import settings
 from django.db import models
 from django.http import HttpRequest
-from django.contrib.auth import get_user_model
+
 from django.contrib.auth.models import AnonymousUser
 from loguru import logger
 
@@ -131,14 +131,28 @@ def is_professional_user(user) -> bool:
     """Check if user is a professional (for determining data retention level)."""
     if not user or isinstance(user, AnonymousUser):
         return False
+
+    # Cache the professional status on the user instance to avoid repeated queries.
+    cached_value = getattr(user, "_is_professional_cached", None)
+    if cached_value is not None:
+        return bool(cached_value)
+
     try:
         from .models import ProfessionalUser
 
-        return ProfessionalUser.objects.filter(user=user).exists()
+        is_professional = ProfessionalUser.objects.filter(user=user).exists()
     except Exception:
-        return False
+        is_professional = False
 
+    # Store the result on the user object for subsequent calls in this process/request.
+    try:
+        setattr(user, "_is_professional_cached", is_professional)
+    except Exception:
+        # If the user instance is immutable or doesn't allow attribute setting,
+        # silently ignore caching and just return the computed value.
+        pass
 
+    return is_professional
 def log_event(
     event_type: Union[EventType, str],
     request: Optional[Union[HttpRequest, "DRFRequest"]] = None,
