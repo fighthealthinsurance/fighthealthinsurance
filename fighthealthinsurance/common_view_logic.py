@@ -1360,26 +1360,47 @@ class DenialCreatorHelper:
                             name__iexact=insurance_company
                         ).afirst()
                         
-                        # If no exact match, try partial match in name or alt_names
+                        # If no exact match, try matching in order of specificity
                         if not matched_company:
+                            # Collect all possible matches with their specificity score
+                            matches = []
                             async for company in InsuranceCompany.objects.all():
                                 company_lower = company.name.lower()
                                 text_lower = insurance_company.lower()
                                 
-                                # Check if company name is in extracted text or vice versa
-                                if company_lower in text_lower or text_lower in company_lower:
-                                    matched_company = company
-                                    break
+                                # Check exact substring match first (more specific)
+                                if company_lower == text_lower:
+                                    matches.append((company, 100))  # Exact match
+                                elif company_lower in text_lower:
+                                    # Score based on how much of the extracted text matches
+                                    score = len(company_lower) / len(text_lower) * 90
+                                    matches.append((company, score))
+                                elif text_lower in company_lower:
+                                    # Lower score if extracted text is partial
+                                    score = len(text_lower) / len(company_lower) * 80
+                                    matches.append((company, score))
                                 
-                                # Check alt_names
+                                # Check alt_names with specificity scoring
                                 if company.alt_names:
-                                    alt_names_lower = company.alt_names.lower()
-                                    if text_lower in alt_names_lower or any(
-                                        alt.strip() and text_lower in alt.strip().lower()
-                                        for alt in company.alt_names.split('\n')
-                                    ):
-                                        matched_company = company
-                                        break
+                                    for alt in company.alt_names.split('\n'):
+                                        alt = alt.strip().lower()
+                                        if alt:
+                                            if alt == text_lower:
+                                                matches.append((company, 95))  # Alt name exact match
+                                            elif alt in text_lower:
+                                                score = len(alt) / len(text_lower) * 85
+                                                matches.append((company, score))
+                                            elif text_lower in alt:
+                                                score = len(text_lower) / len(alt) * 75
+                                                matches.append((company, score))
+                            
+                            # Select the match with highest specificity score
+                            if matches:
+                                matches.sort(key=lambda x: x[1], reverse=True)
+                                matched_company = matches[0][0]
+                                logger.debug(
+                                    f"Matched '{insurance_company}' to '{matched_company.name}' with score {matches[0][1]}"
+                                )
                         
                         # Try to match a specific plan if we found a company
                         if matched_company:
