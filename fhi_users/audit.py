@@ -298,11 +298,10 @@ class TrackingInfo:
     asn_name: str = ""
 
     def to_model_kwargs(self) -> dict[str, typing.Any]:
-        """
-        Convert tracking information to kwargs for model creation.
-        
+        """Convert tracking information to kwargs for model creation.
+
         Returns:
-            Dictionary with keys: 'user_agent' (str), 'asn' (str), 
+            Dictionary with keys: 'user_agent' (str), 'asn' (str),
             'asn_name' (str), 'ip_address' (Optional[str])
         """
         return {
@@ -313,12 +312,11 @@ class TrackingInfo:
         }
 
     def update_model_fields(self, model_instance: HasTrackingFields) -> None:
-        """
-        Update tracking fields on a model instance.
-        
+        """Update tracking fields on a model instance.
+
         Args:
-            model_instance: Object with user_agent, asn, asn_name, 
-                          and ip_address attributes to update
+            model_instance: Object with user_agent, asn, asn_name, and
+                ip_address attributes to update
         """
         model_instance.user_agent = self.user_agent
         model_instance.asn = self.asn
