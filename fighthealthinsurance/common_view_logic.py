@@ -1131,14 +1131,7 @@ class DenialCreatorHelper:
         # For the pro flow we default to pro to finish
         professional_to_finish = creating_professional is not None
         # Build tracking kwargs
-        tracking_kwargs = {}
-        if tracking_info:
-            tracking_kwargs = {
-                "user_agent": tracking_info.user_agent,
-                "asn": tracking_info.asn,
-                "asn_name": tracking_info.asn_name,
-                "ip_address": tracking_info.ip_address,
-            }
+        tracking_kwargs = tracking_info.to_model_kwargs() if tracking_info else {}
 
         # If we don't have a denial we're making a new one
         if denial is None:
@@ -1212,10 +1205,7 @@ class DenialCreatorHelper:
 
             # Update tracking info if provided
             if tracking_info:
-                denial.user_agent = tracking_info.user_agent
-                denial.asn = tracking_info.asn
-                denial.asn_name = tracking_info.asn_name
-                denial.ip_address = tracking_info.ip_address
+                tracking_info.update_model_fields(denial)
 
             denial.save()
 

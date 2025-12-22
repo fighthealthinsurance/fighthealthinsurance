@@ -288,6 +288,32 @@ class TrackingInfo:
     asn: str = ""
     asn_name: str = ""
 
+    def to_model_kwargs(self) -> dict:
+        """
+        Convert tracking information to kwargs for model creation.
+        
+        Returns:
+            Dictionary with tracking fields suitable for unpacking into model kwargs
+        """
+        return {
+            "user_agent": self.user_agent,
+            "asn": self.asn,
+            "asn_name": self.asn_name,
+            "ip_address": self.ip_address,
+        }
+
+    def update_model_fields(self, model_instance) -> None:
+        """
+        Update tracking fields on a model instance.
+        
+        Args:
+            model_instance: Model instance to update with tracking information
+        """
+        model_instance.user_agent = self.user_agent
+        model_instance.asn = self.asn
+        model_instance.asn_name = self.asn_name
+        model_instance.ip_address = self.ip_address
+
 
 def extract_tracking_info(
     request: Optional[Union[HttpRequest, "DRFRequest"]] = None,
