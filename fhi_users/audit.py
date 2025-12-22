@@ -302,12 +302,13 @@ class TrackingInfo:
             "ip_address": self.ip_address,
         }
 
-    def update_model_fields(self, model_instance) -> None:
+    def update_model_fields(self, model_instance: typing.Any) -> None:
         """
         Update tracking fields on a model instance.
         
         Args:
-            model_instance: Model instance to update with tracking information
+            model_instance: Model instance with user_agent, asn, asn_name, 
+                          and ip_address attributes to update
         """
         model_instance.user_agent = self.user_agent
         model_instance.asn = self.asn

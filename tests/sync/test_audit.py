@@ -25,6 +25,17 @@ from fhi_users.audit import (
 User = get_user_model()
 
 
+# Mock model for testing TrackingInfo methods
+class MockModelWithTrackingFields:
+    """Mock model with tracking fields for testing."""
+
+    def __init__(self):
+        self.user_agent = ""
+        self.asn = ""
+        self.asn_name = ""
+        self.ip_address = None
+
+
 class AuditLoggingDisabledTest(TestCase):
     """Tests for when audit logging is disabled."""
 
@@ -314,21 +325,13 @@ class TrackingInfoFromScopeTest(TestCase):
 
     def test_tracking_info_update_model_fields(self):
         """Test updating model instance fields with tracking info."""
-        # Create a mock model instance
-        class MockModel:
-            def __init__(self):
-                self.user_agent = ""
-                self.asn = ""
-                self.asn_name = ""
-                self.ip_address = None
-
         info = TrackingInfo(
             user_agent="TestAgent/2.0",
             ip_address="10.0.0.1",
             asn="AS9999",
             asn_name="Test ASN",
         )
-        model = MockModel()
+        model = MockModelWithTrackingFields()
         info.update_model_fields(model)
 
         self.assertEqual(model.user_agent, "TestAgent/2.0")
