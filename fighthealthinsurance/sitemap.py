@@ -117,11 +117,44 @@ class BlogSitemap(Sitemap):
         return reverse("blog-post", kwargs={"slug": slug})
 
 
+class StateHelpSitemap(Sitemap):
+    """Sitemap for state help pages."""
+
+    priority = 0.6
+    changefreq = "monthly"
+
+    def items(self) -> list[str]:
+        """Return list of state help slugs from state_help.json."""
+        try:
+            with staticfiles_storage.open("state_help.json", "r") as f:
+                contents = f.read()
+                if not isinstance(contents, str):
+                    contents = contents.decode("utf-8")
+                data = json.loads(contents)
+            if not isinstance(data, dict):
+                return []
+            # Add the index page slug first
+            return ["index"] + list(data.keys())
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            logger.warning(f"Could not load state_help.json for sitemap: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"Unexpected error loading state help for sitemap: {e}")
+            return []
+
+    def location(self, item: str) -> str:
+        """Return the URL for a state help page."""
+        if item == "index":
+            return reverse("state_help_index")
+        return reverse("state_help", kwargs={"slug": item})
+
+
 # Dictionary mapping sitemap section names to sitemap classes
 sitemaps = {
     "static": StaticViewSitemap,
     "blog": BlogSitemap,
     "microsites": MicrositeSitemap,
+    "state_help": StateHelpSitemap,
 }
 
 

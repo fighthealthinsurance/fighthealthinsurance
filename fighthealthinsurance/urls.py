@@ -376,6 +376,21 @@ urlpatterns += [
         views.ExplainDenialView.as_view(),
         name="explain_denial",
     ),
+    # State-by-State Help pages
+    path(
+        "state-help/",
+        cache_control(public=True)(
+            cache_page(60 * 60 * 2)(views.StateHelpIndexView.as_view())
+        ),
+        name="state_help_index",
+    ),
+    path(
+        "state-help/<slug:slug>/",
+        cache_control(public=True)(
+            cache_page(60 * 60 * 2)(views.StateHelpView.as_view())
+        ),
+        name="state_help",
+    ),
 ]
 
 

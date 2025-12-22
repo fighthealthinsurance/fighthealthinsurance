@@ -2051,3 +2051,47 @@ class DenialLanguageLibraryView(TemplateView):
             context["title"] = "Denial Language Library"
 
         return context
+
+
+class StateHelpIndexView(TemplateView):
+    """View for the state-by-state help index page."""
+
+    template_name = "state_help_index.html"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        from fighthealthinsurance.state_help import get_states_sorted_by_name
+
+        context["states"] = get_states_sorted_by_name()
+        context["title"] = "State-by-State Health Insurance Help"
+        return context
+
+
+class StateHelpView(TemplateView):
+    """View for individual state help pages."""
+
+    template_name = "state_help.html"
+
+    def get(self, request, slug, *args, **kwargs):
+        from fighthealthinsurance.state_help import get_state_help
+
+        state = get_state_help(slug)
+        if state is None:
+            from django.http import Http404
+
+            raise Http404(f"State help page '{slug}' not found")
+
+        return super().get(request, *args, **kwargs)
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        slug = self.kwargs.get("slug", "")
+
+        from fighthealthinsurance.state_help import get_state_help
+
+        state = get_state_help(slug)
+        if state:
+            context["state"] = state
+            context["title"] = f"{state.name} Health Insurance Help"
+
+        return context
