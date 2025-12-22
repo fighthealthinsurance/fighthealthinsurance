@@ -182,10 +182,12 @@ def log_event(
             log_entry.path = request.path[:2048] if request.path else ""
             log_entry.method = request.method or ""
 
-            # Only store IP/UA for professionals (privacy)
+            # Always store user_agent (not privacy-sensitive)
+            log_entry.user_agent = request.META.get("HTTP_USER_AGENT", "")[:500]
+            
+            # Only store IP for professionals (privacy-sensitive)
             if is_pro:
                 log_entry.ip_address = get_client_ip(request)
-                log_entry.user_agent = request.META.get("HTTP_USER_AGENT", "")[:500]
 
         if status_code is not None:
             log_entry.status_code = status_code
