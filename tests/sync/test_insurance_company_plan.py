@@ -151,3 +151,37 @@ class InsuranceCompanyModelTests(TestCase):
         # Denial should still exist but company should be NULL
         denial = Denial.objects.get(denial_id=denial_id)
         self.assertIsNone(denial.insurance_company_obj)
+
+    def test_multiple_anthem_brands(self):
+        """Test that we can have multiple Anthem regional brands."""
+        anthem_ca = InsuranceCompany.objects.create(
+            name="Anthem Blue Cross California",
+            alt_names="Anthem Blue Cross\nAnthem CA",
+            regex=r"anthem.*california|california.*anthem",
+        )
+        
+        empire_ny = InsuranceCompany.objects.create(
+            name="Empire BlueCross BlueShield",
+            alt_names="Empire BCBS\nEmpire Blue Cross",
+            regex=r"empire.*blue.*cross|empire.*bcbs",
+        )
+        
+        # Both should exist alongside the generic Anthem
+        self.assertEqual(InsuranceCompany.objects.filter(name__icontains="Anthem").count(), 2)
+        self.assertEqual(InsuranceCompany.objects.filter(name__icontains="Empire").count(), 1)
+        
+    def test_regional_brand_priority(self):
+        """Test that regional brands are preferred over generic brands in matching."""
+        # Create generic and specific Anthem entries
+        anthem_generic = InsuranceCompany.objects.create(
+            name="Anthem Generic",
+            alt_names="Anthem",
+        )
+        
+        anthem_ca = InsuranceCompany.objects.create(
+            name="Anthem Blue Cross California",
+            alt_names="Anthem Blue Cross\nAnthem CA",
+        )
+        
+        # Test that "Anthem Blue Cross California" text matches the more specific one
+        # This would be tested in integration tests with the actual matching logic

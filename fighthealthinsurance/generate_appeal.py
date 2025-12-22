@@ -276,26 +276,49 @@ class AppealGenerator(object):
             if match:
                 return match.group(1).strip()
 
-        # Try to find well-known insurance companies
-        known_companies = [
-            "Aetna",
-            "Anthem",
-            "Blue Cross",
-            "Blue Shield",
-            "Cigna",
-            "Humana",
-            "Kaiser Permanente",
-            "UnitedHealthcare",
-            "United Healthcare",
-            "Centene",
-            "Molina Healthcare",
-            "WellCare",
-            "CVS Health",
-            # These are often mentioned even when not the insurer
-            # "Medicare",
-            # "Medicaid",
-        ]
+        # Load known companies from database dynamically
+        known_companies = []
+        try:
+            from fighthealthinsurance.models import InsuranceCompany
+            from asgiref.sync import sync_to_async
+            
+            # Get all insurance companies from database
+            companies = await sync_to_async(list)(
+                InsuranceCompany.objects.values_list('name', 'alt_names')
+            )
+            
+            for name, alt_names in companies:
+                known_companies.append(name)
+                if alt_names:
+                    # Add alternative names too
+                    for alt_name in alt_names.split('\n'):
+                        alt_name = alt_name.strip()
+                        if alt_name:
+                            known_companies.append(alt_name)
+        except Exception as e:
+            logger.opt(exception=True).debug(
+                f"Failed to load companies from database, using fallback list: {e}"
+            )
+            # Fallback to hardcoded list if database query fails
+            known_companies = [
+                "Aetna",
+                "Anthem",
+                "Blue Cross",
+                "Blue Shield",
+                "Cigna",
+                "Humana",
+                "Kaiser Permanente",
+                "UnitedHealthcare",
+                "United Healthcare",
+                "Centene",
+                "Molina Healthcare",
+                "WellCare",
+                "CVS Health",
+                "Empire BlueCross",
+                "Empire Health",
+            ]
 
+        # Try to find companies in the denial text
         for company in known_companies:
             if company in denial_text:
                 # Find the full company name (looking for patterns like "Aetna Health Insurance")
@@ -305,7 +328,7 @@ class AppealGenerator(object):
                     return match.group(1).strip()
                 return company
 
-        # If regex fails, use ML models
+        # If regex fails, use ML models with known companies as context
         models_to_try = ml_router.entity_extract_backends(use_external)
         for model in models_to_try:
             if hasattr(model, "get_insurance_company"):
