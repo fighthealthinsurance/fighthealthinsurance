@@ -144,6 +144,64 @@ class TestCommonViewLogic(TestCase):
             fax.hashed_email, fax.uuid
         )
 
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.fax_actor_ref")
+    def test_resend_sets_should_send_and_sent_flags(self, mock_fax_actor_ref):
+        """Test that resend properly sets should_send=True and sent=False."""
+        # Create test data
+        email = "test@example.com"
+        hashed_email = Denial.get_hashed_email(email)
+        fax_number = "9876543210"
+        new_fax_number = "1234567890"
+
+        # Create a denial
+        denial = Denial.objects.create(
+            denial_id=1,
+            semi_sekret="sekret",
+            hashed_email=hashed_email,
+            appeal_fax_number=fax_number,
+        )
+
+        # Create an appeal
+        appeal = Appeal.objects.create(
+            for_denial=denial,
+            appeal_text="Test appeal text for resend",
+            hashed_email=hashed_email,
+        )
+
+        # Create a fax that was already sent (simulating a previously sent fax)
+        fax = FaxesToSend.objects.create(
+            hashed_email=hashed_email,
+            email=email,
+            appeal_text=appeal.appeal_text,
+            destination=fax_number,
+            denial_id=denial,
+            for_appeal=appeal,
+            paid=True,
+            sent=True,  # Already sent
+            should_send=False,  # Should not send again
+        )
+
+        # Set up mock
+        mock_fax_actor_ref.get.do_send_fax.remote.return_value = None
+
+        # Call the resend method
+        result = SendFaxHelper.resend(new_fax_number, fax.uuid, hashed_email)
+
+        # Verify the method returned True
+        self.assertTrue(result)
+
+        # Verify the fax was updated correctly
+        updated_fax = FaxesToSend.objects.get(uuid=fax.uuid)
+        self.assertEqual(updated_fax.destination, new_fax_number)
+        self.assertTrue(updated_fax.should_send)
+        self.assertFalse(updated_fax.sent)
+
+        # Verify the fax actor was called to resend the fax
+        mock_fax_actor_ref.get.do_send_fax.remote.assert_called_once_with(
+            hashed_email, fax.uuid
+        )
+
     @pytest.mark.skip("Skip for now until we enable this.")
     @pytest.mark.django_db
     @patch("fighthealthinsurance.common_view_logic.appealGenerator")
