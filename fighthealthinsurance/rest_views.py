@@ -21,6 +21,7 @@ from loguru import logger
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
+from rest_framework.permissions import AllowAny
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -1728,6 +1729,11 @@ class ChooserViewSet(viewsets.ViewSet):
     - GET /api/chooser/next/chat - Get next chat chooser task
     - POST /api/chooser/vote - Submit a vote for a task
     """
+
+    # Allow unauthenticated access and disable CSRF checks
+    # This allows both logged-in and anonymous users to vote
+    permission_classes = [AllowAny]
+    authentication_classes = []
 
     def _get_session_key(self, request: Request) -> str:
         """Get or create a session key for the request."""
