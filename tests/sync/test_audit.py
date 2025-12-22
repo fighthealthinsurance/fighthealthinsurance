@@ -15,6 +15,10 @@ from fhi_users.audit import (
     log_api_access,
     is_audit_enabled,
     get_client_ip,
+    get_user_agent,
+    extract_tracking_info,
+    extract_tracking_info_from_scope,
+    TrackingInfo,
 )
 
 
@@ -152,3 +156,132 @@ class GetClientIPTest(TestCase):
         # RequestFactory sets REMOTE_ADDR to 127.0.0.1 by default
         ip = get_client_ip(request)
         self.assertEqual(ip, "127.0.0.1")
+
+
+class TrackingInfoTest(TestCase):
+    """Tests for tracking info extraction."""
+
+    def setUp(self):
+        self.factory = RequestFactory()
+
+    def test_get_user_agent(self):
+        """Test user agent extraction from request."""
+        request = self.factory.get(
+            "/", HTTP_USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+        )
+        ua = get_user_agent(request)
+        self.assertEqual(ua, "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+
+    def test_get_user_agent_empty(self):
+        """Test user agent extraction when not present."""
+        request = self.factory.get("/")
+        ua = get_user_agent(request)
+        self.assertEqual(ua, "")
+
+    def test_get_user_agent_truncation(self):
+        """Test user agent is truncated to 500 chars."""
+        long_ua = "A" * 600
+        request = self.factory.get("/", HTTP_USER_AGENT=long_ua)
+        ua = get_user_agent(request)
+        self.assertEqual(len(ua), 500)
+
+    def test_extract_tracking_info_basic(self):
+        """Test basic tracking info extraction."""
+        request = self.factory.get(
+            "/test/",
+            HTTP_USER_AGENT="TestBrowser/1.0",
+            HTTP_X_FORWARDED_FOR="192.168.1.1",
+        )
+        info = extract_tracking_info(request, is_professional=False)
+
+        self.assertIsInstance(info, TrackingInfo)
+        self.assertEqual(info.user_agent, "TestBrowser/1.0")
+        # IP should be None for non-professional
+        self.assertIsNone(info.ip_address)
+
+    def test_extract_tracking_info_professional(self):
+        """Test tracking info extraction for professional users includes IP."""
+        request = self.factory.get(
+            "/test/",
+            HTTP_USER_AGENT="TestBrowser/1.0",
+            HTTP_X_FORWARDED_FOR="192.168.1.1",
+        )
+        info = extract_tracking_info(request, is_professional=True)
+
+        self.assertIsInstance(info, TrackingInfo)
+        self.assertEqual(info.user_agent, "TestBrowser/1.0")
+        # IP should be present for professional
+        self.assertEqual(info.ip_address, "192.168.1.1")
+
+    def test_extract_tracking_info_none_request(self):
+        """Test tracking info extraction with None request."""
+        info = extract_tracking_info(None)
+        self.assertIsInstance(info, TrackingInfo)
+        self.assertEqual(info.user_agent, "")
+        self.assertIsNone(info.ip_address)
+        self.assertEqual(info.asn, "")
+        self.assertEqual(info.asn_name, "")
+
+
+class TrackingInfoFromScopeTest(TestCase):
+    """Tests for tracking info extraction from websocket scope."""
+
+    def test_extract_tracking_info_from_scope_basic(self):
+        """Test tracking info extraction from websocket scope."""
+        scope = {
+            "headers": [
+                (b"user-agent", b"WebSocketClient/1.0"),
+                (b"x-forwarded-for", b"10.0.0.1"),
+            ],
+            "client": ("127.0.0.1", 12345),
+        }
+        info = extract_tracking_info_from_scope(scope, is_professional=False)
+
+        self.assertIsInstance(info, TrackingInfo)
+        self.assertEqual(info.user_agent, "WebSocketClient/1.0")
+        # IP should be None for non-professional
+        self.assertIsNone(info.ip_address)
+
+    def test_extract_tracking_info_from_scope_professional(self):
+        """Test tracking info extraction for professional includes IP."""
+        scope = {
+            "headers": [
+                (b"user-agent", b"WebSocketClient/1.0"),
+                (b"x-forwarded-for", b"10.0.0.1"),
+            ],
+            "client": ("127.0.0.1", 12345),
+        }
+        info = extract_tracking_info_from_scope(scope, is_professional=True)
+
+        self.assertEqual(info.user_agent, "WebSocketClient/1.0")
+        self.assertEqual(info.ip_address, "10.0.0.1")
+
+    def test_extract_tracking_info_from_scope_x_real_ip(self):
+        """Test tracking info uses X-Real-IP when X-Forwarded-For not present."""
+        scope = {
+            "headers": [
+                (b"user-agent", b"Test/1.0"),
+                (b"x-real-ip", b"172.16.0.1"),
+            ],
+            "client": ("127.0.0.1", 12345),
+        }
+        info = extract_tracking_info_from_scope(scope, is_professional=True)
+
+        self.assertEqual(info.ip_address, "172.16.0.1")
+
+    def test_extract_tracking_info_from_scope_client_fallback(self):
+        """Test tracking info uses client address when no headers present."""
+        scope = {
+            "headers": [],
+            "client": ("192.168.1.100", 54321),
+        }
+        info = extract_tracking_info_from_scope(scope, is_professional=True)
+
+        self.assertEqual(info.ip_address, "192.168.1.100")
+
+    def test_extract_tracking_info_from_scope_none(self):
+        """Test tracking info extraction with None scope."""
+        info = extract_tracking_info_from_scope(None)
+        self.assertIsInstance(info, TrackingInfo)
+        self.assertEqual(info.user_agent, "")
+        self.assertIsNone(info.ip_address)

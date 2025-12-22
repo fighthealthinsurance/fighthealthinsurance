@@ -50,6 +50,7 @@ from fighthealthinsurance.ml.ml_plan_doc_helper import MLPlanDocHelper
 from fighthealthinsurance import stripe_utils
 from fhi_users.models import ProfessionalUser, UserDomain
 from fhi_users import emails as fhi_emails
+from fhi_users.audit import extract_tracking_info, TrackingInfo
 from .pubmed_tools import PubMedTools
 from .utils import (
     check_call,
@@ -1084,6 +1085,7 @@ class DenialCreatorHelper:
         microsite_slug: Optional[str] = None,
         referral_source: Optional[str] = None,
         referral_source_details: Optional[str] = None,
+        tracking_info: Optional[TrackingInfo] = None,
     ):
         """
         Create or update an existing denial.
@@ -1111,6 +1113,7 @@ class DenialCreatorHelper:
                            Should be a valid microsite slug or None.
             referral_source: Optional referral source (e.g., "Search Engine", "Friend or Family").
             referral_source_details: Optional free-text details about the referral source.
+            tracking_info: Optional TrackingInfo with user_agent, ASN, and IP (for professionals).
 
         Returns:
             The created or updated Denial object.
@@ -1127,6 +1130,16 @@ class DenialCreatorHelper:
             creating_professional = None
         # For the pro flow we default to pro to finish
         professional_to_finish = creating_professional is not None
+        # Build tracking kwargs
+        tracking_kwargs = {}
+        if tracking_info:
+            tracking_kwargs = {
+                "user_agent": tracking_info.user_agent,
+                "asn": tracking_info.asn,
+                "asn_name": tracking_info.asn_name,
+                "ip_address": tracking_info.ip_address,
+            }
+
         # If we don't have a denial we're making a new one
         if denial is None:
             try:
@@ -1145,6 +1158,7 @@ class DenialCreatorHelper:
                     microsite_slug=microsite_slug,
                     referral_source=referral_source,
                     referral_source_details=referral_source_details,
+                    **tracking_kwargs,
                 )
             except Exception as e:
                 # This is a temporary hack to drop non-ASCII characters
@@ -1168,6 +1182,7 @@ class DenialCreatorHelper:
                     microsite_slug=microsite_slug,
                     referral_source=referral_source,
                     referral_source_details=referral_source_details,
+                    **tracking_kwargs,
                 )
         else:
             # Directly update denial object fields instead of using denial.update()
@@ -1194,6 +1209,13 @@ class DenialCreatorHelper:
                 denial.referral_source = referral_source
             if referral_source_details is not None:
                 denial.referral_source_details = referral_source_details
+
+            # Update tracking info if provided
+            if tracking_info:
+                denial.user_agent = tracking_info.user_agent
+                denial.asn = tracking_info.asn
+                denial.asn_name = tracking_info.asn_name
+                denial.ip_address = tracking_info.ip_address
 
             denial.save()
 

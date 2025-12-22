@@ -1133,7 +1133,15 @@ class InitialProcessView(generic.FormView):
         if referral_source_details:
             cleaned_data["referral_source_details"] = referral_source_details
 
+        # Extract tracking info for analytics (privacy-aware)
+        from fhi_users.audit import extract_tracking_info
+
+        tracking_info = extract_tracking_info(
+            request=self.request, is_professional=False
+        )
+
         denial_response = common_view_logic.DenialCreatorHelper.create_or_update_denial(
+            tracking_info=tracking_info,
             **cleaned_data,
         )
 

@@ -12,6 +12,7 @@ Design goals:
 - Optional: Controlled by ENABLE_AUDIT_LOGGING setting
 """
 
+from dataclasses import dataclass
 from enum import Enum
 from typing import Optional, Union
 import typing
@@ -231,4 +232,139 @@ def log_api_access(
         request=request,
         status_code=status_code,
         response_time_ms=response_time_ms,
+    )
+
+
+# Tracking utilities for denial/chat flows
+
+
+def get_user_agent(request: Union[HttpRequest, "DRFRequest"]) -> str:
+    """Extract user agent from request."""
+    ua = request.META.get("HTTP_USER_AGENT", "")
+    # Truncate to reasonable length
+    return str(ua)[:500] if ua else ""
+
+
+def get_asn_info(ip_address: Optional[str]) -> tuple[str, str]:
+    """
+    Get ASN information for an IP address.
+
+    Returns:
+        Tuple of (asn_number, asn_name). Both empty strings if lookup fails.
+
+    Note: This is a placeholder that can be enhanced with geoip2fast or similar.
+    For now, returns empty strings. To enable ASN lookup, install geoip2fast
+    and download the ASN database.
+    """
+    if not ip_address:
+        return ("", "")
+
+    try:
+        # Try to import geoip2fast if available
+        from geoip2fast import GeoIP2Fast
+
+        geoip = GeoIP2Fast()
+        result = geoip.lookup(ip_address)
+        if result and hasattr(result, "asn"):
+            asn_num = str(result.asn) if result.asn else ""
+            asn_name = str(result.asn_name)[:200] if result.asn_name else ""
+            return (asn_num, asn_name)
+    except ImportError:
+        # geoip2fast not installed, that's fine
+        pass
+    except Exception:
+        # Any lookup failure, return empty
+        pass
+
+    return ("", "")
+
+
+@dataclass
+class TrackingInfo:
+    """Container for request tracking information."""
+
+    user_agent: str = ""
+    ip_address: Optional[str] = None
+    asn: str = ""
+    asn_name: str = ""
+
+
+def extract_tracking_info(
+    request: Optional[Union[HttpRequest, "DRFRequest"]] = None,
+    is_professional: bool = False,
+) -> TrackingInfo:
+    """
+    Extract tracking information from a request.
+
+    Args:
+        request: HTTP request object
+        is_professional: If True, store IP address. Otherwise, only ASN-level info.
+
+    Returns:
+        TrackingInfo with user agent, ASN, and optionally IP address
+    """
+    if request is None:
+        return TrackingInfo()
+
+    user_agent = get_user_agent(request)
+    ip_address = get_client_ip(request)
+
+    # Get ASN info for privacy-preserving location tracking
+    asn, asn_name = get_asn_info(ip_address)
+
+    return TrackingInfo(
+        user_agent=user_agent,
+        # Only store IP for professionals
+        ip_address=ip_address if is_professional else None,
+        asn=asn,
+        asn_name=asn_name,
+    )
+
+
+def extract_tracking_info_from_scope(
+    scope: Optional[dict] = None,
+    is_professional: bool = False,
+) -> TrackingInfo:
+    """
+    Extract tracking information from a websocket scope.
+
+    Args:
+        scope: Websocket scope dict (from Django Channels)
+        is_professional: If True, store IP address. Otherwise, only ASN-level info.
+
+    Returns:
+        TrackingInfo with user agent, ASN, and optionally IP address
+    """
+    if scope is None:
+        return TrackingInfo()
+
+    # Extract user agent from headers
+    user_agent = ""
+    headers = dict(scope.get("headers", []))
+    if b"user-agent" in headers:
+        user_agent = headers[b"user-agent"].decode("utf-8", errors="ignore")[:500]
+
+    # Extract IP from scope
+    ip_address: Optional[str] = None
+    # Check X-Forwarded-For first (for proxied connections)
+    if b"x-forwarded-for" in headers:
+        forwarded = headers[b"x-forwarded-for"].decode("utf-8", errors="ignore")
+        ip_address = forwarded.split(",")[0].strip()
+    elif b"x-real-ip" in headers:
+        ip_address = headers[b"x-real-ip"].decode("utf-8", errors="ignore").strip()
+    else:
+        # Fall back to client address from scope
+        client = scope.get("client")
+        if client:
+            ip_address = client[0]
+
+    # Get ASN info for privacy-preserving location tracking
+    asn, asn_name = get_asn_info(ip_address)
+
+    return TrackingInfo(
+        user_agent=user_agent,
+        # Only store IP for professionals
+        ip_address=ip_address if is_professional else None,
+        asn=asn,
+        asn_name=asn_name,
     )

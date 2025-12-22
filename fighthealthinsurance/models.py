@@ -684,6 +684,15 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     referral_source = models.CharField(max_length=300, null=True, blank=True)
     referral_source_details = models.TextField(null=True, blank=True)
 
+    # Usage tracking fields (privacy-aware)
+    # user_agent is always tracked (not privacy-sensitive)
+    user_agent = models.TextField(blank=True, default="")
+    # ASN provides privacy-preserving geolocation (network-level, not individual)
+    asn = models.CharField(max_length=50, blank=True, default="")
+    asn_name = models.CharField(max_length=200, blank=True, default="")
+    # IP address only stored for professional users (privacy-sensitive)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+
     @classmethod
     def filter_to_allowed_denials(cls, current_user: User):
         if current_user.is_superuser or current_user.is_staff:
@@ -1234,6 +1243,15 @@ class OngoingChat(models.Model):
     microsite_slug = models.CharField(
         max_length=100, null=True, blank=True, db_index=True
     )
+
+    # Usage tracking fields (privacy-aware)
+    # user_agent is always tracked (not privacy-sensitive)
+    user_agent = models.TextField(blank=True, default="")
+    # ASN provides privacy-preserving geolocation (network-level, not individual)
+    asn = models.CharField(max_length=50, blank=True, default="")
+    asn_name = models.CharField(max_length=200, blank=True, default="")
+    # IP address only stored for professional users (privacy-sensitive)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
 
     @staticmethod
     def find_chats_by_email(email: str):

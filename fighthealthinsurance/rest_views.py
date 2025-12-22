@@ -348,10 +348,19 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
                 serializer_data["email"] = serializer_data["patient_user"].user.email
         # Handle subscription separately - pop from serializer data before passing
         subscribe = serializer_data.pop("subscribe", False)
+
+        # Extract tracking info for analytics (privacy-aware)
+        from fhi_users.audit import extract_tracking_info
+
+        tracking_info = extract_tracking_info(
+            request=request, is_professional=(creating_professional is not None)
+        )
+
         denial_response_info = (
             common_view_logic.DenialCreatorHelper.create_or_update_denial(
                 denial=denial,
                 creating_professional=creating_professional,
+                tracking_info=tracking_info,
                 **serializer_data,
             )
         )
