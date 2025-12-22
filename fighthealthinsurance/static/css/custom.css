@@ -954,6 +954,137 @@ section:not(.slider) .share-subcopy {
     }
 }
 
+/* Alert/Info Box Styles - Extracted from inline styles */
+.alert-box {
+    padding: 1rem;
+    border-radius: 4px;
+    margin-bottom: 1rem;
+    border-left: 4px solid;
+}
+.alert-box p { margin: 0; }
+.alert-box-success {
+    background: #e8f5e9;
+    border-left-color: #a5c422;
+}
+.alert-box-warning {
+    background: #fff3cd;
+    border-left-color: #ffc107;
+}
+.alert-box-warning-light {
+    background: #fff8e1;
+    border-left-color: #ffc107;
+}
+.alert-box-info {
+    background: #e3f2fd;
+    border-left-color: #2196f3;
+}
+.alert-box-info h4 {
+    margin: 0 0 0.5rem 0;
+    color: #1565c0;
+}
+
+/* Button styles - Extracted from inline */
+.btn-secondary-custom {
+    background: #6c757d;
+    color: white;
+    padding: 10px 20px;
+    border-radius: 3px;
+    text-decoration: none;
+}
+.btn-secondary-custom:hover {
+    background: #5a6268;
+    color: white;
+    text-decoration: none;
+}
+.btn-link-muted {
+    color: #6c757d;
+    text-decoration: underline;
+    font-size: 0.9rem;
+}
+
+/* Navigation/Form actions row */
+.form-nav-row {
+    margin-top: 1.5rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.form-nav-centered {
+    margin: 1.5rem 0;
+    display: flex;
+    justify-content: center;
+    gap: 1rem;
+    align-items: center;
+}
+
+/* Footer social icons */
+.footer-social-link {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 48px;
+    height: 48px;
+}
+
+/* Error/Status page styling */
+.status-page-container {
+    padding: 3rem 1rem;
+    text-align: center;
+    max-width: 600px;
+    margin: 0 auto;
+}
+.status-code {
+    font-size: 6rem;
+    color: #a5c422;
+    margin-bottom: 1rem;
+}
+.status-title {
+    color: #333;
+    margin-bottom: 1rem;
+}
+.status-message {
+    color: #666;
+    font-size: 1.1rem;
+    margin-bottom: 1.5rem;
+}
+.status-cta-box {
+    background: #f8f9fa;
+    padding: 1.5rem;
+    border-radius: 8px;
+    margin-bottom: 2rem;
+}
+
+/* Info/Help panels */
+.help-panel {
+    background: #f8f9fa;
+    padding: 1rem;
+    border-radius: 4px;
+    margin-bottom: 1rem;
+}
+
+/* Table styling (outside help) */
+.simple-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 1.5rem;
+}
+.simple-table th {
+    padding: 0.75rem;
+    text-align: left;
+    border-bottom: 2px solid #ddd;
+    background: #f5f5f5;
+}
+.simple-table td {
+    padding: 0.75rem;
+    border-bottom: 1px solid #eee;
+}
+
+/* Social icon sizing */
+.social-icon-sm {
+    width: 28px;
+    height: 28px;
+}
+
 /* Insurance Bullshit Bingo Styles */
 .bingo-section {
     background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
