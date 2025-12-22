@@ -20,6 +20,7 @@ from fhi_users.audit import (
     extract_tracking_info_from_scope,
     TrackingInfo,
 )
+from fhi_users.models import ProfessionalUser
 
 
 User = get_user_model()
@@ -148,8 +149,6 @@ class AuditLoggingEnabledTest(TestCase):
 
     def test_user_agent_and_ip_stored_for_professional(self):
         """Test that both user_agent and IP are stored for professional users."""
-        from fhi_users.models import ProfessionalUser
-        
         # Create a professional user
         pro_user = User.objects.create_user(
             username="prouser",
