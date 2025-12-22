@@ -99,11 +99,11 @@
       "url": "https://www.aldoi.gov/",
       "phone": "334-269-3550",
       "consumer_line": "800-433-3966",
-      "complaint_url": "https://www.aldoi.gov/Consumers/FileAComplaint.aspx"
+      "complaint_url": "https://aldoi.gov/consumers/filecomplaint.aspx"
     },
     "consumer_assistance": {
       "cap_name": "Alabama Department of Insurance Consumer Services",
-      "cap_url": "https://www.aldoi.gov/Consumers.aspx",
+      "cap_url": "https://aldoi.gov/consumers/",
       "cap_phone": "800-433-3966",
       "ship_name": "State Health Insurance Assistance Program (SHIP)",
       "ship_url": "https://www.alabamaageline.gov/ship/",
@@ -117,7 +117,7 @@
     },
     "external_review": {
       "available": true,
-      "info_url": "https://www.aldoi.gov/Consumers/ExternalReview.aspx"
+      "info_url": "https://aldoi.gov/consumers/coveragetips.aspx"
     },
     "additional_resources": [
       {
@@ -450,7 +450,7 @@
     "abbreviation": "FL",
     "insurance_department": {
       "name": "Florida Office of Insurance Regulation",
-      "url": "https://www.floir.com/",
+      "url": "https://floir.gov/",
       "phone": "850-413-3140",
       "consumer_line": "877-693-5236",
       "complaint_url": "https://www.myfloridacfo.com/Division/Consumers/needourhelp.htm"
@@ -475,7 +475,7 @@
     },
     "external_review": {
       "available": true,
-      "info_url": "https://www.floir.com/consumerassistance/healthinsurance"
+      "info_url": "https://floir.gov/consumers"
     },
     "additional_resources": [
       {
@@ -611,17 +611,17 @@
     "abbreviation": "IL",
     "insurance_department": {
       "name": "Illinois Department of Insurance",
-      "url": "https://insurance.illinois.gov/",
+      "url": "https://idoi.illinois.gov/",
       "phone": "217-782-4515",
       "consumer_line": "866-445-5364",
-      "complaint_url": "https://insurance.illinois.gov/complaints.html"
+      "complaint_url": "https://idoi.illinois.gov/consumers/file-a-complaint.html"
     },
     "consumer_assistance": {
       "cap_name": "Illinois Department of Insurance Consumer Assistance",
-      "cap_url": "https://insurance.illinois.gov/Consumer/default.htm",
+      "cap_url": "https://idoi.illinois.gov/consumers/consumerinsurance.html",
       "cap_phone": "866-445-5364",
       "ship_name": "Illinois Senior Health Insurance Program (SHIP)",
-      "ship_url": "https://ilaging.illinois.gov/programs/ship.html",
+      "ship_url": "https://ilaging.illinois.gov/ship.html",
       "ship_phone": "800-252-8966"
     },
     "medicaid": {
@@ -631,12 +631,12 @@
       "managed_care_ombudsman": {
         "name": "Illinois Medicaid Managed Care Ombudsman",
         "phone": "877-912-8880",
-        "url": "https://hfs.illinois.gov/medicalclients/managedcare.html"
+        "url": "https://ilaging.illinois.gov/programs/ltcombudsman/the-home-care-ombudsman-program.html"
       }
     },
     "external_review": {
       "available": true,
-      "info_url": "https://insurance.illinois.gov/complaints/ExternalReviewProcess.html"
+      "info_url": "https://idoi.illinois.gov/consumers/file-an-external-review.html"
     },
     "additional_resources": [
       {
@@ -664,7 +664,7 @@
     },
     "consumer_assistance": {
       "cap_name": "Indiana Department of Insurance Consumer Services",
-      "cap_url": "https://www.in.gov/idoi/files/health-insurance-resources/",
+      "cap_url": "https://www.in.gov/idoi/consumer-services/types-of-insurance/health-insurance/",
       "cap_phone": "800-622-4461",
       "ship_name": "Indiana State Health Insurance Assistance Program (SHIP)",
       "ship_url": "https://www.in.gov/ship/",
@@ -682,7 +682,7 @@
     },
     "external_review": {
       "available": true,
-      "info_url": "https://www.in.gov/idoi/files/health-insurance-resources/external-review/"
+      "info_url": "https://www.in.gov/idoi/consumer-services/internal-and-external-grievance-procedures/"
     },
     "additional_resources": [
       {
@@ -1299,17 +1299,17 @@
     "abbreviation": "NJ",
     "insurance_department": {
       "name": "New Jersey Department of Banking and Insurance",
-      "url": "https://www.state.nj.us/dobi/",
+      "url": "https://www.nj.gov/dobi/",
       "phone": "609-292-7272",
       "consumer_line": "800-446-7467",
-      "complaint_url": "https://www.state.nj.us/dobi/consumer.htm#complaint"
+      "complaint_url": "https://www.nj.gov/dobi/consumer.htm"
     },
     "consumer_assistance": {
       "cap_name": "NJ Department of Banking and Insurance Consumer Services",
-      "cap_url": "https://www.state.nj.us/dobi/consumer.htm",
+      "cap_url": "https://www.nj.gov/dobi/consumer.htm",
       "cap_phone": "800-446-7467",
       "ship_name": "State Health Insurance Assistance Program (SHIP)",
-      "ship_url": "https://www.state.nj.us/humanservices/doas/services/ship/",
+      "ship_url": "https://www.nj.gov/humanservices/doas/services/ship/",
       "ship_phone": "800-792-8820"
     },
     "medicaid": {
@@ -1324,7 +1324,7 @@
     },
     "external_review": {
       "available": true,
-      "info_url": "https://www.state.nj.us/dobi/division_insurance/ihcseh/externalreview.htm"
+      "info_url": "https://www.nj.gov/dobi/division_insurance/ihcseh/externalreview.htm"
     },
     "additional_resources": [
       {
@@ -1457,7 +1457,7 @@
     },
     "external_review": {
       "available": true,
-      "info_url": "https://www.ncdoi.gov/consumers/health-insurance-smart-nc/external-review"
+      "info_url": "https://www.ncdoi.gov/consumers/health-insurance/health-claim-denied/request-external-review"
     },
     "additional_resources": [
       {
@@ -1695,10 +1695,10 @@
     "abbreviation": "RI",
     "insurance_department": {
       "name": "Rhode Island Department of Business Regulation - Insurance Division",
-      "url": "https://dbr.ri.gov/divisions/insurance/",
+      "url": "https://dbr.ri.gov/insurance-overview",
       "phone": "401-462-9520",
       "consumer_line": "401-462-9520",
-      "complaint_url": "https://dbr.ri.gov/divisions/insurance/consumers/filingcomplaint.php"
+      "complaint_url": "https://dbr.ri.gov/insurance/consumers"
     },
     "consumer_assistance": {
       "cap_name": "Rhode Island Office of the Health Insurance Commissioner",
