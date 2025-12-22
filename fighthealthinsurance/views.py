@@ -23,6 +23,8 @@ from django.http import (
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template import loader
 from django.urls import reverse
+from django.views.decorators.clickjacking import xframe_options_exempt
+from django.utils.decorators import method_decorator
 from django.utils.safestring import mark_safe
 from django.views import View, generic
 from django.views.decorators.csrf import csrf_exempt, ensure_csrf_cookie
@@ -1911,6 +1913,7 @@ class UnsubscribeView(View):
             )
 
 
+@method_decorator(xframe_options_exempt, name="dispatch")
 class ChooserView(TemplateView):
     """View for the Chooser (Best-Of Selection) interface."""
 
