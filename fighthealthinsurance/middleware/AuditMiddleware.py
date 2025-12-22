@@ -8,6 +8,7 @@ import time
 from typing import Callable, Optional
 
 from django.http import HttpRequest, HttpResponse
+from loguru import logger
 
 
 class AuditMiddleware:
@@ -54,6 +55,6 @@ class AuditMiddleware:
                 status_code=response.status_code,
                 response_time_ms=response_time_ms,
             )
-        except Exception:
+        except Exception as e:
             # Never let audit logging break the request
-            pass
+            logger.warning(f"Audit logging failed for {request.path}: {e}", exc_info=True)
