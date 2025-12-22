@@ -512,7 +512,7 @@ header span i {
 }
 
 .slider .item-first {
-    background-image: url(../images/crinkledcolors.jpg);
+    background-image: url(../images/crinkledcolors-optimized.jpg);
 }
 
 .slider .item-first .pro-version-text a {
@@ -538,7 +538,7 @@ header span i {
   -----------------------------------------*/
 
 #about {
-    background: url('../images/about-bg-alpaca.jpg') no-repeat top center;
+    background: url('../images/about-bg-alpaca-optimized.jpg') no-repeat top center;
     background-size: cover;
     padding-top: 150px;
     padding-bottom: 150px;

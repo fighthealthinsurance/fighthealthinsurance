@@ -14,7 +14,7 @@ Nearly one in seven 26-year-olds go uninsured. The consequences can be expensive
 
 If you don't have coverage through work, you'll [need](https://kffhealthnews.org/news/article/insurance-cliff-age-26-young-adults-chaos/) to find a new plan to avoid being uninsured. That means navigating a complicated and costly health insurance market.
 
-![Health Insurance Next Steps at 26](/static/images/26-health-insurance2.png)
+![Health Insurance Next Steps at 26](/static/images/26-health-insurance2-optimized.jpg)
 
 ### What to Know
 
