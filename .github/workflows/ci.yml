@@ -59,7 +59,11 @@ jobs:
       - name: Install tox
         run: uv tool install tox --with tox-uv
 
-      - name: Check types
+      - name: Check types with mypy
+        run:
+          tox -e mypy
+
+      - name: Check types with ty
         run:
           tox -e ty
 
