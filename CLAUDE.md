@@ -111,5 +111,6 @@ Tests are in `tests/` with subdirectories:
 - `sync/` - Synchronous tests
 - `sync-actor/` - Ray actor tests
 - `async-unit/` - Unit tests
+- `selenium` - Sync selenium tests
 
 Fixtures live in `fighthealthinsurance/fixtures/` (initial, followup, plan_source).
