@@ -9,6 +9,8 @@ from fighthealthinsurance.models import (
     PlanType,
     Regulator,
     PlanSource,
+    InsuranceCompany,
+    InsurancePlan,
     Diagnosis,
     Procedures,
     DenialTypes,
@@ -159,6 +161,8 @@ class DenialAdmin(admin.ModelAdmin):
         "denial_id",
         "date",
         "raw_email",
+        "insurance_company_obj",
+        "insurance_plan_obj",
         "patient_visible",
         "appeal_result",
         "referral_source",
@@ -167,11 +171,15 @@ class DenialAdmin(admin.ModelAdmin):
         "raw_email",
         "denial_text",
         "insurance_company",
+        "insurance_company_obj__name",
+        "insurance_plan_obj__plan_name",
         "referral_source",
         "referral_source_details",
     )
     list_filter = (
         ("raw_email", admin.EmptyFieldListFilter),
+        "insurance_company_obj",
+        "insurance_plan_obj",
         "plan_source__name",
         "plan_type__name",
         "denial_type__name",
@@ -180,6 +188,7 @@ class DenialAdmin(admin.ModelAdmin):
         "referral_source",
     )
     ordering = ("-date",)
+    autocomplete_fields = ["insurance_company_obj", "insurance_plan_obj"]
 
 
 @admin.register(InterestedProfessional)
@@ -285,6 +294,71 @@ class PlanSourceAdmin(admin.ModelAdmin):
     list_display = ("id", "name")
     search_fields = ("name",)
     ordering = ("name",)
+
+
+@admin.register(InsuranceCompany)
+class InsuranceCompanyAdmin(admin.ModelAdmin):
+    """Admin configuration for InsuranceCompany model."""
+
+    list_display = ("id", "name", "website")
+    search_fields = ("name", "alt_names")
+    ordering = ("name",)
+    fieldsets = (
+        (
+            None,
+            {
+                "fields": ("name", "alt_names", "website", "notes"),
+            },
+        ),
+        (
+            "Pattern Matching",
+            {
+                "fields": ("regex", "negative_regex"),
+                "classes": ("collapse",),
+            },
+        ),
+    )
+
+
+@admin.register(InsurancePlan)
+class InsurancePlanAdmin(admin.ModelAdmin):
+    """Admin configuration for InsurancePlan model."""
+
+    list_display = (
+        "id",
+        "insurance_company",
+        "plan_name",
+        "state",
+        "plan_type",
+        "plan_source",
+    )
+    list_filter = ("insurance_company", "state", "plan_type", "plan_source")
+    search_fields = ("plan_name", "insurance_company__name", "notes")
+    ordering = ("insurance_company__name", "plan_name")
+    autocomplete_fields = ["insurance_company"]
+    fieldsets = (
+        (
+            None,
+            {
+                "fields": (
+                    "insurance_company",
+                    "plan_name",
+                    "state",
+                    "plan_type",
+                    "plan_source",
+                    "plan_id_prefix",
+                    "notes",
+                ),
+            },
+        ),
+        (
+            "Pattern Matching",
+            {
+                "fields": ("regex", "negative_regex"),
+                "classes": ("collapse",),
+            },
+        ),
+    )
 
 
 @admin.register(Diagnosis)
