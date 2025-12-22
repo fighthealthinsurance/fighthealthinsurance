@@ -146,7 +146,7 @@
     "additional_resources": [
       {
         "name": "Center for Arkansas Legal Services",
-        "url": "https://www.arkansaslegalservices.org/",
+        "url": "https://www.arkansaslegal.org/",
         "description": "Free legal help for eligible Arkansans"
       }
     ]
@@ -432,6 +432,11 @@
         "name": "Georgia Legal Services Program",
         "url": "https://www.glsp.org/",
         "description": "Free legal assistance for low-income Georgians"
+      },
+      {
+        "name": "Georgians for a Healthy Future",
+        "url": "https://healthyfuturega.org/",
+        "description": "Consumer advocacy for health policy and insurance issues"
       }
     ]
   },
@@ -918,6 +923,11 @@
         "name": "Michigan Legal Help",
         "url": "https://michiganlegalhelp.org/",
         "description": "Self-help legal information and forms"
+      },
+      {
+        "name": "Michigan League for Public Policy",
+        "url": "https://mlpp.org/",
+        "description": "Health policy research and consumer advocacy"
       }
     ]
   },
@@ -994,7 +1004,7 @@
     "additional_resources": [
       {
         "name": "Mississippi Center for Legal Services",
-        "url": "https://www.mscls.org/",
+        "url": "https://mscenterforlegalservices.org/",
         "description": "Free legal help for low-income Mississippians"
       }
     ]
@@ -1317,6 +1327,11 @@
         "name": "LawNY",
         "url": "https://www.lawny.org/",
         "description": "Free legal services in Western New York"
+      },
+      {
+        "name": "Community Health Advocates",
+        "url": "https://communityhealthadvocates.org/",
+        "description": "Free help navigating health insurance and resolving billing issues"
       }
     ]
   },
@@ -1393,7 +1408,7 @@
     "additional_resources": [
       {
         "name": "Legal Services of North Dakota",
-        "url": "https://www.legalassist.org/",
+        "url": "https://www.lsnd.org/",
         "description": "Free civil legal services for eligible North Dakotans"
       }
     ]
@@ -1441,6 +1456,11 @@
         "name": "Ohio Legal Help",
         "url": "https://www.ohiolegalhelp.org/",
         "description": "Statewide legal information and resources"
+      },
+      {
+        "name": "UHCAN Ohio",
+        "url": "https://uhcanohio.org/",
+        "description": "Health care consumer advocacy and policy"
       }
     ]
   },
@@ -1570,6 +1590,11 @@
         "name": "Pennsylvania Legal Aid Network",
         "url": "https://palegalaid.net/",
         "description": "Statewide legal aid resources"
+      },
+      {
+        "name": "Pennsylvania Health Access Network",
+        "url": "https://www.pahealthaccess.org/",
+        "description": "Free health insurance enrollment assistance and advocacy"
       }
     ]
   },
@@ -1777,6 +1802,11 @@
         "name": "Lone Star Legal Aid",
         "url": "https://www.lonestarlegal.org/",
         "description": "Free legal services in East Texas"
+      },
+      {
+        "name": "Every Texan",
+        "url": "https://everytexan.org/",
+        "description": "Health care policy research and consumer advocacy"
       }
     ]
   },
@@ -1983,7 +2013,7 @@
     "additional_resources": [
       {
         "name": "Legal Aid of West Virginia",
-        "url": "https://www.lawv.net/",
+        "url": "https://legalaidwv.org/",
         "description": "Free civil legal services for eligible West Virginians"
       }
     ]
