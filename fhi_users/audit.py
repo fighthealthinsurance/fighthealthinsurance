@@ -14,7 +14,7 @@ Design goals:
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional, Union, Protocol
+from typing import Optional, Union, Protocol, Any
 import typing
 
 from django.conf import settings
@@ -297,7 +297,7 @@ class TrackingInfo:
     asn: str = ""
     asn_name: str = ""
 
-    def to_model_kwargs(self) -> dict[str, typing.Any]:
+    def to_model_kwargs(self) -> dict[str, Any]:
         """Convert tracking information to kwargs for model creation.
 
         Returns:

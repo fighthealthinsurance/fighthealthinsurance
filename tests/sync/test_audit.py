@@ -2,6 +2,8 @@
 Tests for the simplified audit logging system.
 """
 
+from typing import Optional
+
 from django.test import TestCase, RequestFactory, override_settings
 from django.contrib.auth import get_user_model
 
@@ -28,6 +30,11 @@ User = get_user_model()
 # Mock model for testing TrackingInfo methods
 class MockModelWithTrackingFields:
     """Mock model with tracking fields for testing."""
+
+    user_agent: str
+    asn: str
+    asn_name: str
+    ip_address: Optional[str]
 
     def __init__(self):
         self.user_agent = ""
