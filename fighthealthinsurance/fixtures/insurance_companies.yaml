@@ -15,6 +15,41 @@
     notes: Major national health insurance company with state-specific Medicaid plans
 
 - model: fighthealthinsurance.insurancecompany
+  pk: 9
+  fields:
+    name: Anthem Blue Cross California
+    alt_names: |
+      Anthem Blue Cross
+      Anthem CA
+      Blue Cross of California
+    regex: anthem.*(?:blue\s*cross|bcbs).*california|california.*anthem.*(?:blue\s*cross|bcbs)
+    website: https://www.anthem.com/ca
+    notes: Anthem's California regional brand
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 10
+  fields:
+    name: Empire BlueCross BlueShield
+    alt_names: |
+      Empire BCBS
+      Empire Blue Cross
+      Empire Health
+    regex: empire.*(?:blue\s*cross|bcbs)|empire\s*health
+    website: https://www.empireblue.com
+    notes: Anthem's New York regional brand (Empire)
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 11
+  fields:
+    name: Anthem Blue Cross and Blue Shield
+    alt_names: |
+      Anthem BCBS
+      Anthem Regional
+    regex: anthem.*(?:blue\s*cross\s*and\s*blue\s*shield|bcbs)
+    website: https://www.anthem.com
+    notes: Anthem regional brand used in multiple states
+
+- model: fighthealthinsurance.insurancecompany
   pk: 2
   fields:
     name: UnitedHealthcare
