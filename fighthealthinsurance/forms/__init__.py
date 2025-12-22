@@ -11,6 +11,8 @@ from fighthealthinsurance.models import (
     DenialTypes,
     InterestedProfessional,
     PlanSource,
+    InsuranceCompany,
+    InsurancePlan,
 )
 
 
@@ -98,6 +100,14 @@ class ProDenialForm(BaseDenialForm):
     primary_professional = forms.CharField(required=False)
     patient_id = forms.CharField(required=False)
     insurance_company = forms.CharField(required=False)
+    insurance_company_obj = forms.ModelChoiceField(
+        queryset=InsuranceCompany.objects.all(),
+        required=False,
+    )
+    insurance_plan_obj = forms.ModelChoiceField(
+        queryset=InsurancePlan.objects.all(),
+        required=False,
+    )
     patient_visible = forms.BooleanField(required=False)
     denial_id = forms.IntegerField(required=False)
 
@@ -217,6 +227,22 @@ class BasePostInferedForm(DenialRefForm):
         widget=forms.TextInput(
             attrs={"placeholder": "e.g., Blue Cross, Aetna, UnitedHealthcare"}
         ),
+    )
+    # Optional structured company selection
+    insurance_company_obj = forms.ModelChoiceField(
+        queryset=InsuranceCompany.objects.all(),
+        required=False,
+        label="Select insurance company (optional)",
+        help_text="Choose from list if available, otherwise use text field above.",
+        widget=forms.Select(attrs={"class": "insurance-company-select"}),
+    )
+    # Optional structured plan selection
+    insurance_plan_obj = forms.ModelChoiceField(
+        queryset=InsurancePlan.objects.all(),
+        required=False,
+        label="Select specific plan (optional)",
+        help_text="For state-specific plans like Medicaid, choose if available.",
+        widget=forms.Select(attrs={"class": "insurance-plan-select"}),
     )
     plan_source = forms.ModelMultipleChoiceField(
         queryset=PlanSource.objects.all(),
