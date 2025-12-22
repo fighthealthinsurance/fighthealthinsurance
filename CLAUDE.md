@@ -75,7 +75,7 @@ python manage.py loaddata initial followup plan_source
 ### Frontend
 - React 19 + TypeScript components in `fighthealthinsurance/static/js/`
 - Mantine UI component library
-- Webpack bundler, rebuild with `npm run build` in static/js/
+- Webpack bundler; to rebuild, run `npm run build` from the `fighthealthinsurance/static/js/` directory
 
 ## Important Patterns
 
@@ -89,7 +89,7 @@ Business logic is organized into large helper classes:
 Sensitive data uses `django-encrypted-model-fields`. Look for `encrypted_` prefixed fields in models.
 
 ### Environment Configuration
-Django uses `django-configurations` with classes: Dev, TestSync, Test, TestActor, Production. Set via `DJANGO_CONFIGURATION` env var.
+Django uses `django-configurations` with classes: Dev, TestSync, Test, TestActor, Prod. Set via `DJANGO_CONFIGURATION` env var.
 
 ### API Documentation
 REST API uses drf-spectacular for OpenAPI docs. API endpoints are under `/ziggy/rest/` prefix.
@@ -111,6 +111,6 @@ Tests are in `tests/` with subdirectories:
 - `sync/` - Synchronous tests
 - `sync-actor/` - Ray actor tests
 - `async-unit/` - Unit tests
-- `selenium` - Sync selenium tests
+- `selenium/` - Sync selenium tests
 
 Fixtures live in `fighthealthinsurance/fixtures/` (initial, followup, plan_source).
