@@ -99,7 +99,7 @@
       "managed_care_ombudsman": {
         "name": "AHCCCS Office of the Ombudsman",
         "phone": "602-364-4558",
-        "url": "https://www.azahcccs.gov/AHCCCS/Aboutus/ombudsman.html"
+        "url": "https://www.azahcccs.gov/AHCCCS/healthcareadvocacy/ohr.html"
       }
     },
     "external_review": {
@@ -213,7 +213,7 @@
       "cap_url": "https://doi.colorado.gov/for-consumers",
       "cap_phone": "800-930-3745",
       "ship_name": "Colorado State Health Insurance Assistance Program",
-      "ship_url": "https://colorado.gov/ship",
+      "ship_url": "https://doi.colorado.gov/insurance-products/health-insurance/senior-health-care-medicare",
       "ship_phone": "888-696-7213"
     },
     "medicaid": {
@@ -222,8 +222,8 @@
       "agency_phone": "800-221-3943",
       "managed_care_ombudsman": {
         "name": "Health First Colorado Ombudsman",
-        "phone": "303-830-7480",
-        "url": "https://hcpf.colorado.gov/member-ombudsman"
+        "phone": "303-830-3560",
+        "url": "https://hcpf.colorado.gov/contact-hcpf"
       }
     },
     "external_review": {
@@ -337,8 +337,8 @@
       "agency_phone": "202-442-5988",
       "managed_care_ombudsman": {
         "name": "DC Medicaid Ombudsman Program",
-        "phone": "202-299-5831",
-        "url": "https://dhcf.dc.gov/service/medicaid-recipient-ombudsman"
+        "phone": "202-724-7491",
+        "url": "https://healthcareombudsman.dc.gov/"
       }
     },
     "external_review": {
@@ -379,7 +379,7 @@
       "managed_care_ombudsman": {
         "name": "Florida Medicaid Ombudsman Program",
         "phone": "877-254-1055",
-        "url": "https://ahca.myflorida.com/medicaid/statewide-medicaid-managed-care/medicaid-ombudsman-program"
+        "url": "https://ahca.myflorida.com/medicaid/florida-medicaid-complaints"
       }
     },
     "external_review": {
@@ -535,7 +535,7 @@
       "managed_care_ombudsman": {
         "name": "Illinois Medicaid Managed Care Ombudsman",
         "phone": "877-912-8880",
-        "url": "https://www2.illinois.gov/hfs/MedicalClients/managedcare/Pages/default.aspx"
+        "url": "https://hfs.illinois.gov/medicalclients/managedcare.html"
       }
     },
     "external_review": {
@@ -904,9 +904,9 @@
       "agency_url": "https://www.michigan.gov/mdhhs/assistance-programs/healthcare",
       "agency_phone": "844-799-9876",
       "managed_care_ombudsman": {
-        "name": "Michigan Medicaid Health Plan Ombudsman",
-        "phone": "888-367-6557",
-        "url": "https://www.michigan.gov/mdhhs/doing-business/providers/medicaidproviders/ombudsman"
+        "name": "MI Health Link Ombudsman",
+        "phone": "888-746-6456",
+        "url": "https://www.michigan.gov/mdhhs/assistance-programs/healthcare/beneficiary-support"
       }
     },
     "external_review": {
@@ -947,7 +947,7 @@
       "managed_care_ombudsman": {
         "name": "Minnesota Ombudsman for Managed Care",
         "phone": "800-657-3729",
-        "url": "https://mn.gov/dhs/general-public/contacting-dhs/ombudsman/"
+        "url": "https://mn.gov/dhs/people-we-serve/adults/health-care/health-care-programs/programs-and-services/ombudsperson-for-managed-care.jsp"
       }
     },
     "external_review": {
@@ -1438,9 +1438,9 @@
         "description": "Free legal services in Northeast Ohio"
       },
       {
-        "name": "Ohio State Legal Services",
-        "url": "https://www.ohiolegalservices.org/",
-        "description": "Statewide legal aid resources"
+        "name": "Ohio Legal Help",
+        "url": "https://www.ohiolegalhelp.org/",
+        "description": "Statewide legal information and resources"
       }
     ]
   },
@@ -2071,7 +2071,7 @@
       },
       {
         "name": "Equal Justice Wyoming",
-        "url": "https://www.equaljustice.wy.gov/",
+        "url": "https://www.wyocourts.gov/legal-help/",
         "description": "Legal resources and referrals"
       }
     ]
