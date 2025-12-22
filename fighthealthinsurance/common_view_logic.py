@@ -1292,6 +1292,7 @@ class DenialCreatorHelper:
             named_task(
                 cls.extract_set_insurance_company(denial_id), "insurance company"
             ),
+            named_task(cls.match_insurance_plan_from_regex(denial_id), "insurance plan"),
             named_task(cls.extract_set_plan_id(denial_id), "plan id"),
             named_task(cls.extract_set_claim_id(denial_id), "claim id"),
             named_task(cls.extract_set_date_of_service(denial_id), "date of service"),
@@ -1429,7 +1430,9 @@ class DenialCreatorHelper:
 
     @classmethod
     async def extract_set_insurance_company(cls, denial_id):
-        """Extract insurance company name from denial text"""
+        """Extract insurance company name from denial text and match to structured models"""
+        from fighthealthinsurance.models import InsuranceCompany, InsurancePlan
+        
         denial = await Denial.objects.filter(denial_id=denial_id).aget()
         insurance_company = None
         try:
@@ -1443,9 +1446,66 @@ class DenialCreatorHelper:
                 if (insurance_company in denial.denial_text) or len(
                     insurance_company
                 ) < 50:
-                    # Use aupdate() directly instead of loading and saving the object
+                    # Try to match against structured InsuranceCompany models
+                    matched_company = None
+                    matched_plan = None
+                    
+                    try:
+                        # Try exact match first (case-insensitive)
+                        matched_company = await InsuranceCompany.objects.filter(
+                            name__iexact=insurance_company
+                        ).afirst()
+                        
+                        # If no exact match, try partial match in name or alt_names
+                        if not matched_company:
+                            async for company in InsuranceCompany.objects.all():
+                                company_lower = company.name.lower()
+                                text_lower = insurance_company.lower()
+                                
+                                # Check if company name is in extracted text or vice versa
+                                if company_lower in text_lower or text_lower in company_lower:
+                                    matched_company = company
+                                    break
+                                
+                                # Check alt_names
+                                if company.alt_names:
+                                    alt_names_lower = company.alt_names.lower()
+                                    if text_lower in alt_names_lower or any(
+                                        alt.strip() and text_lower in alt.strip().lower()
+                                        for alt in company.alt_names.split('\n')
+                                    ):
+                                        matched_company = company
+                                        break
+                        
+                        # Try to match a specific plan if we found a company
+                        if matched_company:
+                            # Look for state-specific plans
+                            if denial.state:
+                                matched_plan = await InsurancePlan.objects.filter(
+                                    insurance_company=matched_company,
+                                    state__iexact=denial.state
+                                ).afirst()
+                    
+                    except Exception as e:
+                        logger.opt(exception=True).debug(
+                            f"Error matching structured insurance models: {e}"
+                        )
+                    
+                    # Update denial with both text and structured references
+                    update_fields = {"insurance_company": insurance_company}
+                    if matched_company:
+                        update_fields["insurance_company_obj"] = matched_company
+                        logger.debug(
+                            f"Matched to structured company: {matched_company.name}"
+                        )
+                    if matched_plan:
+                        update_fields["insurance_plan_obj"] = matched_plan
+                        logger.debug(
+                            f"Matched to structured plan: {matched_plan}"
+                        )
+                    
                     await Denial.objects.filter(denial_id=denial_id).aupdate(
-                        insurance_company=insurance_company
+                        **update_fields
                     )
                     logger.debug(
                         f"Successfully extracted insurance company: {insurance_company}"
@@ -1484,6 +1544,62 @@ class DenialCreatorHelper:
             logger.opt(exception=True).warning(
                 f"Failed to extract plan ID for denial {denial_id}: {e}"
             )
+        return None
+
+    @classmethod
+    async def match_insurance_plan_from_regex(cls, denial_id):
+        """
+        Match denial to a specific insurance plan using regex patterns.
+        This helps identify state-specific plans like "Anthem Medicaid California" vs "Anthem Medicaid New York".
+        """
+        from fighthealthinsurance.models import InsurancePlan
+        
+        denial = await Denial.objects.filter(denial_id=denial_id).aget()
+        
+        try:
+            # Only proceed if we don't already have a plan matched
+            if denial.insurance_plan_obj:
+                logger.debug(f"Denial {denial_id} already has matched plan, skipping")
+                return denial.insurance_plan_obj
+            
+            denial_text = denial.denial_text
+            
+            # Try to match plans using regex patterns
+            async for plan in InsurancePlan.objects.select_related('insurance_company').all():
+                if plan.regex and plan.regex.pattern:
+                    try:
+                        if plan.regex.search(denial_text):
+                            # Check negative regex to avoid false positives
+                            if plan.negative_regex and plan.negative_regex.pattern:
+                                if plan.negative_regex.search(denial_text):
+                                    continue
+                            
+                            # We found a match!
+                            logger.debug(
+                                f"Matched denial {denial_id} to plan: {plan}"
+                            )
+                            
+                            # Update both plan and company if not already set
+                            update_fields = {"insurance_plan_obj": plan}
+                            if not denial.insurance_company_obj:
+                                update_fields["insurance_company_obj"] = plan.insurance_company
+                            
+                            await Denial.objects.filter(denial_id=denial_id).aupdate(
+                                **update_fields
+                            )
+                            return plan
+                    except Exception as e:
+                        logger.opt(exception=True).debug(
+                            f"Error matching plan {plan.id}: {e}"
+                        )
+            
+            logger.debug(f"No matching insurance plan found for denial {denial_id}")
+        
+        except Exception as e:
+            logger.opt(exception=True).warning(
+                f"Failed to match insurance plan for denial {denial_id}: {e}"
+            )
+        
         return None
 
     @classmethod
