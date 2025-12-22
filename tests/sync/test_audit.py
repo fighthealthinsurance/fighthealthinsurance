@@ -148,13 +148,18 @@ class AuditLoggingEnabledTest(TestCase):
 
     def test_user_agent_and_ip_stored_for_professional(self):
         """Test that both user_agent and IP are stored for professional users."""
+        from fhi_users.models import ProfessionalUser
+        
         # Create a professional user
         pro_user = User.objects.create_user(
             username="prouser",
             email="pro@example.com",
             password="testpass123",
         )
-        pro_user.groups.create(name="Professionals")
+        ProfessionalUser.objects.create(
+            user=pro_user,
+            active=True,
+        )
 
         request = self.factory.get(
             "/", HTTP_USER_AGENT="TestBrowser/2.0", HTTP_X_FORWARDED_FOR="5.6.7.8"
