@@ -698,7 +698,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
       console.log("Resetting chat ID in localStorage");
       localStorage.removeItem("fhi_chat_id");
     } else {
-      console.log("Keeping existing chat ID in localStorage");
+      console.log("Keeping existing chat ID in localStorage if present.");
     }
 
     let chatId = localStorage.getItem("fhi_chat_id");
@@ -857,25 +857,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
             Update Personal Info
           </Button>
         </MantineGroup>
-        <Tooltip
-          label="Enable backup models when primary models are slow or unavailable. This may use third-party AI providers."
-          position="bottom"
-          multiline
-          w={250}
-        >
-          <MantineGroup gap="xs" mt="sm" justify="center">
-            <Switch
-              id="use-external-models"
-              checked={state.useExternalModels}
-              onChange={(event) => handleToggleExternalModels(event.currentTarget.checked)}
-              label="Use backup models"
-              size="sm"
-              styles={{
-                label: { fontSize: 12, color: '#666' },
-              }}
-            />
-          </MantineGroup>
-        </Tooltip>
         {state.error && (
           <MantineText c="red" size="sm" mt="xs">
             {state.error}
@@ -1145,6 +1126,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const medicare = chatRoot.dataset.medicare || undefined;
     const micrositeSlug = chatRoot.dataset.micrositeSlug || undefined;
     const initialMessage = chatRoot.dataset.initialMessage || undefined;
+    console.log("Using microsite settings", chatRoot.dataset)  
     if (defaultProcedure) {
       console.log("Default procedure from microsite:", defaultProcedure);
     }
