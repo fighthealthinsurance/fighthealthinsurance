@@ -236,14 +236,14 @@ class ChatInterface:
                 -20:
             ]  # Only use the last twenty messages in short history
             for model_backend in model_backends[:2]:
-                short_awaitable: Awaitable[
-                    Tuple[Optional[str], Optional[str]]
-                ] = model_backend.generate_chat_response(
-                    current_message_for_llm,
-                    previous_context_summary=previous_context_summary,
-                    history=short_history,
-                    is_professional=not self.is_patient,
-                    is_logged_in=is_logged_in,
+                short_awaitable: Awaitable[Tuple[Optional[str], Optional[str]]] = (
+                    model_backend.generate_chat_response(
+                        current_message_for_llm,
+                        previous_context_summary=previous_context_summary,
+                        history=short_history,
+                        is_professional=not self.is_patient,
+                        is_logged_in=is_logged_in,
+                    )
                 )
                 calls.append(short_awaitable)
                 call_scores[short_awaitable] = model_backend.quality()
@@ -349,7 +349,7 @@ class ChatInterface:
         # If internal retry also failed and we have external fallback backends, try those
         if (not response_text or len(response_text.strip()) < 5) and fallback_backends:
             logger.info(
-                f"Internal models failed, trying {len(fallback_backends)} external fallback models"
+                f"Internal models failed, trying {len(fallback_backends)} fallback models"
             )
             await self.send_status_message(
                 "Primary models are busy, trying backup models..."
