@@ -47,21 +47,26 @@ if settings.SENTRY_ENDPOINT and not settings.DEBUG:
         """
         Filter out Ray client connection errors that are transient infrastructure
         issues. Ray handles reconnection automatically, so these are noisy but
-        not actionable.
+        not actionable in Sentry. They're logged locally for debugging.
         """
+        from loguru import logger
+
         # Check logger name for Ray client internal loggers
         logger_name = event.get("logger", "")
         if logger_name in (
             "ray.util.client.logsclient",
             "ray.util.client.dataclient",
         ):
+            logger.warning(f"Ray client connection issue (filtered from Sentry): {event.get('message', 'unknown')}")
             return None
 
         # Check for specific gRPC error messages from Ray
         message = event.get("message", "") or ""
         if "Logstream proxy failed to connect" in message:
+            logger.warning(f"Ray logstream proxy connection failed (filtered from Sentry)")
             return None
         if "Unrecoverable error in data channel" in message:
+            logger.warning(f"Ray data channel error (filtered from Sentry)")
             return None
 
         # Check exception values for Ray gRPC errors
@@ -69,8 +74,10 @@ if settings.SENTRY_ENDPOINT and not settings.DEBUG:
         for exc in exception_values:
             exc_value = exc.get("value", "") or ""
             if "Logstream proxy failed to connect" in exc_value:
+                logger.warning(f"Ray gRPC logstream error (filtered from Sentry): {exc_value[:200]}")
                 return None
             if "grpc_status:5" in exc_value and "Channel for client" in exc_value:
+                logger.warning(f"Ray gRPC channel error (filtered from Sentry): {exc_value[:200]}")
                 return None
 
         return event
