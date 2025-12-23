@@ -983,7 +983,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
               label="Use backup models"
               size="sm"
               styles={{
-                label: { fontSize: 12, color: '#666' },
+                label: { fontSize: 12, color: 'var(--mantine-color-dimmed)' },
               }}
             />
           </MantineGroup>
