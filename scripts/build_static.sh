@@ -57,8 +57,7 @@ if [ "$SKIP_JS_BUILD" = false ]; then
   set -ex
 
   if [ ${npm_dep_check} != 0 ]; then
-    npm i || echo "Can't install?" >/dev/stderr
-    exit 1
+    npm i || (echo "Can't install?" >/dev/stderr; exit 1)
   fi
   npm run build
   popd
