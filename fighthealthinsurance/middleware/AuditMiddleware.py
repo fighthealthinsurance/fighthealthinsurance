@@ -57,4 +57,6 @@ class AuditMiddleware:
             )
         except Exception as e:
             # Never let audit logging break the request
-            logger.warning(f"Audit logging failed for {request.path}: {e}", exc_info=True)
+            logger.warning(
+                f"Audit logging failed for {request.path}: {e}", exc_info=True
+            )

@@ -296,10 +296,10 @@ class ChatInterface:
 
         # If primary models failed, retry internal models with shorter context first
         if not response_text or len(response_text.strip()) < 5:
-            logger.info("Primary attempt failed, retrying internal models with reduced context")
-            await self.send_status_message(
-                "Retrying with optimized context..."
+            logger.info(
+                "Primary attempt failed, retrying internal models with reduced context"
             )
+            await self.send_status_message("Retrying with optimized context...")
 
             # Retry with shorter history (last 5 messages only)
             retry_history = history[-5:] if len(history) > 5 else history
@@ -315,7 +315,9 @@ class ChatInterface:
                     is_logged_in=is_logged_in,
                 )
                 retry_calls.append(call)
-                retry_scores[call] = model_backend.quality() * 15  # Slightly lower score for retry
+                retry_scores[call] = (
+                    model_backend.quality() * 15
+                )  # Slightly lower score for retry
 
             def retry_score_fn(result, original_task):
                 score = retry_scores.get(original_task, 0)
@@ -392,7 +394,9 @@ class ChatInterface:
                 if fallback_response and len(fallback_response.strip()) > 5:
                     response_text = fallback_response
                     context_part = fallback_context
-                    logger.info("Successfully got response from external fallback models")
+                    logger.info(
+                        "Successfully got response from external fallback models"
+                    )
             except Exception as e:
                 logger.warning(f"External fallback models also failed: {e}")
 
