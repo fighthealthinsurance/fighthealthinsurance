@@ -169,3 +169,8 @@ node_modules/
 
 # Generated blog metadata
 fighthealthinsurance/static/blog_posts.json
+
+# Cypress
+cypress/screenshots/
+cypress/videos/
+cypress/downloads/
