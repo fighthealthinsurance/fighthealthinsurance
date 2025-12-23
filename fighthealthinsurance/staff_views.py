@@ -111,16 +111,19 @@ class ActivateProUserView(generic.FormView):
             )
         domain.active = True
         domain.save()
-        # Correctly update all professionals associated with the domain.
-        ProfessionalUser.objects.filter(domains__in=[domain]).update(active=True)
-        for p in ProfessionalUser.objects.filter(domains__in=[domain]):
-            user = p.user
-            user.is_active = True
-            user.save()
-        for r in ProfessionalDomainRelation.objects.filter(domain=domain):
-            r.active_domain_relation = True
-            r.pending_domain_relation = False
-            r.save()
+        # Update all professionals associated with the domain
+        professionals = ProfessionalUser.objects.filter(domains__in=[domain])
+        professionals.update(active=True)
+        # Bulk update the auth users
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        user_ids = list(professionals.values_list('user_id', flat=True))
+        User.objects.filter(id__in=user_ids).update(is_active=True)
+        # Bulk update domain relations
+        ProfessionalDomainRelation.objects.filter(domain=domain).update(
+            active_domain_relation=True,
+            pending_domain_relation=False,
+        )
         return HttpResponse("Pro user activated")
 
 
