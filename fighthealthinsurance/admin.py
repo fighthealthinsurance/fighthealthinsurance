@@ -387,6 +387,8 @@ class FaxesToSendAdmin(admin.ModelAdmin):
     search_fields = ("email", "name")
     list_filter = ("date", "paid", "fax_success", "sent")
     ordering = ("-date",)
+    raw_id_fields = ("denial_id", "for_appeal")
+    list_select_related = ("denial_id",)
 
 
 @admin.register(DenialTypesRelation)
@@ -396,6 +398,8 @@ class DenialTypesRelationAdmin(admin.ModelAdmin):
     list_display = ("denial", "denial_type", "src")
     search_fields = ("denial__denial_text", "denial_type__name")
     ordering = ("denial",)
+    raw_id_fields = ("denial",)
+    list_select_related = ("denial", "denial_type")
 
 
 @admin.register(PlanTypesRelation)
@@ -405,6 +409,8 @@ class PlanTypesRelationAdmin(admin.ModelAdmin):
     list_display = ("denial", "plan_type", "src")
     search_fields = ("denial__denial_text", "plan_type__name")
     ordering = ("denial",)
+    raw_id_fields = ("denial",)
+    list_select_related = ("denial", "plan_type")
 
 
 @admin.register(PlanSourceRelation)
@@ -414,6 +420,8 @@ class PlanSourceRelationAdmin(admin.ModelAdmin):
     list_display = ("denial", "plan_source", "src")
     search_fields = ("denial__denial_text", "plan_source__name")
     ordering = ("denial",)
+    raw_id_fields = ("denial",)
+    list_select_related = ("denial", "plan_source")
 
 
 @admin.register(DenialQA)
@@ -424,6 +432,8 @@ class DenialQAAdmin(admin.ModelAdmin):
     search_fields = ("denial__denial_text", "question")
     list_filter = ("bool_answer",)
     ordering = ("id",)
+    raw_id_fields = ("denial",)
+    list_select_related = ("denial",)
 
 
 @admin.register(ProposedAppeal)
@@ -434,6 +444,10 @@ class ProposedAppealAdmin(admin.ModelAdmin):
     search_fields = ("appeal_text",)
     list_filter = ("chosen", "editted")
     ordering = ("id",)
+    # Use raw_id_fields to avoid loading all Denials in FK dropdown
+    raw_id_fields = ("for_denial",)
+    # Prefetch related Denial for list view
+    list_select_related = ("for_denial",)
 
 
 @admin.register(Appeal)
@@ -453,6 +467,10 @@ class AppealAdmin(admin.ModelAdmin):
     search_fields = ("uuid", "appeal_text")
     list_filter = ("pending", "sent", "success", "creation_date")
     ordering = ("-creation_date",)
+    # Use raw_id_fields to avoid loading all Denials in FK dropdown
+    raw_id_fields = ("for_denial",)
+    # Prefetch related Denial for list view
+    list_select_related = ("for_denial",)
 
 
 @admin.register(SecondaryAppealProfessionalRelation)
