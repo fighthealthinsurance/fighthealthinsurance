@@ -377,10 +377,10 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
             except Exception as e:
                 logger.warning(f"Failed to subscribe email to mailing list: {e}")
         denial = Denial.objects.get(uuid=denial_response_info.uuid)
-        # Creating a pending appeal
+        # Creating a pending appeal if one doesn't exist
         try:
             Appeal.objects.get(for_denial=denial)
-        except:
+        except Appeal.DoesNotExist:
             appeal = Appeal.objects.create(
                 for_denial=denial,
                 patient_user=denial.patient_user,
@@ -728,7 +728,7 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
         patient_user = None
         try:
             patient_user = PatientUser.objects.get(user=current_user)
-        except:
+        except PatientUser.DoesNotExist:
             pass
         if (
             appeal.patient_user == patient_user

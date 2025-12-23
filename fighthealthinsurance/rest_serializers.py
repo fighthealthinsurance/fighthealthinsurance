@@ -319,9 +319,7 @@ class AppealDetailSerializer(serializers.ModelSerializer):
 
     @extend_schema_field(serializers.CharField)
     def get_appeal_pdf_url(self, obj: Appeal) -> Optional[str]:
-        # Generate a URL for downloading the appeal PDF
         if obj.document_enc:
-            # TODO: Use reverse here rather than hardcoding
             return reverse("appeal_file_view", kwargs={"appeal_uuid": obj.uuid})
         return None
 
@@ -379,9 +377,7 @@ class AppealFullSerializer(serializers.ModelSerializer):
 
     @extend_schema_field(serializers.CharField(allow_null=True))
     def get_appeal_pdf_url(self, obj: Appeal) -> Optional[str]:
-        # Generate a URL for downloading the appeal PDF
         if obj.document_enc:
-            # TODO: Use reverse here rather than hardcoding
             return reverse("appeal_file_view", kwargs={"appeal_uuid": obj.uuid})
         return None
 
