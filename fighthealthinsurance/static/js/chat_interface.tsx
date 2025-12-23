@@ -351,6 +351,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
                   is_patient: true,
                   session_key: getSessionKey(),
                   microsite_slug: micrositeSlug || undefined,
+                  use_external_models: useExternalModels,
                 }),
               );
             }, 500);
