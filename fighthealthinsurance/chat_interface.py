@@ -29,7 +29,7 @@ from fighthealthinsurance.models import (
 from fighthealthinsurance.pubmed_tools import PubMedTools
 from fighthealthinsurance import settings
 from fighthealthinsurance.prompt_templates import get_intro_template
-from fighthealthinsurance.utils import best_within_timelimit
+from fighthealthinsurance.utils import best_within_timelimit, ensure_message_alternation
 
 # Crisis/self-harm detection - phrases indicating the user may need immediate help
 # IMPORTANT: These must be specific enough to NOT block legitimate mental health
@@ -1159,40 +1159,60 @@ class ChatInterface:
 
         # If history is getting long, summarize older messages to reduce context size
         # This helps prevent timeouts and improves model performance
+        # We trigger summarization after 20 messages, and re-summarize every 10 messages thereafter
         summarized_context = current_llm_context
-        if len(history_for_llm) > 19:
-            try:
-                await self.send_status_message("Summarizing conversation context...")
-                if history_for_llm % 10:
-                    history_summary = await ml_router.summarize_chat_history(
-                        history_for_llm, max_messages=15
-                    )
-                    if history_summary:
-                        # Prepend the summary to the context
-                        if summarized_context:
-                            summarized_context = (
-                                f"Earlier conversation summary: {history_summary}\n\n"
-                                + summarized_context
-                            )
-                            current_content = history_for_llm[-1]["content"]
-                            history_for_llm[-1][
-                                "content"
-                            ] = f"Context previous in the chat was reduced to {summarized_context}. Use this to answer: {current_content}"
-                        else:
-                            summarized_context = (
-                                f"Earlier conversation summary: {history_summary}"
-                            )
-                    chat.summary_for_next_call.append(summarized_context)
-                    # Use only the last 20 messages for the actual history
-                    history_for_llm = history_for_llm[-20:]
-                    logger.info(
-                        f"Summarized chat history for {chat.id}, keeping last 10 messages"
-                    )
-            except Exception as e:
-                logger.warning(f"Failed to summarize chat history: {e}")
-                # Continue with full history if summarization fails
+        messages_to_keep = 20
+        if len(history_for_llm) > messages_to_keep:
+            # Check if we should summarize (every 10 messages after threshold)
+            messages_over_threshold = len(history_for_llm) - messages_to_keep
+            should_summarize = messages_over_threshold % 10 == 0 or messages_over_threshold == 1
 
-        # TODO: Verify we go user/agent/user/agent and combine adjacent user and adjacent agent messages if needed.
+            if should_summarize:
+                try:
+                    await self.send_status_message("Summarizing conversation context...")
+                    # Get the messages that will be dropped (everything except last 20)
+                    messages_to_drop = history_for_llm[:-messages_to_keep]
+
+                    if messages_to_drop:
+                        # Create a fresh summary of what's being dropped
+                        # We always create a new summary even if there's an existing one
+                        history_summary = await ml_router.summarize_chat_history(
+                            messages_to_drop, max_messages=0  # Summarize all dropped messages
+                        )
+
+                        if history_summary:
+                            # Build the new summarized context
+                            if summarized_context:
+                                summarized_context = (
+                                    f"Earlier conversation summary: {history_summary}\n\n"
+                                    f"Additional context: {summarized_context}"
+                                )
+                            else:
+                                summarized_context = (
+                                    f"Earlier conversation summary: {history_summary}"
+                                )
+
+                            # Store the summary for future calls
+                            if not chat.summary_for_next_call:
+                                chat.summary_for_next_call = []
+                            chat.summary_for_next_call.append(summarized_context)
+
+                            logger.info(
+                                f"Summarized {len(messages_to_drop)} messages for chat {chat.id}"
+                            )
+                except Exception as e:
+                    logger.warning(f"Failed to summarize chat history: {e}")
+                    # Continue with truncated history if summarization fails
+
+            # Always truncate to last 20 messages for the LLM
+            history_for_llm = history_for_llm[-messages_to_keep:]
+            logger.debug(
+                f"Truncated history to last {messages_to_keep} messages for chat {chat.id}"
+            )
+
+        # Ensure proper user/assistant alternation by merging consecutive same-role messages
+        history_for_llm = ensure_message_alternation(history_for_llm)
+
         final_response_text = None
         final_context_part = None
 

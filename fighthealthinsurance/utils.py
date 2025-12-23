@@ -69,6 +69,49 @@ def is_convertible_to_int(s):
         return False
 
 
+def ensure_message_alternation(history: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Ensure messages alternate between user and assistant roles.
+    Merges consecutive messages with the same role into a single message.
+
+    This is important for LLM APIs that require strict user/assistant alternation.
+
+    Args:
+        history: List of chat messages with 'role' and 'content' keys
+
+    Returns:
+        List of messages with proper alternation (user/assistant/user/assistant...)
+    """
+    if not history:
+        return []
+
+    result: List[Dict[str, Any]] = []
+    for msg in history:
+        role = msg.get("role", "unknown")
+        content = msg.get("content", "")
+
+        # Normalize role: treat 'agent', 'system', 'assistant' as 'assistant'
+        normalized_role = "assistant" if role in ("assistant", "agent", "system") else "user"
+
+        if not content:
+            continue
+
+        if result and result[-1].get("role") == normalized_role:
+            # Merge with previous message of same role
+            result[-1]["content"] = result[-1]["content"] + "\n" + content
+            # Preserve the most recent timestamp if available
+            if "timestamp" in msg:
+                result[-1]["timestamp"] = msg["timestamp"]
+        else:
+            # Add as new message with normalized role
+            new_msg = {"role": normalized_role, "content": content}
+            if "timestamp" in msg:
+                new_msg["timestamp"] = msg["timestamp"]
+            result.append(new_msg)
+
+    return result
+
+
 def mask_email_for_logging(email: Optional[str]) -> str:
     """
     Mask an email address for logging purposes to protect PII.
