@@ -43,6 +43,38 @@ if settings.SENTRY_ENDPOINT and not settings.DEBUG:
     import sentry_sdk
     from sentry_sdk.integrations.django import DjangoIntegration
 
+    def before_send_filter(event, hint):
+        """
+        Filter out Ray client connection errors that are transient infrastructure
+        issues. Ray handles reconnection automatically, so these are noisy but
+        not actionable.
+        """
+        # Check logger name for Ray client internal loggers
+        logger_name = event.get("logger", "")
+        if logger_name in (
+            "ray.util.client.logsclient",
+            "ray.util.client.dataclient",
+        ):
+            return None
+
+        # Check for specific gRPC error messages from Ray
+        message = event.get("message", "") or ""
+        if "Logstream proxy failed to connect" in message:
+            return None
+        if "Unrecoverable error in data channel" in message:
+            return None
+
+        # Check exception values for Ray gRPC errors
+        exception_values = event.get("exception", {}).get("values", [])
+        for exc in exception_values:
+            exc_value = exc.get("value", "") or ""
+            if "Logstream proxy failed to connect" in exc_value:
+                return None
+            if "grpc_status:5" in exc_value and "Channel for client" in exc_value:
+                return None
+
+        return event
+
     sentry_sdk.init(
         dsn=settings.SENTRY_ENDPOINT,
         # Set traces_sample_rate to 1.0 to capture 100%
@@ -51,6 +83,7 @@ if settings.SENTRY_ENDPOINT and not settings.DEBUG:
         integrations=[DjangoIntegration()],
         environment=get_env_variable("DJANGO_CONFIGURATION", "production-ish"),
         release=get_env_variable("RELEASE", "unset"),
+        before_send=before_send_filter,
         _experiments={
             # Set continuous_profiling_auto_start to True
             # to automatically start the profiler on when
