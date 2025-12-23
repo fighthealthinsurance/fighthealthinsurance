@@ -12,7 +12,7 @@ class FaxPollingActor:
         print(f"Starting fax polling actor")
         time.sleep(1)
         self.fax_actor = FaxActor.options(  # type: ignore
-            name=name, namespace="fhi"
+            name=name, namespace="fhi", get_if_exists=True
         ).remote()
         print(f"Created fpa-worker {self.fax_actor}")
         self.interval = i
