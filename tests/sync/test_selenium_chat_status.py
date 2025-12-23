@@ -393,8 +393,8 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
                 return localStorage.getItem('fhi_use_external_models');
             """)
 
-            # The value should have changed
-            assert new_value != initial_value or new_value is not None, \
+            # The value should have changed and a value should be saved
+            assert new_value is not None and new_value != initial_value, \
                 "Toggle should save state to localStorage"
             print(f"✓ External models toggle saves state: {initial_value} -> {new_value}")
         else:
@@ -421,7 +421,7 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
             return toggle ? toggle.checked : null;
         """)
 
-        assert is_checked == False, "External models toggle should default to off"
+        assert is_checked is False, "External models toggle should default to off"
         print("✓ External models toggle defaults to off")
 
     def test_external_models_toggle_persists_across_page_loads(self):

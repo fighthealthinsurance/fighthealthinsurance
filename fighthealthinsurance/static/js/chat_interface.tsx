@@ -815,7 +815,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
 
     let chatId = localStorage.getItem("fhi_chat_id");
 
-    console.log("Reseting the chat state");
+    console.log("Resetting the chat state");
     // Reset the chat state but preserve useExternalModels setting
     const useExternalModels = localStorage.getItem("fhi_use_external_models") === "true";
     setState({

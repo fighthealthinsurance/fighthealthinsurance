@@ -237,6 +237,12 @@ class MLRouter(object):
             return None
 
         # Use internal models to summarize
+        if not self.internal_models_by_cost:
+            logger.warning(
+                "summarize_chat_history called but no internal models are available; "
+                "skipping summarization and returning None."
+            )
+            return None
         models = self.internal_models_by_cost[:2]
         for m in models:
             try:
