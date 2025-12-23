@@ -451,3 +451,98 @@ class TestMLRouterSummarizeChatHistory(unittest.TestCase):
         asyncio.run(
             self.async_test_summarize_chat_history_only_summarizes_older_messages()
         )
+
+    async def async_test_summarize_chat_history_max_messages_zero(self):
+        """Test summarize_chat_history with max_messages=0 summarizes all messages."""
+        # Create mock model
+        mock_model = MagicMock(spec=RemoteModelLike)
+        mock_model._infer_no_context = AsyncMock(return_value="Summary of all messages")
+        self.router.internal_models_by_cost = [mock_model]
+
+        history = [
+            {"role": "user", "content": "Message 1"},
+            {"role": "assistant", "content": "Reply 1"},
+            {"role": "user", "content": "Message 2"},
+            {"role": "assistant", "content": "Reply 2"},
+        ]
+        result = await self.router.summarize_chat_history(
+            history=history, max_messages=0
+        )
+
+        self.assertEqual(result, "Summary of all messages")
+        # Verify model was called
+        mock_model._infer_no_context.assert_called_once()
+        # All messages should be in the prompt
+        call_args = mock_model._infer_no_context.call_args
+        prompt = call_args.kwargs.get("prompt", "")
+        self.assertIn("Message 1", prompt)
+        self.assertIn("Reply 1", prompt)
+        self.assertIn("Message 2", prompt)
+        self.assertIn("Reply 2", prompt)
+
+    def test_summarize_chat_history_max_messages_zero(self):
+        """Run the async test using asyncio."""
+        asyncio.run(self.async_test_summarize_chat_history_max_messages_zero())
+
+    async def async_test_summarize_chat_history_role_normalization(self):
+        """Test that 'agent' and 'system' roles are normalized to 'assistant'."""
+        # Create mock model
+        mock_model = MagicMock(spec=RemoteModelLike)
+        mock_model._infer_no_context = AsyncMock(return_value="Summary with normalized roles")
+        self.router.internal_models_by_cost = [mock_model]
+
+        history = [
+            {"role": "user", "content": "Hello"},
+            {"role": "agent", "content": "I'm an agent"},
+            {"role": "system", "content": "System message"},
+            {"role": "assistant", "content": "I'm an assistant"},
+        ]
+        result = await self.router.summarize_chat_history(
+            history=history, max_messages=0
+        )
+
+        self.assertEqual(result, "Summary with normalized roles")
+        # Verify model was called
+        mock_model._infer_no_context.assert_called_once()
+        # Check the prompt contains normalized roles
+        call_args = mock_model._infer_no_context.call_args
+        prompt = call_args.kwargs.get("prompt", "")
+        # All assistant-like roles should be normalized
+        self.assertIn("assistant:", prompt.lower())
+
+    def test_summarize_chat_history_role_normalization(self):
+        """Run the async test using asyncio."""
+        asyncio.run(self.async_test_summarize_chat_history_role_normalization())
+
+    async def async_test_summarize_chat_history_consecutive_same_role_merged(self):
+        """Test that consecutive messages with the same role are merged."""
+        # Create mock model
+        mock_model = MagicMock(spec=RemoteModelLike)
+        mock_model._infer_no_context = AsyncMock(return_value="Merged summary")
+        self.router.internal_models_by_cost = [mock_model]
+
+        history = [
+            {"role": "user", "content": "Message A"},
+            {"role": "user", "content": "Message B"},
+            {"role": "assistant", "content": "Reply 1"},
+            {"role": "assistant", "content": "Reply 2"},
+        ]
+        result = await self.router.summarize_chat_history(
+            history=history, max_messages=0
+        )
+
+        self.assertEqual(result, "Merged summary")
+        # Verify model was called
+        mock_model._infer_no_context.assert_called_once()
+        call_args = mock_model._infer_no_context.call_args
+        prompt = call_args.kwargs.get("prompt", "")
+        # Both user messages should be present (merged)
+        self.assertIn("Message A", prompt)
+        self.assertIn("Message B", prompt)
+        # Both replies should be present (merged)
+        self.assertIn("Reply 1", prompt)
+        self.assertIn("Reply 2", prompt)
+
+    def test_summarize_chat_history_consecutive_same_role_merged(self):
+        """Run the async test using asyncio."""
+        asyncio.run(self.async_test_summarize_chat_history_consecutive_same_role_merged())

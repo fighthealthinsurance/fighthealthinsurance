@@ -118,6 +118,12 @@ class RemoteModelLike(DenialBase):
     def quality(self) -> int:
         return 100
 
+    def get_max_context(self) -> int:
+        """Return the maximum context length in tokens for this model."""
+        if hasattr(self, "max_len"):
+            return self.max_len
+        return 4096 * 8  # Default: 32k tokens
+
     def model_is_ok(self):
         return False
 
@@ -2236,12 +2242,25 @@ class RemotePerplexity(RemoteFullOpenLike):
 class DeepInfra(RemoteFullOpenLike):
     """Use DeepInfra."""
 
+    # Model context lengths (in tokens) - most modern models support 128k
+    MODEL_CONTEXT_LENGTHS: ClassVar[dict[str, int]] = {
+        "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8": 128000,
+        "meta-llama/Llama-4-Scout-17B-16E-Instruct": 128000,
+        "google/gemma-3-27b-it": 128000,
+        "meta-llama/Meta-Llama-3.1-70B-Instruct": 128000,
+        "meta-llama/Llama-3.2-3B-Instruct": 128000,
+        "meta-llama/Llama-3.3-70B-Instruct-Turbo": 128000,
+        "deepseek-ai/DeepSeek-R1-Turbo": 64000,
+    }
+
     def __init__(self, model: str, dual_mode: bool = False):
         api_base = "https://api.deepinfra.com/v1/openai"
         token = os.getenv("DEEPINFRA_API")
         if token is None or len(token) < 1:
             raise Exception("No token found for deepinfra")
-        super().__init__(api_base, token, model=model, dual_mode=dual_mode)
+        # Use model-specific context length, default to 128k for unknown models
+        max_len = self.MODEL_CONTEXT_LENGTHS.get(model, 128000)
+        super().__init__(api_base, token, model=model, dual_mode=dual_mode, max_len=max_len)
 
     @property
     def supports_system(self):

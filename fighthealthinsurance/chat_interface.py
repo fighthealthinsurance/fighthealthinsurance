@@ -208,10 +208,23 @@ class ChatInterface:
         is_logged_in: bool = True,
         is_professional: bool = True,
         fallback_backends: Optional[List[RemoteModelLike]] = None,
+        full_history: Optional[List[Dict[str, str]]] = None,
     ) -> Tuple[Optional[str], Optional[str]]:
         """
         Calls the LLM, handles PubMed query requests if present and returns the response.
         Also processes special tokens for creating or updating Appeals and PriorAuthRequests.
+
+        Args:
+            model_backends: List of model backends to try
+            current_message_for_llm: The current message to send
+            previous_context_summary: Summary of previous context
+            history_for_llm: Truncated history (last 20 messages)
+            depth: Recursion depth for tool handling
+            is_logged_in: Whether user is logged in
+            is_professional: Whether user is a professional
+            fallback_backends: Backup models to try if primary fails
+            full_history: Full untruncated history (optional) - will also try with this
+                         if provided and model context allows it
         """
         if depth > 3:
             return None, None
@@ -219,7 +232,13 @@ class ChatInterface:
         history = history_for_llm
         full_calls: List[Awaitable[Tuple[Optional[str], Optional[str]]]] = []
         call_scores: Dict[Awaitable[Tuple[Optional[str], Optional[str]]], int] = {}
+
+        # Estimate tokens per message (rough approximation: ~4 chars per token)
+        def estimate_history_tokens(hist: List[Dict[str, str]]) -> int:
+            return sum(len(msg.get("content", "")) for msg in hist) // 4
+
         for model_backend in model_backends:
+            # Try with truncated history
             call = model_backend.generate_chat_response(
                 current_message_for_llm,
                 previous_context_summary=previous_context_summary,
@@ -229,6 +248,26 @@ class ChatInterface:
             )
             full_calls.append(call)
             call_scores[call] = model_backend.quality() * 20
+
+            # Also try with full history if provided and model can handle it
+            if full_history and full_history != history:
+                full_history_tokens = estimate_history_tokens(full_history)
+                model_max_context = model_backend.get_max_context()
+                # Leave room for system prompt and response (~8k tokens)
+                available_context = model_max_context - 8000
+
+                if full_history_tokens < available_context:
+                    full_history_call = model_backend.generate_chat_response(
+                        current_message_for_llm,
+                        previous_context_summary=previous_context_summary,
+                        history=full_history,
+                        is_professional=not self.is_patient,
+                        is_logged_in=is_logged_in,
+                    )
+                    full_calls.append(full_history_call)
+                    # Slightly prefer full history for better context
+                    call_scores[full_history_call] = model_backend.quality() * 22
+
         calls = full_calls
 
         def score_fn(result, original_task):
@@ -1157,12 +1196,18 @@ class ChatInterface:
         # History passed to LLM should be the state *before* this user_message
         history_for_llm = list(chat.chat_history) if chat.chat_history else []
 
+        # Keep full history for models with large context windows
+        full_history_for_llm: Optional[List[Dict[str, str]]] = None
+
         # If history is getting long, summarize older messages to reduce context size
         # This helps prevent timeouts and improves model performance
         # We trigger summarization after 20 messages, and re-summarize every 10 messages thereafter
         summarized_context = current_llm_context
         messages_to_keep = 20
         if len(history_for_llm) > messages_to_keep:
+            # Preserve full history for models with large context (will be filtered by context size)
+            full_history_for_llm = ensure_message_alternation(list(history_for_llm))
+
             # Check if we should summarize (every 10 messages after threshold)
             messages_over_threshold = len(history_for_llm) - messages_to_keep
             should_summarize = messages_over_threshold % 10 == 0 or messages_over_threshold == 1
@@ -1232,6 +1277,7 @@ class ChatInterface:
                 history_for_llm,  # Pass current history (possibly truncated)
                 is_logged_in=(not is_trial_professional) and not is_patient,
                 fallback_backends=fallback_models if fallback_models else None,
+                full_history=full_history_for_llm,  # Also try with full history if model supports it
             )
 
             if response_text and response_text.strip():
