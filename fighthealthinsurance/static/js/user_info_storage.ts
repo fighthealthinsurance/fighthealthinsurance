@@ -5,6 +5,8 @@
 
 // Storage key for user info
 const USER_INFO_KEY = "fhi_user_info";
+// Storage key for external models preference
+const EXTERNAL_MODELS_KEY = "fhi_use_external_models";
 
 // Interface for user information
 export interface UserInfo {
@@ -49,6 +51,30 @@ export function getUserInfo(): UserInfo | null {
  */
 export function clearUserInfo(): void {
   localStorage.removeItem(USER_INFO_KEY);
+}
+
+/**
+ * Save external models preference to localStorage
+ */
+export function saveExternalModelsPreference(useExternalModels: boolean): void {
+  try {
+    localStorage.setItem(EXTERNAL_MODELS_KEY, useExternalModels.toString());
+  } catch (e) {
+    console.error("Error saving external models preference to localStorage:", e);
+  }
+}
+
+/**
+ * Get external models preference from localStorage
+ */
+export function getExternalModelsPreference(): boolean {
+  try {
+    const stored = localStorage.getItem(EXTERNAL_MODELS_KEY);
+    return stored === "true";
+  } catch (e) {
+    console.error("Error getting external models preference from localStorage:", e);
+  }
+  return false;
 }
 
 /**
@@ -236,10 +262,21 @@ export function setupFormPersistence(formId: string): void {
     populateFormFromUserInfo(storedInfo);
   }
 
+  // Restore external models preference
+  const externalModelsCheckbox = document.getElementById("use_external_models") as HTMLInputElement | null;
+  if (externalModelsCheckbox) {
+    externalModelsCheckbox.checked = getExternalModelsPreference();
+  }
+
   // Save to localStorage on form submit
   form.addEventListener("submit", () => {
     const userInfo = collectUserInfoFromForm();
     saveUserInfo(userInfo);
+
+    // Save external models preference
+    if (externalModelsCheckbox) {
+      saveExternalModelsPreference(externalModelsCheckbox.checked);
+    }
   });
 }
 
@@ -250,6 +287,8 @@ if (typeof window !== "undefined") {
     saveUserInfo,
     getUserInfo,
     clearUserInfo,
+    saveExternalModelsPreference,
+    getExternalModelsPreference,
     scrubPersonalInfo,
     restorePersonalInfo,
     collectUserInfoFromForm,

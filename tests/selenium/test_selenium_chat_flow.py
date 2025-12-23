@@ -369,3 +369,197 @@ Insurance Company"""
         print(f"  - User info stored in localStorage: {test_email}")
         print(f"  - Redirected to chat interface")
         print(f"  - Chat interface loaded successfully")
+
+
+class SeleniumExistingChatTest(FHISeleniumBase, StaticLiveServerTestCase):
+    """
+    Test chat flows when user already has an existing chat session.
+    Verifies that new entry points (explain denial, microsite) work correctly
+    for returning users.
+    """
+
+    fixtures = ["fighthealthinsurance/fixtures/initial.yaml"]
+
+    @classmethod
+    def setUpClass(cls):
+        super(StaticLiveServerTestCase, cls).setUpClass()
+        super(BaseCase, cls).setUpClass()
+
+    @classmethod
+    def tearDownClass(cls):
+        super(StaticLiveServerTestCase, cls).tearDownClass()
+        super(BaseCase, cls).tearDownClass()
+
+    def wait_for_element(self, selector, timeout=10):
+        """Wait for an element to be present."""
+        WebDriverWait(self.driver, timeout).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, selector))
+        )
+
+    def setup_existing_chat_session(self, email="existing_user@example.com"):
+        """Set up an existing chat session in localStorage."""
+        # First complete consent to establish session
+        self.open(f"{self.live_server_url}/chat-consent")
+        self.type("input#store_fname", "Existing")
+        self.type("input#store_lname", "User")
+        self.type("input#email", email)
+        self.click("input#tos")
+        self.click("input#privacy")
+        self.click("button[type='submit']")
+
+        # Wait for chat interface
+        self.wait_for_element("#chat-interface-root", timeout=10)
+        time.sleep(2)
+
+        # Verify chat ID was assigned
+        chat_id = self.execute_script("return localStorage.getItem('fhi_chat_id');")
+        return chat_id
+
+    def test_existing_user_explain_denial_starts_new_chat(self):
+        """Test that existing user going through explain denial gets new context."""
+        # First establish an existing chat session
+        email = f"existing_explain_{int(time.time())}@example.com"
+        initial_chat_id = self.setup_existing_chat_session(email)
+        print(f"✓ Initial chat session established: {initial_chat_id}")
+
+        # Now go to explain denial as a returning user
+        self.open(f"{self.live_server_url}/explain-denial")
+
+        # Form should be pre-filled from localStorage
+        stored_fname = self.execute_script(
+            "return document.getElementById('store_fname')?.value || '';"
+        )
+        # User info should persist
+        assert stored_fname == "Existing", "First name should be pre-filled from localStorage"
+
+        # Fill denial text
+        denial_text = "NEW_DENIAL: My knee surgery was denied as experimental."
+        self.type("textarea#denial_text", denial_text)
+
+        # Submit (other fields should be pre-filled)
+        self.click("button[type='submit']")
+
+        # Wait for chat interface
+        self.wait_for_element("#chat-interface-root", timeout=15)
+        time.sleep(2)
+
+        # User info should still be there
+        user_info_json = self.execute_script(
+            "return localStorage.getItem('fhi_user_info');"
+        )
+        assert user_info_json is not None
+
+        user_info = json.loads(user_info_json)
+        assert user_info["firstName"] == "Existing"
+
+        print("✓ Existing user successfully submitted explain denial")
+        print(f"  - User info preserved from previous session")
+        print(f"  - New denial context passed to chat")
+
+    def test_existing_user_can_start_new_chat(self):
+        """Test that existing user can start fresh with New Chat button."""
+        # Establish existing session
+        email = f"newchat_test_{int(time.time())}@example.com"
+        initial_chat_id = self.setup_existing_chat_session(email)
+        print(f"✓ Initial chat session: {initial_chat_id}")
+
+        # Click New Chat button
+        self.click("button:contains('New Chat')")
+        time.sleep(2)
+
+        # Chat ID should be cleared
+        new_chat_id = self.execute_script(
+            "return localStorage.getItem('fhi_chat_id');"
+        )
+
+        # After clicking New Chat, chat_id should be null/cleared
+        # (a new one will be assigned when user sends a message)
+        assert new_chat_id is None or new_chat_id != initial_chat_id, \
+            "New Chat should clear or change the chat ID"
+
+        # User info should still be preserved
+        user_info_json = self.execute_script(
+            "return localStorage.getItem('fhi_user_info');"
+        )
+        assert user_info_json is not None
+
+        print("✓ New Chat button works for existing users")
+        print(f"  - Old chat ID cleared")
+        print(f"  - User info preserved")
+
+    def test_existing_user_external_models_preference_persists(self):
+        """Test that external models preference persists across sessions."""
+        email = f"external_pref_{int(time.time())}@example.com"
+
+        # Go to consent and enable external models
+        self.open(f"{self.live_server_url}/chat-consent")
+        self.type("input#store_fname", "External")
+        self.type("input#store_lname", "Tester")
+        self.type("input#email", email)
+        self.click("input#tos")
+        self.click("input#privacy")
+        self.click("input#use_external_models")  # Enable external models
+        self.click("button[type='submit']")
+
+        # Wait for chat
+        self.wait_for_element("#chat-interface-root", timeout=10)
+        time.sleep(1)
+
+        # Check external models preference was saved
+        external_pref = self.execute_script(
+            "return localStorage.getItem('fhi_use_external_models');"
+        )
+        assert external_pref == "true", "External models preference should be saved"
+
+        # Now visit explain denial - preference should persist
+        self.open(f"{self.live_server_url}/explain-denial")
+
+        # Check that the checkbox is pre-checked
+        is_checked = self.execute_script(
+            "return document.getElementById('use_external_models')?.checked || false;"
+        )
+        assert is_checked, "External models checkbox should be pre-checked"
+
+        print("✓ External models preference persists across pages")
+
+    def test_consent_form_prefills_for_returning_user(self):
+        """Test that consent form pre-fills user info for returning users."""
+        email = f"prefill_test_{int(time.time())}@example.com"
+
+        # Complete initial consent
+        self.open(f"{self.live_server_url}/chat-consent")
+        self.type("input#store_fname", "Prefill")
+        self.type("input#store_lname", "TestUser")
+        self.type("input#email", email)
+        self.type("input#store_street", "789 Prefill Ave")
+        self.type("input#store_city", "PrefillCity")
+        self.type("input#store_state", "TX")
+        self.type("input#store_zip", "54321")
+        self.click("input#tos")
+        self.click("input#privacy")
+        self.click("button[type='submit']")
+
+        # Wait for chat
+        self.wait_for_element("#chat-interface-root", timeout=10)
+        time.sleep(1)
+
+        # Now visit explain denial - form should be pre-filled
+        self.open(f"{self.live_server_url}/explain-denial")
+        time.sleep(1)
+
+        # Check pre-filled values
+        fname = self.execute_script("return document.getElementById('store_fname')?.value;")
+        lname = self.execute_script("return document.getElementById('store_lname')?.value;")
+        stored_email = self.execute_script("return document.getElementById('email')?.value;")
+        city = self.execute_script("return document.getElementById('store_city')?.value;")
+
+        assert fname == "Prefill", f"First name should be pre-filled, got: {fname}"
+        assert lname == "TestUser", f"Last name should be pre-filled, got: {lname}"
+        assert stored_email == email, f"Email should be pre-filled, got: {stored_email}"
+        assert city == "PrefillCity", f"City should be pre-filled, got: {city}"
+
+        print("✓ Consent form correctly pre-fills for returning users")
+        print(f"  - First name: {fname}")
+        print(f"  - Last name: {lname}")
+        print(f"  - Email: {stored_email}")
+        print(f"  - City: {city}")

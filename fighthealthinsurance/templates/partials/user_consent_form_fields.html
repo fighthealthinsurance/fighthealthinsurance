@@ -88,3 +88,23 @@
         <small class="form-text text-muted">Please provide specific details about your referral source if applicable</small>
     </div>
 </div>
+
+<hr class="my-4">
+
+<!-- AI Model Options Section -->
+<div class="mb-4">
+    <h4>AI Model Options</h4>
+    <p class="text-muted small">Configure how we generate responses for you.</p>
+
+    <div class="form-check mb-3">
+        {{ form.use_external_models }}
+        <label for="use_external_models" class="form-check-label">
+            Allow external AI models as fallback (e.g., OpenAI, Google)
+        </label>
+        <small class="form-text text-muted d-block mt-1">
+            We prefer using our own FHI models when possible. When enabled, external AI providers
+            may be used as a fallback if our models are unavailable. Note that your conversation
+            data will be sent to these third-party services.
+        </small>
+    </div>
+</div>
