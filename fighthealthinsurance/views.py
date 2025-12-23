@@ -950,7 +950,7 @@ class GenerateAppeal(View):
             denial.qa_context = json.dumps(qa_context)
             denial.save()
         except Exception as e:
-            logger.error(f"*********************Error updating medical context: {e}")
+            logger.error(f"Error updating medical context: {e}")
 
         del elems["csrfmiddlewaretoken"]
         return render(
