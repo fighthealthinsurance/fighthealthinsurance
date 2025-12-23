@@ -241,6 +241,24 @@ def interleave_iterator_for_keep_alive(
     )
 
 
+async def _retrieve_pending_future(c: Optional[asyncio.Future]) -> None:
+    """
+    Helper to properly retrieve any pending exception from a shielded future.
+    This prevents "Future exception was never retrieved" warnings.
+    """
+    if c is None:
+        return
+    try:
+        # Give the task a chance to complete quickly
+        await asyncio.wait_for(asyncio.shield(c), timeout=0.1)
+    except (asyncio.TimeoutError, StopAsyncIteration, asyncio.CancelledError):
+        # These are expected - just consume them
+        pass
+    except Exception:
+        # Any other exception is also consumed to prevent unhandled exception warnings
+        pass
+
+
 async def _interleave_iterator_for_keep_alive(
     iterator: AsyncIterator[str], timeout: int = 20
 ) -> AsyncIterator[str]:
@@ -277,6 +295,8 @@ async def _interleave_iterator_for_keep_alive(
             # If the iterator is cancelled, we should stop
             logger.debug("Cancellation of task in interleaved generator")
             yield ""
+            # Properly retrieve any pending exception from the shielded future
+            await _retrieve_pending_future(c)
             c = None
         except StopAsyncIteration:
             # Break the loop if iteration is complete
@@ -284,6 +304,8 @@ async def _interleave_iterator_for_keep_alive(
         except Exception as e:
             logger.opt(exception=True).error(f"Error in generator: {e}")
             yield ""
+            # Properly retrieve any pending exception from the shielded future
+            await _retrieve_pending_future(c)
             c = None
 
 
