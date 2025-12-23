@@ -299,6 +299,15 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
         let chatId = localStorage.getItem("fhi_chat_id");
         const useExternalModels = localStorage.getItem("fhi_use_external_models") === "true";
 
+        // If we have an initial message (e.g., from explain denial page), start a NEW chat
+        // even if there's an existing one - the user explicitly started a new denial explanation
+        if (initialMessage && !hasSentInitialMessage.current) {
+          console.log("Starting new chat for explain denial (clearing existing chat if any)");
+          // Clear the old chat ID since we're starting fresh with a new denial
+          localStorage.removeItem("fhi_chat_id");
+          chatId = null;
+        }
+
         if (chatId) {
           console.log("Replaying chat history for chat ID:", chatId);
           ws.send(
