@@ -156,6 +156,7 @@ class ChatInterface:
         chat: OngoingChat,
         user: User,
         is_patient: bool,
+        use_external_models: bool = False,
     ):  # Changed to Dict[str, Any]
         def wrap_send_json_message_func(message: Dict[str, Any]) -> Awaitable[None]:
             """Wraps the send_json_message_func to ensure it's always awaited."""
@@ -168,6 +169,7 @@ class ChatInterface:
         self.chat: OngoingChat = chat
         self.user: User = user
         self.is_patient: bool = is_patient
+        self.use_external_models: bool = use_external_models
 
     async def send_error_message(self, message: str):
         """Sends an error message to the client."""
@@ -205,6 +207,7 @@ class ChatInterface:
         depth: int = 0,
         is_logged_in: bool = True,
         is_professional: bool = True,
+        fallback_backends: Optional[List[RemoteModelLike]] = None,
     ) -> Tuple[Optional[str], Optional[str]]:
         """
         Calls the LLM, handles PubMed query requests if present and returns the response.
@@ -233,14 +236,14 @@ class ChatInterface:
                 -20:
             ]  # Only use the last twenty messages in short history
             for model_backend in model_backends[:2]:
-                short_awaitable: Awaitable[
-                    Tuple[Optional[str], Optional[str]]
-                ] = model_backend.generate_chat_response(
-                    current_message_for_llm,
-                    previous_context_summary=previous_context_summary,
-                    history=short_history,
-                    is_professional=not self.is_patient,
-                    is_logged_in=is_logged_in,
+                short_awaitable: Awaitable[Tuple[Optional[str], Optional[str]]] = (
+                    model_backend.generate_chat_response(
+                        current_message_for_llm,
+                        previous_context_summary=previous_context_summary,
+                        history=short_history,
+                        is_professional=not self.is_patient,
+                        is_logged_in=is_logged_in,
+                    )
                 )
                 calls.append(short_awaitable)
                 call_scores[short_awaitable] = model_backend.quality()
@@ -290,6 +293,112 @@ class ChatInterface:
         )
 
         response_text = response_text or ""
+
+        # If primary models failed, retry internal models with shorter context first
+        if not response_text or len(response_text.strip()) < 5:
+            logger.info(
+                "Primary attempt failed, retrying internal models with reduced context"
+            )
+            await self.send_status_message("Retrying with optimized context...")
+
+            # Retry with shorter history (last 5 messages only)
+            retry_history = history[-5:] if len(history) > 5 else history
+            retry_calls: List[Awaitable[Tuple[Optional[str], Optional[str]]]] = []
+            retry_scores: Dict[Awaitable[Tuple[Optional[str], Optional[str]]], int] = {}
+
+            for model_backend in model_backends:
+                call = model_backend.generate_chat_response(
+                    current_message_for_llm,
+                    previous_context_summary=previous_context_summary,
+                    history=retry_history,
+                    is_professional=not self.is_patient,
+                    is_logged_in=is_logged_in,
+                )
+                retry_calls.append(call)
+                retry_scores[call] = (
+                    model_backend.quality() * 15
+                )  # Slightly lower score for retry
+
+            def retry_score_fn(result, original_task):
+                score = retry_scores.get(original_task, 0)
+                if result is None:
+                    return float("-inf")
+                if not result[1] and not result[0]:
+                    return float("-inf")
+                if result[0] and len(result[0]) > 5:
+                    score += 100
+                    if _detect_false_promises(result[0]):
+                        score -= 200
+                if result[1] and len(result[1]) > 5:
+                    score += 10
+                return score
+
+            try:
+                retry_response, retry_context = await best_within_timelimit(
+                    retry_calls,
+                    retry_score_fn,
+                    timeout=45.0,  # Give retry a bit more time
+                )
+                if retry_response and len(retry_response.strip()) > 5:
+                    response_text = retry_response
+                    context_part = retry_context
+                    logger.info("Successfully got response from internal model retry")
+            except Exception as e:
+                logger.warning(f"Internal model retry also failed: {e}")
+
+        # If internal retry also failed and we have external fallback backends, try those
+        if (not response_text or len(response_text.strip()) < 5) and fallback_backends:
+            logger.info(
+                f"Internal models failed, trying {len(fallback_backends)} fallback models"
+            )
+            await self.send_status_message(
+                "Primary models are busy, trying backup models..."
+            )
+
+            fallback_calls: List[Awaitable[Tuple[Optional[str], Optional[str]]]] = []
+            fallback_scores: Dict[
+                Awaitable[Tuple[Optional[str], Optional[str]]], int
+            ] = {}
+
+            for model_backend in fallback_backends:
+                call = model_backend.generate_chat_response(
+                    current_message_for_llm,
+                    previous_context_summary=previous_context_summary,
+                    history=history,
+                    is_professional=not self.is_patient,
+                    is_logged_in=is_logged_in,
+                )
+                fallback_calls.append(call)
+                fallback_scores[call] = model_backend.quality() * 20
+
+            def fallback_score_fn(result, original_task):
+                score = fallback_scores.get(original_task, 0)
+                if result is None:
+                    return float("-inf")
+                if not result[1] and not result[0]:
+                    return float("-inf")
+                if result[0] and len(result[0]) > 5:
+                    score += 100
+                    if _detect_false_promises(result[0]):
+                        score -= 200
+                if result[1] and len(result[1]) > 5:
+                    score += 10
+                return score
+
+            try:
+                fallback_response, fallback_context = await best_within_timelimit(
+                    fallback_calls,
+                    fallback_score_fn,
+                    timeout=45.0,  # Give fallback a bit more time
+                )
+                if fallback_response and len(fallback_response.strip()) > 5:
+                    response_text = fallback_response
+                    context_part = fallback_context
+                    logger.info(
+                        "Successfully got response from external fallback models"
+                    )
+            except Exception as e:
+                logger.warning(f"External fallback models also failed: {e}")
 
         logger.debug(f"Using best result {response_text:.20}...")
 
@@ -933,8 +1042,11 @@ class ChatInterface:
             )
             return
 
-        models = ml_router.get_chat_backends(use_external=False)
-        if not models:
+        # Get primary and fallback models based on user preference
+        primary_models, fallback_models = ml_router.get_chat_backends_with_fallback(
+            use_external=self.use_external_models
+        )
+        if not primary_models:
             await self.send_error_message(
                 "Sorry, no language models are currently available."
             )
@@ -1094,6 +1206,35 @@ class ChatInterface:
         # History passed to LLM should be the state *before* this user_message
         history_for_llm = list(chat.chat_history) if chat.chat_history else []
 
+        # If history is getting long, summarize older messages to reduce context size
+        # This helps prevent timeouts and improves model performance
+        summarized_context = current_llm_context
+        if len(history_for_llm) > 15:
+            try:
+                await self.send_status_message("Summarizing conversation context...")
+                history_summary = await ml_router.summarize_chat_history(
+                    history_for_llm, max_messages=10
+                )
+                if history_summary:
+                    # Prepend the summary to the context
+                    if summarized_context:
+                        summarized_context = (
+                            f"Earlier conversation summary: {history_summary}\n\n"
+                            + summarized_context
+                        )
+                    else:
+                        summarized_context = (
+                            f"Earlier conversation summary: {history_summary}"
+                        )
+                    # Use only the last 10 messages for the actual history
+                    history_for_llm = history_for_llm[-10:]
+                    logger.info(
+                        f"Summarized chat history for {chat.id}, keeping last 10 messages"
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to summarize chat history: {e}")
+                # Continue with full history if summarization fails
+
         final_response_text = None
         final_context_part = None
 
@@ -1107,11 +1248,12 @@ class ChatInterface:
 
         try:
             response_text, context_part = await self._call_llm_with_actions(
-                models,
+                primary_models,
                 llm_input_message,
-                current_llm_context,
-                history_for_llm,  # Pass current history
+                summarized_context,
+                history_for_llm,  # Pass current history (possibly truncated)
                 is_logged_in=(not is_trial_professional) and not is_patient,
+                fallback_backends=fallback_models if fallback_models else None,
             )
 
             if response_text and response_text.strip():
@@ -1119,7 +1261,9 @@ class ChatInterface:
                 final_context_part = context_part
         except Exception as e:
             await asyncio.sleep(0.1)
-            logger.opt(exception=True).debug(f"Error with model on chat {models}")
+            logger.opt(exception=True).debug(
+                f"Error with model on chat {primary_models}"
+            )
 
         if final_response_text:
             if not chat.chat_history:
@@ -1178,9 +1322,22 @@ class ChatInterface:
             await chat.asave()
             await self.send_message_to_client(final_response_text)
         else:
-            err_msg = "Sorry, I encountered an error while processing your request after trying available models."
+            # Provide more helpful error message based on context
+            if self.use_external_models:
+                err_msg = (
+                    "Sorry, all available models (including backup models) are currently "
+                    "experiencing issues. Please try again in a few moments. "
+                    "If the problem persists, try refreshing the page or starting a new chat."
+                )
+            else:
+                err_msg = (
+                    "Sorry, our primary models are currently busy or experiencing issues. "
+                    "You can enable 'Use backup models' in settings to allow fallback to "
+                    "additional model providers when our primary models are unavailable."
+                )
             logger.error(
-                f"Failed to generate response for user_message: '{user_message}' in chat {chat.id} after trying all models."
+                f"Failed to generate response for user_message: '{user_message}' in chat {chat.id} "
+                f"after trying all models. use_external_models={self.use_external_models}"
             )
             await self.send_error_message(err_msg)
 

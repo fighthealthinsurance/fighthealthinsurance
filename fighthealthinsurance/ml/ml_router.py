@@ -15,10 +15,12 @@ class MLRouter(object):
     models_by_name: dict[str, List[RemoteModelLike]] = {}
     internal_models_by_cost: List[RemoteModelLike] = []
     all_models_by_cost: List[RemoteModelLike] = []
+    external_models_by_cost: List[RemoteModelLike] = []
 
     def __init__(self):
         logger.debug(f"Starting model 'router'")
         building_internal_models_by_cost = []
+        building_external_models_by_cost = []
         building_all_models_by_cost = []
         building_models_by_name: dict[str, List[ModelDescription]] = {}
         for backend in candidate_model_backends:
@@ -33,9 +35,8 @@ class MLRouter(object):
                         logger.debug(f"Built {m.model}")
                     if not m.model.external:
                         building_internal_models_by_cost.append(m)
-                        building_internal_models_by_cost = (
-                            building_internal_models_by_cost
-                        )
+                    else:
+                        building_external_models_by_cost.append(m)
                     building_all_models_by_cost.append(m)
                     same_models: list[ModelDescription] = []
                     if m.name in building_models_by_name:
@@ -57,6 +58,11 @@ class MLRouter(object):
         ]
         self.all_models_by_cost = [
             x.model for x in sorted(building_all_models_by_cost) if x.model is not None
+        ]
+        self.external_models_by_cost = [
+            x.model
+            for x in sorted(building_external_models_by_cost)
+            if x.model is not None
         ]
         logger.debug(
             f"Built {self} with i:{self.internal_models_by_cost} a:{self.all_models_by_cost}"
@@ -160,7 +166,7 @@ class MLRouter(object):
         """
         Return models for handling chat interactions.
         Args:
-            use_external: Whether to use external models
+            use_external: Whether to include external models as fallback
 
         Returns:
             List of RemoteModelLike models suitable for chat tasks
@@ -172,8 +178,98 @@ class MLRouter(object):
         ]
         if fhi_models:
             models += self.models_by_name[fhi_models[0]] * 2
+        if use_external:
+            models += self.external_models_by_cost[:2]
         models += self.internal_models_by_cost[:6]
         return models
+
+    def get_chat_backends_with_fallback(
+        self, use_external=False
+    ) -> tuple[list[RemoteModelLike], list[RemoteModelLike]]:
+        """
+        Return primary (FHI) and fallback (external) models for chat interactions.
+        The fallback models are only returned if use_external is True.
+
+        Args:
+            use_external: Whether to include external models as fallback
+
+        Returns:
+            Tuple of (primary_models, fallback_models)
+            - primary_models: FHI/internal models to try first
+            - fallback_models: External models to try if primary fails (empty if use_external=False)
+        """
+        # Reuse get_chat_backends for primary models (allows test mocking to work)
+        primary_models = self.get_chat_backends(use_external=False)
+
+        fallback_models: list[RemoteModelLike] = []
+        if use_external:
+            # Get external models sorted by quality for fallback
+            external_models = [m for m in self.all_models_by_cost if m.external]
+            # Prefer higher quality models for chat fallback
+            fallback_models = sorted(external_models, key=lambda m: -m.quality())[:4]
+
+        return primary_models, fallback_models
+
+    async def summarize_chat_history(
+        self, history: list[dict], max_messages: int = 10
+    ) -> Optional[str]:
+        """
+        Summarize chat history when it gets too long.
+        This helps reduce context size and avoid timeouts.
+
+        Args:
+            history: List of chat messages with 'role' and 'content' keys
+            max_messages: Maximum number of recent messages to keep unsummarized
+
+        Returns:
+            Summary string of older messages, or None if summarization fails
+        """
+        if len(history) <= max_messages:
+            return None
+
+        # Get messages to summarize (older ones)
+        to_summarize = history[:-max_messages]
+
+        # Build a text representation
+        history_text = ""
+        for msg in to_summarize:
+            role = msg.get("role", "unknown")
+            content = msg.get("content", "")
+            if content:
+                # Truncate very long messages
+                if len(content) > 500:
+                    content = content[:500] + "..."
+                history_text += f"{role}: {content}\n"
+
+        if not history_text:
+            return None
+
+        # Use internal models to summarize
+        if not self.internal_models_by_cost:
+            logger.warning(
+                "summarize_chat_history called but no internal models are available; "
+                "skipping summarization and returning None."
+            )
+            return None
+        models = self.internal_models_by_cost[:2]
+        for m in models:
+            try:
+                summary = await m._infer_no_context(
+                    system_prompts=[
+                        "You are a helpful assistant summarizing a conversation for context. "
+                        "Be concise but capture key details about the health insurance issue, "
+                        "denied items, and any relevant medical information discussed."
+                    ],
+                    prompt=f"Summarize this conversation for context:\n\n{history_text}\n\n"
+                    "Focus on: what was denied, why, any medical details, and what the user needs help with.",
+                )
+                if summary and len(summary) > 10:
+                    return summary
+            except Exception as e:
+                logger.warning(f"Error summarizing chat history with {m}: {e}")
+                continue
+
+        return None
 
     def cheapest(self, name: str) -> list[RemoteModelLike]:
         try:

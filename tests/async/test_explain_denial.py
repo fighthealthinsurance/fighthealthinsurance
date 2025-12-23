@@ -104,27 +104,27 @@ class TestExplainDenialView(TestCase):
             "privacy_policy": True,
             "subscribe": True,  # Opt in to mailing list
             "denial_text": "My claim was denied.",
-            "referral_source": "search_engine",
+            "referral_source": "Search Engine (Google, Bing, etc.)",
             "referral_source_details": "Google",
         }
-        
+
         # Check no subscriber exists before
         initial_count = MailingListSubscriber.objects.filter(
             email="jane@example.com"
         ).count()
         self.assertEqual(initial_count, 0)
-        
+
         response = self.client.post(self.url, form_data)
         self.assertEqual(response.status_code, 200)
-        
+
         # Check subscriber was created
         subscribers = MailingListSubscriber.objects.filter(email="jane@example.com")
         self.assertEqual(subscribers.count(), 1)
-        
+
         subscriber = subscribers.first()
         self.assertEqual(subscriber.name, "Jane Smith")
         self.assertEqual(subscriber.phone, "555-1234")
-        self.assertEqual(subscriber.referral_source, "search_engine")
+        self.assertEqual(subscriber.referral_source, "Search Engine (Google, Bing, etc.)")
         self.assertEqual(subscriber.referral_source_details, "Google")
         self.assertIn("From explain denial page", subscriber.comments)
 

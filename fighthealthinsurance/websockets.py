@@ -48,9 +48,9 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
             await self.close()
             return
         logger.debug("Starting generation of appeals...")
-        aitr: AsyncIterator[
-            str
-        ] = common_view_logic.AppealsBackendHelper.generate_appeals(data)
+        aitr: AsyncIterator[str] = (
+            common_view_logic.AppealsBackendHelper.generate_appeals(data)
+        )
         # We do a try/except here to log since the WS framework swallow exceptions sometimes
         try:
             await asyncio.sleep(1)
@@ -401,6 +401,9 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
         microsite_slug = data.get(
             "microsite_slug", None
         )  # Microsite slug if coming from a microsite
+        # Allow users to opt-in to using external/public models as fallback
+        # Only used when FHI models fail or timeout
+        use_external_models = data.get("use_external_models", False)
 
         # Validate microsite_slug if provided
         if microsite_slug:
@@ -413,7 +416,8 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
         logger.debug(
             f"Message: {message} replay {replay_requested} chat_id {chat_id} "
             f"iterate_on_appeal {iterate_on_appeal} iterate_on_prior_auth {iterate_on_prior_auth} "
-            f"is_patient {is_patient} session_key {session_key} microsite_slug {microsite_slug}"
+            f"is_patient {is_patient} session_key {session_key} microsite_slug {microsite_slug} "
+            f"use_external_models {use_external_models}"
         )
 
         # Validate we have the required data
@@ -502,7 +506,11 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                     chat=chat,
                     user=user,
                     is_patient=is_patient,
+                    use_external_models=use_external_models,
                 )
+            elif use_external_models != self.chat_interface.use_external_models:
+                # User changed their preference for external models mid-chat
+                self.chat_interface.use_external_models = use_external_models
 
             logger.debug(f"Chat: {chat.id}")
 

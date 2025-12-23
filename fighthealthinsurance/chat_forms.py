@@ -137,3 +137,11 @@ class UserConsentForm(forms.Form):
             }
         ),
     )
+
+    use_external_models = forms.BooleanField(
+        required=False,
+        initial=False,
+        widget=forms.CheckboxInput(
+            attrs={"class": "form-check-input", "id": "use_external_models"}
+        ),
+    )

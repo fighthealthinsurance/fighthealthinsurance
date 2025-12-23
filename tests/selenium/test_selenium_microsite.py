@@ -186,16 +186,158 @@ class SeleniumTestMicrositeIntegration(FHISeleniumBase, StaticLiveServerTestCase
         """Test that microsite landing page has all expected elements."""
         # Visit the MRI denial microsite
         self.open(f"{self.live_server_url}/microsite/mri-denial")
-        
+
         # Check that key elements are present
         self.assert_element('a.primary-cta')  # Start Your Appeal button
         self.assert_element('a.secondary-cta')  # AI Chat button
-        
+
         # Verify the links include microsite parameters
         appeal_link = self.get_attribute('a.primary-cta', 'href')
         self.assertIn('microsite_slug=mri-denial', appeal_link)
         self.assertIn('default_procedure=', appeal_link)
-        
+
         chat_link = self.get_attribute('a.secondary-cta', 'href')
         self.assertIn('microsite_slug=mri-denial', chat_link)
         self.assertIn('default_procedure=', chat_link)
+
+
+class SeleniumTestMicrositeExistingUser(FHISeleniumBase, StaticLiveServerTestCase):
+    """Test microsite integration for users with existing chat sessions."""
+
+    fixtures = [
+        "fighthealthinsurance/fixtures/initial.yaml",
+        "fighthealthinsurance/fixtures/followup.yaml",
+        "fighthealthinsurance/fixtures/plan_source.yaml",
+    ]
+
+    @classmethod
+    def setUpClass(cls):
+        super(SeleniumTestMicrositeExistingUser, cls).setUpClass()
+
+    @classmethod
+    def tearDownClass(cls):
+        super(SeleniumTestMicrositeExistingUser, cls).tearDownClass()
+
+    def setup_existing_session(self, email):
+        """Set up an existing chat session."""
+        self.open(f"{self.live_server_url}/chat-consent")
+        self.type("input#store_fname", "Existing")
+        self.type("input#store_lname", "MicrositeUser")
+        self.type("input#email", email)
+        self.click("input#tos")
+        self.click("input#privacy")
+        self.click("button[type='submit']")
+        time.sleep(2)
+        self.assert_element('#chat-interface-root')
+
+    def test_existing_user_microsite_chat_preserves_user_info(self):
+        """Test that user info is preserved when existing user visits microsite chat."""
+        email = f"existing_microsite_{int(time.time())}@example.com"
+
+        # First establish session
+        self.setup_existing_session(email)
+
+        # Verify user info stored
+        user_info = self.execute_script(
+            "return localStorage.getItem('fhi_user_info');"
+        )
+        self.assertIsNotNone(user_info)
+
+        # Now visit microsite and click chat
+        self.open(f"{self.live_server_url}/microsite/mri-denial")
+        self.assert_element('a.secondary-cta')
+        self.click('a.secondary-cta')
+        time.sleep(1)
+
+        # Should skip consent (already consented) or have pre-filled form
+        # Check if we're on consent page with pre-filled info or directly on chat
+        current_url = self.driver.current_url
+
+        if "chat-consent" in current_url:
+            # Consent page should have pre-filled info
+            fname = self.execute_script(
+                "return document.getElementById('store_fname')?.value || '';"
+            )
+            self.assertEqual(fname, "Existing", "First name should be pre-filled")
+
+            # Just submit (fields are pre-filled, checkboxes need re-checking)
+            self.click("input#tos")
+            self.click("input#privacy")
+            self.click("button[type='submit']")
+            time.sleep(2)
+
+        # Should be on chat now
+        self.assert_element('#chat-interface-root')
+
+        # User info should still be preserved
+        user_info_after = self.execute_script(
+            "return localStorage.getItem('fhi_user_info');"
+        )
+        self.assertIsNotNone(user_info_after)
+
+    def test_existing_user_microsite_chat_gets_procedure_context(self):
+        """Test that existing user gets microsite procedure context in chat."""
+        email = f"microsite_context_{int(time.time())}@example.com"
+
+        # First establish session
+        self.setup_existing_session(email)
+
+        # Now visit a different microsite
+        self.open(f"{self.live_server_url}/microsite/mri-denial")
+        self.click('a.secondary-cta')
+        time.sleep(1)
+
+        # Complete consent if needed
+        if "chat-consent" in self.driver.current_url:
+            self.click("input#tos")
+            self.click("input#privacy")
+            self.click("button[type='submit']")
+            time.sleep(2)
+
+        # Should be on chat with MRI context
+        self.assert_element('#chat-interface-root')
+
+        # The chat interface should have the default_procedure data attribute
+        default_procedure = self.execute_script(
+            "return document.getElementById('chat-interface-root')?.dataset?.defaultProcedure || '';"
+        )
+        # Should contain MRI-related procedure
+        self.assertTrue(
+            "MRI" in default_procedure or default_procedure != "",
+            f"Chat should have procedure context, got: {default_procedure}"
+        )
+
+    def test_microsite_external_models_preference_persists(self):
+        """Test that external models preference from microsite flow persists."""
+        email = f"microsite_external_{int(time.time())}@example.com"
+
+        # Visit microsite and go to chat
+        self.open(f"{self.live_server_url}/microsite/mri-denial")
+        self.click('a.secondary-cta')
+        time.sleep(1)
+
+        # Fill consent with external models enabled
+        self.type("input#store_fname", "Microsite")
+        self.type("input#store_lname", "External")
+        self.type("input#email", email)
+        self.click("input#tos")
+        self.click("input#privacy")
+        self.click("input#use_external_models")  # Enable external models
+        self.click("button[type='submit']")
+        time.sleep(2)
+
+        # Verify external models preference saved
+        external_pref = self.execute_script(
+            "return localStorage.getItem('fhi_use_external_models');"
+        )
+        self.assertEqual(external_pref, "true", "External models should be enabled")
+
+        # Visit a different microsite
+        self.open(f"{self.live_server_url}/microsite/physical-therapy-denial")
+
+        # If it exists, check that clicking chat preserves preference
+        # If not, just verify the preference is still in localStorage
+        pref_still_set = self.execute_script(
+            "return localStorage.getItem('fhi_use_external_models');"
+        )
+        self.assertEqual(pref_still_set, "true", "Preference should persist")

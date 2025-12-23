@@ -17,11 +17,17 @@ CURRENT_JS_CHECKSUM=""
 STORED_JS_CHECKSUM=""
 SKIP_JS_BUILD=false
 
+if [ "$FAST" = "FAST" ]; then
+  echo "Skipping static changes."
+  exit 0
+fi
+
 if [ -d "${JS_PATH}" ]; then
   # Calculate checksum of JS/TS source files
   # Using -maxdepth 1 because source files are in the js directory, not subdirectories
   # (node_modules and dist are excluded by design)
-  CURRENT_JS_CHECKSUM=$(find "${JS_PATH}" -maxdepth 1 -type f \( -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" \) ! -name "*.bundle.js"! -name "*.min.js" -exec md5sum {} \; 2>/dev/null | sort | md5sum | cut -d ' ' -f 1)
+  echo "Computing checksum..."
+  CURRENT_JS_CHECKSUM=$(find "${JS_PATH}" -maxdepth 1 -type f \( -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" \) ! -name "*.bundle.js" ! -name "*.min.js" -exec md5sum {} \; 2>/dev/null | sort | md5sum | cut -d ' ' -f 1)
   
   # Add checksums of package.json and webpack config if they exist
   if [ -f "${JS_PATH}/package.json" ]; then
@@ -51,7 +57,7 @@ if [ "$SKIP_JS_BUILD" = false ]; then
   set -ex
 
   if [ ${npm_dep_check} != 0 ]; then
-  	npm i || echo "Can't install?" >/dev/stderr
+    npm i || (echo "Can't install?" >/dev/stderr; exit 1)
   fi
   npm run build
   popd
@@ -64,10 +70,9 @@ else
   set -ex
 fi
 
-if [ "$FAST" != "FAST" ]; then
-  rm -rf static
-  ./manage.py collectstatic
-  ./manage.py compress --force
-  # Generate the blog metadata so it's included in the container.
-  ./manage.py generate_blog_metadata || echo "Warning: Failed to generate blog metadata. Continuing build without it."
-fi
+
+rm -rf static
+./manage.py collectstatic
+./manage.py compress --force
+# Generate the blog metadata so it's included in the container.
+./manage.py generate_blog_metadata || echo "Warning: Failed to generate blog metadata. Continuing build without it."
