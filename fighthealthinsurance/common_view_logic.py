@@ -50,12 +50,14 @@ from fighthealthinsurance.ml.ml_plan_doc_helper import MLPlanDocHelper
 from fighthealthinsurance import stripe_utils
 from fhi_users.models import ProfessionalUser, UserDomain
 from fhi_users import emails as fhi_emails
+from fhi_users.audit import TrackingInfo
 from .pubmed_tools import PubMedTools
 from .utils import (
     check_call,
     send_fallback_email,
     fire_and_forget_in_new_threadpool,
     execute_critical_optional_fireandforget,
+    _try_pandoc_engines,
 )
 
 
@@ -162,39 +164,32 @@ class AppealAssemblyHelper:
                 f"-o{input_path}.pdf",
             ]
             try:
-                await check_call(base_convert_command)
+                await _try_pandoc_engines(base_convert_command)
                 return f"{input_path}.pdf"
             # pandoc failures are often character encoding issues
             except Exception as e:
                 # try to convert if we've got txt input
                 new_input_path = input_path
-                if input_path.endswith(".txt"):
+                if input_path.endswith(".txt") and not input_path.endswith(
+                    ".magic.u8.txt"
+                ):
                     try:
                         command = [
                             "iconv",
                             "-c",
                             "-t utf8",
-                            f"-o{input_path}.u8.txt",
+                            f"-o{input_path}.magic.u8.txt",
                             input_path,
                         ]
                         await check_call(command)
-                        new_input_path = f"{input_path}.u8.txt"
+                        new_input_path = f"{input_path}.magic.u8.txt"
+                        return await self._convert_input(new_input_path)
                     except:
                         pass
-                if input_path.endswith(".html"):
-                    html_command = base_convert_command
-                    html_command.extend(["-thtml"])
+                if input_path.endswith(".html") or input_path.endswith(".htm"):
+                    html_command = base_convert_command + ["-thtml"]
                     try:
-                        await check_call(html_command)
-                        return f"{input_path}.pdf"
-                    except:
-                        pass
-                # Try a different engine
-                for engine in ["lualatex", "xelatex"]:
-                    convert_command = base_convert_command
-                    convert_command.extend([f"--pdf-engine={engine}"])
-                    try:
-                        await check_call(convert_command)
+                        await _try_pandoc_engines(html_command)
                         return f"{input_path}.pdf"
                     except:
                         pass
@@ -491,6 +486,7 @@ class SendFaxHelper:
         appeal: Appeal,
         email: str,
         professional: bool = False,
+        fax_number: Optional[str] = None,
     ):
         denial = appeal.for_denial
         if denial is None:
@@ -509,7 +505,7 @@ class SendFaxHelper:
             denial_id=denial,
             # This should work but idk why it does not
             combined_document_enc=appeal.document_enc,
-            destination=appeal_fax_number,
+            destination=appeal_fax_number or fax_number,
             professional=professional,
         )
         appeal.fax = fts
@@ -542,6 +538,9 @@ class SendFaxHelper:
     def resend(cls, fax_phone, uuid, hashed_email) -> bool:
         f = FaxesToSend.objects.filter(hashed_email=hashed_email, uuid=uuid).get()
         f.destination = fax_phone
+        f.should_send = True
+        # Technically not necessary, but set in case the live actor fails.
+        f.sent = False
         f.save()
         future = fax_actor_ref.get.do_send_fax.remote(hashed_email, uuid)
         return True
@@ -1089,6 +1088,7 @@ class DenialCreatorHelper:
         microsite_slug: Optional[str] = None,
         referral_source: Optional[str] = None,
         referral_source_details: Optional[str] = None,
+        tracking_info: Optional[TrackingInfo] = None,
     ):
         """
         Create or update an existing denial.
@@ -1116,6 +1116,7 @@ class DenialCreatorHelper:
                            Should be a valid microsite slug or None.
             referral_source: Optional referral source (e.g., "Search Engine", "Friend or Family").
             referral_source_details: Optional free-text details about the referral source.
+            tracking_info: Optional TrackingInfo with user_agent, ASN, and IP (for professionals).
 
         Returns:
             The created or updated Denial object.
@@ -1132,6 +1133,9 @@ class DenialCreatorHelper:
             creating_professional = None
         # For the pro flow we default to pro to finish
         professional_to_finish = creating_professional is not None
+        # Build tracking kwargs
+        tracking_kwargs = tracking_info.to_model_kwargs() if tracking_info else {}
+
         # If we don't have a denial we're making a new one
         if denial is None:
             try:
@@ -1150,6 +1154,7 @@ class DenialCreatorHelper:
                     microsite_slug=microsite_slug,
                     referral_source=referral_source,
                     referral_source_details=referral_source_details,
+                    **tracking_kwargs,
                 )
             except Exception as e:
                 # This is a temporary hack to drop non-ASCII characters
@@ -1173,6 +1178,7 @@ class DenialCreatorHelper:
                     microsite_slug=microsite_slug,
                     referral_source=referral_source,
                     referral_source_details=referral_source_details,
+                    **tracking_kwargs,
                 )
         else:
             # Directly update denial object fields instead of using denial.update()
@@ -1199,6 +1205,10 @@ class DenialCreatorHelper:
                 denial.referral_source = referral_source
             if referral_source_details is not None:
                 denial.referral_source_details = referral_source_details
+
+            # Update tracking info if provided
+            if tracking_info:
+                tracking_info.update_model_fields(denial)
 
             denial.save()
 

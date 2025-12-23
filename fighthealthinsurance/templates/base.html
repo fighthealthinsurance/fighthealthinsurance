@@ -17,23 +17,33 @@
     <meta name="keywords" content="">
     <meta name="author" content="Tooplate">
     <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <!-- Canonical URL -->
+    {% if canonical_url %}<link rel="canonical" href="{{ canonical_url }}">{% endif %}
     <!-- Form persistence meta tags -->
     {% if fhi_session_key %}<meta name="fhi-session-key" content="{{ fhi_session_key }}">{% endif %}
     {% if fhi_request_method %}<meta name="fhi-request-method" content="{{ fhi_request_method }}">{% endif %}
     {% if fhi_always_restore %}<meta name="fhi-always-restore" content="true">{% endif %}
 
+    <!-- Preconnect to external domains for faster resource loading -->
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+    <link rel="dns-prefetch" href="https://cdn.jsdelivr.net">
+    <link rel="dns-prefetch" href="https://cdnjs.cloudflare.com">
+    <link rel="dns-prefetch" href="https://www.googletagmanager.com">
+
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css" rel="stylesheet"
         integrity="sha384-rbsA2VBKQhggwzxH7pPCaAqO46MgnOM80zW1RWuH61DGLwZJEdK2Kadq2F9CUG65" crossorigin="anonymous">
 
+    {% compress css file %}
     <link rel="stylesheet" href="{% static 'css/animate.css' %}">
     <link rel="stylesheet" href="{% static 'css/owl.carousel.css' %}">
     <link rel="stylesheet" href="{% static 'css/owl.theme.default.min.css' %}">
     <link rel="stylesheet" href="{% static 'css/custom.css' %}">
-    <link rel="shortcut icon" href="{% static 'images/favicon.ico' %}" type="image/x-icon">
-    <link rel="shortcut icon" href="{% static 'images/llama-favicon.ico' %}" type="image/x-icon">
 
     <!-- MAIN CSS -->
     <link rel="stylesheet" href="{% static 'css/main.css' %}">
+    {% endcompress %}
+    <link rel="shortcut icon" href="{% static 'images/favicon-optimized.ico' %}" type="image/x-icon">
+    <link rel="icon" href="{% static 'images/favicon-32.png' %}" sizes="32x32" type="image/png">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/github-fork-ribbon-css/0.2.3/gh-fork-ribbon.min.css" />
     <style>
       .betaribbon {
@@ -64,7 +74,7 @@
             % endblock extra_style %
         }
     </style>
-    <!-- SCRIPTS -->
+    <!-- SCRIPTS - Load critical scripts only in head, defer others -->
     <!-- sentry IFF not debug -->
     <!-- {% if not debug %}
     <script
@@ -72,17 +82,7 @@
       crossorigin="anonymous"
       ></script>
     {% endif %} -->
-    <script src="{% static 'js/jquery.js' %}"></script>
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js"
-        integrity="sha384-kenU1KFdBIe4zVF0s0G1M5b4hcpxyD9F7jL+jjXkk+Q2h455rYXK/7HAuoJl+0I4"
-        crossorigin="anonymous"></script>
-    <script src="{% static 'js/jquery.sticky.js' %}"></script>
-    <script src="{% static 'js/jquery.stellar.min.js' %}"></script>
-    <script src="{% static 'js/wow.min.js' %}"></script>
-    <script src="{% static 'js/smoothscroll.js' %}"></script>
-    <script src="{% static 'js/owl.carousel.min.js' %}"></script>
-    <script src="{% static 'js/custom.js' %}"></script>
-    <!-- Google tag (gtag.js) -->
+    <!-- Google tag (gtag.js) - Load async -->
     <script async src="https://www.googletagmanager.com/gtag/js?id=G-JQNGR0JGVN"></script>
     <script>
       window.dataLayer = window.dataLayer || [];
@@ -137,7 +137,7 @@
 
             <!-- lOGO TEXT HERE -->
             <a href="{% url 'root' %}">
-                <img src="{% static '/images/better-logo.png' %}" alt="Fight Health Insurance" class="img-fluid logo">
+                <img src="{% static '/images/better-logo-optimized.png' %}" alt="Fight Health Insurance" class="img-fluid logo" width="500" height="500">
             </a>
 
             <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar"
@@ -148,7 +148,8 @@
             <!-- MENU LINKS -->
             <div class="collapse navbar-collapse justify-content-end" id="navbar">
                 <ul class="nav navbar-nav navbar-right">
-                    <li class="nav-item"><a href="{% url 'chat' %}" class="nav-link">Chat</a></li>        
+                    <li class="nav-item"><a href="{% url 'chat' %}" class="nav-link">Chat</a></li>
+                    <li class="nav-item"><a href="{% url 'explain_denial' %}" class="nav-link">Explain Denial</a></li>
                     <li class="nav-item"><a href="{% url 'how-to-help' %}" class="nav-link">How to Help</a></li>
                     <li class="nav-item"><a href="{% url 'other-resources' %}" class="nav-link">Resources/Blogs</a></li>
 		            <li class="nav-item"><a href="{% url 'remove_data' %}" class="nav-link" id="removedata">Remove Your Data</a></li>
@@ -191,14 +192,14 @@
 			                <a href="https://buy.stripe.com/5kA03r2ZwbgebyE7ss" target="_blank" rel="noopener noreferrer">Support our Development</a>
                         </div>
                         <div class="footer-social" style="margin-top: 32px; display: flex; gap: 32px; justify-content: center; align-items: center;">
-                            <a href="https://www.instagram.com/fighthealthinsurance/" target="_blank" rel="noopener noreferrer" aria-label="Instagram" style="display: flex; align-items: center; justify-content: center; width: 48px; height: 48px;">
+                            <a href="https://www.instagram.com/fighthealthinsurance/" target="_blank" rel="noopener noreferrer" aria-label="Instagram" class="footer-social-link">
                                 <svg xmlns="http://www.w3.org/2000/svg" width="35" height="35" viewBox="0 0 24 24" fill="none" stroke="#888888" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="tabler-icon tabler-icon-brand-instagram ">
                                     <path d="M4 8a4 4 0 0 1 4 -4h8a4 4 0 0 1 4 4v8a4 4 0 0 1 -4 4h-8a4 4 0 0 1 -4 -4z"></path>
                                     <path d="M9 12a3 3 0 1 0 6 0a3 3 0 0 0 -6 0"></path>
                                     <path d="M16.5 7.5v.01"></path>
                                 </svg>
                             </a>
-                            <a href="https://www.linkedin.com/company/fight-health-insurance" target="_blank" rel="noopener noreferrer" aria-label="LinkedIn" style="display: flex; align-items: center; justify-content: center; width: 48px; height: 48px;">
+                            <a href="https://www.linkedin.com/company/fight-health-insurance" target="_blank" rel="noopener noreferrer" aria-label="LinkedIn" class="footer-social-link">
                                 <svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#888888" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="tabler-icon tabler-icon-brand-linkedin ">
                                     <rect x="2" y="2" width="20" height="20" rx="2" />
                                     <path d="M8 11v5" />
@@ -207,18 +208,18 @@
                                     <path d="M16 16v-3a2 2 0 0 0-4 0" />
                                 </svg>
                             </a>
-                            <a href="https://www.youtube.com/@fightpaperwork" target="_blank" rel="noopener noreferrer" aria-label="YouTube" style="display: flex; align-items: center; justify-content: center; width: 48px; height: 48px;">
+                            <a href="https://www.youtube.com/@fightpaperwork" target="_blank" rel="noopener noreferrer" aria-label="YouTube" class="footer-social-link">
                                 <svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#888888" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="tabler-icon tabler-icon-brand-youtube" aria-hidden="true" focusable="false">
                                     <path d="M2 8a4 4 0 0 1 4-4h12a4 4 0 0 1 4 4v8a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"/>
                                     <path d="m10 9 5 3-5 3V9z"/>
                                 </svg>
                             </a>
-                            <a href="https://fighthealthinsurance.substack.com/" target="_blank" rel="noopener noreferrer" aria-label="Substack" style="display: flex; align-items: center; justify-content: center; width: 48px; height: 48px;">
+                            <a href="https://fighthealthinsurance.substack.com/" target="_blank" rel="noopener noreferrer" aria-label="Substack" class="footer-social-link">
                                 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="currentColor" class="bi bi-substack" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
                                     <path d="M15 3.604H1v1.891h14v-1.89ZM1 7.208V16l7-3.926L15 16V7.208zM15 0H1v1.89h14z"/>
                                 </svg>
                             </a>
-                            <a href="https://www.reddit.com/r/fightpaperwork/" target="_blank" rel="noopener noreferrer" aria-label="Reddit" style="display: flex; align-items: center; justify-content: center; width: 48px; height: 48px;">
+                            <a href="https://www.reddit.com/r/fightpaperwork/" target="_blank" rel="noopener noreferrer" aria-label="Reddit" class="footer-social-link">
                                 <svg xmlns="http://www.w3.org/2000/svg" width="35" height="35" viewBox="0 0 24 24" fill="none" stroke="#888888" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="tabler-icon tabler-icon-brand-reddit" aria-hidden="true" focusable="false">
                                     <path d="M12 8c2.648 0 5.028 .826 6.675 2.14a2.5 2.5 0 0 1 2.326 4.36c0 3.59 -4.03 6.5 -9 6.5c-4.875 0 -8.845 -2.8 -9 -6.294l-1 -.206a2.5 2.5 0 0 1 2.326 -4.36c1.646 -1.313 4.026 -2.14 6.674 -2.14z"/>
                                     <path d="M12 8l1 -5l6 1"/>
@@ -242,6 +243,22 @@
         </div>
     </div>
     </footer>
+
+    <!-- Scripts loaded at end of body for better page load performance -->
+    <!-- IMPORTANT: jQuery must load first as all other scripts depend on it -->
+    <script src="{% static 'js/jquery.js' %}"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js"
+        integrity="sha384-kenU1KFdBIe4zVF0s0G1M5b4hcpxyD9F7jL+jjXkk+Q2h455rYXK/7HAuoJl+0I4"
+        crossorigin="anonymous"></script>
+    <!-- jQuery plugins - require jQuery to be loaded above -->
+    {% compress js file %}
+    <script src="{% static 'js/jquery.sticky.js' %}"></script>
+    <script src="{% static 'js/jquery.stellar.min.js' %}"></script>
+    <script src="{% static 'js/wow.min.js' %}"></script>
+    <script src="{% static 'js/smoothscroll.js' %}"></script>
+    <script src="{% static 'js/owl.carousel.min.js' %}"></script>
+    <script src="{% static 'js/custom.js' %}"></script>
+    {% endcompress %}
 </body>
 
 </html>

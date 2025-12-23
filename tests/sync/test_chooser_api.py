@@ -433,6 +433,36 @@ class ChooserVoteAPITest(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("not in the presented", response.json()["error"])
 
+    def test_vote_when_logged_in_as_admin(self):
+        """Test that voting works when logged in as an admin user."""
+        # Create an admin user
+        admin_user = User.objects.create_superuser(
+            username="admin",
+            email="admin@test.com",
+            password="adminpass123",
+        )
+        
+        # Log in as admin
+        self.client.force_authenticate(user=admin_user)
+        
+        url = reverse("chooser-vote")
+        data = {
+            "task_id": self.task.id,
+            "chosen_candidate_id": self.candidate1.id,
+            "presented_candidate_ids": [self.candidate1.id, self.candidate2.id],
+        }
+        response = self.client.post(
+            url, json.dumps(data), content_type="application/json"
+        )
+
+        # This should succeed (200 OK) but currently fails
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.json()["success"])
+        self.assertIn("vote_id", response.json())
+
+        # Verify vote was created
+        self.assertEqual(ChooserVote.objects.filter(task=self.task).count(), 1)
+
 
 class ChooserChatHistoryTest(APITestCase):
     """Test chat tasks with conversation history."""

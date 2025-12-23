@@ -28,7 +28,7 @@ class Command(BaseCommand):
         count = options.get("count")
         dry_run = options.get("dry_run", False)
 
-        candidates = sender.find_candidates()
+        candidates = sender._find_candidates()
         candidate_count = candidates.count()
 
         if candidate_count == 0:

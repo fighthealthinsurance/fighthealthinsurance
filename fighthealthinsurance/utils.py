@@ -375,11 +375,13 @@ async def best_within_timelimit(
     if best_result_option:
         asyncio.create_task(cancel_tasks(list(pending)))
         return best_result_option
+    elif len(pending) == 0:
+        raise Exception(f"No good answers found, ran out of all possibilities.")
 
     # If nothing is done in the length of normal timeout we try again but short
     # circuit on first.
     done, pending = await asyncio.wait(
-        wrapped_tasks, timeout=timeout * 20, return_when=asyncio.FIRST_COMPLETED
+        pending, timeout=(timeout + 1) * 20, return_when=asyncio.FIRST_COMPLETED
     )
 
     for task in done:
@@ -399,7 +401,9 @@ async def best_within_timelimit(
         asyncio.create_task(cancel_tasks(list(pending)))
         return best_result_option
     # Ok somehow things are still _bad_
-    raise Exception("No good answers found and we waitied way past the expected time.")
+    raise Exception(
+        f"No good answers found and we waited way past the expected time {timeout}"
+    )
 
 
 async def best_within_timelimit_static(
@@ -608,3 +612,19 @@ def generate_random_unsupported_filename() -> str:
     """Generate a random short filename with .unsupported extension."""
     rand_str = "".join(random.choices(string.ascii_lowercase + string.digits, k=8))
     return rand_str + ".unsupported"
+
+
+async def _try_pandoc_engines(command: list[str]):
+    engines = [None, "xelatex", "lualatex", "wkhtmltopdf", "weasyprint", "pdflatex"]
+    if "--sandbox" not in command:
+        command = command + ["--sandbox"]
+    for engine in engines:
+        command_with_engine = command
+        if engine is not None:
+            command_with_engine = command + ["--pdf-engine=" + engine]
+        try:
+            await check_call(command_with_engine)
+            return
+        except CalledProcessError as e:
+            logger.debug(f"Error with engine {engine}: {e}")
+    raise Exception(f"Failed {command} with all engines {engines}")

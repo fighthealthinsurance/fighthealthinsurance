@@ -30,7 +30,7 @@ Fight Your Health Insurance Denial: Choose an Appeal
     <p>We're generating your personalized health insurance appeals. This usually takes 1-3 minutes. Our AI is reading your denial, getting appropriately angry, and drafting multiple appeals for you to choose from.</p>
 
     <div style="text-align: center; margin: 2rem 0;">
-      <img src="{% static '/images/timbit-stand-on-keyboard.jpg' %}" alt="Timbit standing on a keyboard" style="max-width: 100%; height: auto; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);">
+      <img src="{% static 'images/timbit-stand-on-keyboard-optimized.jpg' %}" alt="Timbit standing on a keyboard" style="max-width: 100%; height: auto; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);" width="1200" height="891">
       <p style="margin-top: 1rem; font-style: italic; color: #666;">Professor Timbit supervising the AI (that's Holden and Carolyn's dog)</p>
     </div>
 
@@ -79,13 +79,13 @@ Fight Your Health Insurance Denial: Choose an Appeal
 <div id="output-container">
 </div>
 
-<div style="margin:1.5rem 0; display:flex; justify-content:center; gap:1rem; align-items:center;">
+<div class="form-nav-centered">
   {% if back_url %}
-  <a href="{{ back_url }}" class="btn btn-secondary" style="background:#6c757d; color:white; padding:10px 20px; border-radius:3px; text-decoration:none;">
+  <a href="{{ back_url }}" class="btn btn-secondary-custom">
     ← {{ back_label|default:"Back" }}
   </a>
   {% endif %}
-  <a href="{% url 'scan' %}" class="btn btn-link" style="color:#6c757d; text-decoration:underline; font-size:0.9rem;">
+  <a href="{% url 'scan' %}" class="btn-link-muted">
     Start over with a new denial
   </a>
 </div>

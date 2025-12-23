@@ -1,0 +1,235 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Explain My Denial - Fight Health Insurance{% endblock title %}
+{% block metatitle %}Explain My Denial - Fight Health Insurance{% endblock metatitle %}
+{% block metadescription %}Paste your health insurance denial letter and get a plain English explanation from our AI assistant.{% endblock metadescription %}
+
+{% block scriptmagic %}
+<script src="{% static 'js/dist/user_info_storage.bundle.js' %}"></script>
+<script>
+  document.addEventListener('DOMContentLoaded', function() {
+    if (window.userInfoStorage) {
+      window.userInfoStorage.setupFormPersistence('explain_denial_form');
+    }
+  });
+</script>
+{% endblock scriptmagic %}
+
+{% block content %}
+<!-- Hero Section -->
+<section id="explain-denial-hero" class="slider" data-stellar-background-ratio="0.5">
+    <div class="row">
+        <div class="item item-first">
+            <div class="caption d-flex flex-column align-items-center justify-content-center">
+                <div class="hero-inner">
+                    <h3 class="hero-tagline">Decode Your Denial</h3>
+                    <h1 class="hero-headline">Explain My Denial</h1>
+                    <p class="hero-subcopy">Paste your denial letter below and our AI will help you understand what it means and guide you through next steps.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Main Form Section -->
+<section id="denial-form" class="py-5">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-10 mx-auto">
+                <div class="card shadow-sm">
+                    <div class="card-body p-4">
+                        <h2 class="card-title mb-4">Enter Your Denial Letter & Information</h2>
+                        
+                        {% if form.errors or form.non_field_errors %}
+                        <div class="alert alert-danger">
+                            {% if form.non_field_errors %}
+                                {{ form.non_field_errors }}
+                            {% endif %}
+                            {% if form.errors %}
+                                <ul class="mb-0">
+                                {% for field, errors in form.errors.items %}
+                                    {% for error in errors %}
+                                    <li>{{ field }}: {{ error }}</li>
+                                    {% endfor %}
+                                {% endfor %}
+                                </ul>
+                            {% endif %}
+                        </div>
+                        {% endif %}
+                        
+                        <form method="post" action="{% url 'explain_denial' %}" id="explain_denial_form">
+                            {% csrf_token %}
+                            
+                            <!-- Denial Letter Section -->
+                            <div class="mb-4">
+                                <label for="denial_text" class="form-label fw-bold">
+                                    Your Denial Letter*
+                                </label>
+                                <textarea 
+                                    class="form-control" 
+                                    id="denial_text" 
+                                    name="denial_text" 
+                                    rows="8" 
+                                    placeholder="Paste your denial letter here. Include as much detail as possible..."
+                                    required>{{ denial_text|default:"" }}</textarea>
+                                <div class="form-text">
+                                    Tip: Include the entire denial letter for best results. Look for sections about reasons for denial, medical necessity, or coverage exclusions.
+                                </div>
+                            </div>
+
+                            <hr class="my-4">
+
+                            {% include 'partials/user_consent_form_fields.html' %}
+
+                            <div class="d-grid gap-2">
+                                <button type="submit" class="btn btn-green btn-lg">
+                                    <i class="bi bi-chat-dots"></i> Get AI Explanation
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Common Denial Types Info Section -->
+<section id="common-denials" class="py-5 bg-light">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <h2 class="text-center mb-4">Our AI Can Help With These Common Denial Types</h2>
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <h5 class="card-title">Medical Necessity</h5>
+                                <p class="card-text text-muted">When insurance claims treatment isn't medically required.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <h5 class="card-title">Prior Authorization</h5>
+                                <p class="card-text text-muted">When required approval wasn't obtained beforehand.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <h5 class="card-title">Coding/Billing Errors</h5>
+                                <p class="card-text text-muted">When medical codes don't match coverage.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <h5 class="card-title">Policy Exclusions</h5>
+                                <p class="card-text text-muted">When treatment is specifically excluded from your plan.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <h5 class="card-title">Experimental Treatment</h5>
+                                <p class="card-text text-muted">When insurance considers treatment unproven.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <h5 class="card-title">And More</h5>
+                                <p class="card-text text-muted">Out-of-network, step therapy, cosmetic procedures, and other denial reasons.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Disclaimer -->
+<section id="disclaimer" class="py-4">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <div class="disclaimer-box p-3 bg-light border rounded">
+                    <p class="text-muted small mb-0">
+                        <strong>Disclaimer:</strong> This tool provides general information about denial letters and is not legal or medical advice. Always consult with healthcare professionals and review your specific insurance policy.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+{% endblock content %}
+
+{% block extra_style %}
+<style>
+    #explain-denial-hero .hero-inner {
+        max-width: 800px;
+        padding: 2rem;
+    }
+
+    #explain-denial-hero .hero-tagline {
+        color: #a5c422;
+        font-size: 1.2rem;
+        margin-bottom: 0.5rem;
+    }
+
+    #explain-denial-hero .hero-headline {
+        font-size: 2.5rem;
+        font-weight: bold;
+        color: white;
+        margin-bottom: 1rem;
+    }
+
+    #explain-denial-hero .hero-subcopy {
+        font-size: 1.1rem;
+        color: rgba(255, 255, 255, 0.9);
+    }
+
+    .btn-green {
+        background-color: #28a745;
+        border-color: #28a745;
+        color: white;
+    }
+
+    .btn-green:hover {
+        background-color: #218838;
+        border-color: #1e7e34;
+        color: white;
+    }
+
+    .feature-icon {
+        font-weight: bold;
+    }
+
+    .disclaimer-box {
+        border-color: #dee2e6 !important;
+    }
+
+    textarea.form-control {
+        font-family: monospace;
+        font-size: 0.9rem;
+    }
+    
+    #common-denials .card {
+        border-left: 4px solid #a5c422;
+        transition: box-shadow 0.2s ease;
+    }
+    
+    #common-denials .card:hover {
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    }
+</style>
+{% endblock extra_style %}

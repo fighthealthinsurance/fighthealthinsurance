@@ -24,6 +24,7 @@ from fighthealthinsurance.models import (
 )
 from fighthealthinsurance.generate_prior_auth import prior_auth_generator
 from .chat_interface import ChatInterface
+from fhi_users.audit import extract_tracking_info_from_scope, TrackingInfo
 
 
 class StreamingAppealsBackend(AsyncWebsocketConsumer):
@@ -479,6 +480,11 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                     )
                     professional_user = None
                     is_patient = True
+            # Extract tracking info from websocket scope (privacy-aware)
+            tracking_info = extract_tracking_info_from_scope(
+                scope=self.scope, is_professional=(professional_user is not None)
+            )
+
             chat = await self._get_or_create_chat(
                 user,
                 professional_user,
@@ -487,6 +493,7 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                 session_key,
                 email=email,
                 microsite_slug=microsite_slug,
+                tracking_info=tracking_info,
             )
             self.chat_id = chat.id
             if (
@@ -546,6 +553,7 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
         session_key=None,
         email=None,  # Email for patient users so we can handle data deletion later
         microsite_slug=None,  # Microsite slug if coming from a microsite
+        tracking_info: Optional[TrackingInfo] = None,
     ):
         """Get an existing chat or create a new one."""
         if chat_id:
@@ -592,16 +600,28 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                 # Regular anonymous chat
                 pass
 
+            # Also store hashed_email for trial professionals
+            hashed_email = None
+            if not is_trial_professional and email:
+                hashed_email = Denial.get_hashed_email(email)
+
+            # Build tracking kwargs
+            tracking_kwargs = tracking_info.to_model_kwargs() if tracking_info else {}
+
             return await OngoingChat.objects.acreate(
                 session_key=session_key,
                 chat_history=[],
                 summary_for_next_call=[],
                 is_patient=not is_trial_professional,  # Not a patient if it's a trial professional
+                hashed_email=hashed_email,
                 microsite_slug=microsite_slug,
+                **tracking_kwargs,
             )
         elif is_patient and user and user.is_authenticated:
             # Patient user
             logger.info(f"Creating new patient chat for user {user.id}")
+            # Build tracking kwargs
+            tracking_kwargs = tracking_info.to_model_kwargs() if tracking_info else {}
             return await OngoingChat.objects.acreate(
                 user=user,
                 is_patient=True,
@@ -609,15 +629,19 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                 summary_for_next_call=[],
                 hashed_email=Denial.get_hashed_email(email) if email else None,
                 microsite_slug=microsite_slug,
+                **tracking_kwargs,
             )
         else:
             # Professional user
             logger.info(
                 f"Creating new professional chat for user {professional_user.id}"
             )
+            # Build tracking kwargs
+            tracking_kwargs = tracking_info.to_model_kwargs() if tracking_info else {}
             return await OngoingChat.objects.acreate(
                 professional_user=professional_user,
                 chat_history=[],
                 summary_for_next_call=[],
                 microsite_slug=microsite_slug,
+                **tracking_kwargs,
             )

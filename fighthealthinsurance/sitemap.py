@@ -35,6 +35,7 @@ class StaticViewSitemap(Sitemap):
             "root",
             "about",
             "pbs-newshour",
+            "preparing-2026",
             "other-resources",
             "faq",
             "medicaid-faq",

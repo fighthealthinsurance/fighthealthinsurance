@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Redirecting to Chat...</title>
+</head>
+<body>
+    <p>Redirecting to chat...</p>
+    <form id="chatRedirectForm" method="POST" action="{{ chat_url }}">
+        {% csrf_token %}
+        {% if denial_text %}
+        <textarea name="denial_text" style="display:none;">{{ denial_text }}</textarea>
+        {% endif %}
+        {% if default_procedure %}
+        <input type="hidden" name="default_procedure" value="{{ default_procedure }}">
+        {% endif %}
+        {% if default_condition %}
+        <input type="hidden" name="default_condition" value="{{ default_condition }}">
+        {% endif %}
+        {% if microsite_slug %}
+        <input type="hidden" name="microsite_slug" value="{{ microsite_slug }}">
+        {% endif %}
+        {% if microsite_title %}
+        <input type="hidden" name="microsite_title" value="{{ microsite_title }}">
+        {% endif %}
+    </form>
+    <script>
+        // Auto-submit the form
+        document.getElementById('chatRedirectForm').submit();
+    </script>
+</body>
+</html>

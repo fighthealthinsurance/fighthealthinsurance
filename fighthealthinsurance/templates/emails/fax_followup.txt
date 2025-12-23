@@ -1,14 +1,20 @@
 Hello {{name}},
 
-First off, thank you for using Fight Health Insurance to generate an appeal and choosing to use our fax service!.
+First off, thank you for using Fight Health Insurance to generate an appeal and choosing to use our fax service!
 
 {% if success %}
 Our records indicate the fax was sent successfully. You should still call your insurance company to confirm receipt as they love to try and weasel out of it.
+{% elif missing_destination %}
+It looks like we don't have a fax number on file for your appeal. This can happen if there was an issue in out system or the fax number wasn't entered during checkout. Don't worry - you can enter the fax number now and we'll send your appeal right away!
+
+ENTER YOUR FAX NUMBER HERE: {{fax_redo_link}}
 {% else %}
 It seems like there may have been a problem sending the fax. This is fairly common, but you can try to re-send the fax for free.
 {% endif %}
 
+{% if not missing_destination %}
 If you would like to re-send the fax, or send it to another number, go to {{fax_redo_link}}
+{% endif %}
 
 Thank you for being part of our community! If you found Fight Health Insurance helpful, there are many ways you can help us and others fighting unfair denials:
 - Share your experience with friends and family who might need help

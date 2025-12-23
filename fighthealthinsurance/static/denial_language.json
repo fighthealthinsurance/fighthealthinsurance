@@ -164,7 +164,7 @@
       "Request an exception if you had good cause for the delay",
       "Show you submitted claims as soon as you knew coverage was denied",
       "File a complaint with your state if the insurer didn't provide adequate notice of the requirement",
-      "If an in-network provider failed to submit on time, it may be the providers responsibility instead of the patient; this can be complicated but may be a case where your insurance company can actually help.",
+      "If an in-network provider failed to submit on time, it may be the providers responsibility instead of the patient; this can be complicated but may be a case where your insurance company can actually help."
     ],
     "success_rate": "Lower - depends on reason for delay"
   },

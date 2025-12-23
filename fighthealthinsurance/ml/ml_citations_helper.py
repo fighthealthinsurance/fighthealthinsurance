@@ -238,7 +238,9 @@ class MLCitationsHelper:
                         or []
                     )
                 except Exception as e:
-                    logger.opt(exception=True).debug(f"Error in citation generation: {e}")
+                    logger.opt(exception=True).debug(
+                        f"Error in citation generation: {e}"
+                    )
                     result = []
 
                 # Add microsite evidence snippets if available

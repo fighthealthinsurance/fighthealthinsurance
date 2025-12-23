@@ -43,6 +43,9 @@ class Base(Configuration):
     SENTRY_ENDPOINT = os.getenv("SENTRY_ENDPOINT")
     COOKIE_CONSENT_ENABLED = False
     COOKIE_CONSENT_LOG_ENABLED = False
+
+    # Audit logging - disabled by default, enable via environment variable
+    ENABLE_AUDIT_LOGGING = os.getenv("ENABLE_AUDIT_LOGGING", "false").lower() == "true"
     LOGIN_URL = "login"
     LOGIN_REDIRECT_URL = "/"
     THUMBNAIL_DEBUG = True
@@ -157,7 +160,7 @@ class Base(Configuration):
         "django.contrib.staticfiles.finders.AppDirectoriesFinder",
         "compressor.finders.CompressorFinder",
     )
-    COMPRESS_ENABLED = False
+    COMPRESS_ENABLED = True
     COMPRESS_OFFLINE = False
     COMPRESS_YUGLIFY_BINARY = "yuglify"
     COMPRESS_YUGLIFY_JS_ARGUMENTS = "--mangle"
@@ -180,6 +183,7 @@ class Base(Configuration):
         "django.middleware.common.CommonMiddleware",
         "django.middleware.csrf.CsrfViewMiddleware",
         "django.middleware.security.SecurityMiddleware",
+        "fighthealthinsurance.middleware.AuditMiddleware",
         "django_prometheus.middleware.PrometheusAfterMiddleware",
     ]
 
@@ -201,6 +205,7 @@ class Base(Configuration):
                     "django.contrib.auth.context_processors.auth",
                     "django.contrib.messages.context_processors.messages",
                     "fighthealthinsurance.context_processors.form_persistence_context",
+                    "fighthealthinsurance.context_processors.canonical_url_context",
                 ],
             },
         },
@@ -280,6 +285,18 @@ class Base(Configuration):
     USE_I18N = True
 
     USE_TZ = True
+
+    # Cache configuration
+    # https://docs.djangoproject.com/en/5.0/topics/cache/
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "fhi-cache",
+            "OPTIONS": {
+                "MAX_ENTRIES": 1000,
+            },
+        }
+    }
 
     # Static files (CSS, JavaScript, Images)
     # https://docs.djangoproject.com/en/4.0/howto/static-files/
@@ -554,6 +571,8 @@ class Prod(Base):
     CORS_ALLOW_PRIVATE_NETWORK = False
     CORS_ALLOW_CREDENTIALS = True
 
+    COMPRESS_OFFLINE = True
+
     # Domain dynamic overrides the built in domain, we only need to do this for fight paperwork
     # fight health insurance is already on the vanilla domain.
     SESSION_COOKIE_DOMAIN_DYNAMIC = [".fightpaperwork.com"]
@@ -663,7 +682,7 @@ class Prod(Base):
     @cached_property
     def EXTERNAL_STORAGE_B(self):
         try:
-            with Timeout(60.0) as _timeout_ctx:
+            with Timeout(30.0) as _timeout_ctx:
                 if (
                     self.MINIO_STORAGE_ENDPOINT is not None
                     and self.MINIO_STORAGE_ACCESS_KEY is not None
@@ -701,7 +720,7 @@ class Prod(Base):
     @cached_property
     def EXTERNAL_STORAGE_C(self) -> Optional[Storage]:
         try:
-            with Timeout(60.0) as _timeout_ctx:
+            with Timeout(30.0) as _timeout_ctx:
                 if (
                     self.BB_STORAGE_ENDPOINT is not None
                     and self.BB_STORAGE_ACCESS_KEY is not None

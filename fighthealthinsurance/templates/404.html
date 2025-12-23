@@ -4,16 +4,16 @@
 {% block title %}Page Not Found - Fight Health Insurance{% endblock title %}
 
 {% block content %}
-<div class="container" style="padding: 3rem 1rem; text-align: center; max-width: 600px; margin: 0 auto;">
-    <div style="font-size: 6rem; color: #a5c422; margin-bottom: 1rem;">404</div>
-    <h1 style="color: #333; margin-bottom: 1rem;">Page Not Found</h1>
-    <p style="color: #666; font-size: 1.1rem; margin-bottom: 2rem;">
+<div class="container status-page-container">
+    <div class="status-code">404</div>
+    <h1 class="status-title">Page Not Found</h1>
+    <p class="status-message">
         Sorry, we couldn't find the page you're looking for. It might have been moved or doesn't exist.
     </p>
 
-    <div style="background: #f8f9fa; padding: 1.5rem; border-radius: 8px; margin-bottom: 2rem;">
-        <h3 style="color: #333; margin-bottom: 1rem;">Looking to appeal a health insurance denial?</h3>
-        <a href="{% url 'scan' %}" class="btn btn-green" style="background: #a5c422; color: white; padding: 12px 30px; border-radius: 4px; text-decoration: none; display: inline-block;">
+    <div class="status-cta-box">
+        <h3 class="status-title">Looking to appeal a health insurance denial?</h3>
+        <a href="{% url 'scan' %}" class="btn btn-green">
             Start Your Appeal
         </a>
     </div>

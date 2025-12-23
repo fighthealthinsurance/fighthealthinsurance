@@ -21,6 +21,7 @@ from loguru import logger
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
+from rest_framework.permissions import AllowAny
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -348,10 +349,19 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
                 serializer_data["email"] = serializer_data["patient_user"].user.email
         # Handle subscription separately - pop from serializer data before passing
         subscribe = serializer_data.pop("subscribe", False)
+
+        # Extract tracking info for analytics (privacy-aware)
+        from fhi_users.audit import extract_tracking_info
+
+        tracking_info = extract_tracking_info(
+            request=request, is_professional=(creating_professional is not None)
+        )
+
         denial_response_info = (
             common_view_logic.DenialCreatorHelper.create_or_update_denial(
                 denial=denial,
                 creating_professional=creating_professional,
+                tracking_info=tracking_info,
                 **serializer_data,
             )
         )
@@ -1719,6 +1729,11 @@ class ChooserViewSet(viewsets.ViewSet):
     - GET /api/chooser/next/chat - Get next chat chooser task
     - POST /api/chooser/vote - Submit a vote for a task
     """
+
+    # Allow unauthenticated access and disable CSRF checks
+    # This allows both logged-in and anonymous users to vote
+    permission_classes = [AllowAny]
+    authentication_classes = []
 
     def _get_session_key(self, request: Request) -> str:
         """Get or create a session key for the request."""

@@ -1,0 +1,574 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Preparing for 2026: Health Insurance Changes You Need to Know{% endblock title %}
+{% block metatitle %}Preparing for 2026: Health Insurance Changes You Need to Know - Fight Health Insurance{% endblock metatitle %}
+{% block metadescription %}Get ready for major health insurance changes in 2026. Learn about formulary shifts, prior authorization changes, subsidy expirations, and what you can do now to protect your coverage.{% endblock metadescription %}
+
+{% block content %}
+<!-- Hero Section -->
+<section id="prep2026-hero" class="slider" data-stellar-background-ratio="0.5">
+    <div class="row">
+        <div class="item item-first">
+            <div class="caption d-flex flex-column align-items-center justify-content-center">
+                <div class="hero-inner" style="max-width: 900px;">
+                    <h3 class="hero-tagline">Don't wait for a denial to take action</h3>
+                    <h1 class="hero-headline">Prepare for 2026 Insurance Changes</h1>
+                    <p class="hero-subcopy">Major shifts in coverage, formularies, and subsidies are coming. Here's what you need to know&mdash;and what you can do now.</p>
+                    <div class="hero-cta-group">
+                        <a href="#december-checklist" class="section-btn btn btn-default smoothScroll primary-cta">December Action Checklist</a>
+                    </div>
+                    <div class="hero-cta-group hero-cta-secondary">
+                        <a href="{% url 'scan' %}" class="btn btn-outline-green smoothScroll secondary-cta">Already Denied? Generate Appeal</a>
+                        <a href="{% url 'chat' %}" class="btn btn-outline-green smoothScroll tertiary-cta">Ask AI Assistant</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Why This Matters Section -->
+<section id="why-this-matters" class="py-5">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <h2 class="text-center mb-4">Why 2026 Is Different</h2>
+                <p class="lead text-center mb-4">Every year, insurers update their formularies, prior authorization rules, and provider networks. But 2026 brings an unusually large wave of changes that could affect millions of Americans.</p>
+
+                <div class="card mb-4 border-warning">
+                    <div class="card-body">
+                        <h5 class="card-title"><span class="text-warning me-2">&#9888;</span> Enhanced ACA Subsidies Set to Expire</h5>
+                        <p class="card-text">The enhanced premium tax credits from the American Rescue Plan and Inflation Reduction Act are scheduled to expire at the end of 2025. Without Congressional action, average monthly premiums for ACA marketplace plans could rise by <strong>more than 75%</strong> in 2026.</p>
+                        <p class="card-text small text-muted mb-0">Source: <a href="https://www.kff.org/affordable-care-act/aca-marketplace-premium-payments-would-more-than-double-on-average-next-year-if-enhanced-premium-tax-credits-expire/" target="_blank" rel="noopener noreferrer" class="link">Kaiser Family Foundation</a></p>
+                    </div>
+                </div>
+
+                <div class="row g-4">
+                    <div class="col-md-6">
+                        <div class="card h-100 border-info">
+                            <div class="card-body">
+                                <h6 class="card-subtitle mb-2 text-info">Formulary Changes</h6>
+                                <p class="card-text">Insurance companies typically finalize 2026 drug lists in the fall of 2025. Medications you rely on may move to higher cost tiers&mdash;or be removed entirely.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card h-100 border-info">
+                            <div class="card-body">
+                                <h6 class="card-subtitle mb-2 text-info">Prior Authorization Tightening</h6>
+                                <p class="card-text">Insurers are adding more procedures and medications to prior authorization lists, which means more hoops to jump through before care is approved.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- 2026 Formulary Patterns Section -->
+<section id="formulary-patterns" class="py-5 bg-light">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <h2 class="text-center mb-4">Areas to Watch in 2026</h2>
+                <p class="text-center text-muted mb-4">These categories have historically seen the most coverage changes during annual updates.</p>
+
+                <div class="accordion" id="formularyAccordion">
+                    <!-- GLP-1 Medications -->
+                    <div class="accordion-item">
+                        <h3 class="accordion-header" id="headingGLP1">
+                            <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapseGLP1" aria-expanded="true" aria-controls="collapseGLP1">
+                                GLP-1 Medications (Ozempic, Wegovy, Mounjaro, etc.)
+                            </button>
+                        </h3>
+                        <div id="collapseGLP1" class="accordion-collapse collapse show" aria-labelledby="headingGLP1" data-bs-parent="#formularyAccordion">
+                            <div class="accordion-body">
+                                <p>GLP-1 receptor agonists have faced increasing restrictions as their popularity&mdash;and costs&mdash;have surged. Many insurers are:</p>
+                                <ul>
+                                    <li>Requiring step therapy (trying older, cheaper medications first)</li>
+                                    <li>Adding stricter BMI or A1C requirements</li>
+                                    <li>Distinguishing between diabetes treatment and weight management coverage</li>
+                                    <li>Implementing quantity limits or requiring periodic re-authorization</li>
+                                </ul>
+                                <p class="mb-0"><strong>What to do:</strong> If you're currently on a GLP-1, ask your provider about documentation strategies and check your plan's 2026 formulary as soon as it's available.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Biologics and Specialty Medications -->
+                    <div class="accordion-item">
+                        <h3 class="accordion-header" id="headingBiologics">
+                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseBiologics" aria-expanded="false" aria-controls="collapseBiologics">
+                                Biologics &amp; Specialty Medications
+                            </button>
+                        </h3>
+                        <div id="collapseBiologics" class="accordion-collapse collapse" aria-labelledby="headingBiologics" data-bs-parent="#formularyAccordion">
+                            <div class="accordion-body">
+                                <p>Biologics for conditions like rheumatoid arthritis, psoriasis, Crohn's disease, and multiple sclerosis often face coverage changes as biosimilars enter the market. Watch for:</p>
+                                <ul>
+                                    <li>Mandatory switches from brand-name biologics to biosimilars</li>
+                                    <li>New prior authorization requirements</li>
+                                    <li>Changes to specialty pharmacy requirements</li>
+                                    <li>Revised step therapy protocols</li>
+                                </ul>
+                                <p class="mb-0"><strong>What to do:</strong> Talk to your specialist about any biosimilar switches and ensure your medical records document why your current medication is necessary.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Mental Health Medications -->
+                    <div class="accordion-item">
+                        <h3 class="accordion-header" id="headingMentalHealth">
+                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseMentalHealth" aria-expanded="false" aria-controls="collapseMentalHealth">
+                                Mental Health Medications
+                            </button>
+                        </h3>
+                        <div id="collapseMentalHealth" class="accordion-collapse collapse" aria-labelledby="headingMentalHealth" data-bs-parent="#formularyAccordion">
+                            <div class="accordion-body">
+                                <p>Despite mental health parity laws, coverage for psychiatric medications varies significantly. Common issues include:</p>
+                                <ul>
+                                    <li>Step therapy requirements for newer antidepressants or mood stabilizers</li>
+                                    <li>Prior authorization for ADHD medications</li>
+                                    <li>Quantity limits on controlled substances</li>
+                                    <li>Network restrictions for prescribing providers</li>
+                                </ul>
+                                <p class="mb-0"><strong>What to do:</strong> If you're stable on a medication, document your treatment history. Mental health parity laws may support your appeal if denied.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Gender-Affirming Care -->
+                    <div class="accordion-item">
+                        <h3 class="accordion-header" id="headingGAC">
+                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseGAC" aria-expanded="false" aria-controls="collapseGAC">
+                                Gender-Affirming Care &amp; Hormone Therapy
+                            </button>
+                        </h3>
+                        <div id="collapseGAC" class="accordion-collapse collapse" aria-labelledby="headingGAC" data-bs-parent="#formularyAccordion">
+                            <div class="accordion-body">
+                                <p>Coverage for gender-affirming care varies widely by state and plan type. Be prepared for:</p>
+                                <ul>
+                                    <li>New exclusions or limitations in some plans</li>
+                                    <li>Increased documentation requirements</li>
+                                    <li>Prior authorization for hormone therapy</li>
+                                    <li>Network limitations for specialized providers</li>
+                                </ul>
+                                <p class="mb-0"><strong>What to do:</strong> Review your plan documents carefully during open enrollment. Some states have protections that override plan exclusions&mdash;know your rights. See our <a href="{% url 'blog-post' slug='250912-gender-affirming-care-federal-protections' %}" class="link">guide on federal protections</a>.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Durable Medical Equipment -->
+                    <div class="accordion-item">
+                        <h3 class="accordion-header" id="headingDME">
+                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseDME" aria-expanded="false" aria-controls="collapseDME">
+                                Durable Medical Equipment (DME)
+                            </button>
+                        </h3>
+                        <div id="collapseDME" class="accordion-collapse collapse" aria-labelledby="headingDME" data-bs-parent="#formularyAccordion">
+                            <div class="accordion-body">
+                                <p>CPAP machines, wheelchairs, prosthetics, and other DME often face coverage challenges:</p>
+                                <ul>
+                                    <li>Stricter medical necessity documentation</li>
+                                    <li>Rental vs. purchase requirements</li>
+                                    <li>Limited in-network suppliers</li>
+                                    <li>Replacement and repair restrictions</li>
+                                </ul>
+                                <p class="mb-0"><strong>What to do:</strong> Get equipment needs documented before year-end. If you need replacement items, start the authorization process early.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- HSA/FSA Section -->
+<section id="hsa-fsa" class="py-5">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <h2 class="text-center mb-4">2026 HSA &amp; FSA Updates</h2>
+
+                <div class="row g-4 mb-4">
+                    <div class="col-md-6">
+                        <div class="card h-100">
+                            <div class="card-header bg-success text-white">
+                                <strong>HSA Contribution Limits</strong>
+                            </div>
+                            <div class="card-body">
+                                <p class="card-text">The IRS typically announces new HSA contribution limits in the spring. New 2026 limits are:</p>
+                                <ul class="mb-0">
+                                    <li>Individual: $4,400</li>
+                                    <li>Family: $8,750</li>
+                                    <li>Catch-up (55+): Additional $1,000</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card h-100">
+                            <div class="card-header bg-primary text-white">
+                                <strong>FSA Limits</strong>
+                            </div>
+                            <div class="card-body">
+                                <p class="card-text">FSA limits are also adjusted annually. Key considerations:</p>
+                                <ul class="mb-0">
+                                    <li>Use-it-or-lose-it rules (check if your plan has rollover)</li>
+                                    <li>Grace period availability</li>
+                                    <li>Dependent care FSA limits</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="alert alert-info" role="alert">
+                    <strong>Tip:</strong> If you expect higher healthcare costs in 2026 due to coverage changes, consider maximizing your HSA/FSA contributions during open enrollment. HSA funds roll over indefinitely; FSA funds typically don't.
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Prior Authorization Section -->
+<section id="prior-auth" class="py-5 bg-light">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <h2 class="text-center mb-4">Prior Authorization: Getting Ahead</h2>
+                <p class="text-center mb-4">Prior authorization requirements are expanding. Here's a checklist to discuss with your providers <strong>before</strong> January:</p>
+
+                <div class="card">
+                    <div class="card-body">
+                        <h5 class="card-title">Questions to Ask Your Provider</h5>
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" id="pa1">
+                            <label class="form-check-label" for="pa1">
+                                "Will any of my current medications require prior authorization in 2026?"
+                            </label>
+                        </div>
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" id="pa2">
+                            <label class="form-check-label" for="pa2">
+                                "Are there any planned procedures I should get authorized before year-end?"
+                            </label>
+                        </div>
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" id="pa3">
+                            <label class="form-check-label" for="pa3">
+                                "Do you have updated documentation supporting medical necessity for my treatments?"
+                            </label>
+                        </div>
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" id="pa4">
+                            <label class="form-check-label" for="pa4">
+                                "Will you still be in-network with my plan in 2026?"
+                            </label>
+                        </div>
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" id="pa5">
+                            <label class="form-check-label" for="pa5">
+                                "Can I get a transition supply of my medication if coverage changes?"
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- December Checklist Section -->
+<section id="december-checklist" class="py-5">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <h2 class="text-center mb-4">December Action Checklist</h2>
+                <p class="text-center text-muted mb-4">Take these steps before the end of 2025 to minimize disruption in 2026.</p>
+
+                <div class="list-group">
+                    <div class="list-group-item">
+                        <div class="d-flex w-100 justify-content-between">
+                            <h5 class="mb-1"><span class="badge bg-danger me-2">1</span> Refill Your Prescriptions</h5>
+                        </div>
+                        <p class="mb-1">Get a 90-day supply of maintenance medications before December 31 if possible (may require a mail-order fill). If your medication is moving to a higher tier or being removed, you'll want a buffer while appealing or finding alternatives.</p>
+                    </div>
+                    <div class="list-group-item">
+                        <div class="d-flex w-100 justify-content-between">
+                            <h5 class="mb-1"><span class="badge bg-danger me-2">2</span> Download Your 2026 Formulary</h5>
+                        </div>
+                        <p class="mb-1">Some insurers publish 2026 formularies in October or November. Download a copy and check coverage for your medications. Look for tier placement, prior auth requirements, and quantity limits.</p>
+                    </div>
+                    <div class="list-group-item">
+                        <div class="d-flex w-100 justify-content-between">
+                            <h5 class="mb-1"><span class="badge bg-danger me-2">3</span> Verify Your Providers Are In-Network</h5>
+                        </div>
+                        <p class="mb-1">Network changes happen frequently, but it's a good time to confirm your doctors, specialists, and facilities will remain in-network. If not, ask about continuity-of-care provisions.</p>
+                    </div>
+                    <div class="list-group-item">
+                        <div class="d-flex w-100 justify-content-between">
+                            <h5 class="mb-1"><span class="badge bg-danger me-2">4</span> Update Your Marketplace Information</h5>
+                        </div>
+                        <p class="mb-1">If you're on an ACA marketplace plan, update your income estimate and contact information. This ensures you receive any subsidy updates and renewal notices.</p>
+                    </div>
+                    <div class="list-group-item">
+                        <div class="d-flex w-100 justify-content-between">
+                            <h5 class="mb-1"><span class="badge bg-danger me-2">5</span>Track your work and school time for Medicare patients</h5>
+                        </div>
+                        <p class="mb-1">Be ready for the new medicare work requirements</p>
+                    </div>
+                    <div class="list-group-item">
+                        <div class="d-flex w-100 justify-content-between">
+                            <h5 class="mb-1"><span class="badge bg-danger me-2">6</span> Use Your FSA Balance</h5>
+                        </div>
+                        <p class="mb-1">Most FSA funds have a time limit. Schedule any end-of-year appointments, order glasses or contacts, or stock up on eligible supplies before losing those dollars.</p>
+                    </div>
+                    <div class="list-group-item">
+                        <div class="d-flex w-100 justify-content-between">
+                            <h5 class="mb-1"><span class="badge bg-danger me-2">7</span> Gather Documentation</h5>
+                        </div>
+                        <p class="mb-1">Collect medical records, letters of medical necessity, and treatment histories. Having this ready makes appeals faster if you face a denial in January.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Denial Rights Section -->
+<section id="denial-rights" class="py-5 bg-light">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <h2 class="text-center mb-4">Your Rights When Denied</h2>
+                <p class="text-center mb-4">If you receive a denial in 2026, remember: you have the right to appeal. Here's what you need to know.</p>
+
+                <div class="row g-4">
+                    <div class="col-md-4">
+                        <div class="card h-100 text-center">
+                            <div class="card-body">
+                                <div class="display-4 text-success mb-3">&#10003;</div>
+                                <h5 class="card-title">You Can Appeal</h5>
+                                <p class="card-text">Federal law requires insurers to provide at least one level of internal appeal. Many plans often have two. External review by an independent party is also available, often requiring you to exhaust internal options.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card h-100 text-center">
+                            <div class="card-body">
+                                <div class="display-4 text-success mb-3">&#128337;</div>
+                                <h5 class="card-title">Deadlines Matter</h5>
+                                <p class="card-text">Acting quickly is important! Expedited appeals for urgent situations can be decided within 72 hours.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card h-100 text-center">
+                            <div class="card-body">
+                                <div class="display-4 text-success mb-3">&#128221;</div>
+                                <h5 class="card-title">Appeals Work</h5>
+                                <p class="card-text">Studies show that a significant percentage of appeals are successful. A well-documented appeal with supporting medical evidence increases your chances.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="text-center mt-5">
+                    <h4 class="mb-3">Ready to Fight a Denial?</h4>
+                    <p class="mb-4">Our AI-powered tool helps you generate appeal letters in minutes. Free for everyone.</p>
+                    <a href="{% url 'scan' %}" class="btn btn-green btn-lg me-2">Generate an Appeal</a>
+                    <a href="{% url 'chat' %}" class="btn btn-outline-green btn-lg">Chat with AI Assistant</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- What We Don't Know Section -->
+<section id="unknowns" class="py-5">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <h2 class="text-center mb-4">What We Don't Know Yet</h2>
+                <p class="text-center mb-4">We believe in being upfront about uncertainty. Here's what's still unclear as of {{ current_date|default:"late 2025" }}:</p>
+
+                <div class="card border-secondary">
+                    <div class="card-body">
+                        <ul class="mb-0">
+                            <li class="mb-2"><strong>ACA Subsidy Extension:</strong> Congress may or may not extend enhanced premium tax credits (although time is running out). This could significantly impact marketplace plan costs.</li>
+                            <li class="mb-2"><strong>Individual Insurer Decisions:</strong> Each insurer makes their own formulary and prior auth decisions. We can identify patterns, but your specific plan may differ.</li>
+                            <li class="mb-2"><strong>State-Level Changes:</strong> Insurance regulations vary by state and are subject to change. Some states are adding protections while others are reducing them.</li>
+                            <li class="mb-2"><strong>Medicare Part D Redesign:</strong> Ongoing changes to Medicare drug coverage may affect how commercial insurers structure their own plans.</li>
+                            <li class="mb-0"><strong>Employer Plan Changes:</strong> If you get insurance through work, your employer's decisions about plan design aren't known until open enrollment.</li>
+                        </ul>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Resources Section -->
+<section id="resources" class="py-5 bg-light">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <h2 class="text-center mb-4">Additional Resources</h2>
+
+                <div class="row g-4">
+                    <div class="col-md-6">
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <h5 class="card-title">Related Blog Posts</h5>
+                                <ul class="list-unstyled mb-0">
+                                    <li class="mb-2"><a href="{% url 'blog-post' slug='250829-aca-costs-2026-prepare' %}" class="link">ACA Health Insurance Will Cost More in 2026</a></li>
+                                    <li class="mb-2"><a href="{% url 'blog-post' slug='251020-health-coverage-outside-aca-2026' %}" class="link">Health Coverage Options Outside the ACA in 2026</a></li>
+                                    <li class="mb-2"><a href="{% url 'blog-post' slug='250903-glp1-denials-what-to-do' %}" class="link">GLP-1 Denials: What to Do</a></li>
+                                    <li><a href="{% url 'blog' %}" class="link">View All Blog Posts &rarr;</a></li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <h5 class="card-title">External Resources</h5>
+                                <ul class="list-unstyled mb-0">
+                                    <li class="mb-2"><a href="https://www.healthcare.gov/" target="_blank" rel="noopener noreferrer" class="link">HealthCare.gov</a></li>
+                                    <li class="mb-2"><a href="https://www.kff.org/interactive/subsidy-calculator/" target="_blank" rel="noopener noreferrer" class="link">KFF Subsidy Calculator</a></li>
+                                    <li class="mb-2"><a href="https://www.cms.gov/medicare/appeals-grievances" target="_blank" rel="noopener noreferrer" class="link">CMS Appeals Information</a></li>
+                                    <li><a href="{% url 'other-resources' %}" class="link">More Resources &rarr;</a></li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Final CTA Section -->
+<section id="final-cta" class="py-5">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto text-center">
+                <h2 class="mb-3">Stay Informed, Stay Prepared</h2>
+                <p class="lead mb-4">The best time to prepare for coverage changes is before they affect you. Bookmark this page, talk to your providers, and know that help is available if you need to appeal a denial.</p>
+                <div class="d-flex justify-content-center gap-3 flex-wrap">
+                    <a href="{% url 'scan' %}" class="btn btn-green btn-lg">Generate an Appeal</a>
+                    <a href="{% url 'chat' %}" class="btn btn-outline-green btn-lg">AI Chat Assistant</a>
+                    <a href="{% url 'how-to-help' %}" class="btn btn-outline-secondary btn-lg">Help Our Mission</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Disclaimer Section -->
+<section id="disclaimer" class="py-4">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <div class="disclaimer-box p-3 bg-light border rounded">
+                    <p class="text-muted small mb-0">
+                        <strong>Disclaimer:</strong> This page is for informational purposes only and does not constitute legal, medical, or financial advice. Insurance policies vary widely, and you should review your specific plan documents for accurate information about your coverage. Information about 2026 changes is based on publicly available data and may change as insurers and regulators finalize decisions. Last updated: December 2025.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock content %}
+
+{% block extra_style %}
+<style>
+    #prep2026-hero .hero-inner {
+        backdrop-filter: blur(3px);
+        padding: 2rem;
+        border-radius: 14px;
+    }
+
+    .accordion-button:not(.collapsed) {
+        background-color: rgba(165, 196, 34, 0.15);
+        color: #155724;
+    }
+
+    .accordion-button:focus {
+        box-shadow: 0 0 0 0.25rem rgba(165, 196, 34, 0.25);
+    }
+
+    .list-group-item {
+        border-left: 4px solid #a5c422;
+    }
+
+    .list-group-item:hover {
+        background-color: rgba(165, 196, 34, 0.05);
+    }
+
+    .card.border-warning {
+        border-left: 4px solid #ffc107 !important;
+    }
+
+    .card.border-info {
+        border-left: 4px solid #17a2b8 !important;
+    }
+
+    .card.border-secondary {
+        border-left: 4px solid #6c757d !important;
+    }
+
+    #final-cta {
+        background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+    }
+
+    .btn-green {
+        background: linear-gradient(to right, #ADD100 0%, #7B920A 51%, #ADD100 100%);
+        background-size: 200% auto;
+        border: none;
+        color: white;
+        transition: 0.5s;
+    }
+
+    .btn-green:hover {
+        background-position: right center;
+        color: white;
+    }
+
+    .btn-outline-green {
+        color: #7B920A;
+        border-color: #7B920A;
+    }
+
+    .btn-outline-green:hover {
+        background-color: #7B920A;
+        border-color: #7B920A;
+        color: white;
+    }
+
+    .form-check-input:checked {
+        background-color: #a5c422;
+        border-color: #a5c422;
+    }
+
+    section {
+        scroll-margin-top: 80px;
+    }
+
+    @media (max-width: 768px) {
+        #prep2026-hero .hero-inner {
+            padding: 1.5rem;
+        }
+
+        .btn-lg {
+            padding: 0.5rem 1rem;
+            font-size: 1rem;
+        }
+    }
+</style>
+{% endblock extra_style %}

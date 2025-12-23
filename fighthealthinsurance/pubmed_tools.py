@@ -6,7 +6,7 @@ from fighthealthinsurance.models import (
 from asgiref.sync import sync_to_async, async_to_sync
 from fighthealthinsurance.utils import pubmed_fetcher
 from fighthealthinsurance.microsites import get_microsite
-from .utils import markdown_escape
+from .utils import markdown_escape, _try_pandoc_engines
 from concurrent.futures import Future
 from metapub import FindIt
 
@@ -537,24 +537,9 @@ class PubMedTools(object):
                 my_data.name,
                 f"-o{my_data.name}.pdf",
             ]
-            result = subprocess.run(command)
-            if result.returncode == 0:
+            try:
+                await _try_pandoc_engines(command)
                 return f"{my_data.name}.pdf"
-            else:
-                logger.debug(
-                    f"Error processing {command} trying again with different engine"
-                )
-                command = [
-                    "pandoc",
-                    "--wrap=auto",
-                    "--read=markdown",
-                    "--pdf-engine=lualatex",
-                    my_data.name,
-                    f"-o{my_data.name}.pdf",
-                ]
-                result = subprocess.run(command)
-                if result.returncode == 0:
-                    return f"{my_data.name}.pdf"
-                else:
-                    logger.debug(f"Error processing {command}")
+            except Exception as e:
+                logger.debug(f"Error processing {command}: {e}")
         return None

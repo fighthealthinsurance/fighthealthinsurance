@@ -18,7 +18,7 @@ The [Congressional Budget Office (CBO)](https://www.cbo.gov/), which estimates t
 
 If you're staring at an unaffordable premium for 2026, here's what you need to know before making any decisions.
 
-<img src="/static/images/aca-2026-steps.png" alt="What to do when health insurance becomes unaffordable" style="width: 60%; height: auto; display: block; margin: 20px auto;">
+<img src="/static/images/aca-2026-steps-optimized.jpg" alt="What to do when health insurance becomes unaffordable" style="width: 60%; height: auto; display: block; margin: 20px auto;">
 
 ## Act Now: Key Deadlines
 

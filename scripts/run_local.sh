@@ -1,5 +1,14 @@
 #!/bin/bash
-# shellcheck disable=SC2068
+# Run local development server
+#
+# Optimizations:
+# - Checksums requirements.txt and requirements-dev.txt to skip pip install when unchanged
+# - Checksums JS source files to skip webpack build when unchanged (via build_static.sh)
+# - Combines Python version and dependency checks into a single invocation
+# - Parallelizes network connectivity checks (kubectl and ping commands)
+# - All optimizations maintain full compatibility and don't skip necessary operations
+#
+# shellcheck disable=SC2068,SC1090
 
 
 SCRIPT_DIR="$(dirname "$0")"
@@ -39,15 +48,16 @@ if [ -f "requirements.txt" ] && [ -f "requirements-dev.txt" ]; then
 fi
 
 check_python_environment() {
-	python -c 'import configurations'  >/dev/null 2>&1
+	# Combine both checks in a single Python invocation for speed
+	python -c 'import sys; import configurations; sys.exit(0 if sys.version_info >= (3, 10) else -1)' >/dev/null 2>&1
 	python_dep_check=$?
 	if [ ${python_dep_check} != 0 ]; then
 		set +x
-		printf 'Python dependencies may be missing. Please install dependencies via:\n' >/dev/stderr
+		printf 'Python dependencies may be missing or Python version is too old. Please install dependencies via:\n' >/dev/stderr
 		printf 'pip install -r requirements.txt\n' >/dev/stderr
+		printf 'You need at least Python 3.10\n' >/dev/stderr
 		exit 1
 	fi
-	python min_version.py
 }
 
 check_and_fix_inotify_limit() {
@@ -100,36 +110,68 @@ check_and_fix_inotify_limit
 
 "${SCRIPT_DIR}/build_static.sh"
 
-# Are we sort of connected to the backend?
-if kubectl get service -n totallylegitco vllm-health-svc; then
-  export HEALTH_BACKEND_PORT=4280
-  export HEALTH_BACKEND_HOST=localhost
-  kubectl port-forward -n totallylegitco service/vllm-health-svc 4280:80 &
-else
-  echo 'No connection to kube vllm health svc'
-fi
+# Run network checks in parallel for speed
+# Create a temp directory for storing check results
+TMPDIR=$(mktemp -d)
+trap 'rm -rf "${TMPDIR}"' EXIT
 
-if kubectl get service -n totallylegitco vllm-health-svc-slipstream; then
-  export NEW_HEALTH_BACKEND_PORT=4281
-  export NEW_HEALTH_BACKEND_HOST=localhost
-  kubectl port-forward -n totallylegitco service/vllm-health-svc-slipstream 4281:80 &
-else
-  echo 'No connection to _new_ kube vllm health svc'
-fi
+check_vllm_health() {
+  if kubectl get service -n totallylegitco vllm-health-svc >/dev/null 2>&1; then
+    echo "export HEALTH_BACKEND_PORT=4280" > "$TMPDIR/vllm_health"
+    echo "export HEALTH_BACKEND_HOST=localhost" >> "$TMPDIR/vllm_health"
+    kubectl port-forward -n totallylegitco service/vllm-health-svc 4280:80 &
+  else
+    echo 'No connection to kube vllm health svc'
+  fi
+}
 
-if ping -c1 -W1 10.69.200.180 >/dev/null 2>&1; then
-  echo "backup reachable"
-  export HEALTH_BACKUP_BACKEND_PORT=8000
-  export HEALTH_BACKUP_BACKEND_HOST=10.69.200.180
-  export HEALTH_BACKUP_BACKEND_MODEL="/TotallyLegitCo/fighthealthinsurance_model_v0.5"
-else
-  echo "backup not reachable."
-fi
+check_vllm_health_slipstream() {
+  if kubectl get service -n totallylegitco vllm-health-svc-slipstream >/dev/null 2>&1; then
+    echo "export NEW_HEALTH_BACKEND_PORT=4281" > "$TMPDIR/vllm_slipstream"
+    echo "export NEW_HEALTH_BACKEND_HOST=localhost" >> "$TMPDIR/vllm_slipstream"
+    kubectl port-forward -n totallylegitco service/vllm-health-svc-slipstream 4281:80 &
+  else
+    echo 'No connection to _new_ kube vllm health svc'
+  fi
+}
 
-if ping -c1 -W1 scrump.local.pigscanfly.ca >/dev/null 2>&1; then
-  echo "alpha reachable"
-  export ALPHA_HEALTH_BACKEND_HOST=scrump.local.pigscanfly.ca
-fi
+check_backup_backend() {
+  if ping -c1 -W1 10.69.200.180 >/dev/null 2>&1; then
+    echo "backup reachable"
+    echo "export HEALTH_BACKUP_BACKEND_PORT=8000" > "$TMPDIR/backup"
+    echo "export HEALTH_BACKUP_BACKEND_HOST=10.69.200.180" >> "$TMPDIR/backup"
+    echo "export HEALTH_BACKUP_BACKEND_MODEL=\"/TotallyLegitCo/fighthealthinsurance_model_v0.5\"" >> "$TMPDIR/backup"
+  else
+    echo "backup not reachable."
+  fi
+}
+
+check_alpha_backend() {
+  if ping -c1 -W1 scrump.local.pigscanfly.ca >/dev/null 2>&1; then
+    echo "alpha reachable"
+    echo "export ALPHA_HEALTH_BACKEND_HOST=scrump.local.pigscanfly.ca" > "$TMPDIR/alpha"
+  fi
+}
+
+# Run all network checks in parallel
+check_vllm_health &
+vllm_pid=$!
+check_vllm_health_slipstream &
+slipstream_pid=$!
+check_backup_backend &
+backup_pid=$!
+check_alpha_backend &
+alpha_pid=$!
+
+# Wait for all network checks to complete
+wait $vllm_pid $slipstream_pid $backup_pid $alpha_pid 2>/dev/null || true
+
+# Source the results to set environment variables
+for result_file in "$TMPDIR"/*; do
+  if [ -f "$result_file" ]; then
+    source "$result_file"
+  fi
+done
 
 if [ "$FAST" != "FAST" ]; then
   python manage.py migrate
@@ -161,5 +203,5 @@ fi
 # - Test files and artifacts (tests/*, .tox/*, *.sqlite*)
 # - Large data files (*.csv, *.m4a, *.pdf in static)
 # - Migration files (migrations/* - only changed intentionally, not during normal dev)
-RELOAD_EXCLUDE="*.pyc,__pycache__/*,*.pyo,*~,#*#,.#*,node_modules/*,static/*,dist/*,.tox/*,*sqlite*,./tox/*,./tests/*,fhi-0.1.0/*,migrations/*,*.csv,*.m4a,*.pdf,*.png,*.jpg,*.jpeg,*.gif,*.svg,*.woff,*.woff2,*.ttf,*.eot,*.ico"
+RELOAD_EXCLUDE="*.pyc,__pycache__/*,*.pyo,*~,#*#,.#*,node_modules/*,dist/*,.tox/*,*sqlite*,./tox/*,./tests/*,fhi-0.1.0/*,migrations/*,*.csv,*.m4a,*.pdf,*.png,*.jpg,*.jpeg,*.gif,*.svg,*.woff,*.woff2,*.ttf,*.eot,*.ico"
 RECAPTCHA_TESTING=true OAUTHLIB_RELAX_TOKEN_SCOPE=1 uvicorn fighthealthinsurance.asgi:application --reload --reload-dir fighthealthinsurance --reload-exclude "$RELOAD_EXCLUDE" --access-log --log-config conf/uvlog_config.yaml --port 8000 --ssl-keyfile key.pem --ssl-certfile cert.pem "$@" --host 0.0.0.0
