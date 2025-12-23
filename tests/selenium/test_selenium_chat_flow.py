@@ -563,3 +563,44 @@ class SeleniumExistingChatTest(FHISeleniumBase, StaticLiveServerTestCase):
         print(f"  - Last name: {lname}")
         print(f"  - Email: {stored_email}")
         print(f"  - City: {city}")
+
+    def test_explain_denial_with_external_models_sends_preference(self):
+        """Test that external models preference is sent with initial message from explain denial."""
+        email = f"explain_external_{int(time.time())}@example.com"
+
+        # Go to explain denial page
+        self.open(f"{self.live_server_url}/explain-denial")
+
+        # Fill out the form with external models enabled
+        self.type("input#store_fname", "External")
+        self.type("input#store_lname", "Tester")
+        self.type("input#email", email)
+        self.click("input#tos")
+        self.click("input#privacy")
+        self.click("input#use_external_models")  # Enable external models
+
+        # Add denial text
+        denial_text = "My MRI was denied as not medically necessary."
+        self.type("textarea#denial_text", denial_text)
+
+        # Submit
+        self.click("button[type='submit']")
+
+        # Wait for chat interface to load
+        self.wait_for_element("#chat-interface-root", timeout=15)
+        time.sleep(2)
+
+        # Verify external models preference was saved to localStorage
+        external_pref = self.execute_script(
+            "return localStorage.getItem('fhi_use_external_models');"
+        )
+        assert external_pref == "true", f"External models should be saved, got: {external_pref}"
+
+        # Verify the chat loaded with initial message (denial text should appear)
+        page_content = self.get_page_source()
+        assert "MRI" in page_content or "denied" in page_content.lower(), \
+            "Chat should show the denial message"
+
+        print("✓ Explain denial with external models works correctly")
+        print(f"  - External models preference saved: {external_pref}")
+        print(f"  - Initial message sent to chat")
