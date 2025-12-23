@@ -27,7 +27,7 @@ if [ -d "${JS_PATH}" ]; then
   # Using -maxdepth 1 because source files are in the js directory, not subdirectories
   # (node_modules and dist are excluded by design)
   echo "Computing checksum..."
-  CURRENT_JS_CHECKSUM=$(find "${JS_PATH}" -maxdepth 1 -type f \( -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" \) ! -name "*.bundle.js"! -name "*.min.js" -exec md5sum {} \; 2>/dev/null | sort | md5sum | cut -d ' ' -f 1)
+  CURRENT_JS_CHECKSUM=$(find "${JS_PATH}" -maxdepth 1 -type f \( -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" \) ! -name "*.bundle.js" ! -name "*.min.js" -exec md5sum {} \; 2>/dev/null | sort | md5sum | cut -d ' ' -f 1)
   
   # Add checksums of package.json and webpack config if they exist
   if [ -f "${JS_PATH}/package.json" ]; then

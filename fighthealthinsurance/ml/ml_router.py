@@ -179,7 +179,7 @@ class MLRouter(object):
         if fhi_models:
             models += self.models_by_name[fhi_models[0]] * 2
         if use_external:
-            models += self.exeternal_models_by_cost[:2]
+            models += self.external_models_by_cost[:2]
         models += self.internal_models_by_cost[:6]
         return models
 
