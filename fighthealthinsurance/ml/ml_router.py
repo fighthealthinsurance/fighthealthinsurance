@@ -15,10 +15,12 @@ class MLRouter(object):
     models_by_name: dict[str, List[RemoteModelLike]] = {}
     internal_models_by_cost: List[RemoteModelLike] = []
     all_models_by_cost: List[RemoteModelLike] = []
+    external_models_by_cost: List[RemoteModelLike] = []
 
     def __init__(self):
         logger.debug(f"Starting model 'router'")
         building_internal_models_by_cost = []
+        building_external_models_by_cost = []
         building_all_models_by_cost = []
         building_models_by_name: dict[str, List[ModelDescription]] = {}
         for backend in candidate_model_backends:
@@ -33,9 +35,8 @@ class MLRouter(object):
                         logger.debug(f"Built {m.model}")
                     if not m.model.external:
                         building_internal_models_by_cost.append(m)
-                        building_internal_models_by_cost = (
-                            building_internal_models_by_cost
-                        )
+                    else:
+                        building_external_models_by_cost.append(m)
                     building_all_models_by_cost.append(m)
                     same_models: list[ModelDescription] = []
                     if m.name in building_models_by_name:
@@ -57,6 +58,11 @@ class MLRouter(object):
         ]
         self.all_models_by_cost = [
             x.model for x in sorted(building_all_models_by_cost) if x.model is not None
+        ]
+        self.external_models_by_cost = [
+            x.model
+            for x in sorted(building_external_models_by_cost)
+            if x.model is not None
         ]
         logger.debug(
             f"Built {self} with i:{self.internal_models_by_cost} a:{self.all_models_by_cost}"
@@ -172,6 +178,8 @@ class MLRouter(object):
         ]
         if fhi_models:
             models += self.models_by_name[fhi_models[0]] * 2
+        if use_external:
+            models += self.exeternal_models_by_cost[:2]
         models += self.internal_models_by_cost[:6]
         return models
 
