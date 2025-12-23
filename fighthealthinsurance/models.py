@@ -461,6 +461,58 @@ class PubMedQueryData(models.Model):
     created = models.DateTimeField(db_default=Now(), null=True)
 
 
+class GoogleScholarArticleSummarized(models.Model):
+    """Google Scholar articles with a summary for the given query."""
+
+    article_id = models.TextField(blank=True)  # Google Scholar article ID
+    title = models.TextField(blank=True, null=True)
+    publication_info = models.TextField(blank=True, null=True)
+    snippet = models.TextField(blank=True, null=True)
+    text = models.TextField(blank=True, null=True)
+    basic_summary = models.TextField(blank=True, null=True)
+    cited_by_count = models.IntegerField(null=True, blank=True)
+    cited_by_link = models.TextField(blank=True, null=True)
+    article_url = models.TextField(blank=True, null=True)
+    pdf_file = models.TextField(blank=True, null=True)
+    query = models.TextField(blank=True)
+    created = models.DateTimeField(db_default=Now(), null=True)
+
+    def __str__(self):
+        return f"{self.article_id} -- {self.title}"
+
+
+class GoogleScholarMiniArticle(models.Model):
+    """Google Scholar articles with minimal metadata."""
+
+    article_id = models.TextField(blank=True)  # Google Scholar article ID
+    title = models.TextField(blank=True, null=True)
+    snippet = models.TextField(blank=True, null=True)
+    publication_info = models.TextField(blank=True, null=True)
+    cited_by_count = models.IntegerField(null=True, blank=True)
+    cited_by_link = models.TextField(blank=True, null=True)
+    article_url = models.TextField(blank=True, null=True)
+    pdf_file = models.TextField(blank=True, null=True)
+    created = models.DateTimeField(db_default=Now(), null=True)
+
+    def __str__(self):
+        return f"{self.article_id} -- {self.title}"
+
+
+class GoogleScholarQueryData(models.Model):
+    """
+    Caches Google Scholar search results for medical literature queries.
+    Used to avoid redundant scraping and speed up appeal generation.
+    """
+
+    internal_id = models.AutoField(primary_key=True)
+    query = models.TextField(null=False, max_length=300)
+    since = models.TextField(null=True)  # text date for the since query
+    articles = models.TextField(null=True)  # json - list of article IDs
+    query_date = models.DateTimeField(auto_now_add=True)
+    denial_id = models.ForeignKey("Denial", on_delete=models.SET_NULL, null=True)
+    created = models.DateTimeField(db_default=Now(), null=True)
+
+
 class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # type: ignore
     """
     Queues faxes to be sent with appeal documents.
@@ -643,6 +695,8 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     # pubmed articles to be used to create the input context to the appeal
     pubmed_ids_json = models.JSONField(null=True, blank=True)
     pubmed_context = models.TextField(null=True, blank=True)
+    # google scholar context for the appeal
+    scholar_context = models.TextField(null=True, blank=True)
     generated_questions = models.JSONField(null=True, blank=True)
     # ML-generated citations for the appeal
     ml_citation_context = models.JSONField(null=True, blank=True)

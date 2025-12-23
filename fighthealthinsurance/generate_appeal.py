@@ -16,6 +16,7 @@ from .process_denial import ProcessDenialRegex
 from .utils import as_available_nested, best_within_timelimit
 from typing_extensions import reveal_type
 from .pubmed_tools import PubMedTools
+from .google_scholar_tools import GoogleScholarTools
 
 import json
 

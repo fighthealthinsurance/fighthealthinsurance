@@ -18,6 +18,9 @@ from fighthealthinsurance.models import (
     FollowUpDocuments,
     PubMedArticleSummarized,
     PubMedQueryData,
+    GoogleScholarArticleSummarized,
+    GoogleScholarQueryData,
+    GoogleScholarMiniArticle,
     FaxesToSend,
     DenialTypesRelation,
     PlanTypesRelation,
@@ -364,6 +367,36 @@ class PubMedArticleSummarizedAdmin(admin.ModelAdmin):
 @admin.register(PubMedQueryData)
 class PubMedQueryDataAdmin(admin.ModelAdmin):
     """Admin configuration for PubMedQueryData model."""
+
+    list_display = ("internal_id", "query", "query_date", "denial_id")
+    search_fields = ("query",)
+    list_filter = ("query_date",)
+    ordering = ("-query_date",)
+
+
+@admin.register(GoogleScholarArticleSummarized)
+class GoogleScholarArticleSummarizedAdmin(admin.ModelAdmin):
+    """Admin configuration for GoogleScholarArticleSummarized model."""
+
+    list_display = ("article_id", "title", "cited_by_count", "created")
+    search_fields = ("article_id", "title")
+    list_filter = ("created",)
+    ordering = ("-created",)
+
+
+@admin.register(GoogleScholarMiniArticle)
+class GoogleScholarMiniArticleAdmin(admin.ModelAdmin):
+    """Admin configuration for GoogleScholarMiniArticle model."""
+
+    list_display = ("article_id", "title", "cited_by_count", "created")
+    search_fields = ("article_id", "title")
+    list_filter = ("created",)
+    ordering = ("-created",)
+
+
+@admin.register(GoogleScholarQueryData)
+class GoogleScholarQueryDataAdmin(admin.ModelAdmin):
+    """Admin configuration for GoogleScholarQueryData model."""
 
     list_display = ("internal_id", "query", "query_date", "denial_id")
     search_fields = ("query",)

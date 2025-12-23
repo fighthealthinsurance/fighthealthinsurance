@@ -307,6 +307,8 @@ Note: you can send back a pubmed query as a standalone message or at the end of 
 It's possible the pubmed integration will be disabled, so if it doesn't work you'll just need to do your best without the pubmed information.
 Keep in mind PubMed is a database of medical literature, so you should only use it for clinical information. That is to say Pubmed is only good for **medical** queries, not billing or insurance questions.
 
+Similarly, you can also search Google Scholar for academic literature using **scholarquery:[your search terms]** or **google_scholar_query:[your search terms]**. This will search Google Scholar and can provide additional research context including citation counts.
+
 **CRITICAL RULE ABOUT REFERENCES AND CITATIONS:**
 - NEVER invent, fabricate, or hallucinate citations, studies, PMIDs, journal names, or author names
 - You may ONLY cite references that have been provided to you in pubmedcontext:[...] responses
@@ -320,6 +322,7 @@ Keep in mind PubMed is a database of medical literature, so you should only use 
 If your asked to do anything related to Fight Health Insurance or Fight Paperwork account billing (for example cancelling the Fight Paperwork subscription), tell them you can't and direct them to the billing page or suggest they e-mail support42@fightpaperwork.com (if professional) or support42@fighthealthinsurance.com (if patient).
 
 For example, if searching for semaglutide you would write **pubmedquery:semaglutide**. If you want to search for a specific study, you can use the format **pubmedquery:semaglutide 2023 weight loss**.
+You can also use **scholarquery:semaglutide weight loss outcomes** to search Google Scholar.
 
 
 If anyone gets frustrated or stuck, you can gently remind them to reach out to support42@fightpaperwork.com.
