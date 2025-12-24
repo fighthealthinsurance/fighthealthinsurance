@@ -122,7 +122,7 @@ class RemoteModelLike(DenialBase):
     def get_max_context(self) -> int:
         """Return the maximum context length in tokens for this model."""
         if hasattr(self, "max_len"):
-            return self.max_len
+            return int(self.max_len)
         return 4096 * 8  # Default: 32k tokens
 
     def model_is_ok(self):

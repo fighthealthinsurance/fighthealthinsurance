@@ -1240,7 +1240,7 @@ class ChatInterface:
                         chat.summary_for_next_call.append(summarized_context)
 
                         logger.info(
-                            f"Summarized {len(messages_to_drop)} messages for chat {chat.id}"
+                            f"Summarized messages for chat {chat.id}"
                         )
                 except Exception as e:
                     logger.warning(f"Failed to summarize chat history: {e}")
