@@ -50,7 +50,7 @@ class CombinedStorage(Storage):
                 with Timeout(2.0) as _timeout_ctx:
                     return backend.delete(name)
             except Exception as e:
-                logger.error(f"Error {e} deleteing {name} from {self}")
+                logger.error(f"Error {e} deleting {name} from {self}")
                 last_error = e
         if last_error is not None:
             raise last_error
