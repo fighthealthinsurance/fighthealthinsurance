@@ -68,7 +68,7 @@ spec:
               httpHeaders:
                 - name: Host
                   value: "staging.fighthealthinsurance.com"
-              path: /staging
+              path: /scan
               port: 80
             periodSeconds: 180
           startupProbe:
@@ -76,7 +76,7 @@ spec:
               httpHeaders:
                 - name: Host
                   value: "staging.fighthealthinsurance.com"
-              path: /staging
+              path: /scan
               port: 80
             periodSeconds: 10
             failureThreshold: 45
