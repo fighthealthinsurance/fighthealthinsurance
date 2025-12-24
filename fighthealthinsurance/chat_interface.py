@@ -350,16 +350,17 @@ class ChatInterface:
                 retry_calls.append(call)
                 retry_scores[call] = model_backend.quality() * 50
 
-            for model_backend in fallback_backends:
-                call = model_backend.generate_chat_response(
-                    current_message_for_llm,
-                    previous_context_summary=previous_context_summary,
-                    history=history,
-                    is_professional=not self.is_patient,
-                    is_logged_in=is_logged_in,
-                )
-                retry_calls.append(call)
-                retry_scores[call] = model_backend.quality() * 20
+            if fallback_backends:
+                for model_backend in fallback_backends:
+                    call = model_backend.generate_chat_response(
+                        current_message_for_llm,
+                        previous_context_summary=previous_context_summary,
+                        history=history,
+                        is_professional=not self.is_patient,
+                        is_logged_in=is_logged_in,
+                    )
+                    retry_calls.append(call)
+                    retry_scores[call] = model_backend.quality() * 20
 
             def retry_score_fn(result, original_task):
                 score = retry_scores.get(original_task, 0)
@@ -1215,33 +1216,32 @@ class ChatInterface:
             if should_summarize:
                 try:
                     await self.send_status_message("Summarizing conversation context...")
-                    if messages_to_drop:
-                        # Create a fresh summary of what's being dropped
-                        # We always create a new summary even if there's an existing one
-                        history_summary = await ml_router.summarize_chat_history(
-                            history_for_llm[:-messages_to_keep], max_messages=0  # Summarize all dropped messages
-                        )
+                    # Create a fresh summary of what's being dropped
+                    # We always create a new summary even if there's an existing one
+                    history_summary = await ml_router.summarize_chat_history(
+                        history_for_llm[:-messages_to_keep], max_messages=0  # Summarize all dropped messages
+                    )
 
-                        if history_summary:
-                            # Build the new summarized context
-                            if summarized_context:
-                                summarized_context = (
-                                    f"Earlier conversation summary: {history_summary}\n\n"
-                                    f"Additional context: {summarized_context}"
-                                )
-                            else:
-                                summarized_context = (
-                                    f"Earlier conversation summary: {history_summary}"
-                                )
-
-                            # Store the summary for future calls
-                            if not chat.summary_for_next_call:
-                                chat.summary_for_next_call = []
-                            chat.summary_for_next_call.append(summarized_context)
-
-                            logger.info(
-                                f"Summarized {len(messages_to_drop)} messages for chat {chat.id}"
+                    if history_summary:
+                        # Build the new summarized context
+                        if summarized_context:
+                            summarized_context = (
+                                f"Earlier conversation summary: {history_summary}\n\n"
+                                f"Additional context: {summarized_context}"
                             )
+                        else:
+                            summarized_context = (
+                                f"Earlier conversation summary: {history_summary}"
+                            )
+
+                        # Store the summary for future calls
+                        if not chat.summary_for_next_call:
+                            chat.summary_for_next_call = []
+                        chat.summary_for_next_call.append(summarized_context)
+
+                        logger.info(
+                            f"Summarized {len(messages_to_drop)} messages for chat {chat.id}"
+                        )
                 except Exception as e:
                     logger.warning(f"Failed to summarize chat history: {e}")
                     # Continue with truncated history if summarization fails
