@@ -83,7 +83,7 @@ def ensure_message_alternation(history: List[Dict[str, Any]]) -> List[Dict[str, 
         List of messages with proper alternation (user/assistant/user/assistant...)
     """
     if not history:
-        raise Exception("History can not be empty")
+        return []
 
     result: List[Dict[str, Any]] = []
     def _normalize_role(role: str) -> str:
