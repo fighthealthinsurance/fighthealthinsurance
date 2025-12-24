@@ -116,8 +116,9 @@ class ActivateProUserView(generic.FormView):
         professionals.update(active=True)
         # Bulk update the auth users
         from django.contrib.auth import get_user_model
+
         User = get_user_model()
-        user_ids = list(professionals.values_list('user_id', flat=True))
+        user_ids = list(professionals.values_list("user_id", flat=True))
         User.objects.filter(id__in=user_ids).update(is_active=True)
         # Bulk update domain relations
         ProfessionalDomainRelation.objects.filter(domain=domain).update(
