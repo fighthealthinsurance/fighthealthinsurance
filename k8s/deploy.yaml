@@ -44,6 +44,9 @@ spec:
           env:
           - name: POLLING_ACTORS
             value: "1"
+          env:
+          - name: BRB
+            value: "BRB"
           envFrom:
           - secretRef:
               name: fight-health-insurance-secret
@@ -82,7 +85,7 @@ spec:
           name: totallylegitco
           env:
           - name: BRB
-            value: LIVE
+            value: "BRB"
           envFrom:
           - secretRef:
               name: fight-health-insurance-secret

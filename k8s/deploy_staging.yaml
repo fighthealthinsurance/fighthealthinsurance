@@ -53,6 +53,9 @@ spec:
       containers:
         - image: ${FHI_BASE}:${FHI_VERSION}
           name: totallylegitco
+          env:
+          - name: BRB
+            value: "BRB"
           envFrom:
           - secretRef:
               name: fight-health-insurance-secret
@@ -65,7 +68,7 @@ spec:
               httpHeaders:
                 - name: Host
                   value: "staging.fighthealthinsurance.com"
-              path: /
+              path: /staging
               port: 80
             periodSeconds: 180
           startupProbe:
@@ -73,7 +76,7 @@ spec:
               httpHeaders:
                 - name: Host
                   value: "staging.fighthealthinsurance.com"
-              path: /
+              path: /staging
               port: 80
             periodSeconds: 10
             failureThreshold: 45
