@@ -29,24 +29,33 @@ class ChatStatusMessageTest(APITestCase):
 
     async def asyncSetUp(self):
         """
-        Prepare the async test fixture by creating a MockChatModel and patching ml_router.get_chat_backends to return it.
-        
-        Initializes self.mock_model, starts a patcher stored in self.get_chat_backends_patcher, and assigns the started patch mock to self.mock_get_chat_backends so it returns [self.mock_model].
+        Prepare the async test fixture by creating a MockChatModel and patching ml_router methods.
+
+        Initializes self.mock_model, starts patchers for both get_chat_backends and
+        get_chat_backends_with_fallback to return the mock model.
         """
         self.mock_model = MockChatModel()
+
+        # Patch get_chat_backends for direct calls
         self.get_chat_backends_patcher = patch(
             "fighthealthinsurance.ml.ml_router.ml_router.get_chat_backends"
         )
         self.mock_get_chat_backends = self.get_chat_backends_patcher.start()
         self.mock_get_chat_backends.return_value = [self.mock_model]
 
+        # Patch get_chat_backends_with_fallback for chat_interface calls
+        self.get_chat_backends_with_fallback_patcher = patch(
+            "fighthealthinsurance.ml.ml_router.ml_router.get_chat_backends_with_fallback"
+        )
+        self.mock_get_chat_backends_with_fallback = self.get_chat_backends_with_fallback_patcher.start()
+        self.mock_get_chat_backends_with_fallback.return_value = ([self.mock_model], [])
+
     async def asyncTearDown(self):
         """
-        Stop the patched chat backend getter and perform async test teardown.
-        
-        This stops the patcher created in asyncSetUp, restoring the original get_chat_backends implementation.
+        Stop the patched chat backend getters and perform async test teardown.
         """
         self.get_chat_backends_patcher.stop()
+        self.get_chat_backends_with_fallback_patcher.stop()
 
     async def test_send_status_message(self):
         """Test that status messages are sent correctly via ChatInterface."""
@@ -199,8 +208,8 @@ class ChatStatusMessageTest(APITestCase):
             "Medicaid context"
         )
 
-        # Mock medicaid API
-        with patch('fighthealthinsurance.chat_interface.get_medicaid_info', return_value="Medicaid info"):
+        # Mock medicaid API (patch at source since it's imported inside the function)
+        with patch('fighthealthinsurance.medicaid_api.get_medicaid_info', return_value="Medicaid info"):
             # Call the LLM which will trigger Medicaid status messages
             await chat_interface._call_llm_with_actions(
                 [self.mock_model],
@@ -228,6 +237,11 @@ class ChatStatusMessageTest(APITestCase):
         await sync_to_async(ChatLeads.objects.create)(
             session_id=session_key,
             email="trial@example.com",
+            name="Trial User",
+            phone="555-1234",
+            company="Test Company",
+            consent_to_contact=True,
+            agreed_to_terms=True,
         )
 
         # Create communicator
@@ -277,7 +291,12 @@ class ChatStatusMessageTest(APITestCase):
         chat_ids = [r.get("chat_id") for r in responses if "chat_id" in r]
         self.assertGreater(len(chat_ids), 0, "Expected to receive a chat_id")
 
-        await communicator.disconnect()
+        # Give async tasks time to complete before disconnecting
+        await asyncio.sleep(0.1)
+        try:
+            await communicator.disconnect()
+        except asyncio.CancelledError:
+            pass  # Expected when async tasks are still running
         await self.asyncTearDown()
 
     async def test_multiple_status_updates(self):
@@ -440,6 +459,11 @@ class ChatStatusMessageTest(APITestCase):
         await sync_to_async(ChatLeads.objects.create)(
             session_id=session_key,
             email="clear@example.com",
+            name="Clear User",
+            phone="555-5678",
+            company="Test Company",
+            consent_to_contact=True,
+            agreed_to_terms=True,
         )
 
         # Create communicator
@@ -484,7 +508,12 @@ class ChatStatusMessageTest(APITestCase):
         self.assertIsNotNone(response, "Should have received a response")
         self.assertIn("content", response)
 
-        await communicator.disconnect()
+        # Give async tasks time to complete before disconnecting
+        await asyncio.sleep(0.1)
+        try:
+            await communicator.disconnect()
+        except asyncio.CancelledError:
+            pass  # Expected when async tasks are still running
         await self.asyncTearDown()
 
     async def test_retry_functionality(self):

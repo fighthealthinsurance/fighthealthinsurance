@@ -100,7 +100,8 @@ _FALSE_PROMISE_REGEX: Pattern[str] = re.compile(
 )
 
 # Tool call regexes
-pubmed_query_terms_regex = r"[\[\*]{0,4}pubmed[ _]?query:{0,1}\s*(.*?)\s*[\*\]]{0,4}"
+# Capture query terms by matching non-marker characters (avoids non-greedy issues with optional end markers)
+pubmed_query_terms_regex = r"[\[\*]{0,4}pubmed[ _]?query:?\s*([^*\[\]]+)"
 # Updated regex to match both formats: **medicaid_info {JSON}** and medicaid_info {JSON}
 medicaid_info_lookup_regex = r"(?:\*\*)?medicaid_info\s*(\{[^}]*\})\s*(?:\*\*)?"
 # Medicaid eligibility info
