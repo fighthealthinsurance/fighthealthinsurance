@@ -67,8 +67,11 @@ class FollowUpEmailSender(object):
                 .filter(follow_up_date__lt=datetime.date.today())
                 .distinct("email")
             )
+            # Force partial evaluation to catch DISTINCT ON errors (SQLite doesn't support it)
+            candidates.exists()
             return candidates
-        except:
+        except Exception:
+            # Fallback for databases that don't support DISTINCT ON (like SQLite)
             candidates = FollowUpSched.objects.filter(follow_up_sent=False).filter(
                 follow_up_date__lt=datetime.date.today()
             )

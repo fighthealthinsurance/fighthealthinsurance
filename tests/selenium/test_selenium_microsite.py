@@ -13,7 +13,7 @@ BaseCase.main(__name__, __file__)
 
 class SeleniumTestMicrositeIntegration(FHISeleniumBase, StaticLiveServerTestCase):
     """Test microsite integration with appeal flow and chat interface."""
-    
+
     fixtures = [
         "fighthealthinsurance/fixtures/initial.yaml",
         "fighthealthinsurance/fixtures/followup.yaml",
@@ -22,11 +22,13 @@ class SeleniumTestMicrositeIntegration(FHISeleniumBase, StaticLiveServerTestCase
 
     @classmethod
     def setUpClass(cls):
-        super(SeleniumTestMicrositeIntegration, cls).setUpClass()
+        super(StaticLiveServerTestCase, cls).setUpClass()
+        super(BaseCase, cls).setUpClass()
 
     @classmethod
     def tearDownClass(cls):
-        super(SeleniumTestMicrositeIntegration, cls).tearDownClass()
+        super(StaticLiveServerTestCase, cls).tearDownClass()
+        super(BaseCase, cls).tearDownClass()
 
     def test_microsite_appeal_flow_stores_slug(self):
         """Test that coming from a microsite stores the microsite_slug in the Denial."""
@@ -212,11 +214,13 @@ class SeleniumTestMicrositeExistingUser(FHISeleniumBase, StaticLiveServerTestCas
 
     @classmethod
     def setUpClass(cls):
-        super(SeleniumTestMicrositeExistingUser, cls).setUpClass()
+        super(StaticLiveServerTestCase, cls).setUpClass()
+        super(BaseCase, cls).setUpClass()
 
     @classmethod
     def tearDownClass(cls):
-        super(SeleniumTestMicrositeExistingUser, cls).tearDownClass()
+        super(StaticLiveServerTestCase, cls).tearDownClass()
+        super(BaseCase, cls).tearDownClass()
 
     def setup_existing_session(self, email):
         """Set up an existing chat session."""
