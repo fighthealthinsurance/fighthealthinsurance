@@ -55,7 +55,7 @@ spec:
           name: totallylegitco
           env:
           - name: BRB
-            value: "BRB"
+            value: "LIVE"
           envFrom:
           - secretRef:
               name: fight-health-insurance-secret

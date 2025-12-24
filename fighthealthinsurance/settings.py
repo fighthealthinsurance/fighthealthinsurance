@@ -729,43 +729,6 @@ class Prod(Base):
             print(traceback.format_exc())
             return None
 
-    BB_STORAGE_ENDPOINT = os.getenv("BB_STORAGE_ENDPOINT", None)
-    BB_STORAGE_ACCESS_KEY = os.getenv("BB_STORAGE_ACCESS_KEY", None)
-    BB_STORAGE_SECRET_KEY = os.getenv("BB_STORAGE_SECRET_KEY", None)
-    BB_STORAGE_MEDIA_BUCKET_NAME = os.getenv("BB_STORAGE_MEDIA_BUCKET_NAME", None)
-    BB_REGION_NAME = os.getenv("BB_REGION_NAME", None)
-
-    @cached_property
-    def EXTERNAL_STORAGE_C(self) -> Optional[Storage]:
-        try:
-            with Timeout(30.0) as _timeout_ctx:
-                if (
-                    self.BB_STORAGE_ENDPOINT is not None
-                    and self.BB_STORAGE_ACCESS_KEY is not None
-                    and self.BB_STORAGE_SECRET_KEY is not None
-                    and self.BB_STORAGE_MEDIA_BUCKET_NAME is not None
-                ):
-                    minio_client = m.Minio(
-                        self.BB_STORAGE_ENDPOINT,
-                        access_key=self.BB_STORAGE_ACCESS_KEY,
-                        secret_key=self.BB_STORAGE_SECRET_KEY,
-                        region=self.BB_REGION_NAME,
-                    )
-                    minio = MinioStorage(
-                        minio_client,
-                        bucket_name=self.BB_STORAGE_MEDIA_BUCKET_NAME,
-                        auto_create_bucket=True,
-                    )
-                    return minio
-                else:
-                    raise Exception("Back blaze storage endpoint configured")
-        except Exception as e:
-            print(
-                f"Failed to setup back blaze minio storage to {self.MINIO_STORAGE_ENDPOINT} -- {e}"
-            )
-            print(traceback.format_exc())
-            return None
-
 
 TEST_RUNNER = "django_nose.NoseTestSuiteRunner"
 
