@@ -123,6 +123,8 @@ class ActivateProUserView(generic.FormView):
         ProfessionalDomainRelation.objects.filter(domain=domain).update(
             active_domain_relation=True,
             pending_domain_relation=False,
+            suspended=False,
+            rejected=False,
         )
         return HttpResponse("Pro user activated")
 
