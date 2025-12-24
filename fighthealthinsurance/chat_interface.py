@@ -1215,14 +1215,11 @@ class ChatInterface:
             if should_summarize:
                 try:
                     await self.send_status_message("Summarizing conversation context...")
-                    # Get the messages that will be dropped (everything except last 20)
-                    messages_to_drop = history_for_llm[:-messages_to_keep]
-
                     if messages_to_drop:
                         # Create a fresh summary of what's being dropped
                         # We always create a new summary even if there's an existing one
                         history_summary = await ml_router.summarize_chat_history(
-                            messages_to_drop, max_messages=0  # Summarize all dropped messages
+                            history_for_llm[:-messages_to_keep], max_messages=0  # Summarize all dropped messages
                         )
 
                         if history_summary:
@@ -1255,9 +1252,6 @@ class ChatInterface:
                 f"Truncated history to last {messages_to_keep} messages for chat {chat.id}"
             )
 
-        # Ensure proper user/assistant alternation by merging consecutive same-role messages
-        history_for_llm = ensure_message_alternation(history_for_llm)
-
         final_response_text = None
         final_context_part = None
 
@@ -1274,7 +1268,7 @@ class ChatInterface:
                 primary_models,
                 llm_input_message,
                 summarized_context,
-                history_for_llm,  # Pass current history (possibly truncated)
+                history_for_llm,
                 is_logged_in=(not is_trial_professional) and not is_patient,
                 fallback_backends=fallback_models if fallback_models else None,
                 full_history=full_history_for_llm,  # Also try with full history if model supports it
@@ -1330,10 +1324,9 @@ class ChatInterface:
                     }
                 )
 
-            if final_context_part:
-                if not chat.summary_for_next_call:
-                    chat.summary_for_next_call = []
-                chat.summary_for_next_call.append(final_context_part)
+            if not chat.summary_for_next_call:
+                chat.summary_for_next_call = []
+            chat.summary_for_next_call.append(final_context_part)
 
             chat.chat_history.append(
                 {

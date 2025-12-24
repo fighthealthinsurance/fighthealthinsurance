@@ -83,20 +83,31 @@ def ensure_message_alternation(history: List[Dict[str, Any]]) -> List[Dict[str, 
         List of messages with proper alternation (user/assistant/user/assistant...)
     """
     if not history:
-        return []
+        raise Exception("History can not be empty")
 
     result: List[Dict[str, Any]] = []
+    def _normalize_role(role: str) -> str:
+        lr = role.lower()
+        if "system" in lr:
+            return "system"
+        elif lr in ("agent", "assistant"):
+            return "assistant"
+        elif lr in ("user"):
+            return "user"
+        else:
+            logger.debug("Unknown role {role}")
+            return "user"
     for msg in history:
         role = msg.get("role", "unknown")
         content = msg.get("content", "")
 
-        # Normalize role: treat 'agent', 'system', 'assistant' as 'assistant'
-        normalized_role = "assistant" if role in ("assistant", "agent", "system") else "user"
+        # Normalize role: treat 'agent', 'assistant' as 'assistant'
+        normalized_role = _normalize_role(role)
 
         if not content:
             continue
 
-        if result and result[-1].get("role") == normalized_role:
+        if result and len(result) > 0 and result[-1].get("role") == normalized_role:
             # Merge with previous message of same role
             result[-1]["content"] = result[-1]["content"] + "\n" + content
             # Preserve the most recent timestamp if available
@@ -108,6 +119,14 @@ def ensure_message_alternation(history: List[Dict[str, Any]]) -> List[Dict[str, 
             if "timestamp" in msg:
                 new_msg["timestamp"] = msg["timestamp"]
             result.append(new_msg)
+
+    if (result and result[0]):
+        if (result[0].get("role") == "assistant"):
+            logger.error("We should always start with a user or system message instead {result}")
+            result = result[1:]
+        elif (result[0].get("role") == "system" and result[1] and result[1].get("role") == "assistant"):
+            logger.error("We should always start have a user message after system instead {result}")
+            result = [result[0]] + result[2:]
 
     return result
 
