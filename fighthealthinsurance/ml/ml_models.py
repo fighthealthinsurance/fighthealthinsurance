@@ -12,6 +12,7 @@ from concurrent.futures import Future
 from dataclasses import dataclass
 from typing import Callable, ClassVar, List, Optional, Tuple, Iterable, Union
 from loguru import logger
+from fighthealthinsurance.utils import ensure_message_alternation
 import requests
 
 # Import the appropriate async_timeout based on Python version
@@ -117,6 +118,12 @@ class RemoteModelLike(DenialBase):
 
     def quality(self) -> int:
         return 100
+
+    def get_max_context(self) -> int:
+        """Return the maximum context length in tokens for this model."""
+        if hasattr(self, "max_len"):
+            return int(self.max_len)
+        return 4096 * 8  # Default: 32k tokens
 
     def model_is_ok(self):
         return False
@@ -249,7 +256,7 @@ class RemoteModelLike(DenialBase):
 
     async def generate_chat_response(
         self,
-        current_message: str,
+        current_message_for_llm: Optional[str],
         previous_context_summary: Optional[str] = None,
         history: Optional[List[dict[str, str]]] = None,
         temperature: float = 0.7,
@@ -274,10 +281,14 @@ class RemoteModelLike(DenialBase):
             Generated response or None
         """
         previous_context_extra = (
-            f"The previous context is: {previous_context_summary}"
+            f"The previous context is: {previous_context_summary}\n\n And the active question is:"
             if previous_context_summary
             else ""
         )
+
+        if not current_message_for_llm or len(current_message_for_llm) == 0:
+            raise Exception("No message for LLM")
+        current_message: str = current_message_for_llm
 
         # Auto-detect if Medicaid-related if not explicitly specified
         if is_medicaid_related is None:
@@ -500,7 +511,7 @@ Some important notes:
 
 So for example if a user asks a question and you have a follow up (like "How do I appeal a GLP-1 denial?") and your question is "What reason did they give you for your GLP-1 denied?" you would respond with:
 What reason did they give you for your GLP-1 denied?🐼Helping a patient appeal a GLP-1 denial.
-Remember in the last three sentences GLP-1 is just an _example_ check what the user is actually chatting about.
+Remember in the last three sentences GLP-1 is just an _example_ check what the user is actually chatting about. You'll want to include all of the context collected so far in the summary after the panda emoji.
 """
         result: Optional[str] = None
         c = 0
@@ -512,10 +523,10 @@ Remember in the last three sentences GLP-1 is just an _example_ check what the u
             c = c + 1
             result_extra = ""
             if result and len(result) > 0 and "🐼" not in result:
-                result_extra = f"Your previous answer {result} was missing the panda emoji 🐼 and the context information. Please try again."
+                result_extra = f"Your previous answer -- {result} -- was missing the panda emoji 🐼 and the context information. Please try again.\n\n"
             raw_result = await self._infer(
                 system_prompts=[base_system_prompt],
-                prompt=f"{current_message}\n{previous_context_extra}\n{result_extra}",
+                prompt=f"{result_extra}{previous_context_extra}{current_message}",
                 history=history,
                 temperature=temperature,
             )
@@ -1536,6 +1547,8 @@ class RemoteOpenLike(RemoteModel):
                     context_extra += f"For answering the question you can use this context about the plan {plan_context}"
                 if ml_citations_context is not None:
                     context_extra += f"You can also use this context from citations: {ml_citations_context}."
+                if len(context_extra) > 0:
+                    context_extra = f"System context: {context_extra}\n\n"
 
                 # Detect if backend supports system messages
                 # Some backends (e.g., Mistral VLLM) do not support the system role; in those cases, embed the system prompt in the user message.
@@ -1548,68 +1561,22 @@ class RemoteOpenLike(RemoteModel):
                     ]
                 elif self.system_as_user:
                     # If the system prompt is to be treated as a user message
-                    system_extra = f"{system_prompt}\n"
+                    messages += [
+                        {"role": "user", "content": system_prompt},
+                    ]
                 else:
-                    system_extra = f"<<SYS>>{system_prompt}<</SYS>>"
+                    system_extra = f"System prompt: {system_prompt}\n\n"
                 if history:
-                    # Add history messages if provided
-                    for message in history:
-                        if message["role"] == "user":
-                            if (
-                                message["content"]
-                                and message["content"].strip() != prompt.strip()
-                            ):
-                                if (
-                                    len(messages) > 0
-                                    and messages[-1]
-                                    and messages[-1]["role"] == "user"
-                                ):
-                                    # If the last message was also a user message, append the new one
-                                    messages[-1]["content"] += f"\n{message['content']}"
-                                else:
-                                    messages.append(
-                                        {
-                                            "role": "user",
-                                            "content": f"{context_extra}{message['content']}",
-                                        }
-                                    )
-                        else:
-                            if (
-                                len(messages) > 0
-                                and messages[-1]
-                                and messages[-1]["role"] == "assistant"
-                            ):
-                                # If the last message was also a user message, append the new one
-                                messages[-1]["content"] += f"\n{message['content']}"
-                            else:
-                                messages.append(
-                                    {
-                                        "role": "assistant",
-                                        "content": message["content"],
-                                    }
-                                )
-                if len(messages) == 0:
+                    messages.extend(history)
+                if prompt:
                     messages += [
                         {
                             "role": "user",
-                            "content": f"{system_extra}{context_extra}{prompt[0 : self.max_len]}",
-                        },
+                            "content": f"{system_extra}{context_extra}\n\n User prompt: {prompt}",
+                        }
                     ]
-                else:
-                    if messages[-1]["role"] == "user":
-                        messages[-1][
-                            "content"
-                        ] += (
-                            f"\n{system_extra}{context_extra}{prompt[0 : self.max_len]}"
-                        )
-                    else:
-                        messages.append(
-                            {
-                                "role": "user",
-                                "content": f"{system_extra}{context_extra}{prompt[0 : self.max_len]}",
-                            }
-                        )
-                logger.debug(f"Using messages: {messages}")
+                messages = ensure_message_alternation(messages)
+                logger.debug(f"Using messages: {messages} from prompt {prompt} for {model}")
                 async with s.post(
                     url,
                     headers={"Authorization": f"Bearer {self.token}"},
@@ -1619,6 +1586,7 @@ class RemoteOpenLike(RemoteModel):
                         "temperature": temperature,
                     },
                 ) as response:
+                    logger.debug(f"Got response {response}...")
                     json_result = await response.json()
                     if "object" in json_result and json_result["object"] != "error":
                         logger.debug(f"Response {json_result} on {self} Looks ok")
@@ -2016,7 +1984,7 @@ class RemoteFullOpenLike(RemoteOpenLike):
             patient_context=patient_context,
             plan_context=plan_context,
             pubmed_context=pubmed_context,
-            temperature=0.25,  # Lower temperature to reduce creativity in citations
+            temperature=0.20,  # Lower temperature to reduce creativity in citations
         )
 
         if result is None:
@@ -2236,12 +2204,25 @@ class RemotePerplexity(RemoteFullOpenLike):
 class DeepInfra(RemoteFullOpenLike):
     """Use DeepInfra."""
 
+    # Model context lengths (in tokens) - most modern models support 128k
+    MODEL_CONTEXT_LENGTHS: ClassVar[dict[str, int]] = {
+        "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8": 128000,
+        "meta-llama/Llama-4-Scout-17B-16E-Instruct": 128000,
+        "google/gemma-3-27b-it": 128000,
+        "meta-llama/Meta-Llama-3.1-70B-Instruct": 128000,
+        "meta-llama/Llama-3.2-3B-Instruct": 128000,
+        "meta-llama/Llama-3.3-70B-Instruct-Turbo": 128000,
+        "deepseek-ai/DeepSeek-R1-Turbo": 64000,
+    }
+
     def __init__(self, model: str, dual_mode: bool = False):
         api_base = "https://api.deepinfra.com/v1/openai"
         token = os.getenv("DEEPINFRA_API")
         if token is None or len(token) < 1:
             raise Exception("No token found for deepinfra")
-        super().__init__(api_base, token, model=model, dual_mode=dual_mode)
+        # Use model-specific context length, default to 128k for unknown models
+        max_len = self.MODEL_CONTEXT_LENGTHS.get(model, 128000)
+        super().__init__(api_base, token, model=model, dual_mode=dual_mode, max_len=max_len)
 
     @property
     def supports_system(self):

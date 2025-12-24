@@ -29,7 +29,7 @@ from fighthealthinsurance.models import (
 from fighthealthinsurance.pubmed_tools import PubMedTools
 from fighthealthinsurance import settings
 from fighthealthinsurance.prompt_templates import get_intro_template
-from fighthealthinsurance.utils import best_within_timelimit
+from fighthealthinsurance.utils import best_within_timelimit, ensure_message_alternation
 
 # Crisis/self-harm detection - phrases indicating the user may need immediate help
 # IMPORTANT: These must be specific enough to NOT block legitimate mental health
@@ -208,10 +208,23 @@ class ChatInterface:
         is_logged_in: bool = True,
         is_professional: bool = True,
         fallback_backends: Optional[List[RemoteModelLike]] = None,
+        full_history: Optional[List[Dict[str, str]]] = None,
     ) -> Tuple[Optional[str], Optional[str]]:
         """
         Calls the LLM, handles PubMed query requests if present and returns the response.
         Also processes special tokens for creating or updating Appeals and PriorAuthRequests.
+
+        Args:
+            model_backends: List of model backends to try
+            current_message_for_llm: The current message to send
+            previous_context_summary: Summary of previous context
+            history_for_llm: Truncated history (last 20 messages)
+            depth: Recursion depth for tool handling
+            is_logged_in: Whether user is logged in
+            is_professional: Whether user is a professional
+            fallback_backends: Backup models to try if primary fails
+            full_history: Full untruncated history (optional) - will also try with this
+                         if provided and model context allows it
         """
         if depth > 3:
             return None, None
@@ -219,7 +232,13 @@ class ChatInterface:
         history = history_for_llm
         full_calls: List[Awaitable[Tuple[Optional[str], Optional[str]]]] = []
         call_scores: Dict[Awaitable[Tuple[Optional[str], Optional[str]]], int] = {}
+
+        # Estimate tokens per message (rough approximation: ~4 chars per token)
+        def estimate_history_tokens(hist: List[Dict[str, str]]) -> int:
+            return sum(len(msg.get("content", "")) for msg in hist) // 4
+
         for model_backend in model_backends:
+            # Try with truncated history
             call = model_backend.generate_chat_response(
                 current_message_for_llm,
                 previous_context_summary=previous_context_summary,
@@ -229,24 +248,27 @@ class ChatInterface:
             )
             full_calls.append(call)
             call_scores[call] = model_backend.quality() * 20
-        # Only add the short history version if we have long history.
-        calls = full_calls
-        if len(history) > 20:
-            short_history = history_for_llm[
-                -20:
-            ]  # Only use the last twenty messages in short history
-            for model_backend in model_backends[:2]:
-                short_awaitable: Awaitable[Tuple[Optional[str], Optional[str]]] = (
-                    model_backend.generate_chat_response(
+
+            # Also try with full history if provided and model can handle it
+            if full_history and full_history != history:
+                full_history_tokens = estimate_history_tokens(full_history)
+                model_max_context = model_backend.get_max_context()
+                # Leave room for system prompt and response (~8k tokens)
+                available_context = model_max_context - 8000
+
+                if full_history_tokens < available_context:
+                    full_history_call = model_backend.generate_chat_response(
                         current_message_for_llm,
                         previous_context_summary=previous_context_summary,
-                        history=short_history,
+                        history=full_history,
                         is_professional=not self.is_patient,
                         is_logged_in=is_logged_in,
                     )
-                )
-                calls.append(short_awaitable)
-                call_scores[short_awaitable] = model_backend.quality()
+                    full_calls.append(full_history_call)
+                    # Slightly prefer full history for better context
+                    call_scores[full_history_call] = model_backend.quality() * 22
+
+        calls = full_calls
 
         def score_fn(result, original_task):
             score = 0.0
@@ -296,9 +318,7 @@ class ChatInterface:
 
         # If primary models failed, retry internal models with shorter context first
         if not response_text or len(response_text.strip()) < 5:
-            logger.info(
-                "Primary attempt failed, retrying internal models with reduced context"
-            )
+            logger.info("Primary attempt failed, retrying with compacted context")
             await self.send_status_message("Retrying with optimized context...")
 
             # Retry with shorter history (last 5 messages only)
@@ -319,6 +339,29 @@ class ChatInterface:
                     model_backend.quality() * 15
                 )  # Slightly lower score for retry
 
+            for model_backend in model_backends:
+                call = model_backend.generate_chat_response(
+                    current_message_for_llm,
+                    previous_context_summary=previous_context_summary,
+                    history=history,
+                    is_professional=not self.is_patient,
+                    is_logged_in=is_logged_in,
+                )
+                retry_calls.append(call)
+                retry_scores[call] = model_backend.quality() * 50
+
+            if fallback_backends:
+                for model_backend in fallback_backends:
+                    call = model_backend.generate_chat_response(
+                        current_message_for_llm,
+                        previous_context_summary=previous_context_summary,
+                        history=history,
+                        is_professional=not self.is_patient,
+                        is_logged_in=is_logged_in,
+                    )
+                    retry_calls.append(call)
+                    retry_scores[call] = model_backend.quality() * 20
+
             def retry_score_fn(result, original_task):
                 score = retry_scores.get(original_task, 0)
                 if result is None:
@@ -337,68 +380,16 @@ class ChatInterface:
                 retry_response, retry_context = await best_within_timelimit(
                     retry_calls,
                     retry_score_fn,
-                    timeout=45.0,  # Give retry a bit more time
+                    timeout=35.0,
                 )
                 if retry_response and len(retry_response.strip()) > 5:
                     response_text = retry_response
                     context_part = retry_context
-                    logger.info("Successfully got response from internal model retry")
-            except Exception as e:
-                logger.warning(f"Internal model retry also failed: {e}")
-
-        # If internal retry also failed and we have external fallback backends, try those
-        if (not response_text or len(response_text.strip()) < 5) and fallback_backends:
-            logger.info(
-                f"Internal models failed, trying {len(fallback_backends)} fallback models"
-            )
-            await self.send_status_message(
-                "Primary models are busy, trying backup models..."
-            )
-
-            fallback_calls: List[Awaitable[Tuple[Optional[str], Optional[str]]]] = []
-            fallback_scores: Dict[
-                Awaitable[Tuple[Optional[str], Optional[str]]], int
-            ] = {}
-
-            for model_backend in fallback_backends:
-                call = model_backend.generate_chat_response(
-                    current_message_for_llm,
-                    previous_context_summary=previous_context_summary,
-                    history=history,
-                    is_professional=not self.is_patient,
-                    is_logged_in=is_logged_in,
-                )
-                fallback_calls.append(call)
-                fallback_scores[call] = model_backend.quality() * 20
-
-            def fallback_score_fn(result, original_task):
-                score = fallback_scores.get(original_task, 0)
-                if result is None:
-                    return float("-inf")
-                if not result[1] and not result[0]:
-                    return float("-inf")
-                if result[0] and len(result[0]) > 5:
-                    score += 100
-                    if _detect_false_promises(result[0]):
-                        score -= 200
-                if result[1] and len(result[1]) > 5:
-                    score += 10
-                return score
-
-            try:
-                fallback_response, fallback_context = await best_within_timelimit(
-                    fallback_calls,
-                    fallback_score_fn,
-                    timeout=45.0,  # Give fallback a bit more time
-                )
-                if fallback_response and len(fallback_response.strip()) > 5:
-                    response_text = fallback_response
-                    context_part = fallback_context
                     logger.info(
                         "Successfully got response from external fallback models"
                     )
             except Exception as e:
-                logger.warning(f"External fallback models also failed: {e}")
+                logger.warning(f"Fallback models also failed: {e}")
 
         logger.debug(f"Using best result {response_text:.20}...")
 
@@ -1206,34 +1197,60 @@ class ChatInterface:
         # History passed to LLM should be the state *before* this user_message
         history_for_llm = list(chat.chat_history) if chat.chat_history else []
 
+        # Keep full history for models with large context windows
+        full_history_for_llm: Optional[List[Dict[str, str]]] = None
+
         # If history is getting long, summarize older messages to reduce context size
         # This helps prevent timeouts and improves model performance
+        # We trigger summarization after 20 messages, and re-summarize every 10 messages thereafter
         summarized_context = current_llm_context
-        if len(history_for_llm) > 15:
-            try:
-                await self.send_status_message("Summarizing conversation context...")
-                history_summary = await ml_router.summarize_chat_history(
-                    history_for_llm, max_messages=10
-                )
-                if history_summary:
-                    # Prepend the summary to the context
-                    if summarized_context:
-                        summarized_context = (
-                            f"Earlier conversation summary: {history_summary}\n\n"
-                            + summarized_context
-                        )
-                    else:
-                        summarized_context = (
-                            f"Earlier conversation summary: {history_summary}"
-                        )
-                    # Use only the last 10 messages for the actual history
-                    history_for_llm = history_for_llm[-10:]
-                    logger.info(
-                        f"Summarized chat history for {chat.id}, keeping last 10 messages"
+        messages_to_keep = 20
+        if len(history_for_llm) > messages_to_keep:
+            # Preserve full history for models with large context (will be filtered by context size)
+            full_history_for_llm = ensure_message_alternation(list(history_for_llm))
+
+            # Check if we should summarize (every 10 messages after threshold)
+            messages_over_threshold = len(history_for_llm) - messages_to_keep
+            should_summarize = messages_over_threshold % 10 == 0 or messages_over_threshold == 1
+
+            if should_summarize:
+                try:
+                    await self.send_status_message("Summarizing conversation context...")
+                    # Create a fresh summary of what's being dropped
+                    # We always create a new summary even if there's an existing one
+                    history_summary = await ml_router.summarize_chat_history(
+                        history_for_llm[:-messages_to_keep], max_messages=0  # Summarize all dropped messages
                     )
-            except Exception as e:
-                logger.warning(f"Failed to summarize chat history: {e}")
-                # Continue with full history if summarization fails
+
+                    if history_summary:
+                        # Build the new summarized context
+                        if summarized_context:
+                            summarized_context = (
+                                f"Earlier conversation summary: {history_summary}\n\n"
+                                f"Additional context: {summarized_context}"
+                            )
+                        else:
+                            summarized_context = (
+                                f"Earlier conversation summary: {history_summary}"
+                            )
+
+                        # Store the summary for future calls
+                        if not chat.summary_for_next_call:
+                            chat.summary_for_next_call = []
+                        chat.summary_for_next_call.append(summarized_context)
+
+                        logger.info(
+                            f"Summarized messages for chat {chat.id}"
+                        )
+                except Exception as e:
+                    logger.warning(f"Failed to summarize chat history: {e}")
+                    # Continue with truncated history if summarization fails
+
+            # Always truncate to last 20 messages for the LLM
+            history_for_llm = history_for_llm[-messages_to_keep:]
+            logger.debug(
+                f"Truncated history to last {messages_to_keep} messages for chat {chat.id}"
+            )
 
         final_response_text = None
         final_context_part = None
@@ -1251,9 +1268,10 @@ class ChatInterface:
                 primary_models,
                 llm_input_message,
                 summarized_context,
-                history_for_llm,  # Pass current history (possibly truncated)
+                history_for_llm,
                 is_logged_in=(not is_trial_professional) and not is_patient,
                 fallback_backends=fallback_models if fallback_models else None,
+                full_history=full_history_for_llm,  # Also try with full history if model supports it
             )
 
             if response_text and response_text.strip():
@@ -1306,10 +1324,9 @@ class ChatInterface:
                     }
                 )
 
-            if final_context_part:
-                if not chat.summary_for_next_call:
-                    chat.summary_for_next_call = []
-                chat.summary_for_next_call.append(final_context_part)
+            if not chat.summary_for_next_call:
+                chat.summary_for_next_call = []
+            chat.summary_for_next_call.append(final_context_part)
 
             chat.chat_history.append(
                 {

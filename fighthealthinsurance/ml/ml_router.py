@@ -219,27 +219,46 @@ class MLRouter(object):
 
         Args:
             history: List of chat messages with 'role' and 'content' keys
-            max_messages: Maximum number of recent messages to keep unsummarized
+            max_messages: Maximum number of recent messages to keep unsummarized.
+                         If 0, summarize all messages in history.
 
         Returns:
             Summary string of older messages, or None if summarization fails
         """
-        if len(history) <= max_messages:
+        if not history:
             return None
 
-        # Get messages to summarize (older ones)
-        to_summarize = history[:-max_messages]
+        if max_messages > 0 and len(history) <= max_messages:
+            return None
 
-        # Build a text representation
+        # Get messages to summarize (older ones, or all if max_messages=0)
+        if max_messages == 0:
+            to_summarize = history
+        else:
+            to_summarize = history[:-max_messages]
+
+        if not to_summarize:
+            return None
+
+        # Build a text representation, ensuring proper role alternation for clarity
         history_text = ""
+        last_role = None
         for msg in to_summarize:
             role = msg.get("role", "unknown")
+            # Normalize role names for consistency
+            if role in ("assistant", "agent", "system"):
+                role = "assistant"
             content = msg.get("content", "")
             if content:
                 # Truncate very long messages
                 if len(content) > 500:
                     content = content[:500] + "..."
-                history_text += f"{role}: {content}\n"
+                # If same role as last, merge the content
+                if role == last_role and history_text:
+                    history_text = history_text.rstrip("\n") + f" {content}\n"
+                else:
+                    history_text += f"{role}: {content}\n"
+                last_role = role
 
         if not history_text:
             return None
