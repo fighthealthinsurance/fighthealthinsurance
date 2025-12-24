@@ -13,6 +13,7 @@ class MockChatModel:
             str({"summary": "Standard mock response context."}),
         )
         self._external = external
+        self._persistent = False  # If True, don't reset after each call
 
     @property
     def external(self) -> bool:
@@ -24,13 +25,26 @@ class MockChatModel:
 
     def set_next_response(self, response_text: str, context_summary: str):
         """
-        Set the next response that the mock model will return.
+        Set the next response that the mock model will return (resets after use).
 
         Args:
             response_text: The text response to return
             context_summary: The context summary to return
         """
         self._next_response = (response_text, context_summary)
+        self._persistent = False
+
+    def set_persistent_response(self, response_text: str, context_summary: str):
+        """
+        Set a persistent response that won't reset after each call.
+        Useful for simulating a model that always fails.
+
+        Args:
+            response_text: The text response to return
+            context_summary: The context summary to return
+        """
+        self._next_response = (response_text, context_summary)
+        self._persistent = True
 
     async def generate_chat_response(
         self,
@@ -56,14 +70,15 @@ class MockChatModel:
         # Use the next response that was set or the default
         response, context = self._next_response
 
-        # Reset to default for subsequent calls
-        self._next_response = (
-            "This is a standard mock response to your question.",
-            str(
-                {
-                    "summary": f"User asked: {message[:50]}... I provided a standard response."
-                }
-            ),
-        )
+        # Reset to default for subsequent calls (unless persistent)
+        if not self._persistent:
+            self._next_response = (
+                "This is a standard mock response to your question.",
+                str(
+                    {
+                        "summary": f"User asked: {message[:50]}... I provided a standard response."
+                    }
+                ),
+            )
 
         return response, context

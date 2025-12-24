@@ -309,11 +309,16 @@ class ChatInterface:
             logger.debug(f"Scored {result} as {score}")
             return score
 
-        response_text, context_part = await best_within_timelimit(
-            calls,
-            score_fn,
-            timeout=30.0,
-        )
+        try:
+            response_text, context_part = await best_within_timelimit(
+                calls,
+                score_fn,
+                timeout=30.0,
+            )
+        except Exception as e:
+            logger.warning(f"Primary models all failed: {e}")
+            response_text = None
+            context_part = None
 
         response_text = response_text or ""
 
