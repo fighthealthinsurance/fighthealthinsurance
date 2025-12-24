@@ -44,7 +44,6 @@ spec:
           env:
           - name: POLLING_ACTORS
             value: "1"
-          env:
           - name: BRB
             value: "BRB"
           envFrom:
