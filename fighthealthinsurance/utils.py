@@ -135,7 +135,7 @@ def ensure_message_alternation(history: List[Dict[str, Any]]) -> List[Dict[str, 
             and result[1].get("role") == "assistant"
         ):
             logger.error(
-                "We should always start have a user message after system instead {result}"
+                f"We should always start have a user message after system instead {result}"
             )
             result = [result[0]] + result[2:]
 
