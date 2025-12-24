@@ -17,7 +17,10 @@ class FaxActorRef:
             except ValueError:
                 # Actor doesn't exist, create it
                 self.fax_actor = FaxActor.options(  # type: ignore
-                    name=name, lifetime="detached", namespace=namespace, get_if_exists=True
+                    name=name,
+                    lifetime="detached",
+                    namespace=namespace,
+                    get_if_exists=True,
                 ).remote()
         return self.fax_actor
 
