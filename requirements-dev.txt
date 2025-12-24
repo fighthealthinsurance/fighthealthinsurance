@@ -8,7 +8,8 @@ pytest-django
 pytest-xdist
 isort==4.3.21
 mypy==1.15.0
-easyocr
+# easyocr removed - use tesseract-ocr instead (apt install tesseract-ocr)
+# easyocr is a fallback when tesseract isn't available, but it's heavy (pulls in torch)
 daphne
 pytest-asyncio
 types-python-dateutil
