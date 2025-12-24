@@ -96,7 +96,7 @@ def ensure_message_alternation(history: List[Dict[str, Any]]) -> List[Dict[str, 
         elif lr in ("user"):
             return "user"
         else:
-            logger.debug("Unknown role {role}")
+            logger.debug(f"Unknown role {role}")
             return "user"
 
     for msg in history:
@@ -122,7 +122,7 @@ def ensure_message_alternation(history: List[Dict[str, Any]]) -> List[Dict[str, 
                 new_msg["timestamp"] = msg["timestamp"]
             result.append(new_msg)
 
-    if result and result[0]:
+    if result and len(result) > 0 and result[0]:
         if result[0].get("role") == "assistant":
             logger.error(
                 "We should always start with a user or system message instead {result}"
@@ -130,6 +130,7 @@ def ensure_message_alternation(history: List[Dict[str, Any]]) -> List[Dict[str, 
             result = result[1:]
         elif (
             result[0].get("role") == "system"
+            and len(result) > 1
             and result[1]
             and result[1].get("role") == "assistant"
         ):
