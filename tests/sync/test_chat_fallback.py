@@ -34,6 +34,8 @@ class ChatFallbackTest(APITestCase):
             "fighthealthinsurance.ml.ml_router.MLRouter.get_chat_backends_with_fallback"
         )
         self.mock_get_backends = self.get_backends_patcher.start()
+        # Use addCleanup to ensure patch is stopped even if test fails
+        self.addCleanup(self.get_backends_patcher.stop)
 
         # Also patch get_chat_backends for backward compatibility
         self.get_chat_backends_patcher = patch(
@@ -41,11 +43,12 @@ class ChatFallbackTest(APITestCase):
         )
         self.mock_get_chat_backends = self.get_chat_backends_patcher.start()
         self.mock_get_chat_backends.return_value = [self.mock_primary_model]
+        # Use addCleanup to ensure patch is stopped even if test fails
+        self.addCleanup(self.get_chat_backends_patcher.stop)
 
     async def asyncTearDown(self):
-        """Clean up the test environment."""
-        self.get_backends_patcher.stop()
-        self.get_chat_backends_patcher.stop()
+        """Clean up the test environment (patches are auto-cleaned via addCleanup)."""
+        pass
 
     async def test_primary_models_used_first(self):
         """Test that primary models are used first before fallback."""

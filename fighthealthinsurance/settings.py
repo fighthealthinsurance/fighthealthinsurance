@@ -526,6 +526,12 @@ class Test(Dev):
             "NAME": "memory",
         },
     }
+    # Use DummyCache in tests to ensure response.context is available
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.dummy.DummyCache",
+        }
+    }
 
 
 class TestSync(Dev):
@@ -536,6 +542,12 @@ class TestSync(Dev):
             "TIMEOUT": 4,
             "NAME": "memory",
         },
+    }
+    # Use DummyCache in tests to ensure response.context is available
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.dummy.DummyCache",
+        }
     }
 
 
@@ -554,6 +566,12 @@ class TestActor(Dev):
                 "NAME": dbname,
             },
         },
+    }
+    # Use DummyCache in tests to ensure response.context is available
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.dummy.DummyCache",
+        }
     }
 
 

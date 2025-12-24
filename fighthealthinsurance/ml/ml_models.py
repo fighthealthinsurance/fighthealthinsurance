@@ -1576,7 +1576,9 @@ class RemoteOpenLike(RemoteModel):
                         }
                     ]
                 messages = ensure_message_alternation(messages)
-                logger.debug(f"Using messages: {messages} from prompt {prompt} for {model}")
+                logger.debug(
+                    f"Using messages: {messages} from prompt {prompt} for {model}"
+                )
                 async with s.post(
                     url,
                     headers={"Authorization": f"Bearer {self.token}"},
@@ -2222,7 +2224,9 @@ class DeepInfra(RemoteFullOpenLike):
             raise Exception("No token found for deepinfra")
         # Use model-specific context length, default to 128k for unknown models
         max_len = self.MODEL_CONTEXT_LENGTHS.get(model, 128000)
-        super().__init__(api_base, token, model=model, dual_mode=dual_mode, max_len=max_len)
+        super().__init__(
+            api_base, token, model=model, dual_mode=dual_mode, max_len=max_len
+        )
 
     @property
     def supports_system(self):
