@@ -45,8 +45,8 @@ class TestFollowUpEmailSender:
         """Test that find_candidates returns follow-ups that are past due and not sent."""
         sender = FollowUpEmailSender()
         candidates = sender.find_candidates()
-        assert candidates.count() == 1
-        assert candidates.first() == test_followup_sched
+        assert len(candidates) == 1
+        assert candidates[0] == test_followup_sched
 
     def test_find_candidates_excludes_future_followups(self, test_denial):
         """Test that find_candidates excludes future follow-ups."""
@@ -59,7 +59,7 @@ class TestFollowUpEmailSender:
         )
         sender = FollowUpEmailSender()
         candidates = sender.find_candidates()
-        assert candidates.count() == 0
+        assert len(candidates) == 0
 
     def test_find_candidates_excludes_already_sent(self, test_denial):
         """Test that find_candidates excludes already sent follow-ups."""
@@ -72,7 +72,7 @@ class TestFollowUpEmailSender:
         )
         sender = FollowUpEmailSender()
         candidates = sender.find_candidates()
-        assert candidates.count() == 0
+        assert len(candidates) == 0
 
     @patch("fighthealthinsurance.followup_emails.send_fallback_email")
     def test_dosend_sends_email_and_updates_followup(
