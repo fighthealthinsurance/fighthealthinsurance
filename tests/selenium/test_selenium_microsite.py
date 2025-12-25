@@ -50,7 +50,7 @@ class SeleniumTestMicrositeIntegration(FHISeleniumBase, StaticLiveServerTestCase
         self.type("input#store_lname", "User")
         self.type("input#email", "microsite-test@example.com")
         self.type("textarea#denial_text", "My MRI scan was denied as not medically necessary.")
-        self.type("input#zip", "12345")
+        self.type("input#store_zip", "12345")
         self.click("input#pii")
         self.click("input#tos")
         self.click("input#privacy")
