@@ -97,7 +97,7 @@ spec:
               httpHeaders:
                 - name: Host
                   value: "www.fighthealthinsurance.com"
-              path: /scan
+              path: /ziggy/rest/ping
               port: 80
             periodSeconds: 180
           startupProbe:
@@ -105,7 +105,7 @@ spec:
               httpHeaders:
                 - name: Host
                   value: "www.fighthealthinsurance.com"
-              path: /scan
+              path: /ziggy/rest/ping
               port: 80
             periodSeconds: 10
             failureThreshold: 45
