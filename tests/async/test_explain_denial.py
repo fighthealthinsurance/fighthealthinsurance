@@ -22,6 +22,10 @@ class TestExplainDenialView(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Explain My Denial")
         self.assertContains(response, "denial_text")
+        # Verify OCR upload field is present
+        self.assertContains(response, 'id="uploader"')
+        self.assertContains(response, "Upload Denial Letter")
+        self.assertContains(response, 'type="file"')
 
     def test_explain_denial_post_missing_denial_text(self):
         """Test POST without denial text returns error."""
@@ -163,3 +167,10 @@ class TestExplainDenialView(TestCase):
         self.assertEqual(response.status_code, 200)
         # Denial text should be preserved in the context
         self.assertContains(response, denial_text)
+
+    def test_explain_denial_page_includes_ocr_script(self):
+        """Test that the explain denial page includes the OCR JavaScript bundle."""
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        # Check for the explain_denial bundle
+        self.assertContains(response, "explain_denial.bundle.js")
