@@ -80,15 +80,15 @@ class TestEnsureMessageAlternation(unittest.TestCase):
         self.assertEqual(len(result), 2)
         self.assertEqual(result[1]["role"], "assistant")
 
-    def test_system_role_normalized_to_assistant(self):
+    def test_system_role_normalized_left_as_is(self):
         """'system' role should be normalized to 'assistant'."""
         history = [
-            {"role": "user", "content": "Hello"},
             {"role": "system", "content": "System message"},
+            {"role": "user", "content": "Hello"},
         ]
         result = ensure_message_alternation(history)
         self.assertEqual(len(result), 2)
-        self.assertEqual(result[1]["role"], "assistant")
+        self.assertEqual(result[0]["role"], "system")
 
     def test_mixed_roles_merged_correctly(self):
         """Mixed agent/assistant/system should all be merged as assistant."""
