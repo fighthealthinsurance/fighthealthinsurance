@@ -3324,5 +3324,60 @@
     ],
     "medicare": true,
     "blog_post_url": "/blog/medicaid-work-requirements/"
+  },
+  "colonoscopy-denial": {
+    "slug": "colonoscopy-denial",
+    "title": "Appealing Colonoscopy Denials",
+    "default_procedure": "Colonoscopy",
+    "tagline": "Colonoscopy denials can delay life-saving cancer screening—here's how to fight back.",
+    "hero_h1": "Appeal Your Colonoscopy Denial",
+    "hero_subhead": "Don't let \"not medically necessary\" prevent critical screening.",
+    "intro": "Colonoscopies are frequently denied when insurers claim you're too young, it's too soon for a repeat screening, or symptoms don't justify the procedure. But colorectal cancer screening saves lives, and if your doctor ordered it, there's a strong medical rationale you can use to overturn the denial.",
+    "common_denial_reasons": [
+      "Patient too young for screening",
+      "Not enough time since last colonoscopy",
+      "Insufficient documentation of symptoms",
+      "Alternative screening test recommended first",
+      "Family history not adequately documented",
+      "Out-of-network provider"
+    ],
+    "how_we_help": "We help you document your risk factors, symptoms, and physician recommendations in a way that demonstrates medical necessity. Upload your denial letter and we'll generate a compelling appeal that cites clinical guidelines and your specific circumstances.",
+    "cta": "Start your colonoscopy appeal — it takes about 3 minutes.",
+    "faq": [
+      {
+        "question": "Can I appeal if I'm younger than 45 and my colonoscopy was denied?",
+        "answer": "Yes. While routine screening typically starts at 45, many factors justify earlier screening including family history of colorectal cancer, personal history of polyps or inflammatory bowel disease, unexplained symptoms, or genetic conditions. Your appeal should clearly document these risk factors."
+      },
+      {
+        "question": "What if my insurer says it's too soon for another colonoscopy?",
+        "answer": "Standard intervals between colonoscopies depend on prior findings. If you had polyps, adenomas, or other concerning findings, shorter intervals may be medically appropriate. Your appeal should reference your prior colonoscopy results and current clinical guidelines for surveillance."
+      },
+      {
+        "question": "My doctor recommended colonoscopy for symptoms—why was it denied?",
+        "answer": "Insurers sometimes claim symptoms can be evaluated with less invasive tests first. Your appeal should detail your symptoms (bleeding, pain, changes in bowel habits, unexplained weight loss), their duration and severity, and why direct visualization with colonoscopy is the appropriate diagnostic approach."
+      },
+      {
+        "question": "Do I need my doctor to write a letter for my colonoscopy appeal?",
+        "answer": "It's very helpful. A letter from your gastroenterologist or ordering physician explaining why the colonoscopy is medically necessary—citing your specific risk factors, symptoms, or prior findings—significantly strengthens your appeal."
+      },
+      {
+        "question": "What if they want me to do a stool test instead?",
+        "answer": "While stool-based tests like FIT or Cologuard can be appropriate for average-risk screening, they're not suitable for everyone. If you have symptoms, a family history, prior polyps, or other risk factors, colonoscopy may be the recommended test. Your appeal should explain why a stool test is insufficient for your situation."
+      }
+    ],
+    "evidence_snippets": [
+      "Colorectal cancer is the third most common cancer and the second leading cause of cancer death in the United States. Early detection through colonoscopy significantly reduces mortality.",
+      "Clinical guidelines support earlier or more frequent colonoscopy for individuals with increased risk factors including family history, personal history of polyps or colorectal cancer, inflammatory bowel disease, and certain genetic syndromes.",
+      "Colonoscopy is the gold standard for colorectal cancer screening, allowing both detection and removal of precancerous polyps during the same procedure.",
+      "Delayed colorectal cancer screening can result in later-stage diagnoses, worse outcomes, and higher treatment costs.",
+      "The requested colonoscopy is consistent with evidence-based guidelines and the standard of care for this clinical presentation."
+    ],
+    "pubmed_search_terms": [
+      "colonoscopy screening guidelines age family history",
+      "colorectal cancer screening appropriateness criteria",
+      "colonoscopy surveillance intervals polyps adenomas",
+      "early-onset colorectal cancer risk factors",
+      "colonoscopy diagnostic evaluation symptoms bleeding"
+    ]
   }
 }
