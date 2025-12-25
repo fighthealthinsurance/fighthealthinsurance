@@ -145,7 +145,9 @@ def _load_microsites_cached() -> tuple[tuple[str, Microsite], ...]:
     try:
         contents = _find_microsites_json()
         if contents is None:
-            logger.warning("microsites.json not found in static files or STATICFILES_DIRS")
+            logger.warning(
+                "microsites.json not found in static files or STATICFILES_DIRS"
+            )
             return ()
 
         data = json.loads(contents)
