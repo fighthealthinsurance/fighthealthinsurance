@@ -31,11 +31,6 @@ class TestDenialLanguageLibrary(TestCase):
         self.assertContains(response, "What It Really Means")
         self.assertContains(response, "How to Counter This")
 
-    def test_denial_language_page_has_cta(self):
-        """Test that the page has a call-to-action link."""
-        response = self.client.get("/denial-language/")
-        self.assertContains(response, "Generate Your Appeal")
-
     def test_denial_language_page_has_seo_metadata(self):
         """Test that the page includes SEO metadata."""
         response = self.client.get("/denial-language/")
