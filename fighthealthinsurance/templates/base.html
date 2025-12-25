@@ -65,15 +65,8 @@
 	  clipPath: polygon(var(--f) 0,100% 0,100% 100%,calc(50% + var(--f)/2) calc(100% - var(--r)), var(--f) 100%,var(--f) var(--f),0 var(--f));
       }
     </style>
-    <style>
-        {
-            % block extra_style %
-        }
-
-            {
-            % endblock extra_style %
-        }
-    </style>
+    {% block extra_style %}
+    {% endblock extra_style %}
     <!-- SCRIPTS - Load critical scripts only in head, defer others -->
     <!-- sentry IFF not debug -->
     <!-- {% if not debug %}
