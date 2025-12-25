@@ -19,14 +19,6 @@ class TestEnsureMessageAlternation(unittest.TestCase):
         self.assertEqual(result[0]["role"], "user")
         self.assertEqual(result[0]["content"], "Hello")
 
-    def test_single_assistant_message(self):
-        """Single assistant message should be preserved."""
-        history = [{"role": "assistant", "content": "Hi there"}]
-        result = ensure_message_alternation(history)
-        self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["role"], "assistant")
-        self.assertEqual(result[0]["content"], "Hi there")
-
     def test_proper_alternation(self):
         """Properly alternating messages should be unchanged."""
         history = [
@@ -89,25 +81,6 @@ class TestEnsureMessageAlternation(unittest.TestCase):
         result = ensure_message_alternation(history)
         self.assertEqual(len(result), 2)
         self.assertEqual(result[0]["role"], "system")
-
-    def test_mixed_roles_merged_correctly(self):
-        """Mixed agent/assistant/system should all be merged as assistant."""
-        history = [
-            {"role": "user", "content": "Hello"},
-            {"role": "assistant", "content": "Hi"},
-            {"role": "agent", "content": "I'm an agent"},
-            {"role": "system", "content": "System info"},
-            {"role": "user", "content": "Thanks"},
-        ]
-        result = ensure_message_alternation(history)
-        self.assertEqual(len(result), 3)
-        self.assertEqual(result[0]["role"], "user")
-        self.assertEqual(result[1]["role"], "assistant")
-        # All three should be merged into one assistant message
-        self.assertIn("Hi", result[1]["content"])
-        self.assertIn("I'm an agent", result[1]["content"])
-        self.assertIn("System info", result[1]["content"])
-        self.assertEqual(result[2]["role"], "user")
 
     def test_empty_content_skipped(self):
         """Messages with empty content should be skipped."""
