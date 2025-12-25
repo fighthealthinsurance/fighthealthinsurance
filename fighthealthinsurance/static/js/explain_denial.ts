@@ -48,7 +48,7 @@ const recognizeEvent = async function (evt: Event) {
 
   // Reset placeholder
   if (textarea) {
-    textarea.placeholder = "Paste your denial letter here. Include as much detail as possible...";
+    textarea.placeholder = "Paste your denial letter here, or upload files above to automatically extract text...";
   }
 };
 
@@ -63,4 +63,9 @@ function setupExplainDenialOCR(): void {
 }
 
 // Initialize when DOM is ready
-setupExplainDenialOCR();
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', setupExplainDenialOCR);
+} else {
+  // DOMContentLoaded already fired
+  setupExplainDenialOCR();
+}
