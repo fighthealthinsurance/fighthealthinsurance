@@ -204,9 +204,9 @@ jobs:
         with:
           version: 2.19
 
-      - name: Build npm js (needed for the e2e tests in django)
+      - name: Build static, needed for test
         run:
-          cd fighthealthinsurance/static/js && npm i && npm run build && npm cache clean --force
+          ./scripts/build_static.sh
 
       - name: Run selenium tests
         run: tox -e py${{ matrix.toxpy }}-django${{ matrix.django }}-selenium
