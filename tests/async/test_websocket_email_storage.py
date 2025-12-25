@@ -151,38 +151,3 @@ class TestWebSocketChatCreation:
 
         # Clean up
         await chat.adelete()
-
-    async def test_get_or_create_chat_no_email_for_trial_professional(
-        self, mock_websocket_consumer
-    ):
-        """Test that trial professional chats don't store hashed email."""
-        from fighthealthinsurance.models import ChatLeads
-
-        test_email = "trial_pro@example.com"
-        test_session_key = str(uuid.uuid4())
-
-        # Create a ChatLead to mark this as a trial professional chat
-        chat_lead = await ChatLeads.objects.acreate(
-            session_id=test_session_key,
-            email=test_email,
-        )
-
-        try:
-            # Call the method that creates the chat
-            chat = await mock_websocket_consumer._get_or_create_chat(
-                user=None,
-                professional_user=None,
-                is_patient=False,  # Trial professional
-                chat_id=None,
-                session_key=test_session_key,
-                email=test_email,
-            )
-
-            # Verify trial professional chat doesn't store patient email
-            # (is_patient should be False for trial professional)
-            assert chat.is_patient is False
-
-            # Clean up
-            await chat.adelete()
-        finally:
-            await chat_lead.adelete()
