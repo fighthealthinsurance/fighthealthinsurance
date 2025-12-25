@@ -2,6 +2,7 @@ import datetime
 from typing import Optional
 
 from django.db.models import QuerySet
+from django.db.utils import NotSupportedError
 from django.urls import reverse
 from django.utils import timezone
 from fighthealthinsurance.models import FollowUpSched, InterestedProfessional
@@ -67,11 +68,12 @@ class FollowUpEmailSender(object):
                 .filter(follow_up_date__lt=datetime.date.today())
                 .distinct("email")
             )
-            # Force partial evaluation to catch DISTINCT ON errors (SQLite doesn't support it)
+            # Force partial evaluation to catch DISTINCT ON errors
+            # Used for SQLite in local dev/test mode.
             candidates.exists()
             return candidates
-        except Exception:
-            # Fallback for databases that don't support DISTINCT ON (like SQLite)
+        except NotSupportedError:
+            # Fallback for databases that don't support DISTINCT ON
             candidates = FollowUpSched.objects.filter(follow_up_sent=False).filter(
                 follow_up_date__lt=datetime.date.today()
             )
