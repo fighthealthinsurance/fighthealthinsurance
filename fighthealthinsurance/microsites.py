@@ -107,7 +107,7 @@ def _find_microsites_json() -> Optional[str]:
             contents = f.read()
             if not isinstance(contents, str):
                 contents = contents.decode("utf-8")
-            return contents
+            return str(contents)
     except Exception as e:
         logger.debug(f"Could not open microsites.json via staticfiles_storage: {e}")
 
