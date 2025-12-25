@@ -204,10 +204,6 @@ jobs:
         with:
           version: 2.19
 
-      - name: Build static, needed for test
-        run:
-          ./scripts/build_static.sh
-
       - name: Run selenium tests
         run: tox -e py${{ matrix.toxpy }}-django${{ matrix.django }}-selenium
         env:
