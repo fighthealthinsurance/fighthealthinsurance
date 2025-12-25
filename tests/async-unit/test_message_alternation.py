@@ -73,7 +73,7 @@ class TestEnsureMessageAlternation(unittest.TestCase):
         self.assertEqual(result[1]["role"], "assistant")
 
     def test_system_role_normalized_left_as_is(self):
-        """'system' role should be normalized to 'assistant'."""
+        """'system' role should be left as 'system'."""
         history = [
             {"role": "system", "content": "System message"},
             {"role": "user", "content": "Hello"},

@@ -383,7 +383,7 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
 
         # Click the toggle
         toggle_clicked = self.execute_script("""
-            const toggle = document.getElementById('use-external-models');
+            const toggle = document.getElementById('use_external_models');
             if (toggle) {
                 toggle.click();
                 return true;
@@ -436,7 +436,7 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
 
         # Enable external models
         self.execute_script("""
-            const toggle = document.getElementById('use-external-models');
+            const toggle = document.getElementById('use_external_models');
             if (toggle && !toggle.checked) {
                 toggle.click();
             }
@@ -474,7 +474,7 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
 
         # Enable external models
         self.execute_script("""
-            const toggle = document.getElementById('use-external-models');
+            const toggle = document.getElementById('use_external_models');
             if (toggle && !toggle.checked) {
                 toggle.click();
             }
