@@ -34,30 +34,14 @@ from fighthealthinsurance.chat.safety_filters import (
     detect_false_promises,
     CRISIS_RESOURCES,
 )
-
-# Tool call regexes
-# Capture query terms by matching non-marker characters (avoids non-greedy issues with optional end markers)
-pubmed_query_terms_regex = r"[\[\*]{0,4}pubmed[ _]?query:?\s*([^*\[\]]+)"
-# Updated regex to match both formats: **medicaid_info {JSON}** and medicaid_info {JSON}
-medicaid_info_lookup_regex = r"(?:\*\*)?medicaid_info\s*(\{[^}]*\})\s*(?:\*\*)?"
-# Medicaid eligibility info
-medicaid_eligibility_regex = (
-    r".*?(?:\*\*)?medicaid_eligibility\s*(\{[^}]*\})\s*(?:\*\*)?"
+from fighthealthinsurance.chat.tools.patterns import (
+    PUBMED_QUERY_REGEX as pubmed_query_terms_regex,
+    MEDICAID_INFO_REGEX as medicaid_info_lookup_regex,
+    MEDICAID_ELIGIBILITY_REGEX as medicaid_eligibility_regex,
+    CREATE_OR_UPDATE_APPEAL_REGEX as create_or_update_appeal_regex,
+    CREATE_OR_UPDATE_PRIOR_AUTH_REGEX as create_or_update_prior_auth_regex,
+    ALL_TOOL_PATTERNS as tools_regex,
 )
-# Process the special tokens for Appeals and PriorAuthRequests
-create_or_update_appeal_regex = (
-    r"^\s*\*{0,4}create_or_update_appeal\*{0,4}\s*(\{.*\})\s*$"
-)
-create_or_update_prior_auth_regex = (
-    r"^\s*\*{0,4}create_or_update_prior_auth\*{0,4}\s*(\{.*\})\s*$"
-)
-tools_regex = [
-    pubmed_query_terms_regex,
-    medicaid_info_lookup_regex,
-    medicaid_eligibility_regex,
-    create_or_update_appeal_regex,
-    create_or_update_prior_auth_regex,
-]
 
 
 class ChatInterface:
