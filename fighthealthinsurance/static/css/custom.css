@@ -16,6 +16,96 @@
     outline-offset: 2px;
 }
 
+/* Alert/callout box styles - extracted from inline styles */
+.alert-box {
+    padding: 1.5rem;
+    border-radius: 8px;
+    margin: 1.5rem 0;
+    border-left-width: 4px;
+    border-left-style: solid;
+}
+.alert-box h3,
+.alert-box h4 {
+    margin: 0 0 0.5rem 0;
+}
+.alert-box p {
+    margin: 0;
+}
+
+.alert-success {
+    background: #e8f5e9;
+    border-left-color: #4caf50;
+}
+.alert-success h3,
+.alert-success h4 {
+    color: #2e7d32;
+}
+
+.alert-danger {
+    background: #ffebee;
+    border-left-color: #f44336;
+}
+.alert-danger h4,
+.alert-danger p {
+    color: #c62828;
+}
+
+.alert-warning {
+    background: #fff3cd;
+    border-left-color: #ffc107;
+}
+.alert-warning h4,
+.alert-warning li {
+    color: #856404;
+}
+
+.alert-info {
+    background: #e3f2fd;
+    border-left-color: #2196f3;
+}
+.alert-info h4 {
+    color: #1565c0;
+}
+
+/* Section headers with underline */
+.section-header {
+    color: #333;
+    border-bottom: 2px solid #4caf50;
+    padding-bottom: 0.5rem;
+}
+.section-header-spacing {
+    margin-top: 2rem;
+}
+
+/* Option sections */
+.option-header {
+    color: #2e7d32;
+    margin-bottom: 0.5rem;
+}
+.option-content {
+    margin: 0.5rem 0 1rem 1.5rem;
+    line-height: 1.6;
+}
+.option-note {
+    margin: 0.5rem 0 0.5rem 1.5rem;
+    font-size: 0.9rem;
+    color: #666;
+}
+
+/* Form wrapper backgrounds */
+.form-wrapper {
+    background: #f9f9f9;
+    padding: 1.5rem;
+    border-radius: 8px;
+    margin: 1rem 1.5rem;
+}
+.donate-wrapper {
+    background-color: #f8f9fa;
+    padding: 1.5rem;
+    border-radius: 8px;
+    margin: 1.5rem 0;
+}
+
 /* Ensure header stays above hero background */
 header {
     position: relative;

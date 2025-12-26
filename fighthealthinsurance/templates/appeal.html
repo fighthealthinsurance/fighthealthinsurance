@@ -16,25 +16,25 @@ Fight Your Health Insurance Denial: Edit and send in your appeal
   {% include 'partials/flow_progress.html' with current_step=current_step|default:8 %}
 </div>
 
-<div style="background:#e8f5e9; padding:1.5rem; border-radius:8px; margin:1.5rem 0; border-left:4px solid #4caf50;">
-  <h3 style="margin:0 0 0.5rem 0; color:#2e7d32;">🎉 Your Appeal is Ready!</h3>
-  <p style="margin:0; font-size:1.1rem;"><strong>Thank you for trusting us to help you fight your denial.</strong> We've drafted your appeal letter below. Please review and improve it with your personal details and story, then submit it to your insurance company!</p>
+<div class="alert-box alert-success">
+  <h3>🎉 Your Appeal is Ready!</h3>
+  <p style="font-size:1.1rem;"><strong>Thank you for trusting us to help you fight your denial.</strong> We've drafted your appeal letter below. Please review and improve it with your personal details and story, then submit it to your insurance company!</p>
 </div>
 
-<div style="background:#ffebee; padding:1.5rem; border-radius:8px; margin:1.5rem 0; border-left:4px solid #f44336;">
-  <h4 style="margin:0 0 0.5rem 0; color:#c62828;">⚠️ Save a Copy RIGHT NOW!</h4>
-  <p style="margin:0; font-size:1.05rem; color:#c62828;"><strong>Before you do anything else, save a copy of your appeal!</strong> Computers can crash, browsers can freeze, and connections can drop. Copy the text below and save it somewhere safe (email it to yourself, save to a document, etc.) so you don't lose your work.</p>
+<div class="alert-box alert-danger">
+  <h4>⚠️ Save a Copy RIGHT NOW!</h4>
+  <p style="font-size:1.05rem;"><strong>Before you do anything else, save a copy of your appeal!</strong> Computers can crash, browsers can freeze, and connections can drop. Copy the text below and save it somewhere safe (email it to yourself, save to a document, etc.) so you don't lose your work.</p>
 </div>
 
-<div style="background:#fff3cd; padding:1.5rem; border-radius:8px; margin:1.5rem 0; border-left:4px solid #ffc107;">
-  <h4 style="margin:0 0 1rem 0; color:#856404;">📋 What to Do Next - Simple 2-Step Process:</h4>
+<div class="alert-box alert-warning">
+  <h4 style="margin-bottom:1rem;">📋 What to Do Next - Simple 2-Step Process:</h4>
   <div style="margin-left: 1.5rem;">
     <p style="margin:0.5rem 0;"><strong>Step 1:</strong> Review, edit, and improve the appeal letter below - add your personal information and any additional details that strengthen your case</p>
     <p style="margin:0.5rem 0;"><strong>Step 2:</strong> Send your appeal using one of the options below (we explain each one!)</p>
   </div>
 </div>
 
-<div class="appeal-donate-wrapper" style="background-color: #f8f9fa; padding: 1.5rem; border-radius: 8px; margin: 1.5rem 0;">
+<div class="appeal-donate-wrapper donate-wrapper">
   <p style="color: #333; margin-bottom: 1rem;">
     <strong>💙 Help us help others:</strong> Fight Health Insurance is completely free. If we've helped you, please consider supporting our work so we can help more people:
     <a href="https://buy.stripe.com/5kA03r2ZwbgebyE7ss" class="section-btn btn btn-default smoothScroll" id="support-our-dev-button" target="_blank" rel="noopener noreferrer">
@@ -44,7 +44,7 @@ Fight Your Health Insurance Denial: Edit and send in your appeal
   {% include 'partials/pwyw_panel.html' %}
 </div>
 
-<h3 style="color:#333; border-bottom:2px solid #4caf50; padding-bottom:0.5rem;">Step 1: Review, Edit, and Improve Your Appeal</h3>
+<h3 class="section-header">Step 1: Review, Edit, and Improve Your Appeal</h3>
 <p style="font-size:1.05rem;"><strong>Important:</strong> Take time to review and edit the appeal letter below. Click the "Fill in your PII" button to add your personal information (name, address, etc.), and feel free to add or modify any details that strengthen your case. The more personalized and detailed your appeal, the better!</p>
 
 <form action="{% url 'share_appeal' %}" method="post" class="col-md-12 d-flex flex-column align-items-center">
@@ -62,23 +62,23 @@ Fight Your Health Insurance Denial: Edit and send in your appeal
   ✏️ Fill in your PII (Personal Information)
 </button>
 
-<h3 style="color:#333; border-bottom:2px solid #4caf50; padding-bottom:0.5rem; margin-top:2rem;">Step 2: Send Your Appeal to Your Insurance Company</h3>
+<h3 class="section-header section-header-spacing">Step 2: Send Your Appeal to Your Insurance Company</h3>
 
-<div style="background:#e3f2fd; padding:1.5rem; border-radius:8px; margin:1.5rem 0; border-left:4px solid #2196f3;">
-  <h4 style="margin:0 0 1rem 0; color:#1565c0;">📬 How to Submit Your Appeal - Choose What Works Best For You:</h4>
+<div class="alert-box alert-info">
+  <h4 style="margin-bottom:1rem;">📬 How to Submit Your Appeal - Choose What Works Best For You:</h4>
   <p style="margin:0.5rem 0;">Your denial letter should include the mailing address or fax number where you need to send your appeal. Choose one of these options:</p>
 </div>
 
 <div style="margin:1.5rem 0;">
-  <h4 style="color:#2e7d32; margin-bottom:0.5rem;">✅ Option 1: We'll Fax It For You (Easiest!)</h4>
-  <p style="margin:0.5rem 0 1rem 1.5rem; line-height:1.6;">
+  <h4 class="option-header">✅ Option 1: We'll Fax It For You (Easiest!)</h4>
+  <p class="option-content">
     We can send the fax directly to your insurance company. This is the quickest and easiest option. You can pay what you want - even $0 if you need it free!
   </p>
-  <p style="margin:0.5rem 0 0.5rem 1.5rem; font-size:0.9rem; color:#666;">
+  <p class="option-note">
     <strong>Note:</strong> When we fax for you, your completed appeal (including personal information) is temporarily stored on our servers and our fax partner's servers to complete the transmission.
   </p>
 
-<form action="{% url 'stagefaxview' %}" method="post" class="col-md-12 d-flex flex-column align-items-center" style="background:#f9f9f9; padding:1.5rem; border-radius:8px; margin:1rem 1.5rem;">
+<form action="{% url 'stagefaxview' %}" method="post" class="col-md-12 d-flex flex-column align-items-center form-wrapper">
   {% csrf_token %}
   {{fax_form}}
   <div class="fax-pwyw-group" aria-label="Fax price (optional, pay what you want)" style="margin:1rem 0;">
@@ -97,19 +97,19 @@ Fight Your Health Insurance Denial: Edit and send in your appeal
 </div>
 
 <div style="margin:2rem 0;">
-  <h4 style="color:#2e7d32; margin-bottom:0.5rem;">✅ Option 2: Print and Mail It Yourself</h4>
-  <p style="margin:0.5rem 0 1rem 1.5rem; line-height:1.6;">
-    Click the "Print Appeal" button below to print your appeal letter. Then mail it to the address shown on your denial letter. 
+  <h4 class="option-header">✅ Option 2: Print and Mail It Yourself</h4>
+  <p class="option-content">
+    Click the "Print Appeal" button below to print your appeal letter. Then mail it to the address shown on your denial letter.
     <strong>We recommend using certified mail</strong> so you have proof of delivery.
   </p>
-  <button id="print_appeal" style="font-size:1.1rem; padding:12px 24px; margin-left:1.5rem;">
+  <button id="print_appeal" class="btn" style="font-size:1.1rem; padding:12px 24px; margin-left:1.5rem;">
     🖨️ Print My Appeal (to mail yourself)
   </button>
 </div>
 
 <div style="margin:2rem 0;">
-  <h4 style="color:#2e7d32; margin-bottom:0.5rem;">✅ Option 3: Use a Free Fax Service</h4>
-  <p style="margin:0.5rem 0 1rem 1.5rem; line-height:1.6;">
+  <h4 class="option-header">✅ Option 3: Use a Free Fax Service</h4>
+  <p class="option-content">
     You can also fax your appeal yourself using free online fax services. Here are some options:
   </p>
   <ul style="margin-left:3rem; line-height:1.8;">
@@ -123,9 +123,9 @@ Fight Your Health Insurance Denial: Edit and send in your appeal
   </p>
 </div>
 
-<div style="background:#fff3cd; padding:1.5rem; border-radius:8px; margin:2rem 0; border-left:4px solid #ffc107;">
-  <h4 style="margin:0 0 0.5rem 0; color:#856404;">💡 Important Reminders:</h4>
-  <ul style="margin:0.5rem 0 0 1.5rem; line-height:1.8; color:#856404;">
+<div class="alert-box alert-warning" style="margin:2rem 0;">
+  <h4>💡 Important Reminders:</h4>
+  <ul style="margin:0.5rem 0 0 1.5rem; line-height:1.8;">
     <li><strong>Save a copy:</strong> Download or save a copy of your completed appeal for your records before submitting. Computers and fax machines can be unreliable!</li>
     <li><strong>Confirm receipt:</strong> After submitting (by mail or fax), call your insurance company to confirm they received your appeal. Keep a note of who you spoke with and when.</li>
     <li><strong>Be ready to help:</strong> If they claim they "didn't receive it," you'll have your saved copy ready to resend immediately.</li>
@@ -142,9 +142,9 @@ Fight Your Health Insurance Denial: Edit and send in your appeal
   Generate PDF (limited to 1 page)
 </button>
 -->
-<div style="background:#e8f5e9; padding:1.5rem; border-radius:8px; margin:2rem 0; border-left:4px solid #4caf50; text-align:center;">
-  <h4 style="margin:0 0 0.5rem 0; color:#2e7d32;">🙏 Thank You for Trusting Fight Health Insurance</h4>
-  <p style="margin:0; font-size:1.05rem;">
+<div class="alert-box alert-success" style="margin:2rem 0; text-align:center;">
+  <h4>🙏 Thank You for Trusting Fight Health Insurance</h4>
+  <p style="font-size:1.05rem;">
     We're honored to help you fight for the care you deserve. If our service has been helpful, please consider supporting us:
   </p>
   <a href="https://buy.stripe.com/5kA03r2ZwbgebyE7ss" class="section-btn btn btn-default smoothScroll" id="support-our-dev-button" target="_blank" rel="noopener noreferrer" style="margin-top:1rem; display:inline-block; padding:10px 20px; font-size:1.05rem;">
@@ -152,7 +152,7 @@ Fight Your Health Insurance Denial: Edit and send in your appeal
   </a>
 </div>
 
-<div class="appeal-donate-wrapper" style="background-color: #f8f9fa; padding: 1.5rem; border-radius: 8px; margin: 1.5rem 0;">
+<div class="appeal-donate-wrapper donate-wrapper">
   {% include 'partials/pwyw_panel.html' %}
 </div>
 
