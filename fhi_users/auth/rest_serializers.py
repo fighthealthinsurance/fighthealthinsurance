@@ -9,19 +9,25 @@ from .auth_forms import (
 )
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from fhi_users.models import *
+from fhi_users.models import (
+    UserRole,
+    UserDomain,
+    PatientUser,
+    ProfessionalUser,
+    UserContactInfo,
+)
 from fhi_users.auth.auth_utils import (
     create_user,
     validate_password,
     generic_validate_phone_number,
 )
-from typing import Any, Optional
+from typing import Any, Optional, TYPE_CHECKING
 import re
 
 # Add missing import for extend_schema_field
 from drf_spectacular.utils import extend_schema_field
 
-if typing.TYPE_CHECKING:
+if TYPE_CHECKING:
     from django.contrib.auth.models import User
 else:
     User = get_user_model()
