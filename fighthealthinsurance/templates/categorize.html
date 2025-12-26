@@ -8,18 +8,18 @@ Categorize Your Denial
 {% load static %}
 {% block content %}
 
-<div class="container" style="width: 80%; margin-top: 2.5rem !important;">
+<div class="container container-narrow">
   <!-- Progress indicator -->
   {% include 'partials/flow_progress.html' with current_step=current_step|default:5 %}
 
   {% if microsite_prefill_note %}
-  <div class="alert-box alert-box-warning">
+  <div class="alert-box alert-warning">
     <p>You started from the <strong>{{ microsite_title }}</strong> page, so we pre-filled your procedure as <strong>{{ default_procedure }}</strong>. You can change it below if needed.</p>
   </div>
   {% endif %}
 
-  <div class="alert-box alert-box-success" style="margin-bottom:1.5rem;">
-    <h4 style="margin:0 0 0.5rem 0; color:#2e7d32;">Almost there!</h4>
+  <div class="alert-box alert-success">
+    <h4>Almost there!</h4>
     <p>We've tried our best to extract information from your denial letter. Please review and correct anything that looks wrong below.</p>
   </div>
 
@@ -39,15 +39,7 @@ Categorize Your Denial
         Start over with a new denial
       </a>
       {% endif %}
-      <button type="submit" id="submit_cat" class="cat-submit-button" style="
-        background: #a5c422;
-        text-align: center;
-        color:#ffffff !important;
-        border: none;
-        border-radius: 3px;
-        padding: 10px 30px;
-        font-size: 16px;
-        cursor: pointer;">Continue →</button>
+      <button type="submit" id="submit_cat" class="btn btn-green">Continue →</button>
     </div>
   </form>
 </div>

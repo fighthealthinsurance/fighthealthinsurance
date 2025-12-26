@@ -1347,3 +1347,32 @@ section:not(.slider) .share-subcopy {
     color: #dc3545;
     margin-bottom: 1rem;
 }
+
+/* Container utilities */
+.container-narrow {
+    width: 80%;
+    margin-top: 2.5rem !important;
+}
+
+/* Muted link style */
+.btn-link-muted {
+    color: #6c757d;
+    text-decoration: underline;
+    font-size: 0.9rem;
+}
+.btn-link-muted:hover {
+    color: #495057;
+}
+
+/* Secondary button style */
+.btn-secondary-custom {
+    background: #6c757d;
+    color: white;
+    padding: 10px 20px;
+    border-radius: 3px;
+    text-decoration: none;
+}
+.btn-secondary-custom:hover {
+    background: #5a6268;
+    color: white;
+}
