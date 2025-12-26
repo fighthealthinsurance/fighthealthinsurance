@@ -71,19 +71,19 @@ class SeleniumTestAppealGeneration(FHISeleniumBase, StaticLiveServerTestCase):
         file_input = self.find_element("input#uploader")
 
         # Create a simple test image dynamically
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=True) as tmp:
             # Create a simple image with some text-like content
             img = Image.new('RGB', (200, 100), color='white')
             img.save(tmp.name)
             path_to_image = tmp.name
 
-        file_input.send_keys(path_to_image)
-        self.click("button#submit")
-        # The OCR should process the image (even if it doesn't find text)
-        # Give it time to process
-        time.sleep(2)
-        # After successful OCR, the view redirects to scrub.html (main denial form)
-        self.assert_title_eventually("Upload your Health Insurance Denial")
+            file_input.send_keys(path_to_image)
+            self.click("button#submit")
+            # The OCR should process the image (even if it doesn't find text)
+            # Give it time to process
+            time.sleep(2)
+            # After successful OCR, the view redirects to scrub.html (main denial form)
+            self.assert_title_eventually("Upload your Health Insurance Denial")
 
     def test_submit_an_appeal_with_enough_and_fax(self):
         assert DenialTypes.objects.filter(name="Medically Necessary").count() > 0
