@@ -96,6 +96,8 @@
 </head>
 
 <body id="top" data-spy="scroll" data-target=".navbar-collapse" data-offset="50">
+  <!-- Skip link for keyboard navigation (accessibility) -->
+  <a href="#main-content" class="skip-link">Skip to main content</a>
   <a class="github-fork-ribbon" href="https://github.com/orgs/fighthealthinsurance/repositories" data-ribbon="Fork me on GH" title="Fork me on GH">Contribute on GitHub</a>
 <!--  <div class="betaribbon"><a href="https://inc42.com/glossary/alpha-release-beta-release/#:~:text=An%20alpha%20release%20is%20an,caught%20during%20the%20previous%20tests.">Alpha</a> <a href="{% url 'contact' %}">Feedback welcome</a></div>-->
     <!-- PRE LOADER -->
@@ -160,10 +162,12 @@
     {% endblock pre-roll %}
 
     <!-- Actual content -->
+    <main id="main-content" role="main">
     {% block content %}
 
     {% endblock content %}
-    <!-- End of content block. Phew that was short -->
+    </main>
+    <!-- End of content block -->
 
     {% block foot-roll %}
     {% endblock foot-roll %}

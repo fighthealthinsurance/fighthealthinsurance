@@ -105,13 +105,8 @@ class Base(Configuration):
 
     SITE_ID = 1
 
-    TEMPLATE_CONTEXT_PROCESSORS = [
-        "django.template.context_processors.request",
-        "django.template.context_processors.debug",
-        "django.contrib.auth.context_processors.auth",
-        "django.contrib.messages.context_processors.messages",
-        "django.template.context_processors.request",
-    ]
+    # Note: TEMPLATE_CONTEXT_PROCESSORS is legacy - actual context processors
+    # are defined in TEMPLATES['OPTIONS']['context_processors'] below
 
     SESSION_COOKIE_DOMAIN_DYNAMIC = [
         ".fightpaperwork.com",
@@ -234,8 +229,6 @@ class Base(Configuration):
         "mfa.recovery.Hash",
     ]
 
-    CSRF_COOKIE_HTTPONLY = False
-
     # Password validation
     # https://docs.djangoproject.com/en/4.0/ref/settings/#auth-password-validators
 
@@ -314,11 +307,6 @@ class Base(Configuration):
 
     DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-    # Default primary key field type
-    # https://docs.djangoproject.com/en/4.0/ref/settings/#default-auto-field
-
-    DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
-
     # CORS settings
     # CORS_URLS_REGEX = r"^/.*$"
     # CORS_ALLOWED_ORIGINS_REGEXES = [
@@ -379,10 +367,8 @@ class Base(Configuration):
 
     @property
     def STRIPE_API_PUBLISHABLE_KEY(self):
-        return os.getenv(
-            "STRIPE_TEST_PUBLISHABLE_KEY",
-            "pk_test_51MXFu6FI0Ls3lz8tKOwolhL765Pc6WUkeZGTrOqri8ibbWJzRwLqJGRmyY8r6he09aMmGsULImRfIbErgjxvEVTO00vgERwX4P",
-        )
+        # Note: No default - use STRIPE_TEST_PUBLISHABLE_KEY env var
+        return os.getenv("STRIPE_TEST_PUBLISHABLE_KEY", "")
 
     @cached_property
     def EXTERNAL_STORAGE(self) -> Optional[Storage]:
