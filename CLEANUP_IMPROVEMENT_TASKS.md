@@ -35,8 +35,8 @@ This document tracks technical debt, cleanup tasks, and improvement opportunitie
 | Done | Task | File(s) | Notes |
 |------|------|---------|-------|
 | [x] | Remove duplicate `request` context processor | `settings.py` | Removed unused TEMPLATE_CONTEXT_PROCESSORS |
-| [ ] | Remove 101 console.log statements | `static/js/*.ts` | User decided to keep them for now |
-| [ ] | Add `.env.example` with all env vars | Project root | Document required vs optional |
+| [~] | Remove 101 console.log statements | `static/js/*.ts` | User decided to keep them for now |
+| [x] | Add `.env.example` with all env vars | Project root | Documents all env vars with comments |
 | [ ] | Fix wildcard imports | `fhi_users/models.py` imports | Use explicit imports |
 | [x] | Remove hardcoded test Stripe key from settings | `settings.py:383` | Now requires env var |
 
@@ -58,11 +58,11 @@ This document tracks technical debt, cleanup tasks, and improvement opportunitie
 | [x] | `base.html` | 2 `<style>` blocks (ribbon, spinner) extracted | `custom.css` |
 | [x] | `appeal.html` | Alert boxes now use .alert-box classes | `custom.css` |
 | [x] | `scrub.html` | Form styling, box containers now use CSS classes | `custom.css` |
-| [ ] | `privacy_policy.html` | Container/section styling | `main.css` |
+| [x] | `privacy_policy.html` | Uses Bootstrap utility classes (mt-3, mb-3) | N/A |
 | [ ] | `chat_consent.html` | Display hiding utilities | `custom.css` |
 | [ ] | `microsite.html` | Icon sizing | `custom.css` |
-| [ ] | `categorize.html` | Form styling | `custom.css` |
-| [ ] | `403_csrf.html` | Button styling | `custom.css` |
+| [x] | `categorize.html` | Uses alert-box, btn-green, container-narrow classes | `custom.css` |
+| [~] | `403_csrf.html` | Self-contained error page (intentionally standalone) | N/A |
 
 ### 2.2 Create Reusable CSS Classes
 
@@ -117,11 +117,12 @@ The chat interface module is large and handles multiple responsibilities. Break 
 
 | Done | Handler | Current Location | New File | Notes |
 |------|---------|------------------|----------|-------|
-| [ ] | PubMed tool | `chat_interface.py` | `chat/tools/pubmed_tool.py` | |
-| [ ] | Medicaid info tool | `chat_interface.py` | `chat/tools/medicaid_info_tool.py` | |
-| [ ] | Medicaid eligibility tool | `chat_interface.py` | `chat/tools/medicaid_eligibility_tool.py` | |
-| [ ] | Appeal tool | `chat_interface.py` | `chat/tools/appeal_tool.py` | |
-| [ ] | Prior auth tool | `chat_interface.py` | `chat/tools/prior_auth_tool.py` | |
+| [x] | Tool regex patterns | `chat_interface.py` | `chat/tools/patterns.py` | All tool detection patterns extracted |
+| [ ] | PubMed tool handler | `chat_interface.py` | `chat/tools/pubmed_tool.py` | |
+| [ ] | Medicaid info tool handler | `chat_interface.py` | `chat/tools/medicaid_info_tool.py` | |
+| [ ] | Medicaid eligibility handler | `chat_interface.py` | `chat/tools/medicaid_eligibility_tool.py` | |
+| [ ] | Appeal tool handler | `chat_interface.py` | `chat/tools/appeal_tool.py` | |
+| [ ] | Prior auth tool handler | `chat_interface.py` | `chat/tools/prior_auth_tool.py` | |
 
 ### 3.2 Extract Core Logic
 
