@@ -34,11 +34,11 @@ This document tracks technical debt, cleanup tasks, and improvement opportunitie
 
 | Done | Task | File(s) | Notes |
 |------|------|---------|-------|
-| [ ] | Remove duplicate `request` context processor | `settings.py` | Line appears twice |
-| [ ] | Remove 101 console.log statements | `static/js/*.ts` | See Section 10 for file list |
+| [x] | Remove duplicate `request` context processor | `settings.py` | Removed unused TEMPLATE_CONTEXT_PROCESSORS |
+| [ ] | Remove 101 console.log statements | `static/js/*.ts` | User decided to keep them for now |
 | [ ] | Add `.env.example` with all env vars | Project root | Document required vs optional |
 | [ ] | Fix wildcard imports | `fhi_users/models.py` imports | Use explicit imports |
-| [ ] | Remove hardcoded test Stripe key from settings | `settings.py:383` | Move to env var |
+| [x] | Remove hardcoded test Stripe key from settings | `settings.py:383` | Now requires env var |
 
 ---
 
@@ -55,9 +55,9 @@ This document tracks technical debt, cleanup tasks, and improvement opportunitie
 
 | Done | Template | Issue | Target CSS |
 |------|----------|-------|------------|
-| [ ] | `base.html` | 3 `<style>` blocks (ribbon, spinner, preloader) | `custom.css` |
-| [ ] | `appeal.html` | Alert boxes (green #e8f5e9, red #ffebee, yellow #fff3cd) | `custom.css` |
-| [ ] | `scrub.html` | Form styling, box containers | `custom.css` |
+| [x] | `base.html` | 2 `<style>` blocks (ribbon, spinner) extracted | `custom.css` |
+| [x] | `appeal.html` | Alert boxes now use .alert-box classes | `custom.css` |
+| [x] | `scrub.html` | Form styling, box containers now use CSS classes | `custom.css` |
 | [ ] | `privacy_policy.html` | Container/section styling | `main.css` |
 | [ ] | `chat_consent.html` | Display hiding utilities | `custom.css` |
 | [ ] | `microsite.html` | Icon sizing | `custom.css` |

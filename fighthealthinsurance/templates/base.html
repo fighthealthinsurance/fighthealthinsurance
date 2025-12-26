@@ -45,26 +45,6 @@
     <link rel="shortcut icon" href="{% static 'images/favicon-optimized.ico' %}" type="image/x-icon">
     <link rel="icon" href="{% static 'images/favicon-32.png' %}" sizes="32x32" type="image/png">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/github-fork-ribbon-css/0.2.3/gh-fork-ribbon.min.css" />
-    <style>
-      .betaribbon {
-	  font-size: 28px;
-	  font-weight: bold;
-	  color: #fff;
-      }
-      .betaribbon {
-	  --f: .5em; /* control the folded part*/
-	  --r: .8em; /* control the ribbon shape */
-
-	  position: absolute;
-	  left: 20px;
-	  top: calc(-1*var(--f));
-	  padding: .2em;
-	  background: #BF4D28;
-	  border-left: var(--f) solid #0005;
-	  border-bottom: var(--r) solid #0000;
-	  clipPath: polygon(var(--f) 0,100% 0,100% 100%,calc(50% + var(--f)/2) calc(100% - var(--r)), var(--f) 100%,var(--f) var(--f),0 var(--f));
-      }
-    </style>
     {% block extra_style %}
     {% endblock extra_style %}
     <!-- SCRIPTS - Load critical scripts only in head, defer others -->
@@ -84,15 +64,6 @@
 
       gtag('config', 'G-JQNGR0JGVN');
     </script>
-    <style>
-      #loading-spinner {
-	  display: none;
-	  position: fixed;
-	  top: 50%;
-	  left: 50%;
-	  transform: translate(-50%, -50%);
-      }
-    </style>
 </head>
 
 <body id="top" data-spy="scroll" data-target=".navbar-collapse" data-offset="50">

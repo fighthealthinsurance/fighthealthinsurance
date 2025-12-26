@@ -1315,3 +1315,35 @@ section:not(.slider) .share-subcopy {
         font-size: 0.75rem;
     }
 }
+
+/* Beta ribbon - extracted from base.html inline styles */
+.betaribbon {
+    font-size: 28px;
+    font-weight: bold;
+    color: #fff;
+    --f: .5em; /* control the folded part */
+    --r: .8em; /* control the ribbon shape */
+    position: absolute;
+    left: 20px;
+    top: calc(-1*var(--f));
+    padding: .2em;
+    background: #BF4D28;
+    border-left: var(--f) solid #0005;
+    border-bottom: var(--r) solid #0000;
+    clip-path: polygon(var(--f) 0,100% 0,100% 100%,calc(50% + var(--f)/2) calc(100% - var(--r)), var(--f) 100%,var(--f) var(--f),0 var(--f));
+}
+
+/* Loading spinner - extracted from base.html inline styles */
+#loading-spinner {
+    display: none;
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+}
+
+/* Form validation errors */
+.form-errors {
+    color: #dc3545;
+    margin-bottom: 1rem;
+}
