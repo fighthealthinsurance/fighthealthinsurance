@@ -76,7 +76,9 @@ class TestWebSocketEmailStorage(TestCase):
         )
 
         # Simulate GDPR deletion request - delete all chats by hashed email
-        deleted_count, _ = OngoingChat.objects.filter(hashed_email=hashed_email).delete()
+        deleted_count, _ = OngoingChat.objects.filter(
+            hashed_email=hashed_email
+        ).delete()
 
         self.assertEqual(deleted_count, 2)
         self.assertEqual(
@@ -128,7 +130,9 @@ class TestWebSocketChatCreation:
         consumer.scope = {"user": None}  # Anonymous user
         return consumer
 
-    async def test_get_or_create_chat_stores_hashed_email(self, mock_websocket_consumer):
+    async def test_get_or_create_chat_stores_hashed_email(
+        self, mock_websocket_consumer
+    ):
         """Test that _get_or_create_chat properly stores hashed email for patient chats."""
         test_email = "async_test@example.com"
         test_session_key = str(uuid.uuid4())

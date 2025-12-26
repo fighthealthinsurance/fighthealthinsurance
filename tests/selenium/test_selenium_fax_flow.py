@@ -121,8 +121,9 @@ Cheap-O-Insurance-Corp""",
         self.assert_element("#main-content", timeout=5)
 
         # Check that we're on the right page by URL
-        assert "generate_appeal" in self.driver.current_url, \
-            f"Should be on generate_appeal page, got {self.driver.current_url}"
+        assert (
+            "generate_appeal" in self.driver.current_url
+        ), f"Should be on generate_appeal page, got {self.driver.current_url}"
 
         print("✓ Choose appeal page loaded successfully")
 
@@ -144,8 +145,9 @@ Cheap-O-Insurance-Corp""",
         denial_id = denial.denial_id
 
         # Fax number should initially be None
-        assert denial.appeal_fax_number is None or denial.appeal_fax_number == "", \
-            f"Fax number should initially be empty, got: {denial.appeal_fax_number}"
+        assert (
+            denial.appeal_fax_number is None or denial.appeal_fax_number == ""
+        ), f"Fax number should initially be empty, got: {denial.appeal_fax_number}"
 
         # Try to find and fill the fax form
         # The page layout may vary - look for fax form elements
@@ -156,7 +158,9 @@ Cheap-O-Insurance-Corp""",
             elif self.is_element_present("input[name='fax_phone']"):
                 self.type("input[name='fax_phone']", test_fax_number)
             else:
-                print("Note: Fax phone input not found on page - may require JS interaction")
+                print(
+                    "Note: Fax phone input not found on page - may require JS interaction"
+                )
                 return  # Skip rest of test if fax form not accessible
 
             # Fill other required fax form fields if present
@@ -176,8 +180,9 @@ Cheap-O-Insurance-Corp""",
             denial.refresh_from_db()
 
             # Verify fax number was stored
-            assert denial.appeal_fax_number == test_fax_number, \
-                f"Expected fax number {test_fax_number}, got {denial.appeal_fax_number}"
+            assert (
+                denial.appeal_fax_number == test_fax_number
+            ), f"Expected fax number {test_fax_number}, got {denial.appeal_fax_number}"
             print(f"✓ Fax number {test_fax_number} stored in denial record")
 
         except Exception as e:
@@ -249,8 +254,7 @@ class SeleniumFaxDatabaseTest(FHISeleniumBase, StaticLiveServerTestCase):
 
         # Refresh and verify
         denial.refresh_from_db()
-        assert denial.appeal_fax_number == test_fax, \
-            f"Fax number should be {test_fax}"
+        assert denial.appeal_fax_number == test_fax, f"Fax number should be {test_fax}"
 
         # Clean up
         denial.delete()
@@ -281,8 +285,9 @@ class SeleniumFaxDatabaseTest(FHISeleniumBase, StaticLiveServerTestCase):
         )
 
         # Verify destination is stored
-        assert fax.destination == test_destination, \
-            f"Destination should be {test_destination}"
+        assert (
+            fax.destination == test_destination
+        ), f"Destination should be {test_destination}"
 
         # Clean up
         fax.delete()
@@ -313,11 +318,10 @@ class SeleniumFaxDatabaseTest(FHISeleniumBase, StaticLiveServerTestCase):
         )
 
         # Verify we can find faxes without destination
-        faxes_without_dest = FaxesToSend.objects.filter(
-            destination__isnull=True
-        )
-        assert faxes_without_dest.count() >= 1, \
-            "Should be able to find faxes without destination"
+        faxes_without_dest = FaxesToSend.objects.filter(destination__isnull=True)
+        assert (
+            faxes_without_dest.count() >= 1
+        ), "Should be able to find faxes without destination"
 
         # Also check for empty string destinations
         fax2 = FaxesToSend.objects.create(
@@ -330,8 +334,9 @@ class SeleniumFaxDatabaseTest(FHISeleniumBase, StaticLiveServerTestCase):
         )
 
         faxes_empty_dest = FaxesToSend.objects.filter(destination="")
-        assert faxes_empty_dest.count() >= 1, \
-            "Should be able to find faxes with empty destination"
+        assert (
+            faxes_empty_dest.count() >= 1
+        ), "Should be able to find faxes with empty destination"
 
         # Clean up
         fax.delete()

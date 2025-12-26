@@ -28,9 +28,11 @@ class FaxSendBaseTest(unittest.TestCase):
             t.flush()
             os.sync()
             print(f"Using temp file {t.name}")
-            r = asyncio.run(m.assemble_outputs(
-                user_header="MyHeader", extra="", input_paths=[t.name]
-            ))
+            r = asyncio.run(
+                m.assemble_outputs(
+                    user_header="MyHeader", extra="", input_paths=[t.name]
+                )
+            )
             self.assertEqual(len(r), 1)
             reader = PdfReader(r[0])
             header_text = reader.pages[0].extract_text()
@@ -47,9 +49,11 @@ class FaxSendBaseTest(unittest.TestCase):
                 t1.write("Test ")
             t1.flush()
             time.sleep(1)
-            r = asyncio.run(m.assemble_outputs(
-                user_header="MyHeader", extra="", input_paths=[t1.name]
-            ))
+            r = asyncio.run(
+                m.assemble_outputs(
+                    user_header="MyHeader", extra="", input_paths=[t1.name]
+                )
+            )
             self.assertEqual(len(r), 2)
             reader = PdfReader(r[0])
             header_text = reader.pages[0].extract_text()

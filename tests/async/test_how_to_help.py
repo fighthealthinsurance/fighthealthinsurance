@@ -29,10 +29,12 @@ class TestHowToHelpPage(TestCase):
         self.assertContains(result, "Help Us Learn & Improve")
         self.assertContains(result, "Contribute on GitHub")
         self.assertContains(result, "Support Our Development")
-        
+
         # Check for links to key components
         self.assertContains(result, "chooser")  # Link to chooser interface
-        self.assertContains(result, "github.com/orgs/fighthealthinsurance")  # GitHub link
+        self.assertContains(
+            result, "github.com/orgs/fighthealthinsurance"
+        )  # GitHub link
         self.assertContains(result, "buy.stripe.com")  # Donation link
 
     def test_how_to_help_template_used(self):

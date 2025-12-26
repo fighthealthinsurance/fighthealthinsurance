@@ -40,7 +40,9 @@ class ReferralSourceAppealFlowTest(TestCase):
 
         # Verify the subscriber data includes referral_source and details
         subscriber = MailingListSubscriber.objects.get(email="test@example.com")
-        self.assertEqual(subscriber.referral_source, "Search Engine (Google, Bing, etc.)")
+        self.assertEqual(
+            subscriber.referral_source, "Search Engine (Google, Bing, etc.)"
+        )
         self.assertEqual(subscriber.referral_source_details, "Google")
 
         # Verify the denial object also has referral_source and details
@@ -74,7 +76,9 @@ class ReferralSourceAppealFlowTest(TestCase):
 
         # No mailing list subscriber should be created
         self.assertFalse(
-            MailingListSubscriber.objects.filter(email="nosubscribe@example.com").exists()
+            MailingListSubscriber.objects.filter(
+                email="nosubscribe@example.com"
+            ).exists()
         )
 
         # But the denial should have the referral source

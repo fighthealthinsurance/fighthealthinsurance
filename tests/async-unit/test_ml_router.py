@@ -208,7 +208,9 @@ class TestMLRouterSummarizeChatHistory(unittest.TestCase):
 
         # Create a mock model that returns a summary
         mock_model = AsyncMock(spec=RemoteModelLike)
-        mock_model._infer_no_context.return_value = "This is a summary of the conversation"
+        mock_model._infer_no_context.return_value = (
+            "This is a summary of the conversation"
+        )
 
         self.router.internal_models_by_cost = [mock_model]
 
@@ -488,7 +490,9 @@ class TestMLRouterSummarizeChatHistory(unittest.TestCase):
         """Test that 'agent' and 'system' roles are normalized to 'assistant'."""
         # Create mock model
         mock_model = MagicMock(spec=RemoteModelLike)
-        mock_model._infer_no_context = AsyncMock(return_value="Summary with normalized roles")
+        mock_model._infer_no_context = AsyncMock(
+            return_value="Summary with normalized roles"
+        )
         self.router.internal_models_by_cost = [mock_model]
 
         history = [
@@ -545,4 +549,6 @@ class TestMLRouterSummarizeChatHistory(unittest.TestCase):
 
     def test_summarize_chat_history_consecutive_same_role_merged(self):
         """Run the async test using asyncio."""
-        asyncio.run(self.async_test_summarize_chat_history_consecutive_same_role_merged())
+        asyncio.run(
+            self.async_test_summarize_chat_history_consecutive_same_role_merged()
+        )

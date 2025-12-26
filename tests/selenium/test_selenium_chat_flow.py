@@ -99,7 +99,8 @@ class SeleniumChatFlowTest(FHISeleniumBase, StaticLiveServerTestCase):
         self.wait(2)
 
         # Verify that the email is available in user info for sending
-        user_info = self.execute_script("""
+        user_info = self.execute_script(
+            """
             // Check if userInfoStorage module is available
             if (window.userInfoStorage && window.userInfoStorage.getUserInfo) {
                 return window.userInfoStorage.getUserInfo();
@@ -107,24 +108,29 @@ class SeleniumChatFlowTest(FHISeleniumBase, StaticLiveServerTestCase):
             // Fallback to direct localStorage access
             const stored = localStorage.getItem('fhi_user_info');
             return stored ? JSON.parse(stored) : null;
-        """)
+        """
+        )
 
         assert user_info is not None, "User info should be available"
         assert user_info.get("email") == test_email, f"Email should be {test_email}"
 
         # Verify the chat interface has the data it needs to send to backend
         # by checking that a message would include the email
-        message_would_include_email = self.execute_script(f"""
+        message_would_include_email = self.execute_script(
+            f"""
             const userInfo = localStorage.getItem('fhi_user_info');
             if (userInfo) {{
                 const parsed = JSON.parse(userInfo);
                 return parsed.email === '{test_email}';
             }}
             return false;
-        """)
+        """
+        )
 
         assert message_would_include_email, "Message data should include correct email"
-        print(f"✓ Chat interface has email ({test_email}) ready for backend communication")
+        print(
+            f"✓ Chat interface has email ({test_email}) ready for backend communication"
+        )
 
     def test_chat_interface_receives_user_info(self):
         """Test that the chat interface correctly retrieves user info from localStorage."""
@@ -141,14 +147,16 @@ class SeleniumChatFlowTest(FHISeleniumBase, StaticLiveServerTestCase):
         self.wait(1)
 
         # Verify getUserInfo() returns correct data
-        user_info = self.execute_script("""
+        user_info = self.execute_script(
+            """
             if (window.userInfoStorage && window.userInfoStorage.getUserInfo) {
                 return window.userInfoStorage.getUserInfo();
             }
             // Fallback: parse from localStorage directly
             const stored = localStorage.getItem('fhi_user_info');
             return stored ? JSON.parse(stored) : null;
-        """)
+        """
+        )
 
         assert user_info is not None, "getUserInfo() should return user data"
         assert user_info["email"] == test_email, f"Email should be {test_email}"
@@ -207,7 +215,9 @@ class SeleniumExplainDenialChatFlowTest(FHISeleniumBase, StaticLiveServerTestCas
         self.open(f"{self.live_server_url}/explain-denial")
 
         # Fill denial text
-        denial_text = "Your claim for MRI has been denied due to lack of medical necessity."
+        denial_text = (
+            "Your claim for MRI has been denied due to lack of medical necessity."
+        )
         self.type("textarea#denial_text", denial_text)
 
         # Fill user consent fields
@@ -229,14 +239,18 @@ class SeleniumExplainDenialChatFlowTest(FHISeleniumBase, StaticLiveServerTestCas
 
         user_info = json.loads(user_info_json)
         assert user_info["email"] == test_email, f"Email should be {test_email}"
-        print(f"✓ User info stored after explain denial submission: {user_info['email']}")
+        print(
+            f"✓ User info stored after explain denial submission: {user_info['email']}"
+        )
 
     def test_explain_denial_passes_denial_text_to_chat(self):
         """Test that denial text from explain denial page is available in chat interface."""
         self.open(f"{self.live_server_url}/explain-denial")
 
         # Fill denial text with identifiable content
-        denial_text = "UNIQUE_DENIAL_12345: Your claim for physical therapy has been denied."
+        denial_text = (
+            "UNIQUE_DENIAL_12345: Your claim for physical therapy has been denied."
+        )
         self.type("textarea#denial_text", denial_text)
 
         # Fill user consent fields
@@ -257,9 +271,9 @@ class SeleniumExplainDenialChatFlowTest(FHISeleniumBase, StaticLiveServerTestCas
         # Check if the denial-related content is in the page
         # The text may be shown as a user message or in the interface
         has_denial_context = (
-            "denial" in page_content.lower() or
-            "claim" in page_content.lower() or
-            "physical therapy" in page_content.lower()
+            "denial" in page_content.lower()
+            or "claim" in page_content.lower()
+            or "physical therapy" in page_content.lower()
         )
 
         # Also verify user info is stored
@@ -430,7 +444,9 @@ class SeleniumExistingChatTest(FHISeleniumBase, StaticLiveServerTestCase):
             "return document.getElementById('store_fname')?.value || '';"
         )
         # User info should persist
-        assert stored_fname == "Existing", "First name should be pre-filled from localStorage"
+        assert (
+            stored_fname == "Existing"
+        ), "First name should be pre-filled from localStorage"
 
         # Fill denial text
         denial_text = "NEW_DENIAL: My knee surgery was denied as experimental."
@@ -472,14 +488,13 @@ class SeleniumExistingChatTest(FHISeleniumBase, StaticLiveServerTestCase):
         time.sleep(2)
 
         # Chat ID should be cleared
-        new_chat_id = self.execute_script(
-            "return localStorage.getItem('fhi_chat_id');"
-        )
+        new_chat_id = self.execute_script("return localStorage.getItem('fhi_chat_id');")
 
         # After clicking New Chat, chat_id should be null/cleared
         # (a new one will be assigned when user sends a message)
-        assert new_chat_id is None or new_chat_id != initial_chat_id, \
-            "New Chat should clear or change the chat ID"
+        assert (
+            new_chat_id is None or new_chat_id != initial_chat_id
+        ), "New Chat should clear or change the chat ID"
 
         # User info should still be preserved
         user_info_json = self.execute_script(
@@ -552,10 +567,18 @@ class SeleniumExistingChatTest(FHISeleniumBase, StaticLiveServerTestCase):
         time.sleep(1)
 
         # Check pre-filled values
-        fname = self.execute_script("return document.getElementById('store_fname')?.value;")
-        lname = self.execute_script("return document.getElementById('store_lname')?.value;")
-        stored_email = self.execute_script("return document.getElementById('email')?.value;")
-        city = self.execute_script("return document.getElementById('store_city')?.value;")
+        fname = self.execute_script(
+            "return document.getElementById('store_fname')?.value;"
+        )
+        lname = self.execute_script(
+            "return document.getElementById('store_lname')?.value;"
+        )
+        stored_email = self.execute_script(
+            "return document.getElementById('email')?.value;"
+        )
+        city = self.execute_script(
+            "return document.getElementById('store_city')?.value;"
+        )
 
         assert fname == "Prefill", f"First name should be pre-filled, got: {fname}"
         assert lname == "TestUser", f"Last name should be pre-filled, got: {lname}"
@@ -598,12 +621,15 @@ class SeleniumExistingChatTest(FHISeleniumBase, StaticLiveServerTestCase):
         external_pref = self.execute_script(
             "return localStorage.getItem('fhi_use_external_models');"
         )
-        assert external_pref == "true", f"External models should be saved, got: {external_pref}"
+        assert (
+            external_pref == "true"
+        ), f"External models should be saved, got: {external_pref}"
 
         # Verify the chat loaded with initial message (denial text should appear)
         page_content = self.get_page_source()
-        assert "MRI" in page_content or "denied" in page_content.lower(), \
-            "Chat should show the denial message"
+        assert (
+            "MRI" in page_content or "denied" in page_content.lower()
+        ), "Chat should show the denial message"
 
         print("✓ Explain denial with external models works correctly")
         print(f"  - External models preference saved: {external_pref}")

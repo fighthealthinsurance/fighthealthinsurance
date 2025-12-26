@@ -441,10 +441,10 @@ class ChooserVoteAPITest(APITestCase):
             email="admin@test.com",
             password="adminpass123",
         )
-        
+
         # Log in as admin
         self.client.force_authenticate(user=admin_user)
-        
+
         url = reverse("chooser-vote")
         data = {
             "task_id": self.task.id,
@@ -639,7 +639,7 @@ class ChooserSkipAPITest(APITestCase):
     def setUp(self):
         """
         Create a READY "appeal" ChooserTask and two associated appeal_letter candidates.
-        
+
         Sets up a ChooserTask with context_json {"procedure": "Test"} and two ChooserCandidate records:
         candidate_index 0 and 1 with different model_name and content values.
         """

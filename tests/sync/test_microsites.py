@@ -44,7 +44,9 @@ OPTIONAL_MICROSITE_KEYS = {
 }
 
 # All valid keys that can appear in a microsite JSON entry
-ALL_VALID_MICROSITE_KEYS = REQUIRED_MICROSITE_KEYS | COMMON_LIST_KEYS | OPTIONAL_MICROSITE_KEYS
+ALL_VALID_MICROSITE_KEYS = (
+    REQUIRED_MICROSITE_KEYS | COMMON_LIST_KEYS | OPTIONAL_MICROSITE_KEYS
+)
 
 
 def get_microsites_json_path():
@@ -95,12 +97,18 @@ class MicrositeJSONValidationTest(TestCase):
     def test_microsites_json_loads_successfully(self):
         """Test that microsites.json loads without errors."""
         self.assertIsInstance(self.microsites, dict)
-        self.assertGreater(len(self.microsites), 0, "microsites.json should contain at least one microsite")
+        self.assertGreater(
+            len(self.microsites),
+            0,
+            "microsites.json should contain at least one microsite",
+        )
 
     def test_microsites_json_has_expected_count(self):
         """Test that we have the expected number of microsites defined."""
         # Based on the JSON file, we expect at least 25+ microsites
-        self.assertGreaterEqual(len(self.microsites), 25, "Expected at least 25 microsites defined")
+        self.assertGreaterEqual(
+            len(self.microsites), 25, "Expected at least 25 microsites defined"
+        )
 
     def test_all_microsites_have_required_string_fields(self):
         """Test that all microsites have required non-empty string fields."""
@@ -120,77 +128,83 @@ class MicrositeJSONValidationTest(TestCase):
             for field in required_string_fields:
                 value = getattr(microsite, field, None)
                 self.assertIsNotNone(
-                    value,
-                    f"Microsite '{slug}' is missing required field '{field}'"
+                    value, f"Microsite '{slug}' is missing required field '{field}'"
                 )
                 self.assertIsInstance(
-                    value, str,
-                    f"Microsite '{slug}' field '{field}' should be a string"
+                    value, str, f"Microsite '{slug}' field '{field}' should be a string"
                 )
                 self.assertGreater(
-                    len(value), 0,
-                    f"Microsite '{slug}' field '{field}' should not be empty"
+                    len(value),
+                    0,
+                    f"Microsite '{slug}' field '{field}' should not be empty",
                 )
 
     def test_all_microsites_have_slug_matching_key(self):
         """Test that each microsite's slug field matches its dictionary key."""
         for key, microsite in self.microsites.items():
             self.assertEqual(
-                key, microsite.slug,
-                f"Microsite key '{key}' doesn't match its slug field '{microsite.slug}'"
+                key,
+                microsite.slug,
+                f"Microsite key '{key}' doesn't match its slug field '{microsite.slug}'",
             )
 
     def test_all_microsites_have_valid_faq_structure(self):
         """Test that all microsites have properly structured FAQ entries."""
         for slug, microsite in self.microsites.items():
             self.assertIsInstance(
-                microsite.faq, list,
-                f"Microsite '{slug}' faq should be a list"
+                microsite.faq, list, f"Microsite '{slug}' faq should be a list"
             )
             for i, faq_item in enumerate(microsite.faq):
                 self.assertIsInstance(
-                    faq_item, dict,
-                    f"Microsite '{slug}' faq[{i}] should be a dict"
+                    faq_item, dict, f"Microsite '{slug}' faq[{i}] should be a dict"
                 )
                 self.assertIn(
-                    "question", faq_item,
-                    f"Microsite '{slug}' faq[{i}] missing 'question' key"
+                    "question",
+                    faq_item,
+                    f"Microsite '{slug}' faq[{i}] missing 'question' key",
                 )
                 self.assertIn(
-                    "answer", faq_item,
-                    f"Microsite '{slug}' faq[{i}] missing 'answer' key"
+                    "answer",
+                    faq_item,
+                    f"Microsite '{slug}' faq[{i}] missing 'answer' key",
                 )
                 self.assertGreater(
-                    len(faq_item["question"]), 0,
-                    f"Microsite '{slug}' faq[{i}] question should not be empty"
+                    len(faq_item["question"]),
+                    0,
+                    f"Microsite '{slug}' faq[{i}] question should not be empty",
                 )
                 self.assertGreater(
-                    len(faq_item["answer"]), 0,
-                    f"Microsite '{slug}' faq[{i}] answer should not be empty"
+                    len(faq_item["answer"]),
+                    0,
+                    f"Microsite '{slug}' faq[{i}] answer should not be empty",
                 )
 
     def test_all_microsites_have_common_denial_reasons(self):
         """Test that all microsites have at least one common denial reason."""
         for slug, microsite in self.microsites.items():
             self.assertIsInstance(
-                microsite.common_denial_reasons, list,
-                f"Microsite '{slug}' common_denial_reasons should be a list"
+                microsite.common_denial_reasons,
+                list,
+                f"Microsite '{slug}' common_denial_reasons should be a list",
             )
             self.assertGreater(
-                len(microsite.common_denial_reasons), 0,
-                f"Microsite '{slug}' should have at least one common denial reason"
+                len(microsite.common_denial_reasons),
+                0,
+                f"Microsite '{slug}' should have at least one common denial reason",
             )
 
     def test_all_microsites_have_evidence_snippets(self):
         """Test that all microsites have at least one evidence snippet."""
         for slug, microsite in self.microsites.items():
             self.assertIsInstance(
-                microsite.evidence_snippets, list,
-                f"Microsite '{slug}' evidence_snippets should be a list"
+                microsite.evidence_snippets,
+                list,
+                f"Microsite '{slug}' evidence_snippets should be a list",
             )
             self.assertGreater(
-                len(microsite.evidence_snippets), 0,
-                f"Microsite '{slug}' should have at least one evidence snippet"
+                len(microsite.evidence_snippets),
+                0,
+                f"Microsite '{slug}' should have at least one evidence snippet",
             )
 
     def test_known_microsites_exist(self):
@@ -210,8 +224,9 @@ class MicrositeJSONValidationTest(TestCase):
         ]
         for slug in known_slugs:
             self.assertIn(
-                slug, self.microsites,
-                f"Expected microsite '{slug}' to be defined in microsites.json"
+                slug,
+                self.microsites,
+                f"Expected microsite '{slug}' to be defined in microsites.json",
             )
 
     def test_no_unexpected_keys_in_microsites(self):
@@ -336,12 +351,14 @@ class MicrositeModuleTest(TestCase):
         microsite = microsites.get("biologic-denial")
         self.assertIsNotNone(microsite)
         self.assertGreater(
-            len(microsite.assistance_programs), 0,
-            "biologic-denial microsite should have assistance programs"
+            len(microsite.assistance_programs),
+            0,
+            "biologic-denial microsite should have assistance programs",
         )
         self.assertGreater(
-            len(microsite.alternatives), 0,
-            "biologic-denial microsite should have alternatives"
+            len(microsite.alternatives),
+            0,
+            "biologic-denial microsite should have alternatives",
         )
 
 
@@ -387,7 +404,14 @@ class MicrositeViewTest(TestCase):
             microsite = get_microsite(slugs[0])
             response = self.client.get(reverse("microsite", kwargs={"slug": slugs[0]}))
             # Check that the link includes the default_procedure parameter
-            self.assertContains(response, f"default_procedure={microsite.default_procedure.replace(' ', '%20').replace('/', '%2F')}" if '/' in microsite.default_procedure else f"default_procedure={microsite.default_procedure.replace(' ', '%20')}")
+            self.assertContains(
+                response,
+                (
+                    f"default_procedure={microsite.default_procedure.replace(' ', '%20').replace('/', '%2F')}"
+                    if "/" in microsite.default_procedure
+                    else f"default_procedure={microsite.default_procedure.replace(' ', '%20')}"
+                ),
+            )
 
 
 class MicrositeDefaultProcedureFlowTest(TestCase):
@@ -505,7 +529,7 @@ class MicrositeSpecificTest(TestCase):
             response.status_code,
             200,
             "MRI denial microsite should load successfully. "
-            "If this fails, ensure microsites.json is available to Django's staticfiles."
+            "If this fails, ensure microsites.json is available to Django's staticfiles.",
         )
 
     def test_ct_scan_denial_microsite_loads(self):
@@ -516,7 +540,7 @@ class MicrositeSpecificTest(TestCase):
         self.assertEqual(
             response.status_code,
             200,
-            "CT scan denial microsite should load successfully."
+            "CT scan denial microsite should load successfully.",
         )
 
 
@@ -530,8 +554,7 @@ class MedicareMicrositeTest(TestCase):
         """Test that the Medicare work requirements microsite exists."""
         microsite = get_microsite("medicare-work-requirements")
         self.assertIsNotNone(
-            microsite,
-            "Medicare work requirements microsite should exist"
+            microsite, "Medicare work requirements microsite should exist"
         )
 
     def test_medicare_work_requirements_microsite_loads(self):
@@ -542,7 +565,7 @@ class MedicareMicrositeTest(TestCase):
         self.assertEqual(
             response.status_code,
             200,
-            "Medicare work requirements microsite should load successfully."
+            "Medicare work requirements microsite should load successfully.",
         )
 
     def test_medicare_work_requirements_has_medicare_flag(self):
@@ -551,7 +574,7 @@ class MedicareMicrositeTest(TestCase):
         self.assertIsNotNone(microsite)
         self.assertTrue(
             microsite.medicare,
-            "Medicare work requirements microsite should have medicare=True"
+            "Medicare work requirements microsite should have medicare=True",
         )
 
     def test_medicare_work_requirements_page_contains_medicare_content(self):
@@ -597,7 +620,7 @@ class MedicareMicrositeTest(TestCase):
         self.assertGreater(
             len(microsite.faq),
             0,
-            "Medicare work requirements microsite should have FAQ entries"
+            "Medicare work requirements microsite should have FAQ entries",
         )
 
     def test_medicare_work_requirements_has_common_denial_reasons(self):
@@ -607,7 +630,7 @@ class MedicareMicrositeTest(TestCase):
         self.assertGreater(
             len(microsite.common_denial_reasons),
             0,
-            "Medicare work requirements microsite should have common denial reasons"
+            "Medicare work requirements microsite should have common denial reasons",
         )
 
     def test_medicare_work_requirements_has_evidence_snippets(self):
@@ -617,7 +640,7 @@ class MedicareMicrositeTest(TestCase):
         self.assertGreater(
             len(microsite.evidence_snippets),
             0,
-            "Medicare work requirements microsite should have evidence snippets"
+            "Medicare work requirements microsite should have evidence snippets",
         )
 
 
@@ -685,8 +708,12 @@ class MedicareChatIntegrationTest(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Medicare Work Requirements")
         self.assertContains(response, 'data-medicare="true"')
-        self.assertContains(response, 'data-default-procedure="Medicare Work Requirements"')
-        self.assertContains(response, 'data-microsite-slug="medicare-work-requirements"')
+        self.assertContains(
+            response, 'data-default-procedure="Medicare Work Requirements"'
+        )
+        self.assertContains(
+            response, 'data-microsite-slug="medicare-work-requirements"'
+        )
 
     def test_chat_with_medicare_work_requirements_slug(self):
         """Test that chat includes microsite_slug for Medicare work requirements."""
@@ -706,7 +733,9 @@ class MedicareChatIntegrationTest(TestCase):
             },
         )
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, 'data-microsite-slug="medicare-work-requirements"')
+        self.assertContains(
+            response, 'data-microsite-slug="medicare-work-requirements"'
+        )
 
     def test_medicare_chat_via_post(self):
         """Test that Medicare chat parameters work via POST (from consent form)."""
@@ -727,7 +756,9 @@ class MedicareChatIntegrationTest(TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'data-medicare="true"')
-        self.assertContains(response, 'data-microsite-slug="medicare-work-requirements"')
+        self.assertContains(
+            response, 'data-microsite-slug="medicare-work-requirements"'
+        )
 
     def test_medicare_chat_without_consent_redirects(self):
         """Test that accessing Medicare chat without consent redirects to consent page."""
@@ -794,20 +825,25 @@ class MedicareChatIntegrationTest(TestCase):
         )
         self.assertEqual(response.status_code, 200)
         # Verify all data attributes are present
-        self.assertContains(response, 'data-default-procedure="Medicare Work Requirements"')
+        self.assertContains(
+            response, 'data-default-procedure="Medicare Work Requirements"'
+        )
         self.assertContains(response, 'data-medicare="true"')
-        self.assertContains(response, 'data-microsite-slug="medicare-work-requirements"')
+        self.assertContains(
+            response, 'data-microsite-slug="medicare-work-requirements"'
+        )
 
     def test_medicare_microsite_has_blog_post_url(self):
         """Test that Medicare microsite has blog_post_url field."""
         microsite = get_microsite("medicare-work-requirements")
         self.assertIsNotNone(microsite)
         self.assertTrue(
-            hasattr(microsite, 'blog_post_url'),
-            "Medicare microsite should have blog_post_url attribute"
+            hasattr(microsite, "blog_post_url"),
+            "Medicare microsite should have blog_post_url attribute",
         )
         # Check it's actually set
-        blog_url = getattr(microsite, 'blog_post_url', None)
-        self.assertIsNotNone(blog_url, "Medicare microsite blog_post_url should not be None")
+        blog_url = getattr(microsite, "blog_post_url", None)
+        self.assertIsNotNone(
+            blog_url, "Medicare microsite blog_post_url should not be None"
+        )
         self.assertIn("blog", blog_url, "blog_post_url should contain 'blog'")
-

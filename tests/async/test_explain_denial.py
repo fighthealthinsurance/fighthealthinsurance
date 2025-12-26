@@ -1,6 +1,7 @@
 """
 Tests for the Explain Denial view functionality.
 """
+
 from django.test import TestCase, Client
 from django.urls import reverse
 from fighthealthinsurance.models import MailingListSubscriber
@@ -81,13 +82,13 @@ class TestExplainDenialView(TestCase):
             "denial_text": denial_text,
         }
         response = self.client.post(self.url, form_data)
-        
+
         # Should render the chat_redirect.html template
         self.assertEqual(response.status_code, 200)
         self.assertTemplateUsed(response, "chat_redirect.html")
         self.assertContains(response, denial_text)
         self.assertContains(response, "Redirecting to chat")
-        
+
         # Check session was updated
         session = self.client.session
         self.assertTrue(session.get("consent_completed"))
@@ -124,7 +125,9 @@ class TestExplainDenialView(TestCase):
         subscriber = subscribers.first()
         self.assertEqual(subscriber.name, "Jane Smith")
         self.assertEqual(subscriber.phone, "555-1234")
-        self.assertEqual(subscriber.referral_source, "Search Engine (Google, Bing, etc.)")
+        self.assertEqual(
+            subscriber.referral_source, "Search Engine (Google, Bing, etc.)"
+        )
         self.assertEqual(subscriber.referral_source_details, "Google")
         self.assertIn("From explain denial page", subscriber.comments)
 
@@ -139,10 +142,10 @@ class TestExplainDenialView(TestCase):
             "subscribe": False,  # Don't subscribe
             "denial_text": "My claim was denied.",
         }
-        
+
         response = self.client.post(self.url, form_data)
         self.assertEqual(response.status_code, 200)
-        
+
         # Check no subscriber was created
         subscribers = MailingListSubscriber.objects.filter(email="bob@example.com")
         self.assertEqual(subscribers.count(), 0)
@@ -158,7 +161,7 @@ class TestExplainDenialView(TestCase):
             "privacy_policy": True,
             "denial_text": denial_text,
         }
-        
+
         response = self.client.post(self.url, form_data)
         self.assertEqual(response.status_code, 200)
         # Denial text should be preserved in the context
