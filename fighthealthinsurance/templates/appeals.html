@@ -98,6 +98,14 @@ Fight Your Health Insurance Denial: Choose an Appeal
 <script>
   // Call the typescript on load
   document.addEventListener('DOMContentLoaded', () => {
+      // Track "do magic" appeal generation start for UET
+      if (window.trackUETConversion) {
+        window.trackUETConversion('do_magic', {
+          event_category: 'conversion',
+          event_label: 'Appeal Generation Started'
+        });
+      }
+
       const backendUrl = `wss://${window.location.host}/ws/streaming-appeals-backend/`;
       const data = {
 	  {% autoescape off %}
