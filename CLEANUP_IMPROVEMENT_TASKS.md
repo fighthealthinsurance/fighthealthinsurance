@@ -130,7 +130,7 @@ The chat interface module is large and handles multiple responsibilities. Break 
 | [ ] | LLM calling logic | `_build_llm_calls`, `_score_response` | `chat/llm_client.py` |
 | [ ] | Retry logic | Retry with backoff patterns | `chat/retry_handler.py` |
 | [ ] | Context accumulation | Message history management | `chat/context_manager.py` |
-| [ ] | Crisis detection | `_detect_crisis_keywords`, `_detect_false_promises` | `chat/safety_filters.py` |
+| [x] | Crisis detection | `detect_crisis_keywords`, `detect_false_promises` | `chat/safety_filters.py` |
 
 ### 3.3 Extract Microsite PubMed Search
 
