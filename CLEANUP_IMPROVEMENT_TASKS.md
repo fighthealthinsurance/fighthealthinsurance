@@ -37,7 +37,7 @@ This document tracks technical debt, cleanup tasks, and improvement opportunitie
 | [x] | Remove duplicate `request` context processor | `settings.py` | Removed unused TEMPLATE_CONTEXT_PROCESSORS |
 | [~] | Remove 101 console.log statements | `static/js/*.ts` | User decided to keep them for now |
 | [x] | Add `.env.example` with all env vars | Project root | Documents all env vars with comments |
-| [ ] | Fix wildcard imports | `fhi_users/models.py` imports | Use explicit imports |
+| [x] | Fix wildcard imports | `fhi_users/auth/rest_serializers.py` | Now uses explicit imports |
 | [x] | Remove hardcoded test Stripe key from settings | `settings.py:383` | Now requires env var |
 
 ---
