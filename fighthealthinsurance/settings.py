@@ -56,6 +56,14 @@ class Base(Configuration):
             "rest_framework.authentication.SessionAuthentication",
         ],
         "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+        "DEFAULT_THROTTLE_CLASSES": [
+            "rest_framework.throttling.AnonRateThrottle",
+            "rest_framework.throttling.UserRateThrottle",
+        ],
+        "DEFAULT_THROTTLE_RATES": {
+            "anon": "100/hour",
+            "user": "1000/hour",
+        },
     }
 
     FIGHT_PAPERWORK_DOMAIN = "localhost:3000"
@@ -582,6 +590,21 @@ class Prod(Base):
     SESSION_COOKIE_DOMAIN_DYNAMIC = [".fightpaperwork.com"]
 
     DEBUG = False
+
+    # Production security settings
+    ALLOWED_HOSTS = [
+        "fighthealthinsurance.com",
+        "www.fighthealthinsurance.com",
+        "api.fighthealthinsurance.com",
+        "fightpaperwork.com",
+        "www.fightpaperwork.com",
+        "api.fightpaperwork.com",
+    ]
+
+    # HSTS - tell browsers to always use HTTPS
+    SECURE_HSTS_SECONDS = 31536000  # 1 year
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
 
     # Different fido server for production
     FIDO_SERVER_ID = "fighthealthinsurance.com"  # Server rp id for FIDO2, it is the full domain of your project

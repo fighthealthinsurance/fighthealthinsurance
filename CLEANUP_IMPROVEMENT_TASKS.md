@@ -241,21 +241,21 @@ fighthealthinsurance/models/
 
 | Done | Issue | Location | Fix |
 |------|-------|----------|-----|
-| [ ] | Hardcoded SECRET_KEY | `settings.py:81` | Use env var only |
-| [ ] | Hardcoded Stripe test key | `settings.py:383` | Remove from code |
-| [ ] | `SESSION_COOKIE_HTTPONLY = False` | `settings.py:66` | Set to `True` |
-| [ ] | `CSRF_COOKIE_HTTPONLY = False` | `settings.py:67` | Set to `True` |
-| [ ] | `ALLOWED_HOSTS = ["*"]` | `settings.py:95` | Restrict to domains |
-| [ ] | `CORS_ALLOW_ALL_ORIGINS = True` | `settings.py:329` | Use whitelist |
-| [ ] | `DEBUG = True` in Base config | `settings.py:84` | Set to `False` |
+| [x] | Hardcoded SECRET_KEY | `settings.py:81` | Prod class uses env var |
+| [x] | Hardcoded Stripe test key | `settings.py:383` | Removed default, requires env var |
+| [~] | `SESSION_COOKIE_HTTPONLY = False` | `settings.py:66` | Intentional for cross-site JS access |
+| [~] | `CSRF_COOKIE_HTTPONLY = False` | `settings.py:67` | Intentional for cross-site functionality |
+| [x] | `ALLOWED_HOSTS = ["*"]` | `settings.py:95` | Prod class restricts to actual domains |
+| [x] | `CORS_ALLOW_ALL_ORIGINS = True` | `settings.py:329` | Prod class uses whitelist |
+| [x] | `DEBUG = True` in Base config | `settings.py:84` | Prod class sets to False |
 
 ### 6.2 High Priority Issues
 
 | Done | Issue | Location | Fix |
 |------|-------|----------|-----|
-| [ ] | No rate limiting on auth endpoints | `rest_auth_views.py` | Add DRF throttling |
+| [x] | No rate limiting on auth endpoints | `rest_auth_views.py` | Added DRF throttling (100/hr anon, 1000/hr user) |
 | [ ] | Weak password validation | `auth_utils.py:67-77` | Enforce Django validators |
-| [ ] | Missing HSTS header | `settings.py` | Add `SECURE_HSTS_SECONDS` |
+| [x] | Missing HSTS header | `settings.py` | Added to Prod class (1 year, include subdomains, preload) |
 | [ ] | Missing CSP header | `settings.py` | Add Content-Security-Policy |
 | [ ] | Open redirect in Stripe cancel_url | `rest_auth_views.py:785-790` | Validate against whitelist |
 | [ ] | Audit logging disabled by default | `settings.py:48` | Enable by default |
@@ -278,8 +278,8 @@ fighthealthinsurance/models/
 
 | Done | Issue | Location | Fix |
 |------|-------|----------|-----|
-| [ ] | Missing skip link | `base.html` | Add `<a href="#main-content" class="skip-link">Skip to content</a>` |
-| [ ] | No `<main>` landmark | `base.html` | Wrap `{% block content %}` in `<main>` |
+| [x] | Missing skip link | `base.html` | Added skip link with CSS in custom.css |
+| [x] | No `<main>` landmark | `base.html` | Wrapped content in `<main id="main-content" role="main">` |
 | [ ] | Inline onclick without keyboard support | `login.html:47` | Use event listeners |
 | [ ] | Link used as button | `403_csrf.html:78` | Change to `<button>` element |
 
