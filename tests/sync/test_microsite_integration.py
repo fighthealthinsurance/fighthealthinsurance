@@ -39,8 +39,9 @@ class MicrositeSlugStorageTest(TestCase):
             },
         )
 
-        # Should redirect after successful submission
-        self.assertEqual(response.status_code, 302)
+        # Should render health_history page after successful submission (not redirect)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Health History")
 
         # Check that a denial was created with the microsite_slug
         denial = models.Denial.objects.filter(
@@ -63,8 +64,9 @@ class MicrositeSlugStorageTest(TestCase):
             },
         )
 
-        # Should redirect after successful submission
-        self.assertEqual(response.status_code, 302)
+        # Should render health_history page after successful submission (not redirect)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Health History")
 
         # Check that a denial was created without microsite_slug
         denial = models.Denial.objects.filter(

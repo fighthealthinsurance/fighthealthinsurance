@@ -87,7 +87,10 @@ class TestFaxFollowUpTemplates:
         }
         html_content = render_to_string("emails/fax_followup.html", context)
 
-        assert "problem sending the fax" in html_content or "problem" in html_content.lower()
+        assert (
+            "problem sending the fax" in html_content
+            or "problem" in html_content.lower()
+        )
         print("✓ Failure message shown correctly in HTML template")
 
     def test_fax_followup_html_missing_destination(self):
@@ -101,7 +104,11 @@ class TestFaxFollowUpTemplates:
         html_content = render_to_string("emails/fax_followup.html", context)
 
         # The template should mention the fax redo link
-        assert "fax_redo_link" not in html_content or "click here" in html_content.lower() or "redo" in html_content.lower()
+        assert (
+            "fax_redo_link" not in html_content
+            or "click here" in html_content.lower()
+            or "redo" in html_content.lower()
+        )
         print("✓ Missing destination scenario handled in HTML template")
 
     def test_fax_followup_txt_contains_redo_link(self):
@@ -150,11 +157,16 @@ class TestFaxActorEmailSending:
         #     self._update_fax_for_sent(fax, False, missing_destination=True)
         should_trigger_missing_destination_email = fax.destination is None
 
-        assert should_trigger_missing_destination_email, \
-            "Fax without destination should trigger missing_destination=True path"
-        print("✓ Missing destination would trigger failure with missing_destination=True")
+        assert (
+            should_trigger_missing_destination_email
+        ), "Fax without destination should trigger missing_destination=True path"
+        print(
+            "✓ Missing destination would trigger failure with missing_destination=True"
+        )
 
-    def test_fax_with_destination_does_not_flag_missing(self, test_fax_with_destination):
+    def test_fax_with_destination_does_not_flag_missing(
+        self, test_fax_with_destination
+    ):
         """Test that a fax with destination doesn't flag missing_destination."""
         fax = test_fax_with_destination
         assert fax.destination is not None
@@ -180,26 +192,35 @@ class TestFaxActorEmailSending:
 
         # Find the context dict assignment - look for lines that are NOT comments
         # and contain the key assignment
-        lines = source.split('\n')
+        lines = source.split("\n")
         found_missing_destination = False
         for line in lines:
             stripped = line.strip()
             # Skip comments
-            if stripped.startswith('#'):
+            if stripped.startswith("#"):
                 continue
             # Check for the key in dict context (not commented out)
-            if '"missing_destination":' in stripped or "'missing_destination':" in stripped:
+            if (
+                '"missing_destination":' in stripped
+                or "'missing_destination':" in stripped
+            ):
                 found_missing_destination = True
                 break
 
-        assert found_missing_destination, \
-            "FaxActor._update_fax_for_sent must include 'missing_destination' in the email context (not commented out)"
+        assert (
+            found_missing_destination
+        ), "FaxActor._update_fax_for_sent must include 'missing_destination' in the email context (not commented out)"
         print("✓ FaxActor passes missing_destination to email template")
 
     def test_fax_actor_context_dict_structure(self, test_fax_with_destination):
         """Test that the context dict has all required keys for the template."""
         # The template requires these keys
-        required_context_keys = ["name", "success", "fax_redo_link", "missing_destination"]
+        required_context_keys = [
+            "name",
+            "success",
+            "fax_redo_link",
+            "missing_destination",
+        ]
 
         import inspect
         from fighthealthinsurance import fax_actor
@@ -207,19 +228,20 @@ class TestFaxActorEmailSending:
         source = inspect.getsource(fax_actor.FaxActor._update_fax_for_sent)
 
         # Check each key is present and not commented out
-        lines = source.split('\n')
+        lines = source.split("\n")
         for key in required_context_keys:
             found = False
             for line in lines:
                 stripped = line.strip()
                 # Skip comments
-                if stripped.startswith('#'):
+                if stripped.startswith("#"):
                     continue
                 if f'"{key}"' in stripped or f"'{key}'" in stripped:
                     found = True
                     break
-            assert found, \
-                f"FaxActor._update_fax_for_sent must include '{key}' in the email context (not commented out)"
+            assert (
+                found
+            ), f"FaxActor._update_fax_for_sent must include '{key}' in the email context (not commented out)"
 
         print("✓ FaxActor context dict has all required keys")
 
@@ -307,7 +329,9 @@ class TestFaxFollowUpView:
 
         new_fax_number = "8005559999"
 
-        with patch("fighthealthinsurance.common_view_logic.SendFaxHelper.resend") as mock_resend:
+        with patch(
+            "fighthealthinsurance.common_view_logic.SendFaxHelper.resend"
+        ) as mock_resend:
             mock_resend.return_value = True
 
             response = client.post(
@@ -456,22 +480,24 @@ class TestFaxViewsSavesDenialFaxNumber:
         source = inspect.getsource(fax_views.StageFaxView.form_valid)
 
         # Check that appeal_fax_number is set AND denial.save() is called
-        lines = source.split('\n')
+        lines = source.split("\n")
         found_fax_number_assignment = False
         found_denial_save = False
 
         for line in lines:
             stripped = line.strip()
             # Skip comments
-            if stripped.startswith('#'):
+            if stripped.startswith("#"):
                 continue
-            if 'appeal_fax_number' in stripped and '=' in stripped:
+            if "appeal_fax_number" in stripped and "=" in stripped:
                 found_fax_number_assignment = True
-            if 'denial.save()' in stripped:
+            if "denial.save()" in stripped:
                 found_denial_save = True
 
-        assert found_fax_number_assignment, \
-            "StageFaxView.form_valid must set denial.appeal_fax_number"
-        assert found_denial_save, \
-            "StageFaxView.form_valid must call denial.save() to persist fax number"
+        assert (
+            found_fax_number_assignment
+        ), "StageFaxView.form_valid must set denial.appeal_fax_number"
+        assert (
+            found_denial_save
+        ), "StageFaxView.form_valid must call denial.save() to persist fax number"
         print("✓ StageFaxView correctly saves fax number to denial")

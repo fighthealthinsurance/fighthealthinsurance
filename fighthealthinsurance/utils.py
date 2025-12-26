@@ -86,6 +86,7 @@ def ensure_message_alternation(history: List[Dict[str, Any]]) -> List[Dict[str, 
         return []
 
     result: List[Dict[str, Any]] = []
+
     def _normalize_role(role: str) -> str:
         lr = role.lower()
         if "system" in lr:
@@ -95,8 +96,9 @@ def ensure_message_alternation(history: List[Dict[str, Any]]) -> List[Dict[str, 
         elif lr in ("user"):
             return "user"
         else:
-            logger.debug("Unknown role {role}")
+            logger.debug(f"Unknown role {role}")
             return "user"
+
     for msg in history:
         role = msg.get("role", "unknown")
         content = msg.get("content", "")
@@ -120,12 +122,21 @@ def ensure_message_alternation(history: List[Dict[str, Any]]) -> List[Dict[str, 
                 new_msg["timestamp"] = msg["timestamp"]
             result.append(new_msg)
 
-    if (result and result[0]):
-        if (result[0].get("role") == "assistant"):
-            logger.error("We should always start with a user or system message instead {result}")
+    if result and len(result) > 0 and result[0]:
+        if result[0].get("role") == "assistant":
+            logger.error(
+                "We should always start with a user or system message instead {result}"
+            )
             result = result[1:]
-        elif (result[0].get("role") == "system" and result[1] and result[1].get("role") == "assistant"):
-            logger.error("We should always start have a user message after system instead {result}")
+        elif (
+            result[0].get("role") == "system"
+            and len(result) > 1
+            and result[1]
+            and result[1].get("role") == "assistant"
+        ):
+            logger.error(
+                f"We should always start have a user message after system instead {result}"
+            )
             result = [result[0]] + result[2:]
 
     return result
@@ -700,8 +711,6 @@ def generate_random_unsupported_filename() -> str:
 
 async def _try_pandoc_engines(command: list[str]):
     engines = [None, "xelatex", "lualatex", "wkhtmltopdf", "weasyprint", "pdflatex"]
-    if "--sandbox" not in command:
-        command = command + ["--sandbox"]
     for engine in engines:
         command_with_engine = command
         if engine is not None:

@@ -44,6 +44,8 @@ spec:
           env:
           - name: POLLING_ACTORS
             value: "1"
+          - name: BRB
+            value: "LIVE"
           envFrom:
           - secretRef:
               name: fight-health-insurance-secret
@@ -82,7 +84,7 @@ spec:
           name: totallylegitco
           env:
           - name: BRB
-            value: LIVE
+            value: "LIVE"
           envFrom:
           - secretRef:
               name: fight-health-insurance-secret
@@ -95,7 +97,7 @@ spec:
               httpHeaders:
                 - name: Host
                   value: "www.fighthealthinsurance.com"
-              path: /scan
+              path: /ziggy/rest/ping
               port: 80
             periodSeconds: 180
           startupProbe:
@@ -103,7 +105,7 @@ spec:
               httpHeaders:
                 - name: Host
                   value: "www.fighthealthinsurance.com"
-              path: /scan
+              path: /ziggy/rest/ping
               port: 80
             periodSeconds: 10
             failureThreshold: 45

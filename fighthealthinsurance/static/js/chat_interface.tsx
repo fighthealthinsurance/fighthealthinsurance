@@ -257,6 +257,9 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
 
   // Initialize chat interface on load
   useEffect(() => {
+    // Initialize session key immediately on mount (before WebSocket connects)
+    getSessionKey();
+
     // Add a welcome message from the assistant if no messages exist
     if (state.messages.length === 0) {
       // Use startNewChat to initialize chat with welcome message

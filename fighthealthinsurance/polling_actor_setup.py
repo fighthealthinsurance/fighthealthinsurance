@@ -14,6 +14,7 @@ epar = None
 fpar = None
 cpar = None
 while not success and attempt < 10:
+    print("attempting to launch actors.")
     attempt = attempt + 1
     try:
         epar, etask = email_polling_actor_ref.get

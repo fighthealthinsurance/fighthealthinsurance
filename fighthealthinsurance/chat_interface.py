@@ -100,7 +100,8 @@ _FALSE_PROMISE_REGEX: Pattern[str] = re.compile(
 )
 
 # Tool call regexes
-pubmed_query_terms_regex = r"[\[\*]{0,4}pubmed[ _]?query:{0,1}\s*(.*?)\s*[\*\]]{0,4}"
+# Capture query terms by matching non-marker characters (avoids non-greedy issues with optional end markers)
+pubmed_query_terms_regex = r"[\[\*]{0,4}pubmed[ _]?query:?\s*([^*\[\]]+)"
 # Updated regex to match both formats: **medicaid_info {JSON}** and medicaid_info {JSON}
 medicaid_info_lookup_regex = r"(?:\*\*)?medicaid_info\s*(\{[^}]*\})\s*(?:\*\*)?"
 # Medicaid eligibility info
@@ -308,11 +309,16 @@ class ChatInterface:
             logger.debug(f"Scored {result} as {score}")
             return score
 
-        response_text, context_part = await best_within_timelimit(
-            calls,
-            score_fn,
-            timeout=30.0,
-        )
+        try:
+            response_text, context_part = await best_within_timelimit(
+                calls,
+                score_fn,
+                timeout=30.0,
+            )
+        except Exception as e:
+            logger.warning(f"Primary models all failed: {e}")
+            response_text = None
+            context_part = None
 
         response_text = response_text or ""
 
@@ -1211,15 +1217,20 @@ class ChatInterface:
 
             # Check if we should summarize (every 10 messages after threshold)
             messages_over_threshold = len(history_for_llm) - messages_to_keep
-            should_summarize = messages_over_threshold % 10 == 0 or messages_over_threshold == 1
+            should_summarize = (
+                messages_over_threshold % 10 == 0 or messages_over_threshold == 1
+            )
 
             if should_summarize:
                 try:
-                    await self.send_status_message("Summarizing conversation context...")
+                    await self.send_status_message(
+                        "Summarizing conversation context..."
+                    )
                     # Create a fresh summary of what's being dropped
                     # We always create a new summary even if there's an existing one
                     history_summary = await ml_router.summarize_chat_history(
-                        history_for_llm[:-messages_to_keep], max_messages=0  # Summarize all dropped messages
+                        history_for_llm[:-messages_to_keep],
+                        max_messages=0,  # Summarize all dropped messages
                     )
 
                     if history_summary:
@@ -1239,9 +1250,7 @@ class ChatInterface:
                             chat.summary_for_next_call = []
                         chat.summary_for_next_call.append(summarized_context)
 
-                        logger.info(
-                            f"Summarized messages for chat {chat.id}"
-                        )
+                        logger.info(f"Summarized messages for chat {chat.id}")
                 except Exception as e:
                     logger.warning(f"Failed to summarize chat history: {e}")
                     # Continue with truncated history if summarization fails

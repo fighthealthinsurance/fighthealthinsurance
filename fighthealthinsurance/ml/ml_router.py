@@ -11,13 +11,18 @@ class MLRouter(object):
     Tool to route our requests most cheapily.
     """
 
-    # Models by name second value is already sorted by cost
-    models_by_name: dict[str, List[RemoteModelLike]] = {}
-    internal_models_by_cost: List[RemoteModelLike] = []
-    all_models_by_cost: List[RemoteModelLike] = []
-    external_models_by_cost: List[RemoteModelLike] = []
+    # Type hints only (not mutable class-level defaults)
+    models_by_name: dict[str, List[RemoteModelLike]]
+    internal_models_by_cost: List[RemoteModelLike]
+    all_models_by_cost: List[RemoteModelLike]
+    external_models_by_cost: List[RemoteModelLike]
 
     def __init__(self):
+        # Initialize instance attributes to avoid mutable class-level state
+        self.models_by_name = {}
+        self.internal_models_by_cost = []
+        self.all_models_by_cost = []
+        self.external_models_by_cost = []
         logger.debug(f"Starting model 'router'")
         building_internal_models_by_cost = []
         building_external_models_by_cost = []

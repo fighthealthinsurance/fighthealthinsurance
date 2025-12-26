@@ -80,10 +80,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ['3.11']
-        django: ['50']
         include:
           - python: '3.11'
+            toxpy: '311'
             django: '50'
 
     name: Run the sync test suite (Python ${{ matrix.python }}, Django ${{ matrix.django }})
@@ -140,7 +139,7 @@ jobs:
           cd fighthealthinsurance/static/js && npm i && npm run build && npm cache clean --force
 
       - name: Run tests
-        run: tox -e py${{ matrix.python }}-django${{ matrix.django }}-sync
+        run: tox -e py${{ matrix.toxpy }}-django${{ matrix.django }}-sync
         env:
           FARTS: "farts"
           GOOGLE_CLIENT_SECRETS_TEXT: ${{ secrets.GOOGLE_CLIENT_SECRETS_TEXT }}
@@ -151,10 +150,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ['3.11']
-        django: ['50']
         include:
           - python: '3.11'
+            toxpy: '311'
             django: '50'
 
     name: Run the Selenium test suite (Python ${{ matrix.python }}, Django ${{ matrix.django }})
@@ -206,12 +204,8 @@ jobs:
         with:
           version: 2.19
 
-      - name: Build npm js (needed for the e2e tests in django)
-        run:
-          cd fighthealthinsurance/static/js && npm i && npm run build && npm cache clean --force
-
       - name: Run selenium tests
-        run: tox -e py${{ matrix.python }}-django${{ matrix.django }}-selenium
+        run: tox -e py${{ matrix.toxpy }}-django${{ matrix.django }}-selenium
         env:
           FARTS: "farts"
           GOOGLE_CLIENT_SECRETS_TEXT: ${{ secrets.GOOGLE_CLIENT_SECRETS_TEXT }}
@@ -222,10 +216,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ['3.11']
-        django: ['50']
         include:
           - python: '3.11'
+            toxpy: '311'
             django: '50'
     name: Run the sync actor test suite (Python ${{ matrix.python }}, Django ${{ matrix.django }})
     steps:
@@ -281,7 +274,7 @@ jobs:
           cd fighthealthinsurance/static/js && npm i && npm run build && npm cache clean --force
 
       - name: Run tests
-        run: tox -e py${{ matrix.python }}-django${{ matrix.django }}-sync-actor
+        run: tox -e py${{ matrix.toxpy }}-django${{ matrix.django }}-sync-actor
         env:
           FARTS: "farts"
           GOOGLE_CLIENT_SECRETS_TEXT: ${{ secrets.GOOGLE_CLIENT_SECRETS_TEXT }}
@@ -366,10 +359,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ['3.11']
-        django: ['50']
         include:
           - python: '3.11'
+            toxpy: '311'
             django: '50'
 
     name: Run the async test suite (Python ${{ matrix.python }}, Django ${{ matrix.django }})
@@ -429,7 +421,7 @@ jobs:
         run: uv venv && source .venv/bin/activate && uv pip install -r requirements.txt && python manage.py makemigrations && python manage.py migrate && ENVIRONMENT=Test ./manage.py migrate
 
       - name: Run tests
-        run: ENVIRONMENT=Test tox -e py${{ matrix.python }}-django${{ matrix.django }}-async
+        run: ENVIRONMENT=Test tox -e py${{ matrix.toxpy }}-django${{ matrix.django }}-async
         env:
           FARTS: "farts"
           GOOGLE_CLIENT_SECRETS_TEXT: ${{ secrets.GOOGLE_CLIENT_SECRETS_TEXT }}

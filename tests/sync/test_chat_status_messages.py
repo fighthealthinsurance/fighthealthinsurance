@@ -1,4 +1,5 @@
 """Tests for chat status messages and timing functionality."""
+
 import typing
 from unittest.mock import patch
 from channels.testing import WebsocketCommunicator
@@ -29,24 +30,35 @@ class ChatStatusMessageTest(APITestCase):
 
     async def asyncSetUp(self):
         """
-        Prepare the async test fixture by creating a MockChatModel and patching ml_router.get_chat_backends to return it.
-        
-        Initializes self.mock_model, starts a patcher stored in self.get_chat_backends_patcher, and assigns the started patch mock to self.mock_get_chat_backends so it returns [self.mock_model].
+        Prepare the async test fixture by creating a MockChatModel and patching ml_router methods.
+
+        Initializes self.mock_model, starts patchers for both get_chat_backends and
+        get_chat_backends_with_fallback to return the mock model.
         """
         self.mock_model = MockChatModel()
+
+        # Patch get_chat_backends for direct calls
         self.get_chat_backends_patcher = patch(
             "fighthealthinsurance.ml.ml_router.ml_router.get_chat_backends"
         )
         self.mock_get_chat_backends = self.get_chat_backends_patcher.start()
         self.mock_get_chat_backends.return_value = [self.mock_model]
 
+        # Patch get_chat_backends_with_fallback for chat_interface calls
+        self.get_chat_backends_with_fallback_patcher = patch(
+            "fighthealthinsurance.ml.ml_router.ml_router.get_chat_backends_with_fallback"
+        )
+        self.mock_get_chat_backends_with_fallback = (
+            self.get_chat_backends_with_fallback_patcher.start()
+        )
+        self.mock_get_chat_backends_with_fallback.return_value = ([self.mock_model], [])
+
     async def asyncTearDown(self):
         """
-        Stop the patched chat backend getter and perform async test teardown.
-        
-        This stops the patcher created in asyncSetUp, restoring the original get_chat_backends implementation.
+        Stop the patched chat backend getters and perform async test teardown.
         """
         self.get_chat_backends_patcher.stop()
+        self.get_chat_backends_with_fallback_patcher.stop()
 
     async def test_send_status_message(self):
         """Test that status messages are sent correctly via ChatInterface."""
@@ -71,7 +83,7 @@ class ChatStatusMessageTest(APITestCase):
         async def mock_send_json(data):
             """
             Capture the 'status' field from a JSON-like payload and record it in the enclosing status_messages list.
-            
+
             Parameters:
                 data (dict): JSON-like payload to inspect; if it contains a "status" key, that value is appended to the outer `status_messages` list.
             """
@@ -88,7 +100,7 @@ class ChatStatusMessageTest(APITestCase):
 
         # Test sending a status message
         await chat_interface.send_status_message("Processing your request...")
-        
+
         # Verify status message was sent
         self.assertEqual(len(status_messages), 1)
         self.assertEqual(status_messages[0], "Processing your request...")
@@ -116,7 +128,7 @@ class ChatStatusMessageTest(APITestCase):
         async def mock_send_json(data):
             """
             Capture the 'status' field from a JSON-like payload and record it in the enclosing status_messages list.
-            
+
             Parameters:
                 data (dict): JSON-like payload to inspect; if it contains a "status" key, that value is appended to the outer `status_messages` list.
             """
@@ -132,15 +144,14 @@ class ChatStatusMessageTest(APITestCase):
 
         # Mock PubMed response with a tool call
         self.mock_model.set_next_response(
-            "**pubmed_query: diabetes treatment**", 
-            "Context about diabetes"
+            "**pubmed_query: diabetes treatment**", "Context about diabetes"
         )
 
         # Mock PubMed tools to avoid actual API calls
         with patch.object(
-            chat_interface.pubmed_tools, 
-            'find_pubmed_article_ids_for_query',
-            return_value=[]
+            chat_interface.pubmed_tools,
+            "find_pubmed_article_ids_for_query",
+            return_value=[],
         ):
             # Call the LLM which will trigger PubMed status messages
             await chat_interface._call_llm_with_actions(
@@ -153,7 +164,7 @@ class ChatStatusMessageTest(APITestCase):
         # Verify status message was sent for PubMed search
         self.assertTrue(
             any("PubMed" in msg or "Searching" in msg for msg in status_messages),
-            f"Expected PubMed status message, got: {status_messages}"
+            f"Expected PubMed status message, got: {status_messages}",
         )
 
         await self.asyncTearDown()
@@ -179,7 +190,7 @@ class ChatStatusMessageTest(APITestCase):
         async def mock_send_json(data):
             """
             Capture the 'status' field from a JSON-like payload and record it in the enclosing status_messages list.
-            
+
             Parameters:
                 data (dict): JSON-like payload to inspect; if it contains a "status" key, that value is appended to the outer `status_messages` list.
             """
@@ -196,11 +207,14 @@ class ChatStatusMessageTest(APITestCase):
         # Mock Medicaid tool call
         self.mock_model.set_next_response(
             '**medicaid_info {"state": "California", "topic": "eligibility"}**',
-            "Medicaid context"
+            "Medicaid context",
         )
 
-        # Mock medicaid API
-        with patch('fighthealthinsurance.chat_interface.get_medicaid_info', return_value="Medicaid info"):
+        # Mock medicaid API (patch at source since it's imported inside the function)
+        with patch(
+            "fighthealthinsurance.medicaid_api.get_medicaid_info",
+            return_value="Medicaid info",
+        ):
             # Call the LLM which will trigger Medicaid status messages
             await chat_interface._call_llm_with_actions(
                 [self.mock_model],
@@ -212,7 +226,7 @@ class ChatStatusMessageTest(APITestCase):
         # Verify status message was sent for Medicaid lookup
         self.assertTrue(
             any("Medicaid" in msg for msg in status_messages),
-            f"Expected Medicaid status message, got: {status_messages}"
+            f"Expected Medicaid status message, got: {status_messages}",
         )
 
         await self.asyncTearDown()
@@ -223,30 +237,33 @@ class ChatStatusMessageTest(APITestCase):
 
         # Create a session key for anonymous chat
         session_key = "test_session_key_123"
-        
+
         # Create a ChatLeads entry for trial professional
         await sync_to_async(ChatLeads.objects.create)(
             session_id=session_key,
             email="trial@example.com",
+            name="Trial User",
+            phone="555-1234",
+            company="Test Company",
+            consent_to_contact=True,
+            agreed_to_terms=True,
         )
 
         # Create communicator
         communicator = WebsocketCommunicator(
             OngoingChatConsumer.as_asgi(), "/ws/ongoing-chat/"
         )
-        
+
         # Set up scope for anonymous user
         from django.contrib.auth.models import AnonymousUser
+
         communicator.scope["user"] = AnonymousUser()
 
         connected, _ = await communicator.connect()
         self.assertTrue(connected)
 
         # Set mock response
-        self.mock_model.set_next_response(
-            "This is a test response",
-            "Test context"
-        )
+        self.mock_model.set_next_response("This is a test response", "Test context")
 
         # Send a message
         await communicator.send_json_to(
@@ -277,7 +294,12 @@ class ChatStatusMessageTest(APITestCase):
         chat_ids = [r.get("chat_id") for r in responses if "chat_id" in r]
         self.assertGreater(len(chat_ids), 0, "Expected to receive a chat_id")
 
-        await communicator.disconnect()
+        # Give async tasks time to complete before disconnecting
+        await asyncio.sleep(0.1)
+        try:
+            await communicator.disconnect()
+        except asyncio.CancelledError:
+            pass  # Expected when async tasks are still running
         await self.asyncTearDown()
 
     async def test_multiple_status_updates(self):
@@ -285,7 +307,9 @@ class ChatStatusMessageTest(APITestCase):
         await self.asyncSetUp()
 
         user = await sync_to_async(User.objects.create_user)(
-            username="multistatususer", password="testpass", email="multistatus@example.com"
+            username="multistatususer",
+            password="testpass",
+            email="multistatus@example.com",
         )
         professional = await sync_to_async(ProfessionalUser.objects.create)(
             user=user, active=True, npi_number="3333333333"
@@ -301,7 +325,7 @@ class ChatStatusMessageTest(APITestCase):
         async def mock_send_json(data):
             """
             Capture the 'status' field from a JSON-like payload and record it in the enclosing status_messages list.
-            
+
             Parameters:
                 data (dict): JSON-like payload to inspect; if it contains a "status" key, that value is appended to the outer `status_messages` list.
             """
@@ -333,7 +357,9 @@ class ChatStatusMessageTest(APITestCase):
         await self.asyncSetUp()
 
         user = await sync_to_async(User.objects.create_user)(
-            username="appealstatususer", password="testpass", email="appealstatus@example.com"
+            username="appealstatususer",
+            password="testpass",
+            email="appealstatus@example.com",
         )
         professional = await sync_to_async(ProfessionalUser.objects.create)(
             user=user, active=True, npi_number="4444444444"
@@ -349,7 +375,7 @@ class ChatStatusMessageTest(APITestCase):
         async def mock_send_json(data):
             """
             Capture the 'status' field from a JSON-like payload and record it in the enclosing status_messages list.
-            
+
             Parameters:
                 data (dict): JSON-like payload to inspect; if it contains a "status" key, that value is appended to the outer `status_messages` list.
             """
@@ -365,8 +391,7 @@ class ChatStatusMessageTest(APITestCase):
 
         # Mock response with appeal creation
         self.mock_model.set_next_response(
-            '**create_or_update_appeal** {"denied_procedure": "MRI"}',
-            "Appeal context"
+            '**create_or_update_appeal** {"denied_procedure": "MRI"}', "Appeal context"
         )
 
         # Call the LLM which will trigger appeal creation status messages
@@ -380,7 +405,7 @@ class ChatStatusMessageTest(APITestCase):
         # Verify status message was sent for appeal processing
         self.assertTrue(
             any("appeal" in msg.lower() for msg in status_messages),
-            f"Expected appeal status message, got: {status_messages}"
+            f"Expected appeal status message, got: {status_messages}",
         )
 
         await self.asyncTearDown()
@@ -406,7 +431,7 @@ class ChatStatusMessageTest(APITestCase):
         async def mock_send_json(data):
             """
             Capture and record any 'error' field from the provided JSON-like message into the test's error_messages list.
-            
+
             Parameters:
                 data (dict): JSON-like message received; if it contains an "error" key, its value is appended to the surrounding scope's `error_messages` list.
             """
@@ -435,29 +460,32 @@ class ChatStatusMessageTest(APITestCase):
 
         # Create a session key for anonymous chat
         session_key = "test_session_key_456"
-        
+
         # Create a ChatLeads entry
         await sync_to_async(ChatLeads.objects.create)(
             session_id=session_key,
             email="clear@example.com",
+            name="Clear User",
+            phone="555-5678",
+            company="Test Company",
+            consent_to_contact=True,
+            agreed_to_terms=True,
         )
 
         # Create communicator
         communicator = WebsocketCommunicator(
             OngoingChatConsumer.as_asgi(), "/ws/ongoing-chat/"
         )
-        
+
         from django.contrib.auth.models import AnonymousUser
+
         communicator.scope["user"] = AnonymousUser()
 
         connected, _ = await communicator.connect()
         self.assertTrue(connected)
 
         # Set mock response
-        self.mock_model.set_next_response(
-            "Response received",
-            "Context"
-        )
+        self.mock_model.set_next_response("Response received", "Context")
 
         # Send a message
         await communicator.send_json_to(
@@ -484,7 +512,12 @@ class ChatStatusMessageTest(APITestCase):
         self.assertIsNotNone(response, "Should have received a response")
         self.assertIn("content", response)
 
-        await communicator.disconnect()
+        # Give async tasks time to complete before disconnecting
+        await asyncio.sleep(0.1)
+        try:
+            await communicator.disconnect()
+        except asyncio.CancelledError:
+            pass  # Expected when async tasks are still running
         await self.asyncTearDown()
 
     async def test_retry_functionality(self):
@@ -513,7 +546,7 @@ class ChatStatusMessageTest(APITestCase):
         async def mock_send_json(data):
             """
             Capture an outgoing JSON-like message by appending it to the outer-scoped sent_messages list.
-            
+
             Parameters:
                 data (dict): JSON-serializable payload to record.
             """
@@ -527,10 +560,7 @@ class ChatStatusMessageTest(APITestCase):
         )
 
         # Set a response for the retry
-        self.mock_model.set_next_response(
-            "Retry response",
-            "Retry context"
-        )
+        self.mock_model.set_next_response("Retry response", "Retry context")
 
         # Simulate handling the same message again (retry scenario)
         await chat_interface.handle_chat_message("Original message")
@@ -540,7 +570,13 @@ class ChatStatusMessageTest(APITestCase):
         self.assertGreater(len(sent_messages), 0)
 
         # Check that we got a response
-        response_messages = [msg for msg in sent_messages if msg.get("role") == "assistant"]
-        self.assertGreater(len(response_messages), 0, "Should have received at least one assistant response")
+        response_messages = [
+            msg for msg in sent_messages if msg.get("role") == "assistant"
+        ]
+        self.assertGreater(
+            len(response_messages),
+            0,
+            "Should have received at least one assistant response",
+        )
 
         await self.asyncTearDown()

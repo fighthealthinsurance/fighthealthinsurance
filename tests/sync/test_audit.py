@@ -387,4 +387,3 @@ class TrackingInfoFromScopeTest(TestCase):
         self.assertEqual(model.ip_address, "10.0.0.1")
         self.assertEqual(model.asn, "AS9999")
         self.assertEqual(model.asn_name, "Test ASN")
-

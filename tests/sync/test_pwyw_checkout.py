@@ -90,7 +90,9 @@ class PWYWCheckoutTest(TestCase):
         mock_stripe_create.assert_called_once()
         call_kwargs = mock_stripe_create.call_args[1]
         # Should append donation=success with & since URL already has params
-        self.assertTrue(call_kwargs["success_url"].endswith("/appeal?foo=bar&donation=success"))
+        self.assertTrue(
+            call_kwargs["success_url"].endswith("/appeal?foo=bar&donation=success")
+        )
         self.assertTrue(call_kwargs["cancel_url"].endswith("/appeal?foo=bar"))
 
     def test_pwyw_checkout_rejects_absolute_return_url(self):

@@ -45,7 +45,7 @@ class SeleniumTestChooserPageLoad(FHISeleniumBase, StaticLiveServerTestCase):
         # This prevents async DB conflicts in SQLite during tests
         """
         Prepare the class-level test environment by patching chooser async tasks and initializing parent live-server setup.
-        
+
         Patches the async task entrypoints used by the chooser ("fighthealthinsurance.chooser_tasks.trigger_prefill_async"
         and "fighthealthinsurance.chooser_tasks._generate_single_task") and starts those patchers to prevent asynchronous
         database writes during tests. Stores the patcher and mock objects on the class as `prefill_patcher`, `generate_patcher`,
@@ -68,7 +68,7 @@ class SeleniumTestChooserPageLoad(FHISeleniumBase, StaticLiveServerTestCase):
     def tearDownClass(cls):
         """
         Perform class-level teardown for Selenium tests and stop started patchers.
-        
+
         This method invokes superclass class-teardown logic and stops the `prefill_patcher` and `generate_patcher` started in setUpClass to restore patched functions to their original state.
         """
         super(StaticLiveServerTestCase, cls).tearDownClass()

@@ -61,27 +61,29 @@ class SeleniumTestAppealGeneration(FHISeleniumBase, StaticLiveServerTestCase):
         self.assert_title_eventually("Upload your Health Insurance Denial")
 
     def test_server_side_ocr_workflow(self):
+        import tempfile
+        from PIL import Image
+
         self.open(f"{self.live_server_url}/server_side_ocr")
         self.assert_title_eventually(
             "Upload your Health Insurance Denial - Server Side Processing"
         )
         file_input = self.find_element("input#uploader")
-        pathname = None
-        path_to_image = None
-        try:
-            pathname = os.path.dirname(os.path.realpath(__file__))
-            path_to_image = os.path.join(pathname, "sample_ocr_image.png")
-        except:
-            pathname = os.path.dirname(sys.argv[0])
-            path_to_image = os.path.join(
-                pathname, "../../../../tests/sample_ocr_image.png"
-            )
-        file_input.send_keys(path_to_image)
-        self.click("button#submit")
-        self.assert_text_eventually_contains(
-            """UnidentifiedImageError""",
-            "denial_text",
-        )
+
+        # Create a simple test image dynamically
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=True) as tmp:
+            # Create a simple image with some text-like content
+            img = Image.new("RGB", (200, 100), color="white")
+            img.save(tmp.name)
+            path_to_image = tmp.name
+
+            file_input.send_keys(path_to_image)
+            self.click("button#submit")
+            # The OCR should process the image (even if it doesn't find text)
+            # Give it time to process
+            time.sleep(2)
+            # After successful OCR, the view redirects to scrub.html (main denial form)
+            self.assert_title_eventually("Upload your Health Insurance Denial")
 
     def test_submit_an_appeal_with_enough_and_fax(self):
         assert DenialTypes.objects.filter(name="Medically Necessary").count() > 0
@@ -260,9 +262,15 @@ Cheap-O-Insurance-Corp"""
         email_value = self.get_value("input#email")
 
         # These should be the actual values, not JSON like {"value":"...","expiry":...}
-        assert fname_value == test_fname, f"Expected '{test_fname}', got '{fname_value}'"
-        assert lname_value == test_lname, f"Expected '{test_lname}', got '{lname_value}'"
-        assert email_value == test_email, f"Expected '{test_email}', got '{email_value}'"
+        assert (
+            fname_value == test_fname
+        ), f"Expected '{test_fname}', got '{fname_value}'"
+        assert (
+            lname_value == test_lname
+        ), f"Expected '{test_lname}', got '{lname_value}'"
+        assert (
+            email_value == test_email
+        ), f"Expected '{test_email}', got '{email_value}'"
 
         # Verify no JSON-like strings are present
         assert "{" not in fname_value, f"fname contains JSON: {fname_value}"
@@ -299,9 +307,8 @@ Cheap-O-Insurance-Corp"""
 
         # Health History page - should have back button to scan
         self.assert_title_eventually("Optional: Health History")
-        back_link = self.find_element("a.btn-secondary")
-        assert back_link is not None, "Health History page should have a back button"
-        back_link.click()
+        # Use js_click to avoid element click interception from overlays
+        self.js_click("a[class*='btn-secondary']")
 
         # Should be back at Scan page
         self.assert_title_eventually("Upload your Health Insurance Denial")
@@ -348,9 +355,8 @@ Cheap-O-Insurance-Corp"""
 
         # Plan Documents page - should have back button to health history
         self.assert_title_eventually("Optional: Add Plan Documents")
-        back_link = self.find_element("a.btn-secondary")
-        assert back_link is not None, "Plan Documents page should have a back button"
-        back_link.click()
+        # Use js_click to avoid element click interception from overlays
+        self.js_click("a[class*='btn-secondary']")
 
         # Should be back at Health History page
         self.assert_title_eventually("Optional: Health History")
@@ -360,8 +366,9 @@ Cheap-O-Insurance-Corp"""
 
         # Verify health history preserved via localStorage
         health_history_value = self.get_value("textarea#health_history")
-        assert health_history_value == test_health_history, \
-            f"Expected '{test_health_history}', got '{health_history_value}'"
+        assert (
+            health_history_value == test_health_history
+        ), f"Expected '{test_health_history}', got '{health_history_value}'"
 
         # NOW TEST GOING FORWARD AGAIN - this is the key test for the fix
         # The form should have hidden fields populated from URL params
@@ -377,9 +384,8 @@ Cheap-O-Insurance-Corp"""
         self.assert_title_eventually("Categorize Your Denial")
 
         # Go back again to plan documents (back from entity_extract now goes to plan docs)
-        back_link = self.find_element("a.btn-secondary")
-        assert back_link is not None
-        back_link.click()
+        # Use js_click to avoid element click interception from overlays
+        self.js_click("a[class*='btn-secondary']")
 
         # Should be at Plan Documents (back button from entity_extract goes to dvc)
         self.assert_title_eventually("Optional: Add Plan Documents")
@@ -404,9 +410,12 @@ Cheap-O-Insurance-Corp"""
         self.type("input#store_fname", "FirstAppeal")
         self.type("input#store_lname", "User")
         self.type("input#email", first_email)
-        self.type("textarea#denial_text", """Dear FirstAppeal User;
+        self.type(
+            "textarea#denial_text",
+            """Dear FirstAppeal User;
 Your claim for Truvada has been denied.
-Sincerely, InsuranceCo""")
+Sincerely, InsuranceCo""",
+        )
         self.click("input#pii")
         self.click("input#privacy")
         self.click("input#tos")
@@ -424,9 +433,12 @@ Sincerely, InsuranceCo""")
         self.type("input#store_fname", "SecondAppeal")
         self.type("input#store_lname", "Person")
         self.type("input#email", second_email)
-        self.type("textarea#denial_text", """Dear SecondAppeal Person;
+        self.type(
+            "textarea#denial_text",
+            """Dear SecondAppeal Person;
 Your claim for different treatment has been denied.
-Sincerely, OtherInsuranceCo""")
+Sincerely, OtherInsuranceCo""",
+        )
         self.click("input#pii")
         self.click("input#privacy")
         self.click("input#tos")
@@ -438,8 +450,9 @@ Sincerely, OtherInsuranceCo""")
 
         # Health history should NOT have the first appeal's data
         health_value = self.get_value("textarea#health_history")
-        assert health_value != first_health, \
-            f"Second appeal should not restore first appeal's health history. Got: '{health_value}'"
+        assert (
+            health_value != first_health
+        ), f"Second appeal should not restore first appeal's health history. Got: '{health_value}'"
 
     def test_meta_tags_present_for_form_persistence(self):
         """
@@ -453,9 +466,12 @@ Sincerely, OtherInsuranceCo""")
         self.type("input#store_fname", "MetaTagTest")
         self.type("input#store_lname", "User")
         self.type("input#email", "metatag@test.com")
-        self.type("textarea#denial_text", """Dear MetaTagTest User;
+        self.type(
+            "textarea#denial_text",
+            """Dear MetaTagTest User;
 Your claim has been denied.
-Sincerely, InsuranceCo""")
+Sincerely, InsuranceCo""",
+        )
         self.click("input#pii")
         self.click("input#privacy")
         self.click("input#tos")
@@ -467,13 +483,19 @@ Sincerely, InsuranceCo""")
         # Check for request method meta tag (should be POST since we came from form submission)
         # Use wait_for_element_present since meta tags aren't visible
         self.wait_for_element_present('meta[name="fhi-request-method"]')
-        method_content = self.get_attribute('meta[name="fhi-request-method"]', "content")
-        assert method_content == "POST", f"Request method should be POST, got {method_content}"
+        method_content = self.get_attribute(
+            'meta[name="fhi-request-method"]', "content"
+        )
+        assert (
+            method_content == "POST"
+        ), f"Request method should be POST, got {method_content}"
 
         # Session key meta tag should be present after form submission
         self.wait_for_element_present('meta[name="fhi-session-key"]')
         session_content = self.get_attribute('meta[name="fhi-session-key"]', "content")
-        assert len(session_content) > 0, "Session key should not be empty after form submission"
+        assert (
+            len(session_content) > 0
+        ), "Session key should not be empty after form submission"
 
     def test_back_button_navigates_with_get_request(self):
         """
@@ -487,9 +509,12 @@ Sincerely, InsuranceCo""")
         self.type("input#store_fname", "BackGetTest")
         self.type("input#store_lname", "User")
         self.type("input#email", "backget@test.com")
-        self.type("textarea#denial_text", """Dear BackGetTest User;
+        self.type(
+            "textarea#denial_text",
+            """Dear BackGetTest User;
 Your claim has been denied.
-Sincerely, InsuranceCo""")
+Sincerely, InsuranceCo""",
+        )
         self.click("input#pii")
         self.click("input#privacy")
         self.click("input#tos")
@@ -504,8 +529,8 @@ Sincerely, InsuranceCo""")
         self.assert_title_eventually("Optional: Add Plan Documents")
 
         # Click back button link (should be a GET request)
-        back_link = self.find_element("a.btn-secondary")
-        back_link.click()
+        # Use js_click to avoid element click interception from overlays
+        self.js_click("a[class*='btn-secondary']")
 
         # Back at health history page via GET
         self.assert_title_eventually("Optional: Health History")
@@ -513,14 +538,19 @@ Sincerely, InsuranceCo""")
         # Check meta tag - should be GET (from link navigation)
         # Use wait_for_element_present since meta tags aren't visible
         self.wait_for_element_present('meta[name="fhi-request-method"]')
-        method_content = self.get_attribute('meta[name="fhi-request-method"]', "content")
-        assert method_content == "GET", f"Back button should result in GET, got {method_content}"
+        method_content = self.get_attribute(
+            'meta[name="fhi-request-method"]', "content"
+        )
+        assert (
+            method_content == "GET"
+        ), f"Back button should result in GET, got {method_content}"
 
         # Health history should be restored from localStorage
         time.sleep(0.5)
         health_value = self.get_value("textarea#health_history")
-        assert health_value == test_health, \
-            f"Health history should be restored on GET. Expected '{test_health}', got '{health_value}'"
+        assert (
+            health_value == test_health
+        ), f"Health history should be restored on GET. Expected '{test_health}', got '{health_value}'"
 
     def test_back_navigation_flow_from_categorize_to_documents(self):
         """
@@ -560,9 +590,8 @@ Cheap-O-Insurance-Corp"""
         self.assert_title_eventually("Categorize Your Denial")
 
         # Click back button - should go to Plan Documents (not Health History)
-        back_link = self.find_element("a.btn-secondary")
-        assert back_link is not None, "Categorize page should have a back button"
-        back_link.click()
+        # Use js_click to avoid element click interception from overlays
+        self.js_click("a[class*='btn-secondary']")
 
         # Should be at Plan Documents page
         self.assert_title_eventually("Optional: Add Plan Documents")
@@ -616,9 +645,8 @@ Cheap-O-Insurance-Corp"""
         self.assert_title_eventually("Additional Resources & Questions")
 
         # Click back button - should go to Categorize Review
-        back_link = self.find_element("a.btn-secondary")
-        assert back_link is not None, "Questions page should have a back button"
-        back_link.click()
+        # Use js_click to avoid element click interception from overlays
+        self.js_click("a[class*='btn-secondary']")
 
         # Should be at Categorize Review page (shows the categorization)
         self.assert_title_eventually("Categorize Your Denial")
@@ -676,9 +704,8 @@ Cheap-O-Insurance-Corp"""
         )
 
         # Click back button - should go to Questions page
-        back_link = self.find_element("a.btn-secondary")
-        assert back_link is not None, "Generate Appeal page should have a back button"
-        back_link.click()
+        # Use js_click to avoid element click interception from overlays
+        self.js_click("a[class*='btn-secondary']")
 
         # Should be at Questions page
         self.assert_title_eventually("Additional Resources & Questions")

@@ -32,9 +32,9 @@ class TestCanonicalUrls:
 
         # Check for the exact canonical URL
         expected_tag = f'<link rel="canonical" href="{expected_canonical}">'
-        assert expected_tag in content, (
-            f"Page {path} should have canonical URL {expected_canonical}"
-        )
+        assert (
+            expected_tag in content
+        ), f"Page {path} should have canonical URL {expected_canonical}"
 
     @pytest.mark.parametrize("path,_", CANONICAL_URL_PAGES)
     def test_canonical_url_uses_www_subdomain(self, client, path, _):
@@ -43,14 +43,15 @@ class TestCanonicalUrls:
         content = response.content.decode("utf-8")
 
         # Ensure canonical URL uses www.fighthealthinsurance.com
-        assert "https://www.fighthealthinsurance.com" in content, (
-            f"Page {path} should have canonical URL with www subdomain"
-        )
+        assert (
+            "https://www.fighthealthinsurance.com" in content
+        ), f"Page {path} should have canonical URL with www subdomain"
 
         # Ensure it doesn't use non-www version
-        assert '<link rel="canonical" href="https://fighthealthinsurance.com' not in content, (
-            f"Page {path} should not have canonical URL without www"
-        )
+        assert (
+            '<link rel="canonical" href="https://fighthealthinsurance.com'
+            not in content
+        ), f"Page {path} should not have canonical URL without www"
 
     def test_canonical_url_strips_query_parameters(self, client):
         """Test that canonical URL does not include query parameters."""
@@ -60,8 +61,13 @@ class TestCanonicalUrls:
         content = response.content.decode("utf-8")
 
         # Canonical URL should NOT include query parameters
-        assert '<link rel="canonical" href="https://www.fighthealthinsurance.com/">' in content
-        assert "utm_source" not in content.split('<link rel="canonical"')[1].split(">")[0]
+        assert (
+            '<link rel="canonical" href="https://www.fighthealthinsurance.com/">'
+            in content
+        )
+        assert (
+            "utm_source" not in content.split('<link rel="canonical"')[1].split(">")[0]
+        )
 
     def test_canonical_url_normalizes_trailing_slash(self, client):
         """Test that canonical URL uses the path as defined in URL patterns."""
@@ -71,9 +77,9 @@ class TestCanonicalUrls:
 
         content = response.content.decode("utf-8")
         canonical_tag = '<link rel="canonical" href="https://www.fighthealthinsurance.com/about-us">'
-        assert canonical_tag in content, (
-            "Canonical URL should match the URL pattern definition"
-        )
+        assert (
+            canonical_tag in content
+        ), "Canonical URL should match the URL pattern definition"
 
     def test_canonical_url_with_path_parameters(self, client):
         """Test that canonical URLs work correctly with path parameters."""
@@ -83,9 +89,9 @@ class TestCanonicalUrls:
         # Only check if we get a successful response
         if response.status_code == 200:
             content = response.content.decode("utf-8")
-            assert "https://www.fighthealthinsurance.com" in content, (
-                "Pages with path parameters should have canonical URL"
-            )
+            assert (
+                "https://www.fighthealthinsurance.com" in content
+            ), "Pages with path parameters should have canonical URL"
 
 
 @pytest.mark.django_db
@@ -104,7 +110,10 @@ class TestCanonicalUrlOverride:
         request.canonical_url = "https://www.fighthealthinsurance.com/custom-canonical"
 
         context = canonical_url_context(request)
-        assert context["canonical_url"] == "https://www.fighthealthinsurance.com/custom-canonical"
+        assert (
+            context["canonical_url"]
+            == "https://www.fighthealthinsurance.com/custom-canonical"
+        )
 
     def test_context_processor_uses_default_without_override(self):
         """Test that canonical_url_context uses default when no override is set."""
@@ -118,4 +127,6 @@ class TestCanonicalUrlOverride:
         context = canonical_url_context(request)
 
         # Should use the request path as fallback (no resolver_match in factory requests)
-        assert context["canonical_url"] == "https://www.fighthealthinsurance.com/about-us"
+        assert (
+            context["canonical_url"] == "https://www.fighthealthinsurance.com/about-us"
+        )
