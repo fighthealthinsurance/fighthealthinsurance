@@ -436,6 +436,10 @@ class SeleniumExistingChatTest(FHISeleniumBase, StaticLiveServerTestCase):
         denial_text = "NEW_DENIAL: My knee surgery was denied as experimental."
         self.type("textarea#denial_text", denial_text)
 
+        # TOS/privacy checkboxes are required (not stored in localStorage)
+        self.click("input#tos")
+        self.click("input#privacy")
+
         # Submit (other fields should be pre-filled)
         self.click("button[type='submit']")
 
