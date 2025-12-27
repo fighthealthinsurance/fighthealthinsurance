@@ -118,9 +118,10 @@ The chat interface module is large and handles multiple responsibilities. Break 
 | Done | Handler | Current Location | New File | Notes |
 |------|---------|------------------|----------|-------|
 | [x] | Tool regex patterns | `chat_interface.py` | `chat/tools/patterns.py` | All tool detection patterns extracted |
-| [ ] | PubMed tool handler | `chat_interface.py` | `chat/tools/pubmed_tool.py` | |
-| [ ] | Medicaid info tool handler | `chat_interface.py` | `chat/tools/medicaid_info_tool.py` | |
-| [ ] | Medicaid eligibility handler | `chat_interface.py` | `chat/tools/medicaid_eligibility_tool.py` | |
+| [x] | Base tool class | N/A | `chat/tools/base_tool.py` | Abstract base class for all tool handlers |
+| [x] | PubMed tool handler | `chat_interface.py` | `chat/tools/pubmed_tool.py` | PubMedTool class with search and context building |
+| [x] | Medicaid info tool handler | `chat_interface.py` | `chat/tools/medicaid_tool.py` | MedicaidInfoTool class |
+| [x] | Medicaid eligibility handler | `chat_interface.py` | `chat/tools/medicaid_tool.py` | MedicaidEligibilityTool class |
 | [ ] | Appeal tool handler | `chat_interface.py` | `chat/tools/appeal_tool.py` | |
 | [ ] | Prior auth tool handler | `chat_interface.py` | `chat/tools/prior_auth_tool.py` | |
 
