@@ -15,6 +15,8 @@ from .patterns import (
 from .base_tool import BaseTool
 from .pubmed_tool import PubMedTool
 from .medicaid_tool import MedicaidInfoTool, MedicaidEligibilityTool
+from .appeal_tool import AppealTool
+from .prior_auth_tool import PriorAuthTool
 
 __all__ = [
     # Patterns
@@ -29,4 +31,6 @@ __all__ = [
     "PubMedTool",
     "MedicaidInfoTool",
     "MedicaidEligibilityTool",
+    "AppealTool",
+    "PriorAuthTool",
 ]

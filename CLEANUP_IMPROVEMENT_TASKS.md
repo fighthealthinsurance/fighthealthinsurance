@@ -122,8 +122,8 @@ The chat interface module is large and handles multiple responsibilities. Break 
 | [x] | PubMed tool handler | `chat_interface.py` | `chat/tools/pubmed_tool.py` | PubMedTool class with search and context building |
 | [x] | Medicaid info tool handler | `chat_interface.py` | `chat/tools/medicaid_tool.py` | MedicaidInfoTool class |
 | [x] | Medicaid eligibility handler | `chat_interface.py` | `chat/tools/medicaid_tool.py` | MedicaidEligibilityTool class |
-| [ ] | Appeal tool handler | `chat_interface.py` | `chat/tools/appeal_tool.py` | |
-| [ ] | Prior auth tool handler | `chat_interface.py` | `chat/tools/prior_auth_tool.py` | |
+| [x] | Appeal tool handler | `chat_interface.py` | `chat/tools/appeal_tool.py` | AppealTool class with field mapping |
+| [x] | Prior auth tool handler | `chat_interface.py` | `chat/tools/prior_auth_tool.py` | PriorAuthTool class with field normalization |
 
 ### 3.2 Extract Core Logic
 
