@@ -59,8 +59,8 @@ This document tracks technical debt, cleanup tasks, and improvement opportunitie
 | [x] | `appeal.html` | Alert boxes now use .alert-box classes | `custom.css` |
 | [x] | `scrub.html` | Form styling, box containers now use CSS classes | `custom.css` |
 | [x] | `privacy_policy.html` | Uses Bootstrap utility classes (mt-3, mb-3) | N/A |
-| [ ] | `chat_consent.html` | Display hiding utilities | `custom.css` |
-| [ ] | `microsite.html` | Icon sizing | `custom.css` |
+| [x] | `chat_consent.html` | Uses Bootstrap d-none class | N/A |
+| [x] | `microsite.html` | Uses icon-external-sm class, removed duplicate btn-green | `custom.css` |
 | [x] | `categorize.html` | Uses alert-box, btn-green, container-narrow classes | `custom.css` |
 | [~] | `403_csrf.html` | Self-contained error page (intentionally standalone) | N/A |
 
@@ -102,7 +102,7 @@ Add to `custom.css`:
 
 | Done | Form File | Current | Change To |
 |------|-----------|---------|-----------|
-| [ ] | `forms/__init__.py` | `attrs={"style": "width: 50em"}` | `attrs={"class": "form-input-wide"}` |
+| [x] | `forms/__init__.py` | Inline styles removed | Uses form-textarea-wide, form-textarea-medium, form-input-state classes |
 | [ ] | `forms/questions.py` | Various inline styles | CSS classes |
 
 ---

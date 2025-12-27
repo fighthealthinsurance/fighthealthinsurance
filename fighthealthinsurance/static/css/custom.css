@@ -1376,3 +1376,23 @@ section:not(.slider) .share-subcopy {
     background: #5a6268;
     color: white;
 }
+
+/* External link icon (small) - extracted from microsite.html */
+.icon-external-sm {
+    font-size: 0.8em;
+}
+
+/* Form field sizing - extracted from forms/__init__.py */
+.form-textarea-wide {
+    width: 50em;
+    height: 5em;
+    display: block;
+}
+.form-textarea-medium {
+    width: 50em;
+    height: 3em;
+    display: block;
+}
+.form-input-state {
+    width: 60px;
+}
