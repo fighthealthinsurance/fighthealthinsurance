@@ -48,6 +48,7 @@ from fhi_users.auth.auth_utils import (
     combine_domain_and_username,
     user_is_admin_in_domain,
     resolve_domain_id,
+    validate_redirect_url,
     get_patient_or_create_pending_patient,
     get_next_fake_username,
     validate_password,
@@ -782,12 +783,16 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         user_email = request.data.get("user_email") or request.query_params.get(
             "user_email"
         )
-        continue_url = request.data.get("continue_url") or request.query_params.get(
+        default_cancel = f"https://{settings.FIGHT_PAPERWORK_DOMAIN}/?q=ohno"
+        continue_url_raw = request.data.get("continue_url") or request.query_params.get(
             "continue_url"
         )
-        cancel_url = request.data.get("cancel_url") or request.query_params.get(
-            "cancel_url", "https://www.fightpaper.com/?q=ohno"
+        cancel_url_raw = request.data.get("cancel_url") or request.query_params.get(
+            "cancel_url", default_cancel
         )
+        # Validate URLs to prevent open redirect attacks
+        continue_url = validate_redirect_url(continue_url_raw, f"https://{settings.FIGHT_PAPERWORK_DOMAIN}/")
+        cancel_url = validate_redirect_url(cancel_url_raw, default_cancel)
 
         try:
             if domain_id and professional_user_id:
@@ -1071,14 +1076,22 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 status=status.HTTP_201_CREATED,
             )
         if not (settings.DEBUG and data["skip_stripe"]):
+            # Validate redirect URLs to prevent open redirect attacks
+            default_cancel = f"https://{settings.FIGHT_PAPERWORK_DOMAIN}/?q=ohno"
+            continue_url = validate_redirect_url(
+                user_signup_info.get("continue_url"),
+                f"https://{settings.FIGHT_PAPERWORK_DOMAIN}/"
+            )
+            cancel_url = validate_redirect_url(
+                user_signup_info.get("cancel_url", default_cancel),
+                default_cancel
+            )
             checkout_session = self.create_stripe_checkout_session(
                 email,
                 professional_user.id,
                 user_domain,
-                user_signup_info["continue_url"],
-                user_signup_info.get(
-                    "cancel_url", f"https://{settings.FIGHT_PAPERWORK_DOMAIN}/?q=ohno"
-                ),
+                continue_url,
+                cancel_url,
                 card_required=data["card_required"],
             )
             extra_user_properties = ExtraUserProperties.objects.create(

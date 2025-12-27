@@ -258,7 +258,7 @@ fighthealthinsurance/models/
 | [ ] | Weak password validation | `auth_utils.py:67-77` | Enforce Django validators |
 | [x] | Missing HSTS header | `settings.py` | Added to Prod class (1 year, include subdomains, preload) |
 | [~] | Missing CSP header | `settings.py` | Needs django-csp + inline script analysis; added X-Frame-Options, Referrer-Policy, Content-Type-Nosniff |
-| [ ] | Open redirect in Stripe cancel_url | `rest_auth_views.py:785-790` | Validate against whitelist |
+| [x] | Open redirect in Stripe cancel_url | `rest_auth_views.py` | Added validate_redirect_url() with domain allowlist |
 | [ ] | Audit logging disabled by default | `settings.py:48` | Enable by default |
 
 ### 6.3 Medium Priority

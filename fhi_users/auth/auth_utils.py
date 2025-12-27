@@ -278,3 +278,53 @@ def generic_validate_phone_number(value: str) -> str:
     if cleaned_number.startswith("1") and len(cleaned_number) > 11:
         cleaned_number = cleaned_number[1:]
     return cleaned_number
+
+
+# Allowed domains for redirect URLs (prevents open redirect attacks)
+ALLOWED_REDIRECT_DOMAINS = frozenset([
+    "fighthealthinsurance.com",
+    "www.fighthealthinsurance.com",
+    "api.fighthealthinsurance.com",
+    "fightpaperwork.com",
+    "www.fightpaperwork.com",
+    "api.fightpaperwork.com",
+    "localhost",
+    "127.0.0.1",
+])
+
+
+def validate_redirect_url(url: Optional[str], default_url: str) -> str:
+    """
+    Validate that a redirect URL is from an allowed domain.
+    Returns the URL if valid, otherwise returns the default URL.
+
+    This prevents open redirect attacks where an attacker could
+    craft a URL that redirects users to a malicious site.
+    """
+    if not url:
+        return default_url
+
+    from urllib.parse import urlparse
+
+    try:
+        parsed = urlparse(url)
+        # Must be https (except for localhost in development)
+        if parsed.scheme not in ("https", "http"):
+            logger.warning(f"Invalid URL scheme in redirect: {url}")
+            return default_url
+
+        # Allow http only for localhost
+        if parsed.scheme == "http" and parsed.hostname not in ("localhost", "127.0.0.1"):
+            logger.warning(f"HTTP not allowed for non-localhost in redirect: {url}")
+            return default_url
+
+        # Check if domain is in allowlist
+        hostname = parsed.hostname or ""
+        if hostname not in ALLOWED_REDIRECT_DOMAINS:
+            logger.warning(f"Redirect URL domain not in allowlist: {hostname} from {url}")
+            return default_url
+
+        return url
+    except Exception as e:
+        logger.warning(f"Failed to parse redirect URL {url}: {e}")
+        return default_url
