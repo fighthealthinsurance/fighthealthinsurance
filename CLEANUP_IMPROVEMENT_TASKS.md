@@ -580,15 +580,42 @@ fighthealthinsurance/models/
 
 ## Progress Log
 
-### Completed
-*(Move completed items here with date)*
+### Completed (December 26, 2025)
+
+**Security Fixes:**
+- Added HSTS headers with 1-year duration, include subdomains, and preload
+- Added X-Frame-Options, SECURE_CONTENT_TYPE_NOSNIFF, SECURE_REFERRER_POLICY
+- Fixed open redirect vulnerability in Stripe cancel_url/continue_url
+- Improved password validation to use Django's built-in validators
+- Added DRF rate limiting (100/hr anon, 1000/hr user)
+- Restricted ALLOWED_HOSTS in production
+
+**CSS Consolidation:**
+- Extracted inline styles from base.html (ribbon, spinner)
+- Extracted inline styles from appeal.html, scrub.html, categorize.html
+- Cleaned up privacy_policy.html, chat_consent.html, microsite.html
+- Created reusable CSS classes: .alert-box, .btn-green, .form-textarea-wide, etc.
+- Removed duplicate CSS definitions
+
+**Chat Interface Refactoring:**
+- Created `chat/` package with modular structure
+- Extracted safety_filters.py (crisis detection, false promise detection)
+- Extracted tools/patterns.py (tool regex patterns)
+
+**Quick Wins:**
+- Added .env.example with documented environment variables
+- Fixed wildcard imports in rest_serializers.py
+- Replaced inline styles in form widgets with CSS classes
+
+**Performance:**
+- Added select_related/prefetch_related to AppealViewSet.list (N+1 fix)
 
 ### In Progress
-*(Track what you're working on)*
+- Additional N+1 query fixes in ChatViewSet, DenialViewSet
 
 ### Blocked
-*(Note any blockers)*
+- CSP header implementation (requires django-csp + inline script analysis)
 
 ---
 
-*Last updated: December 25, 2025*
+*Last updated: December 26, 2025*
