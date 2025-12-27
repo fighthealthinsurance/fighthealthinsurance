@@ -64,17 +64,22 @@ def validate_username(username: str) -> bool:
     return "🐼" not in username
 
 
-def validate_password(password: str) -> bool:
-    # Check if password is at least 8 characters long
-    if len(password) < 8:
+def validate_password(password: str, user=None) -> bool:
+    """
+    Validate password using Django's built-in password validators.
+
+    Returns True if the password passes all validators, False otherwise.
+    This provides stronger security than basic length/digit checks by also
+    checking against common passwords and user attribute similarity.
+    """
+    from django.contrib.auth.password_validation import validate_password as django_validate
+    from django.core.exceptions import ValidationError as DjangoValidationError
+
+    try:
+        django_validate(password, user=user)
+        return True
+    except DjangoValidationError:
         return False
-    # Check if password contains at least one digit
-    if not any(char.isdigit() for char in password):
-        return False
-    # Check if password is not entirely composed of digits
-    if password.isdigit():
-        return False
-    return True
 
 
 def is_valid_domain(domain_name: str) -> bool:
