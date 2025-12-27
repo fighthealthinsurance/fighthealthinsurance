@@ -312,7 +312,7 @@ fighthealthinsurance/models/
 | [ ] | DenialQA queries in loop | `rest_views.py:457,467` | Use `prefetch_related('denial_qa')` |
 | [ ] | filter_to_allowed_denials N+1 | `rest_views.py:718` | Use `.values_list('denial_id', flat=True)` |
 | [ ] | filter_to_allowed_appeals N+1 | `rest_views.py:914-918` | Same fix as above |
-| [ ] | AppealViewSet.list missing prefetch | `rest_views.py:613-617` | Add `select_related('for_denial', 'patient_user')` |
+| [x] | AppealViewSet.list missing prefetch | `rest_views.py` | Added select_related & prefetch_related for all serializer fields |
 
 ### 8.2 Missing Database Indexes
 
