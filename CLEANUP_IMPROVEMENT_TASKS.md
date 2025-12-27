@@ -257,7 +257,7 @@ fighthealthinsurance/models/
 | [x] | No rate limiting on auth endpoints | `rest_auth_views.py` | Added DRF throttling (100/hr anon, 1000/hr user) |
 | [ ] | Weak password validation | `auth_utils.py:67-77` | Enforce Django validators |
 | [x] | Missing HSTS header | `settings.py` | Added to Prod class (1 year, include subdomains, preload) |
-| [ ] | Missing CSP header | `settings.py` | Add Content-Security-Policy |
+| [~] | Missing CSP header | `settings.py` | Needs django-csp + inline script analysis; added X-Frame-Options, Referrer-Policy, Content-Type-Nosniff |
 | [ ] | Open redirect in Stripe cancel_url | `rest_auth_views.py:785-790` | Validate against whitelist |
 | [ ] | Audit logging disabled by default | `settings.py:48` | Enable by default |
 

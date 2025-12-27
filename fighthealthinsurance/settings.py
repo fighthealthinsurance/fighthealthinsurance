@@ -606,6 +606,14 @@ class Prod(Base):
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_HSTS_PRELOAD = True
 
+    # Additional security headers
+    SECURE_CONTENT_TYPE_NOSNIFF = True  # Prevent MIME type sniffing
+    X_FRAME_OPTIONS = "DENY"  # Prevent clickjacking
+    SECURE_REFERRER_POLICY = "strict-origin-when-cross-origin"
+
+    # Note: Content-Security-Policy (CSP) should be added via django-csp
+    # after careful analysis of inline scripts and external resources used
+
     # Different fido server for production
     FIDO_SERVER_ID = "fighthealthinsurance.com"  # Server rp id for FIDO2, it is the full domain of your project
     FIGHT_PAPERWORK_DOMAIN = "www.fightpaperwork.com"
