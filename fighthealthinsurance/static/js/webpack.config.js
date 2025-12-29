@@ -1,5 +1,6 @@
 const path = require('path');
 const glob = require('glob');
+const TerserPlugin = require('terser-webpack-plugin');
 
 // Dynamically find all .tsx and .ts files in static/js (excluding files like icons.tsx if desired)
 const jsDir = path.join(__dirname);
@@ -17,6 +18,9 @@ try {
   process.exit(1);
 }
 
+// Determine if we're in production mode
+const isProduction = process.env.NODE_ENV === 'production';
+
 module.exports = async (env, argv) => {
   // Load ESM-only plugins with dynamic import()
   const [{ default: remarkGfm }, { default: rehypeHighlight }] = await Promise.all([
@@ -25,12 +29,29 @@ module.exports = async (env, argv) => {
   ]);
   return {
   context: __dirname,
-  mode: process.env.NODE_ENV || 'development',
+  mode: isProduction ? 'production' : 'development',
   entry: entries,
   output: {
     path: path.resolve(__dirname, 'dist'),
     filename: '[name].bundle.js',
   },
+  // Production optimizations
+  optimization: isProduction ? {
+    minimize: true,
+    minimizer: [
+      new TerserPlugin({
+        terserOptions: {
+          compress: {
+            drop_console: true,  // Remove console.log in production
+          },
+          format: {
+            comments: false,
+          },
+        },
+        extractComments: false,
+      }),
+    ],
+  } : {},
   resolve: {
     modules: [
       path.resolve(__dirname, 'node_modules'),
@@ -98,6 +119,7 @@ module.exports = async (env, argv) => {
       },
     ],
   },
-  devtool: 'source-map',
+  // Only generate source maps in development
+  devtool: isProduction ? false : 'source-map',
 };
 }
