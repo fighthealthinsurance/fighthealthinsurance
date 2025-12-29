@@ -2075,8 +2075,9 @@ class StateHelpView(TemplateView):
     def get(self, request, slug, *args, **kwargs):
         from fighthealthinsurance.state_help import get_state_help
 
-        state = get_state_help(slug)
-        if state is None:
+        # Cache state lookup to avoid duplicate call in get_context_data
+        self._state = get_state_help(slug)
+        if self._state is None:
             from django.http import Http404
 
             raise Http404(f"State help page '{slug}' not found")
@@ -2085,11 +2086,9 @@ class StateHelpView(TemplateView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        slug = self.kwargs.get("slug", "")
 
-        from fighthealthinsurance.state_help import get_state_help
-
-        state = get_state_help(slug)
+        # Use cached state from get() to avoid duplicate lookup
+        state = getattr(self, "_state", None)
         if state:
             context["state"] = state
             context["title"] = f"{state.name} Health Insurance Help"

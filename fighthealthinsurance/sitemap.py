@@ -124,22 +124,17 @@ class StateHelpSitemap(Sitemap):
     changefreq = "monthly"
 
     def items(self) -> list[str]:
-        """Return list of state help slugs from state_help.json."""
+        """Return list of validated state help slugs."""
         try:
-            with staticfiles_storage.open("state_help.json", "r") as f:
-                contents = f.read()
-                if not isinstance(contents, str):
-                    contents = contents.decode("utf-8")
-                data = json.loads(contents)
-            if not isinstance(data, dict):
-                return []
+            # Use load_state_help() to get only validated entries
+            # This avoids 404s from invalid entries like "national" that lack required fields
+            from fighthealthinsurance.state_help import load_state_help
+
+            valid_states = load_state_help()
             # Add the index page slug first
-            return ["index"] + list(data.keys())
-        except (FileNotFoundError, json.JSONDecodeError) as e:
-            logger.warning(f"Could not load state_help.json for sitemap: {e}")
-            return []
+            return ["index"] + list(valid_states.keys())
         except Exception as e:
-            logger.error(f"Unexpected error loading state help for sitemap: {e}")
+            logger.warning(f"Could not load state help for sitemap: {e}")
             return []
 
     def location(self, item: str) -> str:
