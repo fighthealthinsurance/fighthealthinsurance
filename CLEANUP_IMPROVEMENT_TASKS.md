@@ -103,7 +103,7 @@ Add to `custom.css`:
 | Done | Form File | Current | Change To |
 |------|-----------|---------|-----------|
 | [x] | `forms/__init__.py` | Inline styles removed | Uses form-textarea-wide, form-textarea-medium, form-input-state classes |
-| [ ] | `forms/questions.py` | Various inline styles | CSS classes |
+| [x] | `forms/questions.py` | No inline styles | File contains form field definitions only (no widget attrs with styles) |
 
 ---
 
@@ -125,13 +125,15 @@ The chat interface module is large and handles multiple responsibilities. Break 
 | [x] | Appeal tool handler | `chat_interface.py` | `chat/tools/appeal_tool.py` | AppealTool class with field mapping |
 | [x] | Prior auth tool handler | `chat_interface.py` | `chat/tools/prior_auth_tool.py` | PriorAuthTool class with field normalization |
 
+**Note:** Tool handlers have been extracted into reusable classes but are not yet integrated into `chat_interface.py`. The next step is to update `chat_interface.py` to use these handlers instead of the inline code. This is a non-breaking change - the old code continues to work while the new modular structure is tested.
+
 ### 3.2 Extract Core Logic
 
 | Done | Component | Description | New File |
 |------|-----------|-------------|----------|
-| [ ] | LLM calling logic | `_build_llm_calls`, `_score_response` | `chat/llm_client.py` |
-| [ ] | Retry logic | Retry with backoff patterns | `chat/retry_handler.py` |
-| [ ] | Context accumulation | Message history management | `chat/context_manager.py` |
+| [x] | LLM calling logic | `build_llm_calls`, `score_llm_response`, `create_response_scorer` | `chat/llm_client.py` |
+| [x] | Retry logic | `retry_llm_with_fallback`, `should_retry_response`, scoring | `chat/retry_handler.py` |
+| [x] | Context accumulation | `prepare_history_for_llm`, summarization, storage | `chat/context_manager.py` |
 | [x] | Crisis detection | `detect_crisis_keywords`, `detect_false_promises` | `chat/safety_filters.py` |
 
 ### 3.3 Extract Microsite PubMed Search
@@ -282,8 +284,8 @@ fighthealthinsurance/models/
 |------|-------|----------|-----|
 | [x] | Missing skip link | `base.html` | Added skip link with CSS in custom.css |
 | [x] | No `<main>` landmark | `base.html` | Wrapped content in `<main id="main-content" role="main">` |
-| [ ] | Inline onclick without keyboard support | `login.html:47` | Use event listeners |
-| [ ] | Link used as button | `403_csrf.html:78` | Change to `<button>` element |
+| [~] | Inline onclick without keyboard support | `login.html:47` | Already a button element - keyboard works natively |
+| [x] | Link used as button | `403_csrf.html:78` | Changed to `<button>` element |
 
 ### 7.2 Color Contrast
 
@@ -296,8 +298,8 @@ fighthealthinsurance/models/
 
 | Done | Issue | Location | Fix |
 |------|-------|----------|-----|
-| [ ] | Error messages lack `aria-live` | `scrub.html:169-180` | Add `aria-live="polite"` |
-| [ ] | Some inline onclick handlers | Various templates | Add keyboard events |
+| [x] | Error messages lack `aria-live` | `scrub.html:169-180` | Added `role="alert" aria-live="polite"` |
+| [x] | Inline onclick in 403_csrf.html | `403_csrf.html:79` | Changed to button element |
 
 ---
 
@@ -309,21 +311,21 @@ fighthealthinsurance/models/
 
 | Done | Issue | Location | Fix |
 |------|-------|----------|-----|
-| [ ] | ChatViewSet.list missing prefetch | `rest_views.py:79-92` | Add `select_related('user', 'professional_user')` |
-| [ ] | DenialQA queries in loop | `rest_views.py:457,467` | Use `prefetch_related('denial_qa')` |
-| [ ] | filter_to_allowed_denials N+1 | `rest_views.py:718` | Use `.values_list('denial_id', flat=True)` |
-| [ ] | filter_to_allowed_appeals N+1 | `rest_views.py:914-918` | Same fix as above |
+| [x] | ChatViewSet.list missing prefetch | `rest_views.py:79-92` | Not needed - only accesses JSONField, no FK traversal |
+| [x] | DenialQA queries in loop | `rest_views.py:457,467` | Fixed with bulk fetch, bulk_update, and bulk_create |
+| [x] | filter_to_allowed_denials N+1 | `models.py:735-738` | Use `.values_list('denial_id', flat=True)` |
+| [x] | filter_to_allowed_appeals N+1 | `models.py:934-937` | Use `.values_list('appeal_id', flat=True)` |
 | [x] | AppealViewSet.list missing prefetch | `rest_views.py` | Added select_related & prefetch_related for all serializer fields |
 
 ### 8.2 Missing Database Indexes
 
 | Done | Field | Model | Notes |
 |------|-------|-------|-------|
-| [ ] | `hashed_email` | Denial | High-traffic lookup |
-| [ ] | `hashed_email` | FaxesToSend | High-traffic lookup |
-| [ ] | `hashed_email` | OngoingChat | High-traffic lookup |
-| [ ] | `created` | Multiple models | Time-range queries |
-| [ ] | `(professional_user_id, updated_at)` | OngoingChat | Chat listing |
+| [x] | `hashed_email` | Denial | Added in migration 0144 |
+| [x] | `hashed_email` | FaxesToSend | Added in migration 0144 |
+| [x] | `hashed_email` | OngoingChat | Added in migration 0144 |
+| [x] | `created` | Denial | Added in migration 0144 |
+| [x] | `(professional_user_id, updated_at)` | OngoingChat | Added in migration 0144 |
 
 ### 8.3 JavaScript Bundle Optimization
 
@@ -505,9 +507,10 @@ fighthealthinsurance/models/
 
 | Done | PR | Title | Status | Notes |
 |------|-----|-------|--------|-------|
-| [ ] | #626 | Client-side OCR for Explain Denial | Ready | Adds Tesseract.js OCR to explain_denial page, feature parity with appeal flow |
+| [x] | #626 | Client-side OCR for Explain Denial | Ready | Adds Tesseract.js OCR to explain_denial page, feature parity with appeal flow. Reviewed - looks good, minor test location issue (tests/async vs tests/sync) |
 | [ ] | #614 | Insurance Company & Plan Extraction | Ready | Adds InsuranceCompany/InsurancePlan models, regional brand support, specificity scoring |
-| [ ] | #600 | State-by-State Help System | WIP | Has sitemap bug (national entry lacks state fields), needs fix before merge |
+| [x] | #600 | State-by-State Help System | Fixed | Sitemap bug fixed (uses load_state_help() to exclude invalid entries), StateHelpView caches lookup |
+| [x] | #629 | UET Tracking Improvements | Fixed | Event naming consistency ('donation_initiated'), skip zero-value fax tracking |
 
 ### PR #626 Details (OCR for Explain Denial)
 - New `explain_denial.ts` module using existing `scrub_ocr.ts`
@@ -602,6 +605,12 @@ fighthealthinsurance/models/
 - Created `chat/` package with modular structure
 - Extracted safety_filters.py (crisis detection, false promise detection)
 - Extracted tools/patterns.py (tool regex patterns)
+- Created base_tool.py (abstract base class for all tool handlers)
+- Created pubmed_tool.py (PubMedTool with search and context building)
+- Created medicaid_tool.py (MedicaidInfoTool and MedicaidEligibilityTool classes)
+- Created appeal_tool.py (AppealTool with field mapping)
+- Created prior_auth_tool.py (PriorAuthTool with field normalization)
+- Added tests/sync/test_chat_tools.py (14 tests for tool handlers)
 
 **Quick Wins:**
 - Added .env.example with documented environment variables
@@ -610,13 +619,17 @@ fighthealthinsurance/models/
 
 **Performance:**
 - Added select_related/prefetch_related to AppealViewSet.list (N+1 fix)
+- Fixed DenialQA N+1 with bulk fetch/update/create in rest_views.py
 
-### In Progress
-- Additional N+1 query fixes in ChatViewSet, DenialViewSet
+**Database Indexes:**
+- Added indexes on hashed_email for Denial, FaxesToSend, OngoingChat (migration 0144)
+- Added index on created for Denial
+- Added compound index on (professional_user, updated_at) for OngoingChat
 
 ### Blocked
 - CSP header implementation (requires django-csp + inline script analysis)
+- Tool handler integration into chat_interface.py (optional - handlers extracted and tested, integration can be done incrementally)
 
 ---
 
-*Last updated: December 26, 2025*
+*Last updated: December 28, 2025*
