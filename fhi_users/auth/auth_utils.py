@@ -285,17 +285,39 @@ def generic_validate_phone_number(value: str) -> str:
     return cleaned_number
 
 
-# Allowed domains for redirect URLs (prevents open redirect attacks)
-ALLOWED_REDIRECT_DOMAINS = frozenset([
-    "fighthealthinsurance.com",
-    "www.fighthealthinsurance.com",
-    "api.fighthealthinsurance.com",
-    "fightpaperwork.com",
-    "www.fightpaperwork.com",
-    "api.fightpaperwork.com",
-    "localhost",
-    "127.0.0.1",
-])
+def _get_allowed_redirect_domains() -> frozenset:
+    """
+    Get allowed redirect domains from settings or use defaults.
+    This is a function to allow settings to override at runtime.
+    """
+    from django.conf import settings
+
+    # Check if custom domains are configured in settings
+    if hasattr(settings, "ALLOWED_REDIRECT_DOMAINS"):
+        return frozenset(settings.ALLOWED_REDIRECT_DOMAINS)
+
+    # Default allowed domains
+    return frozenset([
+        # Production
+        "fighthealthinsurance.com",
+        "www.fighthealthinsurance.com",
+        "api.fighthealthinsurance.com",
+        "fightpaperwork.com",
+        "www.fightpaperwork.com",
+        "api.fightpaperwork.com",
+        # Development
+        "localhost",
+        "127.0.0.1",
+    ])
+
+
+def _sanitize_url_for_logging(url: str, max_length: int = 100) -> str:
+    """Truncate and sanitize URL for safe logging (prevents log injection/flooding)."""
+    # Remove newlines and other control characters
+    sanitized = url.replace("\n", "").replace("\r", "")
+    if len(sanitized) > max_length:
+        return sanitized[:max_length] + "..."
+    return sanitized
 
 
 def validate_redirect_url(url: Optional[str], default_url: str) -> str:
@@ -311,25 +333,29 @@ def validate_redirect_url(url: Optional[str], default_url: str) -> str:
 
     from urllib.parse import urlparse
 
+    # Sanitize for logging to prevent log injection attacks
+    safe_url = _sanitize_url_for_logging(url)
+
     try:
         parsed = urlparse(url)
         # Must be https (except for localhost in development)
         if parsed.scheme not in ("https", "http"):
-            logger.warning(f"Invalid URL scheme in redirect: {url}")
+            logger.warning(f"Invalid URL scheme in redirect: {safe_url}")
             return default_url
 
         # Allow http only for localhost
         if parsed.scheme == "http" and parsed.hostname not in ("localhost", "127.0.0.1"):
-            logger.warning(f"HTTP not allowed for non-localhost in redirect: {url}")
+            logger.warning(f"HTTP not allowed for non-localhost in redirect: {safe_url}")
             return default_url
 
         # Check if domain is in allowlist
         hostname = parsed.hostname or ""
-        if hostname not in ALLOWED_REDIRECT_DOMAINS:
-            logger.warning(f"Redirect URL domain not in allowlist: {hostname} from {url}")
+        allowed_domains = _get_allowed_redirect_domains()
+        if hostname not in allowed_domains:
+            logger.warning(f"Redirect URL domain not in allowlist: {hostname}")
             return default_url
 
         return url
     except Exception as e:
-        logger.warning(f"Failed to parse redirect URL {url}: {e}")
+        logger.warning(f"Failed to parse redirect URL: {e}")
         return default_url

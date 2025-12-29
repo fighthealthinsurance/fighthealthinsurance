@@ -56,13 +56,14 @@ class Base(Configuration):
             "rest_framework.authentication.SessionAuthentication",
         ],
         "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+        # Rate limiting to prevent abuse (adjust as needed based on usage patterns)
         "DEFAULT_THROTTLE_CLASSES": [
             "rest_framework.throttling.AnonRateThrottle",
             "rest_framework.throttling.UserRateThrottle",
         ],
         "DEFAULT_THROTTLE_RATES": {
-            "anon": "100/hour",
-            "user": "1000/hour",
+            "anon": "100/hour",  # Unauthenticated users
+            "user": "1000/hour",  # Authenticated users
         },
     }
 
