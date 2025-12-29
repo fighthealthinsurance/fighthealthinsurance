@@ -23,8 +23,6 @@ from django.http import (
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template import loader
 from django.urls import reverse
-from django.views.decorators.clickjacking import xframe_options_exempt
-from django.utils.decorators import method_decorator
 from django.utils.safestring import mark_safe
 from django.views import View, generic
 from django.views.decorators.csrf import csrf_exempt, ensure_csrf_cookie
@@ -950,7 +948,7 @@ class GenerateAppeal(View):
             denial.qa_context = json.dumps(qa_context)
             denial.save()
         except Exception as e:
-            logger.error(f"Error updating medical context: {e}")
+            logger.error(f"*********************Error updating medical context: {e}")
 
         del elems["csrfmiddlewaretoken"]
         return render(
@@ -1135,15 +1133,7 @@ class InitialProcessView(generic.FormView):
         if referral_source_details:
             cleaned_data["referral_source_details"] = referral_source_details
 
-        # Extract tracking info for analytics (privacy-aware)
-        from fhi_users.audit import extract_tracking_info
-
-        tracking_info = extract_tracking_info(
-            request=self.request, is_professional=False
-        )
-
         denial_response = common_view_logic.DenialCreatorHelper.create_or_update_denial(
-            tracking_info=tracking_info,
             **cleaned_data,
         )
 
@@ -1913,7 +1903,6 @@ class UnsubscribeView(View):
             )
 
 
-@method_decorator(xframe_options_exempt, name="dispatch")
 class ChooserView(TemplateView):
     """View for the Chooser (Best-Of Selection) interface."""
 
@@ -2060,5 +2049,49 @@ class DenialLanguageLibraryView(TemplateView):
             context["denial_phrases"] = []
             context["total_phrases"] = 0
             context["title"] = "Denial Language Library"
+
+        return context
+
+
+class StateHelpIndexView(TemplateView):
+    """View for the state-by-state help index page."""
+
+    template_name = "state_help_index.html"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        from fighthealthinsurance.state_help import get_states_sorted_by_name
+
+        context["states"] = get_states_sorted_by_name()
+        context["title"] = "State-by-State Health Insurance Help"
+        return context
+
+
+class StateHelpView(TemplateView):
+    """View for individual state help pages."""
+
+    template_name = "state_help.html"
+
+    def get(self, request, slug, *args, **kwargs):
+        from fighthealthinsurance.state_help import get_state_help
+
+        state = get_state_help(slug)
+        if state is None:
+            from django.http import Http404
+
+            raise Http404(f"State help page '{slug}' not found")
+
+        return super().get(request, *args, **kwargs)
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        slug = self.kwargs.get("slug", "")
+
+        from fighthealthinsurance.state_help import get_state_help
+
+        state = get_state_help(slug)
+        if state:
+            context["state"] = state
+            context["title"] = f"{state.name} Health Insurance Help"
 
         return context

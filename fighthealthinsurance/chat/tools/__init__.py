@@ -3,6 +3,13 @@ Chat tools package - contains tool handlers for chat interface.
 
 Each tool handler processes specific "tool calls" that the LLM may include
 in its responses (e.g., PubMed searches, Medicaid lookups, etc.)
+
+NOTE: These tool handlers have been extracted from chat_interface.py into
+reusable classes but are NOT YET INTEGRATED. The chat_interface.py still
+uses inline tool handling code. Integration is tracked as a future task.
+
+To use these handlers, instantiate them with the appropriate callbacks
+and call their handle() method with the LLM response text.
 """
 from .patterns import (
     PUBMED_QUERY_REGEX,
