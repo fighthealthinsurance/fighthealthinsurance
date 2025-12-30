@@ -168,4 +168,4 @@ a.tr
 node_modules/
 
 # Generated blog metadata
-fighthealthinsurance/static/blog_posts.json
+fighthealthinsurance/static/blog_posts.jsonlogs/
