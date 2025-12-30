@@ -21,6 +21,7 @@ from fighthealthinsurance.ml.ml_models import RemoteModelLike
 from fighthealthinsurance.chat.llm_client import (
     build_retry_calls,
     score_llm_response,
+    MIN_RESPONSE_LENGTH,
 )
 from fighthealthinsurance.chat.safety_filters import detect_false_promises
 from fighthealthinsurance.utils import best_within_timelimit
@@ -60,14 +61,14 @@ def create_simple_retry_scorer(
             return float("-inf")
 
         # Bonus for having a response
-        if response_text and len(response_text) > 5:
+        if response_text and len(response_text) > MIN_RESPONSE_LENGTH:
             score += 100
             # Safety check
             if detect_false_promises(response_text):
                 score -= 200
 
         # Small bonus for context
-        if context_part and len(context_part) > 5:
+        if context_part and len(context_part) > MIN_RESPONSE_LENGTH:
             score += 10
 
         return score
@@ -134,7 +135,7 @@ async def retry_llm_with_fallback(
             timeout=timeout,
         )
 
-        if retry_response and len(retry_response.strip()) > 5:
+        if retry_response and len(retry_response.strip()) > MIN_RESPONSE_LENGTH:
             logger.info("Successfully got response from retry/fallback models")
             return retry_response, retry_context
 
@@ -144,7 +145,9 @@ async def retry_llm_with_fallback(
     return None, None
 
 
-def should_retry_response(response_text: Optional[str], min_length: int = 5) -> bool:
+def should_retry_response(
+    response_text: Optional[str], min_length: int = MIN_RESPONSE_LENGTH
+) -> bool:
     """
     Determine if an LLM response warrants a retry.
 
@@ -159,6 +162,11 @@ def should_retry_response(response_text: Optional[str], min_length: int = 5) -> 
         return True
 
     if len(response_text.strip()) < min_length:
+        return True
+
+    # Retry on safety check failures (false promises)
+    if detect_false_promises(response_text):
+        logger.warning("Detected false promise in response, triggering retry")
         return True
 
     return False

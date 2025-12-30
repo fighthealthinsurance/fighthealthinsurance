@@ -41,6 +41,9 @@ BAD_CONTEXT_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
+# Minimum length for a valid LLM response or context
+MIN_RESPONSE_LENGTH = 5
+
 
 def estimate_history_tokens(history: List[Dict[str, str]]) -> int:
     """
@@ -88,13 +91,13 @@ def score_llm_response(
         score += 100
 
     # Score context quality
-    if context_part and len(context_part) > 5:
+    if context_part and len(context_part) > MIN_RESPONSE_LENGTH:
         score += 10
         if BAD_CONTEXT_PATTERNS.search(context_part):
             score -= 5
 
     # Score response quality
-    if response_text and len(response_text) > 5:
+    if response_text and len(response_text) > MIN_RESPONSE_LENGTH:
         score += 100
 
         # Penalize responses that leak system prompts

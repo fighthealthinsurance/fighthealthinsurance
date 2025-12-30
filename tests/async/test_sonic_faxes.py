@@ -2,22 +2,19 @@ import os
 from os import environ
 import unittest
 import tempfile
-import pytest
 import asyncio
 from fighthealthinsurance.fax_utils import SonicFax
 
 
+def _sonic_is_configured() -> bool:
+    """Check if Sonic credentials are configured in environment."""
+    keys = ["SONIC_USERNAME", "SONIC_PASSWORD", "SONIC_TOKEN"]
+    return all(key in environ for key in keys)
+
+
 class SonicFaxTest(unittest.TestCase):
 
-    def _sonic_is_configured() -> bool:
-        keys = ["SONIC_USERNAME", "SONIC_PASSWORD", "SONIC_TOKEN"]
-        for key in keys:
-            if key not in environ:
-                return False
-        return True
-
-    # @pytest.mark.skipif(_sonic_is_configured(), reason="Not configured")
-    @pytest.mark.skip
+    @unittest.skipUnless(_sonic_is_configured(), "Sonic credentials not configured")
     def test_sonic_fax_success(self):
         """Test faxing with a valid fax number."""
         s = SonicFax()
@@ -42,8 +39,7 @@ class SonicFaxTest(unittest.TestCase):
             finally:
                 os.remove(file_name)
 
-    # @pytest.mark.skipif(_sonic_is_configured(), reason="Not configured")
-    @pytest.mark.skip
+    @unittest.skipUnless(_sonic_is_configured(), "Sonic credentials not configured")
     def test_sonic_fax_failure(self):
         """Test faxing with an invalid fax number."""
         s = SonicFax()
@@ -67,8 +63,7 @@ class SonicFaxTest(unittest.TestCase):
             finally:
                 os.remove(file_name)
 
-    # @pytest.mark.skipif(_sonic_is_configured(), reason="Not configured")
-    @pytest.mark.skip
+    @unittest.skipUnless(_sonic_is_configured(), "Sonic credentials not configured")
     def test_invalid_file(self):
         """Test sending an invalid file format."""
         s = SonicFax()
@@ -92,8 +87,7 @@ class SonicFaxTest(unittest.TestCase):
             finally:
                 os.remove(file_name)
 
-    # @pytest.mark.skipif(_sonic_is_configured(), reason="Not configured")
-    @pytest.mark.skip
+    @unittest.skipUnless(_sonic_is_configured(), "Sonic credentials not configured")
     def test_empty_file(self):
         """Test sending an empty file."""
         s = SonicFax()
