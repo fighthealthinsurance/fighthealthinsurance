@@ -32,9 +32,24 @@ import {
   type UserInfo,
 } from "./user_info_storage";
 
+// Declare UET tracking function from base.html
+declare global {
+  interface Window {
+    trackUETConversion?: (eventName: string, eventData?: Record<string, unknown>) => void;
+  }
+}
+
 // PWYW Component for the chat interface
 const PWYWBanner: React.FC<{ onDismiss: () => void }> = ({ onDismiss }) => {
   const handleSupport = () => {
+    // Track donation initiation for UET (maximize this conversion)
+    if (window.trackUETConversion) {
+      window.trackUETConversion('donation_initiated', {
+        event_category: 'donation',
+        event_label: 'Chat PWYW Banner',
+        event_action: 'begin_checkout'
+      });
+    }
     // Open Stripe payment page where users can enter their preferred amount
     window.open(`https://buy.stripe.com/5kA03r2ZwbgebyE7ss`, '_blank', 'noopener,noreferrer');
     onDismiss();
@@ -288,6 +303,14 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
       ws.onopen = () => {
         console.log("WebSocket connected");
         wsRef.current = ws;
+
+        // Track chat start conversion for UET
+        if (window.trackUETConversion) {
+          window.trackUETConversion('chat_start', {
+            event_category: 'engagement',
+            event_label: 'Chat Started'
+          });
+        }
 
         // Get user info for potential email data
         const userInfo = getUserInfo();

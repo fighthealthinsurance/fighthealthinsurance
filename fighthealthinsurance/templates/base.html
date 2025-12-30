@@ -64,6 +64,30 @@
 
       gtag('config', 'G-JQNGR0JGVN');
     </script>
+    <!-- Microsoft UET tag -->
+    <script>(function(w,d,t,r,u){var f,n,i;w[u]=w[u]||[],f=function(){var o={ti:"187227448", enableAutoSpaTracking: true};o.q=w[u],w[u]=new UET(o),w[u].push("pageLoad")},n=d.createElement(t),n.src=r,n.async=1,n.onload=n.onreadystatechange=function(){var s=this.readyState;s&&s!=="loaded"&&s!=="complete"||(f(),n.onload=n.onreadystatechange=null)},i=d.getElementsByTagName(t)[0],i.parentNode.insertBefore(n,i)})(window,document,"script","//bat.bing.com/bat.js","uetq");</script>
+    <!-- UET conversion tracking helper -->
+    <script>
+      window.trackUETConversion = function(eventName, eventData) {
+        window.uetq = window.uetq || [];
+        window.uetq.push('event', eventName, eventData || {});
+      };
+
+      // Track all Stripe donation links site-wide
+      document.addEventListener('DOMContentLoaded', function() {
+        document.querySelectorAll('a[href*="buy.stripe.com"]').forEach(function(link) {
+          link.addEventListener('click', function() {
+            if (window.trackUETConversion) {
+              window.trackUETConversion('donation_initiated', {
+                event_category: 'donation',
+                event_label: 'Support Link',
+                event_action: 'begin_checkout'
+              });
+            }
+          });
+        });
+      });
+    </script>
 </head>
 
 <body id="top" data-spy="scroll" data-target=".navbar-collapse" data-offset="50">

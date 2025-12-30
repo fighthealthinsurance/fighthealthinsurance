@@ -10,6 +10,22 @@ Upload your Health Insurance Denial
 <script type="module">
   import * as main from '{% static "js/dist/scrub.bundle.js" %}';
 </script>
+<script>
+  // Track denial appeal start when form is submitted
+  document.addEventListener('DOMContentLoaded', function() {
+    var form = document.getElementById('fuck_health_insurance_form');
+    if (form) {
+      form.addEventListener('submit', function() {
+        if (window.trackUETConversion) {
+          window.trackUETConversion('denial_appeal_start', {
+            event_category: 'conversion',
+            event_label: 'Denial Form Submitted'
+          });
+        }
+      });
+    }
+  });
+</script>
 {% endblock scriptmagic %}
 
 {% block content %}

@@ -5,6 +5,23 @@
   import * as main from '{% static "js/dist/appeal.bundle.js" %}';
 </script>
 <script src="{% static 'js/pwyw.js' %}"></script>
+<script>
+  // Track direct donation button clicks
+  document.addEventListener('DOMContentLoaded', function() {
+    // Track all support/donation links to Stripe
+    document.querySelectorAll('a[href*="buy.stripe.com"]').forEach(function(link) {
+      link.addEventListener('click', function() {
+        if (window.trackUETConversion) {
+          window.trackUETConversion('donation_initiated', {
+            event_category: 'donation',
+            event_label: 'Direct Support Button',
+            event_action: 'begin_checkout'
+          });
+        }
+      });
+    });
+  });
+</script>
 {% endblock scriptmagic %}
 {% block title %}
 Fight Your Health Insurance Denial: Edit and send in your appeal

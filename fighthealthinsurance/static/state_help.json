@@ -1,0 +1,2200 @@
+{
+  "national": {
+    "slug": "national",
+    "name": "National Resources",
+    "description": "Federal and national resources for health insurance assistance",
+    "federal_resources": [
+      {
+        "name": "Medicare (CMS)",
+        "phone": "800-633-4227",
+        "url": "https://www.medicare.gov/",
+        "description": "Official Medicare information, enrollment, and claims assistance"
+      },
+      {
+        "name": "HealthCare.gov Marketplace",
+        "phone": "800-318-2596",
+        "url": "https://www.healthcare.gov/",
+        "description": "Federal health insurance marketplace for ACA plans"
+      },
+      {
+        "name": "Medicaid.gov",
+        "phone": null,
+        "url": "https://www.medicaid.gov/",
+        "description": "Federal Medicaid information and state program links"
+      }
+    ],
+    "consumer_advocacy": [
+      {
+        "name": "Patient Advocate Foundation",
+        "phone": "800-532-5274",
+        "url": "https://www.patientadvocate.org/",
+        "description": "Free case management for insurance denials and appeals"
+      },
+      {
+        "name": "Medicare Rights Center",
+        "phone": "800-333-4114",
+        "url": "https://www.medicarerights.org/",
+        "description": "Free Medicare counseling and advocacy"
+      },
+      {
+        "name": "Families USA",
+        "phone": null,
+        "url": "https://familiesusa.org/",
+        "description": "National health care consumer advocacy organization"
+      },
+      {
+        "name": "National Association of Insurance Commissioners",
+        "phone": null,
+        "url": "https://content.naic.org/consumer.htm",
+        "description": "Consumer insurance information and state regulator directory"
+      }
+    ],
+    "legal_resources": [
+      {
+        "name": "National Health Law Program",
+        "phone": null,
+        "url": "https://healthlaw.org/",
+        "description": "Legal advocacy for health rights of low-income individuals"
+      },
+      {
+        "name": "LawHelp.org",
+        "phone": null,
+        "url": "https://www.lawhelp.org/",
+        "description": "Directory of free legal aid programs by state"
+      },
+      {
+        "name": "Legal Services Corporation",
+        "phone": null,
+        "url": "https://www.lsc.gov/about-lsc/what-legal-aid/get-legal-help",
+        "description": "Find local legal aid offices for low-income individuals"
+      }
+    ],
+    "specialized_assistance": [
+      {
+        "name": "SHIP National Technical Assistance Center",
+        "phone": "877-839-2675",
+        "url": "https://www.shiphelp.org/",
+        "description": "Find your state's Medicare counseling program"
+      },
+      {
+        "name": "Benefits.gov",
+        "phone": null,
+        "url": "https://www.benefits.gov/",
+        "description": "Federal benefit eligibility screening tool"
+      },
+      {
+        "name": "Social Security Administration",
+        "phone": "800-772-1213",
+        "url": "https://www.ssa.gov/",
+        "description": "Medicare enrollment and disability benefits"
+      }
+    ]
+  },
+  "alabama": {
+    "slug": "alabama",
+    "name": "Alabama",
+    "abbreviation": "AL",
+    "insurance_department": {
+      "name": "Alabama Department of Insurance",
+      "url": "https://www.aldoi.gov/",
+      "phone": "334-269-3550",
+      "consumer_line": "800-433-3966",
+      "complaint_url": "https://aldoi.gov/consumers/filecomplaint.aspx"
+    },
+    "consumer_assistance": {
+      "cap_name": "Alabama Department of Insurance Consumer Services",
+      "cap_url": "https://aldoi.gov/consumers/",
+      "cap_phone": "800-433-3966",
+      "ship_name": "State Health Insurance Assistance Program (SHIP)",
+      "ship_url": "https://www.alabamaageline.gov/ship/",
+      "ship_phone": "800-243-5463"
+    },
+    "medicaid": {
+      "agency_name": "Alabama Medicaid Agency",
+      "agency_url": "https://medicaid.alabama.gov/",
+      "agency_phone": "800-362-1504",
+      "managed_care_ombudsman": null
+    },
+    "external_review": {
+      "available": true,
+      "info_url": "https://aldoi.gov/consumers/coveragetips.aspx"
+    },
+    "additional_resources": [
+      {
+        "name": "Alabama Legal Help",
+        "url": "https://www.alabamalegalhelp.org/",
+        "description": "Free legal information and resources for Alabamians"
+      }
+    ]
+  },
+  "alaska": {
+    "slug": "alaska",
+    "name": "Alaska",
+    "abbreviation": "AK",
+    "insurance_department": {
+      "name": "Alaska Division of Insurance",
+      "url": "https://www.commerce.alaska.gov/web/ins/",
+      "phone": "907-465-2515",
+      "consumer_line": "800-467-8725",
+      "complaint_url": "https://www.commerce.alaska.gov/web/ins/Consumers/FileaComplaint.aspx"
+    },
+    "consumer_assistance": {
+      "cap_name": "Alaska Division of Insurance Consumer Services",
+      "cap_url": "https://www.commerce.alaska.gov/web/ins/Consumers.aspx",
+      "cap_phone": "800-467-8725",
+      "ship_name": "Alaska State Health Insurance Assistance Program",
+      "ship_url": "https://health.alaska.gov/dsds/pages/medicare/default.aspx",
+      "ship_phone": "800-478-6065"
+    },
+    "medicaid": {
+      "agency_name": "Alaska Department of Health - Division of Health Care Services",
+      "agency_url": "https://health.alaska.gov/dhcs/Pages/default.aspx",
+      "agency_phone": "907-465-3347",
+      "managed_care_ombudsman": null
+    },
+    "external_review": {
+      "available": true,
+      "info_url": "https://www.commerce.alaska.gov/web/ins/Consumers/ExternalReview.aspx"
+    },
+    "additional_resources": [
+      {
+        "name": "Alaska Legal Services Corporation",
+        "url": "https://alsc-law.org/",
+        "description": "Free civil legal services for low-income Alaskans"
+      }
+    ]
+  },
+  "arizona": {
+    "slug": "arizona",
+    "name": "Arizona",
+    "abbreviation": "AZ",
+    "insurance_department": {
+      "name": "Arizona Department of Insurance and Financial Institutions",
+      "url": "https://difi.az.gov/",
+      "phone": "602-364-3100",
+      "consumer_line": "800-325-2548",
+      "complaint_url": "https://difi.az.gov/consumers/file-complaint"
+    },
+    "consumer_assistance": {
+      "cap_name": "Arizona Department of Insurance Consumer Affairs",
+      "cap_url": "https://difi.az.gov/consumers",
+      "cap_phone": "800-325-2548",
+      "ship_name": "Arizona State Health Insurance Assistance Program",
+      "ship_url": "https://des.az.gov/services/aging-and-adult/state-health-insurance-assistance-program-ship",
+      "ship_phone": "800-432-4040"
+    },
+    "medicaid": {
+      "agency_name": "Arizona Health Care Cost Containment System (AHCCCS)",
+      "agency_url": "https://www.azahcccs.gov/",
+      "agency_phone": "602-417-4000",
+      "managed_care_ombudsman": {
+        "name": "AHCCCS Office of the Ombudsman",
+        "phone": "602-364-4558",
+        "url": "https://www.azahcccs.gov/AHCCCS/healthcareadvocacy/ohr.html"
+      }
+    },
+    "external_review": {
+      "available": true,
+      "info_url": "https://difi.az.gov/consumers/health-insurance/external-review"
+    },
+    "additional_resources": [
+      {
+        "name": "Community Legal Services",
+        "url": "https://clsaz.org/",
+        "description": "Free legal help for low-income Arizonans"
+      }
+    ]
+  },
+  "arkansas": {
+    "slug": "arkansas",
+    "name": "Arkansas",
+    "abbreviation": "AR",
+    "insurance_department": {
+      "name": "Arkansas Insurance Department",
+      "url": "https://insurance.arkansas.gov/",
+      "phone": "501-371-2600",
+      "consumer_line": "800-282-9134",
+      "complaint_url": "https://insurance.arkansas.gov/pages/for-consumers/file-a-complaint/"
+    },
+    "consumer_assistance": {
+      "cap_name": "Arkansas Insurance Department Consumer Services",
+      "cap_url": "https://insurance.arkansas.gov/pages/for-consumers/",
+      "cap_phone": "800-282-9134",
+      "ship_name": "Arkansas Senior Health Insurance Information Program",
+      "ship_url": "https://insurance.arkansas.gov/pages/for-consumers/shiip/",
+      "ship_phone": "800-224-6330"
+    },
+    "medicaid": {
+      "agency_name": "Arkansas Department of Human Services - Division of Medical Services",
+      "agency_url": "https://humanservices.arkansas.gov/divisions/medical-services/",
+      "agency_phone": "800-482-8988",
+      "managed_care_ombudsman": null
+    },
+    "external_review": {
+      "available": true,
+      "info_url": "https://insurance.arkansas.gov/pages/for-consumers/health-insurance/external-review/"
+    },
+    "additional_resources": [
+      {
+        "name": "Center for Arkansas Legal Services",
+        "url": "https://www.arkansaslegal.org/",
+        "description": "Free legal help for eligible Arkansans"
+      }
+    ]
+  },
+  "california": {
+    "slug": "california",
+    "name": "California",
+    "abbreviation": "CA",
+    "insurance_department": {
+      "name": "California Department of Insurance",
+      "url": "https://www.insurance.ca.gov/",
+      "phone": "916-492-3500",
+      "consumer_line": "800-927-4357",
+      "complaint_url": "https://www.insurance.ca.gov/01-consumers/101-help/"
+    },
+    "consumer_assistance": {
+      "cap_name": "California Health Consumer Alliance",
+      "cap_url": "https://healthconsumer.org/",
+      "cap_phone": "888-804-3536",
+      "ship_name": "Health Insurance Counseling and Advocacy Program (HICAP)",
+      "ship_url": "https://www.aging.ca.gov/Programs_and_Services/Medicare_Counseling/",
+      "ship_phone": "800-434-0222"
+    },
+    "medicaid": {
+      "agency_name": "California Department of Health Care Services (Medi-Cal)",
+      "agency_url": "https://www.dhcs.ca.gov/",
+      "agency_phone": "800-541-5555",
+      "managed_care_ombudsman": {
+        "name": "Medi-Cal Managed Care Office of the Ombudsman",
+        "phone": "888-452-8609",
+        "url": "https://www.dhcs.ca.gov/services/medi-cal/Pages/MMCDOmbudsman.aspx"
+      }
+    },
+    "external_review": {
+      "available": true,
+      "info_url": "https://www.insurance.ca.gov/01-consumers/101-help/15-imr/"
+    },
+    "additional_resources": [
+      {
+        "name": "Health Consumer Alliance",
+        "url": "https://healthconsumer.org/",
+        "description": "Free help with health coverage problems"
+      },
+      {
+        "name": "California Department of Managed Health Care",
+        "url": "https://www.dmhc.ca.gov/",
+        "description": "Regulates HMO and managed care plans"
+      }
+    ]
+  },
+  "colorado": {
+    "slug": "colorado",
+    "name": "Colorado",
+    "abbreviation": "CO",
+    "insurance_department": {
+      "name": "Colorado Division of Insurance",
+      "url": "https://doi.colorado.gov/",
+      "phone": "303-894-7490",
+      "consumer_line": "800-930-3745",
+      "complaint_url": "https://doi.colorado.gov/for-consumers/file-a-complaint"
+    },
+    "consumer_assistance": {
+      "cap_name": "Colorado Division of Insurance Consumer Services",
+      "cap_url": "https://doi.colorado.gov/for-consumers",
+      "cap_phone": "800-930-3745",
+      "ship_name": "Colorado State Health Insurance Assistance Program",
+      "ship_url": "https://doi.colorado.gov/insurance-products/health-insurance/senior-health-care-medicare",
+      "ship_phone": "888-696-7213"
+    },
+    "medicaid": {
+      "agency_name": "Colorado Department of Health Care Policy & Financing",
+      "agency_url": "https://hcpf.colorado.gov/",
+      "agency_phone": "800-221-3943",
+      "managed_care_ombudsman": {
+        "name": "Health First Colorado Ombudsman",
+        "phone": "303-830-3560",
+        "url": "https://hcpf.colorado.gov/contact-hcpf"
+      }
+    },
+    "external_review": {
+      "available": true,
+      "info_url": "https://doi.colorado.gov/for-consumers/health-insurance/external-review"
+    },
+    "additional_resources": [
+      {
+        "name": "Colorado Legal Services",
+        "url": "https://www.coloradolegalservices.org/",
+        "description": "Free legal help for qualifying Coloradans"
+      }
+    ]
+  },
+  "connecticut": {
+    "slug": "connecticut",
+    "name": "Connecticut",
+    "abbreviation": "CT",
+    "insurance_department": {
+      "name": "Connecticut Insurance Department",
+      "url": "https://portal.ct.gov/CID",
+      "phone": "860-297-3900",
+      "consumer_line": "800-203-3447",
+      "complaint_url": "https://portal.ct.gov/CID/Consumer/Consumer-Help-Request-Form"
+    },
+    "consumer_assistance": {
+      "cap_name": "Office of the Healthcare Advocate",
+      "cap_url": "https://portal.ct.gov/OHA",
+      "cap_phone": "866-466-4446",
+      "ship_name": "Connecticut CHOICES Program",
+      "ship_url": "https://portal.ct.gov/AgingandDisability/Content-Pages/Programs/CHOICES",
+      "ship_phone": "800-994-9422"
+    },
+    "medicaid": {
+      "agency_name": "Connecticut Department of Social Services (HUSKY Health)",
+      "agency_url": "https://portal.ct.gov/DSS/Health-And-Home-Care/HUSKY-Health",
+      "agency_phone": "800-842-1508",
+      "managed_care_ombudsman": null
+    },
+    "external_review": {
+      "available": true,
+      "info_url": "https://portal.ct.gov/CID/Consumer/Consumer-Information/External-Review"
+    },
+    "additional_resources": [
+      {
+        "name": "Connecticut Legal Services",
+        "url": "https://ctlegal.org/",
+        "description": "Free legal assistance for low-income residents"
+      }
+    ]
+  },
+  "delaware": {
+    "slug": "delaware",
+    "name": "Delaware",
+    "abbreviation": "DE",
+    "insurance_department": {
+      "name": "Delaware Department of Insurance",
+      "url": "https://insurance.delaware.gov/",
+      "phone": "302-674-7300",
+      "consumer_line": "800-282-8611",
+      "complaint_url": "https://insurance.delaware.gov/consumers/filingacomplaint/"
+    },
+    "consumer_assistance": {
+      "cap_name": "Delaware Department of Insurance Consumer Services",
+      "cap_url": "https://insurance.delaware.gov/consumers/",
+      "cap_phone": "800-282-8611",
+      "ship_name": "Delaware Medicare Assistance Bureau",
+      "ship_url": "https://insurance.delaware.gov/divisions/dmab/",
+      "ship_phone": "800-336-9500"
+    },
+    "medicaid": {
+      "agency_name": "Delaware Division of Medicaid and Medical Assistance",
+      "agency_url": "https://dhss.delaware.gov/dhss/dmma/",
+      "agency_phone": "800-372-2022",
+      "managed_care_ombudsman": null
+    },
+    "external_review": {
+      "available": true,
+      "info_url": "https://insurance.delaware.gov/consumers/healthinsurance/"
+    },
+    "additional_resources": [
+      {
+        "name": "Delaware Community Legal Aid Society",
+        "url": "https://www.declasi.org/",
+        "description": "Free civil legal services"
+      }
+    ]
+  },
+  "district-of-columbia": {
+    "slug": "district-of-columbia",
+    "name": "District of Columbia",
+    "abbreviation": "DC",
+    "insurance_department": {
+      "name": "Department of Insurance, Securities and Banking",
+      "url": "https://disb.dc.gov/",
+      "phone": "202-727-8000",
+      "consumer_line": "202-727-8000",
+      "complaint_url": "https://disb.dc.gov/service/file-complaint-background"
+    },
+    "consumer_assistance": {
+      "cap_name": "DC Health Link Consumer Assistance",
+      "cap_url": "https://dchealthlink.com/",
+      "cap_phone": "855-532-5465",
+      "ship_name": "DC State Health Insurance Assistance Program",
+      "ship_url": "https://dacl.dc.gov/service/state-health-insurance-assistance-program-ship",
+      "ship_phone": "202-727-8370"
+    },
+    "medicaid": {
+      "agency_name": "DC Department of Health Care Finance",
+      "agency_url": "https://dhcf.dc.gov/",
+      "agency_phone": "202-442-5988",
+      "managed_care_ombudsman": {
+        "name": "DC Medicaid Ombudsman Program",
+        "phone": "202-724-7491",
+        "url": "https://healthcareombudsman.dc.gov/"
+      }
+    },
+    "external_review": {
+      "available": true,
+      "info_url": "https://disb.dc.gov/service/request-external-review"
+    },
+    "additional_resources": [
+      {
+        "name": "Legal Aid DC",
+        "url": "https://www.legalaiddc.org/",
+        "description": "Free legal services for low-income DC residents"
+      }
+    ]
+  },
+  "florida": {
+    "slug": "florida",
+    "name": "Florida",
+    "abbreviation": "FL",
+    "insurance_department": {
+      "name": "Florida Office of Insurance Regulation",
+      "url": "https://floir.gov/",
+      "phone": "850-413-3140",
+      "consumer_line": "877-693-5236",
+      "complaint_url": "https://www.myfloridacfo.com/Division/Consumers/needourhelp.htm"
+    },
+    "consumer_assistance": {
+      "cap_name": "Florida Department of Financial Services Consumer Helpline",
+      "cap_url": "https://www.myfloridacfo.com/Division/Consumers/",
+      "cap_phone": "877-693-5236",
+      "ship_name": "SHINE (Serving Health Insurance Needs of Elders)",
+      "ship_url": "https://www.floridashine.org/",
+      "ship_phone": "800-963-5337"
+    },
+    "medicaid": {
+      "agency_name": "Agency for Health Care Administration (Florida Medicaid)",
+      "agency_url": "https://ahca.myflorida.com/medicaid",
+      "agency_phone": "888-419-3456",
+      "managed_care_ombudsman": {
+        "name": "Florida Medicaid Ombudsman Program",
+        "phone": "877-254-1055",
+        "url": "https://ahca.myflorida.com/medicaid/florida-medicaid-complaints"
+      }
+    },
+    "external_review": {
+      "available": true,
+      "info_url": "https://floir.gov/consumers"
+    },
+    "additional_resources": [
+      {
+        "name": "Florida Health Justice Project",
+        "url": "https://floridahealthjustice.org/",
+        "description": "Free health care access legal help"
+      }
+    ]
+  },
+  "georgia": {
+    "slug": "georgia",
+    "name": "Georgia",
+    "abbreviation": "GA",
+    "insurance_department": {
+      "name": "Georgia Office of Insurance and Safety Fire Commissioner",
+      "url": "https://oci.georgia.gov/",
+      "phone": "404-656-2070",
+      "consumer_line": "800-656-2298",
+      "complaint_url": "https://oci.georgia.gov/file-consumer-complaint"
+    },
+    "consumer_assistance": {
+      "cap_name": "Georgia Department of Insurance Consumer Services",
+      "cap_url": "https://oci.georgia.gov/consumer-services",
+      "cap_phone": "800-656-2298",
+      "ship_name": "GeorgiaCares",
+      "ship_url": "https://mygeorgiacares.org/",
+      "ship_phone": "866-552-4464"
+    },
+    "medicaid": {
+      "agency_name": "Georgia Department of Community Health (Georgia Medicaid)",
+      "agency_url": "https://medicaid.georgia.gov/",
+      "agency_phone": "866-322-4260",
+      "managed_care_ombudsman": {
+        "name": "Georgia Medicaid Member Ombudsman",
+        "phone": "866-322-4260",
+        "url": "https://medicaid.georgia.gov/contact-us"
+      }
+    },
+    "external_review": {
+      "available": true,
+      "info_url": "https://oci.georgia.gov/external-review"
+    },
+    "additional_resources": [
+      {
+        "name": "Georgia Legal Services Program",
+        "url": "https://www.glsp.org/",
+        "description": "Free legal assistance for low-income Georgians"
+      },
+      {
+        "name": "Georgians for a Healthy Future",
+        "url": "https://healthyfuturega.org/",
+        "description": "Consumer advocacy for health policy and insurance issues"
+      }
+    ]
+  },
+  "hawaii": {
+    "slug": "hawaii",
+    "name": "Hawaii",
+    "abbreviation": "HI",
+    "insurance_department": {
+      "name": "Hawaii Insurance Division",
+      "url": "https://cca.hawaii.gov/ins/",
+      "phone": "808-586-2790",
+      "consumer_line": "808-586-2790",
+      "complaint_url": "https://cca.hawaii.gov/ins/complaints/"
+    },
+    "consumer_assistance": {
+      "cap_name": "Hawaii Insurance Division Consumer Services",
+      "cap_url": "https://cca.hawaii.gov/ins/consumer/",
+      "cap_phone": "808-586-2790",
+      "ship_name": "Hawaii State Health Insurance Assistance Program",
+      "ship_url": "https://www.hawaiiship.org/",
+      "ship_phone": "888-875-9229"
+    },
+    "medicaid": {
+      "agency_name": "Hawaii Med-QUEST Division",
+      "agency_url": "https://medquest.hawaii.gov/",
+      "agency_phone": "800-316-8005",
+      "managed_care_ombudsman": null
+    },
+    "external_review": {
+      "available": true,
+      "info_url": "https://cca.hawaii.gov/ins/consumer/external-review/"
+    },
+    "additional_resources": [
+      {
+        "name": "Legal Aid Society of Hawaii",
+        "url": "https://www.legalaidhawaii.org/",
+        "description": "Free legal services for qualifying residents"
+      }
+    ]
+  },
+  "idaho": {
+    "slug": "idaho",
+    "name": "Idaho",
+    "abbreviation": "ID",
+    "insurance_department": {
+      "name": "Idaho Department of Insurance",
+      "url": "https://doi.idaho.gov/",
+      "phone": "208-334-4250",
+      "consumer_line": "800-721-3272",
+      "complaint_url": "https://doi.idaho.gov/consumer-resources/file-a-complaint/"
+    },
+    "consumer_assistance": {
+      "cap_name": "Idaho Department of Insurance Consumer Assistance",
+      "cap_url": "https://doi.idaho.gov/consumer-resources/",
+      "cap_phone": "800-721-3272",
+      "ship_name": "Idaho Senior Health Insurance Benefits Advisors (SHIBA)",
+      "ship_url": "https://doi.idaho.gov/shiba/",
+      "ship_phone": "800-247-4422"
+    },
+    "medicaid": {
+      "agency_name": "Idaho Department of Health and Welfare - Medicaid",
+      "agency_url": "https://healthandwelfare.idaho.gov/services-programs/medicaid-health",
+      "agency_phone": "877-456-1233",
+      "managed_care_ombudsman": null
+    },
+    "external_review": {
+      "available": true,
+      "info_url": "https://doi.idaho.gov/consumer-resources/health-insurance/"
+    },
+    "additional_resources": [
+      {
+        "name": "Idaho Legal Aid Services",
+        "url": "https://www.idaholegalaid.org/",
+        "description": "Free legal help for low-income Idahoans"
+      }
+    ]
+  },
+  "illinois": {
+    "slug": "illinois",
+    "name": "Illinois",
+    "abbreviation": "IL",
+    "insurance_department": {
+      "name": "Illinois Department of Insurance",
+      "url": "https://idoi.illinois.gov/",
+      "phone": "217-782-4515",
+      "consumer_line": "866-445-5364",
+      "complaint_url": "https://idoi.illinois.gov/consumers/file-a-complaint.html"
+    },
+    "consumer_assistance": {
+      "cap_name": "Illinois Department of Insurance Consumer Assistance",
+      "cap_url": "https://idoi.illinois.gov/consumers/consumerinsurance.html",
+      "cap_phone": "866-445-5364",
+      "ship_name": "Illinois Senior Health Insurance Program (SHIP)",
+      "ship_url": "https://ilaging.illinois.gov/ship.html",
+      "ship_phone": "800-252-8966"
+    },
+    "medicaid": {
+      "agency_name": "Illinois Department of Healthcare and Family Services",
+      "agency_url": "https://hfs.illinois.gov/",
+      "agency_phone": "877-782-5565",
+      "managed_care_ombudsman": {
+        "name": "Illinois Medicaid Managed Care Ombudsman",
+        "phone": "877-912-8880",
+        "url": "https://ilaging.illinois.gov/programs/ltcombudsman/the-home-care-ombudsman-program.html"
+      }
+    },
+    "external_review": {
+      "available": true,
+      "info_url": "https://idoi.illinois.gov/consumers/file-an-external-review.html"
+    },
+    "additional_resources": [
+      {
+        "name": "Legal Aid Chicago",
+        "url": "https://www.legalaidchicago.org/",
+        "description": "Free legal services in Chicago area"
+      },
+      {
+        "name": "Illinois Equal Justice Foundation",
+        "url": "https://www.iejf.org/",
+        "description": "Statewide legal resources directory"
+      }
+    ]
+  },
+  "indiana": {
+    "slug": "indiana",
+    "name": "Indiana",
+    "abbreviation": "IN",
+    "insurance_department": {
+      "name": "Indiana Department of Insurance",
+      "url": "https://www.in.gov/idoi/",
+      "phone": "317-232-2385",
+      "consumer_line": "800-622-4461",
+      "complaint_url": "https://www.in.gov/idoi/file-a-complaint/"
+    },
+    "consumer_assistance": {
+      "cap_name": "Indiana Department of Insurance Consumer Services",
+      "cap_url": "https://www.in.gov/idoi/consumer-services/types-of-insurance/health-insurance/",
+      "cap_phone": "800-622-4461",
+      "ship_name": "Indiana State Health Insurance Assistance Program (SHIP)",
+      "ship_url": "https://www.in.gov/ship/",
+      "ship_phone": "800-452-4800"
+    },
+    "medicaid": {
+      "agency_name": "Indiana Family and Social Services Administration",
+      "agency_url": "https://www.in.gov/fssa/ompp/",
+      "agency_phone": "800-403-0864",
+      "managed_care_ombudsman": {
+        "name": "Indiana Medicaid Ombudsman",
+        "phone": "800-403-0864",
+        "url": "https://www.in.gov/fssa/ompp/member-resources/"
+      }
+    },
+    "external_review": {
+      "available": true,
+      "info_url": "https://www.in.gov/idoi/consumer-services/internal-and-external-grievance-procedures/"
+    },
+    "additional_resources": [
+      {
+        "name": "Indiana Legal Services",
+        "url": "https://www.indianalegalservices.org/",
+        "description": "Free legal help for low-income Hoosiers"
+      }
+    ]
+  },
+  "iowa": {
+    "slug": "iowa",
+    "name": "Iowa",
+    "abbreviation": "IA",
+    "insurance_department": {
+      "name": "Iowa Insurance Division",
+      "url": "https://iid.iowa.gov/",
+      "phone": "515-281-5705",
+      "consumer_line": "877-955-1212",
+      "complaint_url": "https://iid.iowa.gov/file-a-complaint"
+    },
+    "consumer_assistance": {
+      "cap_name": "Iowa Insurance Division Consumer Assistance",
+      "cap_url": "https://iid.iowa.gov/consumers",
+      "cap_phone": "877-955-1212",
+      "ship_name": "Iowa Senior Health Insurance Information Program (SHIIP)",
+      "ship_url": "https://shiip.iowa.gov/",
+      "ship_phone": "800-351-4664"
+    },
+    "medicaid": {
+      "agency_name": "Iowa Department of Health and Human Services (Iowa Medicaid)",
+      "agency_url": "https://hhs.iowa.gov/programs/welcome-iowa-medicaid",
+      "agency_phone": "800-338-8366",
+      "managed_care_ombudsman": {
+        "name": "Iowa Medicaid Member Services",
+        "phone": "800-338-8366",
+        "url": "https://hhs.iowa.gov/ime/members"
+      }
+    },
+    "external_review": {
+      "available": true,
+      "info_url": "https://iid.iowa.gov/external-review"
+    },
+    "additional_resources": [
+      {
+        "name": "Iowa Legal Aid",
+        "url": "https://www.iowalegalaid.org/",
+        "description": "Free civil legal services for qualifying Iowans"
+      }
+    ]
+  },
+  "kansas": {
+    "slug": "kansas",
+    "name": "Kansas",
+    "abbreviation": "KS",
+    "insurance_department": {
+      "name": "Kansas Insurance Department",
+      "url": "https://insurance.kansas.gov/",
+      "phone": "785-296-3071",
+      "consumer_line": "800-432-2484",
+      "complaint_url": "https://insurance.kansas.gov/consumers/file-a-complaint/"
+    },
+    "consumer_assistance": {
+      "cap_name": "Kansas Insurance Department Consumer Assistance",
+      "cap_url": "https://insurance.kansas.gov/consumers/",
+      "cap_phone": "800-432-2484",
+      "ship_name": "Kansas Senior Health Insurance Counseling for Kansas (SHICK)",
+      "ship_url": "https://insurance.kansas.gov/shick/",
+      "ship_phone": "800-860-5260"
+    },
+    "medicaid": {
+      "agency_name": "Kansas Department for Aging and Disability Services (KanCare)",
+      "agency_url": "https://www.kancare.ks.gov/",
+      "agency_phone": "800-792-4884",
+      "managed_care_ombudsman": {
+        "name": "Kansas KanCare Ombudsman",
+        "phone": "855-643-8180",
+        "url": "https://www.kancare.ks.gov/consumers/ombudsman"
+      }
+    },
+    "external_review": {
+      "available": true,
+      "info_url": "https://insurance.kansas.gov/consumers/health-insurance/external-review/"
+    },
+    "additional_resources": [
+      {
+        "name": "Kansas Legal Services",
+        "url": "https://www.kansaslegalservices.org/",
+        "description": "Free civil legal services for low-income Kansans"
+      }
+    ]
+  },
+  "kentucky": {
+    "slug": "kentucky",
+    "name": "Kentucky",
+    "abbreviation": "KY",
+    "insurance_department": {
+      "name": "Kentucky Department of Insurance",
+      "url": "https://insurance.ky.gov/",
+      "phone": "502-564-3630",
+      "consumer_line": "800-595-6053",
+      "complaint_url": "https://insurance.ky.gov/ppc/new_default.aspx"
+    },
+    "consumer_assistance": {
+      "cap_name": "Kentucky Department of Insurance Consumer Protection",
+      "cap_url": "https://insurance.ky.gov/ppc/new_default.aspx",
+      "cap_phone": "800-595-6053",
+      "ship_name": "Kentucky State Health Insurance Assistance Program (SHIP)",
+      "ship_url": "https://chfs.ky.gov/agencies/dail/Pages/kyship.aspx",
+      "ship_phone": "877-293-7447"
+    },
+    "medicaid": {
+      "agency_name": "Kentucky Department for Medicaid Services",
+      "agency_url": "https://chfs.ky.gov/agencies/dms/Pages/default.aspx",
+      "agency_phone": "800-635-2570",
+      "managed_care_ombudsman": {
+        "name": "Kentucky Medicaid Ombudsman",
+        "phone": "800-635-2570",
+        "url": "https://chfs.ky.gov/agencies/dms/member/Pages/ombudsman.aspx"
+      }
+    },
+    "external_review": {
+      "available": true,
+      "info_url": "https://insurance.ky.gov/healthreform/default.aspx"
+    },
+    "additional_resources": [
+      {
+        "name": "Kentucky Legal Aid",
+        "url": "https://klaid.org/",
+        "description": "Free legal help for low-income Kentuckians"
+      }
+    ]
+  },
+  "louisiana": {
+    "slug": "louisiana",
+    "name": "Louisiana",
+    "abbreviation": "LA",
+    "insurance_department": {
+      "name": "Louisiana Department of Insurance",
+      "url": "https://www.ldi.la.gov/",
+      "phone": "225-342-5900",
+      "consumer_line": "800-259-5300",
+      "complaint_url": "https://www.ldi.la.gov/onlineservices/ConsumerComplaint"
+    },
+    "consumer_assistance": {
+      "cap_name": "Louisiana Department of Insurance Consumer Services",
+      "cap_url": "https://www.ldi.la.gov/consumers",
+      "cap_phone": "800-259-5300",
+      "ship_name": "Louisiana Senior Health Insurance Information Program (SHIIP)",
+      "ship_url": "https://www.ldi.la.gov/consumers/senior-health-insurance-information-program-shiip",
+      "ship_phone": "800-259-5300"
+    },
+    "medicaid": {
+      "agency_name": "Louisiana Department of Health (Medicaid)",
+      "agency_url": "https://ldh.la.gov/medicaid",
+      "agency_phone": "888-342-6207",
+      "managed_care_ombudsman": null
+    },
+    "external_review": {
+      "available": true,
+      "info_url": "https://www.ldi.la.gov/consumers/health-insurance/external-review"
+    },
+    "additional_resources": [
+      {
+        "name": "Southeast Louisiana Legal Services",
+        "url": "https://www.slls.org/",
+        "description": "Free legal services for low-income residents"
+      }
+    ]
+  },
+  "maine": {
+    "slug": "maine",
+    "name": "Maine",
+    "abbreviation": "ME",
+    "insurance_department": {
+      "name": "Maine Bureau of Insurance",
+      "url": "https://www.maine.gov/pfr/insurance/",
+      "phone": "207-624-8475",
+      "consumer_line": "800-300-5000",
+      "complaint_url": "https://www.maine.gov/pfr/insurance/consumer/file_complaint.html"
+    },
+    "consumer_assistance": {
+      "cap_name": "Consumers for Affordable Health Care",
+      "cap_url": "https://www.mainecahc.org/",
+      "cap_phone": "800-965-7476",
+      "ship_name": "Maine State Health Insurance Assistance Program",
+      "ship_url": "https://www.maine.gov/dhhs/oads/get-help/ship",
+      "ship_phone": "877-353-3771"
+    },
+    "medicaid": {
+      "agency_name": "Maine Department of Health and Human Services (MaineCare)",
+      "agency_url": "https://www.maine.gov/dhhs/oms/",
+      "agency_phone": "855-797-4357",
+      "managed_care_ombudsman": null
+    },
+    "external_review": {
+      "available": true,
+      "info_url": "https://www.maine.gov/pfr/insurance/consumer/external_review.html"
+    },
+    "additional_resources": [
+      {
+        "name": "Pine Tree Legal Assistance",
+        "url": "https://ptla.org/",
+        "description": "Free legal services for low-income Mainers"
+      }
+    ]
+  },
+  "maryland": {
+    "slug": "maryland",
+    "name": "Maryland",
+    "abbreviation": "MD",
+    "insurance_department": {
+      "name": "Maryland Insurance Administration",
+      "url": "https://insurance.maryland.gov/",
+      "phone": "410-468-2000",
+      "consumer_line": "800-492-6116",
+      "complaint_url": "https://insurance.maryland.gov/Consumer/Pages/FileAComplaint.aspx"
+    },
+    "consumer_assistance": {
+      "cap_name": "Maryland Health Connection Consumer Assistance",
+      "cap_url": "https://www.marylandhealthconnection.gov/",
+      "cap_phone": "855-642-8572",
+      "ship_name": "Maryland State Health Insurance Assistance Program (SHIP)",
+      "ship_url": "https://aging.maryland.gov/pages/state-health-insurance-program.aspx",
+      "ship_phone": "800-243-3425"
+    },
+    "medicaid": {
+      "agency_name": "Maryland Department of Health (Maryland Medicaid)",
+      "agency_url": "https://health.maryland.gov/mmcp/Pages/home.aspx",
+      "agency_phone": "877-463-3464",
+      "managed_care_ombudsman": {
+        "name": "Maryland HealthChoice Enrollee Helpline",
+        "phone": "800-284-4510",
+        "url": "https://health.maryland.gov/mmcp/Pages/home.aspx"
+      }
+    },
+    "external_review": {
+      "available": true,
+      "info_url": "https://insurance.maryland.gov/Consumer/Pages/ExternalReview.aspx"
+    },
+    "additional_resources": [
+      {
+        "name": "Maryland Legal Aid",
+        "url": "https://www.mdlab.org/",
+        "description": "Free civil legal services for eligible Marylanders"
+      }
+    ]
+  },
+  "massachusetts": {
+    "slug": "massachusetts",
+    "name": "Massachusetts",
+    "abbreviation": "MA",
+    "insurance_department": {
+      "name": "Massachusetts Division of Insurance",
+      "url": "https://www.mass.gov/orgs/division-of-insurance",
+      "phone": "617-521-7794",
+      "consumer_line": "877-563-4467",
+      "complaint_url": "https://www.mass.gov/how-to/file-a-complaint-with-the-division-of-insurance"
+    },
+    "consumer_assistance": {
+      "cap_name": "Health Care For All Consumer Health Helpline",
+      "cap_url": "https://www.hcfama.org/",
+      "cap_phone": "800-272-4232",
+      "ship_name": "Serving the Health Insurance Needs of Everyone (SHINE)",
+      "ship_url": "https://www.mass.gov/shine",
+      "ship_phone": "800-243-4636"
+    },
+    "medicaid": {
+      "agency_name": "MassHealth",
+      "agency_url": "https://www.mass.gov/masshealth",
+      "agency_phone": "800-841-2900",
+      "managed_care_ombudsman": {
+        "name": "MassHealth Customer Service Center",
+        "phone": "800-841-2900",
+        "url": "https://www.mass.gov/masshealth-customer-service"
+      }
+    },
+    "external_review": {
+      "available": true,
+      "info_url": "https://www.mass.gov/how-to/file-an-external-appeal-of-a-health-insurance-denial"
+    },
+    "additional_resources": [
+      {
+        "name": "Health Law Advocates",
+        "url": "https://www.healthlawadvocates.org/",
+        "description": "Free legal help with health coverage issues"
+      },
+      {
+        "name": "Massachusetts Legal Aid",
+        "url": "https://www.masslegalservices.org/",
+        "description": "Legal services directory"
+      }
+    ]
+  },
+  "michigan": {
+    "slug": "michigan",
+    "name": "Michigan",
+    "abbreviation": "MI",
+    "insurance_department": {
+      "name": "Michigan Department of Insurance and Financial Services",
+      "url": "https://www.michigan.gov/difs",
+      "phone": "517-284-8800",
+      "consumer_line": "877-999-6442",
+      "complaint_url": "https://www.michigan.gov/difs/consumers/file-complaint"
+    },
+    "consumer_assistance": {
+      "cap_name": "Michigan Department of Insurance Consumer Services",
+      "cap_url": "https://www.michigan.gov/difs/consumers",
+      "cap_phone": "877-999-6442",
+      "ship_name": "Michigan Medicare/Medicaid Assistance Program (MMAP)",
+      "ship_url": "https://www.michigan.gov/mdhhs/adult-child-serv/adults-and-seniors/acls/state-health-insurance-assistance-program",
+      "ship_phone": "800-803-7174"
+    },
+    "medicaid": {
+      "agency_name": "Michigan Department of Health and Human Services (Medicaid)",
+      "agency_url": "https://www.michigan.gov/mdhhs/assistance-programs/healthcare",
+      "agency_phone": "844-799-9876",
+      "managed_care_ombudsman": {
+        "name": "MI Health Link Ombudsman",
+        "phone": "888-746-6456",
+        "url": "https://www.michigan.gov/mdhhs/assistance-programs/healthcare/beneficiary-support"
+      }
+    },
+    "external_review": {
+      "available": true,
+      "info_url": "https://www.michigan.gov/difs/consumers/health/external-review"
+    },
+    "additional_resources": [
+      {
+        "name": "Michigan Legal Help",
+        "url": "https://michiganlegalhelp.org/",
+        "description": "Self-help legal information and forms"
+      },
+      {
+        "name": "Michigan League for Public Policy",
+        "url": "https://mlpp.org/",
+        "description": "Health policy research and consumer advocacy"
+      }
+    ]
+  },
+  "minnesota": {
+    "slug": "minnesota",
+    "name": "Minnesota",
+    "abbreviation": "MN",
+    "insurance_department": {
+      "name": "Minnesota Department of Commerce",
+      "url": "https://mn.gov/commerce/",
+      "phone": "651-539-1500",
+      "consumer_line": "800-657-3602",
+      "complaint_url": "https://mn.gov/commerce/consumers/file-a-complaint/"
+    },
+    "consumer_assistance": {
+      "cap_name": "Minnesota Department of Commerce Consumer Protection",
+      "cap_url": "https://mn.gov/commerce/consumers/",
+      "cap_phone": "800-657-3602",
+      "ship_name": "Minnesota State Health Insurance Assistance Program (SHIP)",
+      "ship_url": "https://mn.gov/senior-linkage-line/",
+      "ship_phone": "800-333-2433"
+    },
+    "medicaid": {
+      "agency_name": "Minnesota Department of Human Services (Medical Assistance)",
+      "agency_url": "https://mn.gov/dhs/people-we-serve/adults/health-care/health-care-programs/programs-and-services/medical-assistance.jsp",
+      "agency_phone": "800-657-3739",
+      "managed_care_ombudsman": {
+        "name": "Minnesota Ombudsman for Managed Care",
+        "phone": "800-657-3729",
+        "url": "https://mn.gov/dhs/people-we-serve/adults/health-care/health-care-programs/programs-and-services/ombudsperson-for-managed-care.jsp"
+      }
+    },
+    "external_review": {
+      "available": true,
+      "info_url": "https://mn.gov/commerce/consumers/your-insurance/health-insurance/external-review/"
+    },
+    "additional_resources": [
+      {
+        "name": "LawHelpMN",
+        "url": "https://www.lawhelpmn.org/",
+        "description": "Free legal information and referrals"
+      }
+    ]
+  },
+  "mississippi": {
+    "slug": "mississippi",
+    "name": "Mississippi",
+    "abbreviation": "MS",
+    "insurance_department": {
+      "name": "Mississippi Insurance Department",
+      "url": "https://www.mid.ms.gov/",
+      "phone": "601-359-3569",
+      "consumer_line": "800-562-2957",
+      "complaint_url": "https://www.mid.ms.gov/consumers/complaint.html"
+    },
+    "consumer_assistance": {
+      "cap_name": "Mississippi Insurance Department Consumer Services",
+      "cap_url": "https://www.mid.ms.gov/consumers/",
+      "cap_phone": "800-562-2957",
+      "ship_name": "Mississippi State Health Insurance Assistance Program (SHIP)",
+      "ship_url": "https://www.mdhs.ms.gov/adults-seniors/services-for-seniors/mississippi-ship/",
+      "ship_phone": "800-948-3090"
+    },
+    "medicaid": {
+      "agency_name": "Mississippi Division of Medicaid",
+      "agency_url": "https://medicaid.ms.gov/",
+      "agency_phone": "800-421-2408",
+      "managed_care_ombudsman": null
+    },
+    "external_review": {
+      "available": true,
+      "info_url": "https://www.mid.ms.gov/consumers/external-review.html"
+    },
+    "additional_resources": [
+      {
+        "name": "Mississippi Center for Legal Services",
+        "url": "https://mscenterforlegalservices.org/",
+        "description": "Free legal help for low-income Mississippians"
+      }
+    ]
+  },
+  "missouri": {
+    "slug": "missouri",
+    "name": "Missouri",
+    "abbreviation": "MO",
+    "insurance_department": {
+      "name": "Missouri Department of Commerce and Insurance",
+      "url": "https://insurance.mo.gov/",
+      "phone": "573-751-4126",
+      "consumer_line": "800-726-7390",
+      "complaint_url": "https://insurance.mo.gov/consumers/complaints/"
+    },
+    "consumer_assistance": {
+      "cap_name": "Missouri Department of Insurance Consumer Services",
+      "cap_url": "https://insurance.mo.gov/consumers/",
+      "cap_phone": "800-726-7390",
+      "ship_name": "Missouri CLAIM",
+      "ship_url": "https://missouriclaim.org/",
+      "ship_phone": "800-390-3330"
+    },
+    "medicaid": {
+      "agency_name": "Missouri Department of Social Services (MO HealthNet)",
+      "agency_url": "https://dss.mo.gov/mhd/",
+      "agency_phone": "800-392-2161",
+      "managed_care_ombudsman": {
+        "name": "MO HealthNet Managed Care Helpline",
+        "phone": "800-392-2161",
+        "url": "https://dss.mo.gov/mhd/participants/"
+      }
+    },
+    "external_review": {
+      "available": true,
+      "info_url": "https://insurance.mo.gov/consumers/health/external-review.php"
+    },
+    "additional_resources": [
+      {
+        "name": "Legal Services of Eastern Missouri",
+        "url": "https://www.lsem.org/",
+        "description": "Free legal help for eligible Missourians"
+      }
+    ]
+  },
+  "montana": {
+    "slug": "montana",
+    "name": "Montana",
+    "abbreviation": "MT",
+    "insurance_department": {
+      "name": "Montana State Auditor, Commissioner of Securities and Insurance",
+      "url": "https://csimt.gov/",
+      "phone": "406-444-2040",
+      "consumer_line": "800-332-6148",
+      "complaint_url": "https://csimt.gov/insurance/consumers/file-a-complaint/"
+    },
+    "consumer_assistance": {
+      "cap_name": "Montana Commissioner of Insurance Consumer Services",
+      "cap_url": "https://csimt.gov/insurance/consumers/",
+      "cap_phone": "800-332-6148",
+      "ship_name": "Montana State Health Insurance Assistance Program (SHIP)",
+      "ship_url": "https://dphhs.mt.gov/seniors-and-people-with-disabilities/aging-and-long-term-care/montana-ship",
+      "ship_phone": "800-551-3191"
+    },
+    "medicaid": {
+      "agency_name": "Montana Department of Public Health and Human Services (Medicaid)",
+      "agency_url": "https://dphhs.mt.gov/montana-medicaid",
+      "agency_phone": "800-362-8312",
+      "managed_care_ombudsman": null
+    },
+    "external_review": {
+      "available": true,
+      "info_url": "https://csimt.gov/insurance/consumers/health-insurance-information/"
+    },
+    "additional_resources": [
+      {
+        "name": "Montana Legal Services Association",
+        "url": "https://www.mtlsa.org/",
+        "description": "Free civil legal services for eligible Montanans"
+      }
+    ]
+  },
+  "nebraska": {
+    "slug": "nebraska",
+    "name": "Nebraska",
+    "abbreviation": "NE",
+    "insurance_department": {
+      "name": "Nebraska Department of Insurance",
+      "url": "https://doi.nebraska.gov/",
+      "phone": "402-471-2201",
+      "consumer_line": "877-564-7323",
+      "complaint_url": "https://doi.nebraska.gov/consumer/file-complaint"
+    },
+    "consumer_assistance": {
+      "cap_name": "Nebraska Department of Insurance Consumer Affairs",
+      "cap_url": "https://doi.nebraska.gov/consumer",
+      "cap_phone": "877-564-7323",
+      "ship_name": "Nebraska State Health Insurance Assistance Program (SHIIP)",
+      "ship_url": "https://doi.nebraska.gov/consumer/shiip",
+      "ship_phone": "800-234-7119"
+    },
+    "medicaid": {
+      "agency_name": "Nebraska Department of Health and Human Services (Medicaid)",
+      "agency_url": "https://dhhs.ne.gov/Pages/Medicaid.aspx",
+      "agency_phone": "800-383-4278",
+      "managed_care_ombudsman": {
+        "name": "Nebraska Medicaid Client Services",
+        "phone": "800-383-4278",
+        "url": "https://dhhs.ne.gov/Pages/Medicaid.aspx"
+      }
+    },
+    "external_review": {
+      "available": true,
+      "info_url": "https://doi.nebraska.gov/consumer/health-insurance"
+    },
+    "additional_resources": [
+      {
+        "name": "Legal Aid of Nebraska",
+        "url": "https://www.legalaidofnebraska.org/",
+        "description": "Free legal assistance for qualifying Nebraskans"
+      }
+    ]
+  },
+  "nevada": {
+    "slug": "nevada",
+    "name": "Nevada",
+    "abbreviation": "NV",
+    "insurance_department": {
+      "name": "Nevada Division of Insurance",
+      "url": "https://doi.nv.gov/",
+      "phone": "775-687-0700",
+      "consumer_line": "888-872-3234",
+      "complaint_url": "https://doi.nv.gov/Consumers/File_Complaint/"
+    },
+    "consumer_assistance": {
+      "cap_name": "Nevada Division of Insurance Consumer Services",
+      "cap_url": "https://doi.nv.gov/Consumers/",
+      "cap_phone": "888-872-3234",
+      "ship_name": "Nevada State Health Insurance Assistance Program (SHIP)",
+      "ship_url": "https://adsd.nv.gov/Programs/Seniors/SHIP/SHIP/",
+      "ship_phone": "800-307-4444"
+    },
+    "medicaid": {
+      "agency_name": "Nevada Division of Health Care Financing and Policy (Medicaid)",
+      "agency_url": "https://dhcfp.nv.gov/",
+      "agency_phone": "800-992-0900",
+      "managed_care_ombudsman": null
+    },
+    "external_review": {
+      "available": true,
+      "info_url": "https://doi.nv.gov/Consumers/Health_Insurance/"
+    },
+    "additional_resources": [
+      {
+        "name": "Nevada Legal Services",
+        "url": "https://nevadalegalservices.org/",
+        "description": "Free civil legal services for eligible Nevadans"
+      }
+    ]
+  },
+  "new-hampshire": {
+    "slug": "new-hampshire",
+    "name": "New Hampshire",
+    "abbreviation": "NH",
+    "insurance_department": {
+      "name": "New Hampshire Insurance Department",
+      "url": "https://www.nh.gov/insurance/",
+      "phone": "603-271-2261",
+      "consumer_line": "800-852-3416",
+      "complaint_url": "https://www.nh.gov/insurance/consumers/complaints.htm"
+    },
+    "consumer_assistance": {
+      "cap_name": "New Hampshire Insurance Department Consumer Services",
+      "cap_url": "https://www.nh.gov/insurance/consumers/",
+      "cap_phone": "800-852-3416",
+      "ship_name": "ServiceLink Aging and Disability Resource Center (SHIP)",
+      "ship_url": "https://www.servicelink.nh.gov/",
+      "ship_phone": "866-634-9412"
+    },
+    "medicaid": {
+      "agency_name": "NH Department of Health and Human Services (NH Medicaid)",
+      "agency_url": "https://www.dhhs.nh.gov/programs-services/medicaid",
+      "agency_phone": "603-271-9700",
+      "managed_care_ombudsman": null
+    },
+    "external_review": {
+      "available": true,
+      "info_url": "https://www.nh.gov/insurance/consumers/external-review.htm"
+    },
+    "additional_resources": [
+      {
+        "name": "New Hampshire Legal Assistance",
+        "url": "https://www.nhla.org/",
+        "description": "Free legal services for eligible New Hampshire residents"
+      }
+    ]
+  },
+  "new-jersey": {
+    "slug": "new-jersey",
+    "name": "New Jersey",
+    "abbreviation": "NJ",
+    "insurance_department": {
+      "name": "New Jersey Department of Banking and Insurance",
+      "url": "https://www.nj.gov/dobi/",
+      "phone": "609-292-7272",
+      "consumer_line": "800-446-7467",
+      "complaint_url": "https://www.nj.gov/dobi/consumer.htm"
+    },
+    "consumer_assistance": {
+      "cap_name": "NJ Department of Banking and Insurance Consumer Services",
+      "cap_url": "https://www.nj.gov/dobi/consumer.htm",
+      "cap_phone": "800-446-7467",
+      "ship_name": "State Health Insurance Assistance Program (SHIP)",
+      "ship_url": "https://www.nj.gov/humanservices/doas/services/ship/",
+      "ship_phone": "800-792-8820"
+    },
+    "medicaid": {
+      "agency_name": "NJ Division of Medical Assistance and Health Services (NJ FamilyCare)",
+      "agency_url": "https://www.nj.gov/humanservices/njfc/",
+      "agency_phone": "800-701-0710",
+      "managed_care_ombudsman": {
+        "name": "NJ FamilyCare Member Services",
+        "phone": "800-701-0710",
+        "url": "https://www.nj.gov/humanservices/njfc/home/contact_us.html"
+      }
+    },
+    "external_review": {
+      "available": true,
+      "info_url": "https://www.nj.gov/dobi/division_insurance/ihcseh/externalreview.htm"
+    },
+    "additional_resources": [
+      {
+        "name": "Legal Services of New Jersey",
+        "url": "https://www.lsnj.org/",
+        "description": "Free legal services for low-income New Jersey residents"
+      }
+    ]
+  },
+  "new-mexico": {
+    "slug": "new-mexico",
+    "name": "New Mexico",
+    "abbreviation": "NM",
+    "insurance_department": {
+      "name": "New Mexico Office of Superintendent of Insurance",
+      "url": "https://www.osi.state.nm.us/",
+      "phone": "505-827-4601",
+      "consumer_line": "855-427-5674",
+      "complaint_url": "https://www.osi.state.nm.us/for-consumers/how-to-file-a-complaint/"
+    },
+    "consumer_assistance": {
+      "cap_name": "New Mexico Office of Superintendent of Insurance Consumer Assistance",
+      "cap_url": "https://www.osi.state.nm.us/for-consumers/",
+      "cap_phone": "855-427-5674",
+      "ship_name": "New Mexico State Health Insurance Assistance Program",
+      "ship_url": "https://www.nmaging.state.nm.us/medicare.aspx",
+      "ship_phone": "800-432-2080"
+    },
+    "medicaid": {
+      "agency_name": "New Mexico Human Services Department (Centennial Care)",
+      "agency_url": "https://www.hsd.state.nm.us/medicaid/",
+      "agency_phone": "888-997-2583",
+      "managed_care_ombudsman": {
+        "name": "Centennial Care Member Services",
+        "phone": "888-997-2583",
+        "url": "https://www.hsd.state.nm.us/medicaid/"
+      }
+    },
+    "external_review": {
+      "available": true,
+      "info_url": "https://www.osi.state.nm.us/for-consumers/health-insurance/"
+    },
+    "additional_resources": [
+      {
+        "name": "New Mexico Legal Aid",
+        "url": "https://www.newmexicolegalaid.org/",
+        "description": "Free civil legal services for eligible New Mexicans"
+      }
+    ]
+  },
+  "new-york": {
+    "slug": "new-york",
+    "name": "New York",
+    "abbreviation": "NY",
+    "insurance_department": {
+      "name": "New York State Department of Financial Services",
+      "url": "https://www.dfs.ny.gov/",
+      "phone": "518-474-6600",
+      "consumer_line": "800-342-3736",
+      "complaint_url": "https://www.dfs.ny.gov/consumers/file_complaint"
+    },
+    "consumer_assistance": {
+      "cap_name": "Community Health Advocates",
+      "cap_url": "https://www.cssny.org/programs/entry/community-health-advocates",
+      "cap_phone": "888-614-5400",
+      "ship_name": "NY State Health Insurance Assistance Program (HIICAP)",
+      "ship_url": "https://aging.ny.gov/health-insurance-information-counseling-and-assistance-program-hiicap",
+      "ship_phone": "800-701-0501"
+    },
+    "medicaid": {
+      "agency_name": "New York State Department of Health (Medicaid)",
+      "agency_url": "https://www.health.ny.gov/health_care/medicaid/",
+      "agency_phone": "800-541-2831",
+      "managed_care_ombudsman": {
+        "name": "NY Medicaid Managed Care Hotline",
+        "phone": "800-206-8125",
+        "url": "https://www.health.ny.gov/health_care/managed_care/"
+      }
+    },
+    "external_review": {
+      "available": true,
+      "info_url": "https://www.dfs.ny.gov/consumers/health_insurance/external_appeal"
+    },
+    "additional_resources": [
+      {
+        "name": "Legal Aid Society",
+        "url": "https://legalaidnyc.org/",
+        "description": "Free legal services in New York City"
+      },
+      {
+        "name": "LawNY",
+        "url": "https://www.lawny.org/",
+        "description": "Free legal services in Western New York"
+      },
+      {
+        "name": "Community Health Advocates",
+        "url": "https://communityhealthadvocates.org/",
+        "description": "Free help navigating health insurance and resolving billing issues"
+      }
+    ]
+  },
+  "north-carolina": {
+    "slug": "north-carolina",
+    "name": "North Carolina",
+    "abbreviation": "NC",
+    "insurance_department": {
+      "name": "North Carolina Department of Insurance",
+      "url": "https://www.ncdoi.gov/",
+      "phone": "919-814-6300",
+      "consumer_line": "855-408-1212",
+      "complaint_url": "https://www.ncdoi.gov/consumers/file-complaint"
+    },
+    "consumer_assistance": {
+      "cap_name": "North Carolina Department of Insurance Consumer Services",
+      "cap_url": "https://www.ncdoi.gov/consumers",
+      "cap_phone": "855-408-1212",
+      "ship_name": "NC Seniors' Health Insurance Information Program (SHIIP)",
+      "ship_url": "https://www.ncdoi.gov/consumers/medicare-consumers/seniors-health-insurance-information-program-shiip",
+      "ship_phone": "855-408-1212"
+    },
+    "medicaid": {
+      "agency_name": "NC Department of Health and Human Services (NC Medicaid)",
+      "agency_url": "https://medicaid.ncdhhs.gov/",
+      "agency_phone": "888-245-0179",
+      "managed_care_ombudsman": {
+        "name": "NC Medicaid Ombudsman",
+        "phone": "877-201-3750",
+        "url": "https://ncmedicaidombudsman.org/"
+      }
+    },
+    "external_review": {
+      "available": true,
+      "info_url": "https://www.ncdoi.gov/consumers/health-insurance/health-claim-denied/request-external-review"
+    },
+    "additional_resources": [
+      {
+        "name": "Legal Aid of North Carolina",
+        "url": "https://www.legalaidnc.org/",
+        "description": "Free legal services for eligible North Carolinians"
+      }
+    ]
+  },
+  "north-dakota": {
+    "slug": "north-dakota",
+    "name": "North Dakota",
+    "abbreviation": "ND",
+    "insurance_department": {
+      "name": "North Dakota Insurance Department",
+      "url": "https://www.insurance.nd.gov/",
+      "phone": "701-328-2440",
+      "consumer_line": "800-247-0560",
+      "complaint_url": "https://www.insurance.nd.gov/consumers/file-a-complaint"
+    },
+    "consumer_assistance": {
+      "cap_name": "North Dakota Insurance Department Consumer Assistance",
+      "cap_url": "https://www.insurance.nd.gov/consumers",
+      "cap_phone": "800-247-0560",
+      "ship_name": "North Dakota State Health Insurance Assistance Program (SHIC)",
+      "ship_url": "https://www.insurance.nd.gov/consumers/shic-senior-health-insurance-counseling",
+      "ship_phone": "888-575-6611"
+    },
+    "medicaid": {
+      "agency_name": "North Dakota Department of Health and Human Services (ND Medicaid)",
+      "agency_url": "https://www.hhs.nd.gov/healthcare/medicaid",
+      "agency_phone": "800-755-2604",
+      "managed_care_ombudsman": null
+    },
+    "external_review": {
+      "available": true,
+      "info_url": "https://www.insurance.nd.gov/consumers/health-insurance/external-review"
+    },
+    "additional_resources": [
+      {
+        "name": "Legal Services of North Dakota",
+        "url": "https://www.lsnd.org/",
+        "description": "Free civil legal services for eligible North Dakotans"
+      }
+    ]
+  },
+  "ohio": {
+    "slug": "ohio",
+    "name": "Ohio",
+    "abbreviation": "OH",
+    "insurance_department": {
+      "name": "Ohio Department of Insurance",
+      "url": "https://insurance.ohio.gov/",
+      "phone": "614-644-2658",
+      "consumer_line": "800-686-1526",
+      "complaint_url": "https://insurance.ohio.gov/wps/portal/consumer/complaint"
+    },
+    "consumer_assistance": {
+      "cap_name": "Ohio Department of Insurance Consumer Services",
+      "cap_url": "https://insurance.ohio.gov/wps/portal/consumer",
+      "cap_phone": "800-686-1526",
+      "ship_name": "Ohio Senior Health Insurance Information Program (OSHIIP)",
+      "ship_url": "https://insurance.ohio.gov/wps/portal/consumer/consumer/oshiip",
+      "ship_phone": "800-686-1578"
+    },
+    "medicaid": {
+      "agency_name": "Ohio Department of Medicaid",
+      "agency_url": "https://medicaid.ohio.gov/",
+      "agency_phone": "800-324-8680",
+      "managed_care_ombudsman": {
+        "name": "Ohio Medicaid Consumer Hotline",
+        "phone": "800-324-8680",
+        "url": "https://medicaid.ohio.gov/resources-for-individuals/member-support"
+      }
+    },
+    "external_review": {
+      "available": true,
+      "info_url": "https://insurance.ohio.gov/wps/portal/consumer/consumer/health-insurance/external-review"
+    },
+    "additional_resources": [
+      {
+        "name": "Legal Aid Society of Cleveland",
+        "url": "https://lasclev.org/",
+        "description": "Free legal services in Northeast Ohio"
+      },
+      {
+        "name": "Ohio Legal Help",
+        "url": "https://www.ohiolegalhelp.org/",
+        "description": "Statewide legal information and resources"
+      },
+      {
+        "name": "UHCAN Ohio",
+        "url": "https://uhcanohio.org/",
+        "description": "Health care consumer advocacy and policy"
+      }
+    ]
+  },
+  "oklahoma": {
+    "slug": "oklahoma",
+    "name": "Oklahoma",
+    "abbreviation": "OK",
+    "insurance_department": {
+      "name": "Oklahoma Insurance Department",
+      "url": "https://www.oid.ok.gov/",
+      "phone": "405-521-2828",
+      "consumer_line": "800-522-0071",
+      "complaint_url": "https://www.oid.ok.gov/consumers/file-a-complaint/"
+    },
+    "consumer_assistance": {
+      "cap_name": "Oklahoma Insurance Department Consumer Assistance",
+      "cap_url": "https://www.oid.ok.gov/consumers/",
+      "cap_phone": "800-522-0071",
+      "ship_name": "Oklahoma Senior Health Insurance Counseling Program (SHICP)",
+      "ship_url": "https://www.oid.ok.gov/consumers/senior-health-insurance-counseling-program/",
+      "ship_phone": "800-763-2828"
+    },
+    "medicaid": {
+      "agency_name": "Oklahoma Health Care Authority (SoonerCare)",
+      "agency_url": "https://oklahoma.gov/ohca.html",
+      "agency_phone": "800-987-7767",
+      "managed_care_ombudsman": null
+    },
+    "external_review": {
+      "available": true,
+      "info_url": "https://www.oid.ok.gov/consumers/health-insurance/"
+    },
+    "additional_resources": [
+      {
+        "name": "Legal Aid Services of Oklahoma",
+        "url": "https://www.legalaidok.org/",
+        "description": "Free legal services for eligible Oklahomans"
+      }
+    ]
+  },
+  "oregon": {
+    "slug": "oregon",
+    "name": "Oregon",
+    "abbreviation": "OR",
+    "insurance_department": {
+      "name": "Oregon Division of Financial Regulation",
+      "url": "https://dfr.oregon.gov/",
+      "phone": "503-378-4140",
+      "consumer_line": "888-877-4894",
+      "complaint_url": "https://dfr.oregon.gov/help/complaints-background"
+    },
+    "consumer_assistance": {
+      "cap_name": "Oregon Division of Financial Regulation Consumer Services",
+      "cap_url": "https://dfr.oregon.gov/consumers",
+      "cap_phone": "888-877-4894",
+      "ship_name": "Oregon Senior Health Insurance Benefits Assistance (SHIBA)",
+      "ship_url": "https://shiba.oregon.gov/",
+      "ship_phone": "800-722-4134"
+    },
+    "medicaid": {
+      "agency_name": "Oregon Health Authority (Oregon Health Plan)",
+      "agency_url": "https://www.oregon.gov/oha/HSD/OHP/Pages/index.aspx",
+      "agency_phone": "800-699-9075",
+      "managed_care_ombudsman": {
+        "name": "Oregon Health Plan Member Services",
+        "phone": "800-699-9075",
+        "url": "https://www.oregon.gov/oha/HSD/OHP/Pages/index.aspx"
+      }
+    },
+    "external_review": {
+      "available": true,
+      "info_url": "https://dfr.oregon.gov/help/complaint-details"
+    },
+    "additional_resources": [
+      {
+        "name": "Legal Aid Services of Oregon",
+        "url": "https://lasoregon.org/",
+        "description": "Free civil legal services for eligible Oregonians"
+      },
+      {
+        "name": "Oregon Law Center",
+        "url": "https://oregonlawcenter.org/",
+        "description": "Legal representation for low-income Oregonians"
+      }
+    ]
+  },
+  "pennsylvania": {
+    "slug": "pennsylvania",
+    "name": "Pennsylvania",
+    "abbreviation": "PA",
+    "insurance_department": {
+      "name": "Pennsylvania Insurance Department",
+      "url": "https://www.insurance.pa.gov/",
+      "phone": "717-787-2317",
+      "consumer_line": "877-881-6388",
+      "complaint_url": "https://www.insurance.pa.gov/Consumers/pages/complaint.aspx"
+    },
+    "consumer_assistance": {
+      "cap_name": "Pennsylvania Insurance Department Consumer Services",
+      "cap_url": "https://www.insurance.pa.gov/Consumers/pages/default.aspx",
+      "cap_phone": "877-881-6388",
+      "ship_name": "Pennsylvania Medicare Education and Decision Insight (MEDI)",
+      "ship_url": "https://www.aging.pa.gov/aging-services/medicare-counseling/Pages/default.aspx",
+      "ship_phone": "800-783-7067"
+    },
+    "medicaid": {
+      "agency_name": "Pennsylvania Department of Human Services (Medical Assistance)",
+      "agency_url": "https://www.dhs.pa.gov/Services/Assistance/Pages/Medical-Assistance.aspx",
+      "agency_phone": "877-395-8930",
+      "managed_care_ombudsman": {
+        "name": "PA Health Law Project",
+        "phone": "800-274-3258",
+        "url": "https://www.phlp.org/"
+      }
+    },
+    "external_review": {
+      "available": true,
+      "info_url": "https://www.insurance.pa.gov/Consumers/pages/externalreview.aspx"
+    },
+    "additional_resources": [
+      {
+        "name": "Pennsylvania Health Law Project",
+        "url": "https://www.phlp.org/",
+        "description": "Free health coverage legal assistance"
+      },
+      {
+        "name": "Pennsylvania Legal Aid Network",
+        "url": "https://palegalaid.net/",
+        "description": "Statewide legal aid resources"
+      },
+      {
+        "name": "Pennsylvania Health Access Network",
+        "url": "https://www.pahealthaccess.org/",
+        "description": "Free health insurance enrollment assistance and advocacy"
+      }
+    ]
+  },
+  "rhode-island": {
+    "slug": "rhode-island",
+    "name": "Rhode Island",
+    "abbreviation": "RI",
+    "insurance_department": {
+      "name": "Rhode Island Department of Business Regulation - Insurance Division",
+      "url": "https://dbr.ri.gov/insurance-overview",
+      "phone": "401-462-9520",
+      "consumer_line": "401-462-9520",
+      "complaint_url": "https://dbr.ri.gov/insurance/consumers"
+    },
+    "consumer_assistance": {
+      "cap_name": "Rhode Island Office of the Health Insurance Commissioner",
+      "cap_url": "https://ohic.ri.gov/",
+      "cap_phone": "401-462-9517",
+      "ship_name": "Rhode Island SHIP (Senior Health Insurance Program)",
+      "ship_url": "https://oha.ri.gov/programs/ship/",
+      "ship_phone": "401-462-4510"
+    },
+    "medicaid": {
+      "agency_name": "Rhode Island Executive Office of Health and Human Services (RIte Care)",
+      "agency_url": "https://eohhs.ri.gov/consumer/healthcare",
+      "agency_phone": "401-462-5300",
+      "managed_care_ombudsman": {
+        "name": "RI Health Access Ombudsman",
+        "phone": "401-462-5274",
+        "url": "https://eohhs.ri.gov/"
+      }
+    },
+    "external_review": {
+      "available": true,
+      "info_url": "https://ohic.ri.gov/consumers/external-appeals"
+    },
+    "additional_resources": [
+      {
+        "name": "Rhode Island Legal Services",
+        "url": "https://www.rils.org/",
+        "description": "Free legal services for eligible Rhode Islanders"
+      }
+    ]
+  },
+  "south-carolina": {
+    "slug": "south-carolina",
+    "name": "South Carolina",
+    "abbreviation": "SC",
+    "insurance_department": {
+      "name": "South Carolina Department of Insurance",
+      "url": "https://www.doi.sc.gov/",
+      "phone": "803-737-6160",
+      "consumer_line": "800-768-3467",
+      "complaint_url": "https://www.doi.sc.gov/consumers/file-complaint"
+    },
+    "consumer_assistance": {
+      "cap_name": "South Carolina Department of Insurance Consumer Services",
+      "cap_url": "https://www.doi.sc.gov/consumers",
+      "cap_phone": "800-768-3467",
+      "ship_name": "South Carolina Insurance Counseling Assistance and Referrals for Elders (I-CARE)",
+      "ship_url": "https://aging.sc.gov/programs-initiatives/insurance-counseling-and-assistance",
+      "ship_phone": "800-868-9095"
+    },
+    "medicaid": {
+      "agency_name": "South Carolina Department of Health and Human Services (SC Healthy Connections)",
+      "agency_url": "https://www.scdhhs.gov/",
+      "agency_phone": "888-549-0820",
+      "managed_care_ombudsman": null
+    },
+    "external_review": {
+      "available": true,
+      "info_url": "https://www.doi.sc.gov/consumers/health-insurance/external-review"
+    },
+    "additional_resources": [
+      {
+        "name": "South Carolina Legal Services",
+        "url": "https://sclegal.org/",
+        "description": "Free civil legal services for eligible South Carolinians"
+      }
+    ]
+  },
+  "south-dakota": {
+    "slug": "south-dakota",
+    "name": "South Dakota",
+    "abbreviation": "SD",
+    "insurance_department": {
+      "name": "South Dakota Division of Insurance",
+      "url": "https://dlr.sd.gov/insurance/",
+      "phone": "605-773-3563",
+      "consumer_line": "605-773-3563",
+      "complaint_url": "https://dlr.sd.gov/insurance/consumers/file_complaint.aspx"
+    },
+    "consumer_assistance": {
+      "cap_name": "South Dakota Division of Insurance Consumer Services",
+      "cap_url": "https://dlr.sd.gov/insurance/consumers/default.aspx",
+      "cap_phone": "605-773-3563",
+      "ship_name": "South Dakota State Health Insurance Assistance Program (SHIINE)",
+      "ship_url": "https://dss.sd.gov/medicaid/individuals/shiine/",
+      "ship_phone": "800-536-8197"
+    },
+    "medicaid": {
+      "agency_name": "South Dakota Department of Social Services (SD Medicaid)",
+      "agency_url": "https://dss.sd.gov/medicaid/",
+      "agency_phone": "800-597-1603",
+      "managed_care_ombudsman": null
+    },
+    "external_review": {
+      "available": true,
+      "info_url": "https://dlr.sd.gov/insurance/consumers/default.aspx"
+    },
+    "additional_resources": [
+      {
+        "name": "East River Legal Services",
+        "url": "https://www.erlservices.org/",
+        "description": "Free legal services in Eastern South Dakota"
+      }
+    ]
+  },
+  "tennessee": {
+    "slug": "tennessee",
+    "name": "Tennessee",
+    "abbreviation": "TN",
+    "insurance_department": {
+      "name": "Tennessee Department of Commerce and Insurance",
+      "url": "https://www.tn.gov/commerce/insurance.html",
+      "phone": "615-741-2241",
+      "consumer_line": "800-342-4029",
+      "complaint_url": "https://www.tn.gov/commerce/insurance/consumer-resources/file-a-complaint.html"
+    },
+    "consumer_assistance": {
+      "cap_name": "Tennessee Department of Commerce and Insurance Consumer Services",
+      "cap_url": "https://www.tn.gov/commerce/insurance/consumer-resources.html",
+      "cap_phone": "800-342-4029",
+      "ship_name": "Tennessee State Health Insurance Assistance Program (SHIP)",
+      "ship_url": "https://www.tn.gov/commerce/insurance/consumer-resources/tennessee-state-health-insurance-assistance-program.html",
+      "ship_phone": "877-801-0044"
+    },
+    "medicaid": {
+      "agency_name": "Tennessee Division of TennCare",
+      "agency_url": "https://www.tn.gov/tenncare.html",
+      "agency_phone": "800-342-3145",
+      "managed_care_ombudsman": {
+        "name": "TennCare Member Services",
+        "phone": "800-342-3145",
+        "url": "https://www.tn.gov/tenncare/members.html"
+      }
+    },
+    "external_review": {
+      "available": true,
+      "info_url": "https://www.tn.gov/commerce/insurance/consumer-resources/external-review.html"
+    },
+    "additional_resources": [
+      {
+        "name": "Legal Aid Society of Middle Tennessee and the Cumberlands",
+        "url": "https://las.org/",
+        "description": "Free legal services for eligible Tennesseans"
+      },
+      {
+        "name": "Tennessee Justice Center",
+        "url": "https://www.tnjustice.org/",
+        "description": "TennCare and health coverage advocacy"
+      }
+    ]
+  },
+  "texas": {
+    "slug": "texas",
+    "name": "Texas",
+    "abbreviation": "TX",
+    "insurance_department": {
+      "name": "Texas Department of Insurance",
+      "url": "https://www.tdi.texas.gov/",
+      "phone": "512-676-6000",
+      "consumer_line": "800-252-3439",
+      "complaint_url": "https://www.tdi.texas.gov/consumer/complfrm.html"
+    },
+    "consumer_assistance": {
+      "cap_name": "Texas Department of Insurance Consumer Help Line",
+      "cap_url": "https://www.tdi.texas.gov/consumer/index.html",
+      "cap_phone": "800-252-3439",
+      "ship_name": "Texas Health Information Counseling and Advocacy Program (HICAP)",
+      "ship_url": "https://www.hhs.texas.gov/services/aging/long-term-care-living/texas-health-information-counseling-advocacy-program",
+      "ship_phone": "800-252-9240"
+    },
+    "medicaid": {
+      "agency_name": "Texas Health and Human Services Commission (Texas Medicaid)",
+      "agency_url": "https://www.hhs.texas.gov/services/health/medicaid-chip",
+      "agency_phone": "877-541-7905",
+      "managed_care_ombudsman": {
+        "name": "Texas HHS Office of the Ombudsman - Managed Care Assistance",
+        "phone": "866-566-8989",
+        "url": "https://www.hhs.texas.gov/contact/complaints-appeals/hhs-office-ombudsman/ombudsman-managed-care-help"
+      }
+    },
+    "external_review": {
+      "available": true,
+      "info_url": "https://www.tdi.texas.gov/health/irhealthreq.html"
+    },
+    "additional_resources": [
+      {
+        "name": "Texas RioGrande Legal Aid",
+        "url": "https://www.trla.org/",
+        "description": "Free legal services in South and West Texas"
+      },
+      {
+        "name": "Lone Star Legal Aid",
+        "url": "https://www.lonestarlegal.org/",
+        "description": "Free legal services in East Texas"
+      },
+      {
+        "name": "Every Texan",
+        "url": "https://everytexan.org/",
+        "description": "Health care policy research and consumer advocacy"
+      }
+    ]
+  },
+  "utah": {
+    "slug": "utah",
+    "name": "Utah",
+    "abbreviation": "UT",
+    "insurance_department": {
+      "name": "Utah Insurance Department",
+      "url": "https://insurance.utah.gov/",
+      "phone": "801-538-3800",
+      "consumer_line": "800-439-3805",
+      "complaint_url": "https://insurance.utah.gov/consumer/file-complaint"
+    },
+    "consumer_assistance": {
+      "cap_name": "Utah Insurance Department Consumer Services",
+      "cap_url": "https://insurance.utah.gov/consumer",
+      "cap_phone": "800-439-3805",
+      "ship_name": "Utah State Health Insurance Assistance Program (SHIP)",
+      "ship_url": "https://daas.utah.gov/seniors/utah-ship/",
+      "ship_phone": "800-541-7735"
+    },
+    "medicaid": {
+      "agency_name": "Utah Department of Health and Human Services (Utah Medicaid)",
+      "agency_url": "https://medicaid.utah.gov/",
+      "agency_phone": "800-662-9651",
+      "managed_care_ombudsman": null
+    },
+    "external_review": {
+      "available": true,
+      "info_url": "https://insurance.utah.gov/consumer/health-insurance/external-review"
+    },
+    "additional_resources": [
+      {
+        "name": "Utah Legal Services",
+        "url": "https://www.utahlegalservices.org/",
+        "description": "Free civil legal services for eligible Utahns"
+      }
+    ]
+  },
+  "vermont": {
+    "slug": "vermont",
+    "name": "Vermont",
+    "abbreviation": "VT",
+    "insurance_department": {
+      "name": "Vermont Department of Financial Regulation - Insurance Division",
+      "url": "https://dfr.vermont.gov/insurance",
+      "phone": "802-828-3301",
+      "consumer_line": "800-964-1784",
+      "complaint_url": "https://dfr.vermont.gov/insurance/consumers/file-complaint"
+    },
+    "consumer_assistance": {
+      "cap_name": "Vermont Health Care Advocate",
+      "cap_url": "https://vtlawhelp.org/health",
+      "cap_phone": "800-917-7787",
+      "ship_name": "Vermont State Health Insurance Assistance Program (SHIP)",
+      "ship_url": "https://asd.vermont.gov/services/vermont-ship",
+      "ship_phone": "800-642-5119"
+    },
+    "medicaid": {
+      "agency_name": "Department of Vermont Health Access (Green Mountain Care/Vermont Medicaid)",
+      "agency_url": "https://dvha.vermont.gov/",
+      "agency_phone": "800-250-8427",
+      "managed_care_ombudsman": null
+    },
+    "external_review": {
+      "available": true,
+      "info_url": "https://dfr.vermont.gov/insurance/consumers/health-insurance/external-appeal"
+    },
+    "additional_resources": [
+      {
+        "name": "Vermont Legal Aid",
+        "url": "https://www.vtlegalaid.org/",
+        "description": "Free legal services for eligible Vermonters"
+      },
+      {
+        "name": "Office of the Health Care Advocate",
+        "url": "https://vtlawhelp.org/health",
+        "description": "Free help with health insurance issues"
+      }
+    ]
+  },
+  "virginia": {
+    "slug": "virginia",
+    "name": "Virginia",
+    "abbreviation": "VA",
+    "insurance_department": {
+      "name": "Virginia State Corporation Commission - Bureau of Insurance",
+      "url": "https://www.scc.virginia.gov/pages/Bureau-of-Insurance",
+      "phone": "804-371-9741",
+      "consumer_line": "877-310-6560",
+      "complaint_url": "https://www.scc.virginia.gov/pages/File-a-Complaint-About-Insurance"
+    },
+    "consumer_assistance": {
+      "cap_name": "Virginia Bureau of Insurance Consumer Services",
+      "cap_url": "https://www.scc.virginia.gov/pages/Consumer-Services",
+      "cap_phone": "877-310-6560",
+      "ship_name": "Virginia Insurance Counseling and Assistance Program (VICAP)",
+      "ship_url": "https://www.vda.virginia.gov/vicap.htm",
+      "ship_phone": "800-552-3402"
+    },
+    "medicaid": {
+      "agency_name": "Virginia Department of Medical Assistance Services (Virginia Medicaid)",
+      "agency_url": "https://www.dmas.virginia.gov/",
+      "agency_phone": "804-786-6145",
+      "managed_care_ombudsman": {
+        "name": "Virginia Medicaid Member Services",
+        "phone": "800-643-2273",
+        "url": "https://www.dmas.virginia.gov/"
+      }
+    },
+    "external_review": {
+      "available": true,
+      "info_url": "https://www.scc.virginia.gov/pages/External-Review"
+    },
+    "additional_resources": [
+      {
+        "name": "Legal Aid Justice Center",
+        "url": "https://www.justice4all.org/",
+        "description": "Free legal services for low-income Virginians"
+      },
+      {
+        "name": "Virginia Poverty Law Center",
+        "url": "https://vplc.org/",
+        "description": "Health coverage advocacy and resources"
+      }
+    ]
+  },
+  "washington": {
+    "slug": "washington",
+    "name": "Washington",
+    "abbreviation": "WA",
+    "insurance_department": {
+      "name": "Washington State Office of the Insurance Commissioner",
+      "url": "https://www.insurance.wa.gov/",
+      "phone": "360-725-7000",
+      "consumer_line": "800-562-6900",
+      "complaint_url": "https://www.insurance.wa.gov/file-complaint-or-check-your-complaint-status"
+    },
+    "consumer_assistance": {
+      "cap_name": "Washington Statewide Health Insurance Benefits Advisors (SHIBA)",
+      "cap_url": "https://www.insurance.wa.gov/about-shiba",
+      "cap_phone": "800-562-6900",
+      "ship_name": "Statewide Health Insurance Benefits Advisors (SHIBA)",
+      "ship_url": "https://www.insurance.wa.gov/about-shiba",
+      "ship_phone": "800-562-6900"
+    },
+    "medicaid": {
+      "agency_name": "Washington Health Care Authority (Apple Health)",
+      "agency_url": "https://www.hca.wa.gov/",
+      "agency_phone": "800-562-3022",
+      "managed_care_ombudsman": {
+        "name": "Washington Apple Health Client Services",
+        "phone": "800-562-3022",
+        "url": "https://www.hca.wa.gov/health-care-services-supports/apple-health-medicaid-coverage"
+      }
+    },
+    "external_review": {
+      "available": true,
+      "info_url": "https://www.insurance.wa.gov/independent-review-organizations-iros"
+    },
+    "additional_resources": [
+      {
+        "name": "Northwest Justice Project",
+        "url": "https://nwjustice.org/",
+        "description": "Free legal services for low-income Washingtonians"
+      },
+      {
+        "name": "CLEAR Hotline",
+        "url": "https://nwjustice.org/get-legal-help",
+        "description": "Legal intake line: 888-201-1014"
+      }
+    ]
+  },
+  "west-virginia": {
+    "slug": "west-virginia",
+    "name": "West Virginia",
+    "abbreviation": "WV",
+    "insurance_department": {
+      "name": "West Virginia Offices of the Insurance Commissioner",
+      "url": "https://www.wvinsurance.gov/",
+      "phone": "304-558-3386",
+      "consumer_line": "888-879-9842",
+      "complaint_url": "https://www.wvinsurance.gov/Consumers/File-A-Complaint"
+    },
+    "consumer_assistance": {
+      "cap_name": "West Virginia Insurance Commission Consumer Services",
+      "cap_url": "https://www.wvinsurance.gov/Consumers",
+      "cap_phone": "888-879-9842",
+      "ship_name": "West Virginia State Health Insurance Assistance Program (SHIP)",
+      "ship_url": "https://www.wvship.org/",
+      "ship_phone": "877-987-4463"
+    },
+    "medicaid": {
+      "agency_name": "West Virginia Department of Human Services - Bureau for Medical Services",
+      "agency_url": "https://dhhr.wv.gov/bms/Pages/default.aspx",
+      "agency_phone": "800-642-8589",
+      "managed_care_ombudsman": null
+    },
+    "external_review": {
+      "available": true,
+      "info_url": "https://www.wvinsurance.gov/Consumers/External-Review"
+    },
+    "additional_resources": [
+      {
+        "name": "Legal Aid of West Virginia",
+        "url": "https://legalaidwv.org/",
+        "description": "Free civil legal services for eligible West Virginians"
+      }
+    ]
+  },
+  "wisconsin": {
+    "slug": "wisconsin",
+    "name": "Wisconsin",
+    "abbreviation": "WI",
+    "insurance_department": {
+      "name": "Wisconsin Office of the Commissioner of Insurance",
+      "url": "https://oci.wi.gov/",
+      "phone": "608-266-3585",
+      "consumer_line": "800-236-8517",
+      "complaint_url": "https://oci.wi.gov/Pages/Consumers/FileAComplaint.aspx"
+    },
+    "consumer_assistance": {
+      "cap_name": "Wisconsin Office of the Commissioner of Insurance Consumer Services",
+      "cap_url": "https://oci.wi.gov/Pages/Consumers/Consumers.aspx",
+      "cap_phone": "800-236-8517",
+      "ship_name": "Wisconsin Board on Aging and Long-Term Care (BOALTC) - Medigap Helpline",
+      "ship_url": "https://longtermcare.wi.gov/",
+      "ship_phone": "800-242-1060"
+    },
+    "medicaid": {
+      "agency_name": "Wisconsin Department of Health Services (BadgerCare Plus)",
+      "agency_url": "https://www.dhs.wisconsin.gov/forwardhealth/index.htm",
+      "agency_phone": "800-362-3002",
+      "managed_care_ombudsman": {
+        "name": "Wisconsin Board on Aging and Long-Term Care Ombudsman",
+        "phone": "800-815-0015",
+        "url": "https://longtermcare.wi.gov/"
+      }
+    },
+    "external_review": {
+      "available": true,
+      "info_url": "https://oci.wi.gov/Pages/Consumers/IndependentReview.aspx"
+    },
+    "additional_resources": [
+      {
+        "name": "Legal Action of Wisconsin",
+        "url": "https://www.legalaction.org/",
+        "description": "Free legal services for low-income Wisconsinites"
+      },
+      {
+        "name": "ABC for Health",
+        "url": "https://www.safetyweb.org/",
+        "description": "Health benefits counseling and advocacy"
+      }
+    ]
+  },
+  "wyoming": {
+    "slug": "wyoming",
+    "name": "Wyoming",
+    "abbreviation": "WY",
+    "insurance_department": {
+      "name": "Wyoming Department of Insurance",
+      "url": "https://doi.wyo.gov/",
+      "phone": "307-777-7401",
+      "consumer_line": "800-438-5768",
+      "complaint_url": "https://doi.wyo.gov/consumers/file-a-complaint"
+    },
+    "consumer_assistance": {
+      "cap_name": "Wyoming Department of Insurance Consumer Assistance",
+      "cap_url": "https://doi.wyo.gov/consumers",
+      "cap_phone": "800-438-5768",
+      "ship_name": "Wyoming State Health Insurance Information Program (WSHIP)",
+      "ship_url": "https://health.wyo.gov/aging/wyshiip/",
+      "ship_phone": "800-856-4398"
+    },
+    "medicaid": {
+      "agency_name": "Wyoming Department of Health (Wyoming Medicaid)",
+      "agency_url": "https://health.wyo.gov/healthcarefin/medicaid/",
+      "agency_phone": "866-571-0944",
+      "managed_care_ombudsman": null
+    },
+    "external_review": {
+      "available": true,
+      "info_url": "https://doi.wyo.gov/consumers/health-insurance"
+    },
+    "additional_resources": [
+      {
+        "name": "Legal Aid of Wyoming",
+        "url": "https://www.lawyoming.org/",
+        "description": "Free civil legal services for eligible Wyoming residents"
+      },
+      {
+        "name": "Equal Justice Wyoming",
+        "url": "https://www.wyocourts.gov/legal-help/",
+        "description": "Legal resources and referrals"
+      }
+    ]
+  }
+}
