@@ -1,6 +1,10 @@
 const path = require('path');
 const glob = require('glob');
 const TerserPlugin = require('terser-webpack-plugin');
+const { BundleAnalyzerPlugin } = require('webpack-bundle-analyzer');
+
+// Check if bundle analysis is requested
+const shouldAnalyze = process.env.ANALYZE === 'true';
 
 // Dynamically find all .tsx and .ts files in static/js (excluding files like icons.tsx if desired)
 const jsDir = path.join(__dirname);
@@ -121,5 +125,13 @@ module.exports = async (env, argv) => {
   },
   // Generate source maps in both development and production (OSS project, helpful for debugging)
   devtool: 'source-map',
+  // Plugins - conditionally add bundle analyzer
+  plugins: shouldAnalyze ? [
+    new BundleAnalyzerPlugin({
+      analyzerMode: 'static',
+      reportFilename: 'bundle-report.html',
+      openAnalyzer: true,
+    }),
+  ] : [],
 };
 }

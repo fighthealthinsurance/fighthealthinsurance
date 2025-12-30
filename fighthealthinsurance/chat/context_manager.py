@@ -43,6 +43,8 @@ async def prepare_history_for_llm(
             - updated_summary: Updated context summary with any new summarization
     """
     history_for_llm = list(chat_history) if chat_history else []
+    # Apply message alternation to input history
+    history_for_llm = ensure_message_alternation(history_for_llm)
     full_history_for_llm: Optional[List[Dict[str, str]]] = None
     summarized_context = existing_summary
 
@@ -51,14 +53,11 @@ async def prepare_history_for_llm(
         return history_for_llm, None, summarized_context
 
     # Preserve full history for models with large context windows
-    full_history_for_llm = ensure_message_alternation(list(history_for_llm))
+    full_history_for_llm = list(history_for_llm)
 
     # Check if we should summarize (every N messages after threshold)
     messages_over_threshold = len(history_for_llm) - DEFAULT_MESSAGES_TO_KEEP
-    should_summarize = (
-        messages_over_threshold % SUMMARIZATION_INTERVAL == 0
-        or messages_over_threshold == 1
-    )
+    should_summarize = messages_over_threshold % SUMMARIZATION_INTERVAL == 0
 
     if should_summarize:
         summarized_context = await _summarize_history(
@@ -69,6 +68,8 @@ async def prepare_history_for_llm(
 
     # Truncate to last N messages for the LLM
     truncated_history = history_for_llm[-DEFAULT_MESSAGES_TO_KEEP:]
+    # Ensure alternation on truncated history in case slicing broke it
+    truncated_history = ensure_message_alternation(truncated_history)
     logger.debug(f"Truncated history to last {DEFAULT_MESSAGES_TO_KEEP} messages")
 
     return truncated_history, full_history_for_llm, summarized_context

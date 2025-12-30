@@ -1,4 +1,5 @@
 """Tests for Django admin configuration."""
+
 from django.test import TestCase, Client
 from django.contrib.admin.sites import AdminSite
 from django.contrib.auth import get_user_model
@@ -74,9 +75,7 @@ class TestAdminAccess(TestCase):
     def setUp(self):
         self.client = Client()
         self.admin_user = User.objects.create_superuser(
-            username="admin",
-            email="admin@test.com",
-            password="adminpass123"
+            username="admin", email="admin@test.com", password="adminpass123"
         )
 
     def test_admin_login_page(self):
@@ -122,9 +121,7 @@ class TestAdminActions(TestCase):
     def setUp(self):
         self.client = Client()
         self.admin_user = User.objects.create_superuser(
-            username="admin",
-            email="admin@test.com",
-            password="adminpass123"
+            username="admin", email="admin@test.com", password="adminpass123"
         )
         self.client.login(username="admin", password="adminpass123")
 

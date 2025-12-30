@@ -79,9 +79,14 @@ class StripeWebhookHelper:
                     )
 
             elif payment_type == "fax":
-                FaxesToSend.objects.filter(uuid=session.metadata.get("uuid")).update(
-                    paid=True, should_send=True
-                )
+                # metadata is already extracted above to handle both object and dict
+                fax_uuid = metadata.get("uuid") if metadata else None
+                if fax_uuid:
+                    FaxesToSend.objects.filter(uuid=fax_uuid).update(
+                        paid=True, should_send=True
+                    )
+                else:
+                    logger.warning("No uuid in metadata for fax payment")
             else:
                 logger.warning(f"Unknown payment type: {payment_type}")
         except Exception as e:

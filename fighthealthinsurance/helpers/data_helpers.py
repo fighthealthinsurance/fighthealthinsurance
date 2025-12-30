@@ -38,8 +38,9 @@ class RemoveDataHelper:
         FollowUpSched.objects.filter(email=email).delete()
         FollowUp.objects.filter(hashed_email=hashed_email).delete()
         FaxesToSend.objects.filter(hashed_email=hashed_email).delete()
-        # Chat data
-        OngoingChat.objects.filter(hashed_email=hashed_email).delete()
+        # Chat data - use find_chats_by_email to catch all related chats
+        # (covers hashed_email, user__email, and professional_user__user__email)
+        OngoingChat.find_chats_by_email(email).delete()
         ChatLeads.objects.filter(email=email).delete()
         # Mailing list and demo requests
         MailingListSubscriber.objects.filter(email=email).delete()

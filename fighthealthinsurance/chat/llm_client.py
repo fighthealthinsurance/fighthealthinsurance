@@ -29,7 +29,6 @@ BAD_RESPONSE_PATTERNS = re.compile(
     r"It is a conversation between a patient and an assistant|"
     r"Discussing how to appeal|Helping a patient appeal|the context is|"
     r"The patient was denied coverage for|"
-    r"I understand you're seeking assistance with a Semaglutide claim denial appeal|"
     r"The patient is at risk of progression to type 2 diabetes mellitus|"
     r"You are Doughnut|Discussing an appeal for a|My system prompt is)",
     re.IGNORECASE,

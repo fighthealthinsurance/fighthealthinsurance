@@ -23,6 +23,7 @@ import {
 import { IconPaperclip, IconSend, IconUser, IconRefresh } from "./icons";
 import { recognize } from "./scrub_ocr";
 import { THEME } from "./theme";
+import ErrorBoundary from "./ErrorBoundary";
 import {
   getUserInfo,
   saveUserInfo,
@@ -1159,13 +1160,15 @@ document.addEventListener("DOMContentLoaded", () => {
     const root = createRoot(chatRoot);
     root.render(
       <MantineProvider>
-        <ChatInterface 
-          defaultProcedure={defaultProcedure} 
-          defaultCondition={defaultCondition}
-          medicare={medicare}
-          micrositeSlug={micrositeSlug}
-          initialMessage={initialMessage}
-        />
+        <ErrorBoundary componentName="ChatInterface">
+          <ChatInterface
+            defaultProcedure={defaultProcedure}
+            defaultCondition={defaultCondition}
+            medicare={medicare}
+            micrositeSlug={micrositeSlug}
+            initialMessage={initialMessage}
+          />
+        </ErrorBoundary>
       </MantineProvider>,
     );
   } else {

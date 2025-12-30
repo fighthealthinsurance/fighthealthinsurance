@@ -7,6 +7,7 @@ from fighthealthinsurance.chat.safety_filters import (
     detect_false_promises,
     CRISIS_RESOURCES,
 )
+
 # Import internal variables for testing
 from fighthealthinsurance.chat.safety_filters import (
     _CRISIS_PHRASES,

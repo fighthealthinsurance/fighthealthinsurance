@@ -6,6 +6,7 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "build": "webpack",
+    "build:analyze": "ANALYZE=true webpack",
     "watch": "npm-watch",
     "auto-fix": "prettier --write *.ts *.tsx"
   },
@@ -68,6 +69,7 @@
     "ts-loader": "^9.5.1",
     "typescript": "^5.6.3",
     "webpack": "^5.76.1",
+    "webpack-bundle-analyzer": "^4.10.2",
     "webpack-cli": "^5.0.1"
   },
   "engines": {

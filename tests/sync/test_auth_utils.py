@@ -1,4 +1,5 @@
 """Tests for authentication utility functions."""
+
 from django.test import TestCase, override_settings
 
 from fhi_users.auth.auth_utils import (

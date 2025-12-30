@@ -1,4 +1,5 @@
 """Tests for chat tool handlers."""
+
 import re
 from unittest.mock import AsyncMock, MagicMock, patch
 from django.test import TestCase
@@ -55,8 +56,12 @@ class TestToolPatterns(TestCase):
 
     def test_prior_auth_pattern(self):
         """Test prior auth pattern matches JSON format."""
-        text = 'create_or_update_prior_auth {"treatment": "MRI", "diagnosis": "back pain"}'
-        match = re.search(CREATE_OR_UPDATE_PRIOR_AUTH_REGEX, text, re.DOTALL | re.MULTILINE)
+        text = (
+            'create_or_update_prior_auth {"treatment": "MRI", "diagnosis": "back pain"}'
+        )
+        match = re.search(
+            CREATE_OR_UPDATE_PRIOR_AUTH_REGEX, text, re.DOTALL | re.MULTILINE
+        )
         self.assertIsNotNone(match)
         self.assertIn("MRI", match.group(1))
 
@@ -70,6 +75,7 @@ class TestBaseTool(TestCase):
 
         class NoPatternTool(BaseTool):
             pattern = ""
+
             async def execute(self, match, response_text, context, **kwargs):
                 return response_text, context
 
@@ -83,6 +89,7 @@ class TestBaseTool(TestCase):
 
         class TestTool(BaseTool):
             pattern = r"REMOVE_THIS"
+
             async def execute(self, match, response_text, context, **kwargs):
                 return response_text, context
 

@@ -248,7 +248,7 @@ class Base(Configuration):
         {
             "NAME": "django.contrib.auth.password_validation.MinimumLengthValidator",
             "OPTIONS": {
-                "min_length": 9,
+                "min_length": 8,
             },
         },
         {

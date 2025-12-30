@@ -1,4 +1,5 @@
 """Tests for chat LLM client utilities."""
+
 from django.test import TestCase
 
 from fighthealthinsurance.chat.llm_client import (
