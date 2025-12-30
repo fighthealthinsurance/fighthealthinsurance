@@ -1,8 +1,8 @@
 """
 Retry handling utilities for LLM chat operations.
 
-Provides retry logic with exponential backoff and fallback strategies
-for handling LLM failures gracefully.
+Provides retry logic with fallback strategies for handling LLM failures
+gracefully. Uses parallel calls to multiple backends with quality scoring.
 """
 
 from typing import (

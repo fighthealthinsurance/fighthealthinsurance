@@ -153,10 +153,10 @@ class StageFaxView(generic.FormView):
             }
         ]
         stripe_recovery_info = StripeRecoveryInfo.objects.create(items=items)
-        metadata = {
+        metadata: dict[str, str] = {
             "payment_type": "fax",
-            "fax_request_uuid": staged.uuid,
-            "recovery_info_id": stripe_recovery_info.id,
+            "fax_request_uuid": str(staged.uuid),
+            "recovery_info_id": str(stripe_recovery_info.id),
         }
         checkout = stripe.checkout.Session.create(
             line_items=items,  # type: ignore
