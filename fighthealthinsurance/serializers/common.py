@@ -13,7 +13,7 @@ from fighthealthinsurance.serializers.fields import (
 )
 
 
-class NextStepInfoSerizableSerializer(serializers.Serializer):
+class NextStepInfoSerializableSerializer(serializers.Serializer):
     """Serializer for next step information returned after denial analysis."""
 
     outside_help_details = StringListField()

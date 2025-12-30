@@ -43,7 +43,7 @@ _CRISIS_PHRASES = [
 # Pre-compile crisis detection regex for performance
 # Uses word boundaries and case-insensitive matching
 _CRISIS_REGEX: Pattern[str] = re.compile(
-    r"|".join(rf"(?:{re.escape(phrase)})" for phrase in _CRISIS_PHRASES),
+    r"|".join(rf"(?:\b{re.escape(phrase)}\b)" for phrase in _CRISIS_PHRASES),
     re.IGNORECASE,
 )
 

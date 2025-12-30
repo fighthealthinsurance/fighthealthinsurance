@@ -103,7 +103,9 @@ class AuditLog(models.Model):
         ]
 
     def __str__(self) -> str:
-        return f"{self.event_type} by {self.username or 'anonymous'} at {self.timestamp}"
+        return (
+            f"{self.event_type} by {self.username or 'anonymous'} at {self.timestamp}"
+        )
 
 
 def is_audit_enabled() -> bool:
@@ -153,6 +155,8 @@ def is_professional_user(user) -> bool:
         pass
 
     return is_professional
+
+
 def log_event(
     event_type: Union[EventType, str],
     request: Optional[Union[HttpRequest, "DRFRequest"]] = None,
@@ -192,7 +196,9 @@ def log_event(
 
         # Build log entry
         log_entry = AuditLog(
-            event_type=str(event_type.value if isinstance(event_type, EventType) else event_type),
+            event_type=str(
+                event_type.value if isinstance(event_type, EventType) else event_type
+            ),
             description=description,
             user=user if user and not isinstance(user, AnonymousUser) else None,
             username=getattr(user, "username", "") if user else "",
@@ -231,12 +237,18 @@ def log_login_success(request, user) -> Optional[AuditLog]:
     return log_event(EventType.LOGIN_SUCCESS, request=request, user=user)
 
 
-def log_login_failure(request, username: str = "", reason: str = "") -> Optional[AuditLog]:
+def log_login_failure(
+    request, username: str = "", reason: str = ""
+) -> Optional[AuditLog]:
     """Log failed login attempt."""
     return log_event(
         EventType.LOGIN_FAILED,
         request=request,
-        description=f"Failed login for {username}: {reason}" if reason else f"Failed login for {username}",
+        description=(
+            f"Failed login for {username}: {reason}"
+            if reason
+            else f"Failed login for {username}"
+        ),
         extra_data={"attempted_username": username, "reason": reason},
     )
 

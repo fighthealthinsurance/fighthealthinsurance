@@ -138,17 +138,24 @@ function showLoading(): void {
   }
   updateStatusIndicator('connecting', 0);
 
-  // Rotate messages every 8 seconds (clear any existing interval first)
+  // Rotate messages every 8 seconds with sub-1-second jitter (clear any existing interval first)
   if (messageRotationInterval) {
     clearInterval(messageRotationInterval);
   }
-  messageRotationInterval = setInterval(rotateStatusMessage, 8000);
+  const scheduleNextRotation = () => {
+    const jitter = Math.random() * 800; // 0-800ms jitter
+    messageRotationInterval = setTimeout(() => {
+      rotateStatusMessage();
+      scheduleNextRotation();
+    }, 8000 + jitter);
+  };
+  scheduleNextRotation();
 }
 
 function hideLoading(): void {
-  // Clear the message rotation interval
+  // Clear the message rotation timeout
   if (messageRotationInterval) {
-    clearInterval(messageRotationInterval);
+    clearTimeout(messageRotationInterval);
     messageRotationInterval = null;
   }
 

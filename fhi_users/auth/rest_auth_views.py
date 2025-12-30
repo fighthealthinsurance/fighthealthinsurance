@@ -791,7 +791,9 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             "cancel_url", default_cancel
         )
         # Validate URLs to prevent open redirect attacks
-        continue_url = validate_redirect_url(continue_url_raw, f"https://{settings.FIGHT_PAPERWORK_DOMAIN}/")
+        continue_url = validate_redirect_url(
+            continue_url_raw, f"https://{settings.FIGHT_PAPERWORK_DOMAIN}/"
+        )
         cancel_url = validate_redirect_url(cancel_url_raw, default_cancel)
 
         try:
@@ -1080,11 +1082,10 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             default_cancel = f"https://{settings.FIGHT_PAPERWORK_DOMAIN}/?q=ohno"
             continue_url = validate_redirect_url(
                 user_signup_info.get("continue_url"),
-                f"https://{settings.FIGHT_PAPERWORK_DOMAIN}/"
+                f"https://{settings.FIGHT_PAPERWORK_DOMAIN}/",
             )
             cancel_url = validate_redirect_url(
-                user_signup_info.get("cancel_url", default_cancel),
-                default_cancel
+                user_signup_info.get("cancel_url", default_cancel), default_cancel
             )
             checkout_session = self.create_stripe_checkout_session(
                 email,

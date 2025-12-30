@@ -42,7 +42,7 @@ module.exports = async (env, argv) => {
       new TerserPlugin({
         terserOptions: {
           compress: {
-            drop_console: true,  // Remove console.log in production
+            drop_console: false,  // Keep console.log for debugging production issues
           },
           format: {
             comments: false,
@@ -119,7 +119,7 @@ module.exports = async (env, argv) => {
       },
     ],
   },
-  // Only generate source maps in development
-  devtool: isProduction ? false : 'source-map',
+  // Generate source maps in both development and production (OSS project, helpful for debugging)
+  devtool: 'source-map',
 };
 }

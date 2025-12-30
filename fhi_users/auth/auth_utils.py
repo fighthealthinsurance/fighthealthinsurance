@@ -307,25 +307,30 @@ def _get_allowed_redirect_domains() -> frozenset:
             domains.add(host)
 
     # Add Stripe domains for payment redirects (always needed)
-    domains.update([
-        "checkout.stripe.com",
-        "billing.stripe.com",
-    ])
+    domains.update(
+        [
+            "stripe.com",
+            "checkout.stripe.com",
+            "billing.stripe.com",
+        ]
+    )
 
     # Add default domains if ALLOWED_REDIRECT_DOMAINS is not explicitly configured
     if not has_custom_config:
-        domains.update([
-            # Production
-            "fighthealthinsurance.com",
-            "www.fighthealthinsurance.com",
-            "api.fighthealthinsurance.com",
-            "fightpaperwork.com",
-            "www.fightpaperwork.com",
-            "api.fightpaperwork.com",
-            # Development
-            "localhost",
-            "127.0.0.1",
-        ])
+        domains.update(
+            [
+                # Production
+                "fighthealthinsurance.com",
+                "www.fighthealthinsurance.com",
+                "api.fighthealthinsurance.com",
+                "fightpaperwork.com",
+                "www.fightpaperwork.com",
+                "api.fightpaperwork.com",
+                # Development
+                "localhost",
+                "127.0.0.1",
+            ]
+        )
 
     return frozenset(domains)
 
@@ -363,8 +368,13 @@ def validate_redirect_url(url: Optional[str], default_url: str) -> str:
             return default_url
 
         # Allow http only for localhost
-        if parsed.scheme == "http" and parsed.hostname not in ("localhost", "127.0.0.1"):
-            logger.warning(f"HTTP not allowed for non-localhost in redirect: {safe_url}")
+        if parsed.scheme == "http" and parsed.hostname not in (
+            "localhost",
+            "127.0.0.1",
+        ):
+            logger.warning(
+                f"HTTP not allowed for non-localhost in redirect: {safe_url}"
+            )
             return default_url
 
         # Check if domain is in allowlist

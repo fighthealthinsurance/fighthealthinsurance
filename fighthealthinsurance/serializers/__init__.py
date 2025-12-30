@@ -16,7 +16,7 @@ from fighthealthinsurance.serializers.fields import (
 )
 
 from fighthealthinsurance.serializers.common import (
-    NextStepInfoSerizableSerializer,
+    NextStepInfoSerializableSerializer,
     StatusResponseSerializer,
     ErrorSerializer,
     NotPaidErrorSerializer,
@@ -27,6 +27,9 @@ from fighthealthinsurance.serializers.common import (
     LiveModelsStatusSerializer,
 )
 
+# Legacy alias for backwards compatibility (typo in original name)
+NextStepInfoSerizableSerializer = NextStepInfoSerializableSerializer
+
 __all__ = [
     # Fields
     "StringListField",
@@ -34,7 +37,8 @@ __all__ = [
     "DictionaryStringField",
     "DenialTypesListField",
     # Common
-    "NextStepInfoSerizableSerializer",
+    "NextStepInfoSerializableSerializer",
+    "NextStepInfoSerizableSerializer",  # Legacy alias
     "StatusResponseSerializer",
     "ErrorSerializer",
     "NotPaidErrorSerializer",

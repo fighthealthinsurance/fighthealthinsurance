@@ -138,7 +138,7 @@ class AppealTool(BaseTool):
             appeal = await chat.appeals.afirst()
             if appeal:
                 await self.send_status_message(f"Updating existing Appeal #{appeal.id}")
-                denial = await sync_to_async(lambda x: x.denial)(appeal)
+                denial = await sync_to_async(lambda x: x.for_denial)(appeal)
         else:
             pro_user = await sync_to_async(lambda: chat.professional_user)()
             denial = await Denial.objects.acreate(creating_professional=pro_user)

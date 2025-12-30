@@ -5,10 +5,15 @@ Provides utilities for data removal and privacy compliance.
 """
 
 from fighthealthinsurance.models import (
+    Appeal,
+    ChatLeads,
+    DemoRequests,
     Denial,
     FaxesToSend,
     FollowUp,
     FollowUpSched,
+    MailingListSubscriber,
+    OngoingChat,
 )
 
 
@@ -26,7 +31,16 @@ class RemoveDataHelper:
             email: Email address to remove data for
         """
         hashed_email: str = Denial.get_hashed_email(email)
+        # Core denial/appeal data
         Denial.objects.filter(hashed_email=hashed_email).delete()
+        Appeal.objects.filter(hashed_email=hashed_email).delete()
+        # Follow-up related
         FollowUpSched.objects.filter(email=email).delete()
         FollowUp.objects.filter(hashed_email=hashed_email).delete()
         FaxesToSend.objects.filter(hashed_email=hashed_email).delete()
+        # Chat data
+        OngoingChat.objects.filter(hashed_email=hashed_email).delete()
+        ChatLeads.objects.filter(email=email).delete()
+        # Mailing list and demo requests
+        MailingListSubscriber.objects.filter(email=email).delete()
+        DemoRequests.objects.filter(email=email).delete()

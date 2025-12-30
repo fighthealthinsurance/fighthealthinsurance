@@ -236,8 +236,8 @@ def build_retry_calls(
     calls: List[Awaitable[Tuple[Optional[str], Optional[str]]]] = []
     call_scores: Dict[Awaitable, int] = {}
 
-    # Use shorter history for retry
-    retry_history = history[-5:] if len(history) > 5 else history
+    # Use shorter history for retry (Python gracefully handles if len < 5)
+    retry_history = history[-5:]
 
     # Try primary backends with shortened history
     for model_backend in model_backends:
@@ -263,9 +263,21 @@ def build_retry_calls(
         calls.append(call)
         call_scores[call] = model_backend.quality() * 50
 
-    # Add fallback backends
+    # Add fallback backends with both short and full histories
     if fallback_backends:
         for model_backend in fallback_backends:
+            # Short history for fallbacks (better success rate)
+            call = model_backend.generate_chat_response(
+                current_message,
+                previous_context_summary=previous_context_summary,
+                history=retry_history,
+                is_professional=is_professional,
+                is_logged_in=is_logged_in,
+            )
+            calls.append(call)
+            call_scores[call] = model_backend.quality() * 15
+
+            # Full history for fallbacks (if model can handle it)
             call = model_backend.generate_chat_response(
                 current_message,
                 previous_context_summary=previous_context_summary,
