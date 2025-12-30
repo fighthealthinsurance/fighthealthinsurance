@@ -90,7 +90,7 @@ def score_llm_response(
     # Score context quality
     if context_part and len(context_part) > 5:
         score += 10
-        if BAD_CONTEXT_PATTERNS.match(context_part):
+        if BAD_CONTEXT_PATTERNS.search(context_part):
             score -= 5
 
     # Score response quality
@@ -98,12 +98,12 @@ def score_llm_response(
         score += 100
 
         # Penalize responses that leak system prompts
-        if BAD_RESPONSE_PATTERNS.match(response_text):
+        if BAD_RESPONSE_PATTERNS.search(response_text):
             score -= 75
 
-        # Bonus for tool usage
+        # Bonus for tool usage (search anywhere in response)
         for pattern in tools_regex:
-            if re.match(pattern, response_text):
+            if re.search(pattern, response_text):
                 score += 100
 
         # Safety: Penalize false promises

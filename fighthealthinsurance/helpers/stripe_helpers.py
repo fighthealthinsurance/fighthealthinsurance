@@ -249,19 +249,17 @@ class StripeWebhookHelper:
             request: Django request object
             event: Stripe event object
         """
-        # First check if we've already received this event
+        # Atomically get or create the webhook event record to avoid TOCTOU race
         event_id = event.id
+        webhook_event, created = StripeWebhookEvents.objects.get_or_create(
+            event_stripe_id=event_id,
+            defaults={"success": False},
+        )
 
-        # Check if this event has already been processed
-        if StripeWebhookEvents.objects.filter(event_stripe_id=event_id).exists():
+        # If the record already existed, this is a duplicate event
+        if not created:
             logger.debug(f"Skipping duplicate stripe event {event_id}")
             return
-
-        # Create a record of receiving this event
-        webhook_event = StripeWebhookEvents.objects.create(
-            event_stripe_id=event_id,
-            success=False,  # Will be updated to True if handling succeeds
-        )
 
         try:
             if event.type == "checkout.session.completed":

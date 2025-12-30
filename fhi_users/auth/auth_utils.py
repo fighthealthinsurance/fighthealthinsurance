@@ -285,7 +285,7 @@ def generic_validate_phone_number(value: str) -> str:
     return cleaned_number
 
 
-def _get_allowed_redirect_domains() -> frozenset:
+def _get_allowed_redirect_domains() -> frozenset[str]:
     """
     Get allowed redirect domains from settings, ALLOWED_HOSTS, and defaults.
     This is a function to allow settings to override at runtime.

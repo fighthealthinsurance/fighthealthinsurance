@@ -1057,7 +1057,7 @@ class StripeWebhookEvents(models.Model):
     """Logs Stripe webhook events for idempotency and debugging."""
 
     internal_id = models.AutoField(primary_key=True)
-    event_stripe_id = models.CharField(max_length=255, null=False)
+    event_stripe_id = models.CharField(max_length=255, null=False, unique=True)
     created_at = models.DateTimeField(auto_now_add=True, blank=True)
     success = models.BooleanField(default=False)
     error = models.CharField(max_length=255, null=True, blank=True)

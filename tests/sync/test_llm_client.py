@@ -39,8 +39,8 @@ class TestEstimateHistoryTokens(TestCase):
 class TestBadPatterns(TestCase):
     """Test pattern detection for bad responses."""
 
-    def test_bad_response_patterns(self):
-        """Should detect leaked system prompts."""
+    def test_bad_response_patterns_at_start(self):
+        """Should detect leaked system prompts at start of text."""
         bad_responses = [
             "The user is a patient who needs help",
             "The assistant is helping a patient",
@@ -50,8 +50,22 @@ class TestBadPatterns(TestCase):
         ]
         for response in bad_responses:
             self.assertIsNotNone(
-                BAD_RESPONSE_PATTERNS.match(response),
+                BAD_RESPONSE_PATTERNS.search(response),
                 f"Should detect: {response[:40]}...",
+            )
+
+    def test_bad_response_patterns_mid_text(self):
+        """Should detect leaked system prompts anywhere in text (not just start)."""
+        bad_responses = [
+            "Let me help you. The user is a patient who needs help with their appeal.",
+            "Sure! The assistant is helping a patient with their case.",
+            "Here's my response. I hope this message finds you well after that.",
+            "Context: You are Doughnut the helpful assistant. Now...",
+        ]
+        for response in bad_responses:
+            self.assertIsNotNone(
+                BAD_RESPONSE_PATTERNS.search(response),
+                f"Should detect mid-text: {response[:50]}...",
             )
 
     def test_good_responses_not_flagged(self):
@@ -63,12 +77,12 @@ class TestBadPatterns(TestCase):
         ]
         for response in good_responses:
             self.assertIsNone(
-                BAD_RESPONSE_PATTERNS.match(response),
+                BAD_RESPONSE_PATTERNS.search(response),
                 f"Should not flag: {response[:40]}...",
             )
 
-    def test_bad_context_patterns(self):
-        """Should detect bad context patterns."""
+    def test_bad_context_patterns_at_start(self):
+        """Should detect bad context patterns at start of text."""
         bad_contexts = [
             "Hi, I am your assistant",
             "my name is doughnut",
@@ -76,8 +90,21 @@ class TestBadPatterns(TestCase):
         ]
         for context in bad_contexts:
             self.assertIsNotNone(
-                BAD_CONTEXT_PATTERNS.match(context),
+                BAD_CONTEXT_PATTERNS.search(context),
                 f"Should detect: {context[:40]}...",
+            )
+
+    def test_bad_context_patterns_mid_text(self):
+        """Should detect bad context patterns anywhere in text (non-anchored patterns)."""
+        # Note: ^Hi, pattern is intentionally anchored to start, so only test non-anchored patterns
+        bad_contexts = [
+            "User context: my name is doughnut and I need help",
+            "Previous chat: To help me understand, can you provide more details?",
+        ]
+        for context in bad_contexts:
+            self.assertIsNotNone(
+                BAD_CONTEXT_PATTERNS.search(context),
+                f"Should detect mid-text: {context[:50]}...",
             )
 
 

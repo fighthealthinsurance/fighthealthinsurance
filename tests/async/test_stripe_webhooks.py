@@ -6,7 +6,7 @@ from django.urls import reverse
 from django.contrib.auth import get_user_model
 
 from fighthealthinsurance.models import StripeWebhookEvents, LostStripeSession
-from fighthealthinsurance.common_view_logic import StripeWebhookHelper
+from fighthealthinsurance.helpers.stripe_helpers import StripeWebhookHelper
 
 
 User = get_user_model()
@@ -19,7 +19,7 @@ class StripeWebhookTests(TestCase):
         self.session_id = "cs_test123"
         self.email = "test@example.com"
 
-    @patch("fighthealthinsurance.common_view_logic.logger")
+    @patch("fighthealthinsurance.helpers.stripe_helpers.logger")
     def test_duplicate_webhook_event_skipped(self, mock_logger):
         # Create a record of an already processed event
         StripeWebhookEvents.objects.create(event_stripe_id=self.event_id, success=True)
@@ -40,9 +40,9 @@ class StripeWebhookTests(TestCase):
         self.assertEqual(StripeWebhookEvents.objects.count(), 1)
 
     @patch(
-        "fighthealthinsurance.common_view_logic.StripeWebhookHelper.handle_checkout_session_completed"
+        "fighthealthinsurance.helpers.stripe_helpers.StripeWebhookHelper.handle_checkout_session_completed"
     )
-    @patch("fighthealthinsurance.common_view_logic.logger")
+    @patch("fighthealthinsurance.helpers.stripe_helpers.logger")
     def test_webhook_event_created_and_updated_on_success(
         self, mock_logger, mock_handler
     ):
@@ -66,9 +66,9 @@ class StripeWebhookTests(TestCase):
         self.assertIsNone(event_record.error)
 
     @patch(
-        "fighthealthinsurance.common_view_logic.StripeWebhookHelper.handle_checkout_session_completed"
+        "fighthealthinsurance.helpers.stripe_helpers.StripeWebhookHelper.handle_checkout_session_completed"
     )
-    @patch("fighthealthinsurance.common_view_logic.logger")
+    @patch("fighthealthinsurance.helpers.stripe_helpers.logger")
     def test_webhook_event_records_error_on_failure(self, mock_logger, mock_handler):
         # Set up handler to raise an exception
         mock_handler.side_effect = Exception("Test error")
@@ -91,7 +91,7 @@ class StripeWebhookTests(TestCase):
         self.assertEqual(event_record.error, "Test error")
 
     @patch("fhi_users.emails.send_checkout_session_expired")
-    @patch("fighthealthinsurance.common_view_logic.logger")
+    @patch("fighthealthinsurance.helpers.stripe_helpers.logger")
     def test_duplicate_checkout_session_expired_email_skipped(
         self, mock_logger, mock_send_email
     ):
