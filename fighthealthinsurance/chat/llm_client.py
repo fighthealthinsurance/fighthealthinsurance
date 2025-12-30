@@ -12,7 +12,6 @@ from typing import (
     List,
     Optional,
     Tuple,
-    TypeVar,
 )
 
 from loguru import logger

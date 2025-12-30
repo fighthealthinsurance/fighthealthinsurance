@@ -1,4 +1,3 @@
-import asyncio
 import json
 import os
 import random
@@ -10,7 +9,6 @@ from urllib.parse import urlencode
 from django import forms
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.contrib.auth.decorators import login_required
 from django.contrib.staticfiles.storage import staticfiles_storage
 from django.core.exceptions import SuspiciousOperation
 from django.http import (

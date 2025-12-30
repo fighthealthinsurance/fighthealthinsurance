@@ -12,7 +12,6 @@ from typing import (
     List,
     Optional,
     Tuple,
-    TypeVar,
 )
 
 from loguru import logger
@@ -20,14 +19,10 @@ from loguru import logger
 from fighthealthinsurance.ml.ml_models import RemoteModelLike
 from fighthealthinsurance.chat.llm_client import (
     build_retry_calls,
-    score_llm_response,
     MIN_RESPONSE_LENGTH,
 )
 from fighthealthinsurance.chat.safety_filters import detect_false_promises
 from fighthealthinsurance.utils import best_within_timelimit
-
-
-T = TypeVar("T")
 
 
 def create_simple_retry_scorer(
