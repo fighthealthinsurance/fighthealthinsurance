@@ -373,6 +373,7 @@ fighthealthinsurance/models/
 
 | Done | Category | Current State | Needs |
 |------|----------|---------------|-------|
+| [x] | Chat context_manager | 16 tests added | prepare_history_for_llm, should_store_summary, get_current_context, ensure_message_alternation |
 | [ ] | Chat interface | Minimal | Unit tests for helper functions |
 | [ ] | ML modules | Some coverage | Complete ml_router, ml_plan_doc_helper |
 | [ ] | Serializers | Indirect only | Validation tests |
@@ -404,14 +405,14 @@ fighthealthinsurance/models/
 | [ ] | `blog.tsx` | 3 | |
 | [ ] | Other files | ~44 | Various |
 
-### 10.2 Error Boundaries (Missing)
+### 10.2 Error Boundaries
 
 | Done | Task | Notes |
 |------|------|-------|
-| [ ] | Create `ErrorBoundary` component | Catch React errors |
-| [ ] | Wrap chat interface | Critical for production |
+| [x] | Create `ErrorBoundary` component | Created ErrorBoundary.tsx with Sentry integration |
+| [x] | Wrap chat interface | Added to chat_interface.tsx |
 | [ ] | Wrap blog components | Has `dangerouslySetInnerHTML` |
-| [ ] | Wrap chooser component | API calls may fail |
+| [x] | Wrap chooser component | Added to chooser.tsx |
 
 ### 10.3 State Management Cleanup
 
@@ -435,7 +436,7 @@ fighthealthinsurance/models/
 | [ ] | Enable tree-shaking | Reduce bundle size |
 | [ ] | Fix source map strategy | Only for dev |
 | [ ] | Add MiniCssExtractPlugin | Extract CSS in production |
-| [ ] | Add webpack-bundle-analyzer | Monitor sizes |
+| [x] | Add webpack-bundle-analyzer | Added to webpack.config.js |
 
 ---
 
@@ -626,10 +627,38 @@ fighthealthinsurance/models/
 - Added index on created for Denial
 - Added compound index on (professional_user, updated_at) for OngoingChat
 
+### Completed (December 30, 2025)
+
+**React & Frontend:**
+- Added ErrorBoundary.tsx component with Sentry integration
+- Wrapped chat_interface.tsx and chooser.tsx with error boundaries
+- Added webpack-bundle-analyzer to monitor bundle sizes
+
+**Chat Interface Fixes:**
+- Fixed context_manager.py: apply ensure_message_alternation on input and truncated history
+- Fixed context_manager.py: simplified should_summarize logic (removed "or == 1")
+- Fixed llm_client.py: removed Semaglutide false-positive from BAD_RESPONSE_PATTERNS
+- Removed unused imports from llm_client.py, retry_handler.py, views.py
+
+**Security & Data Handling:**
+- Fixed appeal_tool.py: require email before creating denial/appeal
+- Fixed data_helpers.py: use find_chats_by_email for comprehensive deletion
+- Fixed stripe_helpers.py: handle both dict and Stripe object access for metadata, subscription, customer
+- Set password min_length to 8 in settings.py
+
+**Other Fixes:**
+- Fixed .gitignore: logs/ now on separate line
+- Added xframe_options_exempt to ChooserView for iframe embedding
+
+**Testing:**
+- Added tests/sync/test_context_manager.py (16 tests for context management)
+- Added DenialTrackingInfoTest in test_audit.py (ASN/network info storage)
+- Total: 426 tests passing
+
 ### Blocked
 - CSP header implementation (requires django-csp + inline script analysis)
 - Tool handler integration into chat_interface.py (optional - handlers extracted and tested, integration can be done incrementally)
 
 ---
 
-*Last updated: December 28, 2025*
+*Last updated: December 30, 2025*
