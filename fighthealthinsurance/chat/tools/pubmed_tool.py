@@ -4,6 +4,7 @@ PubMed search tool handler for the chat interface.
 Handles pubmed_query tool calls from the LLM to search PubMed for
 relevant medical literature.
 """
+
 import asyncio
 import re
 from typing import Optional, Tuple, Union, Callable, Awaitable, Any
@@ -57,7 +58,7 @@ class PubMedTool(BaseTool):
         depth: int = 0,
         is_logged_in: bool = False,
         is_professional: bool = False,
-        **kwargs
+        **kwargs,
     ) -> Tuple[str, str]:
         """
         Execute PubMed search and incorporate results.
@@ -87,9 +88,7 @@ class PubMedTool(BaseTool):
         if len(pubmed_query_terms.strip()) == 0:
             return cleaned_response, context
 
-        await self.send_status_message(
-            f"Searching PubMed for: {pubmed_query_terms}..."
-        )
+        await self.send_status_message(f"Searching PubMed for: {pubmed_query_terms}...")
 
         # Search for both recent and all-time articles in parallel
         article_ids = await self._search_articles(pubmed_query_terms)
@@ -204,14 +203,14 @@ class PubMedTool(BaseTool):
             if art.title and summary_text:
                 await self.send_status_message(f"Found article: {art.title}")
                 summaries.append(
-                    f"Title: {art.title}\\nAbstract: {summary_text[:500]}..."
+                    f"Title: {art.title}\nAbstract: {summary_text[:500]}..."
                 )
 
         if not summaries:
             return ""
 
         return (
-            "\\n\\nWe got back pubmedcontext:[:\\n"
-            + "\\n\\n".join(summaries)
-            + "]. If you reference them make sure to include the title and journal.\\n"
+            "\n\nWe got back pubmedcontext:[:\n"
+            + "\n\n".join(summaries)
+            + "]. If you reference them make sure to include the title and journal.\n"
         )

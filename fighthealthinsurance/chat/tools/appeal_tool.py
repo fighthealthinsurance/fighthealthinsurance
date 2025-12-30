@@ -4,6 +4,7 @@ Appeal creation/update tool handler for the chat interface.
 Handles create_or_update_appeal tool calls from the LLM to create
 or update appeal records linked to the current chat.
 """
+
 import json
 import re
 from typing import Optional, Tuple, Callable, Awaitable, Any
@@ -52,7 +53,7 @@ class AppealTool(BaseTool):
         response_text: str,
         context: str,
         chat: Any = None,
-        **kwargs
+        **kwargs,
     ) -> Tuple[str, str]:
         """
         Execute appeal creation/update.
@@ -136,9 +137,7 @@ class AppealTool(BaseTool):
         if await chat.appeals.aexists():
             appeal = await chat.appeals.afirst()
             if appeal:
-                await self.send_status_message(
-                    f"Updating existing Appeal #{appeal.id}"
-                )
+                await self.send_status_message(f"Updating existing Appeal #{appeal.id}")
                 denial = await sync_to_async(lambda x: x.denial)(appeal)
         else:
             pro_user = await sync_to_async(lambda: chat.professional_user)()

@@ -3,6 +3,7 @@ Custom serializer field types for Fight Health Insurance.
 
 Provides reusable field types for common patterns in the API.
 """
+
 from rest_framework import serializers
 
 from fighthealthinsurance.models import DenialTypes

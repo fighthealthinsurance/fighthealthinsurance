@@ -642,13 +642,13 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
         appeals = Appeal.filter_to_allowed_appeals(current_user)
         # Optimize queries to avoid N+1: prefetch related objects used in serializer
         appeals = appeals.select_related(
-            'for_denial',
-            'primary_professional',
-            'creating_professional',
-            'patient_user',
-            'chat',
+            "for_denial",
+            "primary_professional",
+            "creating_professional",
+            "patient_user",
+            "chat",
         ).prefetch_related(
-            'for_denial__denial_type',
+            "for_denial__denial_type",
         )
         # Parse the filters
         input_serializer = self.deserialize(data=request.data)

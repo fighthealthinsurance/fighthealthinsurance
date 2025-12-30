@@ -4,6 +4,7 @@ Context management utilities for LLM chat operations.
 Handles history truncation, summarization, and context accumulation
 to keep chat sessions manageable within LLM context limits.
 """
+
 from typing import Dict, List, Optional, Tuple
 
 from loguru import logger
@@ -68,9 +69,7 @@ async def prepare_history_for_llm(
 
     # Truncate to last N messages for the LLM
     truncated_history = history_for_llm[-DEFAULT_MESSAGES_TO_KEEP:]
-    logger.debug(
-        f"Truncated history to last {DEFAULT_MESSAGES_TO_KEEP} messages"
-    )
+    logger.debug(f"Truncated history to last {DEFAULT_MESSAGES_TO_KEEP} messages")
 
     return truncated_history, full_history_for_llm, summarized_context
 

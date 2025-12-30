@@ -16,11 +16,15 @@ MEDICAID_INFO_REGEX = r"(?:\*\*)?medicaid_info\s*(\{[^}]*\})\s*(?:\*\*)?"
 
 # Medicaid eligibility tool - captures JSON parameters
 # Matches: medicaid_eligibility {JSON} or **medicaid_eligibility {JSON}**
-MEDICAID_ELIGIBILITY_REGEX = r".*?(?:\*\*)?medicaid_eligibility\s*(\{[^}]*\})\s*(?:\*\*)?"
+MEDICAID_ELIGIBILITY_REGEX = (
+    r".*?(?:\*\*)?medicaid_eligibility\s*(\{[^}]*\})\s*(?:\*\*)?"
+)
 
 # Create or update appeal tool - captures JSON with appeal data
 # Matches: create_or_update_appeal {JSON} with optional ** markers
-CREATE_OR_UPDATE_APPEAL_REGEX = r"^\s*\*{0,4}create_or_update_appeal\*{0,4}\s*(\{.*\})\s*$"
+CREATE_OR_UPDATE_APPEAL_REGEX = (
+    r"^\s*\*{0,4}create_or_update_appeal\*{0,4}\s*(\{.*\})\s*$"
+)
 
 # Create or update prior auth tool - captures JSON with prior auth data
 # Matches: create_or_update_prior_auth {JSON} with optional ** markers

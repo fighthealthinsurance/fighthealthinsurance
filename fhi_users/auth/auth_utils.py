@@ -64,22 +64,22 @@ def validate_username(username: str) -> bool:
     return "🐼" not in username
 
 
-def validate_password(password: str, user=None) -> bool:
+def validate_password(password: str) -> bool:
     """
-    Validate password using Django's built-in password validators.
+    Validate password meets basic requirements.
 
-    Returns True if the password passes all validators, False otherwise.
-    This provides stronger security than basic length/digit checks by also
-    checking against common passwords and user attribute similarity.
+    Returns True if the password is valid, False otherwise.
     """
-    from django.contrib.auth.password_validation import validate_password as django_validate
-    from django.core.exceptions import ValidationError as DjangoValidationError
-
-    try:
-        django_validate(password, user=user)
-        return True
-    except DjangoValidationError:
+    # Check if password is at least 8 characters long
+    if len(password) < 8:
         return False
+    # Check if password contains at least one digit
+    if not any(char.isdigit() for char in password):
+        return False
+    # Check if password is not entirely composed of digits
+    if password.isdigit():
+        return False
+    return True
 
 
 def is_valid_domain(domain_name: str) -> bool:
@@ -287,28 +287,47 @@ def generic_validate_phone_number(value: str) -> str:
 
 def _get_allowed_redirect_domains() -> frozenset:
     """
-    Get allowed redirect domains from settings or use defaults.
+    Get allowed redirect domains from settings, ALLOWED_HOSTS, and defaults.
     This is a function to allow settings to override at runtime.
     """
     from django.conf import settings
 
-    # Check if custom domains are configured in settings
-    if hasattr(settings, "ALLOWED_REDIRECT_DOMAINS"):
-        return frozenset(settings.ALLOWED_REDIRECT_DOMAINS)
+    domains = set()
 
-    # Default allowed domains
-    return frozenset([
-        # Production
-        "fighthealthinsurance.com",
-        "www.fighthealthinsurance.com",
-        "api.fighthealthinsurance.com",
-        "fightpaperwork.com",
-        "www.fightpaperwork.com",
-        "api.fightpaperwork.com",
-        # Development
-        "localhost",
-        "127.0.0.1",
+    # Check if custom domains are configured in settings
+    custom_domains = getattr(settings, "ALLOWED_REDIRECT_DOMAINS", None)
+    has_custom_config = custom_domains is not None
+    if custom_domains:
+        domains.update(custom_domains)
+
+    # Pull from ALLOWED_HOSTS (excluding wildcards)
+    allowed_hosts = getattr(settings, "ALLOWED_HOSTS", [])
+    for host in allowed_hosts:
+        if host and host != "*" and not host.startswith("."):
+            domains.add(host)
+
+    # Add Stripe domains for payment redirects (always needed)
+    domains.update([
+        "checkout.stripe.com",
+        "billing.stripe.com",
     ])
+
+    # Add default domains if ALLOWED_REDIRECT_DOMAINS is not explicitly configured
+    if not has_custom_config:
+        domains.update([
+            # Production
+            "fighthealthinsurance.com",
+            "www.fighthealthinsurance.com",
+            "api.fighthealthinsurance.com",
+            "fightpaperwork.com",
+            "www.fightpaperwork.com",
+            "api.fightpaperwork.com",
+            # Development
+            "localhost",
+            "127.0.0.1",
+        ])
+
+    return frozenset(domains)
 
 
 def _sanitize_url_for_logging(url: str, max_length: int = 100) -> str:

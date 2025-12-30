@@ -3,6 +3,7 @@ Stripe webhook handling helpers for Fight Health Insurance.
 
 Provides utilities for processing Stripe payment webhooks.
 """
+
 from typing import Any, Optional
 from urllib.parse import urlencode
 

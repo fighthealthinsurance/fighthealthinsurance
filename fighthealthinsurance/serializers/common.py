@@ -4,6 +4,7 @@ Common serializers for Fight Health Insurance REST API.
 Provides status, error, success, and statistics serializers
 used across multiple endpoints.
 """
+
 from rest_framework import serializers
 
 from fighthealthinsurance.serializers.fields import (

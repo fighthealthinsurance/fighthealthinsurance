@@ -1062,14 +1062,8 @@ section:not(.slider) .share-subcopy {
     }
 }
 
-/* Alert/Info Box Styles - Extracted from inline styles */
-.alert-box {
-    padding: 1rem;
-    border-radius: 4px;
-    margin-bottom: 1rem;
-    border-left: 4px solid;
-}
-.alert-box p { margin: 0; }
+/* Alert/Info Box Variant Styles - Extracted from inline styles */
+/* Note: Base .alert-box is defined at top of file */
 .alert-box-success {
     background: #e8f5e9;
     border-left-color: #a5c422;

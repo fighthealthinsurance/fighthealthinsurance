@@ -46,10 +46,10 @@ class TestValidatePassword(TestCase):
         self.assertFalse(validate_password("12345678"))
         self.assertFalse(validate_password("9876543210"))
 
-    def test_common_password(self):
-        """Common passwords should fail."""
+    def test_no_digit_password(self):
+        """Passwords without digits should fail."""
         self.assertFalse(validate_password("password"))
-        self.assertFalse(validate_password("password123"))
+        self.assertFalse(validate_password("NoDigitsHere"))
 
 
 class TestNormalizePhoneNumber(TestCase):

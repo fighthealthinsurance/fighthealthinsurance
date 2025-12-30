@@ -986,10 +986,12 @@ class ChatInterface:
 
         # Prepare history for LLM using the context manager
         # This handles truncation, summarization, and full history preservation
-        history_for_llm, full_history_for_llm, summarized_context = await prepare_history_for_llm(
-            chat_history=chat.chat_history,
-            existing_summary=current_llm_context,
-            summarize_callback=self.send_status_message,
+        history_for_llm, full_history_for_llm, summarized_context = (
+            await prepare_history_for_llm(
+                chat_history=chat.chat_history,
+                existing_summary=current_llm_context,
+                summarize_callback=self.send_status_message,
+            )
         )
 
         # Store the updated summary if it changed

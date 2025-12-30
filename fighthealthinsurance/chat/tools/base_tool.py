@@ -4,6 +4,7 @@ Base class for chat tool handlers.
 Tool handlers process specific "tool calls" that the LLM includes in responses.
 Each tool can detect its pattern in text, execute the tool action, and format results.
 """
+
 from abc import ABC, abstractmethod
 from typing import Optional, Tuple, Any, Callable, Awaitable
 import re
@@ -64,11 +65,7 @@ class BaseTool(ABC):
 
     @abstractmethod
     async def execute(
-        self,
-        match: re.Match[str],
-        response_text: str,
-        context: str,
-        **kwargs
+        self, match: re.Match[str], response_text: str, context: str, **kwargs
     ) -> Tuple[str, str]:
         """
         Execute the tool action.
@@ -85,10 +82,7 @@ class BaseTool(ABC):
         pass
 
     async def handle(
-        self,
-        response_text: str,
-        context: str,
-        **kwargs
+        self, response_text: str, context: str, **kwargs
     ) -> Tuple[str, str, bool]:
         """
         Detect and handle this tool if present in the response.
@@ -113,9 +107,7 @@ class BaseTool(ABC):
             return updated_response, updated_context, True
 
         except Exception as e:
-            logger.opt(exception=True).warning(
-                f"Error executing {self.name} tool: {e}"
-            )
+            logger.opt(exception=True).warning(f"Error executing {self.name} tool: {e}")
             await self.send_status_message(
                 f"Error processing {self.name} request. Continuing with original response."
             )

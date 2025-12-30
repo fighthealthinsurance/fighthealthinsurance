@@ -4,6 +4,7 @@ Prior authorization creation/update tool handler for the chat interface.
 Handles create_or_update_prior_auth tool calls from the LLM to create
 or update prior authorization records linked to the current chat.
 """
+
 import json
 import re
 from typing import Optional, Tuple, Callable, Awaitable, Any
@@ -56,7 +57,7 @@ class PriorAuthTool(BaseTool):
         response_text: str,
         context: str,
         chat: Any = None,
-        **kwargs
+        **kwargs,
     ) -> Tuple[str, str]:
         """
         Execute prior authorization creation/update.
@@ -72,9 +73,7 @@ class PriorAuthTool(BaseTool):
         """
         if not chat:
             logger.warning("PriorAuthTool called without chat object")
-            await self.send_error_message(
-                "Cannot create prior auth: no chat context"
-            )
+            await self.send_error_message("Cannot create prior auth: no chat context")
             return response_text, context
 
         json_data = match.group(1).strip()
@@ -121,9 +120,7 @@ class PriorAuthTool(BaseTool):
             raise
 
         except Exception as e:
-            logger.opt(exception=True).warning(
-                f"Error processing prior auth data: {e}"
-            )
+            logger.opt(exception=True).warning(f"Error processing prior auth data: {e}")
             await self.send_status_message(
                 f"Error processing prior auth data: {str(e)}"
             )
@@ -179,6 +176,4 @@ class PriorAuthTool(BaseTool):
             if hasattr(prior_auth, key):
                 setattr(prior_auth, key, value)
             else:
-                logger.warning(
-                    f"Key {key} not found in Prior Auth model. Skipping."
-                )
+                logger.warning(f"Key {key} not found in Prior Auth model. Skipping.")

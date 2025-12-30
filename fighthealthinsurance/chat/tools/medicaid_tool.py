@@ -4,6 +4,7 @@ Medicaid tool handlers for the chat interface.
 Handles medicaid_info and medicaid_eligibility tool calls from the LLM
 to look up Medicaid information and check eligibility.
 """
+
 import json
 import re
 from typing import Optional, Tuple, Callable, Awaitable, Any, List
@@ -80,7 +81,7 @@ class MedicaidInfoTool(BaseTool):
         depth: int = 0,
         is_logged_in: bool = False,
         is_professional: bool = False,
-        **kwargs
+        **kwargs,
     ) -> Tuple[str, str]:
         """
         Execute Medicaid info lookup and incorporate results.
@@ -150,14 +151,16 @@ class MedicaidInfoTool(BaseTool):
                             {"role": "agent", "content": response_text}
                         )
 
-                    additional_response, additional_context = await self.call_llm_callback(
-                        model_backends,
-                        medicaid_info_text,
-                        "",  # Empty previous context summary
-                        history_for_llm,
-                        depth=depth + 1,
-                        is_logged_in=is_logged_in,
-                        is_professional=is_professional,
+                    additional_response, additional_context = (
+                        await self.call_llm_callback(
+                            model_backends,
+                            medicaid_info_text,
+                            "",  # Empty previous context summary
+                            history_for_llm,
+                            depth=depth + 1,
+                            is_logged_in=is_logged_in,
+                            is_professional=is_professional,
+                        )
                     )
 
                     logger.debug(
@@ -183,7 +186,7 @@ class MedicaidInfoTool(BaseTool):
                 return (
                     "I couldn't find Medicaid information for the requested state. "
                     "Please check the state name and try again.",
-                    context
+                    context,
                 )
 
         except json.JSONDecodeError:
@@ -270,7 +273,7 @@ class MedicaidEligibilityTool(BaseTool):
         depth: int = 0,
         is_logged_in: bool = False,
         is_professional: bool = False,
-        **kwargs
+        **kwargs,
     ) -> Tuple[str, str]:
         """
         Execute Medicaid eligibility check and incorporate results.
@@ -359,9 +362,7 @@ class MedicaidEligibilityTool(BaseTool):
                     history_for_llm.append(
                         {"role": "user", "content": current_message_for_llm}
                     )
-                    history_for_llm.append(
-                        {"role": "agent", "content": response_text}
-                    )
+                    history_for_llm.append({"role": "agent", "content": response_text})
 
                 additional_response, additional_context = await self.call_llm_callback(
                     model_backends,
@@ -393,7 +394,7 @@ class MedicaidEligibilityTool(BaseTool):
             return (
                 "Something went wrong trying to figure out eligibility. "
                 "Please contact your state for more info.",
-                context
+                context,
             )
 
     def _build_eligibility_info(
@@ -424,7 +425,9 @@ class MedicaidEligibilityTool(BaseTool):
         )
 
         if len(missing) > 0:
-            info_text += f"To figure out if their eligible we have {missing} questions to ask."
+            info_text += (
+                f"To figure out if they're eligible we have {missing} questions to ask."
+            )
         else:
             if eligible_2025:
                 info_text += (
@@ -452,6 +455,8 @@ class MedicaidEligibilityTool(BaseTool):
                 info_text += "Our data suggests they may be eligible for medicare."
 
         if len(alternatives) > 0:
-            info_text += f"Some possible alternative suggestions to help are {alternatives}."
+            info_text += (
+                f"Some possible alternative suggestions to help are {alternatives}."
+            )
 
         return info_text

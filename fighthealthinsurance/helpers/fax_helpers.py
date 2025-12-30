@@ -3,6 +3,7 @@ Fax sending helpers for Fight Health Insurance.
 
 Provides utilities for staging and sending appeal faxes.
 """
+
 from dataclasses import dataclass
 from typing import Optional
 
@@ -129,7 +130,9 @@ class SendFaxHelper:
         f = FaxesToSend.objects.filter(hashed_email=hashed_email, uuid=uuid).get()
         f.destination = fax_phone
         f.should_send = True
-        f.sent = False  # Technically not necessary, but set in case the live actor fails
+        f.sent = (
+            False  # Technically not necessary, but set in case the live actor fails
+        )
         f.save()
         fax_actor_ref.get.do_send_fax.remote(hashed_email, uuid)
         return True

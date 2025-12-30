@@ -4,6 +4,7 @@ Safety filters for chat messages.
 Contains crisis/self-harm detection and false promise detection logic.
 Extracted from chat_interface.py for better organization and testability.
 """
+
 import re
 from typing import Pattern
 
