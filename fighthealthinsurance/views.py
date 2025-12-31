@@ -37,6 +37,8 @@ from PIL import Image
 
 from fighthealthinsurance import common_view_logic, forms as core_forms, models
 from fighthealthinsurance.chat_forms import UserConsentForm
+from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
+from fighthealthinsurance.helpers.stripe_helpers import StripeWebhookHelper
 from fighthealthinsurance.models import StripeRecoveryInfo
 
 
@@ -614,7 +616,7 @@ class RemoveDataView(View):
 
         if form.is_valid():
             email = form.cleaned_data["email"]
-            common_view_logic.RemoveDataHelper.remove_data_for_email(email)
+            RemoveDataHelper.remove_data_for_email(email)
             return render(
                 request,
                 "removed_data.html",
@@ -1507,7 +1509,7 @@ class StripeWebhookView(View):
             logger.error(f"Invalid signature: {e}")
             return HttpResponse(status=403)
 
-        common_view_logic.StripeWebhookHelper.handle_stripe_webhook(request, event)
+        StripeWebhookHelper.handle_stripe_webhook(request, event)
         return HttpResponse(status=200)
 
 
