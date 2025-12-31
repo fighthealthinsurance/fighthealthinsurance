@@ -603,6 +603,7 @@ class Prod(Base):
         "fightpaperwork.com",
         "www.fightpaperwork.com",
         "api.fightpaperwork.com",
+        "staging.fighthealthinsurance.com",
     ]
 
     # HSTS - tell browsers to always use HTTPS
