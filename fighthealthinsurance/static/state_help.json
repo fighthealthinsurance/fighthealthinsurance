@@ -790,7 +790,7 @@
       "cap_url": "https://insurance.ky.gov/ppc/new_default.aspx",
       "cap_phone": "800-595-6053",
       "ship_name": "Kentucky State Health Insurance Assistance Program (SHIP)",
-      "ship_url": "https://chfs.ky.gov/agencies/dail/Pages/kyship.aspx",
+      "ship_url": "https://chfs.ky.gov/agencies/dail/Pages/ship.aspx",
       "ship_phone": "877-293-7447"
     },
     "medicaid": {
@@ -1954,7 +1954,7 @@
       "cap_url": "https://vtlawhelp.org/health",
       "cap_phone": "800-917-7787",
       "ship_name": "Vermont State Health Insurance Assistance Program (SHIP)",
-      "ship_url": "https://asd.vermont.gov/services/vermont-ship",
+      "ship_url": "https://asd.vermont.gov/services/ship",
       "ship_phone": "800-642-5119"
     },
     "medicaid": {

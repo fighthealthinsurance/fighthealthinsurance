@@ -847,3 +847,78 @@ class MedicareChatIntegrationTest(TestCase):
             blog_url, "Medicare microsite blog_post_url should not be None"
         )
         self.assertIn("blog", blog_url, "blog_post_url should contain 'blog'")
+
+
+class MicrositeDirectoryViewTest(TestCase):
+    """Tests for the microsite directory view."""
+
+    def setUp(self):
+        self.client = Client()
+
+    def test_microsite_directory_page_loads(self):
+        """Test that the microsite directory page loads successfully."""
+        response = self.client.get(reverse("microsite_directory"))
+        self.assertEqual(response.status_code, 200)
+
+    def test_microsite_directory_uses_correct_template(self):
+        """Test that the directory uses the correct template."""
+        response = self.client.get(reverse("microsite_directory"))
+        self.assertTemplateUsed(response, "microsite_directory.html")
+
+    def test_microsite_directory_has_title(self):
+        """Test that the page has the correct title."""
+        response = self.client.get(reverse("microsite_directory"))
+        self.assertContains(response, "Treatment & Drug Resources")
+
+    def test_microsite_directory_lists_microsites(self):
+        """Test that the directory page lists microsites."""
+        response = self.client.get(reverse("microsite_directory"))
+        # Should contain links to individual microsite pages
+        self.assertContains(response, "/microsite/")
+
+    def test_microsite_directory_has_cta_buttons(self):
+        """Test that the directory has call-to-action buttons."""
+        response = self.client.get(reverse("microsite_directory"))
+        # Should have "Start Your Appeal" button
+        self.assertContains(response, "Start Your Appeal")
+        # Should have "Chat with AI" button
+        self.assertContains(response, "Chat with AI")
+
+    def test_microsite_directory_has_fallback_message(self):
+        """Test that the directory has fallback message for treatments not listed."""
+        response = self.client.get(reverse("microsite_directory"))
+        self.assertContains(response, "Don't see your treatment?")
+
+    def test_microsite_directory_context_has_microsites(self):
+        """Test that context includes microsites."""
+        response = self.client.get(reverse("microsite_directory"))
+        self.assertIn("microsites", response.context)
+        self.assertIsInstance(response.context["microsites"], list)
+
+    def test_microsite_directory_microsites_sorted_by_title(self):
+        """Test that microsites are sorted alphabetically by title."""
+        response = self.client.get(reverse("microsite_directory"))
+        microsites = response.context["microsites"]
+        if len(microsites) > 1:
+            titles = [m.title for m in microsites]
+            self.assertEqual(titles, sorted(titles))
+
+    def test_microsite_directory_links_work(self):
+        """Test that microsite links from directory work."""
+        # Get the directory page
+        response = self.client.get(reverse("microsite_directory"))
+        self.assertEqual(response.status_code, 200)
+
+        # Get microsites from context and verify at least one link works
+        microsites = response.context["microsites"]
+        if microsites:
+            first_microsite = microsites[0]
+            microsite_url = reverse("microsite", kwargs={"slug": first_microsite.slug})
+            microsite_response = self.client.get(microsite_url)
+            self.assertEqual(microsite_response.status_code, 200)
+
+    def test_microsite_directory_in_sitemap(self):
+        """Test that the microsite directory is included in the sitemap."""
+        response = self.client.get("/sitemap.xml")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "/treatments/")
