@@ -48,9 +48,9 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
             await self.close()
             return
         logger.debug("Starting generation of appeals...")
-        aitr: AsyncIterator[
-            str
-        ] = common_view_logic.AppealsBackendHelper.generate_appeals(data)
+        aitr: AsyncIterator[str] = (
+            common_view_logic.AppealsBackendHelper.generate_appeals(data)
+        )
         # We do a try/except here to log since the WS framework swallow exceptions sometimes
         try:
             await asyncio.sleep(1)
