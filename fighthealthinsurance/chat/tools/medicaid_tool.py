@@ -313,7 +313,9 @@ class MedicaidEligibilityTool(BaseTool):
             loaded = json.loads(json_data)
             logger.debug(f"Parsed JSON data: {loaded}")
         except json.JSONDecodeError as e:
-            logger.warning(f"Invalid JSON in medicaid_eligibility token: {json_data} - {e}")
+            logger.warning(
+                f"Invalid JSON in medicaid_eligibility token: {json_data} - {e}"
+            )
             await self.send_status_message(
                 "Error processing Medicaid eligibility data: Invalid JSON format."
             )
