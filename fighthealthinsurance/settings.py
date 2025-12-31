@@ -56,6 +56,15 @@ class Base(Configuration):
             "rest_framework.authentication.SessionAuthentication",
         ],
         "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+        # Rate limiting to prevent abuse (adjust as needed based on usage patterns)
+        "DEFAULT_THROTTLE_CLASSES": [
+            "rest_framework.throttling.AnonRateThrottle",
+            "rest_framework.throttling.UserRateThrottle",
+        ],
+        "DEFAULT_THROTTLE_RATES": {
+            "anon": "100/hour",  # Unauthenticated users
+            "user": "1000/hour",  # Authenticated users
+        },
     }
 
     FIGHT_PAPERWORK_DOMAIN = "localhost:3000"
@@ -105,13 +114,8 @@ class Base(Configuration):
 
     SITE_ID = 1
 
-    TEMPLATE_CONTEXT_PROCESSORS = [
-        "django.template.context_processors.request",
-        "django.template.context_processors.debug",
-        "django.contrib.auth.context_processors.auth",
-        "django.contrib.messages.context_processors.messages",
-        "django.template.context_processors.request",
-    ]
+    # Note: TEMPLATE_CONTEXT_PROCESSORS is legacy - actual context processors
+    # are defined in TEMPLATES['OPTIONS']['context_processors'] below
 
     SESSION_COOKIE_DOMAIN_DYNAMIC = [
         ".fightpaperwork.com",
@@ -234,8 +238,6 @@ class Base(Configuration):
         "mfa.recovery.Hash",
     ]
 
-    CSRF_COOKIE_HTTPONLY = False
-
     # Password validation
     # https://docs.djangoproject.com/en/4.0/ref/settings/#auth-password-validators
 
@@ -245,18 +247,15 @@ class Base(Configuration):
         },
         {
             "NAME": "django.contrib.auth.password_validation.MinimumLengthValidator",
+            "OPTIONS": {
+                "min_length": 8,
+            },
         },
         {
             "NAME": "django.contrib.auth.password_validation.CommonPasswordValidator",
         },
         {
             "NAME": "django.contrib.auth.password_validation.NumericPasswordValidator",
-        },
-        {
-            "NAME": "django.contrib.auth.password_validation.MinimumLengthValidator",
-            "OPTIONS": {
-                "min_length": 9,
-            },
         },
     ]
 
@@ -308,11 +307,6 @@ class Base(Configuration):
 
     MEDIA_URL = "media/"
     MEDIA_ROOT = os.path.join(BASE_DIR, "media")
-
-    # Default primary key field type
-    # https://docs.djangoproject.com/en/4.0/ref/settings/#default-auto-field
-
-    DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
     # Default primary key field type
     # https://docs.djangoproject.com/en/4.0/ref/settings/#default-auto-field
@@ -379,10 +373,8 @@ class Base(Configuration):
 
     @property
     def STRIPE_API_PUBLISHABLE_KEY(self):
-        return os.getenv(
-            "STRIPE_TEST_PUBLISHABLE_KEY",
-            "pk_test_51MXFu6FI0Ls3lz8tKOwolhL765Pc6WUkeZGTrOqri8ibbWJzRwLqJGRmyY8r6he09aMmGsULImRfIbErgjxvEVTO00vgERwX4P",
-        )
+        # Note: No default - use STRIPE_TEST_PUBLISHABLE_KEY env var
+        return os.getenv("STRIPE_TEST_PUBLISHABLE_KEY", "")
 
     @cached_property
     def EXTERNAL_STORAGE(self) -> Optional[Storage]:
@@ -514,6 +506,8 @@ class Test(Dev):
     CSRF_COOKIE_SAMESITE = "Lax"
 
     DEBUG = True
+    # Set TESTING env var for SessionRequiredMixin and other test-aware code
+    os.environ["TESTING"] = "True"
     DEFF_SALT = os.getenv("DEFF_SALT", "test-salt")
     DEFF_PASSWORD = os.getenv("DEFF_PASSWORD", "test-password")
     # For async tests we do in memory for increased isolation
@@ -536,6 +530,8 @@ class Test(Dev):
 
 class TestSync(Dev):
     DEBUG = True
+    # Set TESTING env var for SessionRequiredMixin and other test-aware code
+    os.environ["TESTING"] = "True"
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.sqlite3",
@@ -553,6 +549,8 @@ class TestSync(Dev):
 
 class TestActor(Dev):
     DEBUG = True
+    # Set TESTING env var for SessionRequiredMixin and other test-aware code
+    os.environ["TESTING"] = "True"
     # We _may_ use "real" files for actor tests since we have seperate processes for actors.
     dt = str(int(time.time()))
     dbname = os.getenv("DBNAME", f"{BASE_DIR}/test2{dt}.db.sqlite3")
@@ -596,6 +594,29 @@ class Prod(Base):
     SESSION_COOKIE_DOMAIN_DYNAMIC = [".fightpaperwork.com"]
 
     DEBUG = False
+
+    # Production security settings
+    ALLOWED_HOSTS = [
+        "fighthealthinsurance.com",
+        "www.fighthealthinsurance.com",
+        "api.fighthealthinsurance.com",
+        "fightpaperwork.com",
+        "www.fightpaperwork.com",
+        "api.fightpaperwork.com",
+    ]
+
+    # HSTS - tell browsers to always use HTTPS
+    SECURE_HSTS_SECONDS = 31536000  # 1 year
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+
+    # Additional security headers
+    SECURE_CONTENT_TYPE_NOSNIFF = True  # Prevent MIME type sniffing
+    X_FRAME_OPTIONS = "DENY"  # Prevent clickjacking
+    SECURE_REFERRER_POLICY = "strict-origin-when-cross-origin"
+
+    # Note: Content-Security-Policy (CSP) should be added via django-csp
+    # after careful analysis of inline scripts and external resources used
 
     # Different fido server for production
     FIDO_SERVER_ID = "fighthealthinsurance.com"  # Server rp id for FIDO2, it is the full domain of your project

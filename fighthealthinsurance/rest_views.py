@@ -30,6 +30,8 @@ from stopit import ThreadingTimeout as Timeout
 from fhi_users.auth import auth_utils
 from fhi_users.models import PatientUser, ProfessionalUser, UserDomain
 from fighthealthinsurance import common_view_logic, rest_serializers as serializers
+from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
+from fighthealthinsurance.helpers.fax_helpers import SendFaxHelper
 from fighthealthinsurance.ml.health_status import health_status
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.models import (
@@ -194,7 +196,7 @@ class DataRemovalViewSet(viewsets.ViewSet, DeleteMixin, DeleteOnlyMixin):
     )
     def perform_delete(self, request: Request, serializer):
         email: str = serializer.validated_data["email"]
-        common_view_logic.RemoveDataHelper.remove_data_for_email(email)
+        RemoveDataHelper.remove_data_for_email(email)
         return Response(
             serializers.SuccessSerializer(
                 {"message": "Data deleted successfully"}
@@ -214,10 +216,12 @@ class HealthHistoryViewSet(viewsets.ViewSet, CreateMixin):
 
     @extend_schema(responses=serializers.StatusResponseSerializer)
     def create(self, request: Request) -> Response:
+        """Create or update health history for a denial."""
         return super().create(request)
 
     @extend_schema(responses=serializers.StatusResponseSerializer)
     def perform_create(self, request: Request, serializer) -> Response:
+        """Update the denial record with provided health history context."""
         logger.debug(f"Updating denial with {serializer.validated_data}")
         common_view_logic.DenialCreatorHelper.update_denial(
             **serializer.validated_data,
@@ -247,9 +251,11 @@ class NextStepsViewSet(viewsets.ViewSet, CreateMixin):
         }
     )
     def create(self, request: Request) -> Response:
+        """Analyze denial data and return recommended next steps."""
         return super().create(request)
 
     def perform_create(self, request: Request, serializer) -> Response:
+        """Process denial info and return appeal options and regulatory guidance."""
         next_step_info = common_view_logic.FindNextStepsHelper.find_next_steps(
             **serializer.validated_data
         )
@@ -285,11 +291,13 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
 
     @extend_schema(responses=serializers.DenialResponseInfoSerializer)
     def create(self, request: Request) -> Response:
+        """Create a new denial record or update an existing one."""
         logger.debug("Routing create through parent...")
         return super().create(request)
 
     @extend_schema(responses=serializers.DenialResponseInfoSerializer)
     def retrieve(self, request: Request, pk: int) -> Response:
+        """Retrieve detailed information about a specific denial."""
         current_user: User = request.user  # type: ignore
         denial = get_object_or_404(
             Denial.filter_to_allowed_denials(current_user), pk=pk
@@ -304,6 +312,7 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
 
     @extend_schema(responses=serializers.DenialResponseInfoSerializer)
     def perform_create(self, request: Request, serializer) -> Response:
+        """Process denial creation with professional associations and subscriptions."""
         current_user: User = request.user  # type: ignore
         creating_professional = ProfessionalUser.objects.get(user=current_user)
         serializer = self.deserialize(data=request.data)
@@ -452,32 +461,42 @@ class QAResponseViewSet(viewsets.ViewSet, CreateMixin):
 
     @extend_schema(responses=serializers.StatusResponseSerializer)
     def create(self, request: Request) -> Response:
+        """Store Q&A responses for a denial."""
         return super().create(request)
 
     @extend_schema(responses=serializers.StatusResponseSerializer)
     def perform_create(self, request: Request, serializer) -> Response:
+        """Bulk save Q&A responses and update denial context."""
         user: User = request.user  # type: ignore
         denial = Denial.filter_to_allowed_denials(user).get(
             denial_id=serializer.validated_data["denial_id"]
         )
+        # Fetch all existing DenialQA objects for this denial in a single query (N+1 fix)
+        existing_qa = {
+            dqa.question: dqa for dqa in DenialQA.objects.filter(denial=denial)
+        }
+        to_update = []
+        to_create = []
         for key, value in serializer.validated_data["qa"].items():
             if not key or not value or len(value) == 0:
                 continue
-            try:
-                dqa = DenialQA.objects.filter(denial=denial).get(question=key)
+            if key in existing_qa:
+                dqa = existing_qa[key]
                 dqa.text_answer = value
-                dqa.save()
-            except DenialQA.DoesNotExist:
-                DenialQA.objects.create(
-                    denial=denial,
-                    question=key,
-                    text_answer=value,
+                to_update.append(dqa)
+            else:
+                to_create.append(
+                    DenialQA(denial=denial, question=key, text_answer=value)
                 )
-        qa_context = {}
-        for key, value in DenialQA.objects.filter(denial=denial).values_list(
-            "question", "text_answer"
-        ):
-            qa_context[key] = value
+        # Bulk update and create to minimize database round-trips
+        if to_update:
+            DenialQA.objects.bulk_update(to_update, ["text_answer"])
+        if to_create:
+            DenialQA.objects.bulk_create(to_create)
+        # Rebuild qa_context: existing_qa.values() contains in-place modified objects,
+        # plus we add newly created objects from to_create
+        qa_context = {dqa.question: dqa.text_answer for dqa in existing_qa.values()}
+        qa_context.update({dqa.question: dqa.text_answer for dqa in to_create})
         denial.qa_context = json.dumps(qa_context)
         denial.save()
         return Response(status=status.HTTP_204_NO_CONTENT)
@@ -495,10 +514,12 @@ class FollowUpViewSet(viewsets.ViewSet, CreateMixin):
 
     @extend_schema(responses=serializers.StatusResponseSerializer)
     def create(self, request: Request) -> Response:
+        """Record follow-up outcome for an appeal."""
         return super().create(request)
 
     @extend_schema(responses=serializers.StatusResponseSerializer)
     def perform_create(self, request: Request, serializer) -> Response:
+        """Store the user-reported appeal result for tracking."""
         common_view_logic.FollowUpHelper.store_follow_up_result(
             **serializer.validated_data
         )
@@ -618,9 +639,19 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
 
     @extend_schema(responses=serializers.AppealSummarySerializer)
     def list(self, request: Request) -> Response:
-        # Lets figure out what appeals they _should_ see
+        """List all appeals accessible to the current user with optimized queries."""
         current_user: User = request.user  # type: ignore
         appeals = Appeal.filter_to_allowed_appeals(current_user)
+        # Optimize queries to avoid N+1: prefetch related objects used in serializer
+        appeals = appeals.select_related(
+            "for_denial",
+            "primary_professional",
+            "creating_professional",
+            "patient_user",
+            "chat",
+        ).prefetch_related(
+            "for_denial__denial_type",
+        )
         # Parse the filters
         input_serializer = self.deserialize(data=request.data)
         # TODO: Handle the filters
@@ -629,6 +660,7 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
 
     @extend_schema(responses=serializers.AppealDetailSerializer)
     def retrieve(self, request: Request, pk: int) -> Response:
+        """Retrieve detailed information for a specific appeal."""
         current_user: User = request.user  # type: ignore
         appeal = get_object_or_404(
             Appeal.filter_to_allowed_appeals(current_user), pk=pk
@@ -752,10 +784,10 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
             appeal.pending_professional = False
             appeal.pending = False
             appeal.save()
-            staged = common_view_logic.SendFaxHelper.stage_appeal_as_fax(
+            staged = SendFaxHelper.stage_appeal_as_fax(
                 appeal, email=current_user.email, professional=True
             )
-            common_view_logic.SendFaxHelper.remote_send_fax(
+            SendFaxHelper.remote_send_fax(
                 uuid=staged.uuid, hashed_email=staged.hashed_email
             )
         return Response(status=status.HTTP_204_NO_CONTENT)
@@ -1127,10 +1159,12 @@ class MailingListSubscriberViewSet(viewsets.ViewSet, CreateMixin, DeleteMixin):
 
     @extend_schema(responses=serializers.StatusResponseSerializer)
     def create(self, request: Request) -> Response:
+        """Subscribe an email to the mailing list."""
         return super().create(request)
 
     @extend_schema(responses=serializers.StatusResponseSerializer)
     def perform_create(self, request: Request, serializer) -> Response:
+        """Save the new mailing list subscription."""
         serializer.save()
         return Response(
             serializers.StatusResponseSerializer({"status": "subscribed"}).data,
@@ -1139,6 +1173,7 @@ class MailingListSubscriberViewSet(viewsets.ViewSet, CreateMixin, DeleteMixin):
 
     @extend_schema(responses=serializers.StatusResponseSerializer)
     def perform_delete(self, request: Request, serializer):
+        """Remove an email from the mailing list."""
         email = serializer.validated_data["email"]
         MailingListSubscriber.objects.filter(email=email).delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
@@ -1156,10 +1191,12 @@ class DemoRequestsViewSet(viewsets.ViewSet, CreateMixin, DeleteMixin):
 
     @extend_schema(responses=serializers.StatusResponseSerializer)
     def create(self, request: Request) -> Response:
+        """Submit a new demo request."""
         return super().create(request)
 
     @extend_schema(responses=serializers.StatusResponseSerializer)
     def perform_create(self, request: Request, serializer) -> Response:
+        """Save the demo request."""
         serializer.save()
         return Response(
             serializers.StatusResponseSerializer({"status": "subscribed"}).data,

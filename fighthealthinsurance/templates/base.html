@@ -45,26 +45,6 @@
     <link rel="shortcut icon" href="{% static 'images/favicon-optimized.ico' %}" type="image/x-icon">
     <link rel="icon" href="{% static 'images/favicon-32.png' %}" sizes="32x32" type="image/png">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/github-fork-ribbon-css/0.2.3/gh-fork-ribbon.min.css" />
-    <style>
-      .betaribbon {
-	  font-size: 28px;
-	  font-weight: bold;
-	  color: #fff;
-      }
-      .betaribbon {
-	  --f: .5em; /* control the folded part*/
-	  --r: .8em; /* control the ribbon shape */
-
-	  position: absolute;
-	  left: 20px;
-	  top: calc(-1*var(--f));
-	  padding: .2em;
-	  background: #BF4D28;
-	  border-left: var(--f) solid #0005;
-	  border-bottom: var(--r) solid #0000;
-	  clipPath: polygon(var(--f) 0,100% 0,100% 100%,calc(50% + var(--f)/2) calc(100% - var(--r)), var(--f) 100%,var(--f) var(--f),0 var(--f));
-      }
-    </style>
     {% block extra_style %}
     {% endblock extra_style %}
     <!-- SCRIPTS - Load critical scripts only in head, defer others -->
@@ -84,18 +64,35 @@
 
       gtag('config', 'G-JQNGR0JGVN');
     </script>
-    <style>
-      #loading-spinner {
-	  display: none;
-	  position: fixed;
-	  top: 50%;
-	  left: 50%;
-	  transform: translate(-50%, -50%);
-      }
-    </style>
+    <!-- Microsoft UET tag -->
+    <script>(function(w,d,t,r,u){var f,n,i;w[u]=w[u]||[],f=function(){var o={ti:"187227448", enableAutoSpaTracking: true};o.q=w[u],w[u]=new UET(o),w[u].push("pageLoad")},n=d.createElement(t),n.src=r,n.async=1,n.onload=n.onreadystatechange=function(){var s=this.readyState;s&&s!=="loaded"&&s!=="complete"||(f(),n.onload=n.onreadystatechange=null)},i=d.getElementsByTagName(t)[0],i.parentNode.insertBefore(n,i)})(window,document,"script","//bat.bing.com/bat.js","uetq");</script>
+    <!-- UET conversion tracking helper -->
+    <script>
+      window.trackUETConversion = function(eventName, eventData) {
+        window.uetq = window.uetq || [];
+        window.uetq.push('event', eventName, eventData || {});
+      };
+
+      // Track all Stripe donation links site-wide
+      document.addEventListener('DOMContentLoaded', function() {
+        document.querySelectorAll('a[href*="buy.stripe.com"]').forEach(function(link) {
+          link.addEventListener('click', function() {
+            if (window.trackUETConversion) {
+              window.trackUETConversion('donation_initiated', {
+                event_category: 'donation',
+                event_label: 'Support Link',
+                event_action: 'begin_checkout'
+              });
+            }
+          });
+        });
+      });
+    </script>
 </head>
 
 <body id="top" data-spy="scroll" data-target=".navbar-collapse" data-offset="50">
+  <!-- Skip link for keyboard navigation (accessibility) -->
+  <a href="#main-content" class="skip-link">Skip to main content</a>
   <a class="github-fork-ribbon" href="https://github.com/orgs/fighthealthinsurance/repositories" data-ribbon="Fork me on GH" title="Fork me on GH">Contribute on GitHub</a>
 <!--  <div class="betaribbon"><a href="https://inc42.com/glossary/alpha-release-beta-release/#:~:text=An%20alpha%20release%20is%20an,caught%20during%20the%20previous%20tests.">Alpha</a> <a href="{% url 'contact' %}">Feedback welcome</a></div>-->
     <!-- PRE LOADER -->
@@ -160,10 +157,12 @@
     {% endblock pre-roll %}
 
     <!-- Actual content -->
+    <main id="main-content" role="main">
     {% block content %}
 
     {% endblock content %}
-    <!-- End of content block. Phew that was short -->
+    </main>
+    <!-- End of content block -->
 
     {% block foot-roll %}
     {% endblock foot-roll %}

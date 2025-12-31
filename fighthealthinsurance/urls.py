@@ -256,6 +256,20 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         name="denial-language-library",
     ),
     path(
+        "state-help/",
+        cache_control(public=True)(
+            cache_page(60 * 60 * 2)(views.StateHelpIndexView.as_view())
+        ),
+        name="state_help_index",
+    ),
+    path(
+        "state-help/<slug:slug>/",
+        cache_control(public=True)(
+            cache_page(60 * 60 * 2)(views.StateHelpView.as_view())
+        ),
+        name="state_help",
+    ),
+    path(
         "pro_version", csrf_exempt(views.ProVersionView.as_view()), name="pro_version"
     ),
     path(
@@ -369,6 +383,14 @@ urlpatterns += [
             cache_page(60 * 60 * 2)(views.MicrositeView.as_view())
         ),
         name="microsite",
+    ),
+    # Microsite directory - lists all microsites for organic crawlers
+    path(
+        "treatments/",
+        cache_control(public=True)(
+            cache_page(60 * 60 * 24)(views.MicrositeDirectoryView.as_view())
+        ),
+        name="microsite_directory",
     ),
     # Explain my Denial page
     path(

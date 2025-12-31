@@ -45,6 +45,7 @@ class StaticViewSitemap(Sitemap):
             "mhmda",
             "contact",
             "blog",
+            "microsite_directory",
         ]
 
     def location(self, item: str) -> str:
@@ -117,11 +118,39 @@ class BlogSitemap(Sitemap):
         return reverse("blog-post", kwargs={"slug": slug})
 
 
+class StateHelpSitemap(Sitemap):
+    """Sitemap for state help pages."""
+
+    priority = 0.6
+    changefreq = "monthly"
+
+    def items(self) -> list[str]:
+        """Return list of validated state help slugs."""
+        try:
+            # Use load_state_help() to get only validated entries
+            # This avoids 404s from invalid entries like "national" that lack required fields
+            from fighthealthinsurance.state_help import load_state_help
+
+            valid_states = load_state_help()
+            # Add the index page slug first
+            return ["index"] + list(valid_states.keys())
+        except Exception as e:
+            logger.warning(f"Could not load state help for sitemap: {e}")
+            return []
+
+    def location(self, item: str) -> str:
+        """Return the URL for a state help page."""
+        if item == "index":
+            return reverse("state_help_index")
+        return reverse("state_help", kwargs={"slug": item})
+
+
 # Dictionary mapping sitemap section names to sitemap classes
 sitemaps = {
     "static": StaticViewSitemap,
     "blog": BlogSitemap,
     "microsites": MicrositeSitemap,
+    "state_help": StateHelpSitemap,
 }
 
 

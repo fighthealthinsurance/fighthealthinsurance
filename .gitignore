@@ -169,3 +169,6 @@ node_modules/
 
 # Generated blog metadata
 fighthealthinsurance/static/blog_posts.json
+
+# Logs
+logs/

@@ -1,4 +1,3 @@
-import asyncio
 import json
 import os
 import random
@@ -10,7 +9,6 @@ from urllib.parse import urlencode
 from django import forms
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.contrib.auth.decorators import login_required
 from django.contrib.staticfiles.storage import staticfiles_storage
 from django.core.exceptions import SuspiciousOperation
 from django.http import (
@@ -23,10 +21,10 @@ from django.http import (
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template import loader
 from django.urls import reverse
-from django.views.decorators.clickjacking import xframe_options_exempt
-from django.utils.decorators import method_decorator
 from django.utils.safestring import mark_safe
 from django.views import View, generic
+from django.utils.decorators import method_decorator
+from django.views.decorators.clickjacking import xframe_options_exempt
 from django.views.decorators.csrf import csrf_exempt, ensure_csrf_cookie
 from django.views.decorators.http import require_http_methods
 from django.views.generic.base import TemplateView
@@ -39,6 +37,8 @@ from PIL import Image
 
 from fighthealthinsurance import common_view_logic, forms as core_forms, models
 from fighthealthinsurance.chat_forms import UserConsentForm
+from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
+from fighthealthinsurance.helpers.stripe_helpers import StripeWebhookHelper
 from fighthealthinsurance.models import StripeRecoveryInfo
 
 
@@ -616,7 +616,7 @@ class RemoveDataView(View):
 
         if form.is_valid():
             email = form.cleaned_data["email"]
-            common_view_logic.RemoveDataHelper.remove_data_for_email(email)
+            RemoveDataHelper.remove_data_for_email(email)
             return render(
                 request,
                 "removed_data.html",
@@ -950,7 +950,7 @@ class GenerateAppeal(View):
             denial.qa_context = json.dumps(qa_context)
             denial.save()
         except Exception as e:
-            logger.error(f"Error updating medical context: {e}")
+            logger.error(f"*********************Error updating medical context: {e}")
 
         del elems["csrfmiddlewaretoken"]
         return render(
@@ -1135,15 +1135,7 @@ class InitialProcessView(generic.FormView):
         if referral_source_details:
             cleaned_data["referral_source_details"] = referral_source_details
 
-        # Extract tracking info for analytics (privacy-aware)
-        from fhi_users.audit import extract_tracking_info
-
-        tracking_info = extract_tracking_info(
-            request=self.request, is_professional=False
-        )
-
         denial_response = common_view_logic.DenialCreatorHelper.create_or_update_denial(
-            tracking_info=tracking_info,
             **cleaned_data,
         )
 
@@ -1517,7 +1509,7 @@ class StripeWebhookView(View):
             logger.error(f"Invalid signature: {e}")
             return HttpResponse(status=403)
 
-        common_view_logic.StripeWebhookHelper.handle_stripe_webhook(request, event)
+        StripeWebhookHelper.handle_stripe_webhook(request, event)
         return HttpResponse(status=200)
 
 
@@ -1915,7 +1907,10 @@ class UnsubscribeView(View):
 
 @method_decorator(xframe_options_exempt, name="dispatch")
 class ChooserView(TemplateView):
-    """View for the Chooser (Best-Of Selection) interface."""
+    """View for the Chooser (Best-Of Selection) interface.
+
+    Allows embedding in iframes for integration with other platforms.
+    """
 
     template_name = "chooser.html"
 
@@ -1962,6 +1957,20 @@ class MicrositeView(TemplateView):
             context["microsite"] = microsite
             context["title"] = microsite.title
 
+        return context
+
+
+class MicrositeDirectoryView(TemplateView):
+    """View for the microsite directory page listing all treatment/drug-specific landing pages."""
+
+    template_name = "microsite_directory.html"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        from fighthealthinsurance.microsites import get_microsites_sorted_by_title
+
+        context["microsites"] = get_microsites_sorted_by_title()
+        context["title"] = "Treatment & Drug Resources"
         return context
 
 
@@ -2060,5 +2069,48 @@ class DenialLanguageLibraryView(TemplateView):
             context["denial_phrases"] = []
             context["total_phrases"] = 0
             context["title"] = "Denial Language Library"
+
+        return context
+
+
+class StateHelpIndexView(TemplateView):
+    """View for the state-by-state help index page."""
+
+    template_name = "state_help_index.html"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        from fighthealthinsurance.state_help import get_states_sorted_by_name
+
+        context["states"] = get_states_sorted_by_name()
+        context["title"] = "State-by-State Health Insurance Help"
+        return context
+
+
+class StateHelpView(TemplateView):
+    """View for individual state help pages."""
+
+    template_name = "state_help.html"
+
+    def get(self, request, slug, *args, **kwargs):
+        from fighthealthinsurance.state_help import get_state_help
+
+        # Cache state lookup to avoid duplicate call in get_context_data
+        self._state = get_state_help(slug)
+        if self._state is None:
+            from django.http import Http404
+
+            raise Http404(f"State help page '{slug}' not found")
+
+        return super().get(request, *args, **kwargs)
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+
+        # Use cached state from get() to avoid duplicate lookup
+        state = getattr(self, "_state", None)
+        if state:
+            context["state"] = state
+            context["title"] = f"{state.name} Health Insurance Help"
 
         return context

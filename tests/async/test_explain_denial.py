@@ -166,3 +166,17 @@ class TestExplainDenialView(TestCase):
         self.assertEqual(response.status_code, 200)
         # Denial text should be preserved in the context
         self.assertContains(response, denial_text)
+
+    def test_explain_denial_page_has_uploader(self):
+        """Test that the explain denial page has the file uploader element."""
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'id="uploader"')
+        self.assertContains(response, "Upload Denial Letter")
+        self.assertContains(response, 'type="file"')
+
+    def test_explain_denial_page_includes_ocr_script(self):
+        """Test that the OCR JavaScript bundle is loaded."""
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "explain_denial.bundle.js")

@@ -1,5 +1,10 @@
 const path = require('path');
 const glob = require('glob');
+const TerserPlugin = require('terser-webpack-plugin');
+const { BundleAnalyzerPlugin } = require('webpack-bundle-analyzer');
+
+// Check if bundle analysis is requested
+const shouldAnalyze = process.env.ANALYZE === 'true';
 
 // Dynamically find all .tsx and .ts files in static/js (excluding files like icons.tsx if desired)
 const jsDir = path.join(__dirname);
@@ -17,6 +22,9 @@ try {
   process.exit(1);
 }
 
+// Determine if we're in production mode
+const isProduction = process.env.NODE_ENV === 'production';
+
 module.exports = async (env, argv) => {
   // Load ESM-only plugins with dynamic import()
   const [{ default: remarkGfm }, { default: rehypeHighlight }] = await Promise.all([
@@ -25,12 +33,29 @@ module.exports = async (env, argv) => {
   ]);
   return {
   context: __dirname,
-  mode: process.env.NODE_ENV || 'development',
+  mode: isProduction ? 'production' : 'development',
   entry: entries,
   output: {
     path: path.resolve(__dirname, 'dist'),
     filename: '[name].bundle.js',
   },
+  // Production optimizations
+  optimization: isProduction ? {
+    minimize: true,
+    minimizer: [
+      new TerserPlugin({
+        terserOptions: {
+          compress: {
+            drop_console: false,  // Keep console.log for debugging production issues
+          },
+          format: {
+            comments: false,
+          },
+        },
+        extractComments: false,
+      }),
+    ],
+  } : {},
   resolve: {
     modules: [
       path.resolve(__dirname, 'node_modules'),
@@ -98,6 +123,15 @@ module.exports = async (env, argv) => {
       },
     ],
   },
+  // Generate source maps in both development and production (OSS project, helpful for debugging)
   devtool: 'source-map',
+  // Plugins - conditionally add bundle analyzer
+  plugins: shouldAnalyze ? [
+    new BundleAnalyzerPlugin({
+      analyzerMode: 'static',
+      reportFilename: 'bundle-report.html',
+      openAnalyzer: true,
+    }),
+  ] : [],
 };
 }

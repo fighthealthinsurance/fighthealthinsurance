@@ -53,7 +53,7 @@ Terms of Service & Setup - FightHealthInsurance Chat Assistant (Alpha)
               <input type="hidden" name="microsite_title" value="{{ microsite_title }}">
               {% endif %}
               {% if denial_text %}
-              <textarea name="denial_text" style="display:none;">{{ denial_text }}</textarea>
+              <textarea name="denial_text" class="d-none">{{ denial_text }}</textarea>
               {% endif %}
 
               {% include 'partials/user_consent_form_fields.html' %}

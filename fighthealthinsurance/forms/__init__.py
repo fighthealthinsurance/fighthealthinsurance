@@ -40,8 +40,7 @@ class InterestedProfessionalForm(forms.ModelForm):
         widget=forms.Textarea(
             attrs={
                 "placeholder": "ENTER YOUR COMMENTS HERE. WE WELCOME FEEDBACK!",
-                "style": "width: 50em; height: 5em; display: block",
-                "class": "comments",
+                "class": "comments form-textarea-wide",
             }
         ),
     )
@@ -52,8 +51,7 @@ class InterestedProfessionalForm(forms.ModelForm):
         widget=forms.Textarea(
             attrs={
                 "placeholder": "ENTER COMMON DENIALS HERE",
-                "style": "width: 50em; height: 3em; display: block",
-                "class": "most_common_denial",
+                "class": "most_common_denial form-textarea-medium",
             }
         ),
     )
@@ -243,7 +241,7 @@ class BasePostInferedForm(DenialRefForm):
         label="Your state",
         help_text="Two-letter state code (e.g., CA, NY, TX).",
         widget=forms.TextInput(
-            attrs={"placeholder": "CA", "maxlength": "2", "style": "width: 60px;"}
+            attrs={"placeholder": "CA", "maxlength": "2", "class": "form-input-state"}
         ),
     )
     procedure = forms.CharField(

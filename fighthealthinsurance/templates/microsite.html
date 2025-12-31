@@ -174,7 +174,7 @@
                             <h5 class="card-title mb-2">
                                 <a href="{{ program.url }}" target="_blank" rel="noopener noreferrer" class="assistance-link">
                                     {{ program.name }}
-                                    <i class="text-muted ms-1" style="font-size: 0.8em;">&#8599;</i>
+                                    <i class="text-muted ms-1 icon-external-sm">&#8599;</i>
                                 </a>
                             </h5>
                             <p class="card-text text-muted mb-0">{{ program.description }}</p>
@@ -380,26 +380,6 @@
         background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
     }
 
-    .btn-green {
-        background-color: #28a745;
-        border-color: #28a745;
-        color: white;
-    }
-
-    .btn-green:hover {
-        background-color: #218838;
-        border-color: #1e7e34;
-        color: white;
-    }
-
-    .btn-outline-green {
-        color: #28a745;
-        border-color: #28a745;
-    }
-
-    .btn-outline-green:hover {
-        background-color: #28a745;
-        color: white;
-    }
+    /* .btn-green and .btn-outline-green are defined in custom.css */
 </style>
 {% endblock extra_style %}

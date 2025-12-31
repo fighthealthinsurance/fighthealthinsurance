@@ -14,6 +14,7 @@ let retries = 0;
 let maxRetries = 4;
 let connectionStatus: 'connecting' | 'connected' | 'error' | 'done' = 'connecting';
 let currentMessageIndex = 0;
+let messageRotationInterval: ReturnType<typeof setInterval> | null = null;
 
 // Humorous progress messages
 const progressMessages = [
@@ -137,11 +138,27 @@ function showLoading(): void {
   }
   updateStatusIndicator('connecting', 0);
 
-  // Rotate messages every 8 seconds
-  setInterval(rotateStatusMessage, 8000);
+  // Rotate messages every 8 seconds with sub-1-second jitter (clear any existing interval first)
+  if (messageRotationInterval) {
+    clearInterval(messageRotationInterval);
+  }
+  const scheduleNextRotation = () => {
+    const jitter = Math.random() * 800; // 0-800ms jitter
+    messageRotationInterval = setTimeout(() => {
+      rotateStatusMessage();
+      scheduleNextRotation();
+    }, 8000 + jitter);
+  };
+  scheduleNextRotation();
 }
 
 function hideLoading(): void {
+  // Clear the message rotation timeout
+  if (messageRotationInterval) {
+    clearTimeout(messageRotationInterval);
+    messageRotationInterval = null;
+  }
+
   if (loadingSpinner && loadingText && loadingMore) {
     setTimeout(() => {
       loadingSpinner.style.display = "none";

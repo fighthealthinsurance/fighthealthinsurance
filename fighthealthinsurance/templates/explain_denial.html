@@ -7,6 +7,7 @@
 
 {% block scriptmagic %}
 <script src="{% static 'js/dist/user_info_storage.bundle.js' %}"></script>
+<script src="{% static 'js/dist/explain_denial.bundle.js' %}" type="module"></script>
 <script>
   document.addEventListener('DOMContentLoaded', function() {
     if (window.userInfoStorage) {
@@ -61,17 +62,33 @@
                         <form method="post" action="{% url 'explain_denial' %}" id="explain_denial_form">
                             {% csrf_token %}
                             
+                            <!-- Upload Denial Letter Section -->
+                            <div class="mb-4">
+                                <label for="uploader" class="form-label fw-bold">
+                                    Upload Denial Letter (Optional)
+                                </label>
+                                <input
+                                    type="file"
+                                    class="form-control"
+                                    id="uploader"
+                                    accept="image/*,.pdf"
+                                    multiple>
+                                <div class="form-text">
+                                    Upload an image or PDF of your denial letter. Our OCR will extract the text for you.
+                                </div>
+                            </div>
+
                             <!-- Denial Letter Section -->
                             <div class="mb-4">
                                 <label for="denial_text" class="form-label fw-bold">
                                     Your Denial Letter*
                                 </label>
-                                <textarea 
-                                    class="form-control" 
-                                    id="denial_text" 
-                                    name="denial_text" 
-                                    rows="8" 
-                                    placeholder="Paste your denial letter here. Include as much detail as possible..."
+                                <textarea
+                                    class="form-control"
+                                    id="denial_text"
+                                    name="denial_text"
+                                    rows="8"
+                                    placeholder="Paste your denial letter here, or upload a file above to have the text extracted automatically..."
                                     required>{{ denial_text|default:"" }}</textarea>
                                 <div class="form-text">
                                     Tip: Include the entire denial letter for best results. Look for sections about reasons for denial, medical necessity, or coverage exclusions.

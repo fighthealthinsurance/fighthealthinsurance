@@ -32,6 +32,17 @@
           return;
         }
 
+        // Track donation initiation for UET with revenue (maximize this conversion)
+        if(window.trackUETConversion){
+          window.trackUETConversion('donation_initiated', {
+            event_category: 'donation',
+            event_label: 'PWYW Donation',
+            event_action: 'begin_checkout',
+            revenue_value: amt,
+            currency: 'USD'
+          });
+        }
+
 	// Open window immediately (synchronously) to avoid popup blockers
         // This works on both desktop and mobile Safari
 	let checkoutWindow = window.open('about:blank', '_blank');
@@ -132,6 +143,23 @@
         updateAmount();
       });
       updateAmount();
+
+      // Track fax payment when form is submitted (only for paid faxes)
+      if(form){
+        form.addEventListener('submit', function(){
+          const amt = hiddenField ? parseInt(hiddenField.value, 10) : 0;
+          // Skip tracking for free fax submissions to avoid affecting bidding strategies
+          if(amt > 0 && window.trackUETConversion){
+            window.trackUETConversion('donation_initiated', {
+              event_category: 'donation',
+              event_label: 'Fax Payment',
+              event_action: 'fax_submit',
+              revenue_value: amt,
+              currency: 'USD'
+            });
+          }
+        });
+      }
     }
   }
 

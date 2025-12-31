@@ -23,6 +23,7 @@ import {
 import { IconPaperclip, IconSend, IconUser, IconRefresh } from "./icons";
 import { recognize } from "./scrub_ocr";
 import { THEME } from "./theme";
+import ErrorBoundary from "./ErrorBoundary";
 import {
   getUserInfo,
   saveUserInfo,
@@ -31,9 +32,28 @@ import {
   type UserInfo,
 } from "./user_info_storage";
 
+// Declare UET tracking function from base.html
+declare global {
+  interface Window {
+    trackUETConversion?: (eventName: string, eventData?: Record<string, unknown>) => void;
+  }
+}
+
+// Module-scoped flag to track if chat_start UET event has been sent this session
+// This prevents duplicate conversions on WebSocket reconnects
+let hasSentChatStartUET = false;
+
 // PWYW Component for the chat interface
 const PWYWBanner: React.FC<{ onDismiss: () => void }> = ({ onDismiss }) => {
   const handleSupport = () => {
+    // Track donation initiation for UET (maximize this conversion)
+    if (window.trackUETConversion) {
+      window.trackUETConversion('donation_initiated', {
+        event_category: 'donation',
+        event_label: 'Chat PWYW Banner',
+        event_action: 'begin_checkout'
+      });
+    }
     // Open Stripe payment page where users can enter their preferred amount
     window.open(`https://buy.stripe.com/5kA03r2ZwbgebyE7ss`, '_blank', 'noopener,noreferrer');
     onDismiss();
@@ -287,6 +307,15 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
       ws.onopen = () => {
         console.log("WebSocket connected");
         wsRef.current = ws;
+
+        // Track chat start conversion for UET (only once per session, not on reconnects)
+        if (window.trackUETConversion && !hasSentChatStartUET) {
+          window.trackUETConversion('chat_start', {
+            event_category: 'engagement',
+            event_label: 'Chat Started'
+          });
+          hasSentChatStartUET = true;
+        }
 
         // Get user info for potential email data
         const userInfo = getUserInfo();
@@ -1159,13 +1188,15 @@ document.addEventListener("DOMContentLoaded", () => {
     const root = createRoot(chatRoot);
     root.render(
       <MantineProvider>
-        <ChatInterface 
-          defaultProcedure={defaultProcedure} 
-          defaultCondition={defaultCondition}
-          medicare={medicare}
-          micrositeSlug={micrositeSlug}
-          initialMessage={initialMessage}
-        />
+        <ErrorBoundary componentName="ChatInterface">
+          <ChatInterface
+            defaultProcedure={defaultProcedure}
+            defaultCondition={defaultCondition}
+            medicare={medicare}
+            micrositeSlug={micrositeSlug}
+            initialMessage={initialMessage}
+          />
+        </ErrorBoundary>
       </MantineProvider>,
     );
   } else {

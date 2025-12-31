@@ -88,10 +88,13 @@ Other Resources
                     <button type="submit" class="fhi-btn me-2">FAQ</button>
                 </form>
                 <form action="{% url 'blog' %}" method="get" style="display:inline;">
-                    <button type="submit" class="fhi-btn">Blog</button>
+                    <button type="submit" class="fhi-btn me-2">Blog</button>
                 </form>
-                <form action="{% url 'blog' %}" method="get" style="display:inline;">
-                    <button type="submit" class="fhi-btn">Denial Language Library</button>
+                <form action="{% url 'denial-language-library' %}" method="get" style="display:inline;">
+                    <button type="submit" class="fhi-btn me-2">Denial Language Library</button>
+                </form>
+                <form action="{% url 'microsite_directory' %}" method="get" style="display:inline;">
+                    <button type="submit" class="fhi-btn">Treatment Resources</button>
                 </form>
             </div>
         </div>
@@ -102,6 +105,7 @@ Other Resources
             <h4 class="text-fhi-green mb-3">Government Resources</h4>
             <h6>State & Local Advocates</h6>
             <ul class="mb-3">
+                <li><strong><a class="link" href="{% url 'state_help_index' %}">State-by-State Resources</a></strong> - Find your state's insurance department, consumer assistance programs, and Medicaid ombudsman</li>
                 <li>Many states offer health insurance advocates to help navigate appeals</li>
                 <li>Example: <a class="link" href="https://cahealthadvocates.org/appeals/">CA Health Advocates</a> for California residents</li>
             </ul>

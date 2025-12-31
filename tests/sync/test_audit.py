@@ -387,3 +387,77 @@ class TrackingInfoFromScopeTest(TestCase):
         self.assertEqual(model.ip_address, "10.0.0.1")
         self.assertEqual(model.asn, "AS9999")
         self.assertEqual(model.asn_name, "Test ASN")
+
+
+class DenialTrackingInfoTest(TestCase):
+    """Tests for tracking info storage in Denial model."""
+
+    fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
+
+    def test_denial_stores_tracking_info(self):
+        """Test that a Denial stores ASN and user agent tracking info."""
+        from fighthealthinsurance.models import Denial
+
+        tracking_info = TrackingInfo(
+            user_agent="TestBrowser/1.0",
+            ip_address=None,  # Not stored for non-professionals
+            asn="AS12345",
+            asn_name="Test ISP",
+        )
+
+        denial = Denial.objects.create(
+            denial_text="Test denial text",
+            **tracking_info.to_model_kwargs(),
+        )
+
+        # Verify tracking info was stored
+        self.assertEqual(denial.user_agent, "TestBrowser/1.0")
+        self.assertEqual(denial.asn, "AS12345")
+        self.assertEqual(denial.asn_name, "Test ISP")
+        self.assertIsNone(denial.ip_address)
+
+    def test_denial_stores_ip_for_professional(self):
+        """Test that IP is stored for professional users."""
+        from fighthealthinsurance.models import Denial
+
+        tracking_info = TrackingInfo(
+            user_agent="ProfessionalBrowser/2.0",
+            ip_address="192.168.1.100",  # Stored for professionals
+            asn="AS54321",
+            asn_name="Professional ISP",
+        )
+
+        denial = Denial.objects.create(
+            denial_text="Professional denial text",
+            **tracking_info.to_model_kwargs(),
+        )
+
+        # Verify tracking info including IP was stored
+        self.assertEqual(denial.user_agent, "ProfessionalBrowser/2.0")
+        self.assertEqual(denial.asn, "AS54321")
+        self.assertEqual(denial.asn_name, "Professional ISP")
+        self.assertEqual(denial.ip_address, "192.168.1.100")
+
+    def test_denial_tracking_from_request(self):
+        """Test extracting tracking info from request and storing in Denial."""
+        from fighthealthinsurance.models import Denial
+
+        factory = RequestFactory()
+        request = factory.post(
+            "/test/",
+            HTTP_USER_AGENT="RequestBrowser/3.0",
+            HTTP_X_FORWARDED_FOR="10.0.0.1",
+        )
+
+        # Extract tracking info for non-professional
+        tracking_info = extract_tracking_info(request, is_professional=False)
+
+        denial = Denial.objects.create(
+            denial_text="Request denial text",
+            **tracking_info.to_model_kwargs(),
+        )
+
+        # Verify tracking info from request
+        self.assertEqual(denial.user_agent, "RequestBrowser/3.0")
+        # IP should not be stored for non-professional
+        self.assertIsNone(denial.ip_address)

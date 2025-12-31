@@ -531,6 +531,11 @@ class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # t
             os.sync()
             return f.name
 
+    class Meta:
+        indexes = [
+            models.Index(fields=["hashed_email"], name="fax_hashed_email_idx"),
+        ]
+
     def __str__(self):
         return f"{self.fax_id} -- {self.email} -- {self.paid} -- {self.fax_success} -- {self.name}"
 
@@ -693,6 +698,12 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     # IP address only stored for professional users (privacy-sensitive)
     ip_address = models.GenericIPAddressField(null=True, blank=True)
 
+    class Meta:
+        indexes = [
+            models.Index(fields=["hashed_email"], name="denial_hashed_email_idx"),
+            models.Index(fields=["created"], name="denial_created_idx"),
+        ]
+
     @classmethod
     def filter_to_allowed_denials(cls, current_user: User):
         if current_user.is_superuser or current_user.is_staff:
@@ -720,11 +731,11 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
             )
             query_set |= Denial.objects.filter(primary_professional=professional_user)
             query_set |= Denial.objects.filter(creating_professional=professional_user)
-            # Appeals they were add to.
-            additional = SecondaryDenialProfessionalRelation.objects.filter(
+            # Denials they were added to as secondary professional
+            additional_denial_ids = SecondaryDenialProfessionalRelation.objects.filter(
                 professional=professional_user
-            )
-            query_set |= Denial.objects.filter(pk__in=[a.denial.pk for a in additional])
+            ).values_list("denial_id", flat=True)
+            query_set |= Denial.objects.filter(pk__in=additional_denial_ids)
             # Practice/UserDomain admins can view all appeals in their practice
             try:
                 user_admin_domains = professional_user.admin_domains()
@@ -919,13 +930,11 @@ class Appeal(ExportModelOperationsMixin("Appeal"), models.Model):  # type: ignor
             )
             query_set |= Appeal.objects.filter(primary_professional=professional_user)
             query_set |= Appeal.objects.filter(creating_professional=professional_user)
-            # Appeals they were add to.
-            additional_appeals = SecondaryAppealProfessionalRelation.objects.filter(
+            # Appeals they were added to as secondary professional
+            additional_appeal_ids = SecondaryAppealProfessionalRelation.objects.filter(
                 professional=professional_user
-            )
-            query_set |= Appeal.objects.filter(
-                id__in=[a.appeal.id for a in additional_appeals]
-            )
+            ).values_list("appeal_id", flat=True)
+            query_set |= Appeal.objects.filter(id__in=additional_appeal_ids)
             # Practice/UserDomain admins can view all appeals in their practice
             try:
                 user_admin_domains = professional_user.admin_domains()
@@ -1048,7 +1057,7 @@ class StripeWebhookEvents(models.Model):
     """Logs Stripe webhook events for idempotency and debugging."""
 
     internal_id = models.AutoField(primary_key=True)
-    event_stripe_id = models.CharField(max_length=255, null=False)
+    event_stripe_id = models.CharField(max_length=255, null=False, unique=True)
     created_at = models.DateTimeField(auto_now_add=True, blank=True)
     success = models.BooleanField(default=False)
     error = models.CharField(max_length=255, null=True, blank=True)
@@ -1290,6 +1299,15 @@ class OngoingChat(models.Model):
             return f"an anonymous user (Session: {self.session_key[:8]})"
         else:
             return "a user"
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["hashed_email"], name="chat_hashed_email_idx"),
+            models.Index(
+                fields=["professional_user", "updated_at"],
+                name="chat_pro_user_updated_idx",
+            ),
+        ]
 
     def __str__(self):
         if self.is_patient and self.user:

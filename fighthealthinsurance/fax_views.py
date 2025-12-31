@@ -12,6 +12,7 @@ from django.views import View, generic
 from fighthealthinsurance import forms as core_forms
 from fighthealthinsurance import common_view_logic
 from fighthealthinsurance.generate_appeal import *
+from fighthealthinsurance.helpers.fax_helpers import SendFaxHelper
 from fighthealthinsurance.models import *
 from fighthealthinsurance.utils import *
 from fighthealthinsurance.stripe_utils import get_or_create_price
@@ -26,13 +27,13 @@ class FaxFollowUpView(generic.FormView):
         return self.kwargs
 
     def form_valid(self, form):
-        common_view_logic.SendFaxHelper.resend(**form.cleaned_data)
+        SendFaxHelper.resend(**form.cleaned_data)
         return render(self.request, "fax_followup_thankyou.html")
 
 
 class SendFaxView(View):
     def get(self, request, **kwargs):
-        common_view_logic.SendFaxHelper.remote_send_fax(**self.kwargs)
+        SendFaxHelper.remote_send_fax(**self.kwargs)
         return render(self.request, "fax_thankyou.html")
 
 
@@ -86,7 +87,7 @@ class StageFaxView(generic.FormView):
         appeal = common_view_logic.AppealAssemblyHelper().create_or_update_appeal(
             **form_data
         )
-        staged = common_view_logic.SendFaxHelper.stage_appeal_as_fax(
+        staged = SendFaxHelper.stage_appeal_as_fax(
             appeal=appeal, email=form_data["email"], fax_number=form_data["fax_phone"]
         )
         stripe.api_key = settings.STRIPE_API_SECRET_KEY
@@ -133,7 +134,7 @@ class StageFaxView(generic.FormView):
         if fax_amount == 0:
             # Free fax - send immediately
             logger.debug(f"Fax amount is zero, sending directly.")
-            common_view_logic.SendFaxHelper.remote_send_fax(
+            SendFaxHelper.remote_send_fax(
                 uuid=staged.uuid,
                 hashed_email=staged.hashed_email,
             )
@@ -153,10 +154,10 @@ class StageFaxView(generic.FormView):
             }
         ]
         stripe_recovery_info = StripeRecoveryInfo.objects.create(items=items)
-        metadata = {
+        metadata: dict[str, str] = {
             "payment_type": "fax",
-            "fax_request_uuid": staged.uuid,
-            "recovery_info_id": stripe_recovery_info.id,
+            "fax_request_uuid": str(staged.uuid),
+            "recovery_info_id": str(stripe_recovery_info.id),
         }
         checkout = stripe.checkout.Session.create(
             line_items=items,  # type: ignore

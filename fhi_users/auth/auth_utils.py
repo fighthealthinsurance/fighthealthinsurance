@@ -65,6 +65,11 @@ def validate_username(username: str) -> bool:
 
 
 def validate_password(password: str) -> bool:
+    """
+    Validate password meets basic requirements.
+
+    Returns True if the password is valid, False otherwise.
+    """
     # Check if password is at least 8 characters long
     if len(password) < 8:
         return False
@@ -278,3 +283,108 @@ def generic_validate_phone_number(value: str) -> str:
     if cleaned_number.startswith("1") and len(cleaned_number) > 11:
         cleaned_number = cleaned_number[1:]
     return cleaned_number
+
+
+def _get_allowed_redirect_domains() -> frozenset[str]:
+    """
+    Get allowed redirect domains from settings, ALLOWED_HOSTS, and defaults.
+    This is a function to allow settings to override at runtime.
+    """
+    from django.conf import settings
+
+    domains = set()
+
+    # Check if custom domains are configured in settings
+    custom_domains = getattr(settings, "ALLOWED_REDIRECT_DOMAINS", None)
+    has_custom_config = custom_domains is not None
+    if custom_domains:
+        domains.update(custom_domains)
+
+    # Pull from ALLOWED_HOSTS (excluding wildcards)
+    allowed_hosts = getattr(settings, "ALLOWED_HOSTS", [])
+    for host in allowed_hosts:
+        if host and host != "*" and not host.startswith("."):
+            domains.add(host)
+
+    # Add Stripe domains for payment redirects (always needed)
+    domains.update(
+        [
+            "stripe.com",
+            "checkout.stripe.com",
+            "billing.stripe.com",
+        ]
+    )
+
+    # Add default domains if ALLOWED_REDIRECT_DOMAINS is not explicitly configured
+    if not has_custom_config:
+        domains.update(
+            [
+                # Production
+                "fighthealthinsurance.com",
+                "www.fighthealthinsurance.com",
+                "api.fighthealthinsurance.com",
+                "fightpaperwork.com",
+                "www.fightpaperwork.com",
+                "api.fightpaperwork.com",
+                # Development
+                "localhost",
+                "127.0.0.1",
+            ]
+        )
+
+    return frozenset(domains)
+
+
+def _sanitize_url_for_logging(url: str, max_length: int = 100) -> str:
+    """Truncate and sanitize URL for safe logging (prevents log injection/flooding)."""
+    # Remove newlines and other control characters
+    sanitized = url.replace("\n", "").replace("\r", "")
+    if len(sanitized) > max_length:
+        return sanitized[:max_length] + "..."
+    return sanitized
+
+
+def validate_redirect_url(url: Optional[str], default_url: str) -> str:
+    """
+    Validate that a redirect URL is from an allowed domain.
+    Returns the URL if valid, otherwise returns the default URL.
+
+    This prevents open redirect attacks where an attacker could
+    craft a URL that redirects users to a malicious site.
+    """
+    if not url:
+        return default_url
+
+    from urllib.parse import urlparse
+
+    # Sanitize for logging to prevent log injection attacks
+    safe_url = _sanitize_url_for_logging(url)
+
+    try:
+        parsed = urlparse(url)
+        # Must be https (except for localhost in development)
+        if parsed.scheme not in ("https", "http"):
+            logger.warning(f"Invalid URL scheme in redirect: {safe_url}")
+            return default_url
+
+        # Allow http only for localhost
+        if parsed.scheme == "http" and parsed.hostname not in (
+            "localhost",
+            "127.0.0.1",
+        ):
+            logger.warning(
+                f"HTTP not allowed for non-localhost in redirect: {safe_url}"
+            )
+            return default_url
+
+        # Check if domain is in allowlist
+        hostname = parsed.hostname or ""
+        allowed_domains = _get_allowed_redirect_domains()
+        if hostname not in allowed_domains:
+            logger.warning(f"Redirect URL domain not in allowlist: {hostname}")
+            return default_url
+
+        return url
+    except Exception as e:
+        logger.warning(f"Failed to parse redirect URL: {e}")
+        return default_url

@@ -1,0 +1,299 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}State-by-State Health Insurance Help - Fight Health Insurance{% endblock title %}
+{% block metatitle %}State-by-State Health Insurance Help - Fight Health Insurance{% endblock metatitle %}
+{% block metadescription %}Find health insurance resources, consumer assistance programs, insurance department contacts, and Medicaid information for all 50 states and DC.{% endblock metadescription %}
+
+{% block content %}
+<!-- Hero Section -->
+<section id="state-index-hero" class="slider" data-stellar-background-ratio="0.5">
+    <div class="row">
+        <div class="item item-first">
+            <div class="caption d-flex flex-column align-items-center justify-content-center">
+                <div class="hero-inner">
+                    <h3 class="hero-tagline">Extra Help by State</h3>
+                    <h1 class="hero-headline">State Health Insurance Resources</h1>
+                    <p class="hero-subcopy">Find consumer assistance programs, insurance department contacts, Medicaid ombudsman information, and legal aid resources in your state.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Introduction Section -->
+<section id="intro" class="py-5">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto text-center">
+                <h2 class="mb-4">Getting Help With Health Insurance</h2>
+                <p class="lead">Every state has resources to help you navigate health insurance problems. Select your state below to find:</p>
+                <div class="row mt-4">
+                    <div class="col-md-3 mb-3">
+                        <div class="feature-box">
+                            <i class="bi bi-building fs-2 text-primary"></i>
+                            <h6 class="mt-2">Insurance Department</h6>
+                            <small class="text-muted">File complaints & get help</small>
+                        </div>
+                    </div>
+                    <div class="col-md-3 mb-3">
+                        <div class="feature-box">
+                            <i class="bi bi-shield-check fs-2 text-success"></i>
+                            <h6 class="mt-2">Consumer Assistance</h6>
+                            <small class="text-muted">Free counseling programs</small>
+                        </div>
+                    </div>
+                    <div class="col-md-3 mb-3">
+                        <div class="feature-box">
+                            <i class="bi bi-hospital fs-2 text-purple"></i>
+                            <h6 class="mt-2">Medicaid Resources</h6>
+                            <small class="text-muted">Agency & ombudsman info</small>
+                        </div>
+                    </div>
+                    <div class="col-md-3 mb-3">
+                        <div class="feature-box">
+                            <i class="bi bi-clipboard-check fs-2 text-info"></i>
+                            <h6 class="mt-2">External Review</h6>
+                            <small class="text-muted">Appeal denial decisions</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- State Selection Section -->
+<section id="state-list" class="py-5 bg-light">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-10 mx-auto">
+                <h2 class="text-center mb-4">Select Your State</h2>
+
+                <!-- Quick Jump -->
+                <div class="quick-jump text-center mb-4">
+                    <div class="btn-group flex-wrap" role="group" aria-label="Jump to letter">
+                        {% for letter in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ' %}
+                        <a href="#letter-{{ letter }}" class="btn btn-outline-secondary btn-sm letter-btn">{{ letter }}</a>
+                        {% endfor %}
+                    </div>
+                </div>
+
+                <!-- State Grid -->
+                <div class="state-grid">
+                    {% regroup states by name.0 as letter_groups %}
+                    {% for letter_group in letter_groups %}
+                    <div id="letter-{{ letter_group.grouper }}" class="letter-section mb-4">
+                        <h3 class="letter-header">{{ letter_group.grouper }}</h3>
+                        <div class="row">
+                            {% for state in letter_group.list %}
+                            <div class="col-md-4 col-sm-6 mb-3">
+                                <a href="{% url 'state_help' state.slug %}" class="state-card d-block">
+                                    <div class="card h-100">
+                                        <div class="card-body d-flex align-items-center">
+                                            <span class="state-abbrev me-3">{{ state.abbreviation }}</span>
+                                            <div>
+                                                <h5 class="card-title mb-0">{{ state.name }}</h5>
+                                                {% if state.medicaid.managed_care_ombudsman %}
+                                                <small class="text-success"><i class="bi bi-check-circle-fill me-1"></i>Ombudsman Available</small>
+                                                {% endif %}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </a>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- National Resources Section -->
+<section id="national-resources" class="py-5">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <h2 class="text-center mb-4">National Resources</h2>
+                <p class="text-center text-muted mb-4">These resources are available regardless of which state you live in.</p>
+
+                <div class="row">
+                    <div class="col-md-6 mb-4">
+                        <div class="card h-100 national-card">
+                            <div class="card-body">
+                                <h5 class="card-title"><i class="bi bi-globe me-2"></i>CMS Consumer Assistance</h5>
+                                <p class="card-text">The Centers for Medicare & Medicaid Services maintains a directory of state consumer assistance programs.</p>
+                                <a href="https://www.cms.gov/cciio/resources/consumer-assistance-grants" target="_blank" rel="noopener noreferrer" class="btn btn-outline-primary btn-sm">
+                                    Visit CMS <i class="bi bi-box-arrow-up-right ms-1"></i>
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6 mb-4">
+                        <div class="card h-100 national-card">
+                            <div class="card-body">
+                                <h5 class="card-title"><i class="bi bi-building me-2"></i>NAIC Insurance Departments</h5>
+                                <p class="card-text">The National Association of Insurance Commissioners provides a directory of all state insurance departments.</p>
+                                <a href="https://content.naic.org/state-insurance-departments" target="_blank" rel="noopener noreferrer" class="btn btn-outline-primary btn-sm">
+                                    Visit NAIC <i class="bi bi-box-arrow-up-right ms-1"></i>
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6 mb-4">
+                        <div class="card h-100 national-card">
+                            <div class="card-body">
+                                <h5 class="card-title"><i class="bi bi-heart-pulse me-2"></i>SHIP National Network</h5>
+                                <p class="card-text">State Health Insurance Assistance Programs provide free Medicare counseling in every state.</p>
+                                <a href="https://www.shiphelp.org/" target="_blank" rel="noopener noreferrer" class="btn btn-outline-primary btn-sm">
+                                    Visit SHIP <i class="bi bi-box-arrow-up-right ms-1"></i>
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6 mb-4">
+                        <div class="card h-100 national-card">
+                            <div class="card-body">
+                                <h5 class="card-title"><i class="bi bi-hospital me-2"></i>Medicaid.gov</h5>
+                                <p class="card-text">Official federal resource for Medicaid information, including state-by-state program details.</p>
+                                <a href="https://www.medicaid.gov/state-overviews/index.html" target="_blank" rel="noopener noreferrer" class="btn btn-outline-primary btn-sm">
+                                    Visit Medicaid.gov <i class="bi bi-box-arrow-up-right ms-1"></i>
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Final CTA Section -->
+<section id="final-cta" class="py-5 bg-light">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto text-center">
+                <h2 class="mb-3">Need Help With a Health Insurance Denial?</h2>
+                <p class="lead mb-4">Our free AI-powered tool can help you generate a compelling appeal letter in minutes.</p>
+                <div class="d-flex justify-content-center gap-3 flex-wrap">
+                    <a href="{% url 'scan' %}" class="btn btn-green btn-lg">
+                        Start Your Appeal
+                    </a>
+                    <a href="{% url 'chat' %}" class="btn btn-outline-green btn-lg">
+                        Chat with AI Assistant
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Disclaimer Section -->
+<section id="disclaimer" class="py-4">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <div class="disclaimer-box p-3 bg-light border rounded">
+                    <p class="text-muted small mb-0">
+                        <strong>Disclaimer:</strong> The information on this page is provided for informational purposes only and may not be current. Contact information and program details change frequently. Please verify current details directly with each organization. Fight Health Insurance is not affiliated with any government agency or the organizations listed on this page. This is not legal advice.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock content %}
+
+{% block extra_style %}
+<style>
+    #state-index-hero .hero-inner {
+        max-width: 800px;
+        padding: 2rem;
+    }
+
+    .feature-box {
+        padding: 1rem;
+    }
+
+    .text-purple {
+        color: #6f42c1;
+    }
+
+    .quick-jump {
+        background: #fff;
+        padding: 1rem;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+
+    .letter-btn {
+        margin: 2px;
+        min-width: 32px;
+    }
+
+    .letter-header {
+        border-bottom: 2px solid #28a745;
+        padding-bottom: 0.5rem;
+        margin-bottom: 1rem;
+        color: #28a745;
+    }
+
+    .state-card {
+        text-decoration: none;
+        color: inherit;
+    }
+
+    .state-card:hover {
+        text-decoration: none;
+    }
+
+    .state-card .card {
+        transition: all 0.2s ease;
+        border-left: 3px solid transparent;
+    }
+
+    .state-card:hover .card {
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        border-left-color: #28a745;
+    }
+
+    .state-abbrev {
+        font-size: 1.5rem;
+        font-weight: bold;
+        color: #6c757d;
+        min-width: 50px;
+        text-align: center;
+    }
+
+    .national-card {
+        border-top: 3px solid #17a2b8;
+        transition: box-shadow 0.2s ease;
+    }
+
+    .national-card:hover {
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    }
+
+    .disclaimer-box {
+        border-color: #dee2e6 !important;
+    }
+
+    #final-cta {
+        background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+    }
+
+    /* btn-green and btn-outline-green are defined in custom.css */
+
+    /* Smooth scroll for letter navigation */
+    html {
+        scroll-behavior: smooth;
+    }
+
+    .letter-section {
+        scroll-margin-top: 20px;
+    }
+</style>
+{% endblock extra_style %}

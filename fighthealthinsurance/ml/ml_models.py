@@ -2291,6 +2291,7 @@ class TailscaleModelBackend(RemoteFullOpenLike):
         ("fhi-legacy", "TotallyLegitCo/fighthealthinsurance_model_v0.5"),
         ("fhi-new", "/models/fhi-2025-may-0.3-float16-q8-vllm-compressed"),
         ("llama-scout", "meta-llama/Llama-4-Scout-17B-16E-Instruct"),
+        ("fhi-2025-nov-q8-vllm-compressed", "/app/model"),
     ]
 
     _discovered_hosts: ClassVar[dict[str, str]] = {}

@@ -15,6 +15,7 @@ import {
   Alert,
   ScrollArea,
 } from "@mantine/core";
+import ErrorBoundary from "./ErrorBoundary";
 
 // Types for Chooser API responses
 interface ChooserCandidate {
@@ -594,15 +595,17 @@ const ChooserInterface: React.FC = () => {
 const App: React.FC = () => {
   return (
     <MantineProvider>
-      <Box
-	style={{
-	  backgroundColor: THEME.colors.background,
-	  minHeight: "80vh",
-	  padding: "20px 0",
-	}}
-      >
-	<ChooserInterface />
-      </Box>
+      <ErrorBoundary componentName="Chooser">
+        <Box
+          style={{
+            backgroundColor: THEME.colors.background,
+            minHeight: "80vh",
+            padding: "20px 0",
+          }}
+        >
+          <ChooserInterface />
+        </Box>
+      </ErrorBoundary>
     </MantineProvider>
   );
 };

@@ -1,3 +1,111 @@
+/* Skip link for keyboard navigation (accessibility) */
+.skip-link {
+    position: absolute;
+    top: -40px;
+    left: 0;
+    background: #000;
+    color: #fff;
+    padding: 8px 16px;
+    z-index: 10000;
+    text-decoration: none;
+    font-weight: 600;
+}
+.skip-link:focus {
+    top: 0;
+    outline: 2px solid #a5c422;
+    outline-offset: 2px;
+}
+
+/* Alert/callout box styles - extracted from inline styles */
+.alert-box {
+    padding: 1.5rem;
+    border-radius: 8px;
+    margin: 1.5rem 0;
+    border-left-width: 4px;
+    border-left-style: solid;
+}
+.alert-box h3,
+.alert-box h4 {
+    margin: 0 0 0.5rem 0;
+}
+.alert-box p {
+    margin: 0;
+}
+
+.alert-success {
+    background: #e8f5e9;
+    border-left-color: #4caf50;
+}
+.alert-success h3,
+.alert-success h4 {
+    color: #2e7d32;
+}
+
+.alert-danger {
+    background: #ffebee;
+    border-left-color: #f44336;
+}
+.alert-danger h4,
+.alert-danger p {
+    color: #c62828;
+}
+
+.alert-warning {
+    background: #fff3cd;
+    border-left-color: #ffc107;
+}
+.alert-warning h4,
+.alert-warning li {
+    color: #856404;
+}
+
+.alert-info {
+    background: #e3f2fd;
+    border-left-color: #2196f3;
+}
+.alert-info h4 {
+    color: #1565c0;
+}
+
+/* Section headers with underline */
+.section-header {
+    color: #333;
+    border-bottom: 2px solid #4caf50;
+    padding-bottom: 0.5rem;
+}
+.section-header-spacing {
+    margin-top: 2rem;
+}
+
+/* Option sections */
+.option-header {
+    color: #2e7d32;
+    margin-bottom: 0.5rem;
+}
+.option-content {
+    margin: 0.5rem 0 1rem 1.5rem;
+    line-height: 1.6;
+}
+.option-note {
+    margin: 0.5rem 0 0.5rem 1.5rem;
+    font-size: 0.9rem;
+    color: #666;
+}
+
+/* Form wrapper backgrounds */
+.form-wrapper {
+    background: #f9f9f9;
+    padding: 1.5rem;
+    border-radius: 8px;
+    margin: 1rem 1.5rem;
+}
+.donate-wrapper {
+    background-color: #f8f9fa;
+    padding: 1.5rem;
+    border-radius: 8px;
+    margin: 1.5rem 0;
+}
+
 /* Ensure header stays above hero background */
 header {
     position: relative;
@@ -954,14 +1062,8 @@ section:not(.slider) .share-subcopy {
     }
 }
 
-/* Alert/Info Box Styles - Extracted from inline styles */
-.alert-box {
-    padding: 1rem;
-    border-radius: 4px;
-    margin-bottom: 1rem;
-    border-left: 4px solid;
-}
-.alert-box p { margin: 0; }
+/* Alert/Info Box Variant Styles - Extracted from inline styles */
+/* Note: Base .alert-box is defined at top of file */
 .alert-box-success {
     background: #e8f5e9;
     border-left-color: #a5c422;
@@ -1206,4 +1308,85 @@ section:not(.slider) .share-subcopy {
     .bingo-free-space {
         font-size: 0.75rem;
     }
+}
+
+/* Beta ribbon - extracted from base.html inline styles */
+.betaribbon {
+    font-size: 28px;
+    font-weight: bold;
+    color: #fff;
+    --f: .5em; /* control the folded part */
+    --r: .8em; /* control the ribbon shape */
+    position: absolute;
+    left: 20px;
+    top: calc(-1*var(--f));
+    padding: .2em;
+    background: #BF4D28;
+    border-left: var(--f) solid #0005;
+    border-bottom: var(--r) solid #0000;
+    clip-path: polygon(var(--f) 0,100% 0,100% 100%,calc(50% + var(--f)/2) calc(100% - var(--r)), var(--f) 100%,var(--f) var(--f),0 var(--f));
+}
+
+/* Loading spinner - extracted from base.html inline styles */
+#loading-spinner {
+    display: none;
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+}
+
+/* Form validation errors */
+.form-errors {
+    color: #dc3545;
+    margin-bottom: 1rem;
+}
+
+/* Container utilities */
+.container-narrow {
+    width: 80%;
+    margin-top: 2.5rem !important;
+}
+
+/* Muted link style */
+.btn-link-muted {
+    color: #6c757d;
+    text-decoration: underline;
+    font-size: 0.9rem;
+}
+.btn-link-muted:hover {
+    color: #495057;
+}
+
+/* Secondary button style */
+.btn-secondary-custom {
+    background: #6c757d;
+    color: white;
+    padding: 10px 20px;
+    border-radius: 3px;
+    text-decoration: none;
+}
+.btn-secondary-custom:hover {
+    background: #5a6268;
+    color: white;
+}
+
+/* External link icon (small) - extracted from microsite.html */
+.icon-external-sm {
+    font-size: 0.8em;
+}
+
+/* Form field sizing - extracted from forms/__init__.py */
+.form-textarea-wide {
+    width: 50em;
+    height: 5em;
+    display: block;
+}
+.form-textarea-medium {
+    width: 50em;
+    height: 3em;
+    display: block;
+}
+.form-input-state {
+    width: 60px;
 }

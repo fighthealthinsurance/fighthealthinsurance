@@ -10,6 +10,7 @@ from loguru import logger
 from fighthealthinsurance import common_view_logic
 from fighthealthinsurance import forms as core_forms
 from fighthealthinsurance.forms import FollowUpTestForm
+from fighthealthinsurance.helpers.fax_helpers import SendFaxHelper
 from fighthealthinsurance.models import (
     Denial,
     FollowUpSched,
@@ -175,12 +176,11 @@ class FollowUpFaxSenderView(generic.FormView):
 
     def form_valid(self, form):
         field = form.cleaned_data.get("email")
-        helper = common_view_logic.SendFaxHelper
 
         if field.isdigit():
-            sent = helper.blocking_dosend_all(count=field)
+            sent = SendFaxHelper.blocking_dosend_all(count=field)
         else:
-            sent = helper.blocking_dosend_target(email=field)
+            sent = SendFaxHelper.blocking_dosend_target(email=field)
 
         return HttpResponse(str(sent))
 

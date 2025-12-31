@@ -2,11 +2,15 @@
 
 from django.test import TestCase
 
-from fighthealthinsurance.chat_interface import (
-    _detect_crisis_keywords,
-    _detect_false_promises,
-    _CRISIS_PHRASES,
+from fighthealthinsurance.chat.safety_filters import (
+    detect_crisis_keywords,
+    detect_false_promises,
     CRISIS_RESOURCES,
+)
+
+# Import internal variables for testing
+from fighthealthinsurance.chat.safety_filters import (
+    _CRISIS_PHRASES,
     _FALSE_PROMISE_PATTERNS,
 )
 
@@ -28,7 +32,7 @@ class TestCrisisDetection(TestCase):
         ]
         for message in suicide_messages:
             self.assertTrue(
-                _detect_crisis_keywords(message),
+                detect_crisis_keywords(message),
                 f"Failed to detect crisis in: {message}",
             )
 
@@ -42,7 +46,7 @@ class TestCrisisDetection(TestCase):
         ]
         for message in self_harm_messages:
             self.assertTrue(
-                _detect_crisis_keywords(message),
+                detect_crisis_keywords(message),
                 f"Failed to detect crisis in: {message}",
             )
 
@@ -54,15 +58,15 @@ class TestCrisisDetection(TestCase):
         ]
         for message in planning_messages:
             self.assertTrue(
-                _detect_crisis_keywords(message),
+                detect_crisis_keywords(message),
                 f"Failed to detect crisis in: {message}",
             )
 
     def test_case_insensitive_detection(self):
         """Test that detection is case-insensitive."""
-        self.assertTrue(_detect_crisis_keywords("I WANT TO KILL MYSELF"))
-        self.assertTrue(_detect_crisis_keywords("i want to die"))
-        self.assertTrue(_detect_crisis_keywords("I Want To End My Life"))
+        self.assertTrue(detect_crisis_keywords("I WANT TO KILL MYSELF"))
+        self.assertTrue(detect_crisis_keywords("i want to die"))
+        self.assertTrue(detect_crisis_keywords("I Want To End My Life"))
 
     def test_does_not_flag_mental_health_denial_appeals(self):
         """
@@ -94,7 +98,7 @@ class TestCrisisDetection(TestCase):
         ]
         for message in mental_health_denial_messages:
             self.assertFalse(
-                _detect_crisis_keywords(message),
+                detect_crisis_keywords(message),
                 f"Incorrectly flagged mental health denial appeal: {message}",
             )
 
@@ -114,7 +118,7 @@ class TestCrisisDetection(TestCase):
         ]
         for message in normal_messages:
             self.assertFalse(
-                _detect_crisis_keywords(message),
+                detect_crisis_keywords(message),
                 f"Incorrectly flagged normal message: {message}",
             )
 
@@ -129,7 +133,7 @@ class TestCrisisDetection(TestCase):
         ]
         for message in frustrated_messages:
             self.assertFalse(
-                _detect_crisis_keywords(message),
+                detect_crisis_keywords(message),
                 f"Incorrectly flagged frustrated message: {message}",
             )
 
@@ -156,7 +160,7 @@ class TestFalsePromiseDetection(TestCase):
         ]
         for response in false_promise_responses:
             self.assertTrue(
-                _detect_false_promises(response),
+                detect_false_promises(response),
                 f"Failed to detect false promise in: {response}",
             )
 
@@ -170,7 +174,7 @@ class TestFalsePromiseDetection(TestCase):
         ]
         for response in overconfident_responses:
             self.assertTrue(
-                _detect_false_promises(response),
+                detect_false_promises(response),
                 f"Failed to detect false promise in: {response}",
             )
 
@@ -188,22 +192,22 @@ class TestFalsePromiseDetection(TestCase):
         ]
         for response in appropriate_responses:
             self.assertFalse(
-                _detect_false_promises(response),
+                detect_false_promises(response),
                 f"Incorrectly flagged appropriate response: {response}",
             )
 
     def test_handles_none_input(self):
         """Test that None input returns False."""
-        self.assertFalse(_detect_false_promises(None))
+        self.assertFalse(detect_false_promises(None))
 
     def test_handles_empty_string(self):
         """Test that empty string returns False."""
-        self.assertFalse(_detect_false_promises(""))
+        self.assertFalse(detect_false_promises(""))
 
     def test_case_insensitive_detection(self):
         """Test that detection is case-insensitive."""
-        self.assertTrue(_detect_false_promises("I GUARANTEE YOUR APPROVAL"))
-        self.assertTrue(_detect_false_promises("This Will Definitely Get Approved"))
+        self.assertTrue(detect_false_promises("I GUARANTEE YOUR APPROVAL"))
+        self.assertTrue(detect_false_promises("This Will Definitely Get Approved"))
 
 
 class TestCrisisPhraseList(TestCase):

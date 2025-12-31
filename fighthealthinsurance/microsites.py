@@ -226,3 +226,13 @@ def get_microsite_slugs() -> list[str]:
         List of slug strings
     """
     return list(load_microsites().keys())
+
+
+def get_microsites_sorted_by_title() -> list[Microsite]:
+    """
+    Get all microsites sorted alphabetically by title.
+
+    Returns:
+        List of Microsite objects sorted by title
+    """
+    return sorted(load_microsites().values(), key=lambda m: m.title)
