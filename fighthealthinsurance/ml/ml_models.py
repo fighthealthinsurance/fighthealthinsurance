@@ -2358,8 +2358,12 @@ class TailscaleModelBackend(RemoteFullOpenLike):
                 future = executor.submit(socket.gethostbyname, hostname)
                 future.result(timeout=cls.DNS_TIMEOUT)
             return hostname
-        except (socket.gaierror, concurrent.futures.TimeoutError, TimeoutError):
+        except (socket.gaierror, concurrent.futures.TimeoutError, TimeoutError) as e:
+            logger.debug(f"Skipping {hostname}: {e}")
             return None
+
+    def quality(self) -> int:
+        return 500
 
     @classmethod
     def models(cls) -> List[ModelDescription]:
