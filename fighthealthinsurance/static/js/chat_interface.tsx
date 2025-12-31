@@ -39,6 +39,10 @@ declare global {
   }
 }
 
+// Module-scoped flag to track if chat_start UET event has been sent this session
+// This prevents duplicate conversions on WebSocket reconnects
+let hasSentChatStartUET = false;
+
 // PWYW Component for the chat interface
 const PWYWBanner: React.FC<{ onDismiss: () => void }> = ({ onDismiss }) => {
   const handleSupport = () => {
@@ -304,12 +308,13 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
         console.log("WebSocket connected");
         wsRef.current = ws;
 
-        // Track chat start conversion for UET
-        if (window.trackUETConversion) {
+        // Track chat start conversion for UET (only once per session, not on reconnects)
+        if (window.trackUETConversion && !hasSentChatStartUET) {
           window.trackUETConversion('chat_start', {
             event_category: 'engagement',
             event_label: 'Chat Started'
           });
+          hasSentChatStartUET = true;
         }
 
         // Get user info for potential email data

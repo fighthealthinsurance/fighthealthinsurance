@@ -143,7 +143,7 @@ class ChatInterface:
             current_message=current_message_for_llm,
             previous_context_summary=previous_context_summary,
             history=history,
-            is_professional=not self.is_patient,
+            is_professional=is_professional,
             is_logged_in=is_logged_in,
             full_history=full_history,
         )
@@ -171,7 +171,7 @@ class ChatInterface:
                 current_message=current_message_for_llm,
                 previous_context_summary=previous_context_summary,
                 history=history,
-                is_professional=not self.is_patient,
+                is_professional=is_professional,
                 is_logged_in=is_logged_in,
                 fallback_backends=fallback_backends,
                 timeout=35.0,
