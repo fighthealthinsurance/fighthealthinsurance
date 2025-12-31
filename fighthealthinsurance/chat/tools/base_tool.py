@@ -6,7 +6,7 @@ Each tool can detect its pattern in text, execute the tool action, and format re
 """
 
 from abc import ABC, abstractmethod
-from typing import Optional, Tuple, Any, Callable, Awaitable
+from typing import Optional, Tuple, Callable, Awaitable
 import re
 from loguru import logger
 

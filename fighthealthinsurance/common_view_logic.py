@@ -60,10 +60,6 @@ from .utils import (
     _try_pandoc_engines,
 )
 
-# Import helpers from dedicated modules (avoid duplication)
-from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
-from fighthealthinsurance.helpers.fax_helpers import FaxHelperResults, SendFaxHelper
-from fighthealthinsurance.helpers.stripe_helpers import StripeWebhookHelper
 
 
 appealGenerator = AppealGenerator()
