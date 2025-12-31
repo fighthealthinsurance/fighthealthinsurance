@@ -1958,6 +1958,20 @@ class MicrositeView(TemplateView):
         return context
 
 
+class MicrositeDirectoryView(TemplateView):
+    """View for the microsite directory page listing all treatment/drug-specific landing pages."""
+
+    template_name = "microsite_directory.html"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        from fighthealthinsurance.microsites import get_microsites_sorted_by_title
+
+        context["microsites"] = get_microsites_sorted_by_title()
+        context["title"] = "Treatment & Drug Resources"
+        return context
+
+
 class ExplainDenialView(FormView):
     """
     View for the Explain my Denial page - collects denial text with TOS consent and redirects to chat.

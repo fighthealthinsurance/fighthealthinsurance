@@ -1,0 +1,95 @@
+{% extends 'base.html' %}
+
+{% block title %}Treatment & Drug Resources - Fight Health Insurance{% endblock title %}
+{% block metatitle %}Treatment & Drug Resources - Fight Health Insurance{% endblock metatitle %}
+{% block metadescription %}Browse our treatment and drug-specific resources for fighting health insurance denials. Find guidance for your specific medication or procedure.{% endblock metadescription %}
+
+{% block content %}
+<div class="container mt-5">
+    <h1 style="margin-top: 10vh;">Treatment & Drug Resources</h1>
+
+    <div class="row">
+        <div class="col-12">
+            <p class="lead mb-4">
+                Browse our treatment and drug-specific pages for targeted guidance on fighting health insurance denials.
+                Each page includes common denial reasons, evidence we can use in your appeal, and assistance programs.
+            </p>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-12">
+            <h2 class="mb-4">All Resources</h2>
+
+            {% if microsites %}
+            <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-4">
+                {% for microsite in microsites %}
+                <div class="col">
+                    <div class="card h-100 microsite-card">
+                        <div class="card-body">
+                            <h3 class="card-title h5">
+                                <a href="{% url 'microsite' slug=microsite.slug %}" class="stretched-link">
+                                    {{ microsite.title }}
+                                </a>
+                            </h3>
+                            <p class="card-text text-muted">{{ microsite.tagline }}</p>
+                            {% if microsite.default_condition %}
+                            <span class="badge bg-info text-dark">{{ microsite.default_condition }}</span>
+                            {% endif %}
+                            {% if microsite.medicare %}
+                            <span class="badge bg-primary">Medicare</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p class="text-muted">No resources are currently available.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="row mt-5">
+        <div class="col-12">
+            <div class="alert alert-info">
+                <strong>Don't see your treatment?</strong> Our main
+                <a href="{% url 'scan' %}" class="alert-link">appeal generator</a>
+                works for any health insurance denial. You can also
+                <a href="{% url 'chat' %}" class="alert-link">chat with our AI assistant</a>
+                for personalized guidance.
+            </div>
+        </div>
+    </div>
+
+    <div class="row mt-3">
+        <div class="col-12 text-center">
+            <a href="{% url 'scan' %}" class="btn btn-green btn-lg me-2">Start Your Appeal</a>
+            <a href="{% url 'chat' %}" class="btn btn-outline-green btn-lg">Chat with AI</a>
+        </div>
+    </div>
+</div>
+{% endblock content %}
+
+{% block extra_style %}
+<style>
+    .microsite-card {
+        border-left: 4px solid #a5c422;
+        transition: box-shadow 0.2s ease, transform 0.2s ease;
+    }
+
+    .microsite-card:hover {
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        transform: translateY(-2px);
+    }
+
+    .microsite-card .card-title a {
+        color: #333;
+        text-decoration: none;
+    }
+
+    .microsite-card .card-title a:hover {
+        color: #a5c422;
+    }
+</style>
+{% endblock extra_style %}

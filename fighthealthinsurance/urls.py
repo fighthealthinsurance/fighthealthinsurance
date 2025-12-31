@@ -384,6 +384,14 @@ urlpatterns += [
         ),
         name="microsite",
     ),
+    # Microsite directory - lists all microsites for organic crawlers
+    path(
+        "treatments/",
+        cache_control(public=True)(
+            cache_page(60 * 60 * 24)(views.MicrositeDirectoryView.as_view())
+        ),
+        name="microsite_directory",
+    ),
     # Explain my Denial page
     path(
         "explain-denial",

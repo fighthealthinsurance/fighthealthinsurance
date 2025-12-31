@@ -143,7 +143,7 @@
       "cap_url": "https://www.commerce.alaska.gov/web/ins/Consumers.aspx",
       "cap_phone": "800-467-8725",
       "ship_name": "Alaska State Health Insurance Assistance Program",
-      "ship_url": "https://health.alaska.gov/dsds/pages/medicare/default.aspx",
+      "ship_url": "http://www.medicare.alaska.gov",
       "ship_phone": "800-478-6065"
     },
     "medicaid": {
@@ -221,7 +221,7 @@
       "cap_url": "https://insurance.arkansas.gov/pages/for-consumers/",
       "cap_phone": "800-282-9134",
       "ship_name": "Arkansas Senior Health Insurance Information Program",
-      "ship_url": "https://insurance.arkansas.gov/pages/for-consumers/shiip/",
+      "ship_url": "https://insurance.arkansas.gov/consumer-services/senior-health/",
       "ship_phone": "800-224-6330"
     },
     "medicaid": {
@@ -419,7 +419,7 @@
       "cap_url": "https://dchealthlink.com/",
       "cap_phone": "855-532-5465",
       "ship_name": "DC State Health Insurance Assistance Program",
-      "ship_url": "https://dacl.dc.gov/service/state-health-insurance-assistance-program-ship",
+      "ship_url": "https://dcoa.dc.gov/service/dc-state-health-insurance-assistance-program-ship",
       "ship_phone": "202-727-8370"
     },
     "medicaid": {
@@ -749,7 +749,7 @@
       "cap_url": "https://insurance.kansas.gov/consumers/",
       "cap_phone": "800-432-2484",
       "ship_name": "Kansas Senior Health Insurance Counseling for Kansas (SHICK)",
-      "ship_url": "https://insurance.kansas.gov/shick/",
+      "ship_url": "https://www.kdads.ks.gov/services-programs/aging/medicare-programs/senior-health-insurance-counseling-for-kansas-shick",
       "ship_phone": "800-860-5260"
     },
     "medicaid": {
@@ -868,7 +868,7 @@
       "cap_url": "https://www.mainecahc.org/",
       "cap_phone": "800-965-7476",
       "ship_name": "Maine State Health Insurance Assistance Program",
-      "ship_url": "https://www.maine.gov/dhhs/oads/get-help/ship",
+      "ship_url": "https://www.maine.gov/dhhs/oads/get-support/older-adults-disabilities/older-adult-services/ship-medicare-assistance",
       "ship_phone": "877-353-3771"
     },
     "medicaid": {
@@ -946,7 +946,7 @@
       "cap_url": "https://www.hcfama.org/",
       "cap_phone": "800-272-4232",
       "ship_name": "Serving the Health Insurance Needs of Everyone (SHINE)",
-      "ship_url": "https://www.mass.gov/shine",
+      "ship_url": "https://www.mass.gov/health-insurance-counseling",
       "ship_phone": "800-243-4636"
     },
     "medicaid": {
@@ -1079,7 +1079,7 @@
       "cap_url": "https://www.mid.ms.gov/consumers/",
       "cap_phone": "800-562-2957",
       "ship_name": "Mississippi State Health Insurance Assistance Program (SHIP)",
-      "ship_url": "https://www.mdhs.ms.gov/adults-seniors/services-for-seniors/mississippi-ship/",
+      "ship_url": "https://www.mdhs.ms.gov/aging/finding-services-for-older-adults/",
       "ship_phone": "800-948-3090"
     },
     "medicaid": {
@@ -1157,7 +1157,7 @@
       "cap_url": "https://csimt.gov/insurance/consumers/",
       "cap_phone": "800-332-6148",
       "ship_name": "Montana State Health Insurance Assistance Program (SHIP)",
-      "ship_url": "https://dphhs.mt.gov/seniors-and-people-with-disabilities/aging-and-long-term-care/montana-ship",
+      "ship_url": "https://dphhs.mt.gov/sltc/aging/ship",
       "ship_phone": "800-551-3191"
     },
     "medicaid": {
@@ -1194,7 +1194,7 @@
       "cap_url": "https://doi.nebraska.gov/consumer",
       "cap_phone": "877-564-7323",
       "ship_name": "Nebraska State Health Insurance Assistance Program (SHIIP)",
-      "ship_url": "https://doi.nebraska.gov/consumer/shiip",
+      "ship_url": "https://doi.nebraska.gov/consumer/senior-health",
       "ship_phone": "800-234-7119"
     },
     "medicaid": {
@@ -1309,7 +1309,7 @@
       "cap_url": "https://www.nj.gov/dobi/consumer.htm",
       "cap_phone": "800-446-7467",
       "ship_name": "State Health Insurance Assistance Program (SHIP)",
-      "ship_url": "https://www.nj.gov/humanservices/doas/services/ship/",
+      "ship_url": "https://nj.gov/humanservices/doas/services/q-z/ship/",
       "ship_phone": "800-792-8820"
     },
     "medicaid": {
@@ -1350,7 +1350,7 @@
       "cap_url": "https://www.osi.state.nm.us/for-consumers/",
       "cap_phone": "855-427-5674",
       "ship_name": "New Mexico State Health Insurance Assistance Program",
-      "ship_url": "https://www.nmaging.state.nm.us/medicare.aspx",
+      "ship_url": "http://www.nmaging.state.nm.us/",
       "ship_phone": "800-432-2080"
     },
     "medicaid": {
@@ -1442,7 +1442,7 @@
       "cap_url": "https://www.ncdoi.gov/consumers",
       "cap_phone": "855-408-1212",
       "ship_name": "NC Seniors' Health Insurance Information Program (SHIIP)",
-      "ship_url": "https://www.ncdoi.gov/consumers/medicare-consumers/seniors-health-insurance-information-program-shiip",
+      "ship_url": "https://www.ncdoi.gov/consumers/medicare-and-seniors-health-insurance-information-program-shiip",
       "ship_phone": "855-408-1212"
     },
     "medicaid": {
@@ -1483,7 +1483,7 @@
       "cap_url": "https://www.insurance.nd.gov/consumers",
       "cap_phone": "800-247-0560",
       "ship_name": "North Dakota State Health Insurance Assistance Program (SHIC)",
-      "ship_url": "https://www.insurance.nd.gov/consumers/shic-senior-health-insurance-counseling",
+      "ship_url": "https://www.insurance.nd.gov/shic-medicare",
       "ship_phone": "888-575-6611"
     },
     "medicaid": {
@@ -1520,7 +1520,7 @@
       "cap_url": "https://insurance.ohio.gov/wps/portal/consumer",
       "cap_phone": "800-686-1526",
       "ship_name": "Ohio Senior Health Insurance Information Program (OSHIIP)",
-      "ship_url": "https://insurance.ohio.gov/wps/portal/consumer/consumer/oshiip",
+      "ship_url": "https://insurance.ohio.gov/about-us/divisions/oshiip",
       "ship_phone": "800-686-1578"
     },
     "medicaid": {
@@ -1705,7 +1705,7 @@
       "cap_url": "https://ohic.ri.gov/",
       "cap_phone": "401-462-9517",
       "ship_name": "Rhode Island SHIP (Senior Health Insurance Program)",
-      "ship_url": "https://oha.ri.gov/programs/ship/",
+      "ship_url": "https://oha.ri.gov/Medicare",
       "ship_phone": "401-462-4510"
     },
     "medicaid": {
@@ -1746,7 +1746,7 @@
       "cap_url": "https://www.doi.sc.gov/consumers",
       "cap_phone": "800-768-3467",
       "ship_name": "South Carolina Insurance Counseling Assistance and Referrals for Elders (I-CARE)",
-      "ship_url": "https://aging.sc.gov/programs-initiatives/insurance-counseling-and-assistance",
+      "ship_url": "http://www.aging.sc.gov/",
       "ship_phone": "800-868-9095"
     },
     "medicaid": {
@@ -1783,7 +1783,7 @@
       "cap_url": "https://dlr.sd.gov/insurance/consumers/default.aspx",
       "cap_phone": "605-773-3563",
       "ship_name": "South Dakota State Health Insurance Assistance Program (SHIINE)",
-      "ship_url": "https://dss.sd.gov/medicaid/individuals/shiine/",
+      "ship_url": "http://www.shiine.net/",
       "ship_phone": "800-536-8197"
     },
     "medicaid": {
@@ -1820,7 +1820,7 @@
       "cap_url": "https://www.tn.gov/commerce/insurance/consumer-resources.html",
       "cap_phone": "800-342-4029",
       "ship_name": "Tennessee State Health Insurance Assistance Program (SHIP)",
-      "ship_url": "https://www.tn.gov/commerce/insurance/consumer-resources/tennessee-state-health-insurance-assistance-program.html",
+      "ship_url": "https://www.tn.gov/disability-and-aging/disability-aging-programs/tn-ship.html",
       "ship_phone": "877-801-0044"
     },
     "medicaid": {
@@ -1866,7 +1866,7 @@
       "cap_url": "https://www.tdi.texas.gov/consumer/index.html",
       "cap_phone": "800-252-3439",
       "ship_name": "Texas Health Information Counseling and Advocacy Program (HICAP)",
-      "ship_url": "https://www.hhs.texas.gov/services/aging/long-term-care-living/texas-health-information-counseling-advocacy-program",
+      "ship_url": "https://hhs.texas.gov/services/health/medicare",
       "ship_phone": "800-252-9240"
     },
     "medicaid": {
@@ -1917,7 +1917,7 @@
       "cap_url": "https://insurance.utah.gov/consumer",
       "cap_phone": "800-439-3805",
       "ship_name": "Utah State Health Insurance Assistance Program (SHIP)",
-      "ship_url": "https://daas.utah.gov/seniors/utah-ship/",
+      "ship_url": "https://daas.utah.gov/seniors/",
       "ship_phone": "800-541-7735"
     },
     "medicaid": {
@@ -2042,7 +2042,7 @@
       "cap_url": "https://www.insurance.wa.gov/about-shiba",
       "cap_phone": "800-562-6900",
       "ship_name": "Statewide Health Insurance Benefits Advisors (SHIBA)",
-      "ship_url": "https://www.insurance.wa.gov/about-shiba",
+      "ship_url": "https://www.insurance.wa.gov/get-help-medicare",
       "ship_phone": "800-562-6900"
     },
     "medicaid": {
@@ -2085,10 +2085,10 @@
     },
     "consumer_assistance": {
       "cap_name": "West Virginia Insurance Commission Consumer Services",
-      "cap_url": "https://www.wvinsurance.gov/Consumers",
+      "cap_url": "https://www.wvinsurance.gov/Consumer_Services",
       "cap_phone": "888-879-9842",
       "ship_name": "West Virginia State Health Insurance Assistance Program (SHIP)",
-      "ship_url": "https://www.wvship.org/",
+      "ship_url": "http://www.wvship.org/",
       "ship_phone": "877-987-4463"
     },
     "medicaid": {
@@ -2118,11 +2118,11 @@
       "url": "https://oci.wi.gov/",
       "phone": "608-266-3585",
       "consumer_line": "800-236-8517",
-      "complaint_url": "https://oci.wi.gov/Pages/Consumers/FileAComplaint.aspx"
+      "complaint_url": "https://oci.wi.gov/Pages/Consumers/Filing-a-Complaint.aspx"
     },
     "consumer_assistance": {
       "cap_name": "Wisconsin Office of the Commissioner of Insurance Consumer Services",
-      "cap_url": "https://oci.wi.gov/Pages/Consumers/Consumers.aspx",
+      "cap_url": "https://oci.wi.gov/pages/consumershome.aspx",
       "cap_phone": "800-236-8517",
       "ship_name": "Wisconsin Board on Aging and Long-Term Care (BOALTC) - Medigap Helpline",
       "ship_url": "https://longtermcare.wi.gov/",
@@ -2171,7 +2171,7 @@
       "cap_url": "https://doi.wyo.gov/consumers",
       "cap_phone": "800-438-5768",
       "ship_name": "Wyoming State Health Insurance Information Program (WSHIP)",
-      "ship_url": "https://health.wyo.gov/aging/wyshiip/",
+      "ship_url": "https://www.wyomingseniors.com/services/wyoming-state-health-insurance-information-program",
       "ship_phone": "800-856-4398"
     },
     "medicaid": {

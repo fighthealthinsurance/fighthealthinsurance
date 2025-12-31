@@ -298,6 +298,9 @@ def _load_state_help_cached() -> tuple[tuple[str, StateHelp], ...]:
 
         state_help_list = []
         for slug, state_help_data in data.items():
+            # Skip "national" entry - it has a different structure for national resources
+            if slug == "national":
+                continue
             # Validate each state help entry is a dict
             if not isinstance(state_help_data, dict):
                 logger.error(

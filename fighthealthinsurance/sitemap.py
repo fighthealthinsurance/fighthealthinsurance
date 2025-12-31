@@ -45,6 +45,7 @@ class StaticViewSitemap(Sitemap):
             "mhmda",
             "contact",
             "blog",
+            "microsite_directory",
         ]
 
     def location(self, item: str) -> str:
