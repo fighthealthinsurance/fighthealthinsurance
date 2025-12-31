@@ -292,9 +292,9 @@ class MedicaidEligibilityTool(BaseTool):
         Returns:
             Tuple of (updated_response, updated_context)
         """
-        logger.debug("Medicaid eligibility check.")
+        logger.debug(f"Medicaid eligibility tool call detected: {match.group(0)}")
 
-        # Find all matches and clean all of them
+        # Find all matches for cleaning purposes
         all_matches = self.detect_all(response_text)
         cleaned_response = self.clean_all_matches(response_text, all_matches)
 
@@ -304,14 +304,23 @@ class MedicaidEligibilityTool(BaseTool):
                 "processing only the first one"
             )
 
-        # Try to parse JSON from matches
-        loaded = None
-        for ematch in all_matches:
-            if loaded is None:
-                try:
-                    loaded = json.loads(ematch.group(1).strip())
-                except Exception:
-                    pass
+        # Parse JSON from the provided match (not re-detecting)
+        json_data = match.group(1).strip()
+        logger.debug(f"Extracted JSON data: {json_data}")
+
+        try:
+            loaded = json.loads(json_data)
+            logger.debug(f"Parsed JSON data: {loaded}")
+        except json.JSONDecodeError as e:
+            logger.warning(f"Invalid JSON in medicaid_eligibility token: {json_data} - {e}")
+            await self.send_status_message(
+                "Error processing Medicaid eligibility data: Invalid JSON format."
+            )
+            return (
+                "I couldn't process the eligibility check due to a formatting error. "
+                "Please try again with your eligibility question.",
+                context,
+            )
 
         if len(cleaned_response) > 1:
             await self.send_status_message(
@@ -319,13 +328,11 @@ class MedicaidEligibilityTool(BaseTool):
                 f"Remaining information: {cleaned_response}"
             )
 
-        if loaded is None:
-            loaded = {}
-
         if not isinstance(loaded, dict):
-            raise TypeError(
-                f"Expected dict, got {type(loaded).__name__} while loading tool call params."
-            )
+            error_msg = f"Expected dict, got {type(loaded).__name__} while loading tool call params."
+            logger.warning(error_msg)
+            await self.send_status_message(f"Error: {error_msg}")
+            raise TypeError(error_msg)
 
         try:
             # Import here to avoid circular imports
