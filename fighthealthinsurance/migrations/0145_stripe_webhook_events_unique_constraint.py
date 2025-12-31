@@ -4,7 +4,6 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
         ("fighthealthinsurance", "0144_denial_denial_hashed_email_idx_and_more"),
     ]

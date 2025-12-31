@@ -151,16 +151,17 @@ class MedicaidInfoTool(BaseTool):
                             {"role": "agent", "content": response_text}
                         )
 
-                    additional_response, additional_context = (
-                        await self.call_llm_callback(
-                            model_backends,
-                            medicaid_info_text,
-                            "",  # Empty previous context summary
-                            history_for_llm,
-                            depth=depth + 1,
-                            is_logged_in=is_logged_in,
-                            is_professional=is_professional,
-                        )
+                    (
+                        additional_response,
+                        additional_context,
+                    ) = await self.call_llm_callback(
+                        model_backends,
+                        medicaid_info_text,
+                        "",  # Empty previous context summary
+                        history_for_llm,
+                        depth=depth + 1,
+                        is_logged_in=is_logged_in,
+                        is_professional=is_professional,
                     )
 
                     logger.debug(
