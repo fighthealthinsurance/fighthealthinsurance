@@ -2152,7 +2152,7 @@ class AlphaRemoteInternal(RemoteFullOpenLike):
             model=model,
             max_len=4096 * 30,
             dual_mode=dual_mode,
-            backup_model=backup_model
+            backup_model=backup_model,
         )
 
     @property
