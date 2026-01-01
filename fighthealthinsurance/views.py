@@ -1936,12 +1936,20 @@ class MicrositeView(TemplateView):
     template_name = "microsite.html"
 
     def get(self, request, slug, *args, **kwargs):
+        from django.http import Http404
+        from django.shortcuts import redirect
+
         from fighthealthinsurance.microsites import get_microsite
+
+        # Canonical URLs end with "-denial"; redirect if missing
+        if not slug.endswith("-denial"):
+            canonical_slug = f"{slug}-denial"
+            microsite = get_microsite(canonical_slug)
+            if microsite is not None:
+                return redirect("microsite", slug=canonical_slug, permanent=True)
 
         microsite = get_microsite(slug)
         if microsite is None:
-            from django.http import Http404
-
             raise Http404(f"Microsite '{slug}' not found")
 
         return super().get(request, *args, **kwargs)
