@@ -300,7 +300,8 @@ class PlanSourceAdmin(admin.ModelAdmin):
 class InsuranceCompanyAdmin(admin.ModelAdmin):
     """Admin configuration for InsuranceCompany model."""
 
-    list_display = ("id", "name", "website")
+    list_display = ("id", "name", "website", "is_tpa", "is_marketplace_focused")
+    list_filter = ("is_tpa", "is_marketplace_focused")
     search_fields = ("name", "alt_names")
     ordering = ("name",)
     fieldsets = (
@@ -308,6 +309,13 @@ class InsuranceCompanyAdmin(admin.ModelAdmin):
             None,
             {
                 "fields": ("name", "alt_names", "website", "notes"),
+            },
+        ),
+        (
+            "Company Type",
+            {
+                "fields": ("is_tpa", "is_marketplace_focused"),
+                "description": "Flags to indicate company type for suggestions",
             },
         ),
         (
