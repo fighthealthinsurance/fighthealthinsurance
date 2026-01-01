@@ -2132,6 +2132,9 @@ class AlphaRemoteInternal(RemoteFullOpenLike):
     def __init__(self, model: str, dual_mode: bool = True):
         self.port = os.getenv("ALPHA_HEALTH_BACKEND_PORT", "8000")
         self.host = os.getenv("ALPHA_HEALTH_BACKEND_HOST")
+        self.backup_port = os.getenv("ALPHA_HEALTH_BACKUP_BACKEND_PORT", None)
+        self.backup_host = os.getenv("ALPHA_HEALTH_BACKUP_BACKEND_HOST", None)
+        backup_model = "/app/model"
         if self.host is None:
             raise Exception("Can not construct New FHI backend without a host")
         self.url = None
@@ -2140,6 +2143,8 @@ class AlphaRemoteInternal(RemoteFullOpenLike):
         else:
             logger.debug(f"Error setting up remote health {self.host}:{self.port}")
         self.backup_url = None
+        if self.backup_port is not None and self.backup_host is not None:
+            self.backup_url = f"http://{self.backup_host}:{self.backup_port}/v1"
         super().__init__(
             self.url,
             backup_api_base=self.backup_url,
@@ -2147,6 +2152,7 @@ class AlphaRemoteInternal(RemoteFullOpenLike):
             model=model,
             max_len=4096 * 30,
             dual_mode=dual_mode,
+            backup_model=backup_model
         )
 
     @property
