@@ -2146,8 +2146,8 @@
       "out of network ambulance surprise billing"
     ]
   },
-  "glp1-denial-semaglutide-ozempic": {
-    "slug": "glp1-denial-semaglutide-ozempic",
+  "glp1-denial-semaglutide-ozempic-denial": {
+    "slug": "glp1-denial-semaglutide-ozempic-denial",
     "title": "Appealing Ozempic (Semaglutide) Denials",
     "default_procedure": "Ozempic (Semaglutide)",
     "default_condition": "Type 2 Diabetes",
@@ -2213,8 +2213,8 @@
       }
     ]
   },
-  "glp1-denial-semaglutide-wegovy": {
-    "slug": "glp1-denial-semaglutide-wegovy",
+  "glp1-denial-semaglutide-wegovy-denial": {
+    "slug": "glp1-denial-semaglutide-wegovy-denial",
     "title": "Appealing Wegovy (Semaglutide) Denials",
     "default_procedure": "Wegovy (Semaglutide for Obesity)",
     "default_condition": "Obesity",
@@ -2275,8 +2275,8 @@
       }
     ]
   },
-  "glp1-denial-tirzepatide-mounjaro": {
-    "slug": "glp1-denial-tirzepatide-mounjaro",
+  "glp1-denial-tirzepatide-mounjaro-denial": {
+    "slug": "glp1-denial-tirzepatide-mounjaro-denial",
     "title": "Appealing Mounjaro (Tirzepatide) Denials",
     "default_procedure": "Mounjaro (Tirzepatide for Type 2 Diabetes)",
     "default_condition": "Type 2 Diabetes",
@@ -2332,8 +2332,8 @@
       }
     ]
   },
-  "glp1-denial-tirzepatide-zepbound": {
-    "slug": "glp1-denial-tirzepatide-zepbound",
+  "glp1-denial-tirzepatide-zepbound-denial": {
+    "slug": "glp1-denial-tirzepatide-zepbound-denial",
     "title": "Appealing Zepbound (Tirzepatide) Denials",
     "default_procedure": "Zepbound (Tirzepatide for Obesity)",
     "default_condition": "Obesity",
@@ -2393,8 +2393,8 @@
       }
     ]
   },
-  "asthma-biologic-denial-dupilumab": {
-    "slug": "asthma-biologic-denial-dupilumab",
+  "asthma-biologic-denial-dupilumab-denial": {
+    "slug": "asthma-biologic-denial-dupilumab-denial",
     "title": "Appealing Dupixent (Dupilumab) Asthma Denials",
     "default_procedure": "Dupixent for Severe Asthma",
     "default_condition": "Severe Asthma",
@@ -2459,8 +2459,8 @@
       }
     ]
   },
-  "asthma-biologic-denial-omalizumab": {
-    "slug": "asthma-biologic-denial-omalizumab",
+  "asthma-biologic-denial-omalizumab-denial": {
+    "slug": "asthma-biologic-denial-omalizumab-denial",
     "title": "Appealing Xolair (Omalizumab) Asthma Denials",
     "default_procedure": "Xolair for Allergic Asthma",
     "default_condition": "Allergic Asthma",
@@ -2521,8 +2521,8 @@
       }
     ]
   },
-  "asthma-biologic-denial-mepolizumab": {
-    "slug": "asthma-biologic-denial-mepolizumab",
+  "asthma-biologic-denial-mepolizumab-denial": {
+    "slug": "asthma-biologic-denial-mepolizumab-denial",
     "title": "Appealing Nucala (Mepolizumab) Asthma Denials",
     "default_procedure": "Nucala for Eosinophilic Asthma",
     "default_condition": "Eosinophilic Asthma",
@@ -2583,8 +2583,8 @@
       }
     ]
   },
-  "eczema-biologic-denial-dupilumab": {
-    "slug": "eczema-biologic-denial-dupilumab",
+  "eczema-biologic-denial-dupilumab-denial": {
+    "slug": "eczema-biologic-denial-dupilumab-denial",
     "title": "Appealing Dupixent (Dupilumab) Eczema Denials",
     "default_procedure": "Dupixent for Atopic Dermatitis",
     "default_condition": "Atopic Dermatitis",
@@ -2644,8 +2644,8 @@
       }
     ]
   },
-  "eczema-biologic-denial-upadacitinib": {
-    "slug": "eczema-biologic-denial-upadacitinib",
+  "eczema-biologic-denial-upadacitinib-denial": {
+    "slug": "eczema-biologic-denial-upadacitinib-denial",
     "title": "Appealing Rinvoq (Upadacitinib) Eczema Denials",
     "default_procedure": "Rinvoq for Atopic Dermatitis",
     "default_condition": "Atopic Dermatitis",
@@ -2706,8 +2706,8 @@
       }
     ]
   },
-  "migraine-med-denial-emgality": {
-    "slug": "migraine-med-denial-emgality",
+  "migraine-med-denial-emgality-denial": {
+    "slug": "migraine-med-denial-emgality-denial",
     "title": "Appealing Emgality (Galcanezumab) Denials",
     "default_procedure": "Emgality for Migraine Prevention",
     "default_condition": "Migraine",
@@ -2773,8 +2773,8 @@
       }
     ]
   },
-  "migraine-med-denial-aimovig": {
-    "slug": "migraine-med-denial-aimovig",
+  "migraine-med-denial-aimovig-denial": {
+    "slug": "migraine-med-denial-aimovig-denial",
     "title": "Appealing Aimovig (Erenumab) Denials",
     "default_procedure": "Aimovig for Migraine Prevention",
     "default_condition": "Migraine",
@@ -2845,8 +2845,8 @@
       }
     ]
   },
-  "migraine-med-denial-ajovy": {
-    "slug": "migraine-med-denial-ajovy",
+  "migraine-med-denial-ajovy-denial": {
+    "slug": "migraine-med-denial-ajovy-denial",
     "title": "Appealing Ajovy (Fremanezumab) Denials",
     "default_procedure": "Ajovy for Migraine Prevention",
     "default_condition": "Migraine",
@@ -2912,8 +2912,8 @@
       }
     ]
   },
-  "migraine-med-denial-nurtec": {
-    "slug": "migraine-med-denial-nurtec",
+  "migraine-med-denial-nurtec-denial": {
+    "slug": "migraine-med-denial-nurtec-denial",
     "title": "Appealing Nurtec ODT (Rimegepant) Denials",
     "default_procedure": "Nurtec ODT for Acute and Preventive Migraine Treatment",
     "default_condition": "Migraine",
@@ -2979,8 +2979,8 @@
       }
     ]
   },
-  "migraine-med-denial-ubrelvy": {
-    "slug": "migraine-med-denial-ubrelvy",
+  "migraine-med-denial-ubrelvy-denial": {
+    "slug": "migraine-med-denial-ubrelvy-denial",
     "title": "Appealing Ubrelvy (Ubrogepant) Denials",
     "default_procedure": "Ubrelvy for Acute Migraine Treatment",
     "default_condition": "Migraine",
@@ -3046,8 +3046,8 @@
       }
     ]
   },
-  "insulin-pump-cgm-denial-dexcom": {
-    "slug": "insulin-pump-cgm-denial-dexcom",
+  "insulin-pump-cgm-denial-dexcom-denial": {
+    "slug": "insulin-pump-cgm-denial-dexcom-denial",
     "title": "Appealing Dexcom CGM Denials",
     "default_procedure": "Dexcom Continuous Glucose Monitor",
     "default_condition": "Diabetes",
@@ -3108,8 +3108,8 @@
       }
     ]
   },
-  "insulin-pump-cgm-denial-freestyle-libre": {
-    "slug": "insulin-pump-cgm-denial-freestyle-libre",
+  "insulin-pump-cgm-denial-freestyle-libre-denial": {
+    "slug": "insulin-pump-cgm-denial-freestyle-libre-denial",
     "title": "Appealing FreeStyle Libre Denials",
     "default_procedure": "FreeStyle Libre Flash Glucose Monitoring",
     "default_condition": "Diabetes",
@@ -3175,8 +3175,8 @@
       }
     ]
   },
-  "insulin-pump-denial-omnipod": {
-    "slug": "insulin-pump-denial-omnipod",
+  "insulin-pump-denial-omnipod-denial": {
+    "slug": "insulin-pump-denial-omnipod-denial",
     "title": "Appealing Omnipod Insulin Pump Denials",
     "default_procedure": "Omnipod Insulin Pump System",
     "default_condition": "Diabetes",
@@ -3237,8 +3237,8 @@
       }
     ]
   },
-  "pep-denial-hiv-exposure": {
-    "slug": "pep-denial-hiv-exposure",
+  "pep-denial-hiv-exposure-denial": {
+    "slug": "pep-denial-hiv-exposure-denial",
     "title": "Appealing HIV PEP (Post-Exposure Prophylaxis) Denials",
     "default_procedure": "HIV Post-Exposure Prophylaxis (PEP)",
     "default_condition": "HIV Exposure",
@@ -3422,8 +3422,8 @@
       }
     ]
   },
-  "continuity-of-care-formulary-change": {
-    "slug": "continuity-of-care-formulary-change",
+  "continuity-of-care-formulary-change-denial": {
+    "slug": "continuity-of-care-formulary-change-denial",
     "title": "Appealing Formulary Changes Using Continuity of Care",
     "default_procedure": "Medication Continuity of Care Exception",
     "tagline": "When your medication worked and the plan changes, you have rights.",
@@ -3473,8 +3473,8 @@
       "non-medical switching legislation insurance coverage"
     ]
   },
-  "humira-formulary-removal": {
-    "slug": "humira-formulary-removal",
+  "humira-formulary-removal-denial": {
+    "slug": "humira-formulary-removal-denial",
     "title": "Appealing Humira (Adalimumab) Formulary Removal",
     "default_procedure": "Humira (Adalimumab) Continuity of Care",
     "tagline": "Stable on Humira? You have the right to request continued coverage.",
@@ -3543,8 +3543,8 @@
       }
     ]
   },
-  "stelara-formulary-removal": {
-    "slug": "stelara-formulary-removal",
+  "stelara-formulary-removal-denial": {
+    "slug": "stelara-formulary-removal-denial",
     "title": "Appealing Stelara (Ustekinumab) Formulary Removal",
     "default_procedure": "Stelara (Ustekinumab) Continuity of Care",
     "tagline": "Stable on Stelara? Fight for continued coverage as biosimilars enter the market.",
@@ -3612,8 +3612,8 @@
       }
     ]
   },
-  "entyvio-formulary-removal": {
-    "slug": "entyvio-formulary-removal",
+  "entyvio-formulary-removal-denial": {
+    "slug": "entyvio-formulary-removal-denial",
     "title": "Appealing Entyvio (Vedolizumab) Formulary Removal",
     "default_procedure": "Entyvio (Vedolizumab) Continuity of Care",
     "default_condition": "Inflammatory Bowel Disease",
@@ -3672,8 +3672,8 @@
       }
     ]
   },
-  "skyrizi-formulary-removal": {
-    "slug": "skyrizi-formulary-removal",
+  "skyrizi-formulary-removal-denial": {
+    "slug": "skyrizi-formulary-removal-denial",
     "title": "Appealing Skyrizi (Risankizumab) Formulary Removal",
     "default_procedure": "Skyrizi (Risankizumab) Continuity of Care",
     "default_condition": "Psoriasis",
@@ -3725,8 +3725,8 @@
       }
     ]
   },
-  "tremfya-formulary-removal": {
-    "slug": "tremfya-formulary-removal",
+  "tremfya-formulary-removal-denial": {
+    "slug": "tremfya-formulary-removal-denial",
     "title": "Appealing Tremfya (Guselkumab) Formulary Removal",
     "default_procedure": "Tremfya (Guselkumab) Continuity of Care",
     "default_condition": "Psoriasis",
@@ -3966,8 +3966,8 @@
       "Contact the CMS No Surprises Help Desk at 1-800-985-3059 for assistance."
     ]
   },
-  "medicare-work-requirements": {
-    "slug": "medicare-work-requirements",
+  "medicare-work-requirements-denial": {
+    "slug": "medicare-work-requirements-denial",
     "title": "Understanding Medicare Work Requirements",
     "default_procedure": "Medicare Work Requirements",
     "tagline": "Navigating the new Medicare work requirements and understanding your obligations.",
