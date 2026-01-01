@@ -31,6 +31,7 @@ from fighthealthinsurance.chat.tools.patterns import (
     PUBMED_QUERY_REGEX as pubmed_query_terms_regex,
 )
 from fighthealthinsurance.extralink_context_helper import ExtraLinkContextHelper
+from fighthealthinsurance.rag_client import get_rag_context_for_denial
 from fighthealthinsurance.ml.ml_models import RemoteModelLike
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.models import (
@@ -823,7 +824,7 @@ class ChatInterface:
                 if microsite:
 
                     async def fetch_microsite_context():
-                        """Fetch microsite context."""
+                        """Fetch microsite context including RAG evidence."""
                         try:
                             # Send status message if PubMed search is available
                             if microsite.pubmed_search_terms:
@@ -832,8 +833,8 @@ class ChatInterface:
                                     f"Searching medical literature for {safe_procedure}..."
                                 )
 
-                            # Fetch combined context (both extralinks and PubMed if available)
-                            combined_context = await microsite.get_combined_context(
+                            # Fetch combined context (extralinks + PubMed) and RAG in parallel
+                            combined_awaitable = microsite.get_combined_context(
                                 pubmed_tools=(
                                     self.pubmed_tools
                                     if microsite.pubmed_search_terms
@@ -845,7 +846,46 @@ class ChatInterface:
                                 max_pubmed_articles=20,
                             )
 
+                            # Build a denial-like query from microsite info
+                            rag_query_parts = [microsite.default_procedure]
+                            if microsite.default_condition:
+                                rag_query_parts.append(microsite.default_condition)
+                            if microsite.common_denial_reasons:
+                                rag_query_parts.append(
+                                    microsite.common_denial_reasons[0]
+                                )
+                            rag_query = " - ".join(rag_query_parts)
+
+                            rag_awaitable = get_rag_context_for_denial(
+                                denial_text=rag_query,
+                            )
+
+                            results = await asyncio.gather(
+                                combined_awaitable,
+                                rag_awaitable,
+                                return_exceptions=True,
+                            )
+
+                            combined_context = (
+                                results[0] if isinstance(results[0], str) else None
+                            )
+                            rag_context = (
+                                results[1] if isinstance(results[1], str) else None
+                            )
+
+                            all_context_parts = []
                             if combined_context:
+                                all_context_parts.append(combined_context)
+                            if rag_context:
+                                all_context_parts.append(
+                                    f"Medical guidelines and regulations:\n{rag_context}"
+                                )
+                                logger.info(
+                                    f"RAG context added to chat for microsite {microsite.slug}"
+                                )
+
+                            if all_context_parts:
+                                full_context = "\n\n".join(all_context_parts)
                                 # Append to chat summary
                                 chat_obj = await OngoingChat.objects.aget(id=chat.id)
                                 if not chat_obj.summary_for_next_call:
@@ -855,7 +895,7 @@ class ChatInterface:
 
                                 last_summary = chat_obj.summary_for_next_call[-1]
                                 chat_obj.summary_for_next_call[-1] = (
-                                    f"{last_summary}\n\nMicrosite context:\n{combined_context}"
+                                    f"{last_summary}\n\nMicrosite context:\n{full_context}"
                                 )
                                 await chat_obj.asave()
 
