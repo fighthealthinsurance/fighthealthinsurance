@@ -5045,5 +5045,622 @@
         "description": "Teal Health offers the Teal Wand through their telehealth service. Contact Teal Health for current pricing and insurance coverage information."
       }
     ]
+  },
+  "physical-therapy-denial": {
+    "slug": "physical-therapy-denial",
+    "title": "Appealing Physical Therapy Denials",
+    "default_procedure": "Physical Therapy",
+    "tagline": "Help appealing denials for physical therapy coverage.",
+    "hero_h1": "Appeal Your Physical Therapy Denial",
+    "hero_subhead": "Don't let your insurer limit your access to medically necessary rehabilitation.",
+    "intro": "Physical therapy is essential for recovering from injuries, surgeries, and chronic conditions. Insurance companies often deny or limit physical therapy visits based on arbitrary session limits, claiming that continued therapy is not medically necessary even when your provider prescribes it. These denials can prevent full recovery and lead to long-term disability.",
+    "common_denial_reasons": [
+      "Exceeded plan visit limits",
+      "Not medically necessary after initial visits",
+      "Maintenance therapy not covered",
+      "Plateau in progress claimed",
+      "Must try home exercises first",
+      "Out-of-network provider",
+      "Prior authorization not obtained"
+    ],
+    "how_we_help": "We help you document your functional limitations, treatment goals, objective progress measures, and why continued physical therapy is necessary to prevent decline or achieve further meaningful improvement.",
+    "cta": "Start your physical therapy appeal — it takes about 3 minutes.",
+    "faq": [
+      {
+        "question": "My insurer says I've plateaued. Can I still appeal?",
+        "answer": "Yes. You can argue that maintenance therapy is needed to prevent decline, or provide new objective measurements showing continued improvement. Your therapist's documentation of functional gains is key evidence."
+      },
+      {
+        "question": "What if I've exceeded my plan's visit limits?",
+        "answer": "Many plans have exceptions for medical necessity. Your appeal can document why additional visits are needed based on your specific condition, surgery, or injury severity."
+      },
+      {
+        "question": "Can my physical therapist help with the appeal?",
+        "answer": "Yes, and they should. A letter from your PT documenting your progress, functional deficits, and treatment goals is critical evidence for your appeal."
+      }
+    ],
+    "evidence_snippets": [
+      "Physical therapy reduces pain and improves function in patients with musculoskeletal conditions.",
+      "Post-surgical physical therapy improves outcomes and reduces complications.",
+      "Maintenance physical therapy can prevent functional decline in chronic conditions.",
+      "Limiting physical therapy sessions often leads to worse long-term outcomes and higher costs."
+    ],
+    "pubmed_search_terms": [
+      "physical therapy effectiveness musculoskeletal",
+      "post-surgical rehabilitation outcomes",
+      "physical therapy visit frequency outcomes"
+    ]
+  },
+  "bilateral-orchiectomy-denial": {
+    "slug": "bilateral-orchiectomy-denial",
+    "title": "Appealing Bilateral Orchiectomy Denials",
+    "default_procedure": "Bilateral Orchiectomy",
+    "default_condition": "Gender Dysphoria",
+    "tagline": "Help appealing denials for medically necessary bilateral orchiectomy.",
+    "hero_h1": "Appeal Your Orchiectomy Denial",
+    "hero_subhead": "Don't let your insurer deny this medically necessary procedure for gender dysphoria treatment.",
+    "intro": "Bilateral orchiectomy is a recognized treatment for gender dysphoria and may also be performed for prostate cancer treatment. For transgender women, orchiectomy eliminates the need for testosterone-blocking medications and provides permanent feminizing effects. Insurance denials often cite cosmetic or experimental exclusions, despite major medical organizations recognizing this as medically necessary care.",
+    "common_denial_reasons": [
+      "Considered cosmetic surgery",
+      "Deemed experimental or investigational",
+      "Prior authorization requirements not met",
+      "Insufficient documentation of gender dysphoria",
+      "Time on hormone therapy requirements",
+      "Mental health evaluation requirements",
+      "Out-of-network surgeon"
+    ],
+    "how_we_help": "We help you document your gender dysphoria diagnosis, treatment history, mental health evaluations, and how this procedure is medically necessary per WPATH Standards of Care.",
+    "cta": "Start your orchiectomy appeal — it takes about 3 minutes.",
+    "faq": [
+      {
+        "question": "Is orchiectomy considered medically necessary?",
+        "answer": "Yes. Major medical organizations including WPATH, the Endocrine Society, and the AMA recognize surgical treatment of gender dysphoria as medically necessary, not cosmetic."
+      },
+      {
+        "question": "What documentation do I need for an appeal?",
+        "answer": "Key documents include your gender dysphoria diagnosis, letters from mental health providers, hormone therapy history, and a letter of medical necessity from your surgeon."
+      },
+      {
+        "question": "What are the WPATH criteria for this surgery?",
+        "answer": "WPATH Standards of Care recommend persistent, well-documented gender dysphoria, capacity to consent, and if significant medical or mental health concerns are present, they should be reasonably well-controlled."
+      }
+    ],
+    "evidence_snippets": [
+      "Surgical treatment significantly reduces gender dysphoria and improves quality of life.",
+      "WPATH Standards of Care recognize genital surgery as medically necessary treatment.",
+      "Orchiectomy eliminates the need for testosterone-blocking medications, reducing medication costs and side effects.",
+      "Withholding gender-affirming care is associated with significant mental health harms."
+    ],
+    "pubmed_search_terms": [
+      "orchiectomy gender dysphoria outcomes",
+      "gender-affirming surgery quality of life",
+      "transgender surgical treatment mental health"
+    ]
+  },
+  "clonoseq-mrd-testing-denial": {
+    "slug": "clonoseq-mrd-testing-denial",
+    "title": "Appealing clonoSEQ MRD Testing Denials",
+    "default_procedure": "clonoSEQ MRD Testing",
+    "default_condition": "Blood Cancer",
+    "tagline": "Help appealing denials for minimal residual disease testing.",
+    "hero_h1": "Appeal Your clonoSEQ MRD Testing Denial",
+    "hero_subhead": "Don't let your insurer deny access to this important cancer monitoring test.",
+    "intro": "clonoSEQ is an FDA-cleared test that detects minimal residual disease (MRD) in blood cancers like multiple myeloma, leukemia, and lymphoma. MRD testing helps oncologists determine if cancer cells remain after treatment and guides critical treatment decisions. Insurance companies sometimes deny coverage despite Medicare and major insurers recognizing its clinical value.",
+    "manufacturer": "Adaptive Biotechnologies",
+    "common_denial_reasons": [
+      "Test not medically necessary",
+      "Experimental or investigational",
+      "Not covered under lab benefits",
+      "Surveillance testing not covered",
+      "Frequency limits exceeded",
+      "Out-of-network laboratory",
+      "Prior authorization not obtained"
+    ],
+    "how_we_help": "We help you document your cancer diagnosis, treatment history, and how MRD testing will guide your treatment decisions and monitoring.",
+    "cta": "Start your clonoSEQ appeal — it takes about 3 minutes.",
+    "faq": [
+      {
+        "question": "Is clonoSEQ covered by Medicare?",
+        "answer": "Yes. Medicare provides national coverage for clonoSEQ in multiple myeloma, ALL, CLL, DLBCL, and mantle cell lymphoma. This coverage can support appeals to private insurers."
+      },
+      {
+        "question": "Why is MRD testing important?",
+        "answer": "MRD testing can detect cancer cells at much lower levels than standard tests. Achieving MRD negativity is associated with better outcomes, and MRD results help guide decisions about treatment duration and intensity."
+      },
+      {
+        "question": "What if my insurer says MRD testing is experimental?",
+        "answer": "clonoSEQ is FDA-cleared and Medicare-covered. Your appeal should cite these regulatory decisions and clinical guidelines recommending MRD assessment."
+      }
+    ],
+    "evidence_snippets": [
+      "MRD negativity is associated with improved survival in multiple myeloma and leukemias.",
+      "clonoSEQ is the only FDA-cleared MRD test for blood cancers.",
+      "MRD assessment guides treatment decisions including duration of therapy.",
+      "Medicare provides national coverage for clonoSEQ in multiple blood cancers."
+    ],
+    "pubmed_search_terms": [
+      "minimal residual disease multiple myeloma prognosis",
+      "MRD testing leukemia outcomes",
+      "clonoSEQ clinical utility"
+    ],
+    "assistance_programs": [
+      {
+        "name": "Adaptive Assist Patient Support",
+        "url": "https://www.clonoseq.com/adaptive-assist/",
+        "description": "90% of patients have no out-of-pocket costs. Adaptive Assist helps with insurance navigation and financial assistance for qualified patients. Call 1-855-236-9230."
+      }
+    ]
+  },
+  "botox-denial": {
+    "slug": "botox-denial",
+    "title": "Appealing Botox (OnabotulinumtoxinA) Denials",
+    "default_procedure": "Botox (onabotulinumtoxinA)",
+    "tagline": "Help appealing denials for medical Botox treatment.",
+    "hero_h1": "Appeal Your Botox Denial",
+    "hero_subhead": "Don't let your insurer deny medically necessary Botox treatment.",
+    "intro": "Botox (onabotulinumtoxinA) is FDA-approved for many medical conditions including chronic migraine, overactive bladder, cervical dystonia, spasticity, and hyperhidrosis. Insurance companies often deny Botox claiming it's cosmetic, even when prescribed for legitimate medical conditions. These denials can leave patients suffering from debilitating symptoms that Botox effectively treats.",
+    "manufacturer": "AbbVie/Allergan",
+    "common_denial_reasons": [
+      "Deemed cosmetic procedure",
+      "Prior authorization not obtained",
+      "Step therapy requirements not met",
+      "Diagnosis code mismatch",
+      "Dosage not covered",
+      "Frequency limits exceeded",
+      "Not covered for this indication"
+    ],
+    "how_we_help": "We help you document your medical diagnosis, failed prior treatments, and how Botox is being used for an FDA-approved or medically necessary indication, not cosmetic purposes.",
+    "cta": "Start your Botox appeal — it takes about 3 minutes.",
+    "faq": [
+      {
+        "question": "What medical conditions is Botox approved for?",
+        "answer": "FDA-approved indications include chronic migraine, cervical dystonia, upper and lower limb spasticity, overactive bladder, severe hyperhidrosis, blepharospasm, and strabismus, among others."
+      },
+      {
+        "question": "My insurer says Botox is cosmetic. How do I fight this?",
+        "answer": "Your appeal must clearly document that Botox is being used for a medical condition, not cosmetic purposes. Include your diagnosis, treatment history, and your physician's statement of medical necessity."
+      },
+      {
+        "question": "What if I haven't tried other treatments first?",
+        "answer": "Some insurers require step therapy. Your appeal should document any prior treatments tried and why they failed, or argue that Botox should be first-line based on clinical guidelines for your condition."
+      }
+    ],
+    "evidence_snippets": [
+      "OnabotulinumtoxinA significantly reduces chronic migraine frequency and severity.",
+      "Botox is FDA-approved for multiple neurological and urological conditions.",
+      "For chronic migraine, Botox reduced headache days by approximately 50% in clinical trials.",
+      "Botox improves quality of life in patients with spasticity, dystonia, and overactive bladder."
+    ],
+    "pubmed_search_terms": [
+      "onabotulinumtoxinA chronic migraine efficacy",
+      "botulinum toxin spasticity outcomes",
+      "botox overactive bladder treatment"
+    ],
+    "assistance_programs": [
+      {
+        "name": "Allergan BOTOX Savings Program",
+        "url": "https://www.botoxsavingsprogram.com/",
+        "description": "Eligible commercially insured patients may pay as little as $0 per treatment. Savings limits apply."
+      }
+    ]
+  },
+  "breast-reduction-denial": {
+    "slug": "breast-reduction-denial",
+    "title": "Appealing Breast Reduction Denials",
+    "default_procedure": "Breast Reduction (Reduction Mammaplasty)",
+    "tagline": "Help appealing denials for medically necessary breast reduction surgery.",
+    "hero_h1": "Appeal Your Breast Reduction Denial",
+    "hero_subhead": "Don't let your insurer dismiss your chronic pain as cosmetic.",
+    "intro": "Breast reduction surgery is medically necessary for many patients suffering from chronic neck pain, back pain, shoulder grooving from bra straps, rashes, and nerve symptoms caused by macromastia (excessively large breasts). Insurance companies often deny these claims as cosmetic, despite the significant physical symptoms and functional limitations these patients experience.",
+    "common_denial_reasons": [
+      "Deemed cosmetic surgery",
+      "Does not meet gram weight requirements",
+      "BMI too high for surgery",
+      "Insufficient documentation of symptoms",
+      "Conservative treatment not tried",
+      "Physical therapy not completed",
+      "Prior authorization not obtained"
+    ],
+    "how_we_help": "We help you document your physical symptoms, functional limitations, failed conservative treatments, and the weight of tissue to be removed according to your insurer's criteria.",
+    "cta": "Start your breast reduction appeal — it takes about 3 minutes.",
+    "faq": [
+      {
+        "question": "What gram weight requirements do insurers typically have?",
+        "answer": "Most insurers use the Schnur Sliding Scale or require removal of 300-500 grams per breast minimum. Requirements vary by body surface area. Your surgeon should calculate the anticipated tissue removal."
+      },
+      {
+        "question": "What symptoms help prove medical necessity?",
+        "answer": "Document chronic neck, back, and shoulder pain; shoulder grooving from bra straps; intertrigo (rashes under breasts); headaches; numbness or tingling in arms; and difficulty with physical activities."
+      },
+      {
+        "question": "Does my BMI affect coverage?",
+        "answer": "Some insurers require BMI under 30-35 for approval. If your BMI is higher, you may need to document that weight loss hasn't resolved symptoms or that losing weight is not medically feasible."
+      }
+    ],
+    "evidence_snippets": [
+      "Breast reduction surgery significantly reduces chronic pain in the neck, back, and shoulders.",
+      "Patients report improved quality of life and ability to exercise after reduction mammaplasty.",
+      "Conservative treatments including physical therapy, NSAIDs, and supportive bras often fail for macromastia.",
+      "Breast reduction is a well-established treatment for symptomatic macromastia with high satisfaction rates."
+    ],
+    "pubmed_search_terms": [
+      "breast reduction chronic pain outcomes",
+      "reduction mammaplasty quality of life",
+      "macromastia conservative treatment failure"
+    ]
+  },
+  "cardiovascular-risk-panel-denial": {
+    "slug": "cardiovascular-risk-panel-denial",
+    "title": "Appealing Cardiovascular Risk Panel Denials",
+    "default_procedure": "Advanced Cardiovascular Risk Panel",
+    "default_condition": "Cardiovascular Disease Risk",
+    "tagline": "Help appealing denials for advanced cardiac risk testing.",
+    "hero_h1": "Appeal Your Cardiovascular Panel Denial",
+    "hero_subhead": "Don't let your insurer deny tests that could predict heart disease.",
+    "intro": "Advanced cardiovascular risk panels include tests like apolipoprotein measurements, Lp(a), high-sensitivity CRP, and advanced lipid panels that go beyond basic cholesterol testing. These tests help identify patients at higher risk for heart attack and stroke who may benefit from more aggressive treatment. Insurance companies sometimes deny these as experimental or unnecessary.",
+    "common_denial_reasons": [
+      "Standard lipid panel sufficient",
+      "Test deemed experimental",
+      "Not medically necessary",
+      "No family history documented",
+      "No prior cardiovascular event",
+      "Lab not in network",
+      "Duplicate testing"
+    ],
+    "how_we_help": "We help you document your cardiovascular risk factors, family history, and why advanced testing beyond standard lipid panels is necessary to guide your treatment.",
+    "cta": "Start your cardiovascular panel appeal — it takes about 3 minutes.",
+    "faq": [
+      {
+        "question": "What tests are included in advanced cardiovascular panels?",
+        "answer": "Tests may include Lp(a), apolipoprotein B, high-sensitivity CRP, LDL particle number, homocysteine, and coronary artery calcium scoring, depending on the panel ordered."
+      },
+      {
+        "question": "When are advanced panels appropriate?",
+        "answer": "Advanced testing is appropriate for patients with family history of premature heart disease, borderline risk on standard tests, or patients whose standard lipid panels don't explain their risk level."
+      },
+      {
+        "question": "Is Lp(a) testing covered by insurance?",
+        "answer": "Coverage varies. Recent guidelines from major cardiology organizations recommend Lp(a) testing at least once, which can support appeals. High Lp(a) identifies patients who may benefit from more aggressive treatment."
+      }
+    ],
+    "evidence_snippets": [
+      "Lp(a) is an independent risk factor for cardiovascular disease not captured by standard lipid testing.",
+      "Advanced lipid testing can reclassify patient risk and guide statin therapy decisions.",
+      "Family history of premature cardiovascular disease warrants additional risk assessment.",
+      "Apolipoprotein B may be a better predictor of cardiovascular risk than LDL cholesterol alone."
+    ],
+    "pubmed_search_terms": [
+      "Lp(a) cardiovascular risk prediction",
+      "advanced lipid panel clinical utility",
+      "apolipoprotein B cardiovascular outcomes"
+    ]
+  },
+  "breast-augmentation-trans-denial": {
+    "slug": "breast-augmentation-trans-denial",
+    "title": "Appealing Breast Augmentation Denials for Transgender Patients",
+    "default_procedure": "Breast Augmentation",
+    "default_condition": "Gender Dysphoria",
+    "tagline": "Help appealing denials for gender-affirming breast augmentation.",
+    "hero_h1": "Appeal Your Breast Augmentation Denial",
+    "hero_subhead": "Don't let your insurer deny this medically necessary gender-affirming procedure.",
+    "intro": "Breast augmentation for transgender women is a recognized treatment for gender dysphoria when hormone therapy has not produced sufficient breast development. Major medical organizations including WPATH recognize this as medically necessary care, not cosmetic surgery. Insurance denials often incorrectly classify this as cosmetic despite the gender dysphoria diagnosis.",
+    "common_denial_reasons": [
+      "Deemed cosmetic surgery",
+      "Considered experimental",
+      "Insufficient hormone therapy duration",
+      "Breast development from hormones not documented",
+      "Mental health evaluation not completed",
+      "Prior authorization requirements",
+      "Out-of-network surgeon"
+    ],
+    "how_we_help": "We help you document your gender dysphoria diagnosis, hormone therapy history, inadequate breast development on hormones, and how this surgery is medically necessary per WPATH guidelines.",
+    "cta": "Start your breast augmentation appeal — it takes about 3 minutes.",
+    "faq": [
+      {
+        "question": "When is breast augmentation considered medically necessary?",
+        "answer": "WPATH recommends breast augmentation be considered after a minimum of 12 months of hormone therapy if breast growth is insufficient to alleviate gender dysphoria."
+      },
+      {
+        "question": "What documentation do I need for an appeal?",
+        "answer": "Key documents include your gender dysphoria diagnosis, hormone therapy records showing duration and breast development, mental health evaluation, and surgeon's letter of medical necessity."
+      },
+      {
+        "question": "How do I prove breast development is insufficient?",
+        "answer": "Your surgeon or endocrinologist can document breast measurements and compare them to expectations after hormone therapy. Photos may also be used to document current breast size."
+      }
+    ],
+    "evidence_snippets": [
+      "Hormone therapy typically produces Tanner stage 2-3 breast development, which may be insufficient for some patients.",
+      "Breast augmentation significantly reduces chest dysphoria in transgender women.",
+      "WPATH Standards of Care recognize breast augmentation as medically necessary when hormone therapy is inadequate.",
+      "Gender-affirming surgeries improve mental health outcomes and quality of life."
+    ],
+    "pubmed_search_terms": [
+      "breast augmentation transgender outcomes",
+      "gender-affirming surgery quality of life",
+      "hormone therapy breast development transgender"
+    ]
+  },
+  "breast-reconstruction-cancer-denial": {
+    "slug": "breast-reconstruction-cancer-denial",
+    "title": "Appealing Breast Reconstruction Denials After Cancer",
+    "default_procedure": "Breast Reconstruction",
+    "default_condition": "Breast Cancer",
+    "tagline": "Help appealing denials for breast reconstruction after mastectomy.",
+    "hero_h1": "Appeal Your Breast Reconstruction Denial",
+    "hero_subhead": "Federal law protects your right to breast reconstruction after cancer surgery.",
+    "intro": "Breast reconstruction after mastectomy is protected by the Women's Health and Cancer Rights Act (WHCRA), which requires group health plans that cover mastectomy to also cover reconstruction. Despite this federal protection, insurance companies still deny reconstruction procedures, second breast procedures for symmetry, and associated services. You have legal rights to this coverage.",
+    "common_denial_reasons": [
+      "Procedure deemed cosmetic",
+      "Symmetry procedure not covered",
+      "Type of reconstruction not approved",
+      "Out-of-network surgeon",
+      "Prior authorization requirements",
+      "Revision surgery denied",
+      "Nipple reconstruction denied"
+    ],
+    "how_we_help": "We help you cite the Women's Health and Cancer Rights Act and document that your reconstruction is a federally protected benefit that your insurer must cover.",
+    "cta": "Start your breast reconstruction appeal — it takes about 3 minutes.",
+    "faq": [
+      {
+        "question": "What does the Women's Health and Cancer Rights Act cover?",
+        "answer": "WHCRA requires coverage of: reconstruction of the breast on which mastectomy was performed, surgery on the other breast for symmetry, prostheses, and treatment of physical complications at all stages of mastectomy including lymphedema."
+      },
+      {
+        "question": "Can my insurer limit the type of reconstruction?",
+        "answer": "WHCRA requires coverage of 'reconstruction of the breast' without specifying type. Your appeal can argue that the reconstruction method chosen by you and your surgeon should be covered."
+      },
+      {
+        "question": "Is nipple reconstruction covered?",
+        "answer": "Yes. Nipple reconstruction is considered part of breast reconstruction under WHCRA. If denied, your appeal should cite this federal requirement."
+      }
+    ],
+    "evidence_snippets": [
+      "The Women's Health and Cancer Rights Act requires insurance coverage of breast reconstruction after mastectomy.",
+      "Breast reconstruction improves quality of life and psychological well-being after cancer surgery.",
+      "WHCRA mandates coverage for symmetry procedures on the contralateral breast.",
+      "Denying federally mandated breast reconstruction coverage violates federal law."
+    ],
+    "pubmed_search_terms": [
+      "breast reconstruction quality of life",
+      "mastectomy reconstruction outcomes",
+      "WHCRA breast reconstruction coverage"
+    ]
+  },
+  "xphozah-denial": {
+    "slug": "xphozah-denial",
+    "title": "Appealing Xphozah (Tenapanor) Denials",
+    "default_procedure": "Xphozah (tenapanor)",
+    "default_condition": "Hyperphosphatemia in Chronic Kidney Disease",
+    "tagline": "Help appealing denials for this phosphate absorption inhibitor.",
+    "hero_h1": "Appeal Your Xphozah Denial",
+    "hero_subhead": "Don't let your insurer deny access to this treatment for high phosphorus levels.",
+    "intro": "Xphozah (tenapanor) is an FDA-approved medication for controlling serum phosphorus in adults with chronic kidney disease on dialysis. Unlike traditional phosphate binders, Xphozah works by blocking phosphate absorption in the gut. This offers an important option for patients who cannot adequately control phosphorus with binders alone or who experience side effects from binders.",
+    "manufacturer": "Ardelyx",
+    "common_denial_reasons": [
+      "Must try phosphate binders first",
+      "Not on formulary",
+      "Prior authorization required",
+      "Dose limits or quantity restrictions",
+      "Medicare Part D coverage changes",
+      "Cost-effectiveness criteria",
+      "Inadequate documentation of binder failure"
+    ],
+    "how_we_help": "We help you document your phosphorus levels, why traditional phosphate binders have failed or are inadequate, and how Xphozah's unique mechanism of action addresses your needs.",
+    "cta": "Start your Xphozah appeal — it takes about 3 minutes.",
+    "faq": [
+      {
+        "question": "How is Xphozah different from phosphate binders?",
+        "answer": "Unlike binders that bind phosphorus in food, Xphozah blocks phosphorus absorption in the intestinal lining. It can be used alone or with binders for additional phosphorus control."
+      },
+      {
+        "question": "What if I've had side effects from binders?",
+        "answer": "Document specific side effects like GI upset, pill burden, or drug interactions. Xphozah offers an alternative mechanism that may be better tolerated."
+      },
+      {
+        "question": "Has Medicare coverage changed for Xphozah?",
+        "answer": "Coverage policies have evolved. The ArdelyxAssist program can help navigate current coverage options and provide financial assistance for eligible patients."
+      }
+    ],
+    "evidence_snippets": [
+      "Tenapanor significantly reduces serum phosphorus levels in dialysis patients.",
+      "Xphozah offers a novel mechanism distinct from phosphate binders for controlling hyperphosphatemia.",
+      "Combination therapy with tenapanor and binders provides additional phosphorus reduction.",
+      "Managing hyperphosphatemia reduces cardiovascular risk in chronic kidney disease patients."
+    ],
+    "pubmed_search_terms": [
+      "tenapanor hyperphosphatemia dialysis",
+      "phosphate control chronic kidney disease",
+      "Xphozah phosphorus reduction efficacy"
+    ],
+    "assistance_programs": [
+      {
+        "name": "ArdelyxAssist Patient Support",
+        "url": "https://xphozah.com/",
+        "description": "ArdelyxAssist provides insurance navigation, copay assistance, and patient assistance for eligible patients. Call 877-527-3927."
+      }
+    ]
+  },
+  "vasectomy-denial": {
+    "slug": "vasectomy-denial",
+    "title": "Appealing Vasectomy Denials",
+    "default_procedure": "Vasectomy",
+    "tagline": "Help appealing denials for permanent contraception coverage.",
+    "hero_h1": "Appeal Your Vasectomy Denial",
+    "hero_subhead": "Don't let your insurer deny this safe, effective contraception.",
+    "intro": "Vasectomy is a safe, effective, and cost-effective form of permanent male contraception. While the ACA requires coverage of female contraception without cost-sharing, male contraception coverage varies by plan. Many insurers do cover vasectomy as a preventive service, and denials can often be successfully appealed.",
+    "common_denial_reasons": [
+      "Not covered under plan benefits",
+      "Considered elective procedure",
+      "Age or marital status requirements",
+      "Prior authorization not obtained",
+      "Out-of-network provider",
+      "Plan exclusion for male sterilization",
+      "Cooling-off period not completed"
+    ],
+    "how_we_help": "We help you document why vasectomy is a covered benefit under your plan and cite state laws or plan provisions that require contraception coverage.",
+    "cta": "Start your vasectomy appeal — it takes about 3 minutes.",
+    "faq": [
+      {
+        "question": "Does the ACA require vasectomy coverage?",
+        "answer": "The ACA mandates coverage of FDA-approved contraceptive methods for women. Male contraception is not explicitly required, but many state laws and plan designs include vasectomy coverage."
+      },
+      {
+        "question": "What if my plan specifically excludes vasectomy?",
+        "answer": "Check your state laws, as some states mandate vasectomy coverage. Also review if your plan covers female sterilization, as arguments can be made for equal coverage."
+      },
+      {
+        "question": "Do I need my spouse's consent for coverage?",
+        "answer": "Spousal consent requirements are not legal in most states. If your insurer requires this, cite applicable state law prohibiting such requirements."
+      }
+    ],
+    "evidence_snippets": [
+      "Vasectomy is one of the safest and most effective forms of contraception.",
+      "Vasectomy is more cost-effective than female sterilization and long-term contraception costs.",
+      "Office-based vasectomy has low complication rates and quick recovery.",
+      "Vasectomy prevents unintended pregnancy with over 99% effectiveness."
+    ],
+    "pubmed_search_terms": [
+      "vasectomy safety efficacy",
+      "male sterilization cost effectiveness",
+      "vasectomy contraception outcomes"
+    ]
+  },
+  "sleeve-gastrectomy-denial": {
+    "slug": "sleeve-gastrectomy-denial",
+    "title": "Appealing Laparoscopic Sleeve Gastrectomy Denials",
+    "default_procedure": "Laparoscopic Sleeve Gastrectomy",
+    "default_condition": "Obesity",
+    "tagline": "Help appealing denials for bariatric surgery coverage.",
+    "hero_h1": "Appeal Your Sleeve Gastrectomy Denial",
+    "hero_subhead": "Don't let your insurer deny access to life-changing weight loss surgery.",
+    "intro": "Laparoscopic sleeve gastrectomy is a proven, effective bariatric surgery that removes approximately 80% of the stomach, promoting significant weight loss and resolution of obesity-related conditions. Insurance companies often deny this surgery with extensive requirements or claim it's not medically necessary, despite overwhelming evidence of its safety and effectiveness.",
+    "common_denial_reasons": [
+      "BMI does not meet threshold",
+      "Insufficient documentation of obesity-related conditions",
+      "Required diet program not completed",
+      "Psychological evaluation not done",
+      "Prior authorization not obtained",
+      "Bariatric surgery excluded from plan",
+      "Preferred procedure is different surgery"
+    ],
+    "how_we_help": "We help you document your BMI history, obesity-related comorbidities, failed weight loss attempts, and completion of pre-surgical requirements.",
+    "cta": "Start your sleeve gastrectomy appeal — it takes about 3 minutes.",
+    "faq": [
+      {
+        "question": "What BMI is typically required for coverage?",
+        "answer": "Most insurers require BMI ≥40, or BMI ≥35 with obesity-related conditions like type 2 diabetes, sleep apnea, or hypertension. Some newer guidelines support surgery at lower BMIs with metabolic disease."
+      },
+      {
+        "question": "What pre-surgical requirements are typical?",
+        "answer": "Common requirements include 3-6 months of medically supervised diet, psychological evaluation, nutritional counseling, and documentation of failed weight loss attempts."
+      },
+      {
+        "question": "What if my insurer prefers gastric bypass?",
+        "answer": "Your surgeon's recommendation matters. Sleeve gastrectomy may be more appropriate for your specific situation. Document why your surgeon recommends this procedure for you."
+      }
+    ],
+    "evidence_snippets": [
+      "Sleeve gastrectomy produces significant, sustained weight loss with lower complication rates than some other bariatric procedures.",
+      "Bariatric surgery leads to resolution or improvement of type 2 diabetes in the majority of patients.",
+      "Weight loss surgery reduces mortality and improves quality of life in patients with severe obesity.",
+      "Long-term studies show durable weight loss and metabolic improvements after sleeve gastrectomy."
+    ],
+    "pubmed_search_terms": [
+      "sleeve gastrectomy outcomes weight loss",
+      "bariatric surgery diabetes resolution",
+      "laparoscopic sleeve gastrectomy safety efficacy"
+    ]
+  },
+  "toenail-surgery-denial": {
+    "slug": "toenail-surgery-denial",
+    "title": "Appealing Toenail Surgery Denials",
+    "default_procedure": "Toenail Surgery (Matrixectomy)",
+    "tagline": "Help appealing denials for medically necessary toenail procedures.",
+    "hero_h1": "Appeal Your Toenail Surgery Denial",
+    "hero_subhead": "Don't let your insurer dismiss your painful nail condition as cosmetic.",
+    "intro": "Toenail surgery, including partial or total nail removal and matrixectomy, is medically necessary for conditions like chronic ingrown toenails, fungal nail infections unresponsive to medication, and nail deformities causing pain or recurrent infections. Insurance companies often deny these procedures as cosmetic, ignoring the pain, infection risk, and functional limitations they cause.",
+    "common_denial_reasons": [
+      "Deemed cosmetic procedure",
+      "Conservative treatment not tried",
+      "Nail fungus excluded from coverage",
+      "Prior authorization not obtained",
+      "In-office procedure not covered",
+      "Podiatrist not covered provider",
+      "Frequency limits on nail procedures"
+    ],
+    "how_we_help": "We help you document your nail condition, pain levels, failed conservative treatments, infection history, and functional impact to prove medical necessity.",
+    "cta": "Start your toenail surgery appeal — it takes about 3 minutes.",
+    "faq": [
+      {
+        "question": "When is toenail surgery medically necessary?",
+        "answer": "Surgery is medically necessary for recurrent ingrown toenails causing pain or infection, fungal nails unresponsive to oral antifungals, traumatic nail damage, or nail conditions affecting walking or causing repeated infections."
+      },
+      {
+        "question": "What if I have diabetes?",
+        "answer": "For diabetic patients, nail problems pose serious infection risks and can lead to complications. This increases medical necessity and should be emphasized in your appeal."
+      },
+      {
+        "question": "Does my insurer have to cover nail fungus treatment?",
+        "answer": "Some plans exclude onychomycosis treatment, but if the fungal nail is causing pain, secondary bacterial infections, or affecting mobility, you can argue it's medically necessary beyond cosmetic concerns."
+      }
+    ],
+    "evidence_snippets": [
+      "Chronic ingrown toenails cause significant pain and can lead to serious infections if untreated.",
+      "Matrixectomy provides permanent resolution of recurrent ingrown toenails.",
+      "Diabetic patients with nail disorders are at increased risk for infections and ulceration.",
+      "Surgical treatment of problematic toenails improves mobility and quality of life."
+    ],
+    "pubmed_search_terms": [
+      "ingrown toenail surgical treatment outcomes",
+      "matrixectomy recurrence rates",
+      "onychomycosis surgical management"
+    ]
+  },
+  "dexa-scan-denial": {
+    "slug": "dexa-scan-denial",
+    "title": "Appealing DEXA Scan Denials",
+    "default_procedure": "DEXA Bone Density Scan",
+    "default_condition": "Osteoporosis Risk",
+    "tagline": "Help appealing denials for bone density screening.",
+    "hero_h1": "Appeal Your DEXA Scan Denial",
+    "hero_subhead": "Don't let your insurer deny this important osteoporosis screening.",
+    "intro": "DEXA (Dual-Energy X-ray Absorptiometry) scans measure bone density and are the gold standard for diagnosing osteoporosis and assessing fracture risk. Medicare covers DEXA scans every 2 years for eligible beneficiaries, and preventive guidelines recommend screening for women 65+ and younger individuals with risk factors. Insurance denials often cite timing or medical necessity.",
+    "common_denial_reasons": [
+      "Too soon since last scan",
+      "Age does not meet screening criteria",
+      "No documented risk factors",
+      "Prior authorization required",
+      "Facility not covered",
+      "Diagnosis code issues",
+      "Not preventive—diagnostic frequency limits"
+    ],
+    "how_we_help": "We help you document your osteoporosis risk factors, fracture history, medication use, and why screening or monitoring is medically necessary at this time.",
+    "cta": "Start your DEXA scan appeal — it takes about 3 minutes.",
+    "faq": [
+      {
+        "question": "Who should get DEXA screening?",
+        "answer": "Guidelines recommend screening for women 65+, men 70+, and younger adults with risk factors such as fractures, steroid use, low body weight, family history, or conditions that affect bone health."
+      },
+      {
+        "question": "How often should DEXA scans be done?",
+        "answer": "Screening every 2 years is typical. More frequent scans may be appropriate if you're on osteoporosis treatment, have had fractures, or have conditions requiring closer monitoring."
+      },
+      {
+        "question": "What if I need a scan sooner than 2 years?",
+        "answer": "Document clinical reasons such as new fracture, starting or changing osteoporosis treatment, or new risk factors. Your doctor can support earlier scanning based on medical necessity."
+      }
+    ],
+    "evidence_snippets": [
+      "DEXA scanning is the gold standard for diagnosing osteoporosis and predicting fracture risk.",
+      "Early detection of low bone density allows treatment before fractures occur.",
+      "USPSTF recommends bone density screening for women 65 and older.",
+      "Monitoring bone density during osteoporosis treatment helps assess therapy effectiveness."
+    ],
+    "pubmed_search_terms": [
+      "DEXA bone density screening recommendations",
+      "osteoporosis screening fracture prevention",
+      "bone densitometry clinical utility"
+    ]
   }
 }
