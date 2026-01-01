@@ -1941,8 +1941,8 @@ class MicrositeView(TemplateView):
 
         from fighthealthinsurance.microsites import get_microsite
 
-        # Canonical URLs end with "-denial"; redirect if missing
-        if not slug.endswith("-denial"):
+        # Canonical URLs contain "-denial"; redirect if missing
+        if "-denial" not in slug:
             canonical_slug = f"{slug}-denial"
             microsite = get_microsite(canonical_slug)
             if microsite is not None:
