@@ -217,8 +217,13 @@ def get_microsite(slug: str) -> Optional[Microsite]:
     result = microsites.get(slug)
     if result is not None:
         return result
-    else:
-        return microsites.get(f"{slug}-denial")
+    result = microsites.get(f"{slug}-denial")
+    if result is not None:
+        return result
+    result = microsites.get(slug.replace("-denial", ""))
+    if result is not None:
+        return result
+    return microsite.get(slug.replace("-denial", "") + "-denial")
 
 
 def get_all_microsites() -> dict[str, Microsite]:
