@@ -287,6 +287,7 @@
     regex: oscar\s*(?:health|insurance)?
     website: https://www.hioscar.com
     notes: Technology-focused health insurance company, primarily individual and small group markets
+    is_marketplace_focused: true
 
 - model: fighthealthinsurance.insurancecompany
   pk: 24
@@ -297,6 +298,7 @@
     regex: ambetter
     website: https://www.ambetterhealth.com
     notes: Centene's ACA marketplace brand, available in many states
+    is_marketplace_focused: true
 
 - model: fighthealthinsurance.insurancecompany
   pk: 25
@@ -374,6 +376,7 @@
     regex: bright\s*health
     website: https://www.brighthealthcare.com
     notes: "Technology-focused health insurance company (note: has scaled back operations significantly)"
+    is_marketplace_focused: true
 
 - model: fighthealthinsurance.insurancecompany
   pk: 32
@@ -385,6 +388,7 @@
     regex: friday\s*health
     website: https://www.fridayhealthplans.com
     notes: "Low-cost ACA marketplace insurer in several states (note: has exited some markets)"
+    is_marketplace_focused: true
 
 #######################################################################
 # MEDICAID MANAGED CARE PLANS
@@ -426,6 +430,7 @@
     regex: umr(?!\w)|united\s*medical\s*resources
     website: https://www.umr.com
     notes: Third-party administrator (TPA) for self-funded employer health plans. UnitedHealth Group subsidiary.
+    is_tpa: true
 
 - model: fighthealthinsurance.insurancecompany
   pk: 36
@@ -437,6 +442,7 @@
     regex: meritain
     website: https://www.meritain.com
     notes: Third-party administrator for self-funded employer plans. Aetna subsidiary.
+    is_tpa: true
 
 - model: fighthealthinsurance.insurancecompany
   pk: 37
@@ -448,6 +454,7 @@
     regex: trustmark
     website: https://www.trustmarkbenefits.com
     notes: Third-party administrator and voluntary benefits provider
+    is_tpa: true
 
 - model: fighthealthinsurance.insurancecompany
   pk: 38
@@ -458,6 +465,7 @@
     regex: health\s*comp(?!\w)
     website: https://www.healthcomp.com
     notes: Third-party administrator for self-funded health plans
+    is_tpa: true
 
 #######################################################################
 # STATE-SPECIFIC MEDICAID PLANS - ANTHEM
@@ -1286,6 +1294,7 @@
     regex: sedgwick
     website: https://www.sedgwick.com
     notes: Global claims management and TPA services provider
+    is_tpa: true
 
 - model: fighthealthinsurance.insurancecompany
   pk: 68
@@ -1297,6 +1306,7 @@
     regex: gallagher\s*bassett
     website: https://www.gallagherbassett.com
     notes: Global TPA and risk management services provider
+    is_tpa: true
 
 - model: fighthealthinsurance.insurancecompany
   pk: 69
@@ -1307,6 +1317,7 @@
     regex: corvel
     website: https://www.corvel.com
     notes: National TPA specializing in workers compensation and health claims
+    is_tpa: true
 
 - model: fighthealthinsurance.insurancecompany
   pk: 70
@@ -1317,6 +1328,7 @@
     regex: luminare\s*health
     website: https://www.luminarehealth.com
     notes: TPA for self-funded employer health plans
+    is_tpa: true
 
 - model: fighthealthinsurance.insurancecompany
   pk: 71
@@ -1328,6 +1340,7 @@
     regex: administrative\s*concepts|aci\s*(?:benefits|health)
     website: https://www.acitpa.com
     notes: TPA for self-funded health and welfare plans
+    is_tpa: true
 
 #######################################################################
 # ADDITIONAL MEDICAID PLANS
@@ -1422,3 +1435,179 @@
     plan_source: 100
     regex: bcbs.*michigan.*medicare|michigan.*bcbs.*medicare
     notes: Blue Cross Blue Shield of Michigan Medicare Advantage
+
+#######################################################################
+# ADDITIONAL REGIONAL HEALTH PLANS (from web research)
+#######################################################################
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 72
+  fields:
+    name: Point32Health
+    alt_names: |
+      Tufts Health Plan
+      Harvard Pilgrim Health Care
+      Harvard Pilgrim
+      HPHC
+    regex: point32|tufts\s*health|harvard\s*pilgrim
+    website: https://www.point32health.org
+    notes: Second-largest health insurer in Massachusetts, formed from merger of Tufts Health Plan and Harvard Pilgrim Health Care
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 73
+  fields:
+    name: MVP Health Care
+    alt_names: |
+      MVP
+      MVP Health Plan
+    regex: mvp\s*health
+    website: https://www.mvphealthcare.com
+    notes: Regional health plan serving New York and Vermont
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 74
+  fields:
+    name: ConnectiCare
+    alt_names: |
+      Connecticare
+      ConnectiCare Benefits
+    regex: connecticare
+    website: https://www.connecticare.com
+    notes: Connecticut-based health plan, part of EmblemHealth
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 75
+  fields:
+    name: Health Alliance Plan
+    alt_names: |
+      HAP
+      Health Alliance Plan of Michigan
+    regex: health\s*alliance\s*plan|hap(?!\w).*michigan
+    website: https://www.hap.org
+    notes: Michigan-based nonprofit health plan, affiliated with Henry Ford Health System
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 76
+  fields:
+    name: Martin's Point Health Care
+    alt_names: |
+      Martins Point
+      Martin's Point
+    regex: martin'?s?\s*point
+    website: https://www.martinspoint.org
+    notes: Maine-based nonprofit health plan with Medicare Advantage focus
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 77
+  fields:
+    name: Community Health Plan of Washington
+    alt_names: |
+      CHPW
+      Community Health Plan WA
+    regex: community\s*health\s*plan.*washington|chpw
+    website: https://www.chpw.org
+    notes: Washington state nonprofit Medicaid managed care plan
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 78
+  fields:
+    name: L.A. Care Health Plan
+    alt_names: |
+      LA Care
+      L.A. Care
+      Los Angeles Care
+    regex: l\.?a\.?\s*care
+    website: https://www.lacare.org
+    notes: Largest publicly operated health plan in the US, serving Los Angeles County Medi-Cal members
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 79
+  fields:
+    name: CalOptima
+    alt_names: |
+      Cal Optima
+      CalOptima Health
+    regex: caloptima
+    website: https://www.caloptima.org
+    notes: Orange County, California Medi-Cal health plan
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 80
+  fields:
+    name: Inland Empire Health Plan
+    alt_names: |
+      IEHP
+    regex: inland\s*empire\s*health|iehp
+    website: https://www.iehp.org
+    notes: Riverside and San Bernardino County, California Medi-Cal health plan
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 81
+  fields:
+    name: Health Plan of San Mateo
+    alt_names: |
+      HPSM
+    regex: health\s*plan.*san\s*mateo|hpsm
+    website: https://www.hpsm.org
+    notes: San Mateo County, California Medi-Cal health plan
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 82
+  fields:
+    name: Partnership HealthPlan of California
+    alt_names: |
+      Partnership HealthPlan
+      PHC
+    regex: partnership\s*health\s*plan
+    website: https://www.partnershiphp.org
+    notes: Northern California Medi-Cal managed care plan serving 14 counties
+
+#######################################################################
+# DENTAL/VISION INSURERS (for bundled health plans)
+#######################################################################
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 83
+  fields:
+    name: Delta Dental
+    alt_names: |
+      Delta Dental Plans
+      Delta Dental Insurance
+    regex: delta\s*dental
+    website: https://www.deltadental.com
+    notes: Largest dental insurance provider in the US with over 155,000 dentists in network
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 84
+  fields:
+    name: Guardian Life
+    alt_names: |
+      Guardian
+      Guardian Insurance
+      Guardian Life Insurance
+    regex: guardian\s*(?:life|insurance)?
+    negative_regex: health\s*guardian
+    website: https://www.guardianlife.com
+    notes: Major dental and life insurance provider with over 130,000 dental providers
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 85
+  fields:
+    name: MetLife
+    alt_names: |
+      Met Life
+      MetLife Insurance
+    regex: met\s*life
+    website: https://www.metlife.com
+    notes: Major dental and employee benefits insurer with over 146,000 dental providers
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 86
+  fields:
+    name: VSP Vision Care
+    alt_names: |
+      VSP
+      Vision Service Plan
+    regex: vsp|vision\s*service\s*plan
+    website: https://www.vsp.com
+    notes: Largest vision insurance provider in the US

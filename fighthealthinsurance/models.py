@@ -298,6 +298,15 @@ class InsuranceCompany(models.Model):
     notes = models.TextField(
         blank=True, help_text="Additional notes about this insurance company"
     )
+    # Company type flags to help with suggestions
+    is_tpa = models.BooleanField(
+        default=False,
+        help_text="True if company is primarily a third-party administrator (TPA) for self-funded plans",
+    )
+    is_marketplace_focused = models.BooleanField(
+        default=False,
+        help_text="True if company primarily offers ACA marketplace/individual plans (95%+ of business)",
+    )
 
     class Meta:
         verbose_name_plural = "Insurance Companies"
