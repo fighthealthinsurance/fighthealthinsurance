@@ -1363,14 +1363,14 @@ class DenialCreatorHelper:
                         # If no exact match, try matching in order of specificity
                         if not matched_company:
                             # Collect all possible matches with their specificity score
-                            matches = []
+                            matches: list[tuple[InsuranceCompany, float]] = []
                             async for company in InsuranceCompany.objects.all():
                                 company_lower = company.name.lower()
                                 text_lower = insurance_company.lower()
                                 
                                 # Check exact substring match first (more specific)
                                 if company_lower == text_lower:
-                                    matches.append((company, 100))  # Exact match
+                                    matches.append((company, 100.0))  # Exact match
                                 elif company_lower in text_lower:
                                     # Score based on how much of the extracted text matches
                                     score = len(company_lower) / len(text_lower) * 90
@@ -1386,7 +1386,7 @@ class DenialCreatorHelper:
                                         alt = alt.strip().lower()
                                         if alt:
                                             if alt == text_lower:
-                                                matches.append((company, 95))  # Alt name exact match
+                                                matches.append((company, 95.0))  # Alt name exact match
                                             elif alt in text_lower:
                                                 score = len(alt) / len(text_lower) * 85
                                                 matches.append((company, score))
@@ -1417,7 +1417,7 @@ class DenialCreatorHelper:
                         )
                     
                     # Update denial with both text and structured references
-                    update_fields = {"insurance_company": insurance_company}
+                    update_fields: dict[str, Any] = {"insurance_company": insurance_company}
                     if matched_company:
                         update_fields["insurance_company_obj"] = matched_company
                         logger.debug(
@@ -1503,9 +1503,9 @@ class DenialCreatorHelper:
                             logger.debug(
                                 f"Matched denial {denial_id} to plan: {plan}"
                             )
-                            
+
                             # Update both plan and company if not already set
-                            update_fields = {"insurance_plan_obj": plan}
+                            update_fields: dict[str, Any] = {"insurance_plan_obj": plan}
                             if not denial.insurance_company_obj:
                                 update_fields["insurance_company_obj"] = plan.insurance_company
                             

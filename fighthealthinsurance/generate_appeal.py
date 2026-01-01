@@ -277,15 +277,15 @@ class AppealGenerator(object):
                 return match.group(1).strip()
 
         # Load known companies from database dynamically
-        known_companies = []
+        known_companies: list[str] = []
         try:
             from fighthealthinsurance.models import InsuranceCompany
             from asgiref.sync import sync_to_async
-            
+
             # Get all insurance companies from database
-            companies = await sync_to_async(list)(
-                InsuranceCompany.objects.values_list('name', 'alt_names')
-            )
+            companies = await sync_to_async(
+                lambda: list(InsuranceCompany.objects.values_list('name', 'alt_names'))
+            )()
             
             for name, alt_names in companies:
                 known_companies.append(name)
