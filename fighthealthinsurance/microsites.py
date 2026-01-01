@@ -90,6 +90,9 @@ class Microsite:
         # Optional blog post URL to link to related blog content
         self.blog_post_url: Optional[str] = data.get("blog_post_url")
 
+        # Optional manufacturer name (for drug/device microsites)
+        self.manufacturer: Optional[str] = data.get("manufacturer")
+
     def __repr__(self) -> str:
         return f"<Microsite: {self.slug}>"
 

@@ -3379,5 +3379,1671 @@
       "early-onset colorectal cancer risk factors",
       "colonoscopy diagnostic evaluation symptoms bleeding"
     ]
+  },
+  "myqorzo-denial": {
+    "slug": "myqorzo-denial",
+    "title": "Appealing Myqorzo (Aficamten) Denials",
+    "default_procedure": "Myqorzo (aficamten)",
+    "default_condition": "Obstructive Hypertrophic Cardiomyopathy",
+    "tagline": "Help appealing denials for this cardiac myosin inhibitor for symptomatic obstructive HCM.",
+    "hero_h1": "Appeal Your Myqorzo Denial",
+    "hero_subhead": "Don't let your insurer deny access to this first-in-class treatment for obstructive hypertrophic cardiomyopathy.",
+    "intro": "Myqorzo (aficamten) is a cardiac myosin inhibitor FDA-approved for adults with symptomatic obstructive hypertrophic cardiomyopathy (oHCM) to improve functional capacity and symptoms. Insurance denials often cite lack of prior authorization, preference for older treatments, or questions about medical necessity. If your cardiologist prescribed Myqorzo, you have strong grounds for appeal.",
+    "manufacturer": "Cytokinetics",
+    "common_denial_reasons": [
+      "Not medically necessary",
+      "Prior authorization required",
+      "Preferred alternative available (mavacamten/Camzyos)",
+      "Insufficient documentation of oHCM diagnosis",
+      "Step therapy requirement not met",
+      "Specialty tier drug not covered"
+    ],
+    "how_we_help": "We help you document your oHCM diagnosis, symptom severity, prior treatments, and why Myqorzo is the appropriate choice for your condition. Our AI-powered tool generates a compelling appeal letter citing clinical evidence.",
+    "cta": "Start your Myqorzo appeal — it takes about 3 minutes.",
+    "faq": [
+      {
+        "question": "Why was my Myqorzo prescription denied?",
+        "answer": "Common reasons include lack of prior authorization, insurer preference for other treatments, insufficient documentation of your oHCM diagnosis, or the drug being on a high-cost specialty tier. Your denial letter should specify the reason."
+      },
+      {
+        "question": "What documentation do I need for my Myqorzo appeal?",
+        "answer": "Helpful documentation includes your echocardiogram results showing LVOT obstruction, documentation of your symptoms (shortness of breath, chest pain, exercise intolerance), records of prior treatments tried, and a letter from your cardiologist explaining why Myqorzo is medically necessary."
+      },
+      {
+        "question": "Is Myqorzo covered by Medicare?",
+        "answer": "Myqorzo is typically covered under Medicare Part D as a specialty pharmacy drug. However, prior authorization is usually required, and you may need to demonstrate that you meet specific clinical criteria for coverage."
+      }
+    ],
+    "evidence_snippets": [
+      "Aficamten is a selective cardiac myosin inhibitor that reduces excessive contractility in obstructive HCM, improving symptoms and exercise capacity.",
+      "Clinical trials demonstrated significant improvement in peak oxygen uptake and reduction in LVOT gradient with aficamten treatment.",
+      "Obstructive HCM significantly impacts quality of life and can lead to heart failure, arrhythmias, and sudden cardiac death if inadequately treated.",
+      "Current guidelines support the use of cardiac myosin inhibitors for patients with symptomatic oHCM who have inadequate response to or cannot tolerate beta-blockers or calcium channel blockers."
+    ],
+    "pubmed_search_terms": [
+      "aficamten obstructive hypertrophic cardiomyopathy clinical trials",
+      "cardiac myosin inhibitor HCM treatment outcomes",
+      "obstructive HCM medical therapy guidelines"
+    ],
+    "assistance_programs": [
+      {
+        "name": "MYQORZO & You Patient Support",
+        "url": "https://www.cytokinetics.com/patients",
+        "description": "Cytokinetics patient support program offering insurance navigation, financial assistance for eligible patients, and disease education. Call 833-MYQORZO (833-697-6796)."
+      }
+    ]
+  },
+  "exdensur-denial": {
+    "slug": "exdensur-denial",
+    "title": "Appealing Exdensur (Depemokimab) Denials",
+    "default_procedure": "Exdensur (depemokimab)",
+    "default_condition": "Severe Eosinophilic Asthma",
+    "tagline": "Help appealing denials for this twice-yearly biologic for severe eosinophilic asthma.",
+    "hero_h1": "Appeal Your Exdensur Denial",
+    "hero_subhead": "Get access to this ultra-long-acting IL-5 biologic for severe asthma.",
+    "intro": "Exdensur (depemokimab) is the first and only ultra-long-acting biologic with twice-yearly dosing approved for patients with severe asthma with an eosinophilic phenotype. Insurance denials often require documentation of eosinophil levels, prior biologic use, or step therapy requirements. If you have severe eosinophilic asthma, you deserve access to this innovative treatment.",
+    "manufacturer": "GlaxoSmithKline (GSK)",
+    "common_denial_reasons": [
+      "Eosinophil levels not documented",
+      "Must try other biologics first",
+      "Step therapy requirement not met",
+      "Prior authorization not obtained",
+      "Not medically necessary",
+      "Documentation of severe asthma inadequate"
+    ],
+    "how_we_help": "We help you compile your eosinophil counts, asthma control scores, exacerbation history, and prior treatment records to demonstrate medical necessity for Exdensur.",
+    "cta": "Start your Exdensur appeal — it takes about 3 minutes.",
+    "faq": [
+      {
+        "question": "What eosinophil level do I need for Exdensur coverage?",
+        "answer": "Most insurers require documentation of blood eosinophils at 150 cells/mcL or higher at initiation or 300 cells/mcL or higher in the past 12 months. Your appeal should include lab results showing your eosinophil levels."
+      },
+      {
+        "question": "Do I need to try other biologics before Exdensur?",
+        "answer": "Some insurers require step therapy through other IL-5 pathway biologics first. However, you may appeal this requirement if you have specific reasons why Exdensur's twice-yearly dosing is medically necessary for you."
+      },
+      {
+        "question": "How is Exdensur administered?",
+        "answer": "Exdensur is given as a subcutaneous injection every 6 months (twice yearly), making it the longest-acting asthma biologic available. This may be covered under your medical benefit rather than pharmacy benefit."
+      }
+    ],
+    "evidence_snippets": [
+      "Depemokimab is an ultra-long-acting anti-IL-5 monoclonal antibody that provides sustained eosinophil suppression with twice-yearly dosing.",
+      "Clinical trials demonstrated significant reduction in annual asthma exacerbation rates in patients with severe eosinophilic asthma.",
+      "Severe eosinophilic asthma significantly impacts quality of life and can lead to frequent exacerbations, hospitalizations, and oral corticosteroid dependence.",
+      "IL-5 pathway biologics are recommended by guidelines for patients with severe eosinophilic asthma uncontrolled on high-dose inhaled corticosteroids."
+    ],
+    "pubmed_search_terms": [
+      "depemokimab severe eosinophilic asthma",
+      "IL-5 biologics asthma exacerbation reduction",
+      "ultra-long-acting asthma biologics"
+    ],
+    "assistance_programs": [
+      {
+        "name": "GSK Patient Assistance Programs",
+        "url": "https://gskforyou.com/",
+        "description": "GSK offers copay assistance (eligible patients may pay $0, up to $26,000/year) and patient assistance for uninsured patients. Call 1-866-728-4368."
+      }
+    ]
+  },
+  "cardamyst-denial": {
+    "slug": "cardamyst-denial",
+    "title": "Appealing Cardamyst (Etripamil) Denials",
+    "default_procedure": "Cardamyst (etripamil) nasal spray",
+    "default_condition": "Paroxysmal Supraventricular Tachycardia",
+    "tagline": "Help appealing denials for this first self-administered nasal spray for PSVT episodes.",
+    "hero_h1": "Appeal Your Cardamyst Denial",
+    "hero_subhead": "Get access to the first at-home treatment for acute PSVT episodes.",
+    "intro": "Cardamyst (etripamil) is the first and only self-administered nasal spray approved for converting acute paroxysmal supraventricular tachycardia (PSVT) episodes to normal heart rhythm. This means you can treat episodes at home instead of going to the emergency room. Insurance denials often cite preference for ER treatment or questions about PSVT diagnosis.",
+    "manufacturer": "Milestone Pharmaceuticals",
+    "common_denial_reasons": [
+      "Prior authorization required",
+      "PSVT diagnosis not adequately documented",
+      "Preference for emergency department treatment",
+      "Not medically necessary",
+      "New drug with limited coverage policies",
+      "Step therapy through vagal maneuvers first"
+    ],
+    "how_we_help": "We help you document your PSVT diagnosis, frequency of episodes, impact on quality of life, and prior emergency room visits to demonstrate why at-home treatment is medically necessary and cost-effective.",
+    "cta": "Start your Cardamyst appeal — it takes about 3 minutes.",
+    "faq": [
+      {
+        "question": "Why would I want Cardamyst instead of going to the ER?",
+        "answer": "Cardamyst allows you to treat PSVT episodes at home, avoiding the time, cost, and stress of emergency room visits. For many patients, this significantly improves quality of life and reduces healthcare costs."
+      },
+      {
+        "question": "What documentation helps my Cardamyst appeal?",
+        "answer": "Include your electrophysiology study or EKG documentation of PSVT, records of prior ER visits for PSVT, documentation of episode frequency, and a letter from your cardiologist or electrophysiologist."
+      },
+      {
+        "question": "How does Cardamyst work?",
+        "answer": "Cardamyst is a calcium channel blocker delivered as a nasal spray that works to convert PSVT episodes back to normal sinus rhythm. It's designed to be self-administered during an episode."
+      }
+    ],
+    "evidence_snippets": [
+      "Etripamil nasal spray provides rapid conversion of PSVT episodes, with most conversions occurring within 30 minutes of administration.",
+      "Self-administered PSVT treatment significantly reduces emergency department utilization and associated healthcare costs.",
+      "PSVT affects over 2 million Americans and causes significant anxiety, loss of work productivity, and impaired quality of life.",
+      "At-home treatment options for PSVT align with patient-centered care principles and reduce burden on emergency services."
+    ],
+    "pubmed_search_terms": [
+      "etripamil paroxysmal supraventricular tachycardia",
+      "PSVT self-treatment nasal spray",
+      "PSVT emergency department utilization costs"
+    ],
+    "assistance_programs": []
+  },
+  "lerochol-denial": {
+    "slug": "lerochol-denial",
+    "title": "Appealing Lerochol (Lerodalcibep) Denials",
+    "default_procedure": "Lerochol (lerodalcibep)",
+    "default_condition": "Hypercholesterolemia",
+    "tagline": "Help appealing denials for this monthly PCSK9 inhibitor for high LDL cholesterol.",
+    "hero_h1": "Appeal Your Lerochol Denial",
+    "hero_subhead": "Get access to this once-monthly injectable for lowering LDL cholesterol.",
+    "intro": "Lerochol (lerodalcibep) is a PCSK9 inhibitor approved as an adjunct to diet and exercise for adults with hypercholesterolemia, including heterozygous familial hypercholesterolemia (HeFH). Unlike other PCSK9 inhibitors, it's dosed once monthly. Insurance often denies PCSK9 inhibitors due to high cost, but these medications are essential for patients who cannot reach LDL goals with statins alone.",
+    "manufacturer": "LIB Therapeutics",
+    "common_denial_reasons": [
+      "Must try maximum-tolerated statin first",
+      "LDL goal not defined or documented",
+      "Prior authorization required",
+      "Preferred PCSK9 inhibitor required",
+      "Documentation of statin intolerance inadequate",
+      "High-cost specialty medication"
+    ],
+    "how_we_help": "We help you document your LDL levels, statin history (including intolerance if applicable), cardiovascular risk factors, and why achieving LDL goals is critical for your health.",
+    "cta": "Start your Lerochol appeal — it takes about 3 minutes.",
+    "faq": [
+      {
+        "question": "What LDL level do I need for PCSK9 inhibitor coverage?",
+        "answer": "Coverage criteria vary by insurer, but typically require LDL of 70-100 mg/dL or higher despite maximum-tolerated statin therapy, especially for patients with established cardiovascular disease or familial hypercholesterolemia."
+      },
+      {
+        "question": "What if I can't tolerate statins?",
+        "answer": "Document your statin intolerance (muscle pain, elevated liver enzymes, etc.) and which statins you've tried. PCSK9 inhibitors are particularly important for statin-intolerant patients who still need aggressive LDL lowering."
+      },
+      {
+        "question": "How is Lerochol different from other PCSK9 inhibitors?",
+        "answer": "Lerochol is dosed once monthly, compared to every 2 weeks for most other PCSK9 inhibitors. This may improve adherence and convenience for some patients."
+      }
+    ],
+    "evidence_snippets": [
+      "PCSK9 inhibitors significantly reduce LDL cholesterol by 50-60% and decrease cardiovascular events in high-risk patients.",
+      "Patients with familial hypercholesterolemia often cannot reach LDL goals with statins alone and benefit from PCSK9 inhibitor therapy.",
+      "Lower LDL cholesterol levels are associated with reduced risk of heart attack, stroke, and cardiovascular death.",
+      "Once-monthly dosing may improve medication adherence compared to more frequent injection schedules."
+    ],
+    "pubmed_search_terms": [
+      "lerodalcibep PCSK9 inhibitor LDL reduction",
+      "PCSK9 inhibitors cardiovascular outcomes",
+      "familial hypercholesterolemia treatment PCSK9"
+    ],
+    "assistance_programs": [
+      {
+        "name": "LIB Therapeutics Patient Support",
+        "url": "https://www.lerochol.com/",
+        "description": "Patient assistance program information will be available at launch (Spring 2026). LIB Therapeutics is committed to ensuring broad access to LEROCHOL."
+      }
+    ]
+  },
+  "voyxact-denial": {
+    "slug": "voyxact-denial",
+    "title": "Appealing Voyxact (Sibeprenlimab) Denials",
+    "default_procedure": "Voyxact (sibeprenlimab)",
+    "default_condition": "IgA Nephropathy",
+    "tagline": "Help appealing denials for this first biologic treatment for IgA nephropathy.",
+    "hero_h1": "Appeal Your Voyxact Denial",
+    "hero_subhead": "Get access to this breakthrough APRIL-blocking treatment for IgA nephropathy.",
+    "intro": "Voyxact (sibeprenlimab) is the first biologic drug approved for reducing proteinuria in adults with primary IgA nephropathy (IgAN) at risk for disease progression. IgA nephropathy is a serious kidney disease that can lead to kidney failure. If your nephrologist prescribed Voyxact, you have strong grounds for appeal.",
+    "manufacturer": "Otsuka Pharmaceutical",
+    "common_denial_reasons": [
+      "Prior authorization required",
+      "Biopsy-proven IgAN not documented",
+      "Proteinuria level not high enough",
+      "Must try ACE inhibitors/ARBs first",
+      "Specialty tier drug not covered",
+      "Accelerated approval status concerns"
+    ],
+    "how_we_help": "We help you document your biopsy results, proteinuria levels, eGFR, prior treatments, and risk of disease progression to demonstrate medical necessity for Voyxact.",
+    "cta": "Start your Voyxact appeal — it takes about 3 minutes.",
+    "faq": [
+      {
+        "question": "What documentation do I need for Voyxact coverage?",
+        "answer": "Key documentation includes kidney biopsy confirming IgA nephropathy, recent proteinuria levels (typically 1 g/day or higher), eGFR results, and records showing you've been on ACE inhibitors or ARBs for an adequate period."
+      },
+      {
+        "question": "How is Voyxact administered?",
+        "answer": "Voyxact is given as a subcutaneous injection once every 4 weeks and can be self-administered at home after training."
+      },
+      {
+        "question": "What does 'at risk for disease progression' mean?",
+        "answer": "This typically means having significant proteinuria (1 g/day or more) despite treatment with renin-angiotensin system blockers, which indicates higher risk of progressing to kidney failure."
+      }
+    ],
+    "evidence_snippets": [
+      "Sibeprenlimab blocks APRIL, reducing the production of pathogenic IgA antibodies that cause kidney damage in IgA nephropathy.",
+      "Clinical trials demonstrated significant reduction in proteinuria and stabilization of kidney function with sibeprenlimab treatment.",
+      "IgA nephropathy is the most common primary glomerulonephritis worldwide and leads to kidney failure in 20-40% of patients over 20 years.",
+      "Reducing proteinuria is associated with slower disease progression and reduced risk of kidney failure in IgA nephropathy."
+    ],
+    "pubmed_search_terms": [
+      "sibeprenlimab IgA nephropathy proteinuria",
+      "APRIL inhibition IgA nephropathy treatment",
+      "IgA nephropathy disease progression risk factors"
+    ],
+    "assistance_programs": [
+      {
+        "name": "Otsuka Patient Services (VOYXACT)",
+        "url": "https://www.voyxact.com/",
+        "description": "Eligible patients may pay as little as $0 through the VOYXACT Copay Program. Bridge program available for coverage delays. Call 833-VOYXACT (869-9228)."
+      }
+    ]
+  },
+  "hyrnuo-denial": {
+    "slug": "hyrnuo-denial",
+    "title": "Appealing Hyrnuo (Sevabertinib) Denials",
+    "default_procedure": "Hyrnuo (sevabertinib)",
+    "default_condition": "HER2-Mutant Non-Small Cell Lung Cancer",
+    "tagline": "Help appealing denials for this HER2-targeted therapy for NSCLC with HER2 mutations.",
+    "hero_h1": "Appeal Your Hyrnuo Denial",
+    "hero_subhead": "Get access to this targeted therapy for HER2-mutant lung cancer.",
+    "intro": "Hyrnuo (sevabertinib) is a HER2-targeted tyrosine kinase inhibitor approved for adults with metastatic non-squamous non-small cell lung cancer (NSCLC) with HER2-activating mutations who have received prior systemic therapy. Insurance denials often require proof of HER2 mutation testing and prior treatment history.",
+    "manufacturer": "Bayer HealthCare",
+    "common_denial_reasons": [
+      "HER2 mutation not documented by approved test",
+      "Prior authorization required",
+      "Prior systemic therapy not documented",
+      "Must try other targeted therapies first",
+      "Specialty tier drug not covered",
+      "Accelerated approval concerns"
+    ],
+    "how_we_help": "We help you compile your HER2 mutation testing results, prior treatment history, and oncologist recommendations to demonstrate medical necessity for Hyrnuo.",
+    "cta": "Start your Hyrnuo appeal — it takes about 3 minutes.",
+    "faq": [
+      {
+        "question": "What HER2 test do I need for Hyrnuo coverage?",
+        "answer": "You need documentation of HER2-activating mutations detected by an FDA-approved or validated next-generation sequencing (NGS) test. Common mutations include exon 20 insertions."
+      },
+      {
+        "question": "Do I need to have failed other treatments first?",
+        "answer": "Yes, Hyrnuo is approved for patients who have received prior systemic therapy. This typically means at least one prior line of treatment for metastatic disease."
+      },
+      {
+        "question": "How is Hyrnuo taken?",
+        "answer": "Hyrnuo is an oral medication taken daily. This makes it convenient compared to IV therapies, though you'll still need regular monitoring."
+      }
+    ],
+    "evidence_snippets": [
+      "Sevabertinib is a selective HER2 tyrosine kinase inhibitor designed to target HER2-activating mutations in NSCLC.",
+      "HER2 mutations occur in approximately 2-4% of NSCLC patients and represent an actionable target for precision medicine.",
+      "Clinical trials demonstrated meaningful response rates and durable disease control with sevabertinib in pretreated HER2-mutant NSCLC.",
+      "Targeted therapy based on tumor genomic profiling represents the standard of care for advanced NSCLC with actionable mutations."
+    ],
+    "pubmed_search_terms": [
+      "sevabertinib HER2 NSCLC",
+      "HER2 mutations non-small cell lung cancer treatment",
+      "HER2 targeted therapy lung cancer outcomes"
+    ],
+    "assistance_programs": [
+      {
+        "name": "Bayer HYRNUO $0 Co-Pay Program",
+        "url": "https://www.hyrnuo-us.com/",
+        "description": "Commercially insured patients may pay as little as $0 per month. Free trial program available. Bayer Patient Assistance Foundation offers free medication for eligible uninsured patients. Call 1-866-228-7723."
+      }
+    ]
+  },
+  "redemplo-denial": {
+    "slug": "redemplo-denial",
+    "title": "Appealing Redemplo (Plozasiran) Denials",
+    "default_procedure": "Redemplo (plozasiran)",
+    "default_condition": "Familial Chylomicronemia Syndrome",
+    "tagline": "Help appealing denials for this siRNA therapy for rare severe triglyceride disorders.",
+    "hero_h1": "Appeal Your Redemplo Denial",
+    "hero_subhead": "Get access to this breakthrough treatment for familial chylomicronemia syndrome.",
+    "intro": "Redemplo (plozasiran) is an siRNA therapy approved as an adjunct to diet for reducing triglycerides in adults with familial chylomicronemia syndrome (FCS), an ultra-rare genetic disorder. Patients with FCS have extremely high triglycerides that can cause life-threatening pancreatitis. Insurance denials are common for rare disease medications, but these treatments are medically essential.",
+    "manufacturer": "Arrowhead Pharmaceuticals",
+    "common_denial_reasons": [
+      "FCS diagnosis not genetically confirmed",
+      "Prior authorization required",
+      "Triglyceride levels not documented",
+      "Ultra-high cost orphan drug",
+      "Must try diet therapy first",
+      "Rare disease with limited coverage policies"
+    ],
+    "how_we_help": "We help you document your FCS diagnosis, genetic testing results, triglyceride levels, history of pancreatitis, and the failure of dietary management alone to control your condition.",
+    "cta": "Start your Redemplo appeal — it takes about 3 minutes.",
+    "faq": [
+      {
+        "question": "What is familial chylomicronemia syndrome?",
+        "answer": "FCS is a rare genetic disorder where the body cannot properly break down triglycerides, leading to extremely high levels (often over 1,000 mg/dL) and recurrent episodes of severe pancreatitis."
+      },
+      {
+        "question": "What documentation do I need for Redemplo coverage?",
+        "answer": "Key documentation includes genetic testing confirming FCS (mutations in LPL, APOC2, APOA5, LMF1, or GPIHBP1), fasting triglyceride levels, history of pancreatitis episodes, and documentation of adherence to strict dietary fat restriction."
+      },
+      {
+        "question": "How is Redemplo administered?",
+        "answer": "Redemplo is given as a subcutaneous injection once every 3 months (quarterly) and can be self-administered at home."
+      }
+    ],
+    "evidence_snippets": [
+      "Plozasiran is an siRNA that targets apolipoprotein C-III (ApoC-III), reducing triglyceride production and lowering the risk of pancreatitis in FCS.",
+      "Familial chylomicronemia syndrome is an ultra-rare genetic disorder affecting approximately 1 in 500,000 to 1 million people.",
+      "Patients with FCS are at high risk of recurrent acute pancreatitis, which can be life-threatening.",
+      "No other approved therapies specifically target FCS, making plozasiran an essential treatment option for these patients."
+    ],
+    "pubmed_search_terms": [
+      "plozasiran familial chylomicronemia syndrome",
+      "FCS treatment triglyceride reduction",
+      "apoC-III inhibition severe hypertriglyceridemia"
+    ],
+    "assistance_programs": [
+      {
+        "name": "Rely On REDEMPLO Patient Support",
+        "url": "https://arrowheadpharma.com/",
+        "description": "Arrowhead's patient support program offers financial assistance options for eligible patients at each stage of treatment journey."
+      }
+    ]
+  },
+  "komzifti-denial": {
+    "slug": "komzifti-denial",
+    "title": "Appealing Komzifti (Ziftomenib) Denials",
+    "default_procedure": "Komzifti (ziftomenib)",
+    "default_condition": "NPM1-Mutated Acute Myeloid Leukemia",
+    "tagline": "Help appealing denials for this first menin inhibitor for relapsed/refractory AML.",
+    "hero_h1": "Appeal Your Komzifti Denial",
+    "hero_subhead": "Get access to this targeted therapy for NPM1-mutated acute myeloid leukemia.",
+    "intro": "Komzifti (ziftomenib) is the first and only menin inhibitor approved for adults with relapsed or refractory acute myeloid leukemia (AML) with NPM1 mutation who have no satisfactory alternative treatment options. This oral medication targets a key driver of NPM1-mutated AML. Insurance denials often require proof of NPM1 mutation testing and prior treatment failure.",
+    "manufacturer": "Kura Oncology / Kyowa Kirin",
+    "common_denial_reasons": [
+      "NPM1 mutation not documented by approved test",
+      "Prior authorization required",
+      "Prior therapies not adequately documented",
+      "No satisfactory alternatives not established",
+      "Specialty tier drug not covered",
+      "Off-label use concerns"
+    ],
+    "how_we_help": "We help you compile your NPM1 mutation testing results, prior treatment history, and oncologist recommendations to demonstrate that you have no satisfactory alternative treatment options.",
+    "cta": "Start your Komzifti appeal — it takes about 3 minutes.",
+    "faq": [
+      {
+        "question": "What test do I need for Komzifti coverage?",
+        "answer": "You need documentation of a susceptible NPM1 mutation detected by an FDA-approved companion diagnostic or validated molecular testing. Your oncologist should have ordered this testing as part of your AML workup."
+      },
+      {
+        "question": "What does 'no satisfactory alternative treatment options' mean?",
+        "answer": "This means you've tried other available AML treatments or they are not appropriate for you due to your specific situation, comorbidities, or disease characteristics. Your oncologist should document why Komzifti is the best option."
+      },
+      {
+        "question": "How is Komzifti taken?",
+        "answer": "Komzifti is an oral medication taken once daily, making it more convenient than many other AML treatments that require IV administration."
+      }
+    ],
+    "evidence_snippets": [
+      "Ziftomenib is a menin inhibitor that blocks the interaction between menin and MLL proteins, disrupting leukemia cell growth in NPM1-mutated AML.",
+      "NPM1 mutations occur in approximately 30% of AML patients and represent a distinct molecular subtype.",
+      "Clinical trials demonstrated meaningful response rates in heavily pretreated patients with relapsed/refractory NPM1-mutated AML.",
+      "Oral targeted therapy offers improved quality of life compared to intensive chemotherapy regimens."
+    ],
+    "pubmed_search_terms": [
+      "ziftomenib NPM1 mutated AML",
+      "menin inhibitor acute myeloid leukemia",
+      "NPM1 mutation targeted therapy AML"
+    ],
+    "assistance_programs": []
+  },
+  "lynkuet-denial": {
+    "slug": "lynkuet-denial",
+    "title": "Appealing Lynkuet (Elinzanetant) Denials",
+    "default_procedure": "Lynkuet (elinzanetant)",
+    "default_condition": "Menopause Vasomotor Symptoms",
+    "tagline": "Help appealing denials for this non-hormonal treatment for menopause hot flashes.",
+    "hero_h1": "Appeal Your Lynkuet Denial",
+    "hero_subhead": "Get access to this first dual-target non-hormonal treatment for menopause hot flashes.",
+    "intro": "Lynkuet (elinzanetant) is the first and only dual neurokinin receptor antagonist approved for moderate to severe hot flashes due to menopause. As a non-hormonal option, it's particularly important for women who cannot or prefer not to take hormone therapy. Insurance denials often impose step therapy through hormone therapy first.",
+    "manufacturer": "Bayer AG",
+    "common_denial_reasons": [
+      "Must try hormone therapy first",
+      "Prior authorization required",
+      "Not medically necessary",
+      "Hot flash severity not documented",
+      "Preferred alternative required",
+      "New drug with limited coverage policies"
+    ],
+    "how_we_help": "We help you document your hot flash severity, reasons for avoiding hormone therapy (breast cancer history, cardiovascular risk, personal preference), and impact on quality of life.",
+    "cta": "Start your Lynkuet appeal — it takes about 3 minutes.",
+    "faq": [
+      {
+        "question": "Why might I need a non-hormonal option like Lynkuet?",
+        "answer": "Many women cannot take hormone therapy due to breast cancer history, blood clot risk, cardiovascular disease, or other medical conditions. Others prefer to avoid hormones. Your appeal should document your specific reasons."
+      },
+      {
+        "question": "How do I document hot flash severity?",
+        "answer": "Track the number and severity of hot flashes per day, night sweats, sleep disruption, and impact on work and daily activities. Your healthcare provider can also document this in clinical notes."
+      },
+      {
+        "question": "How is Lynkuet different from other menopause treatments?",
+        "answer": "Lynkuet is the first treatment that blocks both NK1 and NK3 receptors, addressing the underlying neurokinin imbalance that causes hot flashes without using hormones."
+      }
+    ],
+    "evidence_snippets": [
+      "Elinzanetant is a dual NK1/NK3 receptor antagonist that reduces hot flashes by targeting the neurokinin pathway in the brain's thermoregulatory center.",
+      "Clinical trials demonstrated significant reduction in hot flash frequency and severity compared to placebo.",
+      "Non-hormonal options are essential for women with contraindications to hormone therapy, including breast cancer survivors.",
+      "Menopause symptoms significantly impact quality of life, sleep, and work productivity for millions of women."
+    ],
+    "pubmed_search_terms": [
+      "elinzanetant vasomotor symptoms menopause",
+      "neurokinin antagonist hot flashes",
+      "non-hormonal menopause treatment efficacy"
+    ],
+    "assistance_programs": [
+      {
+        "name": "Lynkuet Access Savings & Support (LASS)",
+        "url": "https://www.lynkuet.com/",
+        "description": "Commercially insured women may pay as little as $25 per month through the LASS program with Blink Rx. Bayer Patient Assistance Foundation available for eligible uninsured patients. Call 1-866-228-7723."
+      }
+    ]
+  },
+  "jascayd-denial": {
+    "slug": "jascayd-denial",
+    "title": "Appealing Jascayd (Nerandomilast) Denials",
+    "default_procedure": "Jascayd (nerandomilast)",
+    "default_condition": "Idiopathic Pulmonary Fibrosis",
+    "tagline": "Help appealing denials for this oral PDE4 inhibitor for lung fibrosis.",
+    "hero_h1": "Appeal Your Jascayd Denial",
+    "hero_subhead": "Get access to this new treatment option for idiopathic pulmonary fibrosis.",
+    "intro": "Jascayd (nerandomilast) is a PDE4 inhibitor approved for the treatment of idiopathic pulmonary fibrosis (IPF) in adults. IPF is a serious, progressive lung disease with limited treatment options. If your pulmonologist prescribed Jascayd, you have strong grounds for appeal.",
+    "manufacturer": "Boehringer Ingelheim",
+    "common_denial_reasons": [
+      "Prior authorization required",
+      "IPF diagnosis not adequately documented",
+      "Must try nintedanib or pirfenidone first",
+      "Step therapy requirement not met",
+      "High-cost specialty medication",
+      "Pulmonary function tests not provided"
+    ],
+    "how_we_help": "We help you document your IPF diagnosis (including high-resolution CT findings), pulmonary function tests, prior treatments, and why Jascayd is the appropriate choice for your condition.",
+    "cta": "Start your Jascayd appeal — it takes about 3 minutes.",
+    "faq": [
+      {
+        "question": "What documentation supports my Jascayd appeal?",
+        "answer": "Include your high-resolution CT scan showing UIP pattern, pulmonary function tests (FVC, DLCO), biopsy results if available, and documentation of any prior antifibrotic therapy and why you need an alternative."
+      },
+      {
+        "question": "Can I take Jascayd with other IPF treatments?",
+        "answer": "Discuss combination therapy options with your pulmonologist. Your appeal should document why your current treatment regimen is insufficient and how Jascayd fits into your care plan."
+      },
+      {
+        "question": "How does Jascayd work differently from other IPF treatments?",
+        "answer": "Jascayd is a PDE4 inhibitor with a different mechanism than nintedanib or pirfenidone, potentially offering benefits for patients who cannot tolerate or do not respond to existing therapies."
+      }
+    ],
+    "evidence_snippets": [
+      "Nerandomilast is a phosphodiesterase 4 (PDE4) inhibitor that reduces inflammation and fibrotic processes in the lungs.",
+      "Clinical trials demonstrated slowing of lung function decline in patients with idiopathic pulmonary fibrosis.",
+      "IPF is a progressive, fatal disease with median survival of 3-5 years from diagnosis without treatment.",
+      "Additional treatment options are needed for patients who cannot tolerate or do not respond to existing antifibrotic therapies."
+    ],
+    "pubmed_search_terms": [
+      "nerandomilast idiopathic pulmonary fibrosis",
+      "PDE4 inhibitor lung fibrosis treatment",
+      "IPF antifibrotic therapy outcomes"
+    ],
+    "assistance_programs": [
+      {
+        "name": "CareConnect4Me (Boehringer Ingelheim)",
+        "url": "https://www.jascayd.com/",
+        "description": "Patient support program offering copay assistance, insurance navigation, and help with access. Boehringer Cares Patient Assistance Program available for eligible uninsured patients. Call 1-800-542-6257."
+      }
+    ]
+  },
+  "rhapsido-denial": {
+    "slug": "rhapsido-denial",
+    "title": "Appealing Rhapsido (Remibrutinib) Denials",
+    "default_procedure": "Rhapsido (remibrutinib)",
+    "default_condition": "Chronic Spontaneous Urticaria",
+    "tagline": "Help appealing denials for this BTK inhibitor for chronic hives.",
+    "hero_h1": "Appeal Your Rhapsido Denial",
+    "hero_subhead": "Get access to this first oral BTK inhibitor for chronic spontaneous urticaria.",
+    "intro": "Rhapsido (remibrutinib) is the first and only BTK inhibitor approved for chronic spontaneous urticaria (CSU) in adults who have not responded adequately to antihistamines. CSU causes persistent, unpredictable hives that significantly impact quality of life. If antihistamines haven't controlled your hives, you deserve access to this targeted therapy.",
+    "manufacturer": "Novartis AG",
+    "common_denial_reasons": [
+      "Prior authorization required",
+      "Must try multiple antihistamines first",
+      "Must try omalizumab (Xolair) first",
+      "Step therapy requirement not met",
+      "Inadequate documentation of antihistamine failure",
+      "Specialty tier drug not covered"
+    ],
+    "how_we_help": "We help you document your history of antihistamine use, hive severity and frequency, impact on quality of life, and prior treatment failures to demonstrate medical necessity for Rhapsido.",
+    "cta": "Start your Rhapsido appeal — it takes about 3 minutes.",
+    "faq": [
+      {
+        "question": "What treatments do I need to try before Rhapsido?",
+        "answer": "Most insurers require you to have tried and failed H1 antihistamines (like cetirizine, loratadine, or fexofenadine) at standard and often higher doses. Some may also require trial of omalizumab (Xolair). Document all treatments tried and why they failed."
+      },
+      {
+        "question": "How do I document CSU severity?",
+        "answer": "Track your hives using a diary noting daily hive count, itching severity, sleep disruption, and impact on work/activities. The Urticaria Activity Score (UAS7) is commonly used to document disease severity."
+      },
+      {
+        "question": "How is Rhapsido taken?",
+        "answer": "Rhapsido is an oral tablet taken daily, offering convenience compared to injectable treatments like omalizumab."
+      }
+    ],
+    "evidence_snippets": [
+      "Remibrutinib is a highly selective BTK inhibitor that blocks mast cell activation, reducing hive formation and itching.",
+      "Clinical trials demonstrated significant improvement in urticaria symptoms and quality of life in patients with inadequate response to antihistamines.",
+      "Chronic spontaneous urticaria affects quality of life comparable to severe heart disease or asthma.",
+      "Oral targeted therapy offers improved convenience and tolerability compared to injectable biologics for some patients."
+    ],
+    "pubmed_search_terms": [
+      "remibrutinib chronic spontaneous urticaria",
+      "BTK inhibitor urticaria treatment",
+      "CSU refractory antihistamine therapy"
+    ],
+    "assistance_programs": [
+      {
+        "name": "Novartis Patient Support (Rhapsido)",
+        "url": "https://support.rhapsido.com/",
+        "description": "Eligible commercially insured patients may pay as little as $0 through Co-Pay Plus. Bridge Program provides free medication for up to 12 months while awaiting insurance approval. Call Novartis Patient Support."
+      }
+    ]
+  },
+  "palsonify-denial": {
+    "slug": "palsonify-denial",
+    "title": "Appealing Palsonify (Paltusotine) Denials",
+    "default_procedure": "Palsonify (paltusotine)",
+    "default_condition": "Acromegaly",
+    "tagline": "Help appealing denials for this first oral treatment for acromegaly.",
+    "hero_h1": "Appeal Your Palsonify Denial",
+    "hero_subhead": "Get access to the first once-daily oral treatment for acromegaly.",
+    "intro": "Palsonify (paltusotine) is the first and only once-daily oral medication approved for acromegaly in adults who have had inadequate response to surgery or for whom surgery is not an option. This represents a major advance over injectable somatostatin analogs. Insurance denials often require documentation of surgery failure or ineligibility.",
+    "manufacturer": "Crinetics Pharmaceuticals",
+    "common_denial_reasons": [
+      "Prior authorization required",
+      "Must try injectable somatostatin analogs first",
+      "Surgical history not documented",
+      "IGF-1 levels not provided",
+      "Specialty tier drug not covered",
+      "New drug with limited coverage policies"
+    ],
+    "how_we_help": "We help you document your acromegaly diagnosis, surgical history, IGF-1 levels, prior treatment with injectables, and why oral therapy is medically necessary for you.",
+    "cta": "Start your Palsonify appeal — it takes about 3 minutes.",
+    "faq": [
+      {
+        "question": "Do I need to have had surgery for acromegaly?",
+        "answer": "You need to have either had inadequate response to pituitary surgery or have a reason why surgery is not an option for you (tumor location, surgical risk, patient preference with documented discussion). Your endocrinologist should document this."
+      },
+      {
+        "question": "What if I'm currently on injectable therapy?",
+        "answer": "Document why you want to switch to oral therapy, including injection-site reactions, needle phobia, inconvenience of monthly injections, or need for more flexible dosing. Some insurers may require documented inadequate response to injectables."
+      },
+      {
+        "question": "What IGF-1 documentation do I need?",
+        "answer": "Include your IGF-1 levels before and during treatment, showing they are above normal range (indicating active acromegaly) or documenting your response to current therapy."
+      }
+    ],
+    "evidence_snippets": [
+      "Paltusotine is an oral somatostatin receptor agonist that suppresses growth hormone secretion in acromegaly.",
+      "Clinical trials demonstrated effective control of IGF-1 levels with once-daily oral dosing.",
+      "Oral therapy eliminates the burden of monthly injections, improving quality of life and treatment adherence.",
+      "Acromegaly causes serious complications including cardiovascular disease, diabetes, and joint problems if not adequately controlled."
+    ],
+    "pubmed_search_terms": [
+      "paltusotine acromegaly oral treatment",
+      "oral somatostatin agonist acromegaly",
+      "acromegaly medical therapy IGF-1 control"
+    ],
+    "assistance_programs": [
+      {
+        "name": "CrinetiCARE Patient Support",
+        "url": "https://crineticare.com/",
+        "description": "Eligible commercially insured patients may pay as little as $0. Bridge program available while awaiting coverage. Patient assistance for uninsured/underinsured patients. Visit CrinetiCARE.com or Palsonify.com."
+      }
+    ]
+  },
+  "journavx-denial": {
+    "slug": "journavx-denial",
+    "title": "Appealing Journavx (Suzetrigine) Denials",
+    "default_procedure": "Journavx (suzetrigine)",
+    "default_condition": "Acute Pain",
+    "tagline": "Help appealing denials for this first non-opioid pain medication targeting sodium channels.",
+    "hero_h1": "Appeal Your Journavx Denial",
+    "hero_subhead": "Get access to this breakthrough non-opioid treatment for acute pain.",
+    "intro": "Journavx (suzetrigine) is the first non-opioid medication targeting the NaV1.8 sodium channel approved for moderate to severe acute pain in adults. This represents a major advance in pain management without the addiction risks of opioids. Insurance may impose restrictions, but this medication offers important benefits for appropriate patients.",
+    "manufacturer": "Vertex Pharmaceuticals",
+    "common_denial_reasons": [
+      "Prior authorization required",
+      "Must try NSAIDs/acetaminophen first",
+      "Not medically necessary",
+      "Quantity limits exceeded",
+      "Acute pain indication not documented",
+      "New drug with limited coverage policies"
+    ],
+    "how_we_help": "We help you document your pain condition, prior treatments tried, reasons for avoiding opioids, and why Journavx is the appropriate choice for your acute pain management.",
+    "cta": "Start your Journavx appeal — it takes about 3 minutes.",
+    "faq": [
+      {
+        "question": "Why would I choose Journavx over other pain medications?",
+        "answer": "Journavx provides effective pain relief without the addiction, dependence, or cognitive effects associated with opioids. It's appropriate for patients who need more than OTC pain relievers but want to avoid opioid risks."
+      },
+      {
+        "question": "Is Journavx for chronic or acute pain?",
+        "answer": "Journavx is currently approved for acute pain (such as post-surgical pain). Your appeal should document the acute nature of your pain condition."
+      },
+      {
+        "question": "What if I have a history of opioid problems?",
+        "answer": "A history of opioid use disorder or concerns about opioid use is a strong argument for Journavx. Document any history of addiction, adverse reactions to opioids, or preferences to avoid opioid therapy."
+      }
+    ],
+    "evidence_snippets": [
+      "Suzetrigine selectively blocks NaV1.8 sodium channels, inhibiting pain signals without affecting the brain's reward pathways.",
+      "Clinical trials demonstrated effective pain relief comparable to opioids without evidence of addictive potential.",
+      "Non-opioid pain options are critically needed given the ongoing opioid crisis and risks of opioid dependence.",
+      "NaV1.8 inhibition represents a novel mechanism for pain control that does not produce euphoria or dependence."
+    ],
+    "pubmed_search_terms": [
+      "suzetrigine acute pain NaV1.8",
+      "non-opioid analgesic sodium channel",
+      "acute pain management alternatives opioids"
+    ],
+    "assistance_programs": [
+      {
+        "name": "JOURNAVX+you Patient Support",
+        "url": "https://www.journavx.com/support",
+        "description": "Commercially insured patients may pay as little as $30 per fill. Patient Assistance Program at JOURNAVXpap.com for uninsured patients. Call 1-833-589-7246."
+      }
+    ]
+  },
+  "wayrilz-denial": {
+    "slug": "wayrilz-denial",
+    "title": "Appealing Wayrilz (Rilzabrutinib) Denials",
+    "default_procedure": "Wayrilz (rilzabrutinib)",
+    "default_condition": "Immune Thrombocytopenia",
+    "tagline": "Help appealing denials for this first BTK inhibitor for chronic ITP.",
+    "hero_h1": "Appeal Your Wayrilz Denial",
+    "hero_subhead": "Get access to this first oral BTK inhibitor for immune thrombocytopenia.",
+    "intro": "Wayrilz (rilzabrutinib) is the first BTK inhibitor approved for adults with persistent or chronic immune thrombocytopenia (ITP) who have had insufficient response to previous treatment. ITP causes dangerously low platelet counts and bleeding risk. If standard treatments haven't worked, you deserve access to this targeted therapy.",
+    "manufacturer": "Sanofi",
+    "common_denial_reasons": [
+      "Prior authorization required",
+      "Must try steroids first",
+      "Must try other ITP therapies (IVIG, TPO-RA) first",
+      "Step therapy requirement not met",
+      "Platelet count documentation inadequate",
+      "Specialty tier drug not covered"
+    ],
+    "how_we_help": "We help you document your platelet count history, prior ITP treatments and their results, bleeding episodes, and why Wayrilz is the appropriate next step in your care.",
+    "cta": "Start your Wayrilz appeal — it takes about 3 minutes.",
+    "faq": [
+      {
+        "question": "What treatments do I need to try before Wayrilz?",
+        "answer": "Most insurers require you to have tried and failed or been intolerant to first-line therapies like steroids, IVIG, or TPO receptor agonists (romiplostim, eltrombopag). Document all prior treatments and why they failed."
+      },
+      {
+        "question": "How do I document ITP severity?",
+        "answer": "Include your platelet count history over time, any bleeding episodes (bruising, nosebleeds, gum bleeding, heavy periods), transfusion requirements, and impact on daily activities."
+      },
+      {
+        "question": "How is Wayrilz different from other ITP treatments?",
+        "answer": "Wayrilz is an oral BTK inhibitor that works by blocking the immune system's destruction of platelets. It offers a different mechanism than steroids or TPO-RAs and may work for patients who haven't responded to those treatments."
+      }
+    ],
+    "evidence_snippets": [
+      "Rilzabrutinib is a reversible BTK inhibitor that reduces platelet destruction by inhibiting Fc receptor signaling in macrophages.",
+      "Clinical trials demonstrated significant platelet count improvements in patients with persistent or chronic ITP who had failed prior treatments.",
+      "ITP can cause life-threatening bleeding, particularly when platelet counts fall below 20,000/mcL.",
+      "Oral targeted therapy offers convenience and tolerability advantages compared to infusion-based treatments."
+    ],
+    "pubmed_search_terms": [
+      "rilzabrutinib immune thrombocytopenia",
+      "BTK inhibitor ITP treatment",
+      "refractory ITP targeted therapy"
+    ],
+    "assistance_programs": [
+      {
+        "name": "Sanofi HemAssist (Wayrilz)",
+        "url": "https://www.wayrilz.com/us/patient-support",
+        "description": "Eligible patients may pay as little as $0 copay. QuickStart program provides first month free while awaiting coverage. Patient Assistance Program for uninsured. Call 1-833-723-5463."
+      }
+    ]
+  },
+  "dawnzera-denial": {
+    "slug": "dawnzera-denial",
+    "title": "Appealing Dawnzera (Donidalorsen) Denials",
+    "default_procedure": "Dawnzera (donidalorsen)",
+    "default_condition": "Hereditary Angioedema",
+    "tagline": "Help appealing denials for this first RNA-targeted prophylaxis for HAE attacks.",
+    "hero_h1": "Appeal Your Dawnzera Denial",
+    "hero_subhead": "Get access to this breakthrough RNA therapy for preventing hereditary angioedema attacks.",
+    "intro": "Dawnzera (donidalorsen) is the first RNA-targeted therapy approved for preventing hereditary angioedema (HAE) attacks in adults and adolescents 12 years and older. HAE causes unpredictable, potentially life-threatening swelling episodes. Insurance often requires step therapy through older prophylactic treatments first.",
+    "manufacturer": "Ionis Pharmaceuticals",
+    "common_denial_reasons": [
+      "Prior authorization required",
+      "Must try C1-inhibitor products first",
+      "Must try lanadelumab first",
+      "Step therapy requirement not met",
+      "HAE diagnosis not adequately documented",
+      "Ultra-high cost orphan drug concerns"
+    ],
+    "how_we_help": "We help you document your HAE diagnosis, attack frequency and severity, prior prophylactic treatments, and why Dawnzera is the best option for preventing your attacks.",
+    "cta": "Start your Dawnzera appeal — it takes about 3 minutes.",
+    "faq": [
+      {
+        "question": "What documentation supports my Dawnzera appeal?",
+        "answer": "Include your HAE diagnosis confirmation (C4, C1-inhibitor levels, genetic testing), attack diary showing frequency and severity, prior prophylactic treatments tried, and documentation of breakthrough attacks on current therapy."
+      },
+      {
+        "question": "How is Dawnzera different from other HAE prophylaxis?",
+        "answer": "Dawnzera is an antisense oligonucleotide that reduces prekallikrein production, targeting HAE at the RNA level. It's given as a monthly subcutaneous injection."
+      },
+      {
+        "question": "What if I'm currently on another HAE prophylaxis?",
+        "answer": "Document why you need to switch, including breakthrough attacks despite current therapy, injection site reactions, or other tolerability issues with your current treatment."
+      }
+    ],
+    "evidence_snippets": [
+      "Donidalorsen is an antisense oligonucleotide that reduces prekallikrein synthesis, preventing the kallikrein-kinin cascade that causes HAE attacks.",
+      "Clinical trials demonstrated an 81% reduction in HAE attack rate compared to placebo.",
+      "HAE attacks can be life-threatening when affecting the airway and severely impact quality of life.",
+      "Monthly dosing with donidalorsen offers convenience compared to more frequent injection schedules."
+    ],
+    "pubmed_search_terms": [
+      "donidalorsen hereditary angioedema",
+      "antisense oligonucleotide HAE prophylaxis",
+      "prekallikrein inhibition HAE prevention"
+    ],
+    "assistance_programs": [
+      {
+        "name": "Ionis Every Step (Dawnzera)",
+        "url": "https://dawnzera.com/get-started",
+        "description": "Comprehensive support including insurance navigation, financial assistance, and injection training. Free trial program available for all patients including Medicare/Medicaid. Call 1-844-444-4305."
+      }
+    ]
+  },
+  "brinsupri-denial": {
+    "slug": "brinsupri-denial",
+    "title": "Appealing Brinsupri (Brensocatib) Denials",
+    "default_procedure": "Brinsupri (brensocatib)",
+    "default_condition": "Non-Cystic Fibrosis Bronchiectasis",
+    "tagline": "Help appealing denials for this first approved treatment for bronchiectasis.",
+    "hero_h1": "Appeal Your Brinsupri Denial",
+    "hero_subhead": "Get access to the first and only treatment specifically approved for bronchiectasis.",
+    "intro": "Brinsupri (brensocatib) is the first and only medication specifically approved for non-cystic fibrosis bronchiectasis in adults and adolescents 12 years and older. Bronchiectasis causes recurring lung infections and progressive lung damage. If you have this condition, you finally have a targeted treatment option.",
+    "manufacturer": "Insmed Incorporated",
+    "common_denial_reasons": [
+      "Prior authorization required",
+      "Bronchiectasis diagnosis not documented by CT",
+      "Exacerbation history not provided",
+      "Must try antibiotics/airway clearance first",
+      "New drug with limited coverage policies",
+      "High-cost specialty medication"
+    ],
+    "how_we_help": "We help you document your bronchiectasis diagnosis, CT scan findings, exacerbation history, prior treatments, and the impact on your quality of life to demonstrate medical necessity.",
+    "cta": "Start your Brinsupri appeal — it takes about 3 minutes.",
+    "faq": [
+      {
+        "question": "What documentation do I need for Brinsupri coverage?",
+        "answer": "Include your high-resolution CT scan showing bronchiectasis, history of pulmonary exacerbations (typically 2 or more in the past year), sputum culture results, and documentation of current management with airway clearance and antibiotics."
+      },
+      {
+        "question": "How does Brinsupri work?",
+        "answer": "Brinsupri inhibits dipeptidyl peptidase 1 (DPP1), which reduces neutrophil-mediated inflammation and damage in the airways. This helps reduce exacerbations and slow disease progression."
+      },
+      {
+        "question": "Is Brinsupri for cystic fibrosis?",
+        "answer": "No, Brinsupri is specifically approved for non-cystic fibrosis bronchiectasis. You must have bronchiectasis from other causes (infections, immune deficiency, etc.) to be eligible."
+      }
+    ],
+    "evidence_snippets": [
+      "Brensocatib inhibits DPP1, reducing neutrophil serine protease activity and inflammation in bronchiectatic airways.",
+      "Clinical trials demonstrated a 21% reduction in annual exacerbation rate with brensocatib treatment.",
+      "Non-cystic fibrosis bronchiectasis has had no approved disease-modifying treatments until now.",
+      "Reducing exacerbations preserves lung function and improves quality of life in bronchiectasis patients."
+    ],
+    "pubmed_search_terms": [
+      "brensocatib bronchiectasis DPP1 inhibitor",
+      "non-cystic fibrosis bronchiectasis treatment",
+      "bronchiectasis exacerbation prevention"
+    ],
+    "assistance_programs": [
+      {
+        "name": "inLighten Patient Support (Insmed)",
+        "url": "https://www.insmed.com/",
+        "description": "Copay assistance for commercially insured patients. Patient support program offers insurance navigation and access assistance. Contact Insmed for details."
+      }
+    ]
+  },
+  "ekterly-denial": {
+    "slug": "ekterly-denial",
+    "title": "Appealing Ekterly (Sebetralstat) Denials",
+    "default_procedure": "Ekterly (sebetralstat)",
+    "default_condition": "Hereditary Angioedema",
+    "tagline": "Help appealing denials for this first oral on-demand treatment for HAE attacks.",
+    "hero_h1": "Appeal Your Ekterly Denial",
+    "hero_subhead": "Get access to the first and only oral on-demand therapy for acute HAE attacks.",
+    "intro": "Ekterly (sebetralstat) is the first and only oral on-demand treatment for acute hereditary angioedema (HAE) attacks in adults and adolescents 12 years and older. Unlike injectable treatments, you can take it as a pill when an attack starts. Insurance may prefer older injectable options, but oral therapy offers important convenience and faster treatment initiation.",
+    "manufacturer": "KalVista Pharmaceuticals",
+    "common_denial_reasons": [
+      "Prior authorization required",
+      "Must try injectable on-demand treatments first",
+      "HAE diagnosis not adequately documented",
+      "Attack frequency not documented",
+      "New drug with limited coverage policies",
+      "Orphan drug pricing concerns"
+    ],
+    "how_we_help": "We help you document your HAE diagnosis, attack patterns, experience with injectable treatments, and why oral on-demand therapy is the appropriate choice for you.",
+    "cta": "Start your Ekterly appeal — it takes about 3 minutes.",
+    "faq": [
+      {
+        "question": "Why would oral on-demand therapy be better for me?",
+        "answer": "Oral therapy allows faster treatment initiation since you don't need to prepare an injection. It's also easier to carry and use in any setting, and some patients have needle phobia or difficulty with self-injection."
+      },
+      {
+        "question": "What if I'm already using injectable on-demand treatment?",
+        "answer": "Document any issues with your current injectable, such as injection site reactions, difficulty self-injecting during attacks (shaking hands, swelling), needle phobia, or delays in treatment due to injection preparation."
+      },
+      {
+        "question": "How quickly does Ekterly work?",
+        "answer": "Ekterly is designed for rapid absorption when taken orally at the start of an HAE attack. Clinical trials showed meaningful symptom relief within hours of dosing."
+      }
+    ],
+    "evidence_snippets": [
+      "Sebetralstat is an oral plasma kallikrein inhibitor that blocks the enzyme responsible for HAE attack symptoms.",
+      "Clinical trials demonstrated significant reduction in attack severity and duration compared to placebo.",
+      "Oral on-demand therapy eliminates barriers to treatment that exist with injectable options.",
+      "Earlier treatment of HAE attacks leads to faster resolution and less severe symptoms."
+    ],
+    "pubmed_search_terms": [
+      "sebetralstat hereditary angioedema oral",
+      "oral kallikrein inhibitor HAE attacks",
+      "on-demand HAE treatment comparison"
+    ],
+    "assistance_programs": [
+      {
+        "name": "KalVista Cares (Ekterly)",
+        "url": "https://www.ekterly.com/patient-support-program/",
+        "description": "Eligible commercially insured patients may pay as little as $0 (up to $40,000 annual maximum). QuickStart program for coverage delays. Patient assistance available. Call 1-844-432-3322."
+      }
+    ]
+  },
+  "qfitlia-denial": {
+    "slug": "qfitlia-denial",
+    "title": "Appealing Qfitlia (Fitusiran) Denials",
+    "default_procedure": "Qfitlia (fitusiran)",
+    "default_condition": "Hemophilia A or B",
+    "tagline": "Help appealing denials for this RNA therapy for hemophilia prophylaxis.",
+    "hero_h1": "Appeal Your Qfitlia Denial",
+    "hero_subhead": "Get access to this first antithrombin-lowering therapy for hemophilia.",
+    "intro": "Qfitlia (fitusiran) is the first therapy that lowers antithrombin to prevent bleeding in patients with hemophilia A or B, with or without factor inhibitors. With just 6 injections per year using a convenient pen device, it offers a new approach to hemophilia prophylaxis. Insurance may require step therapy through factor products or emicizumab first.",
+    "manufacturer": "Sanofi Genzyme / Alnylam",
+    "common_denial_reasons": [
+      "Prior authorization required",
+      "Must try factor replacement therapy first",
+      "Must try emicizumab first (for hemophilia A)",
+      "Step therapy requirement not met",
+      "Inhibitor status not documented",
+      "Ultra-high cost orphan drug"
+    ],
+    "how_we_help": "We help you document your hemophilia diagnosis, bleeding history, current treatment regimen, and why Qfitlia offers benefits for your specific situation.",
+    "cta": "Start your Qfitlia appeal — it takes about 3 minutes.",
+    "faq": [
+      {
+        "question": "How is Qfitlia different from other hemophilia treatments?",
+        "answer": "Qfitlia works by lowering antithrombin (a natural anticoagulant), which rebalances hemostasis rather than replacing missing clotting factors. It's given just once every 2 months (6 times per year)."
+      },
+      {
+        "question": "Can Qfitlia be used with inhibitors?",
+        "answer": "Yes, Qfitlia is approved for hemophilia A or B with or without factor inhibitors. This is particularly important for patients with inhibitors who have limited treatment options."
+      },
+      {
+        "question": "What documentation supports my appeal?",
+        "answer": "Include your hemophilia type and severity, inhibitor status if applicable, bleeding history, current treatment regimen and burden, and any issues with current therapy (venous access, adherence challenges, breakthrough bleeds)."
+      }
+    ],
+    "evidence_snippets": [
+      "Fitusiran is an siRNA that reduces antithrombin production, rebalancing hemostasis in hemophilia patients.",
+      "Clinical trials demonstrated significant reduction in annualized bleeding rate with fitusiran prophylaxis.",
+      "Every-two-month dosing significantly reduces treatment burden compared to more frequent factor infusions.",
+      "Fitusiran works regardless of inhibitor status, providing an option for patients with this challenging complication."
+    ],
+    "pubmed_search_terms": [
+      "fitusiran hemophilia antithrombin",
+      "siRNA hemophilia prophylaxis",
+      "hemophilia inhibitors treatment options"
+    ],
+    "assistance_programs": [
+      {
+        "name": "Sanofi HemAssist (Qfitlia)",
+        "url": "https://www.sanofihemassist.com/",
+        "description": "Eligible patients may pay as little as $0 copay (up to $20,000/year). QuickStart provides up to 6 months free while awaiting coverage. Call 1-833-723-5463."
+      }
+    ]
+  },
+  "blujepa-denial": {
+    "slug": "blujepa-denial",
+    "title": "Appealing Blujepa (Gepotidacin) Denials",
+    "default_procedure": "Blujepa (gepotidacin)",
+    "default_condition": "Uncomplicated Urinary Tract Infection",
+    "tagline": "Help appealing denials for this first-in-class antibiotic for UTIs.",
+    "hero_h1": "Appeal Your Blujepa Denial",
+    "hero_subhead": "Get access to this new oral antibiotic for uncomplicated UTIs.",
+    "intro": "Blujepa (gepotidacin) is the first new class of oral antibiotic approved for uncomplicated urinary tract infections in nearly 30 years. It works against bacteria that have become resistant to older antibiotics. If you have recurrent UTIs or antibiotic allergies, this new option may be important for your care.",
+    "manufacturer": "GlaxoSmithKline (GSK)",
+    "common_denial_reasons": [
+      "Prior authorization required",
+      "Must try first-line antibiotics first",
+      "Not medically necessary",
+      "Culture and sensitivity not provided",
+      "Resistance pattern not documented",
+      "New drug with limited coverage policies"
+    ],
+    "how_we_help": "We help you document your UTI history, antibiotic allergies or intolerances, culture results showing resistance, and why Blujepa is the appropriate antibiotic choice.",
+    "cta": "Start your Blujepa appeal — it takes about 3 minutes.",
+    "faq": [
+      {
+        "question": "When would Blujepa be used instead of other antibiotics?",
+        "answer": "Blujepa may be appropriate when you have allergies to first-line antibiotics (like sulfa drugs or fluoroquinolones), your infection is caused by resistant bacteria, or you have recurrent UTIs that haven't responded to standard treatments."
+      },
+      {
+        "question": "What documentation helps my appeal?",
+        "answer": "Include urine culture results showing the bacteria causing your UTI, sensitivity testing showing resistance to other antibiotics, documentation of antibiotic allergies, and history of prior UTIs and treatments."
+      },
+      {
+        "question": "How is Blujepa taken?",
+        "answer": "Blujepa is taken as two tablets twice daily for 5 days. Taking it after a meal may help reduce stomach upset."
+      }
+    ],
+    "evidence_snippets": [
+      "Gepotidacin is a first-in-class triazaacenaphthylene antibiotic with a novel mechanism of action against common UTI pathogens.",
+      "Clinical trials demonstrated effectiveness against E. coli and other common UTI-causing bacteria.",
+      "New antibiotic classes are critically needed given increasing antibiotic resistance.",
+      "Gepotidacin retains activity against bacteria resistant to fluoroquinolones and other commonly used antibiotics."
+    ],
+    "pubmed_search_terms": [
+      "gepotidacin urinary tract infection",
+      "novel antibiotic uncomplicated UTI",
+      "antibiotic resistance UTI treatment"
+    ],
+    "assistance_programs": [
+      {
+        "name": "GSK Patient Assistance",
+        "url": "https://gskforyou.com/",
+        "description": "GSK offers copay assistance and patient assistance programs. Visit gskforyou.com or call 1-866-GSK-FOR-U (1-866-475-3678) for details on Blujepa coverage."
+      }
+    ]
+  },
+  "datroway-denial": {
+    "slug": "datroway-denial",
+    "title": "Appealing Datroway (Datopotamab Deruxtecan) Denials",
+    "default_procedure": "Datroway (datopotamab deruxtecan)",
+    "default_condition": "HR-Positive, HER2-Negative Breast Cancer",
+    "tagline": "Help appealing denials for this TROP2-directed antibody-drug conjugate for breast cancer.",
+    "hero_h1": "Appeal Your Datroway Denial",
+    "hero_subhead": "Get access to this targeted therapy for HR-positive, HER2-negative breast cancer.",
+    "intro": "Datroway (datopotamab deruxtecan) is a TROP2-directed antibody-drug conjugate approved for adults with unresectable or metastatic hormone receptor-positive, HER2-negative breast cancer who have received prior endocrine therapy and chemotherapy. Insurance denials often require documentation of prior treatments and HR/HER2 status.",
+    "manufacturer": "Daiichi Sankyo / AstraZeneca",
+    "common_denial_reasons": [
+      "Prior authorization required",
+      "HR/HER2 status not documented",
+      "Prior endocrine therapy not documented",
+      "Prior chemotherapy not documented",
+      "Must try other treatments first",
+      "High-cost specialty medication"
+    ],
+    "how_we_help": "We help you compile your tumor receptor status, prior treatment history, and oncologist recommendations to demonstrate medical necessity for Datroway.",
+    "cta": "Start your Datroway appeal — it takes about 3 minutes.",
+    "faq": [
+      {
+        "question": "What prior treatments do I need for Datroway coverage?",
+        "answer": "You must have received prior endocrine-based therapy (like aromatase inhibitors, fulvestrant, or CDK4/6 inhibitors) and at least one prior chemotherapy regimen for metastatic disease."
+      },
+      {
+        "question": "What documentation shows my HR/HER2 status?",
+        "answer": "Include your pathology report showing estrogen receptor positive (ER+) and/or progesterone receptor positive (PR+) status and HER2-negative status by IHC and/or FISH testing."
+      },
+      {
+        "question": "How is Datroway administered?",
+        "answer": "Datroway is given as an IV infusion every 3 weeks at an infusion center or hospital. Your oncology team will monitor you for side effects."
+      }
+    ],
+    "evidence_snippets": [
+      "Datopotamab deruxtecan is a TROP2-directed antibody-drug conjugate that delivers chemotherapy directly to cancer cells expressing TROP2.",
+      "Clinical trials demonstrated significant improvement in progression-free survival compared to chemotherapy in pretreated HR+/HER2- breast cancer.",
+      "TROP2 is highly expressed in HR+/HER2- breast cancer, making it an effective target for antibody-drug conjugate therapy.",
+      "Targeted delivery of chemotherapy may provide efficacy advantages while potentially reducing systemic side effects."
+    ],
+    "pubmed_search_terms": [
+      "datopotamab deruxtecan breast cancer",
+      "TROP2 ADC HR positive breast cancer",
+      "metastatic breast cancer targeted therapy"
+    ],
+    "assistance_programs": [
+      {
+        "name": "Datroway4u Patient Support",
+        "url": "https://www.datroway.com/",
+        "description": "Patient support program offering reimbursement assistance and financial support. Visit Datroway4u.com or call 1-855-DAT-RO4U (1-855-328-7648)."
+      }
+    ]
+  },
+  "keytruda-qlex-denial": {
+    "slug": "keytruda-qlex-denial",
+    "title": "Appealing Keytruda Qlex (Subcutaneous Pembrolizumab) Denials",
+    "default_procedure": "Keytruda Qlex (pembrolizumab subcutaneous)",
+    "default_condition": "Solid Tumors",
+    "tagline": "Help appealing denials for this subcutaneous formulation of pembrolizumab immunotherapy.",
+    "hero_h1": "Appeal Your Keytruda Qlex Denial",
+    "hero_subhead": "Get access to this convenient subcutaneous formulation of Keytruda.",
+    "intro": "Keytruda Qlex is the first subcutaneous formulation of pembrolizumab, the leading checkpoint inhibitor immunotherapy. It offers the same efficacy as IV Keytruda with a 1-2 minute injection instead of a 30-minute infusion. Insurance may initially prefer the IV formulation, but subcutaneous delivery offers important benefits for many patients.",
+    "manufacturer": "Merck & Co.",
+    "common_denial_reasons": [
+      "Prior authorization required",
+      "IV formulation required/preferred",
+      "Must try IV Keytruda first",
+      "Indication not approved for SC formulation",
+      "New formulation not yet on formulary",
+      "Cost difference concerns"
+    ],
+    "how_we_help": "We help you document why subcutaneous administration is beneficial for you, including reduced infusion time, venous access issues, or patient preference, while demonstrating equivalent efficacy.",
+    "cta": "Start your Keytruda Qlex appeal — it takes about 3 minutes.",
+    "faq": [
+      {
+        "question": "Is Keytruda Qlex as effective as IV Keytruda?",
+        "answer": "Yes, clinical trials demonstrated equivalent efficacy between subcutaneous and IV formulations. The active ingredient (pembrolizumab) and mechanism of action are the same."
+      },
+      {
+        "question": "Why would I want subcutaneous instead of IV?",
+        "answer": "Subcutaneous injection takes only 1-2 minutes versus 30 minutes for IV. It's also easier for patients with poor venous access, reduces time in the infusion center, and may be more convenient overall."
+      },
+      {
+        "question": "Is Keytruda Qlex approved for all the same cancers?",
+        "answer": "Keytruda Qlex is approved for adult solid tumor indications where IV Keytruda is indicated. Check with your oncologist to confirm your specific cancer type is covered."
+      }
+    ],
+    "evidence_snippets": [
+      "Subcutaneous pembrolizumab demonstrated equivalent pharmacokinetics and efficacy to IV pembrolizumab in clinical trials.",
+      "Subcutaneous administration reduces infusion time from 30 minutes to 1-2 minutes.",
+      "Patient preference and convenience are recognized as important factors in cancer treatment adherence.",
+      "Subcutaneous formulations reduce burden on infusion centers and healthcare resources."
+    ],
+    "pubmed_search_terms": [
+      "pembrolizumab subcutaneous vs IV",
+      "checkpoint inhibitor subcutaneous formulation",
+      "immunotherapy administration convenience"
+    ],
+    "assistance_programs": [
+      {
+        "name": "Merck Access Program (Keytruda)",
+        "url": "https://www.merckaccessprogram-keytruda.com/",
+        "description": "Co-pay assistance for eligible commercially insured patients. Patient assistance for uninsured/underinsured. Call 855-257-3932."
+      }
+    ]
+  },
+  "inluriyo-denial": {
+    "slug": "inluriyo-denial",
+    "title": "Appealing Inluriyo (Imlunestrant) Denials",
+    "default_procedure": "Inluriyo (imlunestrant)",
+    "default_condition": "ER-Positive, HER2-Negative Breast Cancer",
+    "tagline": "Help appealing denials for this oral SERD for ESR1-mutated breast cancer.",
+    "hero_h1": "Appeal Your Inluriyo Denial",
+    "hero_subhead": "Get access to this targeted oral therapy for ESR1-mutated advanced breast cancer.",
+    "intro": "Inluriyo (imlunestrant) is an oral selective estrogen receptor degrader (SERD) approved for adults with ER-positive, HER2-negative, ESR1-mutated advanced breast cancer who have progressed on prior endocrine therapy. ESR1 mutations cause resistance to standard hormone therapies, making targeted treatment essential.",
+    "manufacturer": "Eli Lilly & Co.",
+    "common_denial_reasons": [
+      "ESR1 mutation not documented",
+      "Prior authorization required",
+      "Prior endocrine therapy not documented",
+      "Must try fulvestrant first",
+      "Specialty tier drug not covered",
+      "New drug with limited coverage policies"
+    ],
+    "how_we_help": "We help you compile your ESR1 mutation testing results, prior endocrine therapy history, and oncologist recommendations to demonstrate medical necessity.",
+    "cta": "Start your Inluriyo appeal — it takes about 3 minutes.",
+    "faq": [
+      {
+        "question": "What test do I need for Inluriyo coverage?",
+        "answer": "You need documentation of an ESR1 mutation detected by an FDA-approved companion diagnostic or validated molecular testing, typically from a blood or tumor sample."
+      },
+      {
+        "question": "What prior treatments are required?",
+        "answer": "You must have received and progressed on at least one prior endocrine-based therapy (aromatase inhibitor, fulvestrant, or CDK4/6 inhibitor combination) for advanced/metastatic disease."
+      },
+      {
+        "question": "How is Inluriyo different from fulvestrant?",
+        "answer": "Inluriyo is an oral medication taken daily, while fulvestrant requires monthly injections. Inluriyo was specifically designed to work against ESR1 mutations that cause fulvestrant resistance."
+      }
+    ],
+    "evidence_snippets": [
+      "Imlunestrant is an oral SERD that degrades the estrogen receptor, including mutant ESR1 forms that cause endocrine resistance.",
+      "ESR1 mutations occur in 30-40% of metastatic ER+ breast cancers after prior endocrine therapy.",
+      "Clinical trials demonstrated meaningful response rates in heavily pretreated ESR1-mutated breast cancer.",
+      "Oral administration offers convenience compared to injectable fulvestrant."
+    ],
+    "pubmed_search_terms": [
+      "imlunestrant ESR1 mutation breast cancer",
+      "oral SERD ER positive breast cancer",
+      "ESR1 mutated breast cancer treatment"
+    ],
+    "assistance_programs": [
+      {
+        "name": "Lilly Oncology Support Center",
+        "url": "https://oncologysupport.lilly.com/",
+        "description": "Copay assistance for commercially insured patients. Lilly Cares patient assistance for eligible uninsured patients. Call 1-866-472-8663."
+      }
+    ]
+  },
+  "forzinity-denial": {
+    "slug": "forzinity-denial",
+    "title": "Appealing Forzinity (Elamipretide) Denials",
+    "default_procedure": "Forzinity (elamipretide)",
+    "default_condition": "Barth Syndrome",
+    "tagline": "Help appealing denials for this mitochondrial therapy for Barth syndrome.",
+    "hero_h1": "Appeal Your Forzinity Denial",
+    "hero_subhead": "Get access to this breakthrough treatment for Barth syndrome cardiomyopathy.",
+    "intro": "Forzinity (elamipretide) is a mitochondrial-targeted peptide approved for improving muscle strength in patients with Barth syndrome weighing at least 30 kg. Barth syndrome is an ultra-rare genetic disorder causing cardiomyopathy and muscle weakness. Insurance denials are common for rare disease medications, but this is an essential treatment.",
+    "manufacturer": "Stealth BioTherapeutics",
+    "common_denial_reasons": [
+      "Prior authorization required",
+      "Barth syndrome diagnosis not genetically confirmed",
+      "Weight requirement not documented",
+      "Ultra-high cost orphan drug",
+      "Rare disease with limited coverage policies",
+      "New drug with limited experience"
+    ],
+    "how_we_help": "We help you document your Barth syndrome diagnosis, genetic testing results, cardiac function, muscle weakness, and how this condition impacts your daily life.",
+    "cta": "Start your Forzinity appeal — it takes about 3 minutes.",
+    "faq": [
+      {
+        "question": "What is Barth syndrome?",
+        "answer": "Barth syndrome is a rare X-linked genetic disorder caused by TAZ gene mutations. It affects the heart (cardiomyopathy), skeletal muscles, immune system, and growth, primarily in males."
+      },
+      {
+        "question": "What documentation do I need?",
+        "answer": "Include genetic testing confirming TAZ mutation, documentation of current weight (must be at least 30 kg), cardiac function tests showing cardiomyopathy, and muscle strength assessments."
+      },
+      {
+        "question": "How is Forzinity administered?",
+        "answer": "Forzinity is given as a daily subcutaneous injection that can be self-administered at home after training."
+      }
+    ],
+    "evidence_snippets": [
+      "Elamipretide targets the inner mitochondrial membrane, improving mitochondrial function in Barth syndrome.",
+      "Clinical trials demonstrated improvement in muscle strength and functional capacity.",
+      "Barth syndrome affects approximately 1 in 300,000-400,000 births, making it an ultra-rare disease.",
+      "No other approved therapies specifically target the underlying mitochondrial dysfunction in Barth syndrome."
+    ],
+    "pubmed_search_terms": [
+      "elamipretide Barth syndrome",
+      "mitochondrial therapy cardiomyopathy",
+      "TAZ mutation treatment"
+    ],
+    "assistance_programs": [
+      {
+        "name": "Stealth BioTherapeutics Patient Support",
+        "url": "https://www.stealthbt.com/",
+        "description": "Patient support program for Forzinity offering access assistance and financial support for eligible patients."
+      }
+    ]
+  },
+  "nuzolvence-denial": {
+    "slug": "nuzolvence-denial",
+    "title": "Appealing Nuzolvence (Zoliflodacin) Denials",
+    "default_procedure": "Nuzolvence (zoliflodacin)",
+    "default_condition": "Uncomplicated Gonorrhea",
+    "tagline": "Help appealing denials for this first-in-class oral antibiotic for gonorrhea.",
+    "hero_h1": "Appeal Your Nuzolvence Denial",
+    "hero_subhead": "Get access to this new oral treatment for uncomplicated gonorrhea.",
+    "intro": "Nuzolvence (zoliflodacin) is the first spiropyrimidinetrione antibiotic approved for uncomplicated urogenital gonorrhea. With increasing antibiotic resistance in gonorrhea, new treatment options are critically needed. This single-dose oral treatment offers an important alternative when other antibiotics may not be effective.",
+    "manufacturer": "Innoviva Specialty Therapeutics",
+    "common_denial_reasons": [
+      "Prior authorization required",
+      "Must try ceftriaxone first",
+      "Culture and sensitivity not provided",
+      "Not medically necessary",
+      "New drug with limited coverage policies",
+      "Single-dose treatment cost concerns"
+    ],
+    "how_we_help": "We help you document your gonorrhea diagnosis, any antibiotic allergies, prior treatment failures, and why Nuzolvence is the appropriate choice for your infection.",
+    "cta": "Start your Nuzolvence appeal — it takes about 3 minutes.",
+    "faq": [
+      {
+        "question": "When is Nuzolvence used instead of ceftriaxone?",
+        "answer": "Nuzolvence may be appropriate if you have allergies to cephalosporins or other first-line antibiotics, if there's concern about antibiotic resistance, or if you prefer oral over injectable treatment."
+      },
+      {
+        "question": "How is Nuzolvence taken?",
+        "answer": "Nuzolvence is taken as a single oral dose, making it convenient for treating uncomplicated gonorrhea without needing an injection."
+      },
+      {
+        "question": "Does Nuzolvence treat other STIs?",
+        "answer": "Nuzolvence is specifically approved for uncomplicated urogenital gonorrhea. You may still need testing and treatment for other STIs like chlamydia."
+      }
+    ],
+    "evidence_snippets": [
+      "Zoliflodacin is a first-in-class spiropyrimidinetrione antibiotic with a novel mechanism of action.",
+      "Clinical trials demonstrated non-inferiority to ceftriaxone plus azithromycin for uncomplicated gonorrhea.",
+      "Antibiotic-resistant gonorrhea is a growing public health threat requiring new treatment options.",
+      "Single-dose oral treatment improves adherence compared to multi-dose regimens."
+    ],
+    "pubmed_search_terms": [
+      "zoliflodacin gonorrhea treatment",
+      "novel antibiotic Neisseria gonorrhoeae",
+      "antibiotic resistant gonorrhea treatment"
+    ],
+    "assistance_programs": []
+  },
+  "imaavy-denial": {
+    "slug": "imaavy-denial",
+    "title": "Appealing Imaavy (Nipocalimab) Denials",
+    "default_procedure": "Imaavy (nipocalimab)",
+    "default_condition": "Generalized Myasthenia Gravis",
+    "tagline": "Help appealing denials for this FcRn antibody for autoimmune myasthenia gravis.",
+    "hero_h1": "Appeal Your Imaavy Denial",
+    "hero_subhead": "Get access to this IgG-lowering therapy for generalized myasthenia gravis.",
+    "intro": "Imaavy (nipocalimab) is an FcRn-blocking antibody approved for adults with generalized myasthenia gravis (gMG) who are anti-acetylcholine receptor (AChR) antibody positive. By lowering pathogenic IgG antibodies, it addresses the underlying cause of muscle weakness. Insurance often requires step therapy through other treatments first.",
+    "manufacturer": "Janssen Biotech",
+    "common_denial_reasons": [
+      "Prior authorization required",
+      "AChR antibody status not documented",
+      "Must try steroids/immunosuppressants first",
+      "Must try other MG therapies first",
+      "MGFA class not documented",
+      "High-cost biologic medication"
+    ],
+    "how_we_help": "We help you document your AChR antibody status, MGFA classification, prior treatment history, and current disease severity to demonstrate medical necessity.",
+    "cta": "Start your Imaavy appeal — it takes about 3 minutes.",
+    "faq": [
+      {
+        "question": "What antibody test do I need for Imaavy?",
+        "answer": "You need documentation of positive anti-acetylcholine receptor (AChR) antibodies. Imaavy is specifically approved for AChR-positive gMG."
+      },
+      {
+        "question": "What prior treatments are typically required?",
+        "answer": "Most insurers require trial of conventional therapies like steroids, pyridostigmine, azathioprine, or mycophenolate before approving newer biologics. Document all prior treatments and their results."
+      },
+      {
+        "question": "How is Imaavy administered?",
+        "answer": "Imaavy is given as a weekly subcutaneous injection that can be self-administered at home after training."
+      }
+    ],
+    "evidence_snippets": [
+      "Nipocalimab blocks the neonatal Fc receptor (FcRn), reducing pathogenic IgG antibodies that attack the neuromuscular junction.",
+      "Clinical trials demonstrated improvement in MG-ADL scores and reduced need for rescue therapy.",
+      "Generalized myasthenia gravis causes significant disability including weakness, fatigue, and respiratory compromise.",
+      "FcRn inhibition offers a novel mechanism for treating antibody-mediated autoimmune diseases."
+    ],
+    "pubmed_search_terms": [
+      "nipocalimab myasthenia gravis",
+      "FcRn inhibitor autoimmune disease",
+      "generalized myasthenia gravis treatment"
+    ],
+    "assistance_programs": [
+      {
+        "name": "Janssen CarePath",
+        "url": "https://www.janssencarepath.com/",
+        "description": "Copay assistance for eligible commercially insured patients. Patient assistance for uninsured. Call Janssen CarePath for details."
+      }
+    ]
+  },
+  "vanrafia-denial": {
+    "slug": "vanrafia-denial",
+    "title": "Appealing Vanrafia (Atrasentan) Denials",
+    "default_procedure": "Vanrafia (atrasentan)",
+    "default_condition": "IgA Nephropathy",
+    "tagline": "Help appealing denials for this endothelin receptor antagonist for IgA nephropathy.",
+    "hero_h1": "Appeal Your Vanrafia Denial",
+    "hero_subhead": "Get access to this treatment for reducing proteinuria in IgA nephropathy.",
+    "intro": "Vanrafia (atrasentan) is an endothelin receptor antagonist approved for reducing proteinuria in adults with primary IgA nephropathy at risk for disease progression. Reducing proteinuria is critical for slowing kidney disease. Insurance often requires documentation of biopsy-proven diagnosis and prior treatment with ACE inhibitors or ARBs.",
+    "manufacturer": "Travere Therapeutics",
+    "common_denial_reasons": [
+      "Prior authorization required",
+      "Biopsy-proven IgAN not documented",
+      "Proteinuria level not high enough",
+      "Must be on maximum ACEi/ARB therapy",
+      "Specialty tier drug not covered",
+      "New drug with limited coverage policies"
+    ],
+    "how_we_help": "We help you document your kidney biopsy results, proteinuria levels, eGFR, current ACE inhibitor/ARB therapy, and risk factors for disease progression.",
+    "cta": "Start your Vanrafia appeal — it takes about 3 minutes.",
+    "faq": [
+      {
+        "question": "What documentation do I need?",
+        "answer": "Include kidney biopsy confirming IgA nephropathy, urine protein levels showing significant proteinuria (typically 1 g/day or higher), eGFR results, and documentation that you're on maximally tolerated ACE inhibitor or ARB therapy."
+      },
+      {
+        "question": "Can I take Vanrafia with other IgAN treatments?",
+        "answer": "Yes, Vanrafia is typically used in addition to supportive care with ACE inhibitors or ARBs. Discuss with your nephrologist how it fits with your overall treatment plan."
+      },
+      {
+        "question": "How does Vanrafia work?",
+        "answer": "Vanrafia blocks the endothelin A receptor, reducing inflammation and scarring in the kidneys and decreasing protein leakage into the urine."
+      }
+    ],
+    "evidence_snippets": [
+      "Atrasentan is a selective endothelin A receptor antagonist that reduces proteinuria in IgA nephropathy.",
+      "Clinical trials demonstrated significant reduction in proteinuria compared to placebo.",
+      "Reducing proteinuria is associated with slower progression to kidney failure in IgA nephropathy.",
+      "Endothelin pathway blockade provides a complementary mechanism to renin-angiotensin system inhibition."
+    ],
+    "pubmed_search_terms": [
+      "atrasentan IgA nephropathy",
+      "endothelin receptor antagonist proteinuria",
+      "IgA nephropathy disease progression treatment"
+    ],
+    "assistance_programs": [
+      {
+        "name": "Travere Therapeutics Patient Support",
+        "url": "https://www.travere.com/",
+        "description": "Patient support program offering access and affordability assistance for eligible patients."
+      }
+    ]
+  },
+  "enflonsia-denial": {
+    "slug": "enflonsia-denial",
+    "title": "Appealing Enflonsia (Clesrovimab) Denials",
+    "default_procedure": "Enflonsia (clesrovimab)",
+    "default_condition": "RSV Prevention in Infants",
+    "tagline": "Help appealing denials for this long-acting RSV antibody for infants.",
+    "hero_h1": "Appeal Your Enflonsia Denial",
+    "hero_subhead": "Get access to this RSV prevention treatment for your infant.",
+    "intro": "Enflonsia (clesrovimab) is a long-acting monoclonal antibody for preventing RSV lower respiratory tract disease in neonates and infants. RSV is a leading cause of infant hospitalization. While similar to other RSV preventives, insurance may have specific criteria or prefer alternatives.",
+    "manufacturer": "Merck & Co.",
+    "common_denial_reasons": [
+      "Prior authorization required",
+      "Not meeting high-risk criteria",
+      "Preferred RSV preventive required",
+      "Age/timing criteria not met",
+      "Dosing/administration concerns",
+      "New drug with limited coverage policies"
+    ],
+    "how_we_help": "We help you document your infant's RSV risk factors, age eligibility, and why RSV prevention is medically necessary for protecting your baby.",
+    "cta": "Start your Enflonsia appeal — it takes about 3 minutes.",
+    "faq": [
+      {
+        "question": "Which infants are eligible for RSV prevention?",
+        "answer": "RSV preventives are recommended for all infants under 8 months entering their first RSV season, and for certain high-risk infants up to 19 months. Your pediatrician can determine eligibility."
+      },
+      {
+        "question": "How is Enflonsia given?",
+        "answer": "Enflonsia is given as a single intramuscular injection, typically before or during RSV season (fall through spring in most areas)."
+      },
+      {
+        "question": "Is Enflonsia covered as a vaccine or prescription?",
+        "answer": "RSV preventives are typically covered under medical benefits (like vaccines) rather than pharmacy benefits. Check with your insurance about specific coverage."
+      }
+    ],
+    "evidence_snippets": [
+      "Clesrovimab is a long-acting monoclonal antibody that neutralizes RSV, preventing severe lower respiratory tract infection.",
+      "RSV is the leading cause of infant hospitalization in the United States.",
+      "Clinical trials demonstrated significant reduction in medically attended RSV infections.",
+      "Single-dose administration provides protection throughout the RSV season."
+    ],
+    "pubmed_search_terms": [
+      "clesrovimab RSV prevention infants",
+      "RSV monoclonal antibody prophylaxis",
+      "infant RSV hospitalization prevention"
+    ],
+    "assistance_programs": [
+      {
+        "name": "Merck Patient Assistance",
+        "url": "https://www.merck.com/company-overview/responsibility/access-to-health/patient-assistance-programs/",
+        "description": "Merck offers patient assistance programs for eligible patients. Contact Merck for Enflonsia-specific assistance information."
+      }
+    ]
+  },
+  "abbott-volt-pfa-denial": {
+    "slug": "abbott-volt-pfa-denial",
+    "title": "Appealing Abbott Volt PFA System Denials",
+    "default_procedure": "Abbott Volt PFA System (pulsed field ablation)",
+    "default_condition": "Atrial Fibrillation",
+    "tagline": "Help appealing denials for this pulsed field ablation catheter for AFib treatment.",
+    "hero_h1": "Appeal Your Abbott Volt PFA Denial",
+    "hero_subhead": "Get access to this next-generation ablation technology for atrial fibrillation.",
+    "intro": "The Abbott Volt PFA System uses pulsed field ablation (PFA) technology for catheter-based treatment of atrial fibrillation. PFA selectively targets cardiac tissue while sparing nearby structures, potentially offering safety advantages over traditional thermal ablation. Insurance may require documentation of AFib diagnosis and failed medical therapy.",
+    "manufacturer": "Abbott",
+    "common_denial_reasons": [
+      "Prior authorization required",
+      "AFib diagnosis not documented",
+      "Must try antiarrhythmic drugs first",
+      "Facility/provider not approved",
+      "Traditional ablation preferred",
+      "New technology coverage limitations"
+    ],
+    "how_we_help": "We help you document your atrial fibrillation diagnosis, symptoms, failed medical management, and why catheter ablation with PFA technology is appropriate for you.",
+    "cta": "Start your Abbott Volt PFA appeal — it takes about 3 minutes.",
+    "faq": [
+      {
+        "question": "What is pulsed field ablation?",
+        "answer": "PFA uses electrical pulses to create lesions in heart tissue, isolating the pulmonary veins that trigger AFib. Unlike thermal ablation (radiofrequency or cryo), PFA selectively affects cardiac cells while sparing nerves, esophagus, and other nearby structures."
+      },
+      {
+        "question": "Do I need to try medications first?",
+        "answer": "Most insurers require documentation that you've tried and failed or are intolerant to at least one antiarrhythmic medication before approving ablation. Document all medications tried and why they failed."
+      },
+      {
+        "question": "How is the procedure performed?",
+        "answer": "The Abbott Volt system is used during a cardiac catheterization procedure in an electrophysiology lab. Catheters are inserted through blood vessels to reach the heart and deliver PFA energy."
+      }
+    ],
+    "evidence_snippets": [
+      "Pulsed field ablation offers tissue selectivity, potentially reducing complications affecting the esophagus, phrenic nerve, and pulmonary veins.",
+      "Clinical trials demonstrated high rates of pulmonary vein isolation with PFA technology.",
+      "Catheter ablation is a guideline-recommended treatment for symptomatic atrial fibrillation refractory to or intolerant of antiarrhythmic drugs.",
+      "PFA may offer faster procedure times compared to traditional point-by-point ablation."
+    ],
+    "pubmed_search_terms": [
+      "pulsed field ablation atrial fibrillation",
+      "PFA catheter ablation AFib outcomes",
+      "tissue selectivity pulsed field ablation"
+    ],
+    "assistance_programs": []
+  },
+  "edwards-sapien-m3-denial": {
+    "slug": "edwards-sapien-m3-denial",
+    "title": "Appealing Edwards SAPIEN M3 (Mitral Valve) Denials",
+    "default_procedure": "Edwards SAPIEN M3 TMVR System",
+    "default_condition": "Mitral Regurgitation",
+    "tagline": "Help appealing denials for this transcatheter mitral valve replacement for inoperable patients.",
+    "hero_h1": "Appeal Your Edwards SAPIEN M3 Denial",
+    "hero_subhead": "Get access to this first transfemoral mitral valve replacement.",
+    "intro": "The Edwards SAPIEN M3 is the first transcatheter mitral valve replacement (TMVR) system approved for patients with symptomatic moderate-to-severe mitral regurgitation who cannot undergo traditional surgery. This represents a breakthrough for patients with no other options. Insurance may require documentation of surgical ineligibility.",
+    "manufacturer": "Edwards Lifesciences",
+    "common_denial_reasons": [
+      "Prior authorization required",
+      "Surgical candidacy not adequately ruled out",
+      "Imaging requirements not met",
+      "Must try MitraClip or other repair first",
+      "Facility/center not approved",
+      "New technology coverage limitations"
+    ],
+    "how_we_help": "We help you document your mitral regurgitation severity, symptoms, heart team evaluation, reasons for surgical ineligibility, and why TMVR is your best option.",
+    "cta": "Start your Edwards SAPIEN M3 appeal — it takes about 3 minutes.",
+    "faq": [
+      {
+        "question": "Who is eligible for SAPIEN M3?",
+        "answer": "SAPIEN M3 is for patients with symptomatic moderate-to-severe mitral regurgitation who are at prohibitive risk for surgical mitral valve replacement or repair, as determined by a heart team."
+      },
+      {
+        "question": "What documentation proves surgical ineligibility?",
+        "answer": "Include your surgical risk assessment (STS score), heart team evaluation notes, comorbidities that increase surgical risk, and any prior cardiac surgeries that complicate reoperation."
+      },
+      {
+        "question": "How is the procedure performed?",
+        "answer": "SAPIEN M3 is implanted through the femoral vein using a transseptal approach, avoiding the need for open-heart surgery or chest incision."
+      }
+    ],
+    "evidence_snippets": [
+      "SAPIEN M3 is the first transcatheter mitral valve replacement approved for transfemoral delivery.",
+      "Clinical trials demonstrated significant reduction in mitral regurgitation and improvement in symptoms.",
+      "Transcatheter options provide treatment for patients who previously had no surgical options.",
+      "Heart team evaluation is essential for determining appropriate patient selection."
+    ],
+    "pubmed_search_terms": [
+      "transcatheter mitral valve replacement outcomes",
+      "TMVR SAPIEN mitral regurgitation",
+      "inoperable mitral regurgitation treatment"
+    ],
+    "assistance_programs": []
+  },
+  "setpoint-vns-denial": {
+    "slug": "setpoint-vns-denial",
+    "title": "Appealing SetPoint Vagus Nerve Stimulation Denials",
+    "default_procedure": "SetPoint System (vagus nerve stimulation)",
+    "default_condition": "Rheumatoid Arthritis",
+    "tagline": "Help appealing denials for this bioelectronic therapy for treatment-resistant RA.",
+    "hero_h1": "Appeal Your SetPoint VNS Denial",
+    "hero_subhead": "Get access to this first-in-class bioelectronic medicine for rheumatoid arthritis.",
+    "intro": "The SetPoint System is the first implantable vagus nerve stimulation device approved for treating moderate-to-severe rheumatoid arthritis in patients who have not responded to biologic DMARDs. This bioelectronic approach offers a drug-free alternative for patients who have exhausted medication options.",
+    "manufacturer": "SetPoint Medical",
+    "common_denial_reasons": [
+      "Prior authorization required",
+      "Must try multiple biologics first",
+      "Experimental/investigational designation",
+      "Implant surgery not covered",
+      "New technology coverage limitations",
+      "Facility/surgeon not approved"
+    ],
+    "how_we_help": "We help you document your RA history, all prior DMARDs and biologics tried, disease activity scores, and why bioelectronic therapy is appropriate after failing multiple medications.",
+    "cta": "Start your SetPoint VNS appeal — it takes about 3 minutes.",
+    "faq": [
+      {
+        "question": "What is vagus nerve stimulation for RA?",
+        "answer": "The SetPoint device delivers electrical pulses to the vagus nerve, which reduces inflammation through the cholinergic anti-inflammatory pathway. This is a fundamentally different approach from medications."
+      },
+      {
+        "question": "What prior treatments are required?",
+        "answer": "SetPoint is approved for patients who have not responded adequately to biologic or targeted synthetic DMARDs. You'll need to document failure or intolerance to multiple biologic therapies."
+      },
+      {
+        "question": "How is the device implanted?",
+        "answer": "The SetPoint device is implanted in a minimally invasive outpatient surgical procedure. A small pulse generator is placed in the chest and connected to the vagus nerve."
+      }
+    ],
+    "evidence_snippets": [
+      "Vagus nerve stimulation activates the inflammatory reflex, reducing systemic inflammation in rheumatoid arthritis.",
+      "Clinical trials demonstrated significant improvement in ACR response rates in biologic-refractory RA patients.",
+      "Bioelectronic medicine offers a drug-free approach for patients who have exhausted medication options.",
+      "The SetPoint system represents the first FDA-approved bioelectronic therapy for an autoimmune disease."
+    ],
+    "pubmed_search_terms": [
+      "vagus nerve stimulation rheumatoid arthritis",
+      "bioelectronic medicine autoimmune disease",
+      "cholinergic anti-inflammatory pathway RA"
+    ],
+    "assistance_programs": [
+      {
+        "name": "SetPoint Medical Patient Support",
+        "url": "https://www.setpointmedical.com/",
+        "description": "SetPoint is working with payers to establish coverage. Contact SetPoint Medical for information on access and financial assistance options."
+      }
+    ]
+  },
+  "flow-tdcs-depression-denial": {
+    "slug": "flow-tdcs-depression-denial",
+    "title": "Appealing Flow tDCS Device Denials",
+    "default_procedure": "Flow Neuroscience FL-100 (tDCS device)",
+    "default_condition": "Major Depressive Disorder",
+    "tagline": "Help appealing denials for this at-home brain stimulation device for depression.",
+    "hero_h1": "Appeal Your Flow tDCS Device Denial",
+    "hero_subhead": "Get access to this first FDA-approved at-home brain stimulation for depression.",
+    "intro": "The Flow Neuroscience FL-100 is the first FDA-approved at-home transcranial direct current stimulation (tDCS) device for treating major depressive disorder. It offers a drug-free, non-invasive treatment option that can be used at home. Insurance coverage is still developing for this new category of treatment.",
+    "manufacturer": "Flow Neuroscience",
+    "common_denial_reasons": [
+      "Prior authorization required",
+      "Must try antidepressants first",
+      "Experimental/investigational designation",
+      "DME coverage limitations",
+      "New device not yet on formulary",
+      "Provider prescription requirements"
+    ],
+    "how_we_help": "We help you document your depression history, prior antidepressant trials, reasons for seeking non-medication treatment, and how the Flow device fits your treatment plan.",
+    "cta": "Start your Flow tDCS appeal — it takes about 3 minutes.",
+    "faq": [
+      {
+        "question": "What is tDCS?",
+        "answer": "Transcranial direct current stimulation (tDCS) delivers a weak electrical current to the brain through electrodes on the scalp. This modulates brain activity and has been shown to improve depression symptoms."
+      },
+      {
+        "question": "Do I need to try medications first?",
+        "answer": "Flow is approved for moderate-to-severe depression that is not treatment-resistant. Insurers may require trial of antidepressants, but Flow can also be used as an adjunct to medication."
+      },
+      {
+        "question": "How often do I use the device?",
+        "answer": "The typical treatment protocol involves daily 30-minute sessions during the initial treatment phase, with maintenance sessions as needed. The device connects to a smartphone app for guidance."
+      }
+    ],
+    "evidence_snippets": [
+      "tDCS has been shown to improve depression symptoms by modulating activity in the prefrontal cortex.",
+      "Clinical trials demonstrated significant improvement in depression scores compared to sham stimulation.",
+      "At-home tDCS offers a convenient, drug-free treatment option that can be combined with other therapies.",
+      "Non-invasive brain stimulation may benefit patients who prefer to avoid or cannot tolerate antidepressants."
+    ],
+    "pubmed_search_terms": [
+      "tDCS major depressive disorder efficacy",
+      "transcranial direct current stimulation depression",
+      "at-home brain stimulation depression treatment"
+    ],
+    "assistance_programs": [
+      {
+        "name": "Flow Neuroscience Direct Purchase",
+        "url": "https://www.flowneuroscience.com/",
+        "description": "Flow is available for direct purchase while insurance coverage develops. Contact Flow Neuroscience for current pricing and any available payment plans."
+      }
+    ]
+  },
+  "teal-wand-hpv-denial": {
+    "slug": "teal-wand-hpv-denial",
+    "title": "Appealing Teal Wand HPV Self-Collection Denials",
+    "default_procedure": "Teal Wand (at-home HPV test kit)",
+    "default_condition": "Cervical Cancer Screening",
+    "tagline": "Help appealing denials for this at-home cervical cancer screening device.",
+    "hero_h1": "Appeal Your Teal Wand Denial",
+    "hero_subhead": "Get access to this first at-home HPV self-collection test for cervical screening.",
+    "intro": "The Teal Wand is the first FDA-approved at-home self-collection device for HPV testing as part of cervical cancer screening. It allows women to collect their own sample at home, addressing barriers to screening like discomfort with pelvic exams or difficulty accessing healthcare. Insurance coverage is still developing.",
+    "manufacturer": "Teal Health",
+    "common_denial_reasons": [
+      "Must have in-office screening",
+      "Device not covered as DME",
+      "Lab test covered but kit not covered",
+      "New device not yet on formulary",
+      "Provider order requirements",
+      "Telehealth service limitations"
+    ],
+    "how_we_help": "We help you document why at-home screening is necessary for you, including access barriers, anxiety about pelvic exams, or history of non-compliance with traditional screening.",
+    "cta": "Start your Teal Wand appeal — it takes about 3 minutes.",
+    "faq": [
+      {
+        "question": "How does the Teal Wand work?",
+        "answer": "The Teal Wand is a vaginal self-collection device. You collect your own sample at home and send it to a lab for HPV testing. Results are reviewed by a healthcare provider via telehealth."
+      },
+      {
+        "question": "Is at-home HPV testing as accurate as in-office?",
+        "answer": "Self-collected samples have been shown to be equivalent to clinician-collected samples for HPV detection. The FDA has approved the Teal Wand for this purpose."
+      },
+      {
+        "question": "Do I still need a Pap smear?",
+        "answer": "HPV testing is the primary cervical cancer screening for women 25-65. If your HPV test is positive, you may need follow-up with a Pap test or colposcopy as recommended by your provider."
+      }
+    ],
+    "evidence_snippets": [
+      "Self-collected HPV samples show equivalent sensitivity to clinician-collected samples for detecting high-risk HPV.",
+      "Barriers to cervical cancer screening include discomfort, embarrassment, time constraints, and access issues.",
+      "Self-collection options may increase screening rates in underscreened populations.",
+      "HPV screening is a critical preventive service for reducing cervical cancer incidence and mortality."
+    ],
+    "pubmed_search_terms": [
+      "HPV self-collection cervical screening",
+      "at-home HPV test accuracy",
+      "cervical cancer screening barriers self-collection"
+    ],
+    "assistance_programs": [
+      {
+        "name": "Teal Health Direct Access",
+        "url": "https://www.tealhealth.com/",
+        "description": "Teal Health offers the Teal Wand through their telehealth service. Contact Teal Health for current pricing and insurance coverage information."
+      }
+    ]
   }
 }
