@@ -1,6 +1,6 @@
 {
-  "mri-denial": {
-    "slug": "mri-denial",
+  "mri": {
+    "slug": "mri",
     "title": "Appealing MRI Denials",
     "default_procedure": "MRI Scan",
     "tagline": "Insurance often denies MRIs as 'not medically necessary'—here’s how to overturn it.",
@@ -40,8 +40,8 @@
       "impact of delayed MRI diagnosis outcomes"
     ]
   },
-  "ct-scan-denial": {
-    "slug": "ct-scan-denial",
+  "ct-scan": {
+    "slug": "ct-scan",
     "title": "Appealing CT Scan Denials",
     "default_procedure": "CT Scan",
     "tagline": "Step-by-step help appealing CT scan denials, especially for urgent or diagnostic cases.",
@@ -80,8 +80,8 @@
       "clinical decision rules CT imaging"
     ]
   },
-  "sleep-study-denial": {
-    "slug": "sleep-study-denial",
+  "sleep-study": {
+    "slug": "sleep-study",
     "title": "Appealing Sleep Study Denials",
     "default_procedure": "Sleep Study (Polysomnography or Home Study)",
     "tagline": "Insurers frequently require a home test first—learn how to appeal this and win.",
@@ -132,8 +132,8 @@
       }
     ]
   },
-  "cpap-denial": {
-    "slug": "cpap-denial",
+  "cpap": {
+    "slug": "cpap",
     "title": "Appealing CPAP Denials",
     "default_procedure": "CPAP Machine or Supplies",
     "default_condition": "Sleep Apnea",
@@ -186,8 +186,8 @@
       }
     ]
   },
-  "pt-ot-st-denial": {
-    "slug": "pt-ot-st-denial",
+  "pt-ot-st": {
+    "slug": "pt-ot-st",
     "title": "Appealing Physical/Occupational/Speech Therapy Denials",
     "default_procedure": "Physical / Occupational / Speech Therapy",
     "tagline": "Appeal visit-limit denials and claims insurers mark as 'maintenance only.'",
@@ -233,8 +233,8 @@
       }
     ]
   },
-  "mental-health-denial": {
-    "slug": "mental-health-denial",
+  "mental-health": {
+    "slug": "mental-health",
     "title": "Appealing Mental Health Care Denials",
     "default_procedure": "Psychiatry / Therapy Services",
     "tagline": "Mental health parity laws exist — let’s make insurers follow them.",
@@ -285,8 +285,8 @@
       }
     ]
   },
-  "infusion-therapy-denial": {
-    "slug": "infusion-therapy-denial",
+  "infusion-therapy": {
+    "slug": "infusion-therapy",
     "title": "Appealing Infusion Therapy Denials",
     "default_procedure": "Infusion Therapy",
     "tagline": "Covers IVIG, chemo, biologics, and more.",
@@ -359,8 +359,8 @@
       }
     ]
   },
-  "ivig-denial": {
-    "slug": "ivig-denial",
+  "ivig": {
+    "slug": "ivig",
     "title": "Appealing IVIG Denials",
     "default_procedure": "IVIG Infusion",
     "tagline": "IVIG denials are common but often successfully appealed with proper documentation.",
@@ -443,8 +443,8 @@
       }
     ]
   },
-  "biologic-denial": {
-    "slug": "biologic-denial",
+  "biologic": {
+    "slug": "biologic",
     "title": "Appealing Biologic Medication Denials",
     "default_procedure": "Biologic Medication",
     "tagline": "Help appealing biologic denials for conditions like RA, Crohn's, and psoriasis.",
@@ -532,8 +532,8 @@
       }
     ]
   },
-  "oxygen-therapy-denial": {
-    "slug": "oxygen-therapy-denial",
+  "oxygen-therapy": {
+    "slug": "oxygen-therapy",
     "title": "Appealing Oxygen Therapy Denials",
     "default_procedure": "Home Oxygen Therapy",
     "tagline": "Help appealing oxygen therapy denials when your doctor has prescribed it.",
@@ -584,8 +584,8 @@
       }
     ]
   },
-  "wheelchair-denial": {
-    "slug": "wheelchair-denial",
+  "wheelchair": {
+    "slug": "wheelchair",
     "title": "Appealing Wheelchair or Mobility Aid Denials",
     "default_procedure": "Wheelchair / Mobility Device",
     "tagline": "Mobility is a medical necessity — not a luxury.",
@@ -636,8 +636,8 @@
       }
     ]
   },
-  "surgery-denial": {
-    "slug": "surgery-denial",
+  "surgery": {
+    "slug": "surgery",
     "title": "Appealing Surgery Denials",
     "default_procedure": "Surgery",
     "tagline": "When your doctor says it’s necessary, insurers shouldn’t overrule them.",
@@ -676,8 +676,8 @@
       "elective vs medically necessary surgery insurance"
     ]
   },
-  "implantable-device-denial": {
-    "slug": "implantable-device-denial",
+  "implantable-device": {
+    "slug": "implantable-device",
     "title": "Appealing Implantable Device Denials",
     "default_procedure": "Implantable Device or Medical Implant",
     "tagline": "Implants can be life-changing — insurers shouldn’t deny them lightly.",
@@ -716,8 +716,8 @@
       "guidelines implantable medical devices indications"
     ]
   },
-  "pain-management-denial": {
-    "slug": "pain-management-denial",
+  "pain-management": {
+    "slug": "pain-management",
     "title": "Appealing Pain Management Denials",
     "default_procedure": "Pain Management Treatment",
     "tagline": "Help appealing denials for pain procedures your doctor has recommended.",
@@ -768,8 +768,8 @@
       }
     ]
   },
-  "prenatal-denial": {
-    "slug": "prenatal-denial",
+  "prenatal": {
+    "slug": "prenatal",
     "title": "Appealing Prenatal Care Denials",
     "default_procedure": "Prenatal Care / Ultrasound",
     "tagline": "Pregnancy care should never be a fight.",
@@ -815,8 +815,8 @@
       }
     ]
   },
-  "breast-imaging-denial": {
-    "slug": "breast-imaging-denial",
+  "breast-imaging": {
+    "slug": "breast-imaging",
     "title": "Appealing Breast Imaging Denials",
     "default_procedure": "Mammogram / Breast MRI / Ultrasound",
     "tagline": "Early detection saves lives — denials shouldn’t stand in the way.",
@@ -867,8 +867,8 @@
       }
     ]
   },
-  "ffs-denial": {
-    "slug": "ffs-denial",
+  "ffs": {
+    "slug": "ffs",
     "title": "Appealing Facial Feminization Surgery (FFS) Denials",
     "default_procedure": "Facial Feminization Surgery (FFS)",
     "default_condition": "Gender Dysphoria",
@@ -926,8 +926,8 @@
       }
     ]
   },
-  "top-surgery-masc-denial": {
-    "slug": "top-surgery-masc-denial",
+  "top-surgery-masc": {
+    "slug": "top-surgery-masc",
     "title": "Appealing Transmasculine Top Surgery Denials",
     "default_procedure": "Chest Reconstruction (Top Surgery)",
     "default_condition": "Gender Dysphoria",
@@ -985,8 +985,8 @@
       }
     ]
   },
-  "top-surgery-fem-denial": {
-    "slug": "top-surgery-fem-denial",
+  "top-surgery-fem": {
+    "slug": "top-surgery-fem",
     "title": "Appealing Transfeminine Breast Augmentation Denials",
     "default_procedure": "Breast Augmentation (Gender-Affirming)",
     "default_condition": "Gender Dysphoria",
@@ -1044,8 +1044,8 @@
       }
     ]
   },
-  "electrolysis-denial": {
-    "slug": "electrolysis-denial",
+  "electrolysis": {
+    "slug": "electrolysis",
     "title": "Appealing Electrolysis & Gender-Affirming Hair Removal Denials",
     "default_procedure": "Electrolysis / Laser Hair Removal (Gender-Affirming)",
     "default_condition": "Gender Dysphoria",
@@ -1103,8 +1103,8 @@
       }
     ]
   },
-  "voice-therapy-denial": {
-    "slug": "voice-therapy-denial",
+  "voice-therapy": {
+    "slug": "voice-therapy",
     "title": "Appealing Voice Therapy Denials",
     "default_procedure": "Voice Therapy (Gender-Affirming)",
     "default_condition": "Gender Dysphoria",
@@ -1162,8 +1162,8 @@
       }
     ]
   },
-  "voice-surgery-denial": {
-    "slug": "voice-surgery-denial",
+  "voice-surgery": {
+    "slug": "voice-surgery",
     "title": "Appealing Voice Surgery Denials",
     "default_procedure": "Vocal Feminization / Masculinization Surgery",
     "default_condition": "Gender Dysphoria",
@@ -1221,8 +1221,8 @@
       }
     ]
   },
-  "hrt-denial": {
-    "slug": "hrt-denial",
+  "hrt": {
+    "slug": "hrt",
     "title": "Appealing Hormone Therapy (HRT) Denials",
     "default_procedure": "Gender-Affirming Hormone Therapy",
     "default_condition": "Gender Dysphoria",
@@ -1307,8 +1307,8 @@
       }
     ]
   },
-  "puberty-blocker-denial": {
-    "slug": "puberty-blocker-denial",
+  "puberty-blocker": {
+    "slug": "puberty-blocker",
     "title": "Appealing Puberty Blocker Denials",
     "default_procedure": "Puberty Blockers (GnRH Analogues)",
     "default_condition": "Gender Dysphoria",
@@ -1392,8 +1392,8 @@
       }
     ]
   },
-  "grs-denial": {
-    "slug": "grs-denial",
+  "grs": {
+    "slug": "grs",
     "title": "Appealing Gender-Affirming Genital Surgery Denials",
     "default_procedure": "Gender-Affirming Genital Surgery (GRS)",
     "default_condition": "Gender Dysphoria",
@@ -1451,8 +1451,8 @@
       }
     ]
   },
-  "fertility-preservation-denial": {
-    "slug": "fertility-preservation-denial",
+  "fertility-preservation": {
+    "slug": "fertility-preservation",
     "title": "Appealing Fertility Preservation Denials",
     "default_procedure": "Fertility Preservation Prior to treatment",
     "default_condition": "Gender Dysphoria",
@@ -1510,8 +1510,8 @@
       }
     ]
   },
-  "glp1-denial": {
-    "slug": "glp1-denial",
+  "glp1": {
+    "slug": "glp1",
     "title": "Appealing GLP-1 Medication Denials",
     "default_procedure": "GLP-1 Medication (Ozempic, Wegovy, Mounjaro, etc.)",
     "tagline": "Weight and diabetes meds are not vanity drugs when they treat real disease.",
@@ -1559,8 +1559,8 @@
       }
     ]
   },
-  "migraine-med-denial": {
-    "slug": "migraine-med-denial",
+  "migraine-med": {
+    "slug": "migraine-med",
     "title": "Appealing Migraine Medication Denials",
     "default_procedure": "Migraine Medications (CGRP Inhibitors, Gepants, Triptans)",
     "tagline": "When migraines steal your life, treatment is not optional.",
@@ -1617,8 +1617,8 @@
       }
     ]
   },
-  "asthma-biologic-denial": {
-    "slug": "asthma-biologic-denial",
+  "asthma-biologic": {
+    "slug": "asthma-biologic",
     "title": "Appealing Asthma Biologic Denials",
     "default_procedure": "Severe Asthma Biologic (Dupilumab, Omalizumab, etc.)",
     "tagline": "For severe asthma, biologics can be the difference between stability and the ICU.",
@@ -1670,8 +1670,8 @@
       }
     ]
   },
-  "eczema-biologic-denial": {
-    "slug": "eczema-biologic-denial",
+  "eczema-biologic": {
+    "slug": "eczema-biologic",
     "title": "Appealing Eczema Biologic Denials",
     "default_procedure": "Biologic or Targeted Therapy for Atopic Dermatitis",
     "tagline": "Severe eczema is not just dry skin — it is a serious inflammatory disease.",
@@ -1718,8 +1718,8 @@
       }
     ]
   },
-  "insulin-pump-cgm-denial": {
-    "slug": "insulin-pump-cgm-denial",
+  "insulin-pump-cgm": {
+    "slug": "insulin-pump-cgm",
     "title": "Appealing Insulin Pump and CGM Denials",
     "default_procedure": "Insulin Pump or Continuous Glucose Monitor",
     "tagline": "For many people with diabetes, diabetes tech is not a luxury — it is survival.",
@@ -1771,8 +1771,8 @@
       }
     ]
   },
-  "prosthetic-denial": {
-    "slug": "prosthetic-denial",
+  "prosthetic": {
+    "slug": "prosthetic",
     "title": "Appealing Prosthetic Limb Denials",
     "default_procedure": "Prosthetic Limb or Advanced Prosthetic Component",
     "tagline": "Mobility, independence, and work are not cosmetic goals.",
@@ -1819,8 +1819,8 @@
       }
     ]
   },
-  "hearing-aid-denial": {
-    "slug": "hearing-aid-denial",
+  "hearing-aid": {
+    "slug": "hearing-aid",
     "title": "Appealing Hearing Aid and Cochlear Implant Denials",
     "default_procedure": "Hearing Aids or Cochlear Implant",
     "tagline": "Communication is a health need, not a luxury.",
@@ -1867,8 +1867,8 @@
       }
     ]
   },
-  "genetic-testing-denial": {
-    "slug": "genetic-testing-denial",
+  "genetic-testing": {
+    "slug": "genetic-testing",
     "title": "Appealing Genetic Testing Denials",
     "default_procedure": "Genetic or Genomic Testing",
     "tagline": "Genetic answers can change treatment, screening, and family planning.",
@@ -1920,8 +1920,8 @@
       }
     ]
   },
-  "pet-scan-denial": {
-    "slug": "pet-scan-denial",
+  "pet-scan": {
+    "slug": "pet-scan",
     "title": "Appealing PET Scan Denials",
     "default_procedure": "Positron Emission Tomography (PET) Scan",
     "tagline": "When staging or restaging cancer, the right scan matters.",
@@ -1961,8 +1961,8 @@
       "PET indications guideline tumor staging"
     ]
   },
-  "bariatric-surgery-denial": {
-    "slug": "bariatric-surgery-denial",
+  "bariatric-surgery": {
+    "slug": "bariatric-surgery",
     "title": "Appealing Bariatric Surgery Denials",
     "default_procedure": "Metabolic or Bariatric Surgery",
     "default_condition": "Obesity",
@@ -2010,8 +2010,8 @@
       }
     ]
   },
-  "substance-use-treatment-denial": {
-    "slug": "substance-use-treatment-denial",
+  "substance-use-treatment": {
+    "slug": "substance-use-treatment",
     "title": "Appealing Substance Use Treatment Denials",
     "default_procedure": "Substance Use Disorder Treatment (Inpatient, IOP, MAT)",
     "default_condition": "Substance Use Disorder",
@@ -2064,8 +2064,8 @@
       }
     ]
   },
-  "emergency-room-denial": {
-    "slug": "emergency-room-denial",
+  "emergency-room": {
+    "slug": "emergency-room",
     "title": "Appealing Emergency Room Visit Denials",
     "default_procedure": "Emergency Department Visit",
     "tagline": "If it felt like an emergency at the time, the law is usually on your side.",
@@ -2105,8 +2105,8 @@
       "delay in seeking emergency care outcomes"
     ]
   },
-  "ambulance-transport-denial": {
-    "slug": "ambulance-transport-denial",
+  "ambulance-transport": {
+    "slug": "ambulance-transport",
     "title": "Appealing Ambulance Transport Denials",
     "default_procedure": "Ground or Air Ambulance Transport",
     "tagline": "If it was not safe to drive, ambulance care was not optional.",
@@ -3317,8 +3317,8 @@
       }
     ]
   },
-  "doxy-pep-denial": {
-    "slug": "doxy-pep-denial",
+  "doxy-pep": {
+    "slug": "doxy-pep",
     "title": "Appealing Doxy-PEP (Doxycycline Post-Exposure Prophylaxis) Denials",
     "default_procedure": "Doxycycline Post-Exposure Prophylaxis (Doxy-PEP) for STIs",
     "default_condition": "STI Prevention",
@@ -3363,8 +3363,8 @@
       "doxy PEP randomized trial STI prevention"
     ]
   },
-  "flexitouch-plus-denial": {
-    "slug": "flexitouch-plus-denial",
+  "flexitouch-plus": {
+    "slug": "flexitouch-plus",
     "title": "Appealing Flexitouch Plus & Advanced Pneumatic Compression Device Denials",
     "default_procedure": "Flexitouch Plus or Similar Advanced Pneumatic Compression Device",
     "default_condition": "Lymphedema",
@@ -3773,8 +3773,8 @@
       }
     ]
   },
-  "skilled-nursing-denial": {
-    "slug": "skilled-nursing-denial",
+  "skilled-nursing": {
+    "slug": "skilled-nursing",
     "title": "Appealing Skilled Nursing Facility Denials",
     "default_procedure": "Skilled Nursing Facility (SNF) Care",
     "tagline": "UHC Medicare Advantage SNF denials increased 9x from 2019 to 2022: fight back.",
@@ -3824,8 +3824,8 @@
       }
     ]
   },
-  "home-health-denial": {
-    "slug": "home-health-denial",
+  "home-health": {
+    "slug": "home-health",
     "title": "Appealing Home Health Care Denials",
     "default_procedure": "Home Health Care / Home Nursing Services",
     "tagline": "Medicare's 'homebound' requirement trips up many patients — learn how to appeal.",
@@ -3865,8 +3865,8 @@
       }
     ]
   },
-  "joint-replacement-denial": {
-    "slug": "joint-replacement-denial",
+  "joint-replacement": {
+    "slug": "joint-replacement",
     "title": "Appealing Knee and Hip Replacement Denials",
     "default_procedure": "Total Knee or Hip Replacement",
     "tagline": "Joint replacement is one of the most successful surgeries — insurers shouldn't block it.",
@@ -3919,8 +3919,8 @@
       }
     ]
   },
-  "out-of-network-emergency-denial": {
-    "slug": "out-of-network-emergency-denial",
+  "out-of-network-emergency": {
+    "slug": "out-of-network-emergency",
     "title": "Appealing Out-of-Network Emergency Room Denials",
     "default_procedure": "Emergency Room Services",
     "tagline": "Federal law protects you from surprise ER bills — insurers must comply.",
@@ -4018,8 +4018,8 @@
     "medicare": true,
     "blog_post_url": "/blog/medicaid-work-requirements/"
   },
-  "colonoscopy-denial": {
-    "slug": "colonoscopy-denial",
+  "colonoscopy": {
+    "slug": "colonoscopy",
     "title": "Appealing Colonoscopy Denials",
     "default_procedure": "Colonoscopy",
     "tagline": "Colonoscopy denials can delay life-saving cancer screening—here's how to fight back.",
@@ -4085,8 +4085,8 @@
       }
     ]
   },
-  "myqorzo-denial": {
-    "slug": "myqorzo-denial",
+  "myqorzo": {
+    "slug": "myqorzo",
     "title": "Appealing Myqorzo (Aficamten) Denials",
     "default_procedure": "Myqorzo (aficamten)",
     "default_condition": "Obstructive Hypertrophic Cardiomyopathy",
@@ -4150,8 +4150,8 @@
       }
     ]
   },
-  "exdensur-denial": {
-    "slug": "exdensur-denial",
+  "exdensur": {
+    "slug": "exdensur",
     "title": "Appealing Exdensur (Depemokimab) Denials",
     "default_procedure": "Exdensur (depemokimab)",
     "default_condition": "Severe Eosinophilic Asthma",
@@ -4215,8 +4215,8 @@
       }
     ]
   },
-  "cardamyst-denial": {
-    "slug": "cardamyst-denial",
+  "cardamyst": {
+    "slug": "cardamyst",
     "title": "Appealing Cardamyst (Etripamil) Denials",
     "default_procedure": "Cardamyst (etripamil) nasal spray",
     "default_condition": "Paroxysmal Supraventricular Tachycardia",
@@ -4269,8 +4269,8 @@
       }
     ]
   },
-  "lerochol-denial": {
-    "slug": "lerochol-denial",
+  "lerochol": {
+    "slug": "lerochol",
     "title": "Appealing Lerochol (Lerodalcibep) Denials",
     "default_procedure": "Lerochol (lerodalcibep)",
     "default_condition": "Hypercholesterolemia",
@@ -4322,8 +4322,8 @@
       }
     ]
   },
-  "voyxact-denial": {
-    "slug": "voyxact-denial",
+  "voyxact": {
+    "slug": "voyxact",
     "title": "Appealing Voyxact (Sibeprenlimab) Denials",
     "default_procedure": "Voyxact (sibeprenlimab)",
     "default_condition": "IgA Nephropathy",
@@ -4387,8 +4387,8 @@
       }
     ]
   },
-  "hyrnuo-denial": {
-    "slug": "hyrnuo-denial",
+  "hyrnuo": {
+    "slug": "hyrnuo",
     "title": "Appealing Hyrnuo (Sevabertinib) Denials",
     "default_procedure": "Hyrnuo (sevabertinib)",
     "default_condition": "HER2-Mutant Non-Small Cell Lung Cancer",
@@ -4457,8 +4457,8 @@
       }
     ]
   },
-  "redemplo-denial": {
-    "slug": "redemplo-denial",
+  "redemplo": {
+    "slug": "redemplo",
     "title": "Appealing Redemplo (Plozasiran) Denials",
     "default_procedure": "Redemplo (plozasiran)",
     "default_condition": "Familial Chylomicronemia Syndrome",
@@ -4522,8 +4522,8 @@
       }
     ]
   },
-  "komzifti-denial": {
-    "slug": "komzifti-denial",
+  "komzifti": {
+    "slug": "komzifti",
     "title": "Appealing Komzifti (Ziftomenib) Denials",
     "default_procedure": "Komzifti (ziftomenib)",
     "default_condition": "NPM1-Mutated Acute Myeloid Leukemia",
@@ -4581,8 +4581,8 @@
       }
     ]
   },
-  "lynkuet-denial": {
-    "slug": "lynkuet-denial",
+  "lynkuet": {
+    "slug": "lynkuet",
     "title": "Appealing Lynkuet (Elinzanetant) Denials",
     "default_procedure": "Lynkuet (elinzanetant)",
     "default_condition": "Menopause Vasomotor Symptoms",
@@ -4646,8 +4646,8 @@
       }
     ]
   },
-  "jascayd-denial": {
-    "slug": "jascayd-denial",
+  "jascayd": {
+    "slug": "jascayd",
     "title": "Appealing Jascayd (Nerandomilast) Denials",
     "default_procedure": "Jascayd (nerandomilast)",
     "default_condition": "Idiopathic Pulmonary Fibrosis",
@@ -4706,8 +4706,8 @@
       }
     ]
   },
-  "rhapsido-denial": {
-    "slug": "rhapsido-denial",
+  "rhapsido": {
+    "slug": "rhapsido",
     "title": "Appealing Rhapsido (Remibrutinib) Denials",
     "default_procedure": "Rhapsido (remibrutinib)",
     "default_condition": "Chronic Spontaneous Urticaria",
@@ -4771,8 +4771,8 @@
       }
     ]
   },
-  "palsonify-denial": {
-    "slug": "palsonify-denial",
+  "palsonify": {
+    "slug": "palsonify",
     "title": "Appealing Palsonify (Paltusotine) Denials",
     "default_procedure": "Palsonify (paltusotine)",
     "default_condition": "Acromegaly",
@@ -4836,8 +4836,8 @@
       }
     ]
   },
-  "journavx-denial": {
-    "slug": "journavx-denial",
+  "journavx": {
+    "slug": "journavx",
     "title": "Appealing Journavx (Suzetrigine) Denials",
     "default_procedure": "Journavx (suzetrigine)",
     "default_condition": "Acute Pain",
@@ -4901,8 +4901,8 @@
       }
     ]
   },
-  "wayrilz-denial": {
-    "slug": "wayrilz-denial",
+  "wayrilz": {
+    "slug": "wayrilz",
     "title": "Appealing Wayrilz (Rilzabrutinib) Denials",
     "default_procedure": "Wayrilz (rilzabrutinib)",
     "default_condition": "Immune Thrombocytopenia",
@@ -4966,8 +4966,8 @@
       }
     ]
   },
-  "dawnzera-denial": {
-    "slug": "dawnzera-denial",
+  "dawnzera": {
+    "slug": "dawnzera",
     "title": "Appealing Dawnzera (Donidalorsen) Denials",
     "default_procedure": "Dawnzera (donidalorsen)",
     "default_condition": "Hereditary Angioedema",
@@ -5031,8 +5031,8 @@
       }
     ]
   },
-  "brinsupri-denial": {
-    "slug": "brinsupri-denial",
+  "brinsupri": {
+    "slug": "brinsupri",
     "title": "Appealing Brinsupri (Brensocatib) Denials",
     "default_procedure": "Brinsupri (brensocatib)",
     "default_condition": "Non-Cystic Fibrosis Bronchiectasis",
@@ -5091,8 +5091,8 @@
       }
     ]
   },
-  "ekterly-denial": {
-    "slug": "ekterly-denial",
+  "ekterly": {
+    "slug": "ekterly",
     "title": "Appealing Ekterly (Sebetralstat) Denials",
     "default_procedure": "Ekterly (sebetralstat)",
     "default_condition": "Hereditary Angioedema",
@@ -5156,8 +5156,8 @@
       }
     ]
   },
-  "qfitlia-denial": {
-    "slug": "qfitlia-denial",
+  "qfitlia": {
+    "slug": "qfitlia",
     "title": "Appealing Qfitlia (Fitusiran) Denials",
     "default_procedure": "Qfitlia (fitusiran)",
     "default_condition": "Hemophilia A or B",
@@ -5221,8 +5221,8 @@
       }
     ]
   },
-  "blujepa-denial": {
-    "slug": "blujepa-denial",
+  "blujepa": {
+    "slug": "blujepa",
     "title": "Appealing Blujepa (Gepotidacin) Denials",
     "default_procedure": "Blujepa (gepotidacin)",
     "default_condition": "Uncomplicated Urinary Tract Infection",
@@ -5274,8 +5274,8 @@
       }
     ]
   },
-  "datroway-denial": {
-    "slug": "datroway-denial",
+  "datroway": {
+    "slug": "datroway",
     "title": "Appealing Datroway (Datopotamab Deruxtecan) Denials",
     "default_procedure": "Datroway (datopotamab deruxtecan)",
     "default_condition": "HR-Positive, HER2-Negative Breast Cancer",
@@ -5339,8 +5339,8 @@
       }
     ]
   },
-  "keytruda-qlex-denial": {
-    "slug": "keytruda-qlex-denial",
+  "keytruda-qlex": {
+    "slug": "keytruda-qlex",
     "title": "Appealing Keytruda Qlex (Subcutaneous Pembrolizumab) Denials",
     "default_procedure": "Keytruda Qlex (pembrolizumab subcutaneous)",
     "default_condition": "Solid Tumors",
@@ -5409,8 +5409,8 @@
       }
     ]
   },
-  "inluriyo-denial": {
-    "slug": "inluriyo-denial",
+  "inluriyo": {
+    "slug": "inluriyo",
     "title": "Appealing Inluriyo (Imlunestrant) Denials",
     "default_procedure": "Inluriyo (imlunestrant)",
     "default_condition": "ER-Positive, HER2-Negative Breast Cancer",
@@ -5474,8 +5474,8 @@
       }
     ]
   },
-  "forzinity-denial": {
-    "slug": "forzinity-denial",
+  "forzinity": {
+    "slug": "forzinity",
     "title": "Appealing Forzinity (Elamipretide) Denials",
     "default_procedure": "Forzinity (elamipretide)",
     "default_condition": "Barth Syndrome",
@@ -5539,8 +5539,8 @@
       }
     ]
   },
-  "nuzolvence-denial": {
-    "slug": "nuzolvence-denial",
+  "nuzolvence": {
+    "slug": "nuzolvence",
     "title": "Appealing Nuzolvence (Zoliflodacin) Denials",
     "default_procedure": "Nuzolvence (zoliflodacin)",
     "default_condition": "Uncomplicated Gonorrhea",
@@ -5586,8 +5586,8 @@
     ],
     "assistance_programs": []
   },
-  "imaavy-denial": {
-    "slug": "imaavy-denial",
+  "imaavy": {
+    "slug": "imaavy",
     "title": "Appealing Imaavy (Nipocalimab) Denials",
     "default_procedure": "Imaavy (nipocalimab)",
     "default_condition": "Generalized Myasthenia Gravis",
@@ -5646,8 +5646,8 @@
       }
     ]
   },
-  "vanrafia-denial": {
-    "slug": "vanrafia-denial",
+  "vanrafia": {
+    "slug": "vanrafia",
     "title": "Appealing Vanrafia (Atrasentan) Denials",
     "default_procedure": "Vanrafia (atrasentan)",
     "default_condition": "IgA Nephropathy",
@@ -5711,8 +5711,8 @@
       }
     ]
   },
-  "enflonsia-denial": {
-    "slug": "enflonsia-denial",
+  "enflonsia": {
+    "slug": "enflonsia",
     "title": "Appealing Enflonsia (Clesrovimab) Denials",
     "default_procedure": "Enflonsia (clesrovimab)",
     "default_condition": "RSV Prevention in Infants",
@@ -5771,8 +5771,8 @@
       }
     ]
   },
-  "abbott-volt-pfa-denial": {
-    "slug": "abbott-volt-pfa-denial",
+  "abbott-volt-pfa": {
+    "slug": "abbott-volt-pfa",
     "title": "Appealing Abbott Volt PFA System Denials",
     "default_procedure": "Abbott Volt PFA System (pulsed field ablation)",
     "default_condition": "Atrial Fibrillation",
@@ -5825,8 +5825,8 @@
       }
     ]
   },
-  "edwards-sapien-m3-denial": {
-    "slug": "edwards-sapien-m3-denial",
+  "edwards-sapien-m3": {
+    "slug": "edwards-sapien-m3",
     "title": "Appealing Edwards SAPIEN M3 (Mitral Valve) Denials",
     "default_procedure": "Edwards SAPIEN M3 TMVR System",
     "default_condition": "Mitral Regurgitation",
@@ -5884,8 +5884,8 @@
       }
     ]
   },
-  "setpoint-vns-denial": {
-    "slug": "setpoint-vns-denial",
+  "setpoint-vns": {
+    "slug": "setpoint-vns",
     "title": "Appealing SetPoint Vagus Nerve Stimulation Denials",
     "default_procedure": "SetPoint System (vagus nerve stimulation)",
     "default_condition": "Rheumatoid Arthritis",
@@ -5944,8 +5944,8 @@
       }
     ]
   },
-  "flow-tdcs-depression-denial": {
-    "slug": "flow-tdcs-depression-denial",
+  "flow-tdcs-depression": {
+    "slug": "flow-tdcs-depression",
     "title": "Appealing Flow tDCS Device Denials",
     "default_procedure": "Flow Neuroscience FL-100 (tDCS device)",
     "default_condition": "Major Depressive Disorder",
@@ -6009,8 +6009,8 @@
       }
     ]
   },
-  "teal-wand-hpv-denial": {
-    "slug": "teal-wand-hpv-denial",
+  "teal-wand-hpv": {
+    "slug": "teal-wand-hpv",
     "title": "Appealing Teal Wand HPV Self-Collection Denials",
     "default_procedure": "Teal Wand (at-home HPV test kit)",
     "default_condition": "Cervical Cancer Screening",
@@ -6074,8 +6074,8 @@
       }
     ]
   },
-  "physical-therapy-denial": {
-    "slug": "physical-therapy-denial",
+  "physical-therapy": {
+    "slug": "physical-therapy",
     "title": "Appealing Physical Therapy Denials",
     "default_procedure": "Physical Therapy",
     "tagline": "Help appealing denials for physical therapy coverage.",
@@ -6126,8 +6126,8 @@
       }
     ]
   },
-  "bilateral-orchiectomy-denial": {
-    "slug": "bilateral-orchiectomy-denial",
+  "bilateral-orchiectomy": {
+    "slug": "bilateral-orchiectomy",
     "title": "Appealing Bilateral Orchiectomy Denials",
     "default_procedure": "Bilateral Orchiectomy",
     "default_condition": "Gender Dysphoria",
@@ -6189,8 +6189,8 @@
       }
     ]
   },
-  "clonoseq-mrd-testing-denial": {
-    "slug": "clonoseq-mrd-testing-denial",
+  "clonoseq-mrd-testing": {
+    "slug": "clonoseq-mrd-testing",
     "title": "Appealing clonoSEQ MRD Testing Denials",
     "default_procedure": "clonoSEQ MRD Testing",
     "default_condition": "Blood Cancer",
@@ -6255,8 +6255,8 @@
       }
     ]
   },
-  "botox-denial": {
-    "slug": "botox-denial",
+  "botox": {
+    "slug": "botox",
     "title": "Appealing Botox (OnabotulinumtoxinA) Denials",
     "default_procedure": "Botox (onabotulinumtoxinA)",
     "tagline": "Help appealing denials for medical Botox treatment.",
@@ -6320,8 +6320,8 @@
       }
     ]
   },
-  "breast-reduction-denial": {
-    "slug": "breast-reduction-denial",
+  "breast-reduction": {
+    "slug": "breast-reduction",
     "title": "Appealing Breast Reduction Denials",
     "default_procedure": "Breast Reduction (Reduction Mammaplasty)",
     "tagline": "Help appealing denials for medically necessary breast reduction surgery.",
@@ -6365,8 +6365,8 @@
       "macromastia conservative treatment failure"
     ]
   },
-  "cardiovascular-risk-panel-denial": {
-    "slug": "cardiovascular-risk-panel-denial",
+  "cardiovascular-risk-panel": {
+    "slug": "cardiovascular-risk-panel",
     "title": "Appealing Cardiovascular Risk Panel Denials",
     "default_procedure": "Advanced Cardiovascular Risk Panel",
     "default_condition": "Cardiovascular Disease Risk",
@@ -6423,8 +6423,8 @@
       }
     ]
   },
-  "breast-augmentation-trans-denial": {
-    "slug": "breast-augmentation-trans-denial",
+  "breast-augmentation-trans": {
+    "slug": "breast-augmentation-trans",
     "title": "Appealing Breast Augmentation Denials for Transgender Patients",
     "default_procedure": "Breast Augmentation",
     "default_condition": "Gender Dysphoria",
@@ -6486,8 +6486,8 @@
       }
     ]
   },
-  "breast-reconstruction-cancer-denial": {
-    "slug": "breast-reconstruction-cancer-denial",
+  "breast-reconstruction-cancer": {
+    "slug": "breast-reconstruction-cancer",
     "title": "Appealing Breast Reconstruction Denials After Cancer",
     "default_procedure": "Breast Reconstruction",
     "default_condition": "Breast Cancer",
@@ -6544,8 +6544,8 @@
       }
     ]
   },
-  "xphozah-denial": {
-    "slug": "xphozah-denial",
+  "xphozah": {
+    "slug": "xphozah",
     "title": "Appealing Xphozah (Tenapanor) Denials",
     "default_procedure": "Xphozah (tenapanor)",
     "default_condition": "Hyperphosphatemia in Chronic Kidney Disease",
@@ -6610,8 +6610,8 @@
       }
     ]
   },
-  "vasectomy-denial": {
-    "slug": "vasectomy-denial",
+  "vasectomy": {
+    "slug": "vasectomy",
     "title": "Appealing Vasectomy Denials",
     "default_procedure": "Vasectomy",
     "tagline": "Help appealing denials for permanent contraception coverage.",
@@ -6662,8 +6662,8 @@
       }
     ]
   },
-  "sleeve-gastrectomy-denial": {
-    "slug": "sleeve-gastrectomy-denial",
+  "sleeve-gastrectomy": {
+    "slug": "sleeve-gastrectomy",
     "title": "Appealing Laparoscopic Sleeve Gastrectomy Denials",
     "default_procedure": "Laparoscopic Sleeve Gastrectomy",
     "default_condition": "Obesity",
@@ -6715,8 +6715,8 @@
       }
     ]
   },
-  "toenail-surgery-denial": {
-    "slug": "toenail-surgery-denial",
+  "toenail-surgery": {
+    "slug": "toenail-surgery",
     "title": "Appealing Toenail Surgery Denials",
     "default_procedure": "Toenail Surgery (Matrixectomy)",
     "tagline": "Help appealing denials for medically necessary toenail procedures.",
@@ -6760,8 +6760,8 @@
       "onychomycosis surgical management"
     ]
   },
-  "dexa-scan-denial": {
-    "slug": "dexa-scan-denial",
+  "dexa-scan": {
+    "slug": "dexa-scan",
     "title": "Appealing DEXA Scan Denials",
     "default_procedure": "DEXA Bone Density Scan",
     "default_condition": "Osteoporosis Risk",
