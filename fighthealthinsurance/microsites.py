@@ -93,6 +93,12 @@ class Microsite:
         # Optional manufacturer name (for drug/device microsites)
         self.manufacturer: Optional[str] = data.get("manufacturer")
 
+        # Optional advocacy resources (patient advocacy groups, support organizations)
+        # Each entry should have: name, url, description
+        self.advocacy_resources: list[dict[str, str]] = data.get(
+            "advocacy_resources", []
+        )
+
     def __repr__(self) -> str:
         return f"<Microsite: {self.slug}>"
 

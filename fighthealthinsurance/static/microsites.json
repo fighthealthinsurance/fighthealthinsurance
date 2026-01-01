@@ -3,18 +3,18 @@
     "slug": "mri-denial",
     "title": "Appealing MRI Denials",
     "default_procedure": "MRI Scan",
-    "tagline": "Insurance often denies MRIs as 'not medically necessary'—here’s how to overturn it.",
+    "tagline": "Insurance often denies MRIs as 'not medically necessary'\u2014here\u2019s how to overturn it.",
     "hero_h1": "Appeal Your MRI Denial",
-    "hero_subhead": "Don’t let \"not medically necessary\" stop you from getting real answers.",
-    "intro": "MRIs get denied all the time — usually because the insurer wants cheaper imaging first or claims your symptoms don’t justify the scan. But if your doctor ordered it, there’s a strong chance you can overturn the denial with a clear appeal explaining why the MRI is clinically necessary.",
+    "hero_subhead": "Don\u2019t let \"not medically necessary\" stop you from getting real answers.",
+    "intro": "MRIs get denied all the time \u2014 usually because the insurer wants cheaper imaging first or claims your symptoms don\u2019t justify the scan. But if your doctor ordered it, there\u2019s a strong chance you can overturn the denial with a clear appeal explaining why the MRI is clinically necessary.",
     "common_denial_reasons": [
       "Not medically necessary",
       "Try X-ray or PT first",
       "Insufficient documentation of symptoms",
       "Out-of-network imaging provider"
     ],
-    "how_we_help": "We help you explain your symptoms, clinical history, and physician recommendations in a way insurers actually respond to. Upload your denial and we’ll generate a polished appeal letter you can submit today.",
-    "cta": "Start your MRI appeal — it takes about 3 minutes.",
+    "how_we_help": "We help you explain your symptoms, clinical history, and physician recommendations in a way insurers actually respond to. Upload your denial and we\u2019ll generate a polished appeal letter you can submit today.",
+    "cta": "Start your MRI appeal \u2014 it takes about 3 minutes.",
     "faq": [
       {
         "question": "Can I appeal an MRI denial if I already had the scan done?",
@@ -46,19 +46,19 @@
     "default_procedure": "CT Scan",
     "tagline": "Step-by-step help appealing CT scan denials, especially for urgent or diagnostic cases.",
     "hero_h1": "Appeal Your CT Scan Denial",
-    "hero_subhead": "When your doctor orders it, insurers shouldn’t second-guess them.",
-    "intro": "CT scans are often denied because insurers think the issue isn’t urgent or could be diagnosed another way. A strong appeal clarifies why your doctor chose a CT and why delay could harm your health.",
+    "hero_subhead": "When your doctor orders it, insurers shouldn\u2019t second-guess them.",
+    "intro": "CT scans are often denied because insurers think the issue isn\u2019t urgent or could be diagnosed another way. A strong appeal clarifies why your doctor chose a CT and why delay could harm your health.",
     "common_denial_reasons": [
       "Not medically necessary",
       "Alternate imaging recommended first",
       "No documentation of urgent symptoms"
     ],
-    "how_we_help": "We help you articulate the clinical urgency and rationale behind your CT order, backed by your doctor’s notes and your symptoms.",
+    "how_we_help": "We help you articulate the clinical urgency and rationale behind your CT order, backed by your doctor\u2019s notes and your symptoms.",
     "cta": "Start your CT scan appeal.",
     "faq": [
       {
         "question": "Why did my insurer deny my CT scan?",
-        "answer": "Common reasons include claiming your condition isn't urgent, preferring another test first, or saying your symptoms weren’t clearly documented. Your appeal should address each of those points directly."
+        "answer": "Common reasons include claiming your condition isn't urgent, preferring another test first, or saying your symptoms weren\u2019t clearly documented. Your appeal should address each of those points directly."
       },
       {
         "question": "Do I need ER or urgent care notes for my CT appeal?",
@@ -66,7 +66,7 @@
       },
       {
         "question": "Can I still appeal if I went ahead and got the CT scan anyway?",
-        "answer": "Yes. You can appeal after the fact and ask for coverage, especially if your results showed something significant or matched the doctor’s concerns."
+        "answer": "Yes. You can appeal after the fact and ask for coverage, especially if your results showed something significant or matched the doctor\u2019s concerns."
       }
     ],
     "evidence_snippets": [
@@ -84,10 +84,10 @@
     "slug": "sleep-study-denial",
     "title": "Appealing Sleep Study Denials",
     "default_procedure": "Sleep Study (Polysomnography or Home Study)",
-    "tagline": "Insurers frequently require a home test first—learn how to appeal this and win.",
+    "tagline": "Insurers frequently require a home test first\u2014learn how to appeal this and win.",
     "hero_h1": "Appeal Your Sleep Study Denial",
-    "hero_subhead": "Whether in-lab or at home, testing for sleep disorders shouldn’t be a battle.",
-    "intro": "Sleep studies are denied constantly — often because insurers want a home test first or don’t see enough documented symptoms. Your appeal can fix this.",
+    "hero_subhead": "Whether in-lab or at home, testing for sleep disorders shouldn\u2019t be a battle.",
+    "intro": "Sleep studies are denied constantly \u2014 often because insurers want a home test first or don\u2019t see enough documented symptoms. Your appeal can fix this.",
     "common_denial_reasons": [
       "Must complete home sleep test first",
       "Insufficient symptoms documented",
@@ -106,7 +106,7 @@
       },
       {
         "question": "Do I have to wait for another denial to appeal?",
-        "answer": "No. You usually have the right to file an internal appeal after the first denial. Check your plan’s deadline and file as soon as you can."
+        "answer": "No. You usually have the right to file an internal appeal after the first denial. Check your plan\u2019s deadline and file as soon as you can."
       }
     ],
     "evidence_snippets": [
@@ -118,6 +118,18 @@
       "polysomnography obstructive sleep apnea guidelines",
       "untreated sleep apnea cardiovascular risk",
       "home sleep apnea testing vs polysomnography"
+    ],
+    "advocacy_resources": [
+      {
+        "name": "American Sleep Apnea Association",
+        "url": "https://www.sleepapnea.org/",
+        "description": "Patient advocacy organization with A.W.A.K.E. support network and CPAP assistance program."
+      },
+      {
+        "name": "Alliance of Sleep Apnea Partners",
+        "url": "https://www.apneapartners.org/",
+        "description": "National nonprofit advocacy organization for sleep-disordered breathing."
+      }
     ]
   },
   "cpap-denial": {
@@ -128,9 +140,9 @@
     "tagline": "Helpful for OSA patients denied CPAP devices or replacement supplies.",
     "hero_h1": "Appeal Your CPAP Denial",
     "hero_subhead": "Insurers often deny CPAP coverage despite your doctor's prescription.",
-    "intro": "Insurers regularly deny CPAP machines and supplies, often claiming test results don't meet criteria or that compliance wasn’t proven.",
+    "intro": "Insurers regularly deny CPAP machines and supplies, often claiming test results don't meet criteria or that compliance wasn\u2019t proven.",
     "common_denial_reasons": [
-      "Doesn’t meet AHI thresholds",
+      "Doesn\u2019t meet AHI thresholds",
       "Non-compliant usage",
       "Home sleep study insufficient",
       "Replacement schedule not allowed"
@@ -144,7 +156,7 @@
       },
       {
         "question": "How do I address a \"non-compliance\" denial?",
-        "answer": "Explain barriers you faced, how you’ve addressed them, and include any updated compliance data from your device if available."
+        "answer": "Explain barriers you faced, how you\u2019ve addressed them, and include any updated compliance data from your device if available."
       },
       {
         "question": "Can I appeal denials for CPAP supplies and replacement parts?",
@@ -160,6 +172,18 @@
       "CPAP therapy outcomes obstructive sleep apnea",
       "cost effectiveness CPAP cardiovascular",
       "adherence CPAP treatment health outcomes"
+    ],
+    "advocacy_resources": [
+      {
+        "name": "American Sleep Apnea Association",
+        "url": "https://www.sleepapnea.org/",
+        "description": "Patient advocacy organization with A.W.A.K.E. support network and CPAP assistance program."
+      },
+      {
+        "name": "Alliance of Sleep Apnea Partners",
+        "url": "https://www.apneapartners.org/",
+        "description": "National nonprofit advocacy organization for sleep-disordered breathing."
+      }
     ]
   },
   "pt-ot-st-denial": {
@@ -168,14 +192,14 @@
     "default_procedure": "Physical / Occupational / Speech Therapy",
     "tagline": "Appeal visit-limit denials and claims insurers mark as 'maintenance only.'",
     "hero_h1": "Appeal Your Physical, Occupational, or Speech Therapy Denial",
-    "hero_subhead": "Movement, recovery, and communication aren’t optional.",
+    "hero_subhead": "Movement, recovery, and communication aren\u2019t optional.",
     "intro": "Insurers often deny therapy by calling it \"maintenance care\" or limiting visit counts. Your appeal can correct that.",
     "common_denial_reasons": [
       "Maintenance only, not restorative",
       "Exceeded allowed visit limit",
       "Insufficient documentation of functional deficits"
     ],
-    "how_we_help": "We help you explain your functional goals, progress, and clinician recommendations clearly — things insurers typically overlook.",
+    "how_we_help": "We help you explain your functional goals, progress, and clinician recommendations clearly \u2014 things insurers typically overlook.",
     "cta": "Start your therapy appeal.",
     "faq": [
       {
@@ -183,7 +207,7 @@
         "answer": "Showing that therapy improves or prevents decline in mobility, strength, speech, or daily activities usually supports medical necessity."
       },
       {
-        "question": "Can I appeal if I’ve hit the plan’s visit limit?",
+        "question": "Can I appeal if I\u2019ve hit the plan\u2019s visit limit?",
         "answer": "Yes. Many plans allow exceptions when continued therapy is medically necessary. Your appeal can include progress notes and updated goals."
       },
       {
@@ -200,13 +224,20 @@
       "physical therapy functional outcomes chronic conditions",
       "occupational therapy activities of daily living improvement",
       "speech therapy effectiveness communication disorders"
+    ],
+    "advocacy_resources": [
+      {
+        "name": "American Physical Therapy Association",
+        "url": "https://www.apta.org/",
+        "description": "Professional organization advocating for physical therapy access and patient rights."
+      }
     ]
   },
   "mental-health-denial": {
     "slug": "mental-health-denial",
     "title": "Appealing Mental Health Care Denials",
     "default_procedure": "Psychiatry / Therapy Services",
-    "tagline": "Mental health parity laws exist — let’s make insurers follow them.",
+    "tagline": "Mental health parity laws exist \u2014 let\u2019s make insurers follow them.",
     "hero_h1": "Appeal Your Mental Health Care Denial",
     "hero_subhead": "Mental health care is real health care.",
     "intro": "Therapy and psychiatric care get denied for absurd reasons like \"not medically necessary\" or \"not enough impairment.\" Many of these denials violate mental health parity laws.",
@@ -215,7 +246,7 @@
       "Too frequent or insufficient symptoms",
       "Provider out-of-network"
     ],
-    "how_we_help": "We can help you explain your symptoms, risks, impact on daily life, and your clinician’s treatment plan — which often turns denials around quickly.",
+    "how_we_help": "We can help you explain your symptoms, risks, impact on daily life, and your clinician\u2019s treatment plan \u2014 which often turns denials around quickly.",
     "cta": "Start your mental health appeal.",
     "faq": [
       {
@@ -228,7 +259,7 @@
       },
       {
         "question": "Do I need to share very personal details in my appeal?",
-        "answer": "You can focus on symptoms and how they affect work, school, relationships, and self-care. It should be honest but doesn’t require every personal detail."
+        "answer": "You can focus on symptoms and how they affect work, school, relationships, and self-care. It should be honest but doesn\u2019t require every personal detail."
       }
     ],
     "evidence_snippets": [
@@ -240,6 +271,18 @@
       "mental health treatment outcomes psychotherapy medication",
       "parity law impact insurance coverage mental health",
       "under-treatment depression healthcare utilization"
+    ],
+    "advocacy_resources": [
+      {
+        "name": "NAMI - National Alliance on Mental Illness",
+        "url": "https://www.nami.org/",
+        "description": "Nation's largest grassroots mental health organization with 500+ local affiliates."
+      },
+      {
+        "name": "Mental Health America",
+        "url": "https://mhanational.org/",
+        "description": "Nation's leading community-based nonprofit addressing mental health needs."
+      }
     ]
   },
   "infusion-therapy-denial": {
@@ -284,7 +327,7 @@
     "alternatives": [
       "Some infused medications have subcutaneous versions that may have different coverage status.",
       "Ask your provider about biosimilars which may be on a preferred tier with your insurer.",
-      "Home infusion vs. hospital/clinic infusion may have different coverage — discuss options with your provider."
+      "Home infusion vs. hospital/clinic infusion may have different coverage \u2014 discuss options with your provider."
     ],
     "assistance_programs": [
       {
@@ -307,6 +350,13 @@
         "url": "https://primaryimmune.org/living-primary-immunodeficiency/get-support/find-other-support",
         "description": "Comprehensive list of manufacturer programs and independent foundations for infusion assistance."
       }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "Global Healthy Living Foundation",
+        "url": "https://www.ghlf.org/",
+        "description": "Nonprofit advocating for patients with chronic conditions requiring infusion therapy."
+      }
     ]
   },
   "ivig-denial": {
@@ -315,7 +365,7 @@
     "default_procedure": "IVIG Infusion",
     "tagline": "IVIG denials are common but often successfully appealed with proper documentation.",
     "hero_h1": "Appeal Your IVIG Denial",
-    "hero_subhead": "IVIG denials are extremely common — but often reversible.",
+    "hero_subhead": "IVIG denials are extremely common \u2014 but often reversible.",
     "intro": "IVIG denials often happen because insurers don't understand the exact diagnostic criteria or disease progression.",
     "common_denial_reasons": [
       "Insufficient documentation of autoimmune diagnosis",
@@ -378,6 +428,18 @@
         "name": "GBS/CIDP Foundation Financial Resources",
         "url": "https://www.gbs-cidp.org/support/resources/financial-assistance-resources/",
         "description": "Financial assistance resources specifically for GBS and CIDP patients needing IVIG."
+      }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "Immune Deficiency Foundation",
+        "url": "https://primaryimmune.org/",
+        "description": "Leading nonprofit supporting patients with primary immunodeficiency diseases."
+      },
+      {
+        "name": "GBS/CIDP Foundation International",
+        "url": "https://www.gbs-cidp.org/",
+        "description": "Support and advocacy for patients with Guillain-Barr\u00e9 syndrome and CIDP."
       }
     ]
   },
@@ -461,6 +523,13 @@
         "url": "https://www.enbrel.com/support",
         "description": "Eligible commercially insured patients may pay as little as $0 per dose."
       }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "Global Healthy Living Foundation",
+        "url": "https://www.ghlf.org/",
+        "description": "Patient advocacy for chronic disease including biologic medication access."
+      }
     ]
   },
   "oxygen-therapy-denial": {
@@ -501,13 +570,25 @@
       "long term oxygen therapy survival COPD",
       "oxygen therapy chronic hypoxemia guidelines",
       "home oxygen functional outcomes pulmonary disease"
+    ],
+    "advocacy_resources": [
+      {
+        "name": "Pulmonary Fibrosis Foundation",
+        "url": "https://www.pulmonaryfibrosis.org/",
+        "description": "Advocates for oxygen access and has resources on the SOAR Act for Medicare oxygen coverage."
+      },
+      {
+        "name": "COPD Foundation",
+        "url": "https://www.copdfoundation.org/",
+        "description": "National nonprofit supporting COPD patients with education, advocacy, and research."
+      }
     ]
   },
   "wheelchair-denial": {
     "slug": "wheelchair-denial",
     "title": "Appealing Wheelchair or Mobility Aid Denials",
     "default_procedure": "Wheelchair / Mobility Device",
-    "tagline": "Mobility is a medical necessity — not a luxury.",
+    "tagline": "Mobility is a medical necessity \u2014 not a luxury.",
     "hero_h1": "Appeal Your Wheelchair or Mobility Aid Denial",
     "hero_subhead": "Wheelchairs and mobility aids get denied constantly for bad reasons.",
     "intro": "Insurers often deny mobility devices due to coding issues, documentation gaps, or \"not medically necessary\" claims.",
@@ -541,16 +622,28 @@
       "wheelchair prescription functional outcomes",
       "mobility aids fall risk reduction elderly",
       "power wheelchair cost effectiveness independence"
+    ],
+    "advocacy_resources": [
+      {
+        "name": "United Spinal Association",
+        "url": "https://unitedspinal.org/",
+        "description": "Leading nonprofit dedicated to empowering people with spinal cord injuries and disabilities."
+      },
+      {
+        "name": "Amputee Coalition",
+        "url": "https://amputee-coalition.org/",
+        "description": "Advocates for mobility device access for the limb loss community."
+      }
     ]
   },
   "surgery-denial": {
     "slug": "surgery-denial",
     "title": "Appealing Surgery Denials",
     "default_procedure": "Surgery",
-    "tagline": "When your doctor says it’s necessary, insurers shouldn’t overrule them.",
+    "tagline": "When your doctor says it\u2019s necessary, insurers shouldn\u2019t overrule them.",
     "hero_h1": "Appeal Your Surgery Denial",
     "hero_subhead": "Surgery denials often rely on outdated or incorrect standards.",
-    "intro": "Surgeries get denied because insurers think conservative care hasn’t been exhausted or symptoms aren’t severe enough.",
+    "intro": "Surgeries get denied because insurers think conservative care hasn\u2019t been exhausted or symptoms aren\u2019t severe enough.",
     "common_denial_reasons": [
       "Conservative treatments not completed",
       "Insufficient imaging or clinical documentation",
@@ -561,7 +654,7 @@
     "faq": [
       {
         "question": "What does \"conservative care\" mean in surgery denials?",
-        "answer": "Insurers usually mean treatments like medication, physical therapy, or injections. Your appeal should show what you’ve tried and why surgery is now appropriate."
+        "answer": "Insurers usually mean treatments like medication, physical therapy, or injections. Your appeal should show what you\u2019ve tried and why surgery is now appropriate."
       },
       {
         "question": "Can I appeal if they called my surgery \"elective\"?",
@@ -587,7 +680,7 @@
     "slug": "implantable-device-denial",
     "title": "Appealing Implantable Device Denials",
     "default_procedure": "Implantable Device or Medical Implant",
-    "tagline": "Implants can be life-changing — insurers shouldn’t deny them lightly.",
+    "tagline": "Implants can be life-changing \u2014 insurers shouldn\u2019t deny them lightly.",
     "hero_h1": "Appeal Your Implantable Device Denial",
     "hero_subhead": "Spinal stimulators, cardiac devices, and pain pumps are often denied for cost reasons.",
     "intro": "Insurers often deny implants due to cost, labeling them \"experimental\" or requiring unnecessary steps.",
@@ -601,15 +694,15 @@
     "faq": [
       {
         "question": "Why did they call my implant \"experimental\"?",
-        "answer": "Insurers sometimes use older policy language that doesn’t reflect current evidence. Your appeal can cite up-to-date studies and guidelines."
+        "answer": "Insurers sometimes use older policy language that doesn\u2019t reflect current evidence. Your appeal can cite up-to-date studies and guidelines."
       },
       {
-        "question": "What if I’ve already tried other treatments?",
+        "question": "What if I\u2019ve already tried other treatments?",
         "answer": "Your appeal should list each prior treatment, how long you tried it, and why it failed or caused side effects."
       },
       {
         "question": "Should my specialist provide device-specific information?",
-        "answer": "Yes. Manufacturer and clinical data, plus your specialist’s letter, can directly counter \"experimental\" or \"not necessary\" claims."
+        "answer": "Yes. Manufacturer and clinical data, plus your specialist\u2019s letter, can directly counter \"experimental\" or \"not necessary\" claims."
       }
     ],
     "evidence_snippets": [
@@ -629,7 +722,7 @@
     "default_procedure": "Pain Management Treatment",
     "tagline": "Help appealing denials for pain procedures your doctor has recommended.",
     "hero_h1": "Appeal Your Pain Management Treatment Denial",
-    "hero_subhead": "Pain care gets denied constantly — we can help reverse that.",
+    "hero_subhead": "Pain care gets denied constantly \u2014 we can help reverse that.",
     "intro": "Pain treatments get denied because insurers love to call them \"experimental\" or require weeks of PT first.",
     "common_denial_reasons": [
       "Experimental / investigational",
@@ -645,7 +738,7 @@
       },
       {
         "question": "Do I have to keep doing PT before getting pain procedures?",
-        "answer": "Not always. If you’ve already tried PT or cannot tolerate it, your appeal should explain that and why procedures are now appropriate."
+        "answer": "Not always. If you\u2019ve already tried PT or cannot tolerate it, your appeal should explain that and why procedures are now appropriate."
       },
       {
         "question": "Should I describe how pain affects my daily life?",
@@ -661,6 +754,18 @@
       "epidural steroid injection chronic back pain outcomes",
       "radiofrequency ablation facet joint pain effectiveness",
       "interventional pain management guidelines"
+    ],
+    "advocacy_resources": [
+      {
+        "name": "American Chronic Pain Association",
+        "url": "https://www.theacpa.org/",
+        "description": "Peer support and education for people living with chronic pain."
+      },
+      {
+        "name": "U.S. Pain Foundation",
+        "url": "https://uspainfoundation.org/",
+        "description": "Nonprofit connecting people with pain to resources, support, and advocacy."
+      }
     ]
   },
   "prenatal-denial": {
@@ -701,15 +806,22 @@
       "prenatal care outcomes maternal neonatal",
       "high risk pregnancy ultrasound frequency guidelines",
       "antenatal testing evidence-based recommendations"
+    ],
+    "advocacy_resources": [
+      {
+        "name": "March of Dimes",
+        "url": "https://www.marchofdimes.org/",
+        "description": "Leading nonprofit fighting for the health of all moms and babies."
+      }
     ]
   },
   "breast-imaging-denial": {
     "slug": "breast-imaging-denial",
     "title": "Appealing Breast Imaging Denials",
     "default_procedure": "Mammogram / Breast MRI / Ultrasound",
-    "tagline": "Early detection saves lives — denials shouldn’t stand in the way.",
+    "tagline": "Early detection saves lives \u2014 denials shouldn\u2019t stand in the way.",
     "hero_h1": "Appeal Your Breast Imaging Denial",
-    "hero_subhead": "High-risk screening often gets denied — your appeal can fix that.",
+    "hero_subhead": "High-risk screening often gets denied \u2014 your appeal can fix that.",
     "intro": "Mammograms, ultrasounds, and breast MRIs can be denied when insurers claim you're not \"high-risk enough.\"",
     "common_denial_reasons": [
       "High-risk criteria not met",
@@ -741,6 +853,18 @@
       "breast cancer screening high risk MRI",
       "supplemental breast MRI outcomes",
       "breast imaging guidelines high risk women"
+    ],
+    "advocacy_resources": [
+      {
+        "name": "National Breast Cancer Coalition",
+        "url": "https://www.stopbreastcancer.org/",
+        "description": "Grassroots advocacy organization dedicated to ending breast cancer through research and policy."
+      },
+      {
+        "name": "Susan G. Komen",
+        "url": "https://www.komen.org/",
+        "description": "Leading breast cancer organization funding research and providing patient support."
+      }
     ]
   },
   "ffs-denial": {
@@ -748,9 +872,9 @@
     "title": "Appealing Facial Feminization Surgery (FFS) Denials",
     "default_procedure": "Facial Feminization Surgery (FFS)",
     "default_condition": "Gender Dysphoria",
-    "tagline": "Insurers often incorrectly classify FFS as cosmetic — appeals can change that.",
+    "tagline": "Insurers often incorrectly classify FFS as cosmetic \u2014 appeals can change that.",
     "hero_h1": "Appeal Your FFS Denial",
-    "hero_subhead": "Insurers often deny FFS incorrectly as \"cosmetic\" — your appeal can address this.",
+    "hero_subhead": "Insurers often deny FFS incorrectly as \"cosmetic\" \u2014 your appeal can address this.",
     "intro": "FFS is frequently denied by insurers who misclassify it as cosmetic. Appeals succeed when they clearly document your diagnosis, your provider's clinical recommendations, and alignment with WPATH standards.",
     "common_denial_reasons": [
       "Incorrectly deemed cosmetic",
@@ -758,7 +882,7 @@
       "Missing mental health evaluation notes",
       "Provider out-of-network or no contract for FFS"
     ],
-    "how_we_help": "We help you document dysphoria, functional impairments, safety concerns, and WPATH-consistent medical necessity. We also help present your provider’s clinical support in a way insurers respond to.",
+    "how_we_help": "We help you document dysphoria, functional impairments, safety concerns, and WPATH-consistent medical necessity. We also help present your provider\u2019s clinical support in a way insurers respond to.",
     "cta": "Start your FFS appeal.",
     "faq": [
       {
@@ -783,6 +907,23 @@
       "facial feminization surgery quality of life gender dysphoria",
       "gender affirming facial surgery mental health outcomes",
       "WPATH facial gender affirming surgery medical necessity"
+    ],
+    "advocacy_resources": [
+      {
+        "name": "National Center for Transgender Equality",
+        "url": "https://transequality.org/",
+        "description": "Nation's leading social justice advocacy organization for transgender people."
+      },
+      {
+        "name": "Transgender Law Center",
+        "url": "https://transgenderlawcenter.org/",
+        "description": "Legal organization advocating for transgender rights and providing legal resources."
+      },
+      {
+        "name": "WPATH",
+        "url": "https://www.wpath.org/",
+        "description": "World Professional Association for Transgender Health - promotes evidence-based care and standards."
+      }
     ]
   },
   "top-surgery-masc-denial": {
@@ -792,7 +933,7 @@
     "default_condition": "Gender Dysphoria",
     "tagline": "If your provider recommended top surgery, we can help you appeal the denial.",
     "hero_h1": "Appeal Your Top Surgery Denial",
-    "hero_subhead": "Insurers often demand outdated or unnecessary requirements — we help you push back.",
+    "hero_subhead": "Insurers often demand outdated or unnecessary requirements \u2014 we help you push back.",
     "intro": "Top surgery denials typically rely on outdated guidelines or incorrect criteria. A strong appeal focuses on your provider's recommendations and alignment with current standards of care.",
     "common_denial_reasons": [
       "Not medically necessary",
@@ -800,12 +941,12 @@
       "Requests for excessive therapy letters",
       "Incorrectly labeled cosmetic"
     ],
-    "how_we_help": "We help you cite WPATH standards, document dysphoria and functional limitations, and present your provider’s letter in a format insurers can’t easily ignore.",
+    "how_we_help": "We help you cite WPATH standards, document dysphoria and functional limitations, and present your provider\u2019s letter in a format insurers can\u2019t easily ignore.",
     "cta": "Start your top surgery appeal.",
     "faq": [
       {
         "question": "Do I have to meet a specific BMI to get coverage?",
-        "answer": "Many insurers use arbitrary BMI cutoffs that don’t reflect individualized risk. Your appeal can address safety planning without using BMI as an absolute barrier."
+        "answer": "Many insurers use arbitrary BMI cutoffs that don\u2019t reflect individualized risk. Your appeal can address safety planning without using BMI as an absolute barrier."
       },
       {
         "question": "Can I appeal if they want more therapy letters than WPATH suggests?",
@@ -813,7 +954,7 @@
       },
       {
         "question": "Should I talk about binding in my appeal?",
-        "answer": "Yes, if it’s relevant. You can describe pain, skin damage, breathing issues, and functional problems from binding, which support medical necessity for surgery."
+        "answer": "Yes, if it\u2019s relevant. You can describe pain, skin damage, breathing issues, and functional problems from binding, which support medical necessity for surgery."
       }
     ],
     "evidence_snippets": [
@@ -825,6 +966,23 @@
       "gender affirming chest surgery mental health outcomes",
       "top surgery transmasculine quality of life",
       "chest binding physical health effects"
+    ],
+    "advocacy_resources": [
+      {
+        "name": "National Center for Transgender Equality",
+        "url": "https://transequality.org/",
+        "description": "Nation's leading social justice advocacy organization for transgender people."
+      },
+      {
+        "name": "Transgender Law Center",
+        "url": "https://transgenderlawcenter.org/",
+        "description": "Legal organization advocating for transgender rights and providing legal resources."
+      },
+      {
+        "name": "WPATH",
+        "url": "https://www.wpath.org/",
+        "description": "World Professional Association for Transgender Health - promotes evidence-based care and standards."
+      }
     ]
   },
   "top-surgery-fem-denial": {
@@ -834,7 +992,7 @@
     "default_condition": "Gender Dysphoria",
     "tagline": "Breast augmentation for transfeminine people is gender-affirming care, not cosmetic.",
     "hero_h1": "Appeal Your Breast Augmentation Denial",
-    "hero_subhead": "Many insurers rely on outdated criteria — appeals often succeed with proper documentation.",
+    "hero_subhead": "Many insurers rely on outdated criteria \u2014 appeals often succeed with proper documentation.",
     "intro": "Gender-affirming breast augmentation is frequently denied as \"cosmetic,\" even when medically necessary. A proper appeal reframes the request according to WPATH and clinical needs.",
     "common_denial_reasons": [
       "Incorrectly deemed cosmetic",
@@ -854,8 +1012,8 @@
         "answer": "Most appeals focus on dysphoria, physical development, and mental health impact rather than photos."
       },
       {
-        "question": "Can I appeal if I’m nonbinary or not fully out?",
-        "answer": "Yes. The key is documenting your gender dysphoria, your goals, and your provider’s support, not a specific label or coming-out timeline."
+        "question": "Can I appeal if I\u2019m nonbinary or not fully out?",
+        "answer": "Yes. The key is documenting your gender dysphoria, your goals, and your provider\u2019s support, not a specific label or coming-out timeline."
       }
     ],
     "evidence_snippets": [
@@ -867,6 +1025,23 @@
       "gender affirming breast augmentation outcomes transfeminine",
       "chest surgery body image transgender women",
       "WPATH chest surgery medical necessity transfeminine"
+    ],
+    "advocacy_resources": [
+      {
+        "name": "National Center for Transgender Equality",
+        "url": "https://transequality.org/",
+        "description": "Nation's leading social justice advocacy organization for transgender people."
+      },
+      {
+        "name": "Transgender Law Center",
+        "url": "https://transgenderlawcenter.org/",
+        "description": "Legal organization advocating for transgender rights and providing legal resources."
+      },
+      {
+        "name": "WPATH",
+        "url": "https://www.wpath.org/",
+        "description": "World Professional Association for Transgender Health - promotes evidence-based care and standards."
+      }
     ]
   },
   "electrolysis-denial": {
@@ -874,7 +1049,7 @@
     "title": "Appealing Electrolysis & Gender-Affirming Hair Removal Denials",
     "default_procedure": "Electrolysis / Laser Hair Removal (Gender-Affirming)",
     "default_condition": "Gender Dysphoria",
-    "tagline": "Hair removal is often required for surgeries — insurers still deny it as cosmetic.",
+    "tagline": "Hair removal is often required for surgeries \u2014 insurers still deny it as cosmetic.",
     "hero_h1": "Appeal Your Electrolysis Denial",
     "hero_subhead": "Gender-affirming hair removal is medically necessary for many people, especially pre-op.",
     "intro": "Electrolysis and laser hair removal are often necessary before genital surgeries and to reduce dysphoria. Insurers still deny them as cosmetic despite clear surgical guidelines.",
@@ -889,11 +1064,11 @@
     "faq": [
       {
         "question": "Why do surgeons require hair removal before some surgeries?",
-        "answer": "Pre-op hair removal can prevent complications like hair growth where it shouldn’t be and reduce infection risk. Your appeal can cite your surgeon’s requirements."
+        "answer": "Pre-op hair removal can prevent complications like hair growth where it shouldn\u2019t be and reduce infection risk. Your appeal can cite your surgeon\u2019s requirements."
       },
       {
-        "question": "Can I appeal if I’m not having surgery but still need hair removal?",
-        "answer": "Yes. Hair removal can still be medically necessary to treat severe dysphoria or safety concerns even when surgery isn’t planned."
+        "question": "Can I appeal if I\u2019m not having surgery but still need hair removal?",
+        "answer": "Yes. Hair removal can still be medically necessary to treat severe dysphoria or safety concerns even when surgery isn\u2019t planned."
       },
       {
         "question": "Do I need a referral from a surgeon or endocrinologist?",
@@ -909,6 +1084,23 @@
       "hair removal preoperative vaginoplasty protocol",
       "gender affirming hair removal mental health outcomes",
       "WPATH hair removal medical necessity transgender"
+    ],
+    "advocacy_resources": [
+      {
+        "name": "National Center for Transgender Equality",
+        "url": "https://transequality.org/",
+        "description": "Nation's leading social justice advocacy organization for transgender people."
+      },
+      {
+        "name": "Transgender Law Center",
+        "url": "https://transgenderlawcenter.org/",
+        "description": "Legal organization advocating for transgender rights and providing legal resources."
+      },
+      {
+        "name": "WPATH",
+        "url": "https://www.wpath.org/",
+        "description": "World Professional Association for Transgender Health - promotes evidence-based care and standards."
+      }
     ]
   },
   "voice-therapy-denial": {
@@ -916,9 +1108,9 @@
     "title": "Appealing Voice Therapy Denials",
     "default_procedure": "Voice Therapy (Gender-Affirming)",
     "default_condition": "Gender Dysphoria",
-    "tagline": "Voice therapy is medically necessary gender-affirming care — not elective.",
+    "tagline": "Voice therapy is medically necessary gender-affirming care \u2014 not elective.",
     "hero_h1": "Appeal Your Voice Therapy Denial",
-    "hero_subhead": "Insurers often misclassify voice work as cosmetic or elective — which is incorrect.",
+    "hero_subhead": "Insurers often misclassify voice work as cosmetic or elective \u2014 which is incorrect.",
     "intro": "Gender-affirming voice therapy reduces dysphoria, improves safety, and supports communication. Denials often rely on outdated coverage policies.",
     "common_denial_reasons": [
       "Considered cosmetic",
@@ -926,7 +1118,7 @@
       "Insufficient documentation of dysphoria or vocal strain",
       "Provider out-of-network"
     ],
-    "how_we_help": "We help you explain clinical necessity, communication limitations, and dysphoria impacts — key elements insurers often overlook.",
+    "how_we_help": "We help you explain clinical necessity, communication limitations, and dysphoria impacts \u2014 key elements insurers often overlook.",
     "cta": "Start your voice therapy appeal.",
     "faq": [
       {
@@ -935,10 +1127,10 @@
       },
       {
         "question": "Do I need an evaluation from a speech-language pathologist?",
-        "answer": "It’s very helpful. An SLP’s assessment of your current voice, goals, and any strain or pain can support medical necessity."
+        "answer": "It\u2019s very helpful. An SLP\u2019s assessment of your current voice, goals, and any strain or pain can support medical necessity."
       },
       {
-        "question": "Can I appeal if I’ve already started voice therapy and they won’t cover more sessions?",
+        "question": "Can I appeal if I\u2019ve already started voice therapy and they won\u2019t cover more sessions?",
         "answer": "Yes. Your appeal can show progress made so far and why continued sessions are needed to reach safe, sustainable vocal patterns. However, retroactive coverage for sessions already paid for may be more difficult to achieve if \"prior authorization\" is required."
       }
     ],
@@ -951,6 +1143,23 @@
       "gender affirming voice therapy transgender outcomes",
       "voice therapy transgender women satisfaction dysphoria",
       "speech language pathology gender affirming voice care"
+    ],
+    "advocacy_resources": [
+      {
+        "name": "National Center for Transgender Equality",
+        "url": "https://transequality.org/",
+        "description": "Nation's leading social justice advocacy organization for transgender people."
+      },
+      {
+        "name": "Transgender Law Center",
+        "url": "https://transgenderlawcenter.org/",
+        "description": "Legal organization advocating for transgender rights and providing legal resources."
+      },
+      {
+        "name": "WPATH",
+        "url": "https://www.wpath.org/",
+        "description": "World Professional Association for Transgender Health - promotes evidence-based care and standards."
+      }
     ]
   },
   "voice-surgery-denial": {
@@ -973,7 +1182,7 @@
     "faq": [
       {
         "question": "Do I have to do voice therapy before surgery for coverage?",
-        "answer": "Some insurers require it, but your appeal can explain what you’ve tried, how effective it was, and why surgery is still necessary."
+        "answer": "Some insurers require it, but your appeal can explain what you\u2019ve tried, how effective it was, and why surgery is still necessary."
       },
       {
         "question": "Is voice surgery really considered medically necessary?",
@@ -993,6 +1202,23 @@
       "gender affirming voice surgery outcomes pitch",
       "vocal feminization surgery satisfaction transgender women",
       "voice surgery transgender patients quality of life"
+    ],
+    "advocacy_resources": [
+      {
+        "name": "National Center for Transgender Equality",
+        "url": "https://transequality.org/",
+        "description": "Nation's leading social justice advocacy organization for transgender people."
+      },
+      {
+        "name": "Transgender Law Center",
+        "url": "https://transgenderlawcenter.org/",
+        "description": "Legal organization advocating for transgender rights and providing legal resources."
+      },
+      {
+        "name": "WPATH",
+        "url": "https://www.wpath.org/",
+        "description": "World Professional Association for Transgender Health - promotes evidence-based care and standards."
+      }
     ]
   },
   "hrt-denial": {
@@ -1062,6 +1288,23 @@
         "url": "https://www.goodrx.com/",
         "description": "Free discount card that can significantly reduce costs for generic estradiol and testosterone at pharmacies."
       }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "National Center for Transgender Equality",
+        "url": "https://transequality.org/",
+        "description": "Nation's leading social justice advocacy organization for transgender people."
+      },
+      {
+        "name": "Transgender Law Center",
+        "url": "https://transgenderlawcenter.org/",
+        "description": "Legal organization advocating for transgender rights and providing legal resources."
+      },
+      {
+        "name": "WPATH",
+        "url": "https://www.wpath.org/",
+        "description": "World Professional Association for Transgender Health - promotes evidence-based care and standards."
+      }
     ]
   },
   "puberty-blocker-denial": {
@@ -1130,6 +1373,23 @@
         "url": "https://www.pointofpride.org/hrt-access-fund",
         "description": "While primarily for HRT, may assist with gender-affirming care navigation for trans youth (18+)."
       }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "National Center for Transgender Equality",
+        "url": "https://transequality.org/",
+        "description": "Nation's leading social justice advocacy organization for transgender people."
+      },
+      {
+        "name": "Transgender Law Center",
+        "url": "https://transgenderlawcenter.org/",
+        "description": "Legal organization advocating for transgender rights and providing legal resources."
+      },
+      {
+        "name": "WPATH",
+        "url": "https://www.wpath.org/",
+        "description": "World Professional Association for Transgender Health - promotes evidence-based care and standards."
+      }
     ]
   },
   "grs-denial": {
@@ -1152,7 +1412,7 @@
     "faq": [
       {
         "question": "Do I need to meet exact WPATH criteria to appeal?",
-        "answer": "Your appeal can show how you meet or reasonably align with those criteria, and why additional gatekeeping isn’t clinically justified."
+        "answer": "Your appeal can show how you meet or reasonably align with those criteria, and why additional gatekeeping isn\u2019t clinically justified."
       },
       {
         "question": "Can I appeal exclusions that say genital surgery is never covered?",
@@ -1172,6 +1432,23 @@
       "gender affirming genital surgery outcomes quality of life",
       "vaginoplasty satisfaction transgender women mental health",
       "phalloplasty transgender men outcomes dysphoria"
+    ],
+    "advocacy_resources": [
+      {
+        "name": "National Center for Transgender Equality",
+        "url": "https://transequality.org/",
+        "description": "Nation's leading social justice advocacy organization for transgender people."
+      },
+      {
+        "name": "Transgender Law Center",
+        "url": "https://transgenderlawcenter.org/",
+        "description": "Legal organization advocating for transgender rights and providing legal resources."
+      },
+      {
+        "name": "WPATH",
+        "url": "https://www.wpath.org/",
+        "description": "World Professional Association for Transgender Health - promotes evidence-based care and standards."
+      }
     ]
   },
   "fertility-preservation-denial": {
@@ -1179,7 +1456,7 @@
     "title": "Appealing Fertility Preservation Denials",
     "default_procedure": "Fertility Preservation Prior to treatment",
     "default_condition": "Gender Dysphoria",
-    "tagline": "Many insurers must cover this when medically indicated — appeals often win.",
+    "tagline": "Many insurers must cover this when medically indicated \u2014 appeals often win.",
     "hero_h1": "Appeal Your Fertility Preservation Denial",
     "hero_subhead": "Egg or sperm preservation before gender-affirming, oncology, and other care can be medically necessary.",
     "intro": "Fertility preservation is critical for many trans people before starting HRT or undergoing surgery. Insurers frequently deny coverage due to outdated or discriminatory policies.",
@@ -1214,6 +1491,23 @@
       "fertility preservation transgender individuals guidelines",
       "counseling fertility options before gender affirming hormones",
       "fertility preservation oncology analogy standard of care"
+    ],
+    "advocacy_resources": [
+      {
+        "name": "National Center for Transgender Equality",
+        "url": "https://transequality.org/",
+        "description": "Nation's leading social justice advocacy organization for transgender people."
+      },
+      {
+        "name": "Transgender Law Center",
+        "url": "https://transgenderlawcenter.org/",
+        "description": "Legal organization advocating for transgender rights and providing legal resources."
+      },
+      {
+        "name": "WPATH",
+        "url": "https://www.wpath.org/",
+        "description": "World Professional Association for Transgender Health - promotes evidence-based care and standards."
+      }
     ]
   },
   "glp1-denial": {
@@ -1222,7 +1516,7 @@
     "default_procedure": "GLP-1 Medication (Ozempic, Wegovy, Mounjaro, etc.)",
     "tagline": "Weight and diabetes meds are not vanity drugs when they treat real disease.",
     "hero_h1": "Appeal Your GLP-1 Medication Denial",
-    "hero_subhead": "Whether for diabetes or obesity, GLP-1s are often medically necessary — not optional extras.",
+    "hero_subhead": "Whether for diabetes or obesity, GLP-1s are often medically necessary \u2014 not optional extras.",
     "intro": "GLP-1 medications like semaglutide and tirzepatide are frequently denied because insurers say your diagnosis does not qualify, you have not tried enough alternatives, or your plan excludes weight-loss drugs entirely. But for many people with diabetes and obesity-related conditions, these medications are key to preventing serious complications.",
     "common_denial_reasons": [
       "Plan excludes weight-loss medications",
@@ -1256,6 +1550,13 @@
       "GLP-1 receptor agonist cardiovascular outcomes trial",
       "semaglutide weight loss obesity randomized study",
       "tirzepatide type 2 diabetes glycemic control"
+    ],
+    "advocacy_resources": [
+      {
+        "name": "Obesity Action Coalition",
+        "url": "https://www.obesityaction.org/",
+        "description": "National nonprofit empowering those affected by obesity through advocacy, education and support."
+      }
     ]
   },
   "migraine-med-denial": {
@@ -1297,6 +1598,23 @@
       "calcitonin gene related peptide monoclonal antibody migraine trial",
       "gepants acute migraine randomized controlled",
       "chronic migraine prevention guidelines"
+    ],
+    "advocacy_resources": [
+      {
+        "name": "American Migraine Foundation",
+        "url": "https://americanmigrainefoundation.org/",
+        "description": "Leading resource for migraine education, support, and advocacy."
+      },
+      {
+        "name": "National Headache Foundation",
+        "url": "https://headaches.org/",
+        "description": "Promotes headache awareness and education, and provides patient resources."
+      },
+      {
+        "name": "Alliance for Headache Disorders Advocacy",
+        "url": "https://allianceforheadacheadvocacy.org/",
+        "description": "Advocates for equitable policies for people with headache disorders."
+      }
     ]
   },
   "asthma-biologic-denial": {
@@ -1338,13 +1656,25 @@
       "severe asthma biologic therapy randomized trial",
       "omalizumab dupilumab mepolizumab exacerbation reduction",
       "GINA guideline severe asthma biologics"
+    ],
+    "advocacy_resources": [
+      {
+        "name": "Asthma and Allergy Foundation of America",
+        "url": "https://aafa.org/",
+        "description": "Leading patient advocacy organization for asthma and allergies, certified by National Health Council."
+      },
+      {
+        "name": "Allergy & Asthma Network",
+        "url": "https://allergyasthmanetwork.org/",
+        "description": "Nonprofit patient outreach, education, advocacy and research organization."
+      }
     ]
   },
   "eczema-biologic-denial": {
     "slug": "eczema-biologic-denial",
     "title": "Appealing Eczema Biologic Denials",
     "default_procedure": "Biologic or Targeted Therapy for Atopic Dermatitis",
-    "tagline": "Severe eczema is not just dry skin — it is a serious inflammatory disease.",
+    "tagline": "Severe eczema is not just dry skin \u2014 it is a serious inflammatory disease.",
     "hero_h1": "Appeal Your Eczema Biologic Denial",
     "hero_subhead": "When topical creams fail, insurers often fight advanced therapies. You can fight back.",
     "intro": "For moderate-to-severe atopic dermatitis, biologic drugs and targeted therapies can dramatically reduce itching, skin breakdown, and infections. Insurers frequently deny them as too expensive, not medically necessary, or not tried long enough after topical treatments.",
@@ -1379,13 +1709,20 @@
       "dupilumab atopic dermatitis randomized controlled trial",
       "systemic therapy moderate severe atopic dermatitis guidelines",
       "quality of life atopic dermatitis biologic therapy"
+    ],
+    "advocacy_resources": [
+      {
+        "name": "National Eczema Association",
+        "url": "https://nationaleczema.org/",
+        "description": "Largest patient advocacy organization serving Americans with eczema."
+      }
     ]
   },
   "insulin-pump-cgm-denial": {
     "slug": "insulin-pump-cgm-denial",
     "title": "Appealing Insulin Pump and CGM Denials",
     "default_procedure": "Insulin Pump or Continuous Glucose Monitor",
-    "tagline": "For many people with diabetes, diabetes tech is not a luxury — it is survival.",
+    "tagline": "For many people with diabetes, diabetes tech is not a luxury \u2014 it is survival.",
     "hero_h1": "Appeal Your Insulin Pump or CGM Denial",
     "hero_subhead": "Insurers often set narrow criteria for diabetes technology. Your real-world data can change their minds.",
     "intro": "Insulin pumps and continuous glucose monitors (CGMs) help people with diabetes keep blood sugar in a safer range and avoid life-threatening highs and lows. Insurers often deny them for not meeting strict eligibility rules, being on the wrong diagnosis code, or preferring older, less effective approaches.",
@@ -1420,6 +1757,18 @@
       "continuous glucose monitoring randomized trial hypoglycemia",
       "insulin pump therapy type 1 diabetes outcomes",
       "technology-assisted diabetes care quality of life"
+    ],
+    "advocacy_resources": [
+      {
+        "name": "American Diabetes Association",
+        "url": "https://diabetes.org/",
+        "description": "Nation's leading voluntary health organization fighting diabetes through advocacy, research, and education."
+      },
+      {
+        "name": "Beyond Type 1",
+        "url": "https://beyondtype1.org/",
+        "description": "Global diabetes community providing education, advocacy, and support for people with diabetes."
+      }
     ]
   },
   "prosthetic-denial": {
@@ -1461,6 +1810,13 @@
       "prosthetic limb functional outcomes microprocessor knee",
       "amputee mobility falls risk prosthesis",
       "cost effectiveness advanced prosthetic components"
+    ],
+    "advocacy_resources": [
+      {
+        "name": "Amputee Coalition",
+        "url": "https://amputee-coalition.org/",
+        "description": "National organization with 350+ support groups and peer support for limb loss community."
+      }
     ]
   },
   "hearing-aid-denial": {
@@ -1502,6 +1858,13 @@
       "hearing aid outcomes quality of life adult hearing loss",
       "cochlear implant speech language development children",
       "hearing loss cognitive decline association"
+    ],
+    "advocacy_resources": [
+      {
+        "name": "Hearing Loss Association of America",
+        "url": "https://www.hearingloss.org/",
+        "description": "Nation's leading organization for people with hearing loss, with 200 local chapters."
+      }
     ]
   },
   "genetic-testing-denial": {
@@ -1543,6 +1906,18 @@
       "hereditary cancer genetic testing guidelines BRCA Lynch",
       "clinical utility multigene panel testing oncology",
       "cascade genetic testing prevention outcomes"
+    ],
+    "advocacy_resources": [
+      {
+        "name": "National Society of Genetic Counselors",
+        "url": "https://www.nsgc.org/",
+        "description": "Professional society advocating for genetic counseling and testing access."
+      },
+      {
+        "name": "FORCE: Facing Our Risk of Cancer Empowered",
+        "url": "https://www.facingourrisk.org/",
+        "description": "Advocacy for hereditary cancer testing and support."
+      }
     ]
   },
   "pet-scan-denial": {
@@ -1551,7 +1926,7 @@
     "default_procedure": "Positron Emission Tomography (PET) Scan",
     "tagline": "When staging or restaging cancer, the right scan matters.",
     "hero_h1": "Appeal Your PET Scan Denial",
-    "hero_subhead": "PET scans are often key for cancer staging and treatment decisions — and often denied on cost grounds.",
+    "hero_subhead": "PET scans are often key for cancer staging and treatment decisions \u2014 and often denied on cost grounds.",
     "intro": "PET scans are widely used in oncology and some neurologic and cardiac conditions, but insurers frequently deny them as not medically necessary, outside of policy indications, or unnecessary compared with CT alone.",
     "common_denial_reasons": [
       "PET not on policy list for this cancer type or stage",
@@ -1591,7 +1966,7 @@
     "title": "Appealing Bariatric Surgery Denials",
     "default_procedure": "Metabolic or Bariatric Surgery",
     "default_condition": "Obesity",
-    "tagline": "Bariatric surgery treats a disease — it is not a cosmetic shortcut.",
+    "tagline": "Bariatric surgery treats a disease \u2014 it is not a cosmetic shortcut.",
     "hero_h1": "Appeal Your Bariatric Surgery Denial",
     "hero_subhead": "When obesity is harming your health, surgery may be the evidence-based treatment.",
     "intro": "Bariatric surgery is one of the most effective treatments for severe obesity and related conditions, yet many plans deny coverage based on BMI thresholds, documentation technicalities, or blanket exclusions for weight-loss procedures.",
@@ -1626,6 +2001,13 @@
       "bariatric surgery long term outcomes mortality",
       "gastric bypass diabetes remission randomized",
       "metabolic surgery guidelines obesity treatment"
+    ],
+    "advocacy_resources": [
+      {
+        "name": "Obesity Action Coalition",
+        "url": "https://www.obesityaction.org/",
+        "description": "National nonprofit empowering those affected by obesity through advocacy, education and support."
+      }
     ]
   },
   "substance-use-treatment-denial": {
@@ -1633,7 +2015,7 @@
     "title": "Appealing Substance Use Treatment Denials",
     "default_procedure": "Substance Use Disorder Treatment (Inpatient, IOP, MAT)",
     "default_condition": "Substance Use Disorder",
-    "tagline": "Addiction is a chronic medical condition — treatment should be covered like any other.",
+    "tagline": "Addiction is a chronic medical condition \u2014 treatment should be covered like any other.",
     "hero_h1": "Appeal Your Substance Use Treatment Denial",
     "hero_subhead": "When your life or your loved one's life is at stake, coverage denials are not acceptable.",
     "intro": "Detox, rehab, medication-assisted treatment, and intensive outpatient programs for substance use disorders are often denied or cut short, even though mental health parity laws require comparable coverage to medical conditions.",
@@ -1668,6 +2050,18 @@
       "medication assisted treatment opioid use disorder mortality",
       "inpatient versus outpatient substance use treatment outcomes",
       "mental health parity substance use insurance coverage"
+    ],
+    "advocacy_resources": [
+      {
+        "name": "Faces & Voices of Recovery",
+        "url": "https://facesandvoicesofrecovery.org/",
+        "description": "National advocacy organization for addiction recovery."
+      },
+      {
+        "name": "Shatterproof",
+        "url": "https://www.shatterproof.org/",
+        "description": "National nonprofit fighting addiction through prevention, treatment access, and advocacy."
+      }
     ]
   },
   "emergency-room-denial": {
@@ -1676,7 +2070,7 @@
     "default_procedure": "Emergency Department Visit",
     "tagline": "If it felt like an emergency at the time, the law is usually on your side.",
     "hero_h1": "Appeal Your ER Visit Denial",
-    "hero_subhead": "Insurers often second-guess emergencies after the fact — appeals can force them to apply the prudent layperson standard.",
+    "hero_subhead": "Insurers often second-guess emergencies after the fact \u2014 appeals can force them to apply the prudent layperson standard.",
     "intro": "Some insurers deny emergency department claims by saying your condition was not an emergency after all. This ignores the reality that patients must decide based on symptoms in the moment, not final diagnoses.",
     "common_denial_reasons": [
       "Condition judged non-emergent in hindsight",
@@ -1757,9 +2151,9 @@
     "title": "Appealing Ozempic (Semaglutide) Denials",
     "default_procedure": "Ozempic (Semaglutide)",
     "default_condition": "Type 2 Diabetes",
-    "tagline": "Ozempic treats more than blood sugar — it helps prevent serious complications.",
+    "tagline": "Ozempic treats more than blood sugar \u2014 it helps prevent serious complications.",
     "hero_h1": "Appeal Your Ozempic Denial",
-    "hero_subhead": "If your clinician prescribed Ozempic, chances are there’s a strong medical reason.",
+    "hero_subhead": "If your clinician prescribed Ozempic, chances are there\u2019s a strong medical reason.",
     "intro": "Ozempic (semaglutide) is often denied because insurers say your A1c is not high enough, you have not failed enough other medications, or they consider it too expensive. But Ozempic can be medically necessary to control diabetes, reduce complications, and address obesity-related risk.",
     "common_denial_reasons": [
       "Not meeting A1c or diagnosis criteria for coverage",
@@ -1767,7 +2161,7 @@
       "Dose or pen strength not on formulary",
       "Use for weight reduction considered non-covered"
     ],
-    "how_we_help": "We help you list prior medications, side effects, comorbidities, and complication risks so your appeal shows why Ozempic is the right next step—not a cosmetic option.",
+    "how_we_help": "We help you list prior medications, side effects, comorbidities, and complication risks so your appeal shows why Ozempic is the right next step\u2014not a cosmetic option.",
     "cta": "Start your Ozempic appeal.",
     "faq": [
       {
@@ -1805,6 +2199,18 @@
         "url": "https://www.novocare.com/diabetes/help-with-costs/pap.html",
         "description": "Free medication for qualifying patients at or below 400% federal poverty level without insurance."
       }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "American Diabetes Association",
+        "url": "https://diabetes.org/",
+        "description": "Nation's leading voluntary health organization fighting diabetes through advocacy, research, and education."
+      },
+      {
+        "name": "Beyond Type 1",
+        "url": "https://beyondtype1.org/",
+        "description": "Global diabetes community providing education, advocacy, and support for people with diabetes."
+      }
     ]
   },
   "glp1-denial-semaglutide-wegovy": {
@@ -1827,7 +2233,7 @@
     "faq": [
       {
         "question": "How do I show Wegovy is more than cosmetic?",
-        "answer": "Describe specific health issues—such as diabetes, sleep apnea, hypertension, joint damage, or fatty liver—and how weight worsens them. Explain how weight affects your ability to work, parent, or perform daily tasks."
+        "answer": "Describe specific health issues\u2014such as diabetes, sleep apnea, hypertension, joint damage, or fatty liver\u2014and how weight worsens them. Explain how weight affects your ability to work, parent, or perform daily tasks."
       },
       {
         "question": "What if my plan says it never covers weight-loss drugs?",
@@ -1860,6 +2266,13 @@
         "url": "https://www.novocare.com/eligibility/wegovy-savings-card.html",
         "description": "Home delivery option for self-pay patients with access to savings programs."
       }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "Obesity Action Coalition",
+        "url": "https://www.obesityaction.org/",
+        "description": "National nonprofit empowering those affected by obesity through advocacy, education and support."
+      }
     ]
   },
   "glp1-denial-tirzepatide-mounjaro": {
@@ -1882,7 +2295,7 @@
     "faq": [
       {
         "question": "What makes Mounjaro medically necessary in my case?",
-        "answer": "Explain your current A1c, prior therapies, side effects, weight-related risk, and any complications. Your prescriber can explain why tirzepatide’s mechanism and potency are especially helpful for your situation."
+        "answer": "Explain your current A1c, prior therapies, side effects, weight-related risk, and any complications. Your prescriber can explain why tirzepatide\u2019s mechanism and potency are especially helpful for your situation."
       },
       {
         "question": "Can I appeal if I am also hoping for weight loss benefits?",
@@ -1904,6 +2317,18 @@
         "name": "Mounjaro Savings Card",
         "url": "https://www.mounjaro.lilly.com/savings-resources",
         "description": "Pay as little as $25/month with commercial insurance coverage. Up to $150 off per fill."
+      }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "American Diabetes Association",
+        "url": "https://diabetes.org/",
+        "description": "Nation's leading voluntary health organization fighting diabetes through advocacy, research, and education."
+      },
+      {
+        "name": "Beyond Type 1",
+        "url": "https://beyondtype1.org/",
+        "description": "Global diabetes community providing education, advocacy, and support for people with diabetes."
       }
     ]
   },
@@ -1931,7 +2356,7 @@
       },
       {
         "question": "Can my doctor's letter make a difference?",
-        "answer": "Yes. A concise letter linking Zepbound to reduction in concrete risks—such as diabetes progression, sleep apnea, or heart disease—can be very persuasive."
+        "answer": "Yes. A concise letter linking Zepbound to reduction in concrete risks\u2014such as diabetes progression, sleep apnea, or heart disease\u2014can be very persuasive."
       },
       {
         "question": "What if my plan is switching to a different GLP-1 medication?",
@@ -1958,6 +2383,13 @@
         "name": "LillyDirect - Zepbound",
         "url": "https://www.lilly.com/lillydirect/medicines/zepbound",
         "description": "Order Zepbound vials direct from Lilly for $299/month (self-pay option)."
+      }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "Obesity Action Coalition",
+        "url": "https://www.obesityaction.org/",
+        "description": "National nonprofit empowering those affected by obesity through advocacy, education and support."
       }
     ]
   },
@@ -2013,6 +2445,18 @@
         "url": "https://www.dupixent.com/support-savings/dupixent-my-way",
         "description": "Benefits investigation, prior auth support, and patient assistance for uninsured or coverage gaps."
       }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "Asthma and Allergy Foundation of America",
+        "url": "https://aafa.org/",
+        "description": "Leading patient advocacy organization for asthma and allergies, certified by National Health Council."
+      },
+      {
+        "name": "Allergy & Asthma Network",
+        "url": "https://allergyasthmanetwork.org/",
+        "description": "Nonprofit patient outreach, education, advocacy and research organization."
+      }
     ]
   },
   "asthma-biologic-denial-omalizumab": {
@@ -2038,8 +2482,8 @@
         "answer": "Include skin or blood test results for perennial allergens (like dust mites or animal dander), plus notes connecting exposures to symptom flares."
       },
       {
-        "question": "What if I’ve been on high-dose inhalers for years?",
-        "answer": "Your appeal should make that clear, including any side effects or ongoing exacerbations despite treatment—this supports escalation to Xolair."
+        "question": "What if I\u2019ve been on high-dose inhalers for years?",
+        "answer": "Your appeal should make that clear, including any side effects or ongoing exacerbations despite treatment\u2014this supports escalation to Xolair."
       }
     ],
     "evidence_snippets": [
@@ -2063,6 +2507,18 @@
         "url": "https://www.genentech-access.com/patient/brands/xolair/how-we-help-you.html",
         "description": "Free medication for qualifying uninsured or underinsured patients meeting income requirements."
       }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "Asthma and Allergy Foundation of America",
+        "url": "https://aafa.org/",
+        "description": "Leading patient advocacy organization for asthma and allergies, certified by National Health Council."
+      },
+      {
+        "name": "Allergy & Asthma Network",
+        "url": "https://allergyasthmanetwork.org/",
+        "description": "Nonprofit patient outreach, education, advocacy and research organization."
+      }
     ]
   },
   "asthma-biologic-denial-mepolizumab": {
@@ -2070,9 +2526,9 @@
     "title": "Appealing Nucala (Mepolizumab) Asthma Denials",
     "default_procedure": "Nucala for Eosinophilic Asthma",
     "default_condition": "Eosinophilic Asthma",
-    "tagline": "Eosinophilic asthma is high risk—denials often ignore that.",
+    "tagline": "Eosinophilic asthma is high risk\u2014denials often ignore that.",
     "hero_h1": "Appeal Your Nucala Asthma Denial",
-    "hero_subhead": "Eosinophilic asthma is high risk—denials often ignore that.",
+    "hero_subhead": "Eosinophilic asthma is high risk\u2014denials often ignore that.",
     "intro": "Nucala is denied when eosinophil counts are questioned, documentation is incomplete, or insurers want a different biologic first. Appeals can show that your eosinophilic asthma remains uncontrolled and at high risk without Nucala.",
     "common_denial_reasons": [
       "Eosinophil counts not documented or not repeated",
@@ -2112,6 +2568,18 @@
         "name": "GSK Patient Assistance Foundation",
         "url": "https://gskpaf.org/gsk/prescription-medicine-patient-assistance/nucala-uninsured/",
         "description": "Free medication for qualifying uninsured patients or those with Medicare."
+      }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "Asthma and Allergy Foundation of America",
+        "url": "https://aafa.org/",
+        "description": "Leading patient advocacy organization for asthma and allergies, certified by National Health Council."
+      },
+      {
+        "name": "Allergy & Asthma Network",
+        "url": "https://allergyasthmanetwork.org/",
+        "description": "Nonprofit patient outreach, education, advocacy and research organization."
       }
     ]
   },
@@ -2167,6 +2635,13 @@
         "url": "https://www.dupixent.com/support-savings/dupixent-my-way",
         "description": "Benefits investigation, prior auth support, and patient assistance for uninsured or coverage gaps."
       }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "National Eczema Association",
+        "url": "https://nationaleczema.org/",
+        "description": "Largest patient advocacy organization serving Americans with eczema."
+      }
     ]
   },
   "eczema-biologic-denial-upadacitinib": {
@@ -2176,7 +2651,7 @@
     "default_condition": "Atopic Dermatitis",
     "tagline": "When topical and biologic options fail, targeted oral therapy may be necessary.",
     "hero_h1": "Appeal Your Rinvoq Eczema Denial",
-    "hero_subhead": "Rinvoq is often reserved for the hardest cases—exactly where appeals matter most.",
+    "hero_subhead": "Rinvoq is often reserved for the hardest cases\u2014exactly where appeals matter most.",
     "intro": "Rinvoq is a JAK inhibitor used for moderate-to-severe atopic dermatitis when other options are inadequate. Insurers may deny it as too risky, experimental, or not medically necessary.",
     "common_denial_reasons": [
       "Not enough prior systemic or biologic therapy failures documented",
@@ -2184,12 +2659,12 @@
       "Disease severity not clearly documented",
       "Age or comorbidity concerns not addressed"
     ],
-    "how_we_help": "We help you and your dermatologist explain prior treatment failures, monitoring plans, and why Rinvoq’s benefits outweigh risks in your case.",
+    "how_we_help": "We help you and your dermatologist explain prior treatment failures, monitoring plans, and why Rinvoq\u2019s benefits outweigh risks in your case.",
     "cta": "Start your Rinvoq eczema appeal.",
     "faq": [
       {
         "question": "How do we address safety concerns in the appeal?",
-        "answer": "Your clinician can describe baseline labs, ongoing monitoring, and why benefits—such as preventing infections from open skin—are clinically important."
+        "answer": "Your clinician can describe baseline labs, ongoing monitoring, and why benefits\u2014such as preventing infections from open skin\u2014are clinically important."
       },
       {
         "question": "What if I've already tried Dupixent or other biologics?",
@@ -2222,6 +2697,13 @@
         "url": "https://www.abbvie.com/patients/patient-assistance.html",
         "description": "Free medication for qualifying uninsured, underinsured, or unemployed patients."
       }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "National Eczema Association",
+        "url": "https://nationaleczema.org/",
+        "description": "Largest patient advocacy organization serving Americans with eczema."
+      }
     ]
   },
   "migraine-med-denial-emgality": {
@@ -2248,7 +2730,7 @@
       },
       {
         "question": "Can I appeal if I had side effects from older preventives?",
-        "answer": "Yes. Note the side effects and how they limited use—this supports moving to a better-tolerated option like Emgality."
+        "answer": "Yes. Note the side effects and how they limited use\u2014this supports moving to a better-tolerated option like Emgality."
       }
     ],
     "evidence_snippets": [
@@ -2272,6 +2754,23 @@
         "url": "https://www.lillycares.com/",
         "description": "Free medication for qualifying patients without commercial insurance and with low income, including some Medicare Part D patients."
       }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "American Migraine Foundation",
+        "url": "https://americanmigrainefoundation.org/",
+        "description": "Leading resource for migraine education, support, and advocacy."
+      },
+      {
+        "name": "National Headache Foundation",
+        "url": "https://headaches.org/",
+        "description": "Promotes headache awareness and education, and provides patient resources."
+      },
+      {
+        "name": "Alliance for Headache Disorders Advocacy",
+        "url": "https://allianceforheadacheadvocacy.org/",
+        "description": "Advocates for equitable policies for people with headache disorders."
+      }
     ]
   },
   "migraine-med-denial-aimovig": {
@@ -2294,7 +2793,7 @@
     "faq": [
       {
         "question": "Which prior medications should I mention?",
-        "answer": "List beta-blockers, antiepileptics, antidepressants, or other preventives you’ve tried, including dose, duration, and why they failed or were stopped."
+        "answer": "List beta-blockers, antiepileptics, antidepressants, or other preventives you\u2019ve tried, including dose, duration, and why they failed or were stopped."
       },
       {
         "question": "Can I appeal if I previously used another CGRP drug?",
@@ -2327,6 +2826,23 @@
         "url": "https://www.amgensafetynetfoundation.com/",
         "description": "Free medication for qualifying uninsured patients or those whose insurance excludes Aimovig."
       }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "American Migraine Foundation",
+        "url": "https://americanmigrainefoundation.org/",
+        "description": "Leading resource for migraine education, support, and advocacy."
+      },
+      {
+        "name": "National Headache Foundation",
+        "url": "https://headaches.org/",
+        "description": "Promotes headache awareness and education, and provides patient resources."
+      },
+      {
+        "name": "Alliance for Headache Disorders Advocacy",
+        "url": "https://allianceforheadacheadvocacy.org/",
+        "description": "Advocates for equitable policies for people with headache disorders."
+      }
     ]
   },
   "migraine-med-denial-ajovy": {
@@ -2336,7 +2852,7 @@
     "default_condition": "Migraine",
     "tagline": "Monthly or quarterly dosing can simplify life with migraine.",
     "hero_h1": "Appeal Your Ajovy Denial",
-    "hero_subhead": "Ajovy is one of several CGRP antibodies—appeals can justify why it’s the right one for you.",
+    "hero_subhead": "Ajovy is one of several CGRP antibodies\u2014appeals can justify why it\u2019s the right one for you.",
     "intro": "Ajovy may be denied when insurers want you to try a different CGRP antibody or insist that older preventives are enough. Appeals should highlight your specific needs and prior experiences.",
     "common_denial_reasons": [
       "Failure to use insurer-preferred CGRP agent first",
@@ -2344,12 +2860,12 @@
       "Incomplete documentation of prior preventive failures",
       "Questions about monthly vs. quarterly dosing"
     ],
-    "how_we_help": "We help your clinician explain why Ajovy’s dosing schedule, response in your case, or side-effect profile makes it the most appropriate option.",
+    "how_we_help": "We help your clinician explain why Ajovy\u2019s dosing schedule, response in your case, or side-effect profile makes it the most appropriate option.",
     "cta": "Start your Ajovy appeal.",
     "faq": [
       {
         "question": "Does it matter if my migraines are episodic or chronic?",
-        "answer": "Yes. Your appeal should specify which pattern you have and reference data showing Ajovy’s benefit in that group."
+        "answer": "Yes. Your appeal should specify which pattern you have and reference data showing Ajovy\u2019s benefit in that group."
       },
       {
         "question": "Can dosing schedule matter in an appeal?",
@@ -2377,6 +2893,23 @@
         "url": "https://www.tevacares.org/",
         "description": "Free medication for qualifying uninsured or underinsured patients meeting income criteria."
       }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "American Migraine Foundation",
+        "url": "https://americanmigrainefoundation.org/",
+        "description": "Leading resource for migraine education, support, and advocacy."
+      },
+      {
+        "name": "National Headache Foundation",
+        "url": "https://headaches.org/",
+        "description": "Promotes headache awareness and education, and provides patient resources."
+      },
+      {
+        "name": "Alliance for Headache Disorders Advocacy",
+        "url": "https://allianceforheadacheadvocacy.org/",
+        "description": "Advocates for equitable policies for people with headache disorders."
+      }
     ]
   },
   "migraine-med-denial-nurtec": {
@@ -2389,7 +2922,7 @@
     "hero_subhead": "Nurtec is often denied on cost grounds or strict quantity limits.",
     "intro": "Nurtec ODT is a gepant used for acute migraine and, in some cases, prevention. Insurers often impose severe quantity limits or reject coverage entirely.",
     "common_denial_reasons": [
-      "Quantity limits inconsistent with patient’s attack frequency",
+      "Quantity limits inconsistent with patient\u2019s attack frequency",
       "Requirement to fail multiple triptans first",
       "Off-label use for prevention questioned",
       "Plan prefers a different gepant"
@@ -2403,7 +2936,7 @@
       },
       {
         "question": "What if I cannot take triptans?",
-        "answer": "Have your clinician explain contraindications—such as heart disease or stroke risk—or intolerable side effects from triptans."
+        "answer": "Have your clinician explain contraindications\u2014such as heart disease or stroke risk\u2014or intolerable side effects from triptans."
       }
     ],
     "evidence_snippets": [
@@ -2427,6 +2960,23 @@
         "url": "https://www.pfizerrxpathways.com/",
         "description": "Free medication for qualifying patients at or below 300% federal poverty level."
       }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "American Migraine Foundation",
+        "url": "https://americanmigrainefoundation.org/",
+        "description": "Leading resource for migraine education, support, and advocacy."
+      },
+      {
+        "name": "National Headache Foundation",
+        "url": "https://headaches.org/",
+        "description": "Promotes headache awareness and education, and provides patient resources."
+      },
+      {
+        "name": "Alliance for Headache Disorders Advocacy",
+        "url": "https://allianceforheadacheadvocacy.org/",
+        "description": "Advocates for equitable policies for people with headache disorders."
+      }
     ]
   },
   "migraine-med-denial-ubrelvy": {
@@ -2449,11 +2999,11 @@
     "faq": [
       {
         "question": "How many prior medications do I need to document?",
-        "answer": "List all acute meds you’ve tried—over-the-counter and prescription—with responses and side effects. The more thorough, the better."
+        "answer": "List all acute meds you\u2019ve tried\u2014over-the-counter and prescription\u2014with responses and side effects. The more thorough, the better."
       },
       {
         "question": "Can I appeal even if I still have some triptan benefit?",
-        "answer": "Yes. If triptans cause side effects, can’t be used often enough, or are unsafe given your risk factors, that still supports coverage for Ubrelvy."
+        "answer": "Yes. If triptans cause side effects, can\u2019t be used often enough, or are unsafe given your risk factors, that still supports coverage for Ubrelvy."
       }
     ],
     "evidence_snippets": [
@@ -2477,6 +3027,23 @@
         "url": "https://www.abbvie.com/patients/patient-assistance.html",
         "description": "Free medication for qualifying patients who have difficulty paying for their medicine."
       }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "American Migraine Foundation",
+        "url": "https://americanmigrainefoundation.org/",
+        "description": "Leading resource for migraine education, support, and advocacy."
+      },
+      {
+        "name": "National Headache Foundation",
+        "url": "https://headaches.org/",
+        "description": "Promotes headache awareness and education, and provides patient resources."
+      },
+      {
+        "name": "Alliance for Headache Disorders Advocacy",
+        "url": "https://allianceforheadacheadvocacy.org/",
+        "description": "Advocates for equitable policies for people with headache disorders."
+      }
     ]
   },
   "insulin-pump-cgm-denial-dexcom": {
@@ -2494,7 +3061,7 @@
       "Use for type 2 diabetes questioned",
       "Preference for a different CGM"
     ],
-    "how_we_help": "We help you compile logs of lows, highs, and variability, plus your insulin regimen, to demonstrate why Dexcom’s continuous data is necessary.",
+    "how_we_help": "We help you compile logs of lows, highs, and variability, plus your insulin regimen, to demonstrate why Dexcom\u2019s continuous data is necessary.",
     "cta": "Start your Dexcom appeal.",
     "faq": [
       {
@@ -2527,6 +3094,18 @@
         "url": "https://www.dexcom.com/en-us/savings-center",
         "description": "Save over 50% on standard monthly cash price at participating pharmacies."
       }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "American Diabetes Association",
+        "url": "https://diabetes.org/",
+        "description": "Nation's leading voluntary health organization fighting diabetes through advocacy, research, and education."
+      },
+      {
+        "name": "Beyond Type 1",
+        "url": "https://beyondtype1.org/",
+        "description": "Global diabetes community providing education, advocacy, and support for people with diabetes."
+      }
     ]
   },
   "insulin-pump-cgm-denial-freestyle-libre": {
@@ -2534,7 +3113,7 @@
     "title": "Appealing FreeStyle Libre Denials",
     "default_procedure": "FreeStyle Libre Flash Glucose Monitoring",
     "default_condition": "Diabetes",
-    "tagline": "Scanning a sensor is not a luxury—it's safer than guessing.",
+    "tagline": "Scanning a sensor is not a luxury\u2014it's safer than guessing.",
     "hero_h1": "Appeal Your FreeStyle Libre Denial",
     "hero_subhead": "Libre gives continuous insight without constant finger sticks.",
     "intro": "FreeStyle Libre is often denied as unnecessary when finger-stick testing is available. Appeals can show how sensor data helps prevent severe highs and lows, especially for people on insulin.",
@@ -2553,7 +3132,7 @@
       },
       {
         "question": "What if I have trouble with finger sticks?",
-        "answer": "Note pain, calluses, vision issues, or dexterity limits that make traditional testing difficult—these are strong arguments for Libre."
+        "answer": "Note pain, calluses, vision issues, or dexterity limits that make traditional testing difficult\u2014these are strong arguments for Libre."
       }
     ],
     "evidence_snippets": [
@@ -2581,6 +3160,18 @@
         "name": "Abbott Patient Assistance Foundation",
         "url": "https://www.abbott.com/corpnewsroom/diabetes-care/at-a-crossroads-heres-how-to-get-help-for-diabetes.html",
         "description": "Free or reduced-cost sensors for patients meeting income and insurance criteria."
+      }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "American Diabetes Association",
+        "url": "https://diabetes.org/",
+        "description": "Nation's leading voluntary health organization fighting diabetes through advocacy, research, and education."
+      },
+      {
+        "name": "Beyond Type 1",
+        "url": "https://beyondtype1.org/",
+        "description": "Global diabetes community providing education, advocacy, and support for people with diabetes."
       }
     ]
   },
@@ -2632,6 +3223,18 @@
         "url": "https://www.omnipod.com/what-is-omnipod/omnipod-5",
         "description": "30-day free trial for new patients switching from injections or tubed pumps."
       }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "American Diabetes Association",
+        "url": "https://diabetes.org/",
+        "description": "Nation's leading voluntary health organization fighting diabetes through advocacy, research, and education."
+      },
+      {
+        "name": "Beyond Type 1",
+        "url": "https://beyondtype1.org/",
+        "description": "Global diabetes community providing education, advocacy, and support for people with diabetes."
+      }
     ]
   },
   "pep-denial-hiv-exposure": {
@@ -2639,10 +3242,10 @@
     "title": "Appealing HIV PEP (Post-Exposure Prophylaxis) Denials",
     "default_procedure": "HIV Post-Exposure Prophylaxis (PEP)",
     "default_condition": "HIV Exposure",
-    "tagline": "PEP is time-critical emergency prevention — coverage fights come second.",
+    "tagline": "PEP is time-critical emergency prevention \u2014 coverage fights come second.",
     "hero_h1": "Appeal Your HIV PEP Denial",
-    "hero_subhead": "If you might have been exposed to HIV, getting PEP fast is the emergency — we help you fight the bill after.",
-    "intro": "PEP is a course of HIV medicines that should be started as soon as possible after a potential exposure. We encourage you to not wait for insurance and seek out treatment as soon as possible. This page focuses on what to do **after** you’ve gotten care and are facing a denial or a huge bill.",
+    "hero_subhead": "If you might have been exposed to HIV, getting PEP fast is the emergency \u2014 we help you fight the bill after.",
+    "intro": "PEP is a course of HIV medicines that should be started as soon as possible after a potential exposure. We encourage you to not wait for insurance and seek out treatment as soon as possible. This page focuses on what to do **after** you\u2019ve gotten care and are facing a denial or a huge bill.",
     "common_denial_reasons": [
       "Insurer claims the exposure was not \"high risk\" enough for PEP",
       "Started PEP close to or slightly beyond a strict 72-hour cutoff",
@@ -2650,24 +3253,24 @@
       "Lack of prior authorization even though treatment was urgent",
       "Denial of some components of the 3-drug regimen or follow-up labs"
     ],
-    "how_we_help": "We help you explain the exposure, timing, and clinical recommendations in plain language, tie your situation to HIV prevention guidelines, and argue that PEP was urgent post-exposure care — not elective medication. We also help challenge denial of specific drugs or follow-up testing and fix common coding issues.",
+    "how_we_help": "We help you explain the exposure, timing, and clinical recommendations in plain language, tie your situation to HIV prevention guidelines, and argue that PEP was urgent post-exposure care \u2014 not elective medication. We also help challenge denial of specific drugs or follow-up testing and fix common coding issues.",
     "cta": "Start your HIV PEP appeal.",
     "faq": [
       {
-        "question": "What should I do *right now* if I think I’ve been exposed to HIV?",
+        "question": "What should I do *right now* if I think I\u2019ve been exposed to HIV?",
         "answer": "We do not provide medical advice, but we strongly encourage you to consult a provider as soon as possible as PEP is most effective when started as soon as possible. We strongly encourage you not to wait for an insurance decision to seek care and look into community resources that can help in the meantime."
       },
       {
         "question": "Does it still make sense to appeal if I already finished PEP and only now got the denial?",
-        "answer": "Yes. Many people only find out later that their PEP visit or medications weren’t fully covered. Your appeal can explain why PEP was clinically appropriate at the time, how quickly you presented, and what your provider recommended, and ask the plan to reconsider the charges."
+        "answer": "Yes. Many people only find out later that their PEP visit or medications weren\u2019t fully covered. Your appeal can explain why PEP was clinically appropriate at the time, how quickly you presented, and what your provider recommended, and ask the plan to reconsider the charges."
       },
       {
         "question": "Can my insurer deny PEP because they think the risk was low?",
-        "answer": "Your appeal can describe what actually happened (in terms you’re comfortable with) and reference clinical guidance that supports offering PEP for similar exposures. Plans shouldn’t substitute their own risk guesses for the judgment of clinicians using current guidelines."
+        "answer": "Your appeal can describe what actually happened (in terms you\u2019re comfortable with) and reference clinical guidance that supports offering PEP for similar exposures. Plans shouldn\u2019t substitute their own risk guesses for the judgment of clinicians using current guidelines."
       },
       {
         "question": "What if the problem is that different parts of the bill were denied?",
-        "answer": "Sometimes the ER visit is covered but the pharmacy isn’t, or vice versa. Your appeal can argue that the visit, medication, and required labs were all part of one medically necessary PEP episode and should be considered together."
+        "answer": "Sometimes the ER visit is covered but the pharmacy isn\u2019t, or vice versa. Your appeal can argue that the visit, medication, and required labs were all part of one medically necessary PEP episode and should be considered together."
       },
       {
         "question": "Are there local resources that can help me besides my insurer?",
@@ -2700,6 +3303,18 @@
         "url": "https://nastad.org/prepcost-resources/state-prep-assistance-programs",
         "description": "State-level programs that may help with PEP and related lab costs for uninsured or under-insured people."
       }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "AIDS Healthcare Foundation",
+        "url": "https://www.aidshealth.org/",
+        "description": "Global nonprofit providing cutting-edge medicine and advocacy for HIV/AIDS."
+      },
+      {
+        "name": "The Well Project",
+        "url": "https://www.thewellproject.org/",
+        "description": "Nonprofit focused on HIV/AIDS information and support for women."
+      }
     ]
   },
   "doxy-pep-denial": {
@@ -2707,17 +3322,17 @@
     "title": "Appealing Doxy-PEP (Doxycycline Post-Exposure Prophylaxis) Denials",
     "default_procedure": "Doxycycline Post-Exposure Prophylaxis (Doxy-PEP) for STIs",
     "default_condition": "STI Prevention",
-    "tagline": "Doxy-PEP is guideline-supported STI prevention for some patients — not experimental for everyone.",
+    "tagline": "Doxy-PEP is guideline-supported STI prevention for some patients \u2014 not experimental for everyone.",
     "hero_h1": "Appeal Your Doxy-PEP Denial",
     "hero_subhead": "For some MSM and trans women, taking doxycycline after sex is now part of standard STI prevention.",
-    "intro": "Doxycycline post-exposure prophylaxis (doxy-PEP) is a newer STI prevention strategy where certain patients take doxycycline shortly after sex to reduce the risk of syphilis and chlamydia and, in some settings, gonorrhea. Current U.S. guidelines recommend doxy-PEP discussion and prescribing for specific groups, especially men who have sex with men and transgender women with a recent bacterial STI. Plans may deny coverage as \"experimental\" or \"not medically necessary\" even when you’re clearly in the guideline-supported group.",
+    "intro": "Doxycycline post-exposure prophylaxis (doxy-PEP) is a newer STI prevention strategy where certain patients take doxycycline shortly after sex to reduce the risk of syphilis and chlamydia and, in some settings, gonorrhea. Current U.S. guidelines recommend doxy-PEP discussion and prescribing for specific groups, especially men who have sex with men and transgender women with a recent bacterial STI. Plans may deny coverage as \"experimental\" or \"not medically necessary\" even when you\u2019re clearly in the guideline-supported group.",
     "common_denial_reasons": [
       "Classified as experimental or investigational despite guideline support for selected populations",
       "Plan says doxycycline is only covered for infections, not prevention",
       "Risk factors or recent STI history not clearly documented in the chart",
       "Confusion about dosing (e.g., 200 mg within 72 hours after sex) vs standard infection treatment"
     ],
-    "how_we_help": "We help your clinician document your risk factors and recent STI history, show that you fall into a guideline-supported group for doxy-PEP, and explain that this is targeted, evidence-based prevention — not casual or indefinite antibiotic use.",
+    "how_we_help": "We help your clinician document your risk factors and recent STI history, show that you fall into a guideline-supported group for doxy-PEP, and explain that this is targeted, evidence-based prevention \u2014 not casual or indefinite antibiotic use.",
     "cta": "Start your doxy-PEP appeal.",
     "faq": [
       {
@@ -2726,7 +3341,7 @@
       },
       {
         "question": "How is doxy-PEP taken?",
-        "answer": "Guidelines describe a single dose of doxycycline (often 200 mg) taken within a specified window after condomless sex. Your clinician’s note can clarify your dosing plan and emphasize that this is intermittent, post-exposure prevention — not daily long-term antibiotics."
+        "answer": "Guidelines describe a single dose of doxycycline (often 200 mg) taken within a specified window after condomless sex. Your clinician\u2019s note can clarify your dosing plan and emphasize that this is intermittent, post-exposure prevention \u2014 not daily long-term antibiotics."
       },
       {
         "question": "What if my plan is worried about antibiotic resistance or side effects?",
@@ -2734,7 +3349,7 @@
       },
       {
         "question": "Should I also be getting regular STI screening while on doxy-PEP?",
-        "answer": "Yes. Doxy-PEP is designed to complement, not replace, regular STI testing and other prevention strategies. Your appeal can mention that you’re in ongoing sexual health care, including routine screening and follow-up."
+        "answer": "Yes. Doxy-PEP is designed to complement, not replace, regular STI testing and other prevention strategies. Your appeal can mention that you\u2019re in ongoing sexual health care, including routine screening and follow-up."
       }
     ],
     "evidence_snippets": [
@@ -2753,10 +3368,10 @@
     "title": "Appealing Flexitouch Plus & Advanced Pneumatic Compression Device Denials",
     "default_procedure": "Flexitouch Plus or Similar Advanced Pneumatic Compression Device",
     "default_condition": "Lymphedema",
-    "tagline": "For many people with lymphedema, advanced compression devices are medically necessary — not luxury massage gear.",
+    "tagline": "For many people with lymphedema, advanced compression devices are medically necessary \u2014 not luxury massage gear.",
     "hero_h1": "Appeal Your Flexitouch Plus or Lymphedema Pump Denial",
-    "hero_subhead": "When basic compression isn’t enough, advanced pneumatic compression can protect function, skin, and quality of life.",
-    "intro": "Devices like Flexitouch Plus are advanced pneumatic compression systems used at home to treat lymphedema, including limb and head-and-neck lymphedema. Insurers often deny them by saying \"use standard compression only,\" demanding long conservative-therapy trials, or calling them experimental. In reality, many coverage policies do allow these devices when conservative measures haven’t worked and there is documented, persistent lymphedema.",
+    "hero_subhead": "When basic compression isn\u2019t enough, advanced pneumatic compression can protect function, skin, and quality of life.",
+    "intro": "Devices like Flexitouch Plus are advanced pneumatic compression systems used at home to treat lymphedema, including limb and head-and-neck lymphedema. Insurers often deny them by saying \"use standard compression only,\" demanding long conservative-therapy trials, or calling them experimental. In reality, many coverage policies do allow these devices when conservative measures haven\u2019t worked and there is documented, persistent lymphedema.",
     "common_denial_reasons": [
       "\"Conservative therapy not exhausted\" (e.g., not enough weeks of bandaging, garments, elevation, exercise)",
       "No documentation of persistent swelling, skin changes, or functional limits",
@@ -2764,7 +3379,7 @@
       "Request for trunk/head-and-neck treatment when policy is written for limb-only devices",
       "Lack of clear physician plan of care or follow-up notes"
     ],
-    "how_we_help": "We help you lay out your full lymphedema history: how long you’ve had swelling, infections, skin breakdown, or pain; what conservative measures you’ve actually tried and for how long; and how much function you’re losing. We also help your clinician reference coverage criteria and clinical studies showing that advanced pneumatic compression can reduce swelling and symptoms, especially when standard care hasn’t been enough.",
+    "how_we_help": "We help you lay out your full lymphedema history: how long you\u2019ve had swelling, infections, skin breakdown, or pain; what conservative measures you\u2019ve actually tried and for how long; and how much function you\u2019re losing. We also help your clinician reference coverage criteria and clinical studies showing that advanced pneumatic compression can reduce swelling and symptoms, especially when standard care hasn\u2019t been enough.",
     "cta": "Start your Flexitouch Plus or lymphedema pump appeal.",
     "faq": [
       {
@@ -2773,15 +3388,15 @@
       },
       {
         "question": "How do I show that I really need an advanced device instead of a basic pump or just garments?",
-        "answer": "Your appeal can include limb or neck measurements over time, photos (if you’re comfortable), therapist notes, episodes of cellulitis, difficulty with daily activities, and any failure of simpler devices. If your lymphedema involves the trunk or head and neck, it’s especially important to show why a device designed for those areas is needed."
+        "answer": "Your appeal can include limb or neck measurements over time, photos (if you\u2019re comfortable), therapist notes, episodes of cellulitis, difficulty with daily activities, and any failure of simpler devices. If your lymphedema involves the trunk or head and neck, it\u2019s especially important to show why a device designed for those areas is needed."
       },
       {
         "question": "Is Flexitouch Plus actually studied, or is it experimental?",
-        "answer": "Clinical studies have evaluated advanced pneumatic compression devices, including Flexitouch systems, in people with limb and head-and-neck lymphedema. Trials have reported improvements in swelling, symptoms, and function compared with self-care alone in selected patients. Your appeal can cite that there is published evidence and that the device is FDA-cleared for lymphedema, even if your plan’s policy summary sounds cautious."
+        "answer": "Clinical studies have evaluated advanced pneumatic compression devices, including Flexitouch systems, in people with limb and head-and-neck lymphedema. Trials have reported improvements in swelling, symptoms, and function compared with self-care alone in selected patients. Your appeal can cite that there is published evidence and that the device is FDA-cleared for lymphedema, even if your plan\u2019s policy summary sounds cautious."
       },
       {
         "question": "What documentation should my doctor or therapist provide?",
-        "answer": "Helpful items include a formal lymphedema diagnosis, stage, limb/trunk/neck measurements, photos, a signed plan of care, notes from at least one recent in-person visit, and documentation of conservative measures already tried. If you’ve had hospitalizations or recurrent infections related to lymphedema, include those too."
+        "answer": "Helpful items include a formal lymphedema diagnosis, stage, limb/trunk/neck measurements, photos, a signed plan of care, notes from at least one recent in-person visit, and documentation of conservative measures already tried. If you\u2019ve had hospitalizations or recurrent infections related to lymphedema, include those too."
       }
     ],
     "evidence_snippets": [
@@ -2793,6 +3408,18 @@
       "advanced pneumatic compression device lymphedema Flexitouch randomized trial",
       "home pneumatic compression lymphedema coverage criteria conservative therapy",
       "head and neck lymphedema Flexitouch Plus clinical outcomes"
+    ],
+    "advocacy_resources": [
+      {
+        "name": "Lymphatic Education & Research Network",
+        "url": "https://lymphaticnetwork.org/",
+        "description": "International nonprofit fighting lymphatic diseases through education, research and advocacy."
+      },
+      {
+        "name": "National Lymphedema Network",
+        "url": "https://lymphnet.org/",
+        "description": "Empowering people with lymphedema through education, advocacy, and care."
+      }
     ]
   },
   "continuity-of-care-formulary-change": {
@@ -2804,7 +3431,7 @@
     "hero_subhead": "If your medication is removed from formulary or moved to a higher tier, you can request an exception to continue your treatment.",
     "intro": "Insurance plans frequently change their formularies (drug lists), sometimes removing medications that patients are already taking or moving them to higher cost-sharing tiers. Federal regulations and many state laws protect patients by requiring insurers to grant continuity of care exceptions when a formulary change would disrupt ongoing treatment. This page helps you understand your rights and appeal for continued coverage.",
     "common_denial_reasons": [
-      "Drug removed from formulary — preferred alternative available",
+      "Drug removed from formulary \u2014 preferred alternative available",
       "Drug moved to non-preferred or specialty tier with higher cost-sharing",
       "Step therapy required before covering your current medication",
       "Insurer claims equivalent medication is available",
@@ -2828,7 +3455,7 @@
       },
       {
         "question": "What if my insurer says a generic or alternative is available?",
-        "answer": "Your appeal can explain why the alternative is not appropriate for you — for example, if you've tried it before and it didn't work, if you have allergies or intolerances, or if the medications are not truly therapeutically equivalent for your condition."
+        "answer": "Your appeal can explain why the alternative is not appropriate for you \u2014 for example, if you've tried it before and it didn't work, if you have allergies or intolerances, or if the medications are not truly therapeutically equivalent for your condition."
       },
       {
         "question": "How long can I get a continuity of care exception?",
@@ -2838,7 +3465,7 @@
     "evidence_snippets": [
       "Often health plans must have a transition policy when drugs are removed from formulary, and patients have the right to request a medically necessary exception.",
       "Many states have enacted non-medical switching laws that protect patients from being forced to change medications that are working well, especially for conditions like cancer, HIV, epilepsy, and mental health.",
-      "Clinical research shows that medication switching can lead to adverse outcomes, treatment failures, and increased healthcare costs — supporting the medical necessity of continuity of care."
+      "Clinical research shows that medication switching can lead to adverse outcomes, treatment failures, and increased healthcare costs \u2014 supporting the medical necessity of continuity of care."
     ],
     "pubmed_search_terms": [
       "medication switching adverse outcomes treatment stability",
@@ -2855,7 +3482,7 @@
     "hero_subhead": "Some major PBMs removed Humira, but you can appeal for continuity of care.",
     "intro": "CVS Caremark, Express Scripts, and other major pharmacy benefit managers have removed Humira from many formularies in favor of biosimilars. If you've been stable on Humira and your insurer wants you to switch, you have rights under federal continuity of care regulations and potentially state non-medical switching laws.",
     "common_denial_reasons": [
-      "Humira removed from formulary — biosimilar required",
+      "Humira removed from formulary \u2014 biosimilar required",
       "Plan requires switch to preferred biosimilar (Hyrimoz, Hadlima, etc.)",
       "Humira no longer covered at current tier",
       "Prior authorization required for continued Humira use",
@@ -2874,7 +3501,7 @@
       },
       {
         "question": "What if I've tried a biosimilar and it didn't work?",
-        "answer": "Document your experience with the biosimilar — side effects, efficacy issues, or other problems. This strengthens your case for continued Humira coverage as medically necessary."
+        "answer": "Document your experience with the biosimilar \u2014 side effects, efficacy issues, or other problems. This strengthens your case for continued Humira coverage as medically necessary."
       },
       {
         "question": "Can I get Humira covered even if it's not on formulary?",
@@ -2902,6 +3529,18 @@
         "url": "https://www.abbvie.com/patients/patient-assistance.html",
         "description": "Patient assistance for uninsured or underinsured patients who qualify based on income."
       }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "Arthritis Foundation",
+        "url": "https://www.arthritis.org/",
+        "description": "Leading organization for arthritis advocacy and support."
+      },
+      {
+        "name": "Crohn's & Colitis Foundation",
+        "url": "https://www.crohnscolitisfoundation.org/",
+        "description": "IBD patient advocacy and support organization."
+      }
     ]
   },
   "stelara-formulary-removal": {
@@ -2913,7 +3552,7 @@
     "hero_subhead": "Some major PBMs are removing Stelara in 2025-2026, but you can appeal for continuity of care.",
     "intro": "Health Alliance, Navitus, UnitedHealthcare, and other plans are removing Stelara from formularies in 2025-2026 as multiple ustekinumab biosimilars enter the market. If you've been stable on Stelara and your insurer wants you to switch to a biosimilar, you have rights under federal continuity of care regulations.",
     "common_denial_reasons": [
-      "Stelara removed from formulary — biosimilar required",
+      "Stelara removed from formulary \u2014 biosimilar required",
       "Plan requires switch to Steqeyma, Yesintek, or other biosimilar",
       "Stelara no longer covered at current tier",
       "Prior authorization now required for Stelara",
@@ -2959,6 +3598,18 @@
         "url": "https://www.jnjpaf.org/",
         "description": "Patient assistance for uninsured or underinsured patients who meet income requirements."
       }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "Crohn's & Colitis Foundation",
+        "url": "https://www.crohnscolitisfoundation.org/",
+        "description": "Leading nonprofit for IBD research and patient support."
+      },
+      {
+        "name": "National Psoriasis Foundation",
+        "url": "https://www.psoriasis.org/",
+        "description": "Patient advocacy for psoriasis and psoriatic arthritis."
+      }
     ]
   },
   "entyvio-formulary-removal": {
@@ -2968,7 +3619,7 @@
     "default_condition": "Inflammatory Bowel Disease",
     "tagline": "Stable on Entyvio for IBD? Fight for continued coverage.",
     "hero_h1": "Fight Your Entyvio Formulary Removal",
-    "hero_subhead": "Express Scripts is excluding Entyvio IV in 2026 — but you can appeal especially for continuity of care.",
+    "hero_subhead": "Express Scripts is excluding Entyvio IV in 2026 \u2014 but you can appeal especially for continuity of care.",
     "intro": "Express Scripts is excluding Entyvio IV from the National Preferred Formulary effective 2026. If you have Crohn's disease or ulcerative colitis and are stable on Entyvio, you may have rights under continuity of care regulations.",
     "common_denial_reasons": [
       "Entyvio IV excluded from formulary effective July 2026",
@@ -3012,6 +3663,13 @@
         "url": "https://www.takeda.com/en-us/what-we-do/patient-services/",
         "description": "Patient assistance for uninsured or underinsured patients who qualify."
       }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "Crohn's & Colitis Foundation",
+        "url": "https://www.crohnscolitisfoundation.org/",
+        "description": "Leading nonprofit organization focused on IBD research and patient support."
+      }
     ]
   },
   "skyrizi-formulary-removal": {
@@ -3021,7 +3679,7 @@
     "default_condition": "Psoriasis",
     "tagline": "Stable on Skyrizi for psoriasis or IBD? Fight for continued coverage.",
     "hero_h1": "Fight Your Skyrizi Formulary Removal",
-    "hero_subhead": "Some plans are excluding Skyrizi in 2026 — but you can appeal for continuity of care.",
+    "hero_subhead": "Some plans are excluding Skyrizi in 2026 \u2014 but you can appeal for continuity of care.",
     "intro": "Some PBMs are excluding Skyrizi from formularies in 2026. If you have psoriasis, psoriatic arthritis, or Crohn's disease and are stable on Skyrizi, you have rights under federal continuity of care regulations.",
     "common_denial_reasons": [
       "Skyrizi excluded from formulary",
@@ -3058,6 +3716,13 @@
         "url": "https://www.abbvie.com/patients/patient-assistance.html",
         "description": "Patient assistance for uninsured or underinsured patients who qualify based on income."
       }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "National Psoriasis Foundation",
+        "url": "https://www.psoriasis.org/",
+        "description": "Patient-centric nonprofit driving research and improving lives of those with psoriatic disease."
+      }
     ]
   },
   "tremfya-formulary-removal": {
@@ -3067,7 +3732,7 @@
     "default_condition": "Psoriasis",
     "tagline": "Stable on Tremfya for psoriasis? Fight for continued coverage.",
     "hero_h1": "Fight Your Tremfya Formulary Removal",
-    "hero_subhead": "Express Scripts is excluding Tremfya in 2026 — but you can appeal for continuity of care.",
+    "hero_subhead": "Express Scripts is excluding Tremfya in 2026 \u2014 but you can appeal for continuity of care.",
     "intro": "Express Scripts is excluding Tremfya from the National Preferred Formulary in 2026. If you have psoriasis or psoriatic arthritis and are stable on Tremfya, you have rights under federal continuity of care regulations.",
     "common_denial_reasons": [
       "Tremfya excluded from formulary",
@@ -3099,6 +3764,13 @@
         "url": "https://www.jnjpaf.org/",
         "description": "Patient assistance for uninsured or underinsured patients who meet income requirements."
       }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "National Psoriasis Foundation",
+        "url": "https://www.psoriasis.org/",
+        "description": "Patient-centric nonprofit driving research and improving lives of those with psoriatic disease."
+      }
     ]
   },
   "skilled-nursing-denial": {
@@ -3108,10 +3780,10 @@
     "tagline": "UHC Medicare Advantage SNF denials increased 9x from 2019 to 2022: fight back.",
     "hero_h1": "Appeal Your Skilled Nursing Facility Denial",
     "hero_subhead": "Post-hospital care is essential for recovery. Don't be discharged too early.",
-    "intro": "Skilled nursing facility denials have exploded, especially in Medicare Advantage plans. Between 2019 and 2022, SNF denials increased 9-fold, often driven by AI algorithms rather than clinical judgment. The good news: studies suggest the majority of appealed SNF denials are overturned, but few patients appeal. You have rights — use them.",
+    "intro": "Skilled nursing facility denials have exploded, especially in Medicare Advantage plans. Between 2019 and 2022, SNF denials increased 9-fold, often driven by AI algorithms rather than clinical judgment. The good news: studies suggest the majority of appealed SNF denials are overturned, but few patients appeal. You have rights \u2014 use them.",
     "common_denial_reasons": [
       "Patient no longer meets skilled care criteria",
-      "Custodial care only — not skilled nursing",
+      "Custodial care only \u2014 not skilled nursing",
       "Discharge to home is appropriate",
       "Maximum benefit reached",
       "Prior authorization expired"
@@ -3143,13 +3815,20 @@
       "Home health care with visiting nurses may be an option if you have adequate support at home.",
       "Some long-term acute care hospitals (LTACHs) provide a higher level of care if SNF isn't sufficient.",
       "Ask about swing bed programs at community hospitals which combine acute and SNF-level care."
+    ],
+    "advocacy_resources": [
+      {
+        "name": "Center for Medicare Advocacy",
+        "url": "https://www.medicareadvocacy.org/",
+        "description": "Nonprofit providing legal resources for Medicare coverage issues including SNF care."
+      }
     ]
   },
   "home-health-denial": {
     "slug": "home-health-denial",
     "title": "Appealing Home Health Care Denials",
     "default_procedure": "Home Health Care / Home Nursing Services",
-    "tagline": "Medicare's 'homebound' requirement trips up many patients — learn how to appeal.",
+    "tagline": "Medicare's 'homebound' requirement trips up many patients \u2014 learn how to appeal.",
     "hero_h1": "Appeal Your Home Health Care Denial",
     "hero_subhead": "You shouldn't have to choose between leaving home and losing coverage.",
     "intro": "Home health care denials often hinge on the 'homebound' requirement and whether you need 'skilled' nursing care. Medicare Advantage plans are increasingly using narrow interpretations to deny home health services, even when your doctor has ordered them. Understanding what qualifies as homebound and skilled care is key to winning your appeal.",
@@ -3177,13 +3856,20 @@
       "Adult day programs may provide supervision and therapy while preserving home health eligibility.",
       "Telehealth visits may supplement in-person home health for some services.",
       "Community-based waiver programs may provide additional home care services in some states."
+    ],
+    "advocacy_resources": [
+      {
+        "name": "National Association for Home Care & Hospice",
+        "url": "https://www.nahc.org/",
+        "description": "Trade association advocating for home care access and coverage."
+      }
     ]
   },
   "joint-replacement-denial": {
     "slug": "joint-replacement-denial",
     "title": "Appealing Knee and Hip Replacement Denials",
     "default_procedure": "Total Knee or Hip Replacement",
-    "tagline": "Joint replacement is one of the most successful surgeries — insurers shouldn't block it.",
+    "tagline": "Joint replacement is one of the most successful surgeries \u2014 insurers shouldn't block it.",
     "hero_h1": "Appeal Your Joint Replacement Denial",
     "hero_subhead": "When conservative treatment fails, surgery is the answer.",
     "intro": "Knee and hip replacements are among the most successful surgeries performed, with high satisfaction rates and dramatic quality-of-life improvements. Yet insurers frequently deny them, claiming you haven't tried enough conservative treatments or the surgery isn't 'medically necessary.' If you're living with severe joint pain that limits your daily activities, you deserve surgery.",
@@ -3224,13 +3910,20 @@
       "Partial knee replacement may be an option for some patients with localized arthritis.",
       "Joint preservation procedures like osteotomy may delay the need for replacement in younger patients.",
       "Ask about outpatient joint replacement programs which may have different coverage criteria."
+    ],
+    "advocacy_resources": [
+      {
+        "name": "Arthritis Foundation",
+        "url": "https://www.arthritis.org/",
+        "description": "Leading organization for arthritis support, advocacy, and research."
+      }
     ]
   },
   "out-of-network-emergency-denial": {
     "slug": "out-of-network-emergency-denial",
     "title": "Appealing Out-of-Network Emergency Room Denials",
     "default_procedure": "Emergency Room Services",
-    "tagline": "Federal law protects you from surprise ER bills — insurers must comply.",
+    "tagline": "Federal law protects you from surprise ER bills \u2014 insurers must comply.",
     "hero_h1": "Appeal Your Out-of-Network ER Denial",
     "hero_subhead": "The No Surprises Act protects you. Make your insurer follow the law.",
     "intro": "Since 2022, the No Surprises Act helps protect patients from surprise bills when they receive emergency care at out-of-network facilities. Yet insurers continue to improperly deny or underpay these claims. You normally cannot be balance-billed more than your in-network cost-sharing, and your insurer must pay the emergency facility appropriately. If your claim was denied or you received a surprise bill, you have strong appeal rights.",
@@ -3329,7 +4022,7 @@
     "slug": "colonoscopy-denial",
     "title": "Appealing Colonoscopy Denials",
     "default_procedure": "Colonoscopy",
-    "tagline": "Colonoscopy denials can delay life-saving cancer screening—here's how to fight back.",
+    "tagline": "Colonoscopy denials can delay life-saving cancer screening\u2014here's how to fight back.",
     "hero_h1": "Appeal Your Colonoscopy Denial",
     "hero_subhead": "Don't let \"not medically necessary\" prevent critical screening.",
     "intro": "Colonoscopies are frequently denied when insurers claim you're too young, it's too soon for a repeat screening, or symptoms don't justify the procedure. But colorectal cancer screening saves lives, and if your doctor ordered it, there's a strong medical rationale you can use to overturn the denial.",
@@ -3342,7 +4035,7 @@
       "Out-of-network provider"
     ],
     "how_we_help": "We help you document your risk factors, symptoms, and physician recommendations in a way that demonstrates medical necessity. Upload your denial letter and we'll generate a compelling appeal that cites clinical guidelines and your specific circumstances.",
-    "cta": "Start your colonoscopy appeal — it takes about 3 minutes.",
+    "cta": "Start your colonoscopy appeal \u2014 it takes about 3 minutes.",
     "faq": [
       {
         "question": "Can I appeal if I'm younger than 45 and my colonoscopy was denied?",
@@ -3353,12 +4046,12 @@
         "answer": "Standard intervals between colonoscopies depend on prior findings. If you had polyps, adenomas, or other concerning findings, shorter intervals may be medically appropriate. Your appeal should reference your prior colonoscopy results and current clinical guidelines for surveillance."
       },
       {
-        "question": "My doctor recommended colonoscopy for symptoms—why was it denied?",
+        "question": "My doctor recommended colonoscopy for symptoms\u2014why was it denied?",
         "answer": "Insurers sometimes claim symptoms can be evaluated with less invasive tests first. Your appeal should detail your symptoms (bleeding, pain, changes in bowel habits, unexplained weight loss), their duration and severity, and why direct visualization with colonoscopy is the appropriate diagnostic approach."
       },
       {
         "question": "Do I need my doctor to write a letter for my colonoscopy appeal?",
-        "answer": "It's very helpful. A letter from your gastroenterologist or ordering physician explaining why the colonoscopy is medically necessary—citing your specific risk factors, symptoms, or prior findings—significantly strengthens your appeal."
+        "answer": "It's very helpful. A letter from your gastroenterologist or ordering physician explaining why the colonoscopy is medically necessary\u2014citing your specific risk factors, symptoms, or prior findings\u2014significantly strengthens your appeal."
       },
       {
         "question": "What if they want me to do a stool test instead?",
@@ -3378,6 +4071,18 @@
       "colonoscopy surveillance intervals polyps adenomas",
       "early-onset colorectal cancer risk factors",
       "colonoscopy diagnostic evaluation symptoms bleeding"
+    ],
+    "advocacy_resources": [
+      {
+        "name": "Colorectal Cancer Alliance",
+        "url": "https://www.ccalliance.org/",
+        "description": "National nonprofit providing support, raising awareness, and advocating for colorectal cancer screening."
+      },
+      {
+        "name": "Fight Colorectal Cancer",
+        "url": "https://fightcolorectalcancer.org/",
+        "description": "Advocacy organization fighting for access to colorectal cancer screening and treatment."
+      }
     ]
   },
   "myqorzo-denial": {
@@ -3399,7 +4104,7 @@
       "Specialty tier drug not covered"
     ],
     "how_we_help": "We help you document your oHCM diagnosis, symptom severity, prior treatments, and why Myqorzo is the appropriate choice for your condition. Our AI-powered tool generates a compelling appeal letter citing clinical evidence.",
-    "cta": "Start your Myqorzo appeal — it takes about 3 minutes.",
+    "cta": "Start your Myqorzo appeal \u2014 it takes about 3 minutes.",
     "faq": [
       {
         "question": "Why was my Myqorzo prescription denied?",
@@ -3431,6 +4136,18 @@
         "url": "https://www.cytokinetics.com/patients",
         "description": "Cytokinetics patient support program offering insurance navigation, financial assistance for eligible patients, and disease education. Call 833-MYQORZO (833-697-6796)."
       }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "National Organization for Rare Disorders (NORD)",
+        "url": "https://rarediseases.org/",
+        "description": "Leading patient advocacy organization for rare disease community."
+      },
+      {
+        "name": "Global Genes",
+        "url": "https://globalgenes.org/",
+        "description": "Leading rare disease patient advocacy organization connecting and empowering patients."
+      }
     ]
   },
   "exdensur-denial": {
@@ -3452,7 +4169,7 @@
       "Documentation of severe asthma inadequate"
     ],
     "how_we_help": "We help you compile your eosinophil counts, asthma control scores, exacerbation history, and prior treatment records to demonstrate medical necessity for Exdensur.",
-    "cta": "Start your Exdensur appeal — it takes about 3 minutes.",
+    "cta": "Start your Exdensur appeal \u2014 it takes about 3 minutes.",
     "faq": [
       {
         "question": "What eosinophil level do I need for Exdensur coverage?",
@@ -3484,6 +4201,18 @@
         "url": "https://gskforyou.com/",
         "description": "GSK offers copay assistance (eligible patients may pay $0, up to $26,000/year) and patient assistance for uninsured patients. Call 1-866-728-4368."
       }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "Asthma and Allergy Foundation of America",
+        "url": "https://aafa.org/",
+        "description": "Leading patient advocacy organization for asthma and allergies, certified by National Health Council."
+      },
+      {
+        "name": "Allergy & Asthma Network",
+        "url": "https://allergyasthmanetwork.org/",
+        "description": "Nonprofit patient outreach, education, advocacy and research organization."
+      }
     ]
   },
   "cardamyst-denial": {
@@ -3505,7 +4234,7 @@
       "Step therapy through vagal maneuvers first"
     ],
     "how_we_help": "We help you document your PSVT diagnosis, frequency of episodes, impact on quality of life, and prior emergency room visits to demonstrate why at-home treatment is medically necessary and cost-effective.",
-    "cta": "Start your Cardamyst appeal — it takes about 3 minutes.",
+    "cta": "Start your Cardamyst appeal \u2014 it takes about 3 minutes.",
     "faq": [
       {
         "question": "Why would I want Cardamyst instead of going to the ER?",
@@ -3531,7 +4260,14 @@
       "PSVT self-treatment nasal spray",
       "PSVT emergency department utilization costs"
     ],
-    "assistance_programs": []
+    "assistance_programs": [],
+    "advocacy_resources": [
+      {
+        "name": "StopAfib.org",
+        "url": "https://www.stopafib.org/",
+        "description": "Patient advocacy organization founded by and for afib patients."
+      }
+    ]
   },
   "lerochol-denial": {
     "slug": "lerochol-denial",
@@ -3552,7 +4288,7 @@
       "High-cost specialty medication"
     ],
     "how_we_help": "We help you document your LDL levels, statin history (including intolerance if applicable), cardiovascular risk factors, and why achieving LDL goals is critical for your health.",
-    "cta": "Start your Lerochol appeal — it takes about 3 minutes.",
+    "cta": "Start your Lerochol appeal \u2014 it takes about 3 minutes.",
     "faq": [
       {
         "question": "What LDL level do I need for PCSK9 inhibitor coverage?",
@@ -3605,7 +4341,7 @@
       "Accelerated approval status concerns"
     ],
     "how_we_help": "We help you document your biopsy results, proteinuria levels, eGFR, prior treatments, and risk of disease progression to demonstrate medical necessity for Voyxact.",
-    "cta": "Start your Voyxact appeal — it takes about 3 minutes.",
+    "cta": "Start your Voyxact appeal \u2014 it takes about 3 minutes.",
     "faq": [
       {
         "question": "What documentation do I need for Voyxact coverage?",
@@ -3637,6 +4373,18 @@
         "url": "https://www.voyxact.com/",
         "description": "Eligible patients may pay as little as $0 through the VOYXACT Copay Program. Bridge program available for coverage delays. Call 833-VOYXACT (869-9228)."
       }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "IgA Nephropathy Foundation of America",
+        "url": "https://www.iganephropathy.org/",
+        "description": "Foundation dedicated to IgA nephropathy awareness, research, and patient support."
+      },
+      {
+        "name": "National Kidney Foundation",
+        "url": "https://www.kidney.org/",
+        "description": "Leading kidney health organization with advocacy and patient resources."
+      }
     ]
   },
   "hyrnuo-denial": {
@@ -3658,7 +4406,7 @@
       "Accelerated approval concerns"
     ],
     "how_we_help": "We help you compile your HER2 mutation testing results, prior treatment history, and oncologist recommendations to demonstrate medical necessity for Hyrnuo.",
-    "cta": "Start your Hyrnuo appeal — it takes about 3 minutes.",
+    "cta": "Start your Hyrnuo appeal \u2014 it takes about 3 minutes.",
     "faq": [
       {
         "question": "What HER2 test do I need for Hyrnuo coverage?",
@@ -3690,6 +4438,23 @@
         "url": "https://www.hyrnuo-us.com/",
         "description": "Commercially insured patients may pay as little as $0 per month. Free trial program available. Bayer Patient Assistance Foundation offers free medication for eligible uninsured patients. Call 1-866-228-7723."
       }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "American Cancer Society",
+        "url": "https://www.cancer.org/",
+        "description": "Nationwide voluntary health organization providing cancer support, information, and advocacy."
+      },
+      {
+        "name": "CancerCare",
+        "url": "https://www.cancercare.org/",
+        "description": "Free professional support services including counseling, support groups, and financial assistance."
+      },
+      {
+        "name": "Cancer Support Community",
+        "url": "https://www.cancersupportcommunity.org/",
+        "description": "Largest professionally led nonprofit network of cancer support worldwide."
+      }
     ]
   },
   "redemplo-denial": {
@@ -3711,7 +4476,7 @@
       "Rare disease with limited coverage policies"
     ],
     "how_we_help": "We help you document your FCS diagnosis, genetic testing results, triglyceride levels, history of pancreatitis, and the failure of dietary management alone to control your condition.",
-    "cta": "Start your Redemplo appeal — it takes about 3 minutes.",
+    "cta": "Start your Redemplo appeal \u2014 it takes about 3 minutes.",
     "faq": [
       {
         "question": "What is familial chylomicronemia syndrome?",
@@ -3743,6 +4508,18 @@
         "url": "https://arrowheadpharma.com/",
         "description": "Arrowhead's patient support program offers financial assistance options for eligible patients at each stage of treatment journey."
       }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "National Organization for Rare Disorders (NORD)",
+        "url": "https://rarediseases.org/",
+        "description": "Leading patient advocacy organization for rare disease community."
+      },
+      {
+        "name": "Global Genes",
+        "url": "https://globalgenes.org/",
+        "description": "Leading rare disease patient advocacy organization connecting and empowering patients."
+      }
     ]
   },
   "komzifti-denial": {
@@ -3764,7 +4541,7 @@
       "Off-label use concerns"
     ],
     "how_we_help": "We help you compile your NPM1 mutation testing results, prior treatment history, and oncologist recommendations to demonstrate that you have no satisfactory alternative treatment options.",
-    "cta": "Start your Komzifti appeal — it takes about 3 minutes.",
+    "cta": "Start your Komzifti appeal \u2014 it takes about 3 minutes.",
     "faq": [
       {
         "question": "What test do I need for Komzifti coverage?",
@@ -3790,7 +4567,19 @@
       "menin inhibitor acute myeloid leukemia",
       "NPM1 mutation targeted therapy AML"
     ],
-    "assistance_programs": []
+    "assistance_programs": [],
+    "advocacy_resources": [
+      {
+        "name": "Leukemia & Lymphoma Society",
+        "url": "https://www.lls.org/",
+        "description": "World's largest voluntary health agency dedicated to blood cancer research and patient support."
+      },
+      {
+        "name": "International Myeloma Foundation",
+        "url": "https://www.myeloma.org/",
+        "description": "Largest organization focusing specifically on multiple myeloma research and patient education."
+      }
+    ]
   },
   "lynkuet-denial": {
     "slug": "lynkuet-denial",
@@ -3811,7 +4600,7 @@
       "New drug with limited coverage policies"
     ],
     "how_we_help": "We help you document your hot flash severity, reasons for avoiding hormone therapy (breast cancer history, cardiovascular risk, personal preference), and impact on quality of life.",
-    "cta": "Start your Lynkuet appeal — it takes about 3 minutes.",
+    "cta": "Start your Lynkuet appeal \u2014 it takes about 3 minutes.",
     "faq": [
       {
         "question": "Why might I need a non-hormonal option like Lynkuet?",
@@ -3843,6 +4632,18 @@
         "url": "https://www.lynkuet.com/",
         "description": "Commercially insured women may pay as little as $25 per month through the LASS program with Blink Rx. Bayer Patient Assistance Foundation available for eligible uninsured patients. Call 1-866-228-7723."
       }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "North American Menopause Society",
+        "url": "https://www.menopause.org/",
+        "description": "Leading nonprofit organization for menopause health information and advocacy."
+      },
+      {
+        "name": "The Menopause Society",
+        "url": "https://www.menopause.org/",
+        "description": "Professional organization promoting menopause health through education and advocacy."
+      }
     ]
   },
   "jascayd-denial": {
@@ -3864,7 +4665,7 @@
       "Pulmonary function tests not provided"
     ],
     "how_we_help": "We help you document your IPF diagnosis (including high-resolution CT findings), pulmonary function tests, prior treatments, and why Jascayd is the appropriate choice for your condition.",
-    "cta": "Start your Jascayd appeal — it takes about 3 minutes.",
+    "cta": "Start your Jascayd appeal \u2014 it takes about 3 minutes.",
     "faq": [
       {
         "question": "What documentation supports my Jascayd appeal?",
@@ -3896,6 +4697,13 @@
         "url": "https://www.jascayd.com/",
         "description": "Patient support program offering copay assistance, insurance navigation, and help with access. Boehringer Cares Patient Assistance Program available for eligible uninsured patients. Call 1-800-542-6257."
       }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "Pulmonary Fibrosis Foundation",
+        "url": "https://www.pulmonaryfibrosis.org/",
+        "description": "Largest nonprofit dedicated to pulmonary fibrosis research and patient support. Help Center: 844.TalkPFF."
+      }
     ]
   },
   "rhapsido-denial": {
@@ -3917,7 +4725,7 @@
       "Specialty tier drug not covered"
     ],
     "how_we_help": "We help you document your history of antihistamine use, hive severity and frequency, impact on quality of life, and prior treatment failures to demonstrate medical necessity for Rhapsido.",
-    "cta": "Start your Rhapsido appeal — it takes about 3 minutes.",
+    "cta": "Start your Rhapsido appeal \u2014 it takes about 3 minutes.",
     "faq": [
       {
         "question": "What treatments do I need to try before Rhapsido?",
@@ -3949,6 +4757,18 @@
         "url": "https://support.rhapsido.com/",
         "description": "Eligible commercially insured patients may pay as little as $0 through Co-Pay Plus. Bridge Program provides free medication for up to 12 months while awaiting insurance approval. Call Novartis Patient Support."
       }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "Asthma and Allergy Foundation of America",
+        "url": "https://aafa.org/",
+        "description": "Leading patient advocacy for allergic conditions including chronic urticaria."
+      },
+      {
+        "name": "We CU",
+        "url": "https://www.wecu.org/",
+        "description": "Nonprofit dedicated to empowering those affected by chronic urticaria."
+      }
     ]
   },
   "palsonify-denial": {
@@ -3970,7 +4790,7 @@
       "New drug with limited coverage policies"
     ],
     "how_we_help": "We help you document your acromegaly diagnosis, surgical history, IGF-1 levels, prior treatment with injectables, and why oral therapy is medically necessary for you.",
-    "cta": "Start your Palsonify appeal — it takes about 3 minutes.",
+    "cta": "Start your Palsonify appeal \u2014 it takes about 3 minutes.",
     "faq": [
       {
         "question": "Do I need to have had surgery for acromegaly?",
@@ -4002,6 +4822,18 @@
         "url": "https://crineticare.com/",
         "description": "Eligible commercially insured patients may pay as little as $0. Bridge program available while awaiting coverage. Patient assistance for uninsured/underinsured patients. Visit CrinetiCARE.com or Palsonify.com."
       }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "National Organization for Rare Disorders (NORD)",
+        "url": "https://rarediseases.org/",
+        "description": "Leading patient advocacy organization for rare disease community."
+      },
+      {
+        "name": "Global Genes",
+        "url": "https://globalgenes.org/",
+        "description": "Leading rare disease patient advocacy organization connecting and empowering patients."
+      }
     ]
   },
   "journavx-denial": {
@@ -4023,7 +4855,7 @@
       "New drug with limited coverage policies"
     ],
     "how_we_help": "We help you document your pain condition, prior treatments tried, reasons for avoiding opioids, and why Journavx is the appropriate choice for your acute pain management.",
-    "cta": "Start your Journavx appeal — it takes about 3 minutes.",
+    "cta": "Start your Journavx appeal \u2014 it takes about 3 minutes.",
     "faq": [
       {
         "question": "Why would I choose Journavx over other pain medications?",
@@ -4055,6 +4887,18 @@
         "url": "https://www.journavx.com/support",
         "description": "Commercially insured patients may pay as little as $30 per fill. Patient Assistance Program at JOURNAVXpap.com for uninsured patients. Call 1-833-589-7246."
       }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "American Chronic Pain Association",
+        "url": "https://www.theacpa.org/",
+        "description": "Peer support and education for people living with chronic pain."
+      },
+      {
+        "name": "U.S. Pain Foundation",
+        "url": "https://uspainfoundation.org/",
+        "description": "Nonprofit connecting people with pain to resources, support, and advocacy."
+      }
     ]
   },
   "wayrilz-denial": {
@@ -4076,7 +4920,7 @@
       "Specialty tier drug not covered"
     ],
     "how_we_help": "We help you document your platelet count history, prior ITP treatments and their results, bleeding episodes, and why Wayrilz is the appropriate next step in your care.",
-    "cta": "Start your Wayrilz appeal — it takes about 3 minutes.",
+    "cta": "Start your Wayrilz appeal \u2014 it takes about 3 minutes.",
     "faq": [
       {
         "question": "What treatments do I need to try before Wayrilz?",
@@ -4108,6 +4952,18 @@
         "url": "https://www.wayrilz.com/us/patient-support",
         "description": "Eligible patients may pay as little as $0 copay. QuickStart program provides first month free while awaiting coverage. Patient Assistance Program for uninsured. Call 1-833-723-5463."
       }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "National Organization for Rare Disorders (NORD)",
+        "url": "https://rarediseases.org/",
+        "description": "Leading patient advocacy organization for rare disease community."
+      },
+      {
+        "name": "Global Genes",
+        "url": "https://globalgenes.org/",
+        "description": "Leading rare disease patient advocacy organization connecting and empowering patients."
+      }
     ]
   },
   "dawnzera-denial": {
@@ -4129,7 +4985,7 @@
       "Ultra-high cost orphan drug concerns"
     ],
     "how_we_help": "We help you document your HAE diagnosis, attack frequency and severity, prior prophylactic treatments, and why Dawnzera is the best option for preventing your attacks.",
-    "cta": "Start your Dawnzera appeal — it takes about 3 minutes.",
+    "cta": "Start your Dawnzera appeal \u2014 it takes about 3 minutes.",
     "faq": [
       {
         "question": "What documentation supports my Dawnzera appeal?",
@@ -4161,6 +5017,18 @@
         "url": "https://dawnzera.com/get-started",
         "description": "Comprehensive support including insurance navigation, financial assistance, and injection training. Free trial program available for all patients including Medicare/Medicaid. Call 1-844-444-4305."
       }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "US Hereditary Angioedema Association",
+        "url": "https://www.haea.org/",
+        "description": "Nonprofit advocacy organization for people with HAE and their caregivers."
+      },
+      {
+        "name": "HAE International",
+        "url": "https://haei.org/",
+        "description": "Global network of HAE organizations dedicated to improving lives of people with HAE."
+      }
     ]
   },
   "brinsupri-denial": {
@@ -4182,7 +5050,7 @@
       "High-cost specialty medication"
     ],
     "how_we_help": "We help you document your bronchiectasis diagnosis, CT scan findings, exacerbation history, prior treatments, and the impact on your quality of life to demonstrate medical necessity.",
-    "cta": "Start your Brinsupri appeal — it takes about 3 minutes.",
+    "cta": "Start your Brinsupri appeal \u2014 it takes about 3 minutes.",
     "faq": [
       {
         "question": "What documentation do I need for Brinsupri coverage?",
@@ -4214,6 +5082,13 @@
         "url": "https://www.insmed.com/",
         "description": "Copay assistance for commercially insured patients. Patient support program offers insurance navigation and access assistance. Contact Insmed for details."
       }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "Pulmonary Fibrosis Foundation",
+        "url": "https://www.pulmonaryfibrosis.org/",
+        "description": "Largest nonprofit dedicated to pulmonary fibrosis research and patient support. Help Center: 844.TalkPFF."
+      }
     ]
   },
   "ekterly-denial": {
@@ -4235,7 +5110,7 @@
       "Orphan drug pricing concerns"
     ],
     "how_we_help": "We help you document your HAE diagnosis, attack patterns, experience with injectable treatments, and why oral on-demand therapy is the appropriate choice for you.",
-    "cta": "Start your Ekterly appeal — it takes about 3 minutes.",
+    "cta": "Start your Ekterly appeal \u2014 it takes about 3 minutes.",
     "faq": [
       {
         "question": "Why would oral on-demand therapy be better for me?",
@@ -4267,6 +5142,18 @@
         "url": "https://www.ekterly.com/patient-support-program/",
         "description": "Eligible commercially insured patients may pay as little as $0 (up to $40,000 annual maximum). QuickStart program for coverage delays. Patient assistance available. Call 1-844-432-3322."
       }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "US Hereditary Angioedema Association",
+        "url": "https://www.haea.org/",
+        "description": "Nonprofit advocacy organization for people with HAE and their caregivers."
+      },
+      {
+        "name": "HAE International",
+        "url": "https://haei.org/",
+        "description": "Global network of HAE organizations dedicated to improving lives of people with HAE."
+      }
     ]
   },
   "qfitlia-denial": {
@@ -4288,7 +5175,7 @@
       "Ultra-high cost orphan drug"
     ],
     "how_we_help": "We help you document your hemophilia diagnosis, bleeding history, current treatment regimen, and why Qfitlia offers benefits for your specific situation.",
-    "cta": "Start your Qfitlia appeal — it takes about 3 minutes.",
+    "cta": "Start your Qfitlia appeal \u2014 it takes about 3 minutes.",
     "faq": [
       {
         "question": "How is Qfitlia different from other hemophilia treatments?",
@@ -4320,6 +5207,18 @@
         "url": "https://www.sanofihemassist.com/",
         "description": "Eligible patients may pay as little as $0 copay (up to $20,000/year). QuickStart provides up to 6 months free while awaiting coverage. Call 1-833-723-5463."
       }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "National Bleeding Disorders Foundation",
+        "url": "https://www.bleeding.org/",
+        "description": "Patient advocacy organization for hemophilia and bleeding disorders since 1948."
+      },
+      {
+        "name": "Hemophilia Federation of America",
+        "url": "https://www.hemophiliafed.org/",
+        "description": "National nonprofit serving the bleeding disorders community."
+      }
     ]
   },
   "blujepa-denial": {
@@ -4341,7 +5240,7 @@
       "New drug with limited coverage policies"
     ],
     "how_we_help": "We help you document your UTI history, antibiotic allergies or intolerances, culture results showing resistance, and why Blujepa is the appropriate antibiotic choice.",
-    "cta": "Start your Blujepa appeal — it takes about 3 minutes.",
+    "cta": "Start your Blujepa appeal \u2014 it takes about 3 minutes.",
     "faq": [
       {
         "question": "When would Blujepa be used instead of other antibiotics?",
@@ -4394,7 +5293,7 @@
       "High-cost specialty medication"
     ],
     "how_we_help": "We help you compile your tumor receptor status, prior treatment history, and oncologist recommendations to demonstrate medical necessity for Datroway.",
-    "cta": "Start your Datroway appeal — it takes about 3 minutes.",
+    "cta": "Start your Datroway appeal \u2014 it takes about 3 minutes.",
     "faq": [
       {
         "question": "What prior treatments do I need for Datroway coverage?",
@@ -4426,6 +5325,18 @@
         "url": "https://www.datroway.com/",
         "description": "Patient support program offering reimbursement assistance and financial support. Visit Datroway4u.com or call 1-855-DAT-RO4U (1-855-328-7648)."
       }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "National Breast Cancer Coalition",
+        "url": "https://www.stopbreastcancer.org/",
+        "description": "Grassroots advocacy organization dedicated to ending breast cancer through research and policy."
+      },
+      {
+        "name": "Susan G. Komen",
+        "url": "https://www.komen.org/",
+        "description": "Leading breast cancer organization funding research and providing patient support."
+      }
     ]
   },
   "keytruda-qlex-denial": {
@@ -4447,7 +5358,7 @@
       "Cost difference concerns"
     ],
     "how_we_help": "We help you document why subcutaneous administration is beneficial for you, including reduced infusion time, venous access issues, or patient preference, while demonstrating equivalent efficacy.",
-    "cta": "Start your Keytruda Qlex appeal — it takes about 3 minutes.",
+    "cta": "Start your Keytruda Qlex appeal \u2014 it takes about 3 minutes.",
     "faq": [
       {
         "question": "Is Keytruda Qlex as effective as IV Keytruda?",
@@ -4479,6 +5390,23 @@
         "url": "https://www.merckaccessprogram-keytruda.com/",
         "description": "Co-pay assistance for eligible commercially insured patients. Patient assistance for uninsured/underinsured. Call 855-257-3932."
       }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "American Cancer Society",
+        "url": "https://www.cancer.org/",
+        "description": "Nationwide voluntary health organization providing cancer support, information, and advocacy."
+      },
+      {
+        "name": "CancerCare",
+        "url": "https://www.cancercare.org/",
+        "description": "Free professional support services including counseling, support groups, and financial assistance."
+      },
+      {
+        "name": "Cancer Support Community",
+        "url": "https://www.cancersupportcommunity.org/",
+        "description": "Largest professionally led nonprofit network of cancer support worldwide."
+      }
     ]
   },
   "inluriyo-denial": {
@@ -4500,7 +5428,7 @@
       "New drug with limited coverage policies"
     ],
     "how_we_help": "We help you compile your ESR1 mutation testing results, prior endocrine therapy history, and oncologist recommendations to demonstrate medical necessity.",
-    "cta": "Start your Inluriyo appeal — it takes about 3 minutes.",
+    "cta": "Start your Inluriyo appeal \u2014 it takes about 3 minutes.",
     "faq": [
       {
         "question": "What test do I need for Inluriyo coverage?",
@@ -4532,6 +5460,18 @@
         "url": "https://oncologysupport.lilly.com/",
         "description": "Copay assistance for commercially insured patients. Lilly Cares patient assistance for eligible uninsured patients. Call 1-866-472-8663."
       }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "National Breast Cancer Coalition",
+        "url": "https://www.stopbreastcancer.org/",
+        "description": "Grassroots advocacy organization dedicated to ending breast cancer through research and policy."
+      },
+      {
+        "name": "Susan G. Komen",
+        "url": "https://www.komen.org/",
+        "description": "Leading breast cancer organization funding research and providing patient support."
+      }
     ]
   },
   "forzinity-denial": {
@@ -4553,7 +5493,7 @@
       "New drug with limited experience"
     ],
     "how_we_help": "We help you document your Barth syndrome diagnosis, genetic testing results, cardiac function, muscle weakness, and how this condition impacts your daily life.",
-    "cta": "Start your Forzinity appeal — it takes about 3 minutes.",
+    "cta": "Start your Forzinity appeal \u2014 it takes about 3 minutes.",
     "faq": [
       {
         "question": "What is Barth syndrome?",
@@ -4585,6 +5525,18 @@
         "url": "https://www.stealthbt.com/",
         "description": "Patient support program for Forzinity offering access assistance and financial support for eligible patients."
       }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "National Organization for Rare Disorders (NORD)",
+        "url": "https://rarediseases.org/",
+        "description": "Leading patient advocacy organization for rare disease community."
+      },
+      {
+        "name": "Global Genes",
+        "url": "https://globalgenes.org/",
+        "description": "Leading rare disease patient advocacy organization connecting and empowering patients."
+      }
     ]
   },
   "nuzolvence-denial": {
@@ -4606,7 +5558,7 @@
       "Single-dose treatment cost concerns"
     ],
     "how_we_help": "We help you document your gonorrhea diagnosis, any antibiotic allergies, prior treatment failures, and why Nuzolvence is the appropriate choice for your infection.",
-    "cta": "Start your Nuzolvence appeal — it takes about 3 minutes.",
+    "cta": "Start your Nuzolvence appeal \u2014 it takes about 3 minutes.",
     "faq": [
       {
         "question": "When is Nuzolvence used instead of ceftriaxone?",
@@ -4653,7 +5605,7 @@
       "High-cost biologic medication"
     ],
     "how_we_help": "We help you document your AChR antibody status, MGFA classification, prior treatment history, and current disease severity to demonstrate medical necessity.",
-    "cta": "Start your Imaavy appeal — it takes about 3 minutes.",
+    "cta": "Start your Imaavy appeal \u2014 it takes about 3 minutes.",
     "faq": [
       {
         "question": "What antibody test do I need for Imaavy?",
@@ -4685,6 +5637,13 @@
         "url": "https://www.janssencarepath.com/",
         "description": "Copay assistance for eligible commercially insured patients. Patient assistance for uninsured. Call Janssen CarePath for details."
       }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "Myasthenia Gravis Foundation of America",
+        "url": "https://myasthenia.org/",
+        "description": "Largest patient advocacy organization solely focused on myasthenia gravis."
+      }
     ]
   },
   "vanrafia-denial": {
@@ -4706,7 +5665,7 @@
       "New drug with limited coverage policies"
     ],
     "how_we_help": "We help you document your kidney biopsy results, proteinuria levels, eGFR, current ACE inhibitor/ARB therapy, and risk factors for disease progression.",
-    "cta": "Start your Vanrafia appeal — it takes about 3 minutes.",
+    "cta": "Start your Vanrafia appeal \u2014 it takes about 3 minutes.",
     "faq": [
       {
         "question": "What documentation do I need?",
@@ -4738,6 +5697,18 @@
         "url": "https://www.travere.com/",
         "description": "Patient support program offering access and affordability assistance for eligible patients."
       }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "IgA Nephropathy Foundation of America",
+        "url": "https://www.iganephropathy.org/",
+        "description": "Foundation dedicated to IgA nephropathy awareness, research, and patient support."
+      },
+      {
+        "name": "National Kidney Foundation",
+        "url": "https://www.kidney.org/",
+        "description": "Leading kidney health organization with advocacy and patient resources."
+      }
     ]
   },
   "enflonsia-denial": {
@@ -4759,7 +5730,7 @@
       "New drug with limited coverage policies"
     ],
     "how_we_help": "We help you document your infant's RSV risk factors, age eligibility, and why RSV prevention is medically necessary for protecting your baby.",
-    "cta": "Start your Enflonsia appeal — it takes about 3 minutes.",
+    "cta": "Start your Enflonsia appeal \u2014 it takes about 3 minutes.",
     "faq": [
       {
         "question": "Which infants are eligible for RSV prevention?",
@@ -4791,6 +5762,13 @@
         "url": "https://www.merck.com/company-overview/responsibility/access-to-health/patient-assistance-programs/",
         "description": "Merck offers patient assistance programs for eligible patients. Contact Merck for Enflonsia-specific assistance information."
       }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "American Lung Association",
+        "url": "https://www.lung.org/",
+        "description": "Leading organization fighting lung disease including RSV through research and advocacy."
+      }
     ]
   },
   "abbott-volt-pfa-denial": {
@@ -4812,7 +5790,7 @@
       "New technology coverage limitations"
     ],
     "how_we_help": "We help you document your atrial fibrillation diagnosis, symptoms, failed medical management, and why catheter ablation with PFA technology is appropriate for you.",
-    "cta": "Start your Abbott Volt PFA appeal — it takes about 3 minutes.",
+    "cta": "Start your Abbott Volt PFA appeal \u2014 it takes about 3 minutes.",
     "faq": [
       {
         "question": "What is pulsed field ablation?",
@@ -4838,7 +5816,14 @@
       "PFA catheter ablation AFib outcomes",
       "tissue selectivity pulsed field ablation"
     ],
-    "assistance_programs": []
+    "assistance_programs": [],
+    "advocacy_resources": [
+      {
+        "name": "StopAfib.org",
+        "url": "https://www.stopafib.org/",
+        "description": "Patient advocacy organization founded by and for afib patients."
+      }
+    ]
   },
   "edwards-sapien-m3-denial": {
     "slug": "edwards-sapien-m3-denial",
@@ -4859,7 +5844,7 @@
       "New technology coverage limitations"
     ],
     "how_we_help": "We help you document your mitral regurgitation severity, symptoms, heart team evaluation, reasons for surgical ineligibility, and why TMVR is your best option.",
-    "cta": "Start your Edwards SAPIEN M3 appeal — it takes about 3 minutes.",
+    "cta": "Start your Edwards SAPIEN M3 appeal \u2014 it takes about 3 minutes.",
     "faq": [
       {
         "question": "Who is eligible for SAPIEN M3?",
@@ -4885,7 +5870,19 @@
       "TMVR SAPIEN mitral regurgitation",
       "inoperable mitral regurgitation treatment"
     ],
-    "assistance_programs": []
+    "assistance_programs": [],
+    "advocacy_resources": [
+      {
+        "name": "American Heart Association",
+        "url": "https://www.heart.org/",
+        "description": "Leading nonprofit fighting heart disease through education, advocacy, and research."
+      },
+      {
+        "name": "Mended Hearts",
+        "url": "https://mendedhearts.org/",
+        "description": "Peer support network for heart patients and their families."
+      }
+    ]
   },
   "setpoint-vns-denial": {
     "slug": "setpoint-vns-denial",
@@ -4906,7 +5903,7 @@
       "Facility/surgeon not approved"
     ],
     "how_we_help": "We help you document your RA history, all prior DMARDs and biologics tried, disease activity scores, and why bioelectronic therapy is appropriate after failing multiple medications.",
-    "cta": "Start your SetPoint VNS appeal — it takes about 3 minutes.",
+    "cta": "Start your SetPoint VNS appeal \u2014 it takes about 3 minutes.",
     "faq": [
       {
         "question": "What is vagus nerve stimulation for RA?",
@@ -4938,6 +5935,13 @@
         "url": "https://www.setpointmedical.com/",
         "description": "SetPoint is working with payers to establish coverage. Contact SetPoint Medical for information on access and financial assistance options."
       }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "Arthritis Foundation",
+        "url": "https://www.arthritis.org/",
+        "description": "Nationwide advocacy, support, and research organization for all forms of arthritis."
+      }
     ]
   },
   "flow-tdcs-depression-denial": {
@@ -4959,7 +5963,7 @@
       "Provider prescription requirements"
     ],
     "how_we_help": "We help you document your depression history, prior antidepressant trials, reasons for seeking non-medication treatment, and how the Flow device fits your treatment plan.",
-    "cta": "Start your Flow tDCS appeal — it takes about 3 minutes.",
+    "cta": "Start your Flow tDCS appeal \u2014 it takes about 3 minutes.",
     "faq": [
       {
         "question": "What is tDCS?",
@@ -4991,6 +5995,18 @@
         "url": "https://www.flowneuroscience.com/",
         "description": "Flow is available for direct purchase while insurance coverage develops. Contact Flow Neuroscience for current pricing and any available payment plans."
       }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "NAMI - National Alliance on Mental Illness",
+        "url": "https://www.nami.org/",
+        "description": "Nation's largest grassroots mental health organization. HelpLine: 1-800-950-NAMI."
+      },
+      {
+        "name": "Depression and Bipolar Support Alliance",
+        "url": "https://www.dbsalliance.org/",
+        "description": "Peer-based support and education for people with depression and bipolar disorder."
+      }
     ]
   },
   "teal-wand-hpv-denial": {
@@ -5012,7 +6028,7 @@
       "Telehealth service limitations"
     ],
     "how_we_help": "We help you document why at-home screening is necessary for you, including access barriers, anxiety about pelvic exams, or history of non-compliance with traditional screening.",
-    "cta": "Start your Teal Wand appeal — it takes about 3 minutes.",
+    "cta": "Start your Teal Wand appeal \u2014 it takes about 3 minutes.",
     "faq": [
       {
         "question": "How does the Teal Wand work?",
@@ -5044,6 +6060,18 @@
         "url": "https://www.tealhealth.com/",
         "description": "Teal Health offers the Teal Wand through their telehealth service. Contact Teal Health for current pricing and insurance coverage information."
       }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "National Cervical Cancer Coalition",
+        "url": "https://www.nccc-online.org/",
+        "description": "Grassroots nonprofit advocating for cervical cancer prevention and awareness."
+      },
+      {
+        "name": "Foundation for Women's Cancer",
+        "url": "https://www.foundationforwomenscancer.org/",
+        "description": "Supporting women with gynecologic cancers through research and education."
+      }
     ]
   },
   "physical-therapy-denial": {
@@ -5064,7 +6092,7 @@
       "Prior authorization not obtained"
     ],
     "how_we_help": "We help you document your functional limitations, treatment goals, objective progress measures, and why continued physical therapy is necessary to prevent decline or achieve further meaningful improvement.",
-    "cta": "Start your physical therapy appeal — it takes about 3 minutes.",
+    "cta": "Start your physical therapy appeal \u2014 it takes about 3 minutes.",
     "faq": [
       {
         "question": "My insurer says I've plateaued. Can I still appeal?",
@@ -5089,6 +6117,13 @@
       "physical therapy effectiveness musculoskeletal",
       "post-surgical rehabilitation outcomes",
       "physical therapy visit frequency outcomes"
+    ],
+    "advocacy_resources": [
+      {
+        "name": "American Physical Therapy Association",
+        "url": "https://www.apta.org/",
+        "description": "Professional organization advocating for physical therapy access and coverage."
+      }
     ]
   },
   "bilateral-orchiectomy-denial": {
@@ -5110,7 +6145,7 @@
       "Out-of-network surgeon"
     ],
     "how_we_help": "We help you document your gender dysphoria diagnosis, treatment history, mental health evaluations, and how this procedure is medically necessary per WPATH Standards of Care.",
-    "cta": "Start your orchiectomy appeal — it takes about 3 minutes.",
+    "cta": "Start your orchiectomy appeal \u2014 it takes about 3 minutes.",
     "faq": [
       {
         "question": "Is orchiectomy considered medically necessary?",
@@ -5135,6 +6170,23 @@
       "orchiectomy gender dysphoria outcomes",
       "gender-affirming surgery quality of life",
       "transgender surgical treatment mental health"
+    ],
+    "advocacy_resources": [
+      {
+        "name": "National Center for Transgender Equality",
+        "url": "https://transequality.org/",
+        "description": "Nation's leading social justice advocacy organization for transgender people."
+      },
+      {
+        "name": "Transgender Law Center",
+        "url": "https://transgenderlawcenter.org/",
+        "description": "Legal organization advocating for transgender rights and providing legal resources."
+      },
+      {
+        "name": "WPATH",
+        "url": "https://www.wpath.org/",
+        "description": "World Professional Association for Transgender Health - promotes evidence-based care and standards."
+      }
     ]
   },
   "clonoseq-mrd-testing-denial": {
@@ -5157,7 +6209,7 @@
       "Prior authorization not obtained"
     ],
     "how_we_help": "We help you document your cancer diagnosis, treatment history, and how MRD testing will guide your treatment decisions and monitoring.",
-    "cta": "Start your clonoSEQ appeal — it takes about 3 minutes.",
+    "cta": "Start your clonoSEQ appeal \u2014 it takes about 3 minutes.",
     "faq": [
       {
         "question": "Is clonoSEQ covered by Medicare?",
@@ -5189,6 +6241,18 @@
         "url": "https://www.clonoseq.com/adaptive-assist/",
         "description": "90% of patients have no out-of-pocket costs. Adaptive Assist helps with insurance navigation and financial assistance for qualified patients. Call 1-855-236-9230."
       }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "Leukemia & Lymphoma Society",
+        "url": "https://www.lls.org/",
+        "description": "World's largest voluntary health agency dedicated to blood cancer research and patient support."
+      },
+      {
+        "name": "International Myeloma Foundation",
+        "url": "https://www.myeloma.org/",
+        "description": "Largest organization focusing specifically on multiple myeloma research and patient education."
+      }
     ]
   },
   "botox-denial": {
@@ -5210,7 +6274,7 @@
       "Not covered for this indication"
     ],
     "how_we_help": "We help you document your medical diagnosis, failed prior treatments, and how Botox is being used for an FDA-approved or medically necessary indication, not cosmetic purposes.",
-    "cta": "Start your Botox appeal — it takes about 3 minutes.",
+    "cta": "Start your Botox appeal \u2014 it takes about 3 minutes.",
     "faq": [
       {
         "question": "What medical conditions is Botox approved for?",
@@ -5242,6 +6306,18 @@
         "url": "https://www.botoxsavingsprogram.com/",
         "description": "Eligible commercially insured patients may pay as little as $0 per treatment. Savings limits apply."
       }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "American Migraine Foundation",
+        "url": "https://americanmigrainefoundation.org/",
+        "description": "Resources for Botox coverage for chronic migraine."
+      },
+      {
+        "name": "Dystonia Medical Research Foundation",
+        "url": "https://dystonia-foundation.org/",
+        "description": "Leading organization for dystonia research and patient support."
+      }
     ]
   },
   "breast-reduction-denial": {
@@ -5262,7 +6338,7 @@
       "Prior authorization not obtained"
     ],
     "how_we_help": "We help you document your physical symptoms, functional limitations, failed conservative treatments, and the weight of tissue to be removed according to your insurer's criteria.",
-    "cta": "Start your breast reduction appeal — it takes about 3 minutes.",
+    "cta": "Start your breast reduction appeal \u2014 it takes about 3 minutes.",
     "faq": [
       {
         "question": "What gram weight requirements do insurers typically have?",
@@ -5308,7 +6384,7 @@
       "Duplicate testing"
     ],
     "how_we_help": "We help you document your cardiovascular risk factors, family history, and why advanced testing beyond standard lipid panels is necessary to guide your treatment.",
-    "cta": "Start your cardiovascular panel appeal — it takes about 3 minutes.",
+    "cta": "Start your cardiovascular panel appeal \u2014 it takes about 3 minutes.",
     "faq": [
       {
         "question": "What tests are included in advanced cardiovascular panels?",
@@ -5333,6 +6409,18 @@
       "Lp(a) cardiovascular risk prediction",
       "advanced lipid panel clinical utility",
       "apolipoprotein B cardiovascular outcomes"
+    ],
+    "advocacy_resources": [
+      {
+        "name": "American Heart Association",
+        "url": "https://www.heart.org/",
+        "description": "Leading nonprofit fighting heart disease and stroke through education and advocacy."
+      },
+      {
+        "name": "FH Foundation",
+        "url": "https://thefhfoundation.org/",
+        "description": "Advocacy organization for familial hypercholesterolemia awareness and testing."
+      }
     ]
   },
   "breast-augmentation-trans-denial": {
@@ -5354,7 +6442,7 @@
       "Out-of-network surgeon"
     ],
     "how_we_help": "We help you document your gender dysphoria diagnosis, hormone therapy history, inadequate breast development on hormones, and how this surgery is medically necessary per WPATH guidelines.",
-    "cta": "Start your breast augmentation appeal — it takes about 3 minutes.",
+    "cta": "Start your breast augmentation appeal \u2014 it takes about 3 minutes.",
     "faq": [
       {
         "question": "When is breast augmentation considered medically necessary?",
@@ -5379,6 +6467,23 @@
       "breast augmentation transgender outcomes",
       "gender-affirming surgery quality of life",
       "hormone therapy breast development transgender"
+    ],
+    "advocacy_resources": [
+      {
+        "name": "National Center for Transgender Equality",
+        "url": "https://transequality.org/",
+        "description": "Nation's leading social justice advocacy organization for transgender people."
+      },
+      {
+        "name": "Transgender Law Center",
+        "url": "https://transgenderlawcenter.org/",
+        "description": "Legal organization advocating for transgender rights and providing legal resources."
+      },
+      {
+        "name": "WPATH",
+        "url": "https://www.wpath.org/",
+        "description": "World Professional Association for Transgender Health - promotes evidence-based care and standards."
+      }
     ]
   },
   "breast-reconstruction-cancer-denial": {
@@ -5400,7 +6505,7 @@
       "Nipple reconstruction denied"
     ],
     "how_we_help": "We help you cite the Women's Health and Cancer Rights Act and document that your reconstruction is a federally protected benefit that your insurer must cover.",
-    "cta": "Start your breast reconstruction appeal — it takes about 3 minutes.",
+    "cta": "Start your breast reconstruction appeal \u2014 it takes about 3 minutes.",
     "faq": [
       {
         "question": "What does the Women's Health and Cancer Rights Act cover?",
@@ -5425,6 +6530,18 @@
       "breast reconstruction quality of life",
       "mastectomy reconstruction outcomes",
       "WHCRA breast reconstruction coverage"
+    ],
+    "advocacy_resources": [
+      {
+        "name": "National Breast Cancer Coalition",
+        "url": "https://www.stopbreastcancer.org/",
+        "description": "Grassroots advocacy organization dedicated to ending breast cancer through research and policy."
+      },
+      {
+        "name": "Susan G. Komen",
+        "url": "https://www.komen.org/",
+        "description": "Leading breast cancer organization funding research and providing patient support."
+      }
     ]
   },
   "xphozah-denial": {
@@ -5447,7 +6564,7 @@
       "Inadequate documentation of binder failure"
     ],
     "how_we_help": "We help you document your phosphorus levels, why traditional phosphate binders have failed or are inadequate, and how Xphozah's unique mechanism of action addresses your needs.",
-    "cta": "Start your Xphozah appeal — it takes about 3 minutes.",
+    "cta": "Start your Xphozah appeal \u2014 it takes about 3 minutes.",
     "faq": [
       {
         "question": "How is Xphozah different from phosphate binders?",
@@ -5479,6 +6596,18 @@
         "url": "https://xphozah.com/",
         "description": "ArdelyxAssist provides insurance navigation, copay assistance, and patient assistance for eligible patients. Call 877-527-3927."
       }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "American Kidney Fund",
+        "url": "https://www.kidneyfund.org/",
+        "description": "Leading kidney nonprofit fighting kidney disease through patient services and advocacy."
+      },
+      {
+        "name": "National Kidney Foundation",
+        "url": "https://www.kidney.org/",
+        "description": "75 years of impact in kidney health through advocacy, research, and education."
+      }
     ]
   },
   "vasectomy-denial": {
@@ -5499,7 +6628,7 @@
       "Cooling-off period not completed"
     ],
     "how_we_help": "We help you document why vasectomy is a covered benefit under your plan and cite state laws or plan provisions that require contraception coverage.",
-    "cta": "Start your vasectomy appeal — it takes about 3 minutes.",
+    "cta": "Start your vasectomy appeal \u2014 it takes about 3 minutes.",
     "faq": [
       {
         "question": "Does the ACA require vasectomy coverage?",
@@ -5524,6 +6653,13 @@
       "vasectomy safety efficacy",
       "male sterilization cost effectiveness",
       "vasectomy contraception outcomes"
+    ],
+    "advocacy_resources": [
+      {
+        "name": "Planned Parenthood",
+        "url": "https://www.plannedparenthood.org/",
+        "description": "Leading reproductive health organization advocating for contraception access."
+      }
     ]
   },
   "sleeve-gastrectomy-denial": {
@@ -5545,11 +6681,11 @@
       "Preferred procedure is different surgery"
     ],
     "how_we_help": "We help you document your BMI history, obesity-related comorbidities, failed weight loss attempts, and completion of pre-surgical requirements.",
-    "cta": "Start your sleeve gastrectomy appeal — it takes about 3 minutes.",
+    "cta": "Start your sleeve gastrectomy appeal \u2014 it takes about 3 minutes.",
     "faq": [
       {
         "question": "What BMI is typically required for coverage?",
-        "answer": "Most insurers require BMI ≥40, or BMI ≥35 with obesity-related conditions like type 2 diabetes, sleep apnea, or hypertension. Some newer guidelines support surgery at lower BMIs with metabolic disease."
+        "answer": "Most insurers require BMI \u226540, or BMI \u226535 with obesity-related conditions like type 2 diabetes, sleep apnea, or hypertension. Some newer guidelines support surgery at lower BMIs with metabolic disease."
       },
       {
         "question": "What pre-surgical requirements are typical?",
@@ -5570,6 +6706,13 @@
       "sleeve gastrectomy outcomes weight loss",
       "bariatric surgery diabetes resolution",
       "laparoscopic sleeve gastrectomy safety efficacy"
+    ],
+    "advocacy_resources": [
+      {
+        "name": "Obesity Action Coalition",
+        "url": "https://www.obesityaction.org/",
+        "description": "National nonprofit empowering those affected by obesity through advocacy, education and support."
+      }
     ]
   },
   "toenail-surgery-denial": {
@@ -5590,7 +6733,7 @@
       "Frequency limits on nail procedures"
     ],
     "how_we_help": "We help you document your nail condition, pain levels, failed conservative treatments, infection history, and functional impact to prove medical necessity.",
-    "cta": "Start your toenail surgery appeal — it takes about 3 minutes.",
+    "cta": "Start your toenail surgery appeal \u2014 it takes about 3 minutes.",
     "faq": [
       {
         "question": "When is toenail surgery medically necessary?",
@@ -5633,10 +6776,10 @@
       "Prior authorization required",
       "Facility not covered",
       "Diagnosis code issues",
-      "Not preventive—diagnostic frequency limits"
+      "Not preventive\u2014diagnostic frequency limits"
     ],
     "how_we_help": "We help you document your osteoporosis risk factors, fracture history, medication use, and why screening or monitoring is medically necessary at this time.",
-    "cta": "Start your DEXA scan appeal — it takes about 3 minutes.",
+    "cta": "Start your DEXA scan appeal \u2014 it takes about 3 minutes.",
     "faq": [
       {
         "question": "Who should get DEXA screening?",
@@ -5661,6 +6804,13 @@
       "DEXA bone density screening recommendations",
       "osteoporosis screening fracture prevention",
       "bone densitometry clinical utility"
+    ],
+    "advocacy_resources": [
+      {
+        "name": "Bone Health & Osteoporosis Foundation",
+        "url": "https://www.bonehealthandosteoporosis.org/",
+        "description": "40 years of commitment to preventing osteoporosis through education and advocacy."
+      }
     ]
   }
 }
