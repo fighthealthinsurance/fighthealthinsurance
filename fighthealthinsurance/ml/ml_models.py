@@ -2302,7 +2302,7 @@ class TailscaleModelBackend(RemoteFullOpenLike):
     def quality(self) -> int:
         return 150  # Higher quality since these are dedicated hosts
 
-    def __init__(self, model: str, host: str, port: str = "80"):
+    def __init__(self, model: str, host: str, port: str = "8000"):
         self.host = host
         self.port = port
         self.url = f"http://{host}:{port}/v1"
