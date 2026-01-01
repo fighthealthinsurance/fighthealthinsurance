@@ -281,17 +281,17 @@ class AppealGenerator(object):
         try:
             from fighthealthinsurance.models import InsuranceCompany
             from asgiref.sync import sync_to_async
-            
+
             # Get all insurance companies from database
             companies = await sync_to_async(list)(
-                InsuranceCompany.objects.values_list('name', 'alt_names')
+                InsuranceCompany.objects.values_list("name", "alt_names")
             )
-            
+
             for name, alt_names in companies:
                 known_companies.append(name)
                 if alt_names:
                     # Add alternative names too
-                    for alt_name in alt_names.split('\n'):
+                    for alt_name in alt_names.split("\n"):
                         alt_name = alt_name.strip()
                         if alt_name:
                             known_companies.append(alt_name)
