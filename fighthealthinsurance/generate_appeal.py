@@ -286,7 +286,6 @@ class AppealGenerator(object):
             companies = await sync_to_async(
                 lambda: list(InsuranceCompany.objects.values_list("name", "alt_names"))
             )()
-
             for name, alt_names in companies:
                 known_companies.append(name)
                 if alt_names:
