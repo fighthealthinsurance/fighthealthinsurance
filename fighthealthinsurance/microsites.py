@@ -214,7 +214,11 @@ def get_microsite(slug: str) -> Optional[Microsite]:
         Microsite object if found, None otherwise
     """
     microsites = load_microsites()
-    return microsites.get(slug)
+    result = microsites.get(slug)
+    if result is not None:
+        return result
+    else:
+        return microsites.get(f"{slug}-denial")
 
 
 def get_all_microsites() -> dict[str, Microsite]:
