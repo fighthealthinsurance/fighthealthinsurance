@@ -2368,9 +2368,6 @@ class TailscaleModelBackend(RemoteFullOpenLike):
             logger.debug(f"Skipping {hostname}: {e}")
             return None
 
-    def quality(self) -> int:
-        return 500
-
     @classmethod
     def models(cls) -> List[ModelDescription]:
         """Discover available models via Tailscale DNS."""

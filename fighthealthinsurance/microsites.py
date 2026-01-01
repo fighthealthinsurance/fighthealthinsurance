@@ -90,6 +90,15 @@ class Microsite:
         # Optional blog post URL to link to related blog content
         self.blog_post_url: Optional[str] = data.get("blog_post_url")
 
+        # Optional manufacturer name (for drug/device microsites)
+        self.manufacturer: Optional[str] = data.get("manufacturer")
+
+        # Optional advocacy resources (patient advocacy groups, support organizations)
+        # Each entry should have: name, url, description
+        self.advocacy_resources: list[dict[str, str]] = data.get(
+            "advocacy_resources", []
+        )
+
     def __repr__(self) -> str:
         return f"<Microsite: {self.slug}>"
 
@@ -205,7 +214,19 @@ def get_microsite(slug: str) -> Optional[Microsite]:
         Microsite object if found, None otherwise
     """
     microsites = load_microsites()
-    return microsites.get(slug)
+    result = microsites.get(slug)
+    if result is not None:
+        return result
+    result = microsites.get(f"{slug}-denial")
+    if result is not None:
+        return result
+    result = microsites.get(slug.replace("-denial", ""))
+    if result is not None:
+        return result
+    result = microsites.get(slug.replace("-denial", "") + "-denial")
+    if result is not None:
+        return result
+    return None
 
 
 def get_all_microsites() -> dict[str, Microsite]:

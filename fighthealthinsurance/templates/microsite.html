@@ -191,6 +191,35 @@
 </section>
 {% endif %}
 
+<!-- Advocacy Resources Section -->
+{% if microsite.advocacy_resources %}
+<section id="advocacy-resources" class="py-5">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <h2 class="text-center mb-4">Patient Advocacy &amp; Support Organizations</h2>
+                <p class="text-center text-muted mb-4">These organizations provide education, support, and advocacy for patients:</p>
+                <div class="advocacy-resources-list">
+                    {% for resource in microsite.advocacy_resources %}
+                    <div class="card mb-3 advocacy-card">
+                        <div class="card-body">
+                            <h5 class="card-title mb-2">
+                                <a href="{{ resource.url }}" target="_blank" rel="noopener noreferrer" class="advocacy-link">
+                                    {{ resource.name }}
+                                    <i class="text-muted ms-1 icon-external-sm">&#8599;</i>
+                                </a>
+                            </h5>
+                            <p class="card-text text-muted mb-0">{{ resource.description }}</p>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+{% endif %}
+
 <!-- FAQ Section -->
 {% if microsite.faq %}
 <section id="faq" class="py-5">
@@ -269,7 +298,7 @@
             <div class="col-lg-8 mx-auto">
                 <div class="disclaimer-box p-3 bg-light border rounded">
                     <p class="text-muted small mb-0">
-                        <strong>Disclaimer:</strong> Fight Health Insurance is not affiliated with, endorsed by, or partnered with any pharmaceutical manufacturer, healthcare provider, medical device company, or patient assistance program. All information provided is for educational and informational purposes only and does not constitute medical or legal advice. Please consult with your healthcare provider regarding treatment options and with your insurance company regarding coverage decisions.
+                        <strong>Disclaimer:</strong> Fight Health Insurance is not affiliated with, endorsed by, or partnered with any pharmaceutical manufacturer, healthcare provider, medical device company, or patient assistance program{% if microsite.manufacturer %}, including {{ microsite.manufacturer }}{% endif %}. All information provided is for educational and informational purposes only and does not constitute medical or legal advice. Please consult with your healthcare provider regarding treatment options and with your insurance company regarding coverage decisions.
                     </p>
                 </div>
             </div>
@@ -360,6 +389,25 @@
 
     .assistance-link:hover {
         color: #563d7c;
+        text-decoration: underline;
+    }
+
+    .advocacy-resources-list .advocacy-card {
+        border-left: 4px solid #0d6efd;
+        transition: box-shadow 0.2s ease;
+    }
+
+    .advocacy-resources-list .advocacy-card:hover {
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    }
+
+    .advocacy-link {
+        color: #0d6efd;
+        text-decoration: none;
+    }
+
+    .advocacy-link:hover {
+        color: #0a58ca;
         text-decoration: underline;
     }
 
