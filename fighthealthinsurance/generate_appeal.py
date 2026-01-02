@@ -549,6 +549,7 @@ class AppealGenerator(object):
         plan_id=None,
         claim_id=None,
         insurance_company=None,
+        is_tpa=False,
         ml_context=None,
         pubmed_context=None,
         plan_context=None,
@@ -634,6 +635,8 @@ class AppealGenerator(object):
             and insurance_company != "UNKNOWN"
         ):
             base = f"{base}. Please include and fill in any references to the insurance company to be {insurance_company}."
+            if is_tpa:
+                base = f"{base} Note: This insurance company is a Third-Party Administrator (TPA) for self-funded employer plans, which are typically governed by ERISA (Employee Retirement Income Security Act). ERISA plans have specific appeal requirements and timelines. The employer is the plan fiduciary and ultimately responsible for coverage decisions, though the TPA administers claims."
         if (
             claim_id is not None
             and claim_id != ""
@@ -700,6 +703,13 @@ class AppealGenerator(object):
         if non_ai_appeals is None:
             non_ai_appeals = []
 
+        # Prefer structured insurance company name if available, but keep text as fallback
+        insurance_company_name = denial.insurance_company
+        is_tpa = False
+        if denial.insurance_company_obj is not None:
+            insurance_company_name = denial.insurance_company_obj.name
+            is_tpa = denial.insurance_company_obj.is_tpa
+
         open_prompt = self.make_open_prompt(
             denial_text=denial.denial_text,
             procedure=denial.procedure,
@@ -710,7 +720,8 @@ class AppealGenerator(object):
             professional_to_finish=denial.professional_to_finish,
             plan_id=denial.plan_id,
             claim_id=denial.claim_id,
-            insurance_company=denial.insurance_company,
+            insurance_company=insurance_company_name,
+            is_tpa=is_tpa,
             ml_context=denial.ml_citation_context,
             pubmed_context=denial.pubmed_context,
             plan_context=plan_context,

@@ -685,6 +685,8 @@ class FindNextStepsHelper:
         in_network: Optional[bool] = None,
         single_case: Optional[bool] = None,
         prof_pov: Optional[bool] = False,
+        insurance_company_obj: Optional["InsuranceCompany"] = None,
+        insurance_plan_obj: Optional["InsurancePlan"] = None,
     ) -> NextStepInfo:
         hashed_email = Denial.get_hashed_email(email)
         # Update the denial
@@ -729,6 +731,10 @@ class FindNextStepsHelper:
         outside_help_details = cls._get_outside_help_details(denial, your_state)
 
         denial.insurance_company = insurance_company
+        if insurance_company_obj is not None:
+            denial.insurance_company_obj = insurance_company_obj
+        if insurance_plan_obj is not None:
+            denial.insurance_plan_obj = insurance_plan_obj
         denial.plan_id = plan_id
         denial.claim_id = claim_id
         if denial_type_text is not None:
