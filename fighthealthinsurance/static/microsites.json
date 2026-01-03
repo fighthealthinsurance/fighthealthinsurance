@@ -2902,7 +2902,8 @@
         "url": "https://www.abbvie.com/patients/patient-assistance.html",
         "description": "Patient assistance for uninsured or underinsured patients who qualify based on income."
       }
-    ]
+    ],
+    "extra_links": ["https://www.humira.com/content/dam/admphumira/HCP/pdf/formulary-exception-request-letter-pr.docx"]
   },
   "stelara-formulary-removal": {
     "slug": "stelara-formulary-removal",
@@ -2959,60 +2960,8 @@
         "url": "https://www.jnjpaf.org/",
         "description": "Patient assistance for uninsured or underinsured patients who meet income requirements."
       }
-    ]
-  },
-  "entyvio-formulary-removal": {
-    "slug": "entyvio-formulary-removal",
-    "title": "Appealing Entyvio (Vedolizumab) Formulary Removal",
-    "default_procedure": "Entyvio (Vedolizumab) Continuity of Care",
-    "default_condition": "Inflammatory Bowel Disease",
-    "tagline": "Stable on Entyvio for IBD? Fight for continued coverage.",
-    "hero_h1": "Fight Your Entyvio Formulary Removal",
-    "hero_subhead": "Express Scripts is excluding Entyvio IV in 2026 — but you can appeal especially for continuity of care.",
-    "intro": "Express Scripts is excluding Entyvio IV from the National Preferred Formulary effective 2026. If you have Crohn's disease or ulcerative colitis and are stable on Entyvio, you may have rights under continuity of care regulations.",
-    "common_denial_reasons": [
-      "Entyvio IV excluded from formulary effective July 2026",
-      "Plan requires switch to alternative biologic",
-      "Prior authorization now required",
-      "Non-formulary exception denied"
     ],
-    "how_we_help": "We help you document your IBD treatment history with Entyvio, explain why switching biologics may trigger disease flares, and cite federal and state laws that protect stable patients from forced medication changes.",
-    "cta": "Start your Entyvio continuity of care appeal.",
-    "faq": [
-      {
-        "question": "Why is this particularly concerning for IBD patients?",
-        "answer": "Switching biologics in IBD can trigger disease flares, and patients may develop antibodies that make returning to their original medication difficult. Your appeal should emphasize the risks of switching when stable."
-      },
-      {
-        "question": "What alternatives might my plan prefer?",
-        "answer": "Plans may push for other biologics or JAK inhibitors. Your appeal can explain why Entyvio's gut-selective mechanism is specifically appropriate for your case, especially if you've tried other medications."
-      },
-      {
-        "question": "Can I get Entyvio covered even after exclusion?",
-        "answer": "Yes. You can request a non-formulary exception based on medical necessity. Your gastroenterologist should provide a letter explaining why Entyvio specifically is needed."
-      }
-    ],
-    "evidence_snippets": [
-      "Vedolizumab (Entyvio) has a gut-selective mechanism of action, which may offer advantages for patients who have failed or are intolerant to systemic immunosuppressants.",
-      "Switching biologics in IBD carries risk of disease flare, loss of response, and development of anti-drug antibodies."
-    ],
-    "pubmed_search_terms": [
-      "vedolizumab inflammatory bowel disease switching biologics outcomes",
-      "IBD biologic switching disease flare anti-drug antibodies",
-      "vedolizumab gut selective mechanism ulcerative colitis Crohn"
-    ],
-    "assistance_programs": [
-      {
-        "name": "EntyvioConnect",
-        "url": "https://www.entyvio.com/copay-support",
-        "description": "Eligible patients with commercial insurance may pay as little as $5 per infusion. Not for government insurance."
-      },
-      {
-        "name": "Takeda Patient Assistance Program",
-        "url": "https://www.takeda.com/en-us/what-we-do/patient-services/",
-        "description": "Patient assistance for uninsured or underinsured patients who qualify."
-      }
-    ]
+    "extra_links": ["https://www.stelarainfo.com/files/cp-385680v1_VFTC_Voice_For_Treatment_Choice_Understanding_Exception_Letters.pdf"]
   },
   "skyrizi-formulary-removal": {
     "slug": "skyrizi-formulary-removal",
@@ -3058,7 +3007,8 @@
         "url": "https://www.abbvie.com/patients/patient-assistance.html",
         "description": "Patient assistance for uninsured or underinsured patients who qualify based on income."
       }
-    ]
+    ],
+    "extra_links": ["https://www.skyrizihcp.com/content/dam/skyrizihcpivy/docs/ulcerative-colitis/Formulary-Exception-Letter-Instructions.pdf"]
   },
   "tremfya-formulary-removal": {
     "slug": "tremfya-formulary-removal",
@@ -3099,7 +3049,8 @@
         "url": "https://www.jnjpaf.org/",
         "description": "Patient assistance for uninsured or underinsured patients who meet income requirements."
       }
-    ]
+    ],
+    "extra_links": ["https://asset.jnjwithme.com/document/tremfya-sample-exception-letter.docx"]
   },
   "skilled-nursing-denial": {
     "slug": "skilled-nursing-denial",
