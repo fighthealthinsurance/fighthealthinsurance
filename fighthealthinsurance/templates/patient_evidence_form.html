@@ -1,0 +1,156 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}{% if editing %}Edit{% else %}Add{% endif %} Evidence - Fight Health Insurance{% endblock title %}
+{% block metatitle %}{% if editing %}Edit{% else %}Add{% endif %} Evidence - Fight Health Insurance{% endblock metatitle %}
+{% block metadescription %}Upload documents, screenshots, and notes to support your insurance appeal.{% endblock metadescription %}
+
+{% block content %}
+<div class="container mt-4" style="margin-top: 12vh !important;">
+    <div class="row">
+        <div class="col-lg-8 mx-auto">
+            <!-- Breadcrumb -->
+            <nav aria-label="breadcrumb" class="mb-3">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="{% url 'patient-dashboard' %}">Dashboard</a></li>
+                    <li class="breadcrumb-item active" aria-current="page">{% if editing %}Edit{% else %}Add{% endif %} Evidence</li>
+                </ol>
+            </nav>
+
+            <div class="card">
+                <div class="card-header">
+                    <h4 class="mb-0">{% if editing %}Edit{% else %}Add{% endif %} Evidence</h4>
+                </div>
+                <div class="card-body">
+                    <!-- Tips -->
+                    <div class="alert alert-info mb-4">
+                        <h6 class="alert-heading">What makes good evidence?</h6>
+                        <ul class="mb-0 small">
+                            <li><strong>Explanation of Benefits (EOBs)</strong> - Shows what was billed vs. paid</li>
+                            <li><strong>Denial letters</strong> - The original denial and any correspondence</li>
+                            <li><strong>Medical records</strong> - Notes from your doctor supporting medical necessity</li>
+                            <li><strong>Screenshots</strong> - Insurance website showing coverage details</li>
+                            <li><strong>Research</strong> - Clinical guidelines or studies supporting your treatment</li>
+                        </ul>
+                    </div>
+
+                    <form method="post" enctype="multipart/form-data" novalidate>
+                        {% csrf_token %}
+
+                        <!-- Evidence Type & Title -->
+                        <div class="row mb-3">
+                            <div class="col-md-4">
+                                <label for="id_evidence_type" class="form-label">{{ form.evidence_type.label }} <span class="text-danger">*</span></label>
+                                {{ form.evidence_type }}
+                                {% if form.evidence_type.errors %}
+                                <div class="invalid-feedback d-block">{{ form.evidence_type.errors.0 }}</div>
+                                {% endif %}
+                            </div>
+                            <div class="col-md-8">
+                                <label for="id_title" class="form-label">{{ form.title.label }} <span class="text-danger">*</span></label>
+                                {{ form.title }}
+                                {% if form.title.errors %}
+                                <div class="invalid-feedback d-block">{{ form.title.errors.0 }}</div>
+                                {% endif %}
+                            </div>
+                        </div>
+
+                        <!-- Description -->
+                        <div class="mb-3">
+                            <label for="id_description" class="form-label">{{ form.description.label }}</label>
+                            {{ form.description }}
+                        </div>
+
+                        <!-- Date & Source -->
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <label for="id_date_of_evidence" class="form-label">{{ form.date_of_evidence.label }}</label>
+                                {{ form.date_of_evidence }}
+                                {% if form.date_of_evidence.help_text %}
+                                <div class="form-text">{{ form.date_of_evidence.help_text }}</div>
+                                {% endif %}
+                            </div>
+                            <div class="col-md-6">
+                                <label for="id_source" class="form-label">{{ form.source.label }}</label>
+                                {{ form.source }}
+                                {% if form.source.help_text %}
+                                <div class="form-text">{{ form.source.help_text }}</div>
+                                {% endif %}
+                            </div>
+                        </div>
+
+                        <!-- File Upload -->
+                        <h6 class="border-bottom pb-2 mb-3">Upload a File</h6>
+                        <div class="mb-3">
+                            <label for="id_file" class="form-label">{{ form.file.label }}</label>
+                            {{ form.file }}
+                            {% if form.file.help_text %}
+                            <div class="form-text">{{ form.file.help_text }}</div>
+                            {% endif %}
+                            {% if form.file.errors %}
+                            <div class="invalid-feedback d-block">{{ form.file.errors.0 }}</div>
+                            {% endif %}
+                            {% if editing and object.file %}
+                            <div class="mt-2">
+                                <span class="text-muted">Current file:</span>
+                                <a href="{% url 'patient-evidence-download' uuid=object.uuid %}">{{ object.filename }}</a>
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        <!-- Text Content -->
+                        <h6 class="border-bottom pb-2 mb-3">Or Add Text/Notes</h6>
+                        <div class="mb-3">
+                            <label for="id_text_content" class="form-label">{{ form.text_content.label }}</label>
+                            {{ form.text_content }}
+                            {% if form.text_content.help_text %}
+                            <div class="form-text">{{ form.text_content.help_text }}</div>
+                            {% endif %}
+                        </div>
+
+                        <!-- Include in Appeal -->
+                        <div class="mb-4">
+                            <div class="form-check">
+                                {{ form.include_in_appeal }}
+                                <label class="form-check-label" for="id_include_in_appeal">
+                                    {{ form.include_in_appeal.label }}
+                                </label>
+                                {% if form.include_in_appeal.help_text %}
+                                <div class="form-text">{{ form.include_in_appeal.help_text }}</div>
+                                {% endif %}
+                            </div>
+                        </div>
+
+                        <!-- Submit -->
+                        <div class="d-flex justify-content-between">
+                            <a href="{% url 'patient-dashboard' %}" class="btn btn-outline-secondary">Cancel</a>
+                            <div>
+                                {% if editing %}
+                                <button type="submit" name="delete" class="btn btn-outline-danger me-2" onclick="return confirm('Are you sure you want to delete this evidence?');">Delete</button>
+                                {% endif %}
+                                <button type="submit" class="btn btn-green">{% if editing %}Save Changes{% else %}Add Evidence{% endif %}</button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock content %}
+
+{% block extra_style %}
+<style>
+    .btn-green {
+        background: linear-gradient(to right, #ADD100 0%, #7B920A 51%, #ADD100 100%);
+        background-size: 200% auto;
+        border: none;
+        color: white;
+        transition: 0.5s;
+    }
+    .btn-green:hover {
+        background-position: right center;
+        color: white;
+    }
+</style>
+{% endblock extra_style %}
