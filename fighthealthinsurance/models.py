@@ -266,6 +266,123 @@ class PlanSource(models.Model):
         return self.name
 
 
+class InsuranceCompany(models.Model):
+    """
+    Represents an insurance company/carrier (e.g., Anthem, Blue Cross, Aetna).
+    Uses regex patterns to automatically identify companies from denial text.
+    """
+
+    id = models.AutoField(primary_key=True)
+    name = models.CharField(
+        max_length=300,
+        unique=True,
+        help_text="Official name of the insurance company (e.g., Anthem, Blue Cross Blue Shield)",
+    )
+    alt_names = models.TextField(
+        blank=True,
+        help_text="Alternative names or abbreviations, one per line (e.g., BCBS for Blue Cross Blue Shield)",
+    )
+    regex = RegexField(
+        max_length=800,
+        re_flags=re.IGNORECASE | re.UNICODE | re.M,
+        blank=True,
+        help_text="Regular expression pattern to match this company in denial text",
+    )
+    negative_regex = RegexField(
+        max_length=800,
+        re_flags=re.IGNORECASE | re.UNICODE | re.M,
+        blank=True,
+        help_text="Pattern to exclude false matches",
+    )
+    website = models.URLField(blank=True, help_text="Company's official website")
+    notes = models.TextField(
+        blank=True, help_text="Additional notes about this insurance company"
+    )
+    # Company type flags to help with suggestions
+    is_tpa = models.BooleanField(
+        default=False,
+        help_text="True if company is primarily a third-party administrator (TPA) for self-funded plans",
+    )
+    is_marketplace_focused = models.BooleanField(
+        default=False,
+        help_text="True if company primarily offers ACA marketplace/individual plans (95%+ of business)",
+    )
+
+    class Meta:
+        verbose_name_plural = "Insurance Companies"
+        ordering = ["name"]
+
+    def __str__(self):
+        return self.name
+
+
+class InsurancePlan(models.Model):
+    """
+    Represents a specific insurance plan offered by a company.
+    Examples: Anthem Medicaid California, Blue Cross PPO New York.
+    This allows differentiation between state-specific Medicaid plans, regional variations, etc.
+    """
+
+    id = models.AutoField(primary_key=True)
+    insurance_company = models.ForeignKey(
+        InsuranceCompany,
+        on_delete=models.CASCADE,
+        related_name="plans",
+        help_text="The insurance company that offers this plan",
+    )
+    plan_name = models.CharField(
+        max_length=300,
+        help_text="Specific plan name (e.g., Medicaid California, Gold PPO)",
+    )
+    state = models.CharField(
+        max_length=2,
+        blank=True,
+        help_text="Two-letter state code if plan is state-specific",
+    )
+    plan_type = models.ForeignKey(
+        PlanType,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        help_text="Type of plan (HMO, PPO, etc.)",
+    )
+    plan_source = models.ForeignKey(
+        PlanSource,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        help_text="Source of plan (Medicaid, Medicare, Employer, etc.)",
+    )
+    regex = RegexField(
+        max_length=800,
+        re_flags=re.IGNORECASE | re.UNICODE | re.M,
+        blank=True,
+        help_text="Regular expression pattern to match this specific plan",
+    )
+    negative_regex = RegexField(
+        max_length=800,
+        re_flags=re.IGNORECASE | re.UNICODE | re.M,
+        blank=True,
+        help_text="Pattern to exclude false matches",
+    )
+    plan_id_prefix = models.CharField(
+        max_length=50,
+        blank=True,
+        help_text="Common prefix for plan IDs (helps with identification)",
+    )
+    notes = models.TextField(blank=True, help_text="Additional notes about this plan")
+
+    class Meta:
+        verbose_name = "Insurance Plan"
+        ordering = ["insurance_company__name", "plan_name"]
+        unique_together = [["insurance_company", "plan_name", "state"]]
+
+    def __str__(self):
+        if self.state:
+            return f"{self.insurance_company.name} - {self.plan_name} ({self.state})"
+        return f"{self.insurance_company.name} - {self.plan_name}"
+
+
 class Diagnosis(models.Model):
     """
     These represent rules for extracting a diagnosis from text.
@@ -590,6 +707,24 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     pre_service = models.BooleanField(default=False)
     denial_date = models.DateField(auto_now=False, null=True, blank=True)
     insurance_company = models.CharField(max_length=300, null=True, blank=True)
+    # Structured insurance company reference (optional, text field kept for backward compatibility)
+    insurance_company_obj = models.ForeignKey(
+        InsuranceCompany,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="denials",
+        help_text="Structured reference to insurance company",
+    )
+    # Structured insurance plan reference (optional, allows state-specific plans like Medicaid CA vs NY)
+    insurance_plan_obj = models.ForeignKey(
+        InsurancePlan,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="denials",
+        help_text="Specific insurance plan (e.g., Anthem Medicaid California)",
+    )
     claim_id = models.CharField(max_length=300, null=True, blank=True)
     procedure = models.CharField(max_length=300, null=True, blank=True)
     diagnosis = models.CharField(max_length=300, null=True, blank=True)

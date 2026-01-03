@@ -1,0 +1,1613 @@
+# Insurance companies and plans fixture
+# Covers major U.S. health insurance carriers, regional BCBS plans, TPAs, and state-specific plans
+
+#######################################################################
+# MAJOR NATIONAL CARRIERS
+#######################################################################
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 1
+  fields:
+    name: Anthem Blue Cross Blue Shield
+    alt_names: |
+      Anthem
+      BCBS
+      Blue Cross Blue Shield
+      Anthem BCBS
+      Elevance Health
+    regex: (anthem|elevance\s*health)(?!.*empire)
+    negative_regex: empire
+    website: https://www.anthem.com
+    notes: Major national health insurance company (parent company now branded as Elevance Health). Has state-specific brands.
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 2
+  fields:
+    name: UnitedHealthcare
+    alt_names: |
+      UHC
+      United Healthcare
+      United Health
+      UnitedHealth
+      UnitedHealth Group
+    regex: united\s*health(?:\s*care|\s*group)?|uhc(?!\w)
+    website: https://www.uhc.com
+    notes: One of the largest health insurance providers in the U.S. Part of UnitedHealth Group.
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 3
+  fields:
+    name: Aetna
+    alt_names: |
+      Aetna Inc
+      CVS Health Aetna
+      CVS Aetna
+    regex: aetna(?!\s*better)
+    negative_regex: aetna\s*better\s*health
+    website: https://www.aetna.com
+    notes: Major health insurance company, now part of CVS Health
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 4
+  fields:
+    name: Cigna
+    alt_names: |
+      Cigna Health
+      Cigna Healthcare
+      Cigna Group
+      The Cigna Group
+    regex: cigna
+    website: https://www.cigna.com
+    notes: Global health insurance and services company
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 5
+  fields:
+    name: Humana
+    alt_names: |
+      Humana Inc
+    regex: humana
+    website: https://www.humana.com
+    notes: Focuses on Medicare Advantage plans
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 6
+  fields:
+    name: Kaiser Permanente
+    alt_names: |
+      Kaiser
+      KP
+    regex: kaiser\s*permanente|kaiser(?!\s*foundation)
+    website: https://www.kp.org
+    notes: Integrated managed care consortium operating in multiple states
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 7
+  fields:
+    name: Molina Healthcare
+    alt_names: |
+      Molina
+    regex: molina\s*health
+    website: https://www.molinahealthcare.com
+    notes: Specializes in government-sponsored healthcare programs (Medicaid, Medicare)
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 8
+  fields:
+    name: Centene Corporation
+    alt_names: |
+      Centene
+      Health Net
+    regex: centene|health\s*net(?!\s*federal)
+    negative_regex: ambetter|wellcare
+    website: https://www.centene.com
+    notes: Parent company of Ambetter, WellCare, and Health Net. Focuses on Medicaid and marketplace.
+
+#######################################################################
+# REGIONAL ANTHEM / BCBS BRANDS
+#######################################################################
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 9
+  fields:
+    name: Anthem Blue Cross California
+    alt_names: |
+      Anthem Blue Cross
+      Anthem CA
+      Blue Cross of California
+    regex: anthem.*(?:blue\s*cross|bcbs).*california|california.*anthem.*(?:blue\s*cross|bcbs)|blue\s*cross\s*(?:of\s*)?california
+    website: https://www.anthem.com/ca
+    notes: Anthem's California regional brand
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 10
+  fields:
+    name: Empire BlueCross BlueShield
+    alt_names: |
+      Empire BCBS
+      Empire Blue Cross
+      Empire Health
+    regex: empire.*(?:blue\s*cross|bcbs)|empire\s*health
+    website: https://www.empireblue.com
+    notes: Anthem's New York regional brand (Empire)
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 11
+  fields:
+    name: Anthem Blue Cross and Blue Shield
+    alt_names: |
+      Anthem BCBS
+      Anthem Regional
+    regex: anthem.*(?:blue\s*cross\s*and\s*blue\s*shield)
+    website: https://www.anthem.com
+    notes: Anthem regional brand used in multiple states (IN, KY, OH, VA, WI)
+
+#######################################################################
+# REGIONAL BCBS PLANS (NON-ANTHEM)
+#######################################################################
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 12
+  fields:
+    name: Blue Cross Blue Shield of California
+    alt_names: |
+      BCBS California
+      Blue Shield of California
+      Blue Shield CA
+    regex: blue\s*(?:cross\s*blue\s*)?shield\s*(?:of\s*)?california
+    negative_regex: anthem
+    website: https://www.blueshieldca.com
+    notes: Independent Blue Shield plan for California (not Anthem)
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 13
+  fields:
+    name: Highmark
+    alt_names: |
+      Highmark BCBS
+      Highmark Blue Cross Blue Shield
+      Highmark Health
+    regex: highmark
+    website: https://www.highmark.com
+    notes: Regional BCBS for PA, WV, DE, and western NY. Parent of Allegheny Health Network.
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 14
+  fields:
+    name: Blue Cross Blue Shield of Texas
+    alt_names: |
+      BCBS Texas
+      BCBSTX
+      Blue Cross Texas
+    regex: (?:blue\s*cross\s*blue\s*shield|bcbs).*texas|texas.*(?:blue\s*cross\s*blue\s*shield|bcbs)
+    website: https://www.bcbstx.com
+    notes: Largest health insurer in Texas. Part of Health Care Service Corporation.
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 15
+  fields:
+    name: Florida Blue
+    alt_names: |
+      Blue Cross Blue Shield of Florida
+      BCBS Florida
+      BCBSFL
+    regex: florida\s*blue|(?:blue\s*cross\s*blue\s*shield|bcbs).*florida|florida.*(?:blue\s*cross\s*blue\s*shield|bcbs)
+    website: https://www.floridablue.com
+    notes: Independent BCBS licensee for Florida
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 16
+  fields:
+    name: Premera Blue Cross
+    alt_names: |
+      Premera
+      Premera BCBS
+    regex: premera
+    website: https://www.premera.com
+    notes: BCBS licensee for Washington and Alaska
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 17
+  fields:
+    name: Health Care Service Corporation
+    alt_names: |
+      HCSC
+    regex: health\s*care\s*service\s*corporation|hcsc
+    website: https://www.hcsc.com
+    notes: Parent company of BCBS plans in IL, MT, NM, OK, and TX. Largest customer-owned health insurer in the US.
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 18
+  fields:
+    name: Capital Blue Cross
+    alt_names: |
+      Capital BCBS
+      Capital BlueCross
+    regex: capital\s*blue\s*cross
+    website: https://www.capbluecross.com
+    notes: BCBS licensee for central Pennsylvania and the Lehigh Valley
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 19
+  fields:
+    name: EmblemHealth
+    alt_names: |
+      Emblem Health
+      HIP
+      GHI
+      Group Health Incorporated
+      Health Insurance Plan of Greater New York
+    regex: emblem\s*health|emblem(?!\w)|group\s*health\s*inc|hip(?!\w).*new\s*york
+    website: https://www.emblemhealth.com
+    notes: Major health insurer in New York, formed from merger of HIP and GHI
+
+#######################################################################
+# REGIONAL/SPECIALTY HEALTH PLANS
+#######################################################################
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 20
+  fields:
+    name: Geisinger Health Plan
+    alt_names: |
+      Geisinger
+      Geisinger Health
+    regex: geisinger
+    website: https://www.geisinger.org
+    notes: Pennsylvania-based integrated health system with health plan
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 21
+  fields:
+    name: UPMC Health Plan
+    alt_names: |
+      UPMC
+      University of Pittsburgh Medical Center Health Plan
+    regex: upmc
+    website: https://www.upmchealthplan.com
+    notes: Pittsburgh-based integrated health system with health plan
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 22
+  fields:
+    name: CareSource
+    alt_names: |
+      Care Source
+    regex: care\s*source
+    website: https://www.caresource.com
+    notes: Nonprofit managed care organization serving Medicaid, Medicare, and Marketplace populations in multiple states
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 23
+  fields:
+    name: Oscar Health
+    alt_names: |
+      Oscar
+      Oscar Insurance
+    regex: oscar\s*(?:health|insurance)?
+    website: https://www.hioscar.com
+    notes: Technology-focused health insurance company, primarily individual and small group markets
+    is_marketplace_focused: true
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 24
+  fields:
+    name: Ambetter
+    alt_names: |
+      Ambetter Health
+    regex: ambetter
+    website: https://www.ambetterhealth.com
+    notes: Centene's ACA marketplace brand, available in many states
+    is_marketplace_focused: true
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 25
+  fields:
+    name: WellCare
+    alt_names: |
+      Wellcare
+      WellCare Health Plans
+    regex: well\s*care
+    website: https://www.wellcare.com
+    notes: Centene subsidiary focusing on Medicare and Medicaid managed care
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 26
+  fields:
+    name: SCAN Health Plan
+    alt_names: |
+      SCAN
+      Senior Care Action Network
+    regex: scan\s*health|scan(?!\w).*health
+    website: https://www.scanhealthplan.com
+    notes: California-based nonprofit Medicare Advantage plan
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 27
+  fields:
+    name: Alignment Health
+    alt_names: |
+      Alignment Healthcare
+      Alignment Health Plan
+    regex: alignment\s*health
+    website: https://www.alignmenthealthcare.com
+    notes: Medicare Advantage plan focused on seniors, primarily in CA, AZ, NV, NC, TX
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 28
+  fields:
+    name: Devoted Health
+    alt_names: |
+      Devoted
+      Devoted Health Plan
+    regex: devoted\s*health
+    website: https://www.devoted.com
+    notes: Medicare Advantage plan with technology-focused care model
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 29
+  fields:
+    name: Amerigroup
+    alt_names: |
+      Amerigroup Corporation
+    regex: amerigroup
+    website: https://www.amerigroup.com
+    notes: Anthem subsidiary focusing on Medicaid and Medicare managed care
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 30
+  fields:
+    name: Moda Health
+    alt_names: |
+      Moda
+      Moda Health Plan
+    regex: moda\s*health
+    website: https://www.modahealth.com
+    notes: Oregon-based health plan serving OR, WA, AK, and parts of CA and TX
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 31
+  fields:
+    name: Bright Health
+    alt_names: |
+      Bright Health Plan
+      Bright HealthCare
+      BrightHealth
+    regex: bright\s*health
+    website: https://www.brighthealthcare.com
+    notes: "Technology-focused health insurance company (note: has scaled back operations significantly)"
+    is_marketplace_focused: true
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 32
+  fields:
+    name: Friday Health Plans
+    alt_names: |
+      Friday Health
+      Friday Insurance
+    regex: friday\s*health
+    website: https://www.fridayhealthplans.com
+    notes: "Low-cost ACA marketplace insurer in several states (note: has exited some markets)"
+    is_marketplace_focused: true
+
+#######################################################################
+# MEDICAID MANAGED CARE PLANS
+#######################################################################
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 33
+  fields:
+    name: UnitedHealthcare Community Plan
+    alt_names: |
+      UHC Community Plan
+      United Community Plan
+      UnitedHealthcare Community & State
+    regex: united\s*health\s*care\s*community|uhc\s*community
+    website: https://www.uhccommunityplan.com
+    notes: UnitedHealthcare's Medicaid managed care brand
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 34
+  fields:
+    name: Aetna Better Health
+    alt_names: |
+      Aetna Medicaid
+    regex: aetna\s*better\s*health
+    website: https://www.aetnabetterhealth.com
+    notes: Aetna's Medicaid managed care brand
+
+#######################################################################
+# THIRD-PARTY ADMINISTRATORS (TPAs) AND ASO
+#######################################################################
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 35
+  fields:
+    name: UMR
+    alt_names: |
+      UMR Inc
+      United Medical Resources
+    regex: umr(?!\w)|united\s*medical\s*resources
+    website: https://www.umr.com
+    notes: Third-party administrator (TPA) for self-funded employer health plans. UnitedHealth Group subsidiary.
+    is_tpa: true
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 36
+  fields:
+    name: Meritain Health
+    alt_names: |
+      Meritain
+      Aetna Meritain
+    regex: meritain
+    website: https://www.meritain.com
+    notes: Third-party administrator for self-funded employer plans. Aetna subsidiary.
+    is_tpa: true
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 37
+  fields:
+    name: Trustmark
+    alt_names: |
+      Trustmark Health Benefits
+      Trustmark Insurance
+    regex: trustmark
+    website: https://www.trustmarkbenefits.com
+    notes: Third-party administrator and voluntary benefits provider
+    is_tpa: true
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 38
+  fields:
+    name: HealthComp
+    alt_names: |
+      Health Comp
+    regex: health\s*comp(?!\w)
+    website: https://www.healthcomp.com
+    notes: Third-party administrator for self-funded health plans
+    is_tpa: true
+
+#######################################################################
+# STATE-SPECIFIC MEDICAID PLANS - ANTHEM
+#######################################################################
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 1
+  fields:
+    insurance_company: 1
+    plan_name: Medicaid
+    state: CA
+    plan_source: 300
+    regex: anthem.*medicaid.*california|california.*anthem.*medicaid|anthem.*medi-cal
+    notes: Anthem Blue Cross Medi-Cal (California Medicaid)
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 2
+  fields:
+    insurance_company: 1
+    plan_name: Medicaid
+    state: NY
+    plan_source: 300
+    regex: anthem.*medicaid.*new\s*york|new\s*york.*anthem.*medicaid
+    notes: Anthem Blue Cross Blue Shield Medicaid (New York)
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 3
+  fields:
+    insurance_company: 1
+    plan_name: Medicaid
+    state: VA
+    plan_source: 300
+    regex: anthem.*medicaid.*virginia|virginia.*anthem.*medicaid|healthkeepers\s*plus
+    notes: Anthem HealthKeepers Plus (Virginia Medicaid)
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 4
+  fields:
+    insurance_company: 1
+    plan_name: Medicaid
+    state: IN
+    plan_source: 300
+    regex: anthem.*medicaid.*indiana|indiana.*anthem.*medicaid|hoosier\s*healthwise
+    notes: Anthem Hoosier Healthwise (Indiana Medicaid)
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 5
+  fields:
+    insurance_company: 1
+    plan_name: Medicaid
+    state: KY
+    plan_source: 300
+    regex: anthem.*medicaid.*kentucky|kentucky.*anthem.*medicaid
+    notes: Anthem Kentucky Medicaid
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 6
+  fields:
+    insurance_company: 1
+    plan_name: Medicaid
+    state: OH
+    plan_source: 300
+    regex: anthem.*medicaid.*ohio|ohio.*anthem.*medicaid
+    notes: Anthem Blue Cross and Blue Shield Medicaid (Ohio)
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 7
+  fields:
+    insurance_company: 1
+    plan_name: Medicaid
+    state: WI
+    plan_source: 300
+    regex: anthem.*medicaid.*wisconsin|wisconsin.*anthem.*medicaid
+    notes: Anthem Blue Cross Blue Shield Medicaid (Wisconsin)
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 8
+  fields:
+    insurance_company: 1
+    plan_name: Medicaid
+    state: GA
+    plan_source: 300
+    regex: anthem.*medicaid.*georgia|georgia.*anthem.*medicaid
+    notes: Anthem Blue Cross Blue Shield Medicaid (Georgia)
+
+#######################################################################
+# STATE-SPECIFIC MEDICAID PLANS - UNITEDHEALTHCARE
+#######################################################################
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 9
+  fields:
+    insurance_company: 2
+    plan_name: Medicaid
+    state: CA
+    plan_source: 300
+    regex: united.*medicaid.*california|california.*united.*medicaid
+    notes: UnitedHealthcare Community Plan (California Medicaid)
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 10
+  fields:
+    insurance_company: 2
+    plan_name: Medicaid
+    state: TX
+    plan_source: 300
+    regex: united.*medicaid.*texas|texas.*united.*medicaid
+    notes: UnitedHealthcare Community Plan (Texas Medicaid)
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 11
+  fields:
+    insurance_company: 2
+    plan_name: Medicaid
+    state: FL
+    plan_source: 300
+    regex: united.*medicaid.*florida|florida.*united.*medicaid
+    notes: UnitedHealthcare Community Plan (Florida Medicaid)
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 12
+  fields:
+    insurance_company: 2
+    plan_name: Medicaid
+    state: NY
+    plan_source: 300
+    regex: united.*medicaid.*new\s*york|new\s*york.*united.*medicaid
+    notes: UnitedHealthcare Community Plan (New York Medicaid)
+
+#######################################################################
+# MEDICARE ADVANTAGE PLANS
+#######################################################################
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 13
+  fields:
+    insurance_company: 2
+    plan_name: Medicare Advantage
+    state: ""
+    plan_source: 100
+    regex: united.*medicare\s*advantage|aarp.*medicare
+    notes: UnitedHealthcare Medicare Advantage plans (including AARP Medicare)
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 14
+  fields:
+    insurance_company: 5
+    plan_name: Medicare Advantage
+    state: ""
+    plan_source: 100
+    regex: humana.*medicare\s*advantage|humana.*gold\s*plus
+    notes: Humana Medicare Advantage plans
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 15
+  fields:
+    insurance_company: 1
+    plan_name: Medicare Advantage
+    state: ""
+    plan_source: 100
+    regex: anthem.*medicare\s*advantage
+    notes: Anthem Medicare Advantage plans
+
+#######################################################################
+# STATE-SPECIFIC MEDICAID PLANS - MOLINA
+#######################################################################
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 16
+  fields:
+    insurance_company: 7
+    plan_name: Medicaid
+    state: CA
+    plan_source: 300
+    regex: molina.*medicaid.*california|california.*molina.*medicaid|molina.*medi-cal
+    notes: Molina Healthcare of California (Medicaid/Medi-Cal)
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 17
+  fields:
+    insurance_company: 7
+    plan_name: Medicaid
+    state: WA
+    plan_source: 300
+    regex: molina.*medicaid.*washington|washington.*molina.*medicaid
+    notes: Molina Healthcare of Washington (Medicaid)
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 18
+  fields:
+    insurance_company: 7
+    plan_name: Medicaid
+    state: MI
+    plan_source: 300
+    regex: molina.*medicaid.*michigan|michigan.*molina.*medicaid
+    notes: Molina Healthcare of Michigan (Medicaid)
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 19
+  fields:
+    insurance_company: 7
+    plan_name: Medicaid
+    state: OH
+    plan_source: 300
+    regex: molina.*medicaid.*ohio|ohio.*molina.*medicaid
+    notes: Molina Healthcare of Ohio (Medicaid)
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 20
+  fields:
+    insurance_company: 7
+    plan_name: Medicaid
+    state: TX
+    plan_source: 300
+    regex: molina.*medicaid.*texas|texas.*molina.*medicaid
+    notes: Molina Healthcare of Texas (Medicaid)
+
+#######################################################################
+# STATE-SPECIFIC PLANS - CENTENE/AMBETTER/WELLCARE
+#######################################################################
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 21
+  fields:
+    insurance_company: 24
+    plan_name: Marketplace
+    state: ""
+    plan_source: 1100
+    regex: ambetter
+    notes: Ambetter marketplace plans by Centene (available in many states)
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 22
+  fields:
+    insurance_company: 8
+    plan_name: Medicaid
+    state: CA
+    plan_source: 300
+    regex: (health\s*net|centene).*medicaid.*california|california.*(health\s*net|centene).*medicaid
+    notes: Health Net (Centene) California Medicaid
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 23
+  fields:
+    insurance_company: 25
+    plan_name: Medicare Advantage
+    state: ""
+    plan_source: 100
+    regex: wellcare.*medicare
+    notes: WellCare Medicare Advantage plans
+
+#######################################################################
+# STATE-SPECIFIC PLANS - CARESOURCE
+#######################################################################
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 24
+  fields:
+    insurance_company: 22
+    plan_name: Medicaid
+    state: OH
+    plan_source: 300
+    regex: caresource.*ohio|ohio.*caresource|caresource.*medicaid
+    notes: CareSource Medicaid (Ohio - their home state)
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 25
+  fields:
+    insurance_company: 22
+    plan_name: Medicaid
+    state: IN
+    plan_source: 300
+    regex: caresource.*indiana|indiana.*caresource
+    notes: CareSource Medicaid (Indiana)
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 26
+  fields:
+    insurance_company: 22
+    plan_name: Medicaid
+    state: KY
+    plan_source: 300
+    regex: caresource.*kentucky|kentucky.*caresource
+    notes: CareSource Medicaid (Kentucky)
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 27
+  fields:
+    insurance_company: 22
+    plan_name: Medicaid
+    state: GA
+    plan_source: 300
+    regex: caresource.*georgia|georgia.*caresource
+    notes: CareSource Medicaid (Georgia)
+
+#######################################################################
+# STATE-SPECIFIC PLANS - AMERIGROUP
+#######################################################################
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 28
+  fields:
+    insurance_company: 29
+    plan_name: Medicaid
+    state: TX
+    plan_source: 300
+    regex: amerigroup.*texas|texas.*amerigroup
+    notes: Amerigroup Texas Medicaid
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 29
+  fields:
+    insurance_company: 29
+    plan_name: Medicaid
+    state: GA
+    plan_source: 300
+    regex: amerigroup.*georgia|georgia.*amerigroup
+    notes: Amerigroup Georgia Medicaid
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 30
+  fields:
+    insurance_company: 29
+    plan_name: Medicaid
+    state: NJ
+    plan_source: 300
+    regex: amerigroup.*new\s*jersey|new\s*jersey.*amerigroup
+    notes: Amerigroup New Jersey Medicaid
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 31
+  fields:
+    insurance_company: 29
+    plan_name: Medicaid
+    state: TN
+    plan_source: 300
+    regex: amerigroup.*tennessee|tennessee.*amerigroup
+    notes: Amerigroup Tennessee Medicaid (TennCare)
+
+#######################################################################
+# STATE-SPECIFIC PLANS - AETNA BETTER HEALTH
+#######################################################################
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 32
+  fields:
+    insurance_company: 34
+    plan_name: Medicaid
+    state: PA
+    plan_source: 300
+    regex: aetna\s*better.*pennsylvania|pennsylvania.*aetna\s*better
+    notes: Aetna Better Health of Pennsylvania Medicaid
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 33
+  fields:
+    insurance_company: 34
+    plan_name: Medicaid
+    state: NJ
+    plan_source: 300
+    regex: aetna\s*better.*new\s*jersey|new\s*jersey.*aetna\s*better
+    notes: Aetna Better Health of New Jersey Medicaid
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 34
+  fields:
+    insurance_company: 34
+    plan_name: Medicaid
+    state: IL
+    plan_source: 300
+    regex: aetna\s*better.*illinois|illinois.*aetna\s*better
+    notes: Aetna Better Health of Illinois Medicaid
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 35
+  fields:
+    insurance_company: 34
+    plan_name: Medicaid
+    state: LA
+    plan_source: 300
+    regex: aetna\s*better.*louisiana|louisiana.*aetna\s*better
+    notes: Aetna Better Health of Louisiana Medicaid
+
+#######################################################################
+# REGIONAL BCBS PLANS - HIGHMARK
+#######################################################################
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 36
+  fields:
+    insurance_company: 13
+    plan_name: Standard
+    state: PA
+    plan_source: 700
+    regex: highmark.*pennsylvania|pennsylvania.*highmark
+    notes: Highmark BCBS Pennsylvania plans
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 37
+  fields:
+    insurance_company: 13
+    plan_name: Standard
+    state: WV
+    plan_source: 700
+    regex: highmark.*west\s*virginia|west\s*virginia.*highmark
+    notes: Highmark BCBS West Virginia plans
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 38
+  fields:
+    insurance_company: 13
+    plan_name: Standard
+    state: DE
+    plan_source: 700
+    regex: highmark.*delaware|delaware.*highmark
+    notes: Highmark BCBS Delaware plans
+
+#######################################################################
+# MEDICARE ADVANTAGE - OTHER CARRIERS
+#######################################################################
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 39
+  fields:
+    insurance_company: 26
+    plan_name: Medicare Advantage
+    state: CA
+    plan_source: 100
+    regex: scan.*medicare|scan\s*health\s*plan
+    notes: SCAN Health Plan Medicare Advantage (California focused)
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 40
+  fields:
+    insurance_company: 27
+    plan_name: Medicare Advantage
+    state: ""
+    plan_source: 100
+    regex: alignment.*medicare|alignment\s*health
+    notes: Alignment Health Medicare Advantage plans
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 41
+  fields:
+    insurance_company: 28
+    plan_name: Medicare Advantage
+    state: ""
+    plan_source: 100
+    regex: devoted.*medicare|devoted\s*health
+    notes: Devoted Health Medicare Advantage plans
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 42
+  fields:
+    insurance_company: 6
+    plan_name: Medicare Advantage
+    state: ""
+    plan_source: 100
+    regex: kaiser.*senior\s*advantage|kaiser.*medicare
+    notes: Kaiser Permanente Senior Advantage (Medicare)
+
+#######################################################################
+# TPA PLANS
+#######################################################################
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 43
+  fields:
+    insurance_company: 35
+    plan_name: Self-Funded
+    state: ""
+    plan_source: 700
+    regex: umr.*self.*funded|umr.*employer
+    notes: UMR-administered self-funded employer plans
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 44
+  fields:
+    insurance_company: 36
+    plan_name: Self-Funded
+    state: ""
+    plan_source: 700
+    regex: meritain.*self.*funded|meritain.*employer
+    notes: Meritain Health-administered self-funded employer plans
+
+#######################################################################
+# ADDITIONAL REGIONAL BCBS PLANS
+#######################################################################
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 39
+  fields:
+    name: Blue Cross Blue Shield of Michigan
+    alt_names: |
+      BCBS Michigan
+      BCBSM
+      Blue Cross Michigan
+    regex: (?:blue\s*cross\s*blue\s*shield|bcbs).*michigan|michigan.*(?:blue\s*cross|bcbs)|bcbsm(?!\w)
+    website: https://www.bcbsm.com
+    notes: Largest health insurer in Michigan, nonprofit mutual insurance company
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 40
+  fields:
+    name: Blue Cross Blue Shield of Massachusetts
+    alt_names: |
+      BCBS Massachusetts
+      BCBSMA
+      Blue Cross MA
+    regex: (?:blue\s*cross\s*blue\s*shield|bcbs).*massachusetts|massachusetts.*(?:blue\s*cross|bcbs)
+    website: https://www.bluecrossma.org
+    notes: Largest private health insurer in Massachusetts
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 41
+  fields:
+    name: Independence Blue Cross
+    alt_names: |
+      IBX
+      Independence BC
+      Blue Cross Philadelphia
+    regex: independence\s*(?:blue\s*cross|bc)|ibx(?!\w)
+    website: https://www.ibx.com
+    notes: BCBS licensee serving southeastern Pennsylvania including Philadelphia
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 42
+  fields:
+    name: Horizon Blue Cross Blue Shield of New Jersey
+    alt_names: |
+      Horizon BCBS
+      Horizon NJ
+      BCBS New Jersey
+    regex: horizon.*(?:blue\s*cross|bcbs)|(?:blue\s*cross|bcbs).*new\s*jersey
+    website: https://www.horizonblue.com
+    notes: Largest health insurer in New Jersey
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 43
+  fields:
+    name: BlueCross BlueShield of Tennessee
+    alt_names: |
+      BCBS Tennessee
+      BCBST
+      Blue Cross TN
+    regex: (?:blue\s*cross\s*blue\s*shield|bcbs).*tennessee|tennessee.*(?:blue\s*cross|bcbs)
+    website: https://www.bcbst.com
+    notes: Largest health insurer in Tennessee, nonprofit
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 44
+  fields:
+    name: CareFirst BlueCross BlueShield
+    alt_names: |
+      CareFirst
+      CareFirst BCBS
+      BCBS DC
+      BCBS Maryland
+    regex: carefirst|(?:blue\s*cross|bcbs).*(?:dc|maryland|virginia)|(?:dc|maryland).*(?:blue\s*cross|bcbs)
+    negative_regex: anthem
+    website: https://www.carefirst.com
+    notes: BCBS licensee for DC, Maryland, and Northern Virginia
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 45
+  fields:
+    name: Excellus BlueCross BlueShield
+    alt_names: |
+      Excellus BCBS
+      Excellus
+      BCBS Upstate NY
+    regex: excellus
+    website: https://www.excellusbcbs.com
+    notes: BCBS licensee for upstate New York (Rochester, Syracuse, Utica regions)
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 46
+  fields:
+    name: Blue Cross Blue Shield of Arizona
+    alt_names: |
+      BCBS Arizona
+      BCBSAZ
+      Blue Cross AZ
+    regex: (?:blue\s*cross\s*blue\s*shield|bcbs).*arizona|arizona.*(?:blue\s*cross|bcbs)
+    website: https://www.azblue.com
+    notes: BCBS licensee for Arizona, nonprofit
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 47
+  fields:
+    name: Arkansas Blue Cross Blue Shield
+    alt_names: |
+      ABCBS
+      Blue Cross Arkansas
+      BCBS Arkansas
+    regex: (?:blue\s*cross\s*blue\s*shield|bcbs).*arkansas|arkansas.*(?:blue\s*cross|bcbs)
+    website: https://www.arkansasbluecross.com
+    notes: Largest health insurer in Arkansas
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 48
+  fields:
+    name: Regence BlueCross BlueShield
+    alt_names: |
+      Regence
+      Regence BCBS
+      Regence Blue Shield
+    regex: regence
+    website: https://www.regence.com
+    notes: BCBS licensee for Oregon, Utah, Idaho, and Washington (part of Cambia Health Solutions)
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 49
+  fields:
+    name: Blue Cross Blue Shield of North Carolina
+    alt_names: |
+      BCBS NC
+      Blue Cross NC
+      BCBSNC
+    regex: (?:blue\s*cross\s*blue\s*shield|bcbs).*north\s*carolina|north\s*carolina.*(?:blue\s*cross|bcbs)|bcbsnc
+    website: https://www.bluecrossnc.com
+    notes: Largest health insurer in North Carolina
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 50
+  fields:
+    name: Blue Cross and Blue Shield of Kansas
+    alt_names: |
+      BCBS Kansas
+      BCBSKS
+      Blue Cross KS
+    regex: (?:blue\s*cross\s*blue\s*shield|bcbs).*kansas|kansas.*(?:blue\s*cross|bcbs)
+    negative_regex: kansas\s*city
+    website: https://www.bcbsks.com
+    notes: BCBS licensee for Kansas
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 51
+  fields:
+    name: Blue Cross and Blue Shield of Minnesota
+    alt_names: |
+      BCBS Minnesota
+      Blue Cross MN
+      BCBSMN
+    regex: (?:blue\s*cross\s*blue\s*shield|bcbs).*minnesota|minnesota.*(?:blue\s*cross|bcbs)
+    website: https://www.bluecrossmn.com
+    notes: Largest health insurer in Minnesota, nonprofit
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 52
+  fields:
+    name: Blue Cross Blue Shield of Louisiana
+    alt_names: |
+      BCBS Louisiana
+      BCBSLA
+      Blue Cross LA
+    regex: (?:blue\s*cross\s*blue\s*shield|bcbs).*louisiana|louisiana.*(?:blue\s*cross|bcbs)
+    website: https://www.bcbsla.com
+    notes: BCBS licensee for Louisiana
+
+#######################################################################
+# ADDITIONAL MEDICARE ADVANTAGE AND SPECIALTY PLANS
+#######################################################################
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 53
+  fields:
+    name: Clover Health
+    alt_names: |
+      Clover
+      Clover Health Investments
+    regex: clover\s*health
+    website: https://www.cloverhealth.com
+    notes: Technology-focused Medicare Advantage company
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 54
+  fields:
+    name: HealthPartners
+    alt_names: |
+      Health Partners
+    regex: health\s*partners
+    website: https://www.healthpartners.com
+    notes: Minnesota-based nonprofit integrated health care organization
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 55
+  fields:
+    name: SelectHealth
+    alt_names: |
+      Select Health
+      Intermountain SelectHealth
+    regex: select\s*health
+    website: https://www.selecthealth.org
+    notes: Utah-based nonprofit health plan, part of Intermountain Healthcare
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 56
+  fields:
+    name: Priority Health
+    alt_names: |
+      Priority Health Plan
+    regex: priority\s*health
+    website: https://www.priorityhealth.com
+    notes: Michigan-based nonprofit health plan, part of Spectrum Health
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 57
+  fields:
+    name: Medica
+    alt_names: |
+      Medica Health Plans
+    regex: medica(?!\s*id|\s*re|\s*l)
+    website: https://www.medica.com
+    notes: Minnesota-based nonprofit health plan serving multiple states
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 58
+  fields:
+    name: GuideWell
+    alt_names: |
+      GuideWell Mutual
+      Florida Blue Parent
+    regex: guidewell
+    website: https://www.guidewell.com
+    notes: Parent company of Florida Blue and related health companies
+
+#######################################################################
+# CENTENE SUBSIDIARY BRANDS (STATE MCOs)
+#######################################################################
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 59
+  fields:
+    name: Fidelis Care
+    alt_names: |
+      Fidelis
+      Fidelis Care New York
+    regex: fidelis\s*care
+    website: https://www.fideliscare.org
+    notes: Centene subsidiary serving New York Medicaid and Medicare markets
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 60
+  fields:
+    name: Superior HealthPlan
+    alt_names: |
+      Superior Health Plan
+      Superior Texas
+    regex: superior\s*health\s*plan
+    website: https://www.superiorhealthplan.com
+    notes: Centene subsidiary serving Texas Medicaid market
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 61
+  fields:
+    name: Buckeye Health Plan
+    alt_names: |
+      Buckeye Health
+    regex: buckeye\s*health
+    website: https://www.buckeyehealthplan.com
+    notes: Centene subsidiary serving Ohio Medicaid market
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 62
+  fields:
+    name: Peach State Health Plan
+    alt_names: |
+      Peach State
+    regex: peach\s*state\s*health
+    website: https://www.pshpgeorgia.com
+    notes: Centene subsidiary serving Georgia Medicaid market
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 63
+  fields:
+    name: Sunshine Health
+    alt_names: |
+      Sunshine Health Plan
+    regex: sunshine\s*health
+    website: https://www.sunshinehealth.com
+    notes: Centene subsidiary serving Florida Medicaid market
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 64
+  fields:
+    name: Iowa Total Care
+    alt_names: |
+      Iowa TotalCare
+    regex: iowa\s*total\s*care
+    website: https://www.iowatotalcare.com
+    notes: Centene subsidiary serving Iowa Medicaid market
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 65
+  fields:
+    name: Coordinated Care
+    alt_names: |
+      Coordinated Care Washington
+      Coordinated Care Corporation
+    regex: coordinated\s*care(?!\s*organization)
+    website: https://www.coordinatedcarehealth.com
+    notes: Centene subsidiary serving Washington Medicaid market
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 66
+  fields:
+    name: Home State Health
+    alt_names: |
+      Home State Health Plan
+    regex: home\s*state\s*health
+    website: https://www.homestatehealth.com
+    notes: Centene subsidiary serving Missouri Medicaid market
+
+#######################################################################
+# ADDITIONAL TPAs
+#######################################################################
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 67
+  fields:
+    name: Sedgwick
+    alt_names: |
+      Sedgwick Claims Management
+      Sedgwick CMS
+    regex: sedgwick
+    website: https://www.sedgwick.com
+    notes: Global claims management and TPA services provider
+    is_tpa: true
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 68
+  fields:
+    name: Gallagher Bassett
+    alt_names: |
+      GB
+      Gallagher Bassett Services
+    regex: gallagher\s*bassett
+    website: https://www.gallagherbassett.com
+    notes: Global TPA and risk management services provider
+    is_tpa: true
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 69
+  fields:
+    name: CorVel
+    alt_names: |
+      CorVel Corporation
+    regex: corvel
+    website: https://www.corvel.com
+    notes: National TPA specializing in workers compensation and health claims
+    is_tpa: true
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 70
+  fields:
+    name: Luminare Health
+    alt_names: |
+      Luminare
+    regex: luminare\s*health
+    website: https://www.luminarehealth.com
+    notes: TPA for self-funded employer health plans
+    is_tpa: true
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 71
+  fields:
+    name: Administrative Concepts Inc
+    alt_names: |
+      ACI
+      ACI Benefits
+    regex: administrative\s*concepts|aci\s*(?:benefits|health)
+    website: https://www.acitpa.com
+    notes: TPA for self-funded health and welfare plans
+    is_tpa: true
+
+#######################################################################
+# ADDITIONAL MEDICAID PLANS
+#######################################################################
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 45
+  fields:
+    insurance_company: 59
+    plan_name: Medicaid
+    state: NY
+    plan_source: 300
+    regex: fidelis.*medicaid|fidelis\s*care
+    notes: Fidelis Care New York Medicaid
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 46
+  fields:
+    insurance_company: 60
+    plan_name: Medicaid
+    state: TX
+    plan_source: 300
+    regex: superior.*medicaid|superior\s*health\s*plan
+    notes: Superior HealthPlan Texas Medicaid
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 47
+  fields:
+    insurance_company: 61
+    plan_name: Medicaid
+    state: OH
+    plan_source: 300
+    regex: buckeye.*medicaid|buckeye\s*health
+    notes: Buckeye Health Plan Ohio Medicaid
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 48
+  fields:
+    insurance_company: 62
+    plan_name: Medicaid
+    state: GA
+    plan_source: 300
+    regex: peach\s*state.*medicaid|peach\s*state\s*health
+    notes: Peach State Health Plan Georgia Medicaid
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 49
+  fields:
+    insurance_company: 63
+    plan_name: Medicaid
+    state: FL
+    plan_source: 300
+    regex: sunshine.*medicaid|sunshine\s*health
+    notes: Sunshine Health Florida Medicaid
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 50
+  fields:
+    insurance_company: 64
+    plan_name: Medicaid
+    state: IA
+    plan_source: 300
+    regex: iowa\s*total\s*care
+    notes: Iowa Total Care Medicaid
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 51
+  fields:
+    insurance_company: 53
+    plan_name: Medicare Advantage
+    state: ""
+    plan_source: 100
+    regex: clover.*medicare|clover\s*health
+    notes: Clover Health Medicare Advantage plans
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 52
+  fields:
+    insurance_company: 54
+    plan_name: Medicare Advantage
+    state: ""
+    plan_source: 100
+    regex: healthpartners.*medicare
+    notes: HealthPartners Medicare Advantage plans
+
+- model: fighthealthinsurance.insuranceplan
+  pk: 53
+  fields:
+    insurance_company: 39
+    plan_name: Medicare Advantage
+    state: MI
+    plan_source: 100
+    regex: bcbs.*michigan.*medicare|michigan.*bcbs.*medicare
+    notes: Blue Cross Blue Shield of Michigan Medicare Advantage
+
+#######################################################################
+# ADDITIONAL REGIONAL HEALTH PLANS (from web research)
+#######################################################################
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 72
+  fields:
+    name: Point32Health
+    alt_names: |
+      Tufts Health Plan
+      Harvard Pilgrim Health Care
+      Harvard Pilgrim
+      HPHC
+    regex: point32|tufts\s*health|harvard\s*pilgrim
+    website: https://www.point32health.org
+    notes: Second-largest health insurer in Massachusetts, formed from merger of Tufts Health Plan and Harvard Pilgrim Health Care
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 73
+  fields:
+    name: MVP Health Care
+    alt_names: |
+      MVP
+      MVP Health Plan
+    regex: mvp\s*health
+    website: https://www.mvphealthcare.com
+    notes: Regional health plan serving New York and Vermont
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 74
+  fields:
+    name: ConnectiCare
+    alt_names: |
+      Connecticare
+      ConnectiCare Benefits
+    regex: connecticare
+    website: https://www.connecticare.com
+    notes: Connecticut-based health plan, part of EmblemHealth
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 75
+  fields:
+    name: Health Alliance Plan
+    alt_names: |
+      HAP
+      Health Alliance Plan of Michigan
+    regex: health\s*alliance\s*plan|hap(?!\w).*michigan
+    website: https://www.hap.org
+    notes: Michigan-based nonprofit health plan, affiliated with Henry Ford Health System
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 76
+  fields:
+    name: Martin's Point Health Care
+    alt_names: |
+      Martins Point
+      Martin's Point
+    regex: martin'?s?\s*point
+    website: https://www.martinspoint.org
+    notes: Maine-based nonprofit health plan with Medicare Advantage focus
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 77
+  fields:
+    name: Community Health Plan of Washington
+    alt_names: |
+      CHPW
+      Community Health Plan WA
+    regex: community\s*health\s*plan.*washington|chpw
+    website: https://www.chpw.org
+    notes: Washington state nonprofit Medicaid managed care plan
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 78
+  fields:
+    name: L.A. Care Health Plan
+    alt_names: |
+      LA Care
+      L.A. Care
+      Los Angeles Care
+    regex: l\.?a\.?\s*care
+    website: https://www.lacare.org
+    notes: Largest publicly operated health plan in the US, serving Los Angeles County Medi-Cal members
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 79
+  fields:
+    name: CalOptima
+    alt_names: |
+      Cal Optima
+      CalOptima Health
+    regex: caloptima
+    website: https://www.caloptima.org
+    notes: Orange County, California Medi-Cal health plan
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 80
+  fields:
+    name: Inland Empire Health Plan
+    alt_names: |
+      IEHP
+    regex: inland\s*empire\s*health|iehp
+    website: https://www.iehp.org
+    notes: Riverside and San Bernardino County, California Medi-Cal health plan
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 81
+  fields:
+    name: Health Plan of San Mateo
+    alt_names: |
+      HPSM
+    regex: health\s*plan.*san\s*mateo|hpsm
+    website: https://www.hpsm.org
+    notes: San Mateo County, California Medi-Cal health plan
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 82
+  fields:
+    name: Partnership HealthPlan of California
+    alt_names: |
+      Partnership HealthPlan
+      PHC
+    regex: partnership\s*health\s*plan
+    website: https://www.partnershiphp.org
+    notes: Northern California Medi-Cal managed care plan serving 14 counties
+
+#######################################################################
+# DENTAL/VISION INSURERS (for bundled health plans)
+#######################################################################
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 83
+  fields:
+    name: Delta Dental
+    alt_names: |
+      Delta Dental Plans
+      Delta Dental Insurance
+    regex: delta\s*dental
+    website: https://www.deltadental.com
+    notes: Largest dental insurance provider in the US with over 155,000 dentists in network
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 84
+  fields:
+    name: Guardian Life
+    alt_names: |
+      Guardian
+      Guardian Insurance
+      Guardian Life Insurance
+    regex: guardian\s*(?:life|insurance)?
+    negative_regex: health\s*guardian
+    website: https://www.guardianlife.com
+    notes: Major dental and life insurance provider with over 130,000 dental providers
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 85
+  fields:
+    name: MetLife
+    alt_names: |
+      Met Life
+      MetLife Insurance
+    regex: met\s*life
+    website: https://www.metlife.com
+    notes: Major dental and employee benefits insurer with over 146,000 dental providers
+
+- model: fighthealthinsurance.insurancecompany
+  pk: 86
+  fields:
+    name: VSP Vision Care
+    alt_names: |
+      VSP
+      Vision Service Plan
+    regex: vsp|vision\s*service\s*plan
+    website: https://www.vsp.com
+    notes: Largest vision insurance provider in the US

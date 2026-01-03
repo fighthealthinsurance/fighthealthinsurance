@@ -276,26 +276,48 @@ class AppealGenerator(object):
             if match:
                 return match.group(1).strip()
 
-        # Try to find well-known insurance companies
-        known_companies = [
-            "Aetna",
-            "Anthem",
-            "Blue Cross",
-            "Blue Shield",
-            "Cigna",
-            "Humana",
-            "Kaiser Permanente",
-            "UnitedHealthcare",
-            "United Healthcare",
-            "Centene",
-            "Molina Healthcare",
-            "WellCare",
-            "CVS Health",
-            # These are often mentioned even when not the insurer
-            # "Medicare",
-            # "Medicaid",
-        ]
+        # Load known companies from database dynamically
+        known_companies: list[str] = []
+        try:
+            from fighthealthinsurance.models import InsuranceCompany
+            from asgiref.sync import sync_to_async
 
+            # Get all insurance companies from database
+            companies = await sync_to_async(
+                lambda: list(InsuranceCompany.objects.values_list("name", "alt_names"))
+            )()
+            for name, alt_names in companies:
+                known_companies.append(name)
+                if alt_names:
+                    # Add alternative names too
+                    for alt_name in alt_names.split("\n"):
+                        alt_name = alt_name.strip()
+                        if alt_name:
+                            known_companies.append(alt_name)
+        except Exception as e:
+            logger.opt(exception=True).debug(
+                f"Failed to load companies from database, using fallback list: {e}"
+            )
+            # Fallback to hardcoded list if database query fails
+            known_companies = [
+                "Aetna",
+                "Anthem",
+                "Blue Cross",
+                "Blue Shield",
+                "Cigna",
+                "Humana",
+                "Kaiser Permanente",
+                "UnitedHealthcare",
+                "United Healthcare",
+                "Centene",
+                "Molina Healthcare",
+                "WellCare",
+                "CVS Health",
+                "Empire BlueCross",
+                "Empire Health",
+            ]
+
+        # Try to find companies in the denial text
         for company in known_companies:
             if company in denial_text:
                 # Find the full company name (looking for patterns like "Aetna Health Insurance")
@@ -305,7 +327,7 @@ class AppealGenerator(object):
                     return match.group(1).strip()
                 return company
 
-        # If regex fails, use ML models
+        # If regex fails, use ML models with known companies as context
         models_to_try = ml_router.entity_extract_backends(use_external)
         for model in models_to_try:
             if hasattr(model, "get_insurance_company"):
@@ -527,6 +549,7 @@ class AppealGenerator(object):
         plan_id=None,
         claim_id=None,
         insurance_company=None,
+        is_tpa=False,
         ml_context=None,
         pubmed_context=None,
         plan_context=None,
@@ -612,6 +635,8 @@ class AppealGenerator(object):
             and insurance_company != "UNKNOWN"
         ):
             base = f"{base}. Please include and fill in any references to the insurance company to be {insurance_company}."
+            if is_tpa:
+                base = f"{base} Note: This insurance company is a Third-Party Administrator (TPA) for self-funded employer plans, which are typically governed by ERISA (Employee Retirement Income Security Act). ERISA plans have specific appeal requirements and timelines. The employer is the plan fiduciary and ultimately responsible for coverage decisions, though the TPA administers claims."
         if (
             claim_id is not None
             and claim_id != ""
@@ -678,6 +703,13 @@ class AppealGenerator(object):
         if non_ai_appeals is None:
             non_ai_appeals = []
 
+        # Prefer structured insurance company name if available, but keep text as fallback
+        insurance_company_name = denial.insurance_company
+        is_tpa = False
+        if denial.insurance_company_obj is not None:
+            insurance_company_name = denial.insurance_company_obj.name
+            is_tpa = denial.insurance_company_obj.is_tpa
+
         open_prompt = self.make_open_prompt(
             denial_text=denial.denial_text,
             procedure=denial.procedure,
@@ -688,7 +720,8 @@ class AppealGenerator(object):
             professional_to_finish=denial.professional_to_finish,
             plan_id=denial.plan_id,
             claim_id=denial.claim_id,
-            insurance_company=denial.insurance_company,
+            insurance_company=insurance_company_name,
+            is_tpa=is_tpa,
             ml_context=denial.ml_citation_context,
             pubmed_context=denial.pubmed_context,
             plan_context=plan_context,
