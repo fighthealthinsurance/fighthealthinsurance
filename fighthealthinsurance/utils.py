@@ -122,22 +122,30 @@ def ensure_message_alternation(history: List[Dict[str, Any]]) -> List[Dict[str, 
                 new_msg["timestamp"] = msg["timestamp"]
             result.append(new_msg)
 
+    modified = False
     if result and len(result) > 0 and result[0]:
         if result[0].get("role") == "assistant":
-            logger.error(
-                "We should always start with a user or system message instead {result}"
+            logger.debug(
+                f"Removing leading assistant message to fix alternation: {result}"
             )
             result = result[1:]
+            modified = True
         elif (
             result[0].get("role") == "system"
             and len(result) > 1
             and result[1]
             and result[1].get("role") == "assistant"
         ):
-            logger.error(
-                f"We should always start have a user message after system instead {result}"
+            logger.debug(
+                f"Removing assistant after system to fix alternation: {result}"
             )
             result = [result[0]] + result[2:]
+            modified = True
+
+    # If we modified the result by removing elements, re-run to ensure
+    # proper merging of any newly-adjacent same-role messages
+    if modified:
+        return ensure_message_alternation(result)
 
     return result
 

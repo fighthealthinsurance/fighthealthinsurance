@@ -124,6 +124,86 @@ class TestEnsureMessageAlternation(unittest.TestCase):
         self.assertIn("D", result[2]["content"])
         self.assertIn("E", result[2]["content"])
 
+    def test_system_followed_by_assistant_removes_assistant(self):
+        """System followed by assistant should remove the assistant."""
+        history = [
+            {"role": "system", "content": "You are a helpful assistant"},
+            {"role": "assistant", "content": "Hello!"},
+            {"role": "user", "content": "Hi"},
+        ]
+        result = ensure_message_alternation(history)
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0]["role"], "system")
+        self.assertEqual(result[1]["role"], "user")
+
+    def test_system_followed_by_assistant_only(self):
+        """System followed by assistant only should return just system."""
+        history = [
+            {"role": "system", "content": "You are a helpful assistant"},
+            {"role": "assistant", "content": "Hello!"},
+        ]
+        result = ensure_message_alternation(history)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["role"], "system")
+
+    def test_leading_assistant_removed(self):
+        """Leading assistant message should be removed."""
+        history = [
+            {"role": "assistant", "content": "Hello!"},
+            {"role": "user", "content": "Hi"},
+            {"role": "assistant", "content": "How can I help?"},
+        ]
+        result = ensure_message_alternation(history)
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0]["role"], "user")
+        self.assertEqual(result[1]["role"], "assistant")
+
+    def test_system_assistant_system_user_merges_systems(self):
+        """Removing assistant between systems should merge the systems."""
+        history = [
+            {"role": "system", "content": "System prompt 1"},
+            {"role": "assistant", "content": "Hello!"},
+            {"role": "system", "content": "System prompt 2"},
+            {"role": "user", "content": "Hi"},
+        ]
+        result = ensure_message_alternation(history)
+        # After removing assistant, systems should be merged
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0]["role"], "system")
+        self.assertIn("System prompt 1", result[0]["content"])
+        self.assertIn("System prompt 2", result[0]["content"])
+        self.assertEqual(result[1]["role"], "user")
+
+    def test_multiple_leading_assistants_removed(self):
+        """Multiple leading assistant messages should all be removed."""
+        history = [
+            {"role": "assistant", "content": "First"},
+            {"role": "assistant", "content": "Second"},
+            {"role": "user", "content": "Hi"},
+        ]
+        result = ensure_message_alternation(history)
+        # First the assistants are merged, then the leading assistant is removed
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["role"], "user")
+
+    def test_system_then_agent_never_occurs(self):
+        """System followed by agent should never occur in output."""
+        # This tests the specific bug: system then agent should never happen
+        history = [
+            {"role": "system", "content": "System"},
+            {"role": "agent", "content": "Agent response"},
+            {"role": "user", "content": "User message"},
+        ]
+        result = ensure_message_alternation(history)
+        # Verify system is never immediately followed by assistant/agent
+        for i in range(len(result) - 1):
+            if result[i]["role"] == "system":
+                self.assertNotEqual(
+                    result[i + 1]["role"],
+                    "assistant",
+                    "System should never be followed by assistant",
+                )
+
 
 if __name__ == "__main__":
     unittest.main()
