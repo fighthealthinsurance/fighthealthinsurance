@@ -1,0 +1,45 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Deletion Requested - Fight Health Insurance{% endblock title %}
+{% block metatitle %}Data Deletion Requested{% endblock metatitle %}
+
+{% block content %}
+<div class="container mt-5" style="margin-top: 12vh !important;">
+    <div class="row justify-content-center">
+        <div class="col-md-8 col-lg-6">
+            <div class="card">
+                <div class="card-body text-center py-5">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" fill="#007bff" class="bi bi-envelope-check mb-4" viewBox="0 0 16 16">
+                        <path d="M2 2a2 2 0 0 0-2 2v8.01A2 2 0 0 0 2 14h5.5a.5.5 0 0 0 0-1H2a1 1 0 0 1-.966-.741l5.64-3.471L8 9.583l7-4.2V8.5a.5.5 0 0 0 1 0V4a2 2 0 0 0-2-2zm3.708 6.208L1 11.105V5.383zM1 4.217V4a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v.217l-7 4.2z"/>
+                        <path d="M16 12.5a3.5 3.5 0 1 1-7 0 3.5 3.5 0 0 1 7 0m-1.993-1.679a.5.5 0 0 0-.686.172l-1.17 1.95-.547-.547a.5.5 0 0 0-.708.708l.774.773a.75.75 0 0 0 1.174-.144l1.335-2.226a.5.5 0 0 0-.172-.686"/>
+                    </svg>
+
+                    <h2 class="mb-3">Check Your Email</h2>
+
+                    <p class="lead mb-4">
+                        We've sent a confirmation email to <strong>{{ email }}</strong>
+                    </p>
+
+                    <div class="alert alert-warning text-start">
+                        <strong>Important:</strong>
+                        <ul class="mb-0 mt-2">
+                            <li>Click the confirmation link in the email to complete the deletion</li>
+                            <li>The link will expire in <strong>24 hours</strong></li>
+                            <li>Check your spam folder if you don't see the email within a few minutes</li>
+                        </ul>
+                    </div>
+
+                    <p class="text-muted small mt-4">
+                        <strong>Didn't request this?</strong> You can safely ignore the email. Your data will not be deleted without confirmation.
+                    </p>
+
+                    <div class="mt-4">
+                        <a href="{% url 'root' %}" class="btn btn-outline-primary">Return to Home</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock content %}

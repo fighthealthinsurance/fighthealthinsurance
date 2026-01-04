@@ -210,6 +210,59 @@ class FollowUpSched(models.Model):
         return f"{self.email} on {self.follow_up_date}"
 
 
+class DataDeletionRequest(models.Model):
+    """
+    Tracks pending data deletion requests requiring email confirmation.
+
+    Implements a two-step deletion process with email verification to prevent
+    unauthorized data deletion by bad actors. Tokens expire after 24 hours.
+
+    Attributes:
+        id: Auto-incrementing primary key
+        email: Email address requesting deletion
+        hashed_email: Hashed version for denial lookup
+        token: Unique confirmation token (sent via email)
+        created_at: Timestamp when request was created
+        confirmed: Whether the deletion was confirmed via email
+        confirmed_at: Timestamp when confirmation occurred
+        ip_address: IP address of requester (for audit trail)
+
+    """
+
+    id = models.AutoField(primary_key=True)
+    email = models.CharField(max_length=300)
+    hashed_email = models.CharField(max_length=300)
+    token = models.CharField(max_length=100, unique=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    confirmed = models.BooleanField(default=False)
+    confirmed_at = models.DateTimeField(null=True)
+    ip_address = models.GenericIPAddressField(null=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["token"]),
+            models.Index(fields=["hashed_email"]),
+            models.Index(fields=["created_at"]),
+        ]
+
+    def __str__(self):
+        status = "confirmed" if self.confirmed else "pending"
+        return f"Deletion request for {self.email} ({status})"
+
+    def is_expired(self):
+        """
+        Check if the confirmation token has expired.
+
+        Returns:
+            bool: True if more than 24 hours have passed since creation
+
+        """
+        from django.utils import timezone
+        from datetime import timedelta
+
+        return timezone.now() > self.created_at + timedelta(hours=24)
+
+
 class PlanType(models.Model):
     """
     Categorizes insurance plan types (e.g., HMO, PPO, Medicare).
