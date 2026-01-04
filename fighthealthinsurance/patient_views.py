@@ -12,12 +12,18 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.core.files.uploadedfile import UploadedFile
-from django.http import FileResponse, Http404, HttpResponseRedirect
+from django.http import (
+    FileResponse,
+    Http404,
+    HttpResponse,
+    HttpResponseRedirect,
+)
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse, reverse_lazy
 from django.views import View
 from django.views.generic import CreateView, DeleteView, TemplateView, UpdateView
 
+from django_encrypted_filefield.crypt import Cryptographer
 from fhi_users.models import PatientUser
 from fighthealthinsurance.forms import InsuranceCallLogForm, PatientEvidenceForm
 from fighthealthinsurance.models import (
@@ -41,6 +47,20 @@ class PatientRequiredMixin(LoginRequiredMixin):
     """
 
     def dispatch(self, request, *args, **kwargs):
+        """
+        Ensure user is authenticated and has a PatientUser record.
+
+        Automatically creates a PatientUser record for authenticated users who don't have one yet.
+
+        Args:
+            request: HTTP request object
+            *args: Variable positional arguments
+            **kwargs: Variable keyword arguments
+
+        Returns:
+            HttpResponse: The response from the parent dispatch or login redirect
+
+        """
         if not request.user.is_authenticated:
             return self.handle_no_permission()
 
@@ -72,6 +92,19 @@ class PatientDashboardView(PatientRequiredMixin, TemplateView):
     template_name = "patient_dashboard.html"
 
     def get_context_data(self, **kwargs):
+        """
+        Build context data for patient dashboard template.
+
+        Retrieves and aggregates patient's appeals, call logs, evidence, and upcoming
+        follow-ups. Limits queryset to 20 most recent items for performance.
+
+        Args:
+            **kwargs: Additional context data from parent class
+
+        Returns:
+            dict: Template context containing appeals, call_logs, evidence, counts, and upcoming_followups
+
+        """
         context = super().get_context_data(**kwargs)
         # User is guaranteed to be authenticated by PatientRequiredMixin
         user: User = self.request.user  # type: ignore
@@ -133,11 +166,13 @@ class CallLogCreateView(PatientRequiredMixin, CreateView):
     success_url = reverse_lazy("patient-dashboard")
 
     def get_context_data(self, **kwargs):
+        """Add editing flag to template context."""
         context = super().get_context_data(**kwargs)
         context["editing"] = False
         return context
 
     def form_valid(self, form):
+        """Associate call log with patient user before saving."""
         # Associate the call log with the patient
         form.instance.patient_user = self.patient_user
         return super().form_valid(form)
@@ -154,16 +189,19 @@ class CallLogEditView(PatientRequiredMixin, UpdateView):
     slug_url_kwarg = "uuid"
 
     def get_queryset(self):
+        """Filter queryset to only include call logs owned by current user."""
         # Only allow editing own call logs
         user: User = self.request.user  # type: ignore
         return InsuranceCallLog.filter_to_allowed_call_logs(user)
 
     def get_context_data(self, **kwargs):
+        """Add editing flag to template context."""
         context = super().get_context_data(**kwargs)
         context["editing"] = True
         return context
 
     def post(self, request, *args, **kwargs):
+        """Handle form submission or deletion if delete button was clicked."""
         # Handle delete button
         if "delete" in request.POST:
             self.object = self.get_object()
@@ -181,11 +219,25 @@ class EvidenceCreateView(PatientRequiredMixin, CreateView):
     success_url = reverse_lazy("patient-dashboard")
 
     def get_context_data(self, **kwargs):
+        """Add editing flag to template context."""
         context = super().get_context_data(**kwargs)
         context["editing"] = False
         return context
 
     def form_valid(self, form):
+        """
+        Associate evidence with patient and capture file metadata before saving.
+
+        Extracts filename and MIME type from uploaded file and stores them
+        in the evidence record for future downloads.
+
+        Args:
+            form: Valid EvidenceForm instance
+
+        Returns:
+            HttpResponse: Redirect to success URL
+
+        """
         # Associate the evidence with the patient
         form.instance.patient_user = self.patient_user
 
@@ -212,17 +264,29 @@ class EvidenceEditView(PatientRequiredMixin, UpdateView):
     slug_url_kwarg = "uuid"
 
     def get_queryset(self):
+        """Filter queryset to only include evidence owned by current user."""
         # Only allow editing own evidence
         user: User = self.request.user  # type: ignore
         return PatientEvidence.filter_to_allowed_evidence(user)
 
     def get_context_data(self, **kwargs):
+        """Add editing flag and object to template context."""
         context = super().get_context_data(**kwargs)
         context["editing"] = True
         context["object"] = self.object
         return context
 
     def form_valid(self, form):
+        """
+        Update file metadata if new file is uploaded.
+
+        Args:
+            form: Valid EvidenceForm instance
+
+        Returns:
+            HttpResponse: Redirect to success URL
+
+        """
         # Handle file upload
         if "file" in self.request.FILES:
             uploaded_file = self.request.FILES["file"]
@@ -235,6 +299,7 @@ class EvidenceEditView(PatientRequiredMixin, UpdateView):
         return super().form_valid(form)
 
     def post(self, request, *args, **kwargs):
+        """Handle form submission or deletion if delete button was clicked."""
         # Handle delete button
         if "delete" in request.POST:
             self.object = self.get_object()
@@ -244,9 +309,26 @@ class EvidenceEditView(PatientRequiredMixin, UpdateView):
 
 
 class EvidenceDownloadView(PatientRequiredMixin, View):
-    """View for downloading evidence files."""
+    """View for downloading evidence files with proper decryption."""
 
     def get(self, request, uuid):
+        """
+        Download evidence file with decryption.
+
+        Retrieves encrypted evidence file, decrypts it, and returns as download.
+        Only allows access to evidence owned by the current user.
+
+        Args:
+            request: HTTP request object
+            uuid: UUID of the evidence to download
+
+        Returns:
+            HttpResponse: Decrypted file content with appropriate headers
+
+        Raises:
+            Http404: If evidence not found or has no file attached
+
+        """
         # Get the evidence, ensuring user has access
         user: User = request.user  # type: ignore
         evidence = get_object_or_404(
@@ -257,9 +339,12 @@ class EvidenceDownloadView(PatientRequiredMixin, View):
         if not evidence.file:
             raise Http404("No file attached to this evidence")
 
-        # Return the file
-        response = FileResponse(
-            evidence.file,
+        # Decrypt the file before returning
+        file = evidence.file.open()
+        decrypted_content = Cryptographer.decrypted(file.read())
+
+        response = HttpResponse(
+            decrypted_content,
             content_type=evidence.mime_type or "application/octet-stream",
         )
         response["Content-Disposition"] = (
