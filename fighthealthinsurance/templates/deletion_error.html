@@ -1,0 +1,50 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Deletion Link Error - Fight Health Insurance{% endblock title %}
+{% block metatitle %}Invalid or Expired Link{% endblock metatitle %}
+
+{% block content %}
+<div class="container mt-5" style="margin-top: 12vh !important;">
+    <div class="row justify-content-center">
+        <div class="col-md-8 col-lg-6">
+            <div class="card">
+                <div class="card-body text-center py-5">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" fill="#dc3545" class="bi bi-exclamation-triangle mb-4" viewBox="0 0 16 16">
+                        <path d="M7.938 2.016A.13.13 0 0 1 8.002 2a.13.13 0 0 1 .063.016.15.15 0 0 1 .054.057l6.857 11.667c.036.06.035.124.002.183a.2.2 0 0 1-.054.06.1.1 0 0 1-.066.017H1.146a.1.1 0 0 1-.066-.017.2.2 0 0 1-.054-.06.18.18 0 0 1 .002-.183L7.884 2.073a.15.15 0 0 1 .054-.057m1.044-.45a1.13 1.13 0 0 0-1.96 0L.165 13.233c-.457.778.091 1.767.98 1.767h13.713c.889 0 1.438-.99.98-1.767z"/>
+                        <path d="M7.002 12a1 1 0 1 1 2 0 1 1 0 0 1-2 0M7.1 5.995a.905.905 0 1 1 1.8 0l-.35 3.507a.552.552 0 0 1-1.1 0z"/>
+                    </svg>
+
+                    <h2 class="mb-3">{{ error_title|default:"Invalid or Expired Link" }}</h2>
+
+                    <p class="lead mb-4">
+                        {{ error_message|default:"This deletion confirmation link is invalid or has expired." }}
+                    </p>
+
+                    <div class="alert alert-warning text-start">
+                        <strong>Common reasons:</strong>
+                        <ul class="mb-0 mt-2">
+                            <li>The link has expired (links are valid for 24 hours)</li>
+                            <li>You've already used this link to delete your data</li>
+                            <li>The link was copied incorrectly</li>
+                        </ul>
+                    </div>
+
+                    <p class="mt-4">
+                        If you still want to delete your data, please submit a new deletion request.
+                    </p>
+
+                    <div class="mt-4">
+                        <a href="{% url 'remove_data' %}" class="btn btn-primary">Submit New Request</a>
+                        <a href="{% url 'root' %}" class="btn btn-outline-secondary">Return to Home</a>
+                    </div>
+
+                    <p class="text-muted small mt-4">
+                        Questions? Contact us at <a href="mailto:support@fighthealthinsurance.com">support@fighthealthinsurance.com</a>
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock content %}
