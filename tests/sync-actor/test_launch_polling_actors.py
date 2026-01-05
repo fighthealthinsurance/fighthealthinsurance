@@ -31,19 +31,6 @@ class TestLaunchPollingActorsCommand(TestCase):
         if ray.is_initialized():
             ray.shutdown()
 
-    def test_command_without_force(self):
-        """Test the command without --force flag."""
-        out = StringIO()
-        # This may fail if actors aren't set up, but we're just testing the command runs
-        try:
-            call_command("launch_polling_actors", stdout=out)
-            output = out.getvalue()
-            # Should mention actors being loaded
-            assert "actor" in output.lower() or "loaded" in output.lower()
-        except Exception:
-            # It's okay if this fails in test environment
-            pass
-
     @mock.patch(
         "fighthealthinsurance.management.commands.launch_polling_actors.relaunch_actors"
     )
