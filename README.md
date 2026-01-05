@@ -90,6 +90,45 @@ Test suites:
 - `sync` - Synchronous tests
 - `sync-actor` - Ray actor tests
 
+## Actor Management
+
+The application uses Ray actors for background tasks like email polling, fax polling, and chooser refill. These actors run continuously in the background.
+
+### Monitoring Actor Health
+
+Check the health status of all polling actors via the REST API:
+
+```bash
+curl http://localhost:8010/ziggy/rest/actor_health_status
+```
+
+Response format:
+```json
+{
+  "alive_actors": 3,
+  "total_actors": 3,
+  "details": [
+    {"name": "email_polling_actor", "alive": true, "error": null},
+    {"name": "fax_polling_actor", "alive": true, "error": null},
+    {"name": "chooser_refill_actor", "alive": true, "error": null}
+  ]
+}
+```
+
+### Relaunching Actors
+
+If actors have crashed or need to be restarted:
+
+```bash
+# Force relaunch all actors (kills existing ones first)
+python manage.py launch_polling_actors --force
+
+# Just load actors (uses existing if available)
+python manage.py launch_polling_actors
+```
+
+The `--force` flag is useful when actors are in a bad state and need a clean restart.
+
 ## Code Quality
 
 ### Style (Black)
