@@ -83,7 +83,9 @@
                 event_label: 'Support Link',
                 event_action: 'begin_checkout'
               });
-            }
+            } else {
+              console.warn('UET tracking function not available.');
+	    }
           });
         });
       });
