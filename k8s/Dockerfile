@@ -1,6 +1,6 @@
-FROM python:3.12.11-bookworm AS base-arm64
+FROM python:3.13.1-bookworm AS base-arm64
 
-FROM python:3.12.11-bookworm AS base-amd64
+FROM python:3.13.1-bookworm AS base-amd64
 
 FROM base-${TARGETARCH}
 

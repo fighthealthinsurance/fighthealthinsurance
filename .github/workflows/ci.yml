@@ -51,7 +51,7 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.13'
           
       - name: Install system level packages
         run: (sudo apt-get update || echo "sometimes this fails because of the azure cli repo which we do not use") && sudo apt-get install -y  libgirepository1.0-dev pkg-config python3-dev && sudo apt-get clean
@@ -83,7 +83,13 @@ jobs:
         include:
           - python: '3.11'
             toxpy: '311'
-            django: '50'
+            django: '51'
+          - python: '3.12'
+            toxpy: '312'
+            django: '52'
+          - python: '3.13'
+            toxpy: '313'
+            django: '52'
 
     name: Run the sync test suite (Python ${{ matrix.python }}, Django ${{ matrix.django }})
     steps:
@@ -153,7 +159,13 @@ jobs:
         include:
           - python: '3.11'
             toxpy: '311'
-            django: '50'
+            django: '51'
+          - python: '3.12'
+            toxpy: '312'
+            django: '52'
+          - python: '3.13'
+            toxpy: '313'
+            django: '52'
 
     name: Run the Selenium test suite (Python ${{ matrix.python }}, Django ${{ matrix.django }})
     steps:
@@ -219,7 +231,13 @@ jobs:
         include:
           - python: '3.11'
             toxpy: '311'
-            django: '50'
+            django: '51'
+          - python: '3.12'
+            toxpy: '312'
+            django: '52'
+          - python: '3.13'
+            toxpy: '313'
+            django: '52'
     name: Run the sync actor test suite (Python ${{ matrix.python }}, Django ${{ matrix.django }})
     steps:
       - name: Free up disk space
@@ -362,7 +380,13 @@ jobs:
         include:
           - python: '3.11'
             toxpy: '311'
-            django: '50'
+            django: '51'
+          - python: '3.12'
+            toxpy: '312'
+            django: '52'
+          - python: '3.13'
+            toxpy: '313'
+            django: '52'
 
     name: Run the async test suite (Python ${{ matrix.python }}, Django ${{ matrix.django }})
     steps:

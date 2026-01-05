@@ -10,7 +10,7 @@ bokeh
 numpy
 channels
 chardet
-django>=5.0; python_version >= "3.10"
+django>=5.1; python_version >= "3.10"
 django-cms
 djangocms-attributes-field
 django_compressor
@@ -68,15 +68,15 @@ python-Levenshtein
 pytz
 pyyaml
 RapidFuzz==2.15.1 # See https://github.com/mindee/doctr/issues/1186
-ray==2.43.0
-ray[client]==2.43.0
+ray==2.53.0
+ray[client]==2.53.0
 requests
 sentry-sdk[django]
 setuptools>=58
 sorl-thumbnail
 sqlalchemy_mate==2.0.0.0 # uszipcode issue see https://github.com/MacHu-GWU/uszipcode-project/issues/79
 stopit
-stripe==12.2.0
+stripe==14.1.0
 totallylegit-django-rest-framework-braces # forked from django-rest-framework-braces
 types-paramiko
 types-requests
