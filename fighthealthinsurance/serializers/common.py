@@ -39,6 +39,17 @@ class LiveModelsStatusSerializer(serializers.Serializer):
     message = serializers.CharField(required=False)
 
 
+class ActorHealthStatusSerializer(serializers.Serializer):
+    """Serializer for Ray actor health status endpoint response."""
+
+    alive_actors = serializers.IntegerField()
+    total_actors = serializers.IntegerField()
+    details = serializers.ListField(
+        child=serializers.DictField(), required=False, allow_null=True
+    )
+    message = serializers.CharField(required=False)
+
+
 class ErrorSerializer(StatusResponseSerializer):
     """Serializer for API error responses with error message."""
 
