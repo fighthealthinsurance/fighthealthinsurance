@@ -16,11 +16,14 @@ from django.http import (
     HttpResponse,
     HttpResponseBase,
     HttpResponseForbidden,
+    HttpResponseNotFound,
     HttpResponseRedirect,
+    HttpResponseServerError,
 )
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template import loader
 from django.urls import reverse
+from django.utils import timezone
 from django.utils.safestring import mark_safe
 from django.views import View, generic
 from django.utils.decorators import method_decorator
@@ -36,6 +39,7 @@ from loguru import logger
 from PIL import Image
 
 from fighthealthinsurance import common_view_logic, forms as core_forms, models
+from fighthealthinsurance.calendar_utils import generate_followup_ics
 from fighthealthinsurance.chat_forms import UserConsentForm
 from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
 from fighthealthinsurance.helpers.stripe_helpers import StripeWebhookHelper
@@ -674,113 +678,84 @@ class RemoveDataView(View):
 class ConfirmDataDeletionView(View):
     """View for confirming data deletion via email token."""
 
-    def get(self, request, token):
-        """Display confirmation page for valid, non-expired tokens."""
+    def _validate_deletion_request(self, token: str):
+        """Validate deletion request token and return error context if invalid.
+
+        Returns:
+            tuple: (deletion_request, error_context) where error_context is None if valid
+        """
         try:
             deletion_request = models.DataDeletionRequest.objects.get(token=token)
 
             # Check if already confirmed
             if deletion_request.confirmed:
-                return render(
-                    request,
-                    "deletion_error.html",
-                    context={
-                        "title": "Already Deleted",
-                        "error_title": "Data Already Deleted",
-                        "error_message": "This deletion request has already been completed.",
-                    },
-                )
+                return deletion_request, {
+                    "title": "Already Deleted",
+                    "error_title": "Data Already Deleted",
+                    "error_message": "This deletion request has already been completed.",
+                }
 
             # Check if expired
             if deletion_request.is_expired():
-                return render(
-                    request,
-                    "deletion_error.html",
-                    context={
-                        "title": "Link Expired",
-                        "error_title": "Confirmation Link Expired",
-                        "error_message": "This confirmation link has expired. Deletion links are valid for 24 hours.",
-                    },
-                )
+                return deletion_request, {
+                    "title": "Link Expired",
+                    "error_title": "Confirmation Link Expired",
+                    "error_message": "This confirmation link has expired. Deletion links are valid for 24 hours.",
+                }
 
-            # Show confirmation page
-            return render(
-                request,
-                "deletion_confirm_page.html",
-                context={
-                    "title": "Confirm Deletion",
-                    "email": deletion_request.email,
-                    "token": token,
-                },
-            )
+            return deletion_request, None
 
         except models.DataDeletionRequest.DoesNotExist:
-            return render(
-                request,
-                "deletion_error.html",
-                context={
-                    "title": "Invalid Link",
-                    "error_title": "Invalid Deletion Link",
-                    "error_message": "This deletion link is not valid. It may have been copied incorrectly.",
-                },
-            )
+            return None, {
+                "title": "Invalid Link",
+                "error_title": "Invalid Deletion Link",
+                "error_message": "This deletion link is not valid. It may have been copied incorrectly.",
+            }
+
+    def get(self, request, token):
+        """Display confirmation page for valid, non-expired tokens."""
+        deletion_request, error_context = self._validate_deletion_request(token)
+
+        if error_context:
+            return render(request, "deletion_error.html", context=error_context)
+
+        # Show confirmation page
+        return render(
+            request,
+            "deletion_confirm_page.html",
+            context={
+                "title": "Confirm Deletion",
+                "email": deletion_request.email,
+                "token": token,
+            },
+        )
 
     def post(self, request, token):
         """Process the confirmed deletion."""
-        try:
-            deletion_request = models.DataDeletionRequest.objects.get(token=token)
+        deletion_request, error_context = self._validate_deletion_request(token)
 
-            # Check if already confirmed
-            if deletion_request.confirmed:
+        if error_context:
+            # If already confirmed, show success instead of error
+            if deletion_request and deletion_request.confirmed:
                 return render(
-                    request,
-                    "deletion_confirmed.html",
-                    context={"title": "Data Deleted"},
+                    request, "deletion_confirmed.html", {"title": "Data Deleted"}
                 )
+            return render(request, "deletion_error.html", context=error_context)
 
-            # Check if expired
-            if deletion_request.is_expired():
-                return render(
-                    request,
-                    "deletion_error.html",
-                    context={
-                        "title": "Link Expired",
-                        "error_title": "Confirmation Link Expired",
-                        "error_message": "This confirmation link has expired.",
-                    },
-                )
+        # Perform the deletion
+        email = deletion_request.email
+        RemoveDataHelper.remove_data_for_email(email)
 
-            # Perform the deletion
-            email = deletion_request.email
-            RemoveDataHelper.remove_data_for_email(email)
+        # Mark as confirmed
+        deletion_request.confirmed = True
+        deletion_request.confirmed_at = timezone.now()
+        deletion_request.save()
 
-            # Mark as confirmed
-            from django.utils import timezone
+        logger.info(
+            f"Data deletion confirmed and completed for {email} (token: {token[:8]}...)"
+        )
 
-            deletion_request.confirmed = True
-            deletion_request.confirmed_at = timezone.now()
-            deletion_request.save()
-
-            logger.info(
-                f"Data deletion confirmed and completed for {email} (token: {token[:8]}...)"
-            )
-
-            return render(
-                request,
-                "deletion_confirmed.html",
-                context={"title": "Data Deleted"},
-            )
-
-        except models.DataDeletionRequest.DoesNotExist:
-            return render(
-                request,
-                "deletion_error.html",
-                context={
-                    "title": "Invalid Link",
-                    "error_title": "Invalid Deletion Link",
-                    "error_message": "This deletion link is not valid.",
-                },
-            )
+        return render(request, "deletion_confirmed.html", {"title": "Data Deleted"})
 
 
 class DownloadCalendarView(View):
@@ -807,9 +782,14 @@ class DownloadCalendarView(View):
                 )
                 return HttpResponseNotFound("Denial not found")
 
-            # Generate .ics file
-            from fighthealthinsurance.calendar_utils import generate_followup_ics
+            # Verify raw_email is available
+            if not denial.raw_email:
+                logger.warning(
+                    f"Calendar download attempt for denial {denial_uuid} with no email"
+                )
+                return HttpResponseNotFound("Denial not found")
 
+            # Generate .ics file
             ics_content = generate_followup_ics(denial, denial.raw_email)
 
             # Create response with .ics file
@@ -822,10 +802,14 @@ class DownloadCalendarView(View):
             return response
 
         except models.Denial.DoesNotExist:
-            logger.warning(f"Calendar download attempt for non-existent denial {denial_uuid}")
+            logger.warning(
+                f"Calendar download attempt for non-existent denial {denial_uuid}"
+            )
             return HttpResponseNotFound("Denial not found")
         except Exception as e:
-            logger.error(f"Error generating calendar file for denial {denial_uuid}: {e}")
+            logger.error(
+                f"Error generating calendar file for denial {denial_uuid}: {e}"
+            )
             return HttpResponseServerError("Error generating calendar file")
 
 

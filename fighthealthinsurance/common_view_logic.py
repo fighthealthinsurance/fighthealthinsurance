@@ -1159,10 +1159,14 @@ class DenialCreatorHelper:
 
                 # Send initial calendar email with .ics attachment
                 send_initial_calendar_email(denial, possible_email)
-                logger.info(f"Created calendar reminders and sent initial email for denial {denial.uuid}")
+                logger.info(
+                    f"Created calendar reminders and sent initial email for denial {denial.uuid}"
+                )
             except Exception as e:
                 # Don't fail the entire denial creation if calendar setup fails
-                logger.error(f"Failed to create calendar reminders for denial {denial.uuid}: {e}")
+                logger.error(
+                    f"Failed to create calendar reminders for denial {denial.uuid}: {e}"
+                )
 
         your_state = None
         if zip is not None and zip != "":
