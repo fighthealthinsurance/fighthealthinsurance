@@ -16,6 +16,8 @@ import {
   ScrollArea,
 } from "@mantine/core";
 import ErrorBoundary from "./ErrorBoundary";
+import { THEME } from "./theme";
+import { getCSRFToken } from "./shared";
 
 // Types for Chooser API responses
 interface ChooserCandidate {
@@ -50,37 +52,6 @@ interface ChooserState {
   error: string | null;
   taskType: "appeal" | "chat" | null;
 }
-
-const THEME = {
-  colors: {
-    background: "#f4f6fb",
-    buttonBackground: "#a5c422",
-    buttonText: "#ffffff",
-    selectedBorder: "#a5c422",
-  },
-  borderRadius: {
-    small: 3,
-    medium: 12,
-    large: 24,
-  },
-} as const;
-
-// Get CSRF token from cookies
-const getCSRFToken = (): string => {
-  const name = "csrftoken";
-  let cookieValue = "";
-  if (document.cookie && document.cookie !== "") {
-    const cookies = document.cookie.split(";");
-    for (let i = 0; i < cookies.length; i++) {
-      const cookie = cookies[i].trim();
-      if (cookie.substring(0, name.length + 1) === name + "=") {
-	cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
-	break;
-      }
-    }
-  }
-  return cookieValue;
-};
 
 // Format context for display
 const formatContext = (context: ChooserTaskContext, taskType: string): React.ReactNode => {
@@ -164,7 +135,7 @@ const CandidateCard: React.FC<{
       onClick={onSelect}
       style={{
 	cursor: "pointer",
-	border: isSelected ? `3px solid ${THEME.colors.selectedBorder}` : "1px solid #e0e0e0",
+	border: isSelected ? `3px solid ${THEME.colors.primary}` : "1px solid #e0e0e0",
 	backgroundColor: isSelected ? "#f9fff0" : "#ffffff",
 	transition: "all 0.2s ease",
       }}
@@ -356,8 +327,8 @@ const ChooserInterface: React.FC = () => {
 	      radius="md"
 	      onClick={() => fetchNextTask("appeal")}
 	      style={{
-		background: THEME.colors.buttonBackground,
-		color: THEME.colors.buttonText,
+		background: THEME.buttonSharedStyles.background,
+		color: THEME.buttonSharedStyles.color,
 	      }}
 	    >
 	      Score Appeal Letters
@@ -367,8 +338,8 @@ const ChooserInterface: React.FC = () => {
 	      radius="md"
 	      onClick={() => fetchNextTask("chat")}
 	      style={{
-		background: THEME.colors.buttonBackground,
-		color: THEME.colors.buttonText,
+		background: THEME.buttonSharedStyles.background,
+		color: THEME.buttonSharedStyles.color,
 	      }}
 	    >
 	      Score Chat Responses
@@ -407,8 +378,8 @@ const ChooserInterface: React.FC = () => {
 	    radius="md"
 	    onClick={resetToSelection}
 	    style={{
-	      background: THEME.colors.buttonBackground,
-	      color: THEME.colors.buttonText,
+	      background: THEME.buttonSharedStyles.background,
+	      color: THEME.buttonSharedStyles.color,
 	    }}
 	  >
 	    Go Back
@@ -435,8 +406,8 @@ const ChooserInterface: React.FC = () => {
 	      radius="md"
 	      onClick={doAnother}
 	      style={{
-		background: THEME.colors.buttonBackground,
-		color: THEME.colors.buttonText,
+		background: THEME.buttonSharedStyles.background,
+		color: THEME.buttonSharedStyles.color,
 	      }}
 	    >
 	      Do Another One
@@ -482,8 +453,8 @@ const ChooserInterface: React.FC = () => {
 		onClick={skipTask}
 		loading={isSkipping}
 		style={{
-		  background: THEME.colors.buttonBackground,
-		  color: THEME.colors.buttonText,
+		  background: THEME.buttonSharedStyles.background,
+		  color: THEME.buttonSharedStyles.color,
 		}}
 	      >
 		Find Another Task
@@ -554,9 +525,9 @@ const ChooserInterface: React.FC = () => {
 	      onClick={submitVote}
 	      style={{
 		background: state.selectedCandidate
-		  ? THEME.colors.buttonBackground
+		  ? THEME.buttonSharedStyles.background
 		  : "#cccccc",
-		color: THEME.colors.buttonText,
+		color: THEME.buttonSharedStyles.color,
 	      }}
 	    >
 	      Submit Vote
