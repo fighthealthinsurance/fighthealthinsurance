@@ -119,7 +119,7 @@ def relaunch_actors(force: bool = False) -> Dict[str, Any]:
     from fighthealthinsurance.fax_polling_actor_ref import fax_polling_actor_ref
     from fighthealthinsurance.chooser_refill_actor_ref import chooser_refill_actor_ref
 
-    results = {
+    results: Dict[str, Dict[str, Any]] = {
         "email_polling_actor": {"status": "pending"},
         "fax_polling_actor": {"status": "pending"},
         "chooser_refill_actor": {"status": "pending"},
@@ -139,21 +139,21 @@ def relaunch_actors(force: bool = False) -> Dict[str, Any]:
                     actor = ray.get_actor(actor_name, namespace="fhi")
                     ray.kill(actor)
                     logger.info(f"Killed existing actor: {actor_name}")
-                    results[actor_name]["killed"] = True
+                    results[actor_name]["killed"] = True  # type: ignore
                 except ValueError:
                     # Actor doesn't exist, that's fine
-                    results[actor_name]["killed"] = False
+                    results[actor_name]["killed"] = False  # type: ignore
                 except Exception as e:
                     logger.warning(f"Error killing actor {actor_name}: {e}")
                     results[actor_name]["kill_error"] = str(e)
 
                 # Reset the actor reference to force recreation
                 if actor_name == "email_polling_actor":
-                    actor_ref.email_polling_actor = None
+                    actor_ref.email_polling_actor = None  # type: ignore
                 elif actor_name == "fax_polling_actor":
-                    actor_ref.fax_polling_actor = None
+                    actor_ref.fax_polling_actor = None  # type: ignore
                 elif actor_name == "chooser_refill_actor":
-                    actor_ref.chooser_refill_actor = None
+                    actor_ref.chooser_refill_actor = None  # type: ignore
 
                 # Clear the cached property by deleting it from the instance
                 try:
@@ -164,7 +164,7 @@ def relaunch_actors(force: bool = False) -> Dict[str, Any]:
                     pass
 
             # Launch the actor
-            actor, task = actor_ref.get
+            actor, task = actor_ref.get  # type: ignore
             results[actor_name]["status"] = "launched"
             results[actor_name]["actor"] = str(actor)
             logger.info(f"Launched actor: {actor_name}")

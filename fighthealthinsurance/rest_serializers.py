@@ -39,6 +39,7 @@ from fighthealthinsurance.serializers.common import (
     NextStepInfoSerializableSerializer,
     StatusResponseSerializer,
     LiveModelsStatusSerializer,
+    ActorHealthStatusSerializer,
     ErrorSerializer,
     NotPaidErrorSerializer,
     SuccessSerializer,
