@@ -8,7 +8,6 @@ from urllib.parse import urlencode
 
 from django import forms
 from django.conf import settings
-from django.contrib.auth import get_user_model
 from django.contrib.staticfiles.storage import staticfiles_storage
 from django.core.exceptions import SuspiciousOperation
 from django.http import (
@@ -40,6 +39,7 @@ from fighthealthinsurance.chat_forms import UserConsentForm
 from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
 from fighthealthinsurance.helpers.stripe_helpers import StripeWebhookHelper
 from fighthealthinsurance.models import StripeRecoveryInfo
+from fighthealthinsurance.type_utils import User
 
 
 class BlogPostMetadata(TypedDict, total=False):
@@ -53,12 +53,6 @@ class BlogPostMetadata(TypedDict, total=False):
     excerpt: str
     tags: list[str]
     readTime: str
-
-
-if typing.TYPE_CHECKING:
-    from django.contrib.auth.models import User
-else:
-    User = get_user_model()
 
 
 # Insurance Bullshit Bingo phrases - humorous but factual common denial reasons

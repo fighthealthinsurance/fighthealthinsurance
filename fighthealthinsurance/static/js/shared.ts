@@ -114,6 +114,26 @@ const node_module_path = "/static/js/node_modules/";
 pdfjsLib.GlobalWorkerOptions.workerSrc =
   node_module_path + "pdfjs-dist/build/pdf.worker.min.mjs";
 
+/**
+ * Get CSRF token from cookies for Django requests.
+ * @returns The CSRF token string or empty string if not found
+ */
+export function getCSRFToken(): string {
+  const name = "csrftoken";
+  let cookieValue = "";
+  if (document.cookie && document.cookie !== "") {
+    const cookies = document.cookie.split(";");
+    for (let i = 0; i < cookies.length; i++) {
+      const cookie = cookies[i].trim();
+      if (cookie.substring(0, name.length + 1) === name + "=") {
+        cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+        break;
+      }
+    }
+  }
+  return cookieValue;
+}
+
 export {
   storeLocal,
   storeTextareaLocal,
