@@ -147,13 +147,7 @@ def relaunch_actors(force: bool = False) -> Dict[str, Any]:
                     logger.warning(f"Error killing actor {actor_name}: {e}")
                     results[actor_name]["kill_error"] = str(e)
 
-                # Clear the cached property to force recreation
-                if hasattr(actor_ref, "get"):
-                    try:
-                        del actor_ref.__class__.get.fget.attrname
-                    except AttributeError:
-                        pass
-                # Reset the actor reference
+                # Reset the actor reference to force recreation
                 if actor_name == "email_polling_actor":
                     actor_ref.email_polling_actor = None
                 elif actor_name == "fax_polling_actor":
