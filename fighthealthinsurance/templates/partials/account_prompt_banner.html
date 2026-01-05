@@ -1,0 +1,42 @@
+{% comment %}
+Reusable account creation prompt banner for anonymous users.
+
+Usage:
+    {% include 'partials/account_prompt_banner.html' %}
+
+This banner only displays if the user is NOT authenticated.
+{% endcomment %}
+
+{% if not user.is_authenticated %}
+<div class="alert alert-info border-success" style="background-color: #d4edda; border-width: 2px; margin-top: 20px; margin-bottom: 20px;">
+    <div class="row align-items-center">
+        <div class="col-md-8">
+            <h4 class="alert-heading mb-3">
+                <i class="bi bi-person-plus-fill"></i> Save Your Appeals - Create a Free Account
+            </h4>
+            <p class="mb-2"><strong>Never lose track of your appeals again!</strong></p>
+            <p class="mb-2">Benefits of creating an account:</p>
+            <ul class="mb-2" style="padding-left: 20px;">
+                <li>Save all your appeals in one secure place</li>
+                <li>Track outcomes and follow-ups</li>
+                <li>Access your appeals from any device</li>
+                <li>Add notes, call logs, and supporting evidence</li>
+            </ul>
+            <p class="mb-0" style="font-size: 0.9em; color: #666;">
+                <strong>Important:</strong> We store data for 90 days. We're a small scrappy startup -
+                please save important documents outside of FHI too! Only appeals created
+                <strong>after</strong> account signup will appear in your dashboard (for your security).
+            </p>
+        </div>
+        <div class="col-md-4 text-center">
+            <a href="{% url 'fhi_users:signup' %}" class="btn btn-success btn-lg" style="font-weight: bold; padding: 12px 30px;">
+                Create Free Account
+            </a>
+            <p class="mt-2 mb-0" style="font-size: 0.85em; color: #666;">
+                Already have an account?
+                <a href="{% url 'fhi_users:login' %}" style="color: #28a745;">Log in</a>
+            </p>
+        </div>
+    </div>
+</div>
+{% endif %}
