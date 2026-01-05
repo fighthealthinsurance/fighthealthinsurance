@@ -34,6 +34,7 @@ django-tables2
 django-treebeard
 django-types
 django_user_agents
+dnspython
 django-otp
 django-two-factor-auth
 django-mfa2
