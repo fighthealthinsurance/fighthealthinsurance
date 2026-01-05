@@ -2328,66 +2328,6 @@ class TailscaleModelBackend(RemoteFullOpenLike):
         return False
 
     @classmethod
-    async def _resolve_tailscale_host_async(
-        cls, hostname: str, timeout: float = 2.0
-    ) -> Optional[str]:
-        """
-        Try to resolve a Tailscale hostname via explicit Tailscale DNS asynchronously.
-
-        Uses Tailscale DNS (100.100.100.100) explicitly since containers don't
-        automatically use it. Caches resolved IPs.
-
-        Args:
-            hostname: The hostname to resolve
-            timeout: Maximum time to wait for DNS resolution in seconds
-
-        Returns:
-            The resolved IP address if successful, None otherwise
-        """
-        import dns.resolver
-
-        # Check cache first
-        if hostname in cls._resolved_ips:
-            logger.debug(
-                f"Using cached IP for {hostname}: {cls._resolved_ips[hostname]}"
-            )
-            return cls._resolved_ips[hostname]
-
-        loop = asyncio.get_event_loop()
-        try:
-            # Configure resolver to use Tailscale DNS
-            resolver = dns.resolver.Resolver(configure=False)
-            resolver.nameservers = [cls.TAILSCALE_DNS]
-            resolver.timeout = timeout
-            resolver.lifetime = timeout
-
-            # Run DNS resolution in executor with timeout
-            async with async_timeout(timeout):
-                answers = await loop.run_in_executor(
-                    None, resolver.resolve, hostname, "A"
-                )
-
-                # Get the first A record
-                ip_address = str(answers[0])
-                logger.info(
-                    f"Resolved {hostname} to {ip_address} via Tailscale DNS (async)"
-                )
-
-                # Cache the result
-                cls._resolved_ips[hostname] = ip_address
-                return ip_address
-        except (
-            dns.resolver.NXDOMAIN,
-            dns.resolver.NoAnswer,
-            dns.resolver.Timeout,
-            asyncio.TimeoutError,
-            TimeoutError,
-            Exception,
-        ) as e:
-            logger.debug(f"Skipping {hostname} (async): {e}")
-            return None
-
-    @classmethod
     def _resolve_tailscale_host(cls, hostname: str) -> Optional[str]:
         """
         Try to resolve a Tailscale hostname via explicit Tailscale DNS with timeout.
@@ -2433,10 +2373,11 @@ class TailscaleModelBackend(RemoteFullOpenLike):
             dns.resolver.Timeout,
             concurrent.futures.TimeoutError,
             TimeoutError,
-            Exception,
         ) as e:
             logger.debug(f"Skipping {hostname}: {e}")
             return None
+        except Exception as e:
+            logger.error(f"Skipping {hostname}: unexecpted error {e}")
 
     @classmethod
     def models(cls) -> List[ModelDescription]:
@@ -2454,7 +2395,7 @@ class TailscaleModelBackend(RemoteFullOpenLike):
                 cls._discovered_hosts[friendly_name] = hostname
                 discovered.append(
                     ModelDescription(
-                        cost=5,  # Low cost since it's our own infrastructure
+                        cost=5,  # Low cost since it's on credits.
                         name=f"ts-{friendly_name}",
                         internal_name=model_path,
                         model=cls(model=model_path, host=resolved_ip),
