@@ -19,7 +19,6 @@ dependencies:
 
   # System dependencies that are easier via conda than pip
   - tesseract>=5.0
-  - cairo
   - pango
   - gdk-pixbuf
   - libffi

@@ -11,11 +11,11 @@ The [ML model is generated using this repo](https://github.com/fighthealthinsura
 ### Prerequisites
 
 - Python 3.11, or 3.12
-- System dependencies: `tesseract-ocr`, `texlive`, `libcairo2-dev`
+- System dependencies: `tesseract-ocr`, `texlive`
 
 On Ubuntu/Debian:
 ```bash
-sudo apt-get install tesseract-ocr texlive libcairo2-dev libpango1.0-dev libgdk-pixbuf2.0-dev
+sudo apt-get install tesseract-ocr texlive libpango1.0-dev libgdk-pixbuf2.0-dev
 ```
 
 ### Option A: Using Conda/Micromamba (Recommended)
