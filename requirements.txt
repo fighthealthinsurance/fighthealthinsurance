@@ -64,7 +64,7 @@ PyPDF2
 pyright
 pytesseract # We either need easyocr + opencv-python OR pytesseract + tesseract (so alt is easyocr>=1.7.0 opencv-python)
 python-decouple==3.8
-levenshtein==0.27.2
+levenshtein==0.27.1
 pytz
 pyyaml
 RapidFuzz==2.15.1 # See https://github.com/mindee/doctr/issues/1186
