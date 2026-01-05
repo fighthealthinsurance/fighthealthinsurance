@@ -4,7 +4,6 @@ import typing
 from typing import Optional
 
 from django.conf import settings
-from django.contrib.auth import get_user_model
 from django.core.exceptions import SuspiciousFileOperation
 from django.db import IntegrityError, models
 from django.db.models import Count, Q
@@ -58,14 +57,10 @@ from fighthealthinsurance.rest_mixins import (
     DeleteOnlyMixin,
     SerializerMixin,
 )
+from fighthealthinsurance.type_utils import User
 
 from .common_view_logic import AppealAssemblyHelper
 from .utils import is_convertible_to_int
-
-if typing.TYPE_CHECKING:
-    from django.contrib.auth.models import User
-else:
-    User = get_user_model()
 
 appeal_assembly_helper = AppealAssemblyHelper()
 pubmed_tools = PubMedTools()
