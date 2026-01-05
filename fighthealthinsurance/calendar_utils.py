@@ -62,7 +62,7 @@ def generate_followup_ics(denial: Any, email: str) -> bytes:
     insurance_company = getattr(denial, "insurance_company", "your insurance company")
 
     # Procedure/claim information
-    procedure = getattr(denial, "claim_type", "your claim")
+    procedure = getattr(denial, "procedure", "your claim")
 
     # Create three follow-up events
     follow_up_days = [
