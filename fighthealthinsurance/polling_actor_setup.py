@@ -25,11 +25,19 @@ while not success and attempt < 10:
         print(f"Launched chooser refill actor {cpar}")
         print(f"Double check that we're not finishing the tasks")
         time.sleep(10)
-        ready, wait = ray.wait([etask, ftask, ctask], timeout=1)
+        ready, wait = ray.wait([etask, ftask, ctask], timeout=10)
         print(f"Finished {ready}")
         result = ray.get(ready)
         print(f"Which resulted in {result}")
+        if len(result) > 0:
+            raise Exception("We should not have any polling actors finished!")
+        for actor in [epar, fpar, cpar]:
+            print(f"Checking health of {actor}")
+            result = ray.get(actor.health_check().remote())
+            print(f"Got {result}")
         success = True
+        print(f"Requesting polling runs")
+
     except Exception as e:
         print(f"Error {e} trying to launch")
         time.sleep(60)
