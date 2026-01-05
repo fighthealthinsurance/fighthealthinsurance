@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Follow-up Reminder for Your Appeal</title>
+</head>
+<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+    <div style="background-color: #7B920A; color: white; padding: 20px; text-align: center; border-radius: 5px 5px 0 0;">
+        <h1 style="margin: 0; font-size: 24px;">⏰ Time to Follow Up!</h1>
+    </div>
+
+    <div style="background-color: #f9f9f9; padding: 20px; border: 1px solid #ddd; border-top: none; border-radius: 0 0 5px 5px;">
+        <p>Hi there,</p>
+
+        <p>This is your <strong>{{ reminder_type }}</strong> reminder to check on your <strong>{{ insurance_company }}</strong> appeal.</p>
+
+        <div style="background-color: #fff; border-left: 4px solid #7B920A; padding: 15px; margin: 20px 0;">
+            <h2 style="margin-top: 0; color: #7B920A; font-size: 18px;">✅ Action Items</h2>
+            <ol style="margin: 10px 0; padding-left: 20px;">
+                <li>Call {{ insurance_company }} to check on your appeal status</li>
+                <li>Ask for a reference number and the name of the person you spoke with</li>
+                <li>Document the conversation and outcome</li>
+                <li>If denied, consider your next steps (external review, etc.)</li>
+            </ol>
+        </div>
+
+        {% if reminder_type_code == "2day" %}
+        <div style="background-color: #d4edda; border: 1px solid #c3e6cb; padding: 15px; margin: 20px 0; border-radius: 5px;">
+            <h3 style="margin-top: 0; color: #155724;">💚 Create a Free Account</h3>
+            <p style="margin-bottom: 10px;">Track your appeals and never lose important documents!</p>
+            <p><strong>Benefits of creating an account:</strong></p>
+            <ul style="margin-top: 10px; margin-bottom: 10px;">
+                <li>Save all your appeals in one place</li>
+                <li>Track outcomes and follow-ups</li>
+                <li>Access your appeals from any device</li>
+                <li>Add notes and call logs</li>
+            </ul>
+            <div style="text-align: center; margin-top: 15px;">
+                <a href="https://www.fighthealthinsurance.com/v0/auth/signup" style="display: inline-block; background-color: #28a745; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; font-weight: bold;">Create Free Account</a>
+            </div>
+            <p style="margin-top: 15px; font-size: 13px; color: #666;"><strong>Important:</strong> We store data for 90 days. We're a small scrappy startup - please save important documents outside of FHI too! Only appeals created AFTER account signup will appear in your dashboard (for your security).</p>
+        </div>
+        {% endif %}
+
+        <div style="text-align: center; margin: 30px 0;">
+            <p>Need to add the calendar reminders again?</p>
+            <a href="{{ calendar_download_url }}" style="display: inline-block; background-color: #7B920A; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; font-weight: bold;">Download Calendar File</a>
+        </div>
+
+        {% if selected_appeal %}
+        <div style="background-color: #fff; border: 1px solid #ddd; padding: 15px; margin: 20px 0; border-radius: 5px;">
+            <h3 style="margin-top: 0; color: #333;">📄 Your Appeal Summary</h3>
+            <p style="margin-bottom: 5px;"><strong>Insurance:</strong> {{ insurance_company }}</p>
+            {% if denial.claim_type %}
+            <p style="margin-bottom: 5px;"><strong>Procedure/Claim:</strong> {{ denial.claim_type }}</p>
+            {% endif %}
+        </div>
+        {% endif %}
+
+        <hr style="border: none; border-top: 1px solid #ddd; margin: 30px 0;">
+
+        <h3 style="color: #7B920A;">Need Help?</h3>
+        <p>Visit <a href="https://www.fighthealthinsurance.com" style="color: #7B920A;">www.fighthealthinsurance.com</a> for:</p>
+        <ul>
+            <li>Tips on following up with insurance companies</li>
+            <li>Resources for external reviews</li>
+            <li>State-specific help and guidance</li>
+        </ul>
+
+        <div style="background-color: #fff3cd; border: 1px solid #ffc107; padding: 15px; margin: 20px 0; border-radius: 5px;">
+            <p style="margin: 0; color: #856404;"><strong>📧 Reminder:</strong> Add support42@fighthealthinsurance.com to your contacts to ensure you receive future reminders!</p>
+        </div>
+
+        <p style="margin-top: 30px;">Good luck with your follow-up!</p>
+        <p style="color: #666; font-style: italic;">— The Fight Health Insurance Team</p>
+    </div>
+
+    <div style="text-align: center; padding: 20px; color: #999; font-size: 12px;">
+        <p>Fight Health Insurance | Helping patients fight unfair denials</p>
+        <p>
+            <a href="https://www.fighthealthinsurance.com" style="color: #999;">Website</a> |
+            <a href="https://www.fighthealthinsurance.com/contact" style="color: #999;">Contact</a> |
+            <a href="https://www.fighthealthinsurance.com/privacy_policy" style="color: #999;">Privacy</a>
+        </p>
+    </div>
+</body>
+</html>

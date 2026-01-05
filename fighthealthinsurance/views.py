@@ -783,6 +783,52 @@ class ConfirmDataDeletionView(View):
             )
 
 
+class DownloadCalendarView(View):
+    """View for downloading .ics calendar file with follow-up reminders."""
+
+    def get(self, request, denial_uuid, hashed_email):
+        """Generate and return .ics file for a denial's follow-up reminders.
+
+        Args:
+            denial_uuid: UUID of the denial
+            hashed_email: Hashed email for verification
+
+        Returns:
+            HttpResponse: .ics file download or 404 if denial not found/email mismatch
+        """
+        try:
+            # Get the denial
+            denial = models.Denial.objects.get(uuid=denial_uuid)
+
+            # Verify hashed email matches for security
+            if denial.hashed_email != hashed_email:
+                logger.warning(
+                    f"Calendar download attempt with mismatched email for denial {denial_uuid}"
+                )
+                return HttpResponseNotFound("Denial not found")
+
+            # Generate .ics file
+            from fighthealthinsurance.calendar_utils import generate_followup_ics
+
+            ics_content = generate_followup_ics(denial, denial.raw_email)
+
+            # Create response with .ics file
+            response = HttpResponse(ics_content, content_type="text/calendar")
+            response["Content-Disposition"] = (
+                f'attachment; filename="fhi_appeal_reminders_{denial_uuid}.ics"'
+            )
+
+            logger.info(f"Calendar file downloaded for denial {denial_uuid}")
+            return response
+
+        except models.Denial.DoesNotExist:
+            logger.warning(f"Calendar download attempt for non-existent denial {denial_uuid}")
+            return HttpResponseNotFound("Denial not found")
+        except Exception as e:
+            logger.error(f"Error generating calendar file for denial {denial_uuid}: {e}")
+            return HttpResponseServerError("Error generating calendar file")
+
+
 class RecommendAppeal(View):
     """View for recommending appeal templates (placeholder)."""
 
