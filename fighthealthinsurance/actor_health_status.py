@@ -154,11 +154,11 @@ def relaunch_actors(force: bool = False) -> Dict[str, Any]:
                     actor_ref.fax_polling_actor = None
                 elif actor_name == "chooser_refill_actor":
                     actor_ref.chooser_refill_actor = None
-                
+
                 # Clear the cached property by deleting it from the instance
                 try:
-                    if hasattr(actor_ref, 'get'):
-                        delattr(actor_ref, 'get')
+                    if hasattr(actor_ref, "get"):
+                        delattr(actor_ref, "get")
                 except AttributeError:
                     # Already cleared or never cached
                     pass
