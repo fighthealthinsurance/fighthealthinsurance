@@ -24,9 +24,9 @@ pip install -r requirements.txt -r requirements-dev.txt
 tox
 
 # Run specific test suites
-tox -e py313-django52-sync       # Synchronous tests
-tox -e py313-django52-async      # Async tests (parallelized)
-tox -e py313-django52-sync-actor # Ray actor tests
+tox -e py313-django60-sync       # Synchronous tests
+tox -e py313-django60-async      # Async tests (parallelized)
+tox -e py313-django60-sync-actor # Ray actor tests
 
 # Run single test file
 python manage.py run_test --test-file tests/async/test_appeal_file_view.py
