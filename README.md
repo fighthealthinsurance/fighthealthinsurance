@@ -76,7 +76,7 @@ Tests are run through `tox`. Install it with `pip install tox` if needed.
 tox
 
 # Run specific test suite
-tox -e py313-django60-sync -- tests/sync/test_selenium_appeal_generation.py
+tox -e py313-django52-sync -- tests/sync/test_selenium_appeal_generation.py
 
 # Run tests via Django management command
 python manage.py run_test
