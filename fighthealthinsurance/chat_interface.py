@@ -961,6 +961,41 @@ class ChatInterface:
                             search_and_store_pubmed()
                         )
 
+                    # Load extralink context if available
+                    if microsite and microsite.extralinks:
+                        try:
+                            from fighthealthinsurance.extralink_context_helper import (
+                                ExtraLinkContextHelper,
+                            )
+
+                            logger.info(
+                                f"Loading extralink context for microsite {chat.microsite_slug}"
+                            )
+
+                            extralink_context = (
+                                await ExtraLinkContextHelper.get_context_for_microsite(
+                                    chat.microsite_slug,
+                                    max_docs=5,
+                                    max_chars_per_doc=2000,
+                                )
+                            )
+
+                            if extralink_context:
+                                # Append to chat summary
+                                chat_obj = await OngoingChat.objects.aget(id=chat.id)
+                                if not chat_obj.summary_for_next_call:
+                                    chat_obj.summary_for_next_call = []
+                                chat_obj.summary_for_next_call.append(
+                                    extralink_context
+                                )
+                                await chat_obj.asave()
+
+                                logger.info(
+                                    f"Added {len(extralink_context)} chars of extralink context to chat"
+                                )
+                        except Exception as e:
+                            logger.warning(f"Error loading extralink context: {e}")
+
                 except Exception as e:
                     logger.warning(f"Error loading microsite data for chat: {e}")
 
