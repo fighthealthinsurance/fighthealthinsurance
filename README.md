@@ -87,8 +87,9 @@ python manage.py run_test --test-file tests/async/test_appeal_file_view.py
 
 Test suites:
 - `async` - Async tests (run with `-n auto` for parallelization)
-- `sync` - Synchronous tests
-- `sync-actor` - Ray actor tests
+- `sync` - Tests which must be run synchronously (must be run synch)
+- `selenium` - Selenium tests (must be run synch)
+- `sync-actor` - Ray actor tests (must be run synch)
 
 ## Actor Management
 
