@@ -2378,6 +2378,7 @@ class TailscaleModelBackend(RemoteFullOpenLike):
             return None
         except Exception as e:
             logger.error(f"Skipping {hostname}: unexecpted error {e}")
+            return None
 
     @classmethod
     def models(cls) -> List[ModelDescription]:
