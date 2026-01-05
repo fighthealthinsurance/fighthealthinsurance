@@ -573,6 +573,202 @@ class PubMedQueryData(models.Model):
     created = models.DateTimeField(db_default=Now(), null=True)
 
 
+class ExtraLinkDocument(
+    ExportModelOperationsMixin("ExtraLinkDocument"), models.Model
+):  # type: ignore
+    """
+    Stores external document content fetched from microsite extralinks.
+    Cached documents are reused across microsites to avoid redundant fetching.
+    """
+
+    id = models.UUIDField(
+        default=uuid.uuid4,
+        editable=False,
+        primary_key=True,
+    )
+
+    # URL is the unique key for deduplication
+    url = models.URLField(max_length=2000, unique=True, db_index=True)
+    url_hash = models.CharField(
+        max_length=64, unique=True, db_index=True
+    )  # SHA256 of URL
+
+    # Document metadata
+    document_type = models.CharField(
+        max_length=50,
+        choices=[
+            ("pdf", "PDF Document"),
+            ("docx", "Word Document"),
+            ("html", "HTML Page"),
+            ("txt", "Text Document"),
+            ("unknown", "Unknown Type"),
+        ],
+        default="unknown",
+    )
+    content_type = models.CharField(max_length=200, blank=True)
+    file_size = models.IntegerField(null=True, blank=True)  # in bytes
+
+    # Extracted content
+    raw_text = models.TextField(blank=True)  # Full extracted text
+    summary = models.TextField(blank=True)  # ML-generated summary (optional)
+
+    # Storage reference (if we save the original file)
+    stored_file = models.FileField(
+        upload_to="extralink_docs/",
+        blank=True,
+        null=True,
+        storage=settings.COMBINED_STORAGE,
+    )
+    stored_file_enc = EncryptedFileField(
+        upload_to="extralink_docs_enc/",
+        blank=True,
+        null=True,
+        storage=settings.COMBINED_STORAGE,
+    )
+
+    # Fetch tracking
+    fetch_status = models.CharField(
+        max_length=20,
+        choices=[
+            ("pending", "Pending"),
+            ("fetching", "Fetching"),
+            ("success", "Success"),
+            ("failed", "Failed"),
+        ],
+        default="pending",
+        db_index=True,
+    )
+    fetch_error = models.TextField(blank=True)  # Error message if failed
+    first_fetched_at = models.DateTimeField(null=True, blank=True)
+    last_fetched_at = models.DateTimeField(null=True, blank=True)
+    fetch_attempts = models.IntegerField(default=0)
+
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["url_hash"]),
+            models.Index(fields=["fetch_status", "created_at"]),
+            models.Index(fields=["document_type"]),
+        ]
+        verbose_name = "Extra Link Document"
+        verbose_name_plural = "Extra Link Documents"
+
+    def __str__(self):
+        return f"{self.url[:100]} ({self.fetch_status})"
+
+    @staticmethod
+    def get_url_hash(url: str) -> str:
+        """Generate SHA256 hash of URL for deduplication."""
+        return hashlib.sha256(url.encode("utf-8")).hexdigest()
+
+
+class MicrositeExtraLink(models.Model):
+    """
+    Junction table linking microsites to their extralink documents.
+    Allows same document to be shared across multiple microsites.
+    """
+
+    id = models.AutoField(primary_key=True)
+
+    # Microsite identification
+    microsite_slug = models.CharField(
+        max_length=100, db_index=True, help_text="Slug from microsites.json"
+    )
+
+    # Link to document
+    document = models.ForeignKey(
+        ExtraLinkDocument,
+        on_delete=models.CASCADE,
+        related_name="microsite_links",
+    )
+
+    # Metadata from microsites.json
+    title = models.CharField(max_length=500, blank=True)
+    description = models.TextField(blank=True)
+    category = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="E.g., 'Clinical Guidelines', 'Patient Resources', 'Research'",
+    )
+
+    # Ordering and importance
+    display_order = models.IntegerField(default=0)
+    priority = models.CharField(
+        max_length=20,
+        choices=[
+            ("high", "High Priority"),
+            ("medium", "Medium Priority"),
+            ("low", "Low Priority"),
+        ],
+        default="medium",
+    )
+
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["microsite_slug", "priority"]),
+            models.Index(fields=["microsite_slug", "display_order"]),
+        ]
+        unique_together = [["microsite_slug", "document"]]
+        ordering = ["microsite_slug", "display_order"]
+
+    def __str__(self):
+        return f"{self.microsite_slug}: {self.title or self.document.url[:50]}"
+
+
+class ExtraLinkFetchLog(models.Model):
+    """
+    Audit log for extralink fetch attempts.
+    Useful for debugging and monitoring pre-fetch operations.
+    """
+
+    id = models.AutoField(primary_key=True)
+
+    document = models.ForeignKey(
+        ExtraLinkDocument,
+        on_delete=models.CASCADE,
+        related_name="fetch_logs",
+    )
+
+    timestamp = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    status = models.CharField(
+        max_length=20,
+        choices=[
+            ("started", "Started"),
+            ("success", "Success"),
+            ("failed", "Failed"),
+        ],
+    )
+
+    error_message = models.TextField(blank=True)
+    fetch_duration_ms = models.IntegerField(null=True, blank=True)
+
+    # Context
+    triggered_by = models.CharField(
+        max_length=50,
+        choices=[
+            ("deploy", "Deploy-time Actor"),
+            ("manual", "Manual Trigger"),
+            ("retry", "Automatic Retry"),
+            ("on_demand", "On-Demand Fetch"),
+        ],
+        default="deploy",
+    )
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["document", "timestamp"]),
+            models.Index(fields=["status", "timestamp"]),
+        ]
+        ordering = ["-timestamp"]
+
+
 class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # type: ignore
     """
     Queues faxes to be sent with appeal documents.

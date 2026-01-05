@@ -99,6 +99,21 @@ class Microsite:
             "advocacy_resources", []
         )
 
+        # Optional extralinks (external documents/PDFs/guidelines)
+        # Each entry should have: url (required), title, description, category, priority
+        self.extralinks: list[dict[str, str]] = data.get("extralinks", [])
+
+        # Validate extralinks structure
+        for link in self.extralinks:
+            if not isinstance(link, dict):
+                raise MicrositeValidationError(
+                    f"Each extralink must be a dict, got {type(link)}"
+                )
+            if "url" not in link:
+                raise MicrositeValidationError(
+                    f"Extralink missing required 'url' field: {link}"
+                )
+
     def __repr__(self) -> str:
         return f"<Microsite: {self.slug}>"
 
