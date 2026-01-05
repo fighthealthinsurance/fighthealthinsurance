@@ -67,7 +67,6 @@ python-decouple==3.8
 levenshtein==0.27.1
 pytz
 pyyaml
-RapidFuzz==2.15.1 # See https://github.com/mindee/doctr/issues/1186
 ray==2.53.0 # Must update build_ray
 ray[client]==2.53.0 # Must update build_ray
 requests
