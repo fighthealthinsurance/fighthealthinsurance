@@ -8,7 +8,9 @@ from fighthealthinsurance.calendar_emails import CalendarReminderSender
 
 
 class Command(BaseCommand):
-    help = "Send calendar reminder emails at 2/30/90 day intervals for insurance appeals"
+    help = (
+        "Send calendar reminder emails at 2/30/90 day intervals for insurance appeals"
+    )
 
     def add_arguments(self, parser: CommandParser) -> None:
         parser.add_argument(
@@ -40,9 +42,7 @@ class Command(BaseCommand):
         self.stdout.write(f"Found {candidate_count} pending calendar reminders.")
 
         if dry_run:
-            self.stdout.write(
-                self.style.WARNING("Dry run mode - not sending emails.")
-            )
+            self.stdout.write(self.style.WARNING("Dry run mode - not sending emails."))
             for candidate in candidates[:count] if count else candidates:
                 self.stdout.write(
                     f"  Would send {candidate.get_reminder_type_display()} to: {candidate.email}"

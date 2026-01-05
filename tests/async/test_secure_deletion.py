@@ -204,7 +204,9 @@ class ConfirmDataDeletionViewTest(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "already")
 
-    @patch("fighthealthinsurance.helpers.data_helpers.RemoveDataHelper.remove_data_for_email")
+    @patch(
+        "fighthealthinsurance.helpers.data_helpers.RemoveDataHelper.remove_data_for_email"
+    )
     def test_confirm_deletion_post_deletes_data(self, mock_remove):
         """Test POST request actually deletes data."""
         mock_remove.return_value = None
@@ -219,7 +221,9 @@ class ConfirmDataDeletionViewTest(TestCase):
         self.assertTrue(self.deletion_request.confirmed)
         self.assertIsNotNone(self.deletion_request.confirmed_at)
 
-    @patch("fighthealthinsurance.helpers.data_helpers.RemoveDataHelper.remove_data_for_email")
+    @patch(
+        "fighthealthinsurance.helpers.data_helpers.RemoveDataHelper.remove_data_for_email"
+    )
     def test_confirm_deletion_post_shows_success(self, mock_remove):
         """Test POST shows success page."""
         mock_remove.return_value = None
@@ -257,7 +261,9 @@ class ConfirmDataDeletionViewTest(TestCase):
         expired_request.refresh_from_db()
         self.assertFalse(expired_request.confirmed)
 
-    @patch("fighthealthinsurance.helpers.data_helpers.RemoveDataHelper.remove_data_for_email")
+    @patch(
+        "fighthealthinsurance.helpers.data_helpers.RemoveDataHelper.remove_data_for_email"
+    )
     def test_confirm_deletion_post_idempotent(self, mock_remove):
         """Test that confirming twice doesn't cause issues."""
         mock_remove.return_value = None
@@ -322,7 +328,9 @@ class DeletionSecurityTest(TestCase):
         )
 
         # Confirm deletion
-        with patch("fighthealthinsurance.helpers.data_helpers.RemoveDataHelper.remove_data_for_email") as mock_remove:
+        with patch(
+            "fighthealthinsurance.helpers.data_helpers.RemoveDataHelper.remove_data_for_email"
+        ) as mock_remove:
             mock_remove.return_value = None
             client = Client()
             url = reverse("confirm_deletion", kwargs={"token": "test-token"})

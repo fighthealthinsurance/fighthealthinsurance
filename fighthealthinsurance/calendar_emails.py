@@ -20,6 +20,17 @@ from fighthealthinsurance.calendar_utils import generate_followup_ics
 from fighthealthinsurance.models import CalendarReminder
 
 
+def _get_calendar_download_url(denial: Any) -> str:
+    """Generate calendar download URL for a denial."""
+    return "https://www.fighthealthinsurance.com" + reverse(
+        "download_calendar",
+        kwargs={
+            "denial_uuid": denial.uuid,
+            "hashed_email": denial.hashed_email,
+        },
+    )
+
+
 def send_calendar_email_with_attachment(
     subject: str,
     template_name: str,
@@ -117,15 +128,6 @@ def send_initial_calendar_email(denial: Any, email: str) -> bool:
         # Generate .ics file
         ics_content = generate_followup_ics(denial, email)
 
-        # Create download URL for calendar file
-        calendar_download_url = "https://www.fighthealthinsurance.com" + reverse(
-            "download_calendar",
-            kwargs={
-                "denial_uuid": denial.uuid,
-                "hashed_email": denial.hashed_email,
-            },
-        )
-
         # Get insurance company name
         insurance_company = getattr(denial, "insurance_company", "your insurance")
 
@@ -133,7 +135,7 @@ def send_initial_calendar_email(denial: Any, email: str) -> bool:
         context = {
             "email": email,
             "insurance_company": insurance_company,
-            "calendar_download_url": calendar_download_url,
+            "calendar_download_url": _get_calendar_download_url(denial),
             "denial": denial,
         }
 
@@ -147,15 +149,10 @@ def send_initial_calendar_email(denial: Any, email: str) -> bool:
             ics_filename=f"fhi_appeal_reminders_{denial.uuid}.ics",
         )
 
-        if success:
-            logger.info(
-                f"Successfully sent initial calendar email to {email} for denial {denial.uuid}"
-            )
-        else:
-            logger.warning(
-                f"Failed to send initial calendar email to {email} for denial {denial.uuid}"
-            )
-
+        log_level = logger.info if success else logger.warning
+        log_level(
+            f"{'Successfully sent' if success else 'Failed to send'} initial calendar email to {email} for denial {denial.uuid}"
+        )
         return success
 
     except Exception as e:
@@ -219,18 +216,12 @@ class CalendarReminderSender:
         Returns:
             int: Number of emails successfully sent
         """
-        candidates = self.find_candidates()
-        selected_candidates = candidates
-        if count is not None:
-            selected_candidates = candidates[:count]
-        return len(
-            list(
-                map(
-                    lambda reminder: self.dosend(calendar_reminder=reminder),
-                    selected_candidates,
-                )
-            )
-        )
+        candidates = self.find_candidates()[:count] if count else self.find_candidates()
+        sent_count = 0
+        for reminder in candidates:
+            if self.dosend(calendar_reminder=reminder):
+                sent_count += 1
+        return sent_count
 
     def dosend(
         self,
@@ -261,30 +252,18 @@ class CalendarReminderSender:
         email = calendar_reminder.email
         denial = calendar_reminder.denial
         reminder_type = calendar_reminder.get_reminder_type_display()
-
-        # Generate fresh .ics file for download link
-        calendar_download_url = "https://www.fighthealthinsurance.com" + reverse(
-            "download_calendar",
-            kwargs={
-                "denial_uuid": denial.uuid,
-                "hashed_email": denial.hashed_email,
-            },
-        )
-
-        # Get insurance company name
         insurance_company = getattr(denial, "insurance_company", "your insurance")
-
-        # Get selected appeal if available
-        selected_appeal = denial.chose_appeal() if hasattr(denial, "chose_appeal") else None
 
         # Create email context
         context = {
             "email": email,
             "insurance_company": insurance_company,
-            "calendar_download_url": calendar_download_url,
+            "calendar_download_url": _get_calendar_download_url(denial),
             "denial": denial,
             "reminder_type": reminder_type,
-            "selected_appeal": selected_appeal,
+            "selected_appeal": (
+                denial.chose_appeal() if hasattr(denial, "chose_appeal") else None
+            ),
             "reminder_type_code": calendar_reminder.reminder_type,
         }
 

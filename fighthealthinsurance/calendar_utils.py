@@ -6,9 +6,9 @@ to receive reminders about insurance appeal follow-ups at 2, 30, and 90 day inte
 """
 
 from datetime import datetime, timedelta
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
-from icalendar import Calendar, Event, vText
+from icalendar import Alarm, Calendar, Event, vText
 from django.utils import timezone
 
 
@@ -111,8 +111,6 @@ This reminder was created by Fight Health Insurance (https://www.fighthealthinsu
         event.add("organizer", f"mailto:{email}")
 
         # Add reminder alarm (1 day before the event)
-        from icalendar import Alarm
-
         alarm = Alarm()
         alarm.add("action", "DISPLAY")
         alarm.add("description", f"Reminder: {summary_suffix}")
@@ -141,28 +139,4 @@ This reminder was created by Fight Health Insurance (https://www.fighthealthinsu
         cal.add_component(event)
 
     # Return as bytes
-    return cal.to_ical()
-
-
-def generate_calendar_token(denial: Any) -> str:
-    """Generate a secure token for calendar download links.
-
-    This token is used in the calendar download URL to prevent unauthorized
-    access while still allowing users to download their calendar files.
-
-    Args:
-        denial: Denial model instance
-
-    Returns:
-        str: Secure token for calendar downloads
-
-    Note:
-        The token should be validated against the denial's UUID and hashed email
-        when processing download requests.
-    """
-    import secrets
-
-    # Generate a secure random token
-    # In practice, you might want to store this with the denial or derive it
-    # from denial data for verification
-    return secrets.token_urlsafe(16)
+    return cast(bytes, cal.to_ical())
