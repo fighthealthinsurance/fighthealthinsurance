@@ -3,6 +3,7 @@
 This module provides common type patterns used across the application
 to reduce code duplication.
 """
+
 import typing
 
 from django.contrib.auth import get_user_model

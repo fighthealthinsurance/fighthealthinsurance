@@ -1,4 +1,5 @@
 """Base class for Ray actor references to reduce code duplication."""
+
 from functools import cached_property
 from typing import Any, Optional, Tuple
 
@@ -8,7 +9,7 @@ import ray
 class BaseActorRef:
     """
     Base class for Ray actor references with common initialization logic.
-    
+
     Subclasses should set:
     - actor_class: The actor class to instantiate
     - actor_name: The name for the actor
@@ -24,7 +25,7 @@ class BaseActorRef:
     def get(self) -> Any:
         """
         Get or create the actor instance.
-        
+
         Returns:
             For actors with run_method: Tuple of (actor, remote_result)
             For actors without run_method: Just the actor instance
@@ -49,7 +50,7 @@ class BaseActorRef:
 class FaxActorRefBase(BaseActorRef):
     """
     Base class for FaxActor reference with special initialization logic.
-    
+
     FaxActor uses ray.get_actor for retrieval instead of standard initialization.
     """
 
@@ -62,7 +63,9 @@ class FaxActorRefBase(BaseActorRef):
         if self._actor_instance is None:
             # First try to get existing actor to avoid race conditions
             try:
-                self._actor_instance = ray.get_actor(self.actor_name, namespace=namespace)
+                self._actor_instance = ray.get_actor(
+                    self.actor_name, namespace=namespace
+                )
             except ValueError:
                 # Actor doesn't exist, create it
                 self._actor_instance = self.actor_class.options(  # type: ignore
