@@ -33,7 +33,7 @@ while not success and attempt < 10:
             raise Exception("We should not have any polling actors finished!")
         for actor in [epar, fpar, cpar]:
             print(f"Checking health of {actor}")
-            result = ray.get(actor.health_check().remote())
+            result = ray.get(actor.health_check.remote())
             print(f"Got {result}")
         success = True
         print(f"Requesting polling runs")
