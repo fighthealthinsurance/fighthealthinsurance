@@ -29,8 +29,8 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 # We hope requirements has not changed so we can use the cache
 COPY *requirements.txt /opt/fighthealthinsurance/
 RUN export PATH=/root/.local/bin:$PATH && \
-    uv pip install --system --prefer-binary -r /opt/fighthealthinsurance/requirements.txt && \
-    uv pip install --system --prefer-binary -r /opt/fighthealthinsurance/deploy-requirements.txt
+    uv pip install --system -r /opt/fighthealthinsurance/requirements.txt && \
+    uv pip install --system -r /opt/fighthealthinsurance/deploy-requirements.txt
 RUN mkdir -p /external_data
 # We copy static early ish since it could also be cached nicely
 # Remember to update the combined ray docker file for these copies
