@@ -10,7 +10,7 @@ bokeh
 numpy
 channels
 chardet
-django~=5.2.0; python_version >= "3.10"  # Will install 5.2.10 when available on PyPI
+django~=5.2.9
 django-cms
 djangocms-attributes-field
 django_compressor
@@ -68,8 +68,8 @@ python-Levenshtein
 pytz
 pyyaml
 RapidFuzz==2.15.1 # See https://github.com/mindee/doctr/issues/1186
-ray==2.53.0
-ray[client]==2.53.0
+ray==2.53.0 # Must update build_ray
+ray[client]==2.53.0 # Must update build_ray
 requests
 sentry-sdk[django]
 setuptools>=58
