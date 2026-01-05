@@ -282,6 +282,11 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
     path("share_appeal", views.ShareAppealView.as_view(), name="share_appeal"),
     path("remove_data", views.RemoveDataView.as_view(), name="remove_data"),
     path(
+        "confirm_deletion/<slug:token>",
+        views.ConfirmDataDeletionView.as_view(),
+        name="confirm_deletion",
+    ),
+    path(
         "tos",
         cache_control(public=True)(
             cache_page(60 * 60 * 2)(views.TermsOfServiceView.as_view())

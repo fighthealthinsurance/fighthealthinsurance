@@ -599,7 +599,7 @@ class ShareAppealView(View):
 
 
 class RemoveDataView(View):
-    """View for users to request deletion of their data."""
+    """View for users to request deletion of their data with email confirmation."""
 
     def get(self, request):
         return render(
@@ -616,12 +616,48 @@ class RemoveDataView(View):
 
         if form.is_valid():
             email = form.cleaned_data["email"]
-            RemoveDataHelper.remove_data_for_email(email)
+            hashed_email = models.Denial.get_hashed_email(email)
+
+            # Generate unique token for confirmation
+            import secrets
+
+            token = secrets.token_urlsafe(32)
+
+            # Get client IP for audit trail
+            x_forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
+            if x_forwarded_for:
+                ip_address = x_forwarded_for.split(",")[0]
+            else:
+                ip_address = request.META.get("REMOTE_ADDR")
+
+            # Create deletion request
+            deletion_request = models.DataDeletionRequest.objects.create(
+                email=email,
+                hashed_email=hashed_email,
+                token=token,
+                ip_address=ip_address,
+            )
+
+            # Send confirmation email
+            confirmation_url = request.build_absolute_uri(
+                reverse("confirm_deletion", kwargs={"token": token})
+            )
+
+            from fighthealthinsurance.utils import send_fallback_email
+
+            send_fallback_email(
+                subject="Confirm Data Deletion - Fight Health Insurance",
+                template_name="emails/deletion_confirmation",
+                context={"confirmation_url": confirmation_url},
+                to_email=email,
+            )
+
             return render(
                 request,
-                "removed_data.html",
+                "deletion_requested.html",
                 context={
-                    "title": "Remove My Data",
+                    "title": "Deletion Requested",
+                    "email": email,
                 },
             )
 
@@ -633,6 +669,118 @@ class RemoveDataView(View):
                 "form": form,
             },
         )
+
+
+class ConfirmDataDeletionView(View):
+    """View for confirming data deletion via email token."""
+
+    def get(self, request, token):
+        """Display confirmation page for valid, non-expired tokens."""
+        try:
+            deletion_request = models.DataDeletionRequest.objects.get(token=token)
+
+            # Check if already confirmed
+            if deletion_request.confirmed:
+                return render(
+                    request,
+                    "deletion_error.html",
+                    context={
+                        "title": "Already Deleted",
+                        "error_title": "Data Already Deleted",
+                        "error_message": "This deletion request has already been completed.",
+                    },
+                )
+
+            # Check if expired
+            if deletion_request.is_expired():
+                return render(
+                    request,
+                    "deletion_error.html",
+                    context={
+                        "title": "Link Expired",
+                        "error_title": "Confirmation Link Expired",
+                        "error_message": "This confirmation link has expired. Deletion links are valid for 24 hours.",
+                    },
+                )
+
+            # Show confirmation page
+            return render(
+                request,
+                "deletion_confirm_page.html",
+                context={
+                    "title": "Confirm Deletion",
+                    "email": deletion_request.email,
+                    "token": token,
+                },
+            )
+
+        except models.DataDeletionRequest.DoesNotExist:
+            return render(
+                request,
+                "deletion_error.html",
+                context={
+                    "title": "Invalid Link",
+                    "error_title": "Invalid Deletion Link",
+                    "error_message": "This deletion link is not valid. It may have been copied incorrectly.",
+                },
+            )
+
+    def post(self, request, token):
+        """Process the confirmed deletion."""
+        try:
+            deletion_request = models.DataDeletionRequest.objects.get(token=token)
+
+            # Check if already confirmed
+            if deletion_request.confirmed:
+                return render(
+                    request,
+                    "deletion_confirmed.html",
+                    context={"title": "Data Deleted"},
+                )
+
+            # Check if expired
+            if deletion_request.is_expired():
+                return render(
+                    request,
+                    "deletion_error.html",
+                    context={
+                        "title": "Link Expired",
+                        "error_title": "Confirmation Link Expired",
+                        "error_message": "This confirmation link has expired.",
+                    },
+                )
+
+            # Perform the deletion
+            email = deletion_request.email
+            RemoveDataHelper.remove_data_for_email(email)
+
+            # Mark as confirmed
+            from django.utils import timezone
+
+            deletion_request.confirmed = True
+            deletion_request.confirmed_at = timezone.now()
+            deletion_request.save()
+
+            logger.info(
+                f"Data deletion confirmed and completed for {email} (token: {token[:8]}...)"
+            )
+
+            return render(
+                request,
+                "deletion_confirmed.html",
+                context={"title": "Data Deleted"},
+            )
+
+        except models.DataDeletionRequest.DoesNotExist:
+            return render(
+                request,
+                "deletion_error.html",
+                context={
+                    "title": "Invalid Link",
+                    "error_title": "Invalid Deletion Link",
+                    "error_message": "This deletion link is not valid.",
+                },
+            )
 
 
 class RecommendAppeal(View):
