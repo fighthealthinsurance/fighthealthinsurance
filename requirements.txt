@@ -10,7 +10,7 @@ bokeh
 numpy
 channels
 chardet
-django~=5.2.9; python_version >= "3.10"
+django~=5.2.0; python_version >= "3.10"  # Will install 5.2.10 when available on PyPI
 django-cms
 djangocms-attributes-field
 django_compressor
