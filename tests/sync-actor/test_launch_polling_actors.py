@@ -44,7 +44,9 @@ class TestLaunchPollingActorsCommand(TestCase):
             # It's okay if this fails in test environment
             pass
 
-    @mock.patch("fighthealthinsurance.management.commands.launch_polling_actors.relaunch_actors")
+    @mock.patch(
+        "fighthealthinsurance.management.commands.launch_polling_actors.relaunch_actors"
+    )
     def test_command_with_force(self, mock_relaunch):
         """Test the command with --force flag."""
         # Mock the relaunch_actors function
@@ -53,20 +55,22 @@ class TestLaunchPollingActorsCommand(TestCase):
             "fax_polling_actor": {"status": "launched"},
             "chooser_refill_actor": {"status": "launched"},
         }
-        
+
         out = StringIO()
         call_command("launch_polling_actors", "--force", stdout=out)
         output = out.getvalue()
-        
+
         # Should call relaunch_actors with force=True
         mock_relaunch.assert_called_once_with(force=True)
-        
+
         # Should show success messages
         assert "email_polling_actor" in output
         assert "fax_polling_actor" in output
         assert "chooser_refill_actor" in output
 
-    @mock.patch("fighthealthinsurance.management.commands.launch_polling_actors.relaunch_actors")
+    @mock.patch(
+        "fighthealthinsurance.management.commands.launch_polling_actors.relaunch_actors"
+    )
     def test_command_with_force_handles_errors(self, mock_relaunch):
         """Test the command with --force flag when there are errors."""
         # Mock relaunch_actors to return errors
@@ -75,11 +79,11 @@ class TestLaunchPollingActorsCommand(TestCase):
             "fax_polling_actor": {"status": "error", "error": "Connection failed"},
             "chooser_refill_actor": {"status": "launched"},
         }
-        
+
         out = StringIO()
         call_command("launch_polling_actors", "--force", stdout=out)
         output = out.getvalue()
-        
+
         # Should show both success and error messages
         assert "email_polling_actor" in output
         assert "fax_polling_actor" in output

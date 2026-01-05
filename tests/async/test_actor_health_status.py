@@ -28,9 +28,9 @@ class TestActorHealthStatus(TestCase):
         """Test actor health when all actors are down."""
         # Simulate all actors not found
         mock_ray.get_actor.side_effect = ValueError("Actor not found")
-        
+
         from fighthealthinsurance.actor_health_status import check_actor_health
-        
+
         result = check_actor_health()
         assert result["alive_actors"] == 0
         assert result["total_actors"] == 3
@@ -47,12 +47,12 @@ class TestActorHealthStatus(TestCase):
         mock_actor = mock.MagicMock()
         mock_health_result = mock.MagicMock()
         mock_actor.health_check.remote.return_value = mock_health_result
-        
+
         mock_ray.get_actor.return_value = mock_actor
         mock_ray.get.return_value = True
-        
+
         from fighthealthinsurance.actor_health_status import check_actor_health
-        
+
         result = check_actor_health()
         assert result["alive_actors"] == 3
         assert result["total_actors"] == 3
@@ -66,7 +66,7 @@ class TestActorHealthStatus(TestCase):
     def test_actor_health_partial(self, mock_ray):
         """Test actor health when some actors are up and some are down."""
         call_count = [0]
-        
+
         def get_actor_side_effect(name, namespace):
             call_count[0] += 1
             if call_count[0] == 1:  # First actor is up
@@ -76,12 +76,12 @@ class TestActorHealthStatus(TestCase):
                 return mock_actor
             else:  # Other actors are down
                 raise ValueError("Actor not found")
-        
+
         mock_ray.get_actor.side_effect = get_actor_side_effect
         mock_ray.get.return_value = True
-        
+
         from fighthealthinsurance.actor_health_status import check_actor_health
-        
+
         result = check_actor_health()
         assert result["alive_actors"] == 1
         assert result["total_actors"] == 3
