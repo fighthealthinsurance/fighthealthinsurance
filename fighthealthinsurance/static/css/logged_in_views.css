@@ -1,0 +1,353 @@
+/**
+ * Logged-In Patient Dashboard Styles
+ * Mobile-first responsive design for patient dashboard views
+ */
+
+/* ====================
+   Navigation Tabs
+   ==================== */
+.nav-tabs .nav-link {
+    color: #495057;
+    padding: 0.75rem 1.25rem;
+}
+
+.nav-tabs .nav-link.active {
+    color: #7B920A;
+    font-weight: 600;
+    border-bottom-color: #7B920A;
+}
+
+.nav-tabs .nav-link:hover {
+    color: #7B920A;
+}
+
+/* Mobile: Stack tabs vertically on small screens */
+@media (max-width: 767px) {
+    .nav-tabs {
+        flex-direction: column;
+        border-bottom: none;
+    }
+
+    .nav-tabs .nav-link {
+        border: 1px solid #dee2e6;
+        border-radius: 0;
+        margin-bottom: -1px;
+    }
+
+    .nav-tabs .nav-link.active {
+        border-left: 3px solid #7B920A;
+        background-color: #f8f9fa;
+    }
+}
+
+/* ====================
+   Cards and Borders
+   ==================== */
+.card.border-success {
+    border-width: 2px;
+}
+
+.card {
+    margin-bottom: 1.5rem;
+}
+
+/* ====================
+   Buttons
+   ==================== */
+.btn-green {
+    background: linear-gradient(to right, #ADD100 0%, #7B920A 51%, #ADD100 100%);
+    background-size: 200% auto;
+    border: none;
+    color: white;
+    transition: 0.5s;
+    min-height: 44px; /* Touch-friendly button size */
+}
+
+.btn-green:hover {
+    background-position: right center;
+    color: white;
+}
+
+.btn-green:focus {
+    box-shadow: 0 0 0 0.2rem rgba(123, 146, 10, 0.5);
+}
+
+/* Ensure all buttons are touch-friendly */
+.btn {
+    min-height: 44px;
+    padding: 0.5rem 1rem;
+}
+
+/* Mobile: Full-width buttons */
+@media (max-width: 767px) {
+    .btn-block-mobile {
+        width: 100%;
+        display: block;
+        margin-bottom: 0.5rem;
+    }
+}
+
+/* ====================
+   Evidence Cards Grid
+   ==================== */
+.evidence-grid {
+    display: grid;
+    gap: 1.5rem;
+    margin-top: 1rem;
+}
+
+/* Desktop: 3 columns */
+@media (min-width: 992px) {
+    .evidence-grid {
+        grid-template-columns: repeat(3, 1fr);
+    }
+}
+
+/* Tablet: 2 columns */
+@media (min-width: 768px) and (max-width: 991px) {
+    .evidence-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+/* Mobile: 1 column */
+@media (max-width: 767px) {
+    .evidence-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* ====================
+   Tables
+   ==================== */
+.table-responsive {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+/* Mobile: Better table display */
+@media (max-width: 767px) {
+    .table-responsive {
+        border: 1px solid #dee2e6;
+        border-radius: 0.25rem;
+    }
+
+    table {
+        font-size: 0.875rem;
+    }
+
+    table th,
+    table td {
+        padding: 0.5rem;
+    }
+}
+
+/* ====================
+   Dashboard Header
+   ==================== */
+.dashboard-header {
+    background-color: #f8f9fa;
+    padding: 1.5rem;
+    border-radius: 0.5rem;
+    margin-bottom: 2rem;
+}
+
+.dashboard-header h1 {
+    color: #7B920A;
+    margin-bottom: 0.5rem;
+}
+
+/* Mobile: Smaller header */
+@media (max-width: 767px) {
+    .dashboard-header {
+        padding: 1rem;
+    }
+
+    .dashboard-header h1 {
+        font-size: 1.75rem;
+    }
+}
+
+/* ====================
+   Form Layouts
+   ==================== */
+.form-group {
+    margin-bottom: 1.5rem;
+}
+
+/* Mobile: Stack form fields */
+@media (max-width: 767px) {
+    .form-row {
+        flex-direction: column;
+    }
+
+    .form-row > .col,
+    .form-row > [class*="col-"] {
+        width: 100%;
+        max-width: 100%;
+        padding-right: 0;
+        padding-left: 0;
+    }
+}
+
+/* ====================
+   Evidence Cards
+   ==================== */
+.evidence-card {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+.evidence-card .card-body {
+    flex: 1;
+}
+
+.evidence-card .card-footer {
+    background-color: #f8f9fa;
+    padding: 0.75rem 1.25rem;
+}
+
+/* ====================
+   Stats Cards
+   ==================== */
+.stats-card {
+    text-align: center;
+    padding: 1.5rem;
+}
+
+.stats-number {
+    font-size: 2.5rem;
+    font-weight: bold;
+    color: #7B920A;
+}
+
+.stats-label {
+    font-size: 1rem;
+    color: #666;
+}
+
+@media (max-width: 767px) {
+    .stats-number {
+        font-size: 2rem;
+    }
+}
+
+/* ====================
+   Empty States
+   ==================== */
+.empty-state {
+    text-align: center;
+    padding: 3rem 1.5rem;
+    color: #666;
+}
+
+.empty-state-icon {
+    font-size: 4rem;
+    color: #dee2e6;
+    margin-bottom: 1rem;
+}
+
+/* ====================
+   Action Buttons Container
+   ==================== */
+.action-buttons {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+@media (max-width: 767px) {
+    .action-buttons {
+        flex-direction: column;
+    }
+
+    .action-buttons .btn {
+        width: 100%;
+    }
+}
+
+/* ====================
+   File Upload Preview
+   ==================== */
+.file-preview {
+    max-width: 100%;
+    height: auto;
+    border: 1px solid #dee2e6;
+    border-radius: 0.25rem;
+    margin-top: 1rem;
+}
+
+/* ====================
+   Alerts and Messages
+   ==================== */
+.alert {
+    margin-bottom: 1.5rem;
+}
+
+/* Mobile: Adjust alert spacing */
+@media (max-width: 767px) {
+    .alert {
+        font-size: 0.9rem;
+        padding: 0.75rem;
+    }
+}
+
+/* ====================
+   Utility Classes
+   ==================== */
+.text-muted {
+    color: #6c757d !important;
+}
+
+.mb-mobile {
+    margin-bottom: 1rem;
+}
+
+@media (min-width: 768px) {
+    .mb-mobile {
+        margin-bottom: 0;
+    }
+}
+
+/* ====================
+   Accessibility
+   ==================== */
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border-width: 0;
+}
+
+/* Focus visible for keyboard navigation */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+    outline: 2px solid #7B920A;
+    outline-offset: 2px;
+}
+
+/* ====================
+   Print Styles
+   ==================== */
+@media print {
+    .no-print {
+        display: none !important;
+    }
+
+    .dashboard-header {
+        background-color: white;
+    }
+
+    .nav-tabs {
+        display: none;
+    }
+}

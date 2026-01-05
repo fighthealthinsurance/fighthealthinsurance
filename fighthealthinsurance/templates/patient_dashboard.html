@@ -1,6 +1,10 @@
 {% extends 'base.html' %}
 {% load static %}
 
+{% block extra_head %}
+<link rel="stylesheet" href="{% static 'css/logged_in_views.css' %}">
+{% endblock extra_head %}
+
 {% block title %}My Dashboard - Fight Health Insurance{% endblock title %}
 {% block metatitle %}Patient Dashboard - Fight Health Insurance{% endblock metatitle %}
 {% block metadescription %}View and manage your appeals, call logs, and evidence. Track your interactions with insurance companies.{% endblock metadescription %}
@@ -270,33 +274,3 @@
     {% endif %}
 </div>
 {% endblock content %}
-
-{% block extra_style %}
-<style>
-    .nav-tabs .nav-link {
-        color: #495057;
-    }
-    .nav-tabs .nav-link.active {
-        color: #7B920A;
-        font-weight: 600;
-        border-bottom-color: #7B920A;
-    }
-    .nav-tabs .nav-link:hover {
-        color: #7B920A;
-    }
-    .card.border-success {
-        border-width: 2px;
-    }
-    .btn-green {
-        background: linear-gradient(to right, #ADD100 0%, #7B920A 51%, #ADD100 100%);
-        background-size: 200% auto;
-        border: none;
-        color: white;
-        transition: 0.5s;
-    }
-    .btn-green:hover {
-        background-position: right center;
-        color: white;
-    }
-</style>
-{% endblock extra_style %}
