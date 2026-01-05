@@ -48,6 +48,7 @@ from fighthealthinsurance.ml.ml_citations_helper import MLCitationsHelper
 from fighthealthinsurance.ml.ml_appeal_questions_helper import MLAppealQuestionsHelper
 from fighthealthinsurance.ml.ml_plan_doc_helper import MLPlanDocHelper
 from fighthealthinsurance import stripe_utils
+from fighthealthinsurance.calendar_emails import send_initial_calendar_email
 from fhi_users.models import ProfessionalUser, UserDomain
 from fhi_users import emails as fhi_emails
 from fhi_users.audit import TrackingInfo
@@ -1140,6 +1141,29 @@ class DenialCreatorHelper:
                 follow_up_date=denial.date + datetime.timedelta(days=15),
                 denial_id=denial,
             )
+
+            # Create calendar reminders at 2, 30, and 90 day intervals
+            try:
+                calendar_reminders = [
+                    (2, "2day"),
+                    (30, "30day"),
+                    (90, "90day"),
+                ]
+                for days, reminder_type in calendar_reminders:
+                    CalendarReminder.objects.create(
+                        email=possible_email,
+                        denial=denial,
+                        reminder_date=denial.date + datetime.timedelta(days=days),
+                        reminder_type=reminder_type,
+                    )
+
+                # Send initial calendar email with .ics attachment
+                send_initial_calendar_email(denial, possible_email)
+                logger.info(f"Created calendar reminders and sent initial email for denial {denial.uuid}")
+            except Exception as e:
+                # Don't fail the entire denial creation if calendar setup fails
+                logger.error(f"Failed to create calendar reminders for denial {denial.uuid}: {e}")
+
         your_state = None
         if zip is not None and zip != "":
             try:

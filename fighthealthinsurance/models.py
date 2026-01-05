@@ -263,6 +263,52 @@ class DataDeletionRequest(models.Model):
         return timezone.now() > self.created_at + timedelta(hours=24)
 
 
+class CalendarReminder(models.Model):
+    """
+    Schedules calendar reminder emails at 2/30/90 day intervals after appeal submission.
+
+    Sends reminder emails to users (both logged-in and anonymous) at strategic intervals
+    to check on their insurance appeal status. Works in conjunction with .ics file generation
+    for calendar integration.
+
+    Attributes:
+        id: Auto-incrementing primary key
+        email: Email address to send reminder to
+        denial: Associated denial (for cascade deletion)
+        reminder_date: Date when reminder should be sent
+        reminder_type: Type of reminder (2day, 30day, or 90day)
+        reminder_sent: Whether the reminder has been sent
+        reminder_sent_date: Timestamp when reminder was sent
+        created_at: When this reminder was created
+
+    """
+
+    REMINDER_TYPE_CHOICES = [
+        ("2day", "2 Day Follow-up"),
+        ("30day", "30 Day Follow-up"),
+        ("90day", "90 Day Follow-up"),
+    ]
+
+    id = models.AutoField(primary_key=True)
+    email = models.CharField(max_length=300)
+    denial = models.ForeignKey("Denial", on_delete=models.CASCADE)
+    reminder_date = models.DateField()
+    reminder_type = models.CharField(max_length=10, choices=REMINDER_TYPE_CHOICES)
+    reminder_sent = models.BooleanField(default=False)
+    reminder_sent_date = models.DateTimeField(null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["email", "reminder_date"]),
+            models.Index(fields=["denial"]),
+            models.Index(fields=["reminder_sent", "reminder_date"]),
+        ]
+
+    def __str__(self):
+        return f"{self.get_reminder_type_display()} for {self.email} on {self.reminder_date}"
+
+
 class PlanType(models.Model):
     """
     Categorizes insurance plan types (e.g., HMO, PPO, Medicare).

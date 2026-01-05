@@ -48,6 +48,7 @@ git+https://github.com/jazzband/django-cookie-consent.git#egg=django-cookie-cons
 git+https://github.com/fighthealthinsurance/django-encrypted-model-fields.git@d96965e40e8b40da72fbc78cb968258a4d1bcdf1
 git+https://github.com/fighthealthinsurance/llm-result-utils.git@f24e0bf7fa485d682fe3e42df831623c55844462
 icd10-cm
+icalendar>=5.0.0
 loguru
 markdown_strings
 metapub==0.5.12

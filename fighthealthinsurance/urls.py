@@ -287,6 +287,11 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         name="confirm_deletion",
     ),
     path(
+        "v0/download_calendar/<uuid:denial_uuid>/<slug:hashed_email>",
+        views.DownloadCalendarView.as_view(),
+        name="download_calendar",
+    ),
+    path(
         "tos",
         cache_control(public=True)(
             cache_page(60 * 60 * 2)(views.TermsOfServiceView.as_view())
