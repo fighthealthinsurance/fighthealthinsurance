@@ -114,6 +114,11 @@ class Microsite:
                     f"Extralink missing required 'url' field: {link}"
                 )
 
+        # Optional WIP (work-in-progress) flag
+        # If true, the microsite is excluded from the sitemap but still accessible
+        # This allows working on and iterating on microsites before they go live
+        self.wip: bool = data.get("wip", False)
+
     def __repr__(self) -> str:
         return f"<Microsite: {self.slug}>"
 

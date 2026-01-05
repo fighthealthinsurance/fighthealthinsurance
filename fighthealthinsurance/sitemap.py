@@ -60,16 +60,21 @@ class MicrositeSitemap(Sitemap):
     changefreq = "monthly"
 
     def items(self) -> list[str]:
-        """Return list of microsite slugs from microsites.json."""
+        """Return list of microsite slugs from microsites.json, excluding WIP microsites."""
         try:
-            with staticfiles_storage.open("microsites.json", "r") as f:
-                contents = f.read()
-                if not isinstance(contents, str):
-                    contents = contents.decode("utf-8")
-                data = json.loads(contents)
-            if not isinstance(data, dict):
-                return []
-            return list(data.keys())
+            from fighthealthinsurance.microsites import get_all_microsites
+
+            # Get all microsites and filter out those marked as WIP
+            microsites = get_all_microsites()
+
+            # Only include microsites where wip is False (default) or not set
+            live_slugs = [
+                slug
+                for slug, microsite in microsites.items()
+                if not getattr(microsite, "wip", False)
+            ]
+
+            return live_slugs
         except (FileNotFoundError, json.JSONDecodeError) as e:
             logger.warning(f"Could not load microsites.json for sitemap: {e}")
             return []
