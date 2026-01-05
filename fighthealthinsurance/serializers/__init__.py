@@ -25,6 +25,7 @@ from fighthealthinsurance.serializers.common import (
     AbsoluteStatisticsSerializer,
     SearchResultSerializer,
     LiveModelsStatusSerializer,
+    ActorHealthStatusSerializer,
 )
 
 # Legacy alias for backwards compatibility (typo in original name)
@@ -47,4 +48,5 @@ __all__ = [
     "AbsoluteStatisticsSerializer",
     "SearchResultSerializer",
     "LiveModelsStatusSerializer",
+    "ActorHealthStatusSerializer",
 ]

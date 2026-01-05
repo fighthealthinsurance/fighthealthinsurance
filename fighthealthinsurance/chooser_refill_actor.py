@@ -27,6 +27,10 @@ class ChooserRefillActor:
         _application = get_wsgi_application()
         print(f"wsgi started for ChooserRefillActor")
 
+    async def health_check(self) -> bool:
+        """Check if the actor is healthy and running."""
+        return getattr(self, "running", False)
+
     async def run(self) -> None:
         print(f"Starting ChooserRefillActor run")
         self.running = True

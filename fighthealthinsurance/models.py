@@ -13,17 +13,12 @@ from django.db.models import Q
 from django.db.models.functions import Now
 from django_prometheus.models import ExportModelOperationsMixin
 from django_encrypted_filefield.fields import EncryptedFileField
-from django.contrib.auth import get_user_model
 from django_encrypted_filefield.crypt import Cryptographer
 
+from fighthealthinsurance.type_utils import User
 from fighthealthinsurance.utils import sekret_gen
 from fhi_users.models import *
 from regex_field.fields import RegexField
-
-if typing.TYPE_CHECKING:
-    from django.contrib.auth.models import User
-else:
-    User = get_user_model()
 
 
 class GenericQuestionGeneration(ExportModelOperationsMixin("GenericQuestionGeneration"), models.Model):  # type: ignore

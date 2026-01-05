@@ -23,6 +23,10 @@ class FaxPollingActor:
     async def hello(self) -> str:
         return "Hi"
 
+    async def health_check(self) -> bool:
+        """Check if the actor is healthy and running."""
+        return getattr(self, "running", False)
+
     async def run(self) -> bool:
         print(f"Starting run")
         self.running = True

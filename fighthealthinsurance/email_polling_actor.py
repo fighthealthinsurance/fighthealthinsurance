@@ -39,6 +39,10 @@ class EmailPollingActor:
         self.last_email_clear_check = timezone.now()
         print(f"Senders started")
 
+    async def health_check(self) -> bool:
+        """Check if the actor is healthy and running."""
+        return getattr(self, "running", False)
+
     async def run(self) -> None:
         print(f"Starting run")
         self.running = True

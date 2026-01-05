@@ -3,17 +3,12 @@ import datetime
 import typing
 import re
 from django.db import models
-from django.contrib.auth import get_user_model
 from django.db.models.signals import pre_save
 from django.dispatch import receiver
 from enum import Enum
 from loguru import logger
 
-
-if typing.TYPE_CHECKING:
-    from django.contrib.auth.models import User
-else:
-    User = get_user_model()
+from fighthealthinsurance.type_utils import User
 
 
 # Define user role enum

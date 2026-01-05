@@ -24,6 +24,7 @@ from fighthealthinsurance.followup_emails import (
     FollowUpEmailSender,
 )
 from fighthealthinsurance.mailing_list_actor_ref import mailing_list_actor_ref
+from fighthealthinsurance.type_utils import User
 from fighthealthinsurance.utils import mask_email_for_logging
 
 
@@ -116,9 +117,6 @@ class ActivateProUserView(generic.FormView):
         professionals = ProfessionalUser.objects.filter(domains__in=[domain])
         professionals.update(active=True)
         # Bulk update the auth users
-        from django.contrib.auth import get_user_model
-
-        User = get_user_model()
         user_ids = list(professionals.values_list("user_id", flat=True))
         User.objects.filter(id__in=user_ids).update(is_active=True)
         # Bulk update domain relations
