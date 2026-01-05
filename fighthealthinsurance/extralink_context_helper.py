@@ -48,12 +48,14 @@ class ExtraLinkContextHelper:
             # Get all successfully fetched extralinks for this microsite
             # Ordered by priority (high first) then display_order
             links = []
-            async for link in MicrositeExtraLink.objects.filter(
-                microsite_slug=microsite_slug,
-                document__fetch_status="success",
-            ).select_related("document").order_by("-priority", "display_order")[
-                :max_docs
-            ]:
+            async for link in (
+                MicrositeExtraLink.objects.filter(
+                    microsite_slug=microsite_slug,
+                    document__fetch_status="success",
+                )
+                .select_related("document")
+                .order_by("-priority", "display_order")[:max_docs]
+            ):
                 links.append(link)
 
             if not links:
@@ -124,11 +126,15 @@ class ExtraLinkContextHelper:
         try:
             citations = []
 
-            async for link in MicrositeExtraLink.objects.filter(
-                microsite_slug=microsite_slug,
-                document__fetch_status="success",
-                priority__in=["high", "medium"],
-            ).select_related("document").order_by("-priority")[:max_citations]:
+            async for link in (
+                MicrositeExtraLink.objects.filter(
+                    microsite_slug=microsite_slug,
+                    document__fetch_status="success",
+                    priority__in=["high", "medium"],
+                )
+                .select_related("document")
+                .order_by("-priority")[:max_citations]
+            ):
 
                 title = link.title or "Medical guideline"
                 url = link.document.url

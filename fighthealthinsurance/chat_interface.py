@@ -985,9 +985,7 @@ class ChatInterface:
                                 chat_obj = await OngoingChat.objects.aget(id=chat.id)
                                 if not chat_obj.summary_for_next_call:
                                     chat_obj.summary_for_next_call = []
-                                chat_obj.summary_for_next_call.append(
-                                    extralink_context
-                                )
+                                chat_obj.summary_for_next_call.append(extralink_context)
                                 await chat_obj.asave()
 
                                 logger.info(

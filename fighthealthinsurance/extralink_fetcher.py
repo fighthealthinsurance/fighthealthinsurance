@@ -358,9 +358,7 @@ class ExtraLinkFetcher:
                         try:
                             reader.decrypt("")
                         except Exception:
-                            raise ValueError(
-                                "PDF is encrypted and cannot be decrypted"
-                            )
+                            raise ValueError("PDF is encrypted and cannot be decrypted")
 
                     # Extract text from each page
                     for page in reader.pages:

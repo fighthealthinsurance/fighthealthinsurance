@@ -29,9 +29,7 @@ class ExtraLinkPrefetchActor:
         logger.info("Starting ExtraLink Pre-fetch Actor")
 
         # Initialize Django WSGI application inside the actor
-        os.environ.setdefault(
-            "DJANGO_SETTINGS_MODULE", "fighthealthinsurance.settings"
-        )
+        os.environ.setdefault("DJANGO_SETTINGS_MODULE", "fighthealthinsurance.settings")
         from configurations.wsgi import get_wsgi_application
 
         _application = get_wsgi_application()
@@ -67,8 +65,8 @@ class ExtraLinkPrefetchActor:
             pubmed_result = await self._prefetch_pubmed()
 
             elapsed = time.time() - start_time
-            total_fetched = (
-                extralink_result.get("fetched", 0) + pubmed_result.get("fetched", 0)
+            total_fetched = extralink_result.get("fetched", 0) + pubmed_result.get(
+                "fetched", 0
             )
 
             logger.info(
