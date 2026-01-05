@@ -76,7 +76,7 @@ setuptools>=58
 sorl-thumbnail
 sqlalchemy_mate==2.0.0.0 # uszipcode issue see https://github.com/MacHu-GWU/uszipcode-project/issues/79
 stopit
-stripe==14.1.0
+stripe==12.2.0
 totallylegit-django-rest-framework-braces # forked from django-rest-framework-braces
 types-paramiko
 types-requests
