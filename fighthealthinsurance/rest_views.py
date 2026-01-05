@@ -587,6 +587,38 @@ class LiveModelsStatus(APIView):
             )
 
 
+class ActorHealthStatus(APIView):
+    """Return health status of Ray polling actors.
+
+    Shape:
+    { "alive_actors": int, "total_actors": int, "details": [{"name": str, "alive": bool, "error": Optional[str]}] }
+    """
+
+    @extend_schema(responses=serializers.ActorHealthStatusSerializer)
+    def get(self, request: Request) -> Response:
+        try:
+            from fighthealthinsurance.actor_health_status import check_actor_health
+
+            result = check_actor_health()
+            # Always succeed; return 200 with the current status
+            response = Response(result, status=status.HTTP_200_OK)
+            # Don't cache this as aggressively - 1 minute max
+            response["Cache-Control"] = "public, max-age=60"
+            return response
+        except Exception as e:
+            logger.warning(f"ActorHealthStatus failed: {e}")
+            # Graceful degradation: return error state
+            return Response(
+                {
+                    "alive_actors": 0,
+                    "total_actors": 3,
+                    "details": [],
+                    "message": str(e),
+                },
+                status=status.HTTP_200_OK,
+            )
+
+
 class AppealViewSet(viewsets.ViewSet, SerializerMixin):
     """
     ViewSet for managing appeals and related operations.

@@ -70,6 +70,11 @@ urlpatterns = [
         rest_views.LiveModelsStatus.as_view(),
         name="live_models_status",
     ),
+    path(
+        "actor_health_status",
+        rest_views.ActorHealthStatus.as_view(),
+        name="actor_health_status",
+    ),
     # Router
     path("", include(router.urls)),
 ]
