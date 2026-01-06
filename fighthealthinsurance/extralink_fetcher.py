@@ -475,9 +475,17 @@ class ExtraLinkFetcher:
             microsite_data: List of (microsite_slug, link_data) tuples
         """
         for slug, link_data in microsite_data:
-            priority_map = {"high": 0, "medium": 1, "low": 2,
-                            "0": 0, "1": 1, "2": 2,
-                            0: 0, 1: 1, 2: 2}
+            priority_map = {
+                "high": 0,
+                "medium": 1,
+                "low": 2,
+                "0": 0,
+                "1": 1,
+                "2": 2,
+                0: 0,
+                1: 1,
+                2: 2,
+            }
             priority_raw = link_data.get("priority")
             priority = (
                 priority_map.get(priority_raw, 1)
