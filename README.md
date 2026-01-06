@@ -10,7 +10,7 @@ The [ML model is generated using this repo](https://github.com/fighthealthinsura
 
 ### Prerequisites
 
-- Python 3.11, or 3.12
+- Python 3.13
 - System dependencies: `tesseract-ocr`, `texlive`
 
 On Ubuntu/Debian:
@@ -39,7 +39,7 @@ micromamba activate fhi
 
 ```bash
 # Create a virtual environment (use .venv or build_venv - these are auto-detected)
-python3.11 -m venv .venv
+python3.13 -m venv .venv
 source .venv/bin/activate
 
 # Install dependencies
@@ -76,7 +76,7 @@ Tests are run through `tox`. Install it with `pip install tox` if needed.
 tox
 
 # Run specific test suite
-tox -e py311-django50-sync -- tests/sync/test_selenium_appeal_generation.py
+tox -e py313-django52-sync -- tests/sync/test_selenium_appeal_generation.py
 
 # Run tests via Django management command
 python manage.py run_test

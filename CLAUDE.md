@@ -14,7 +14,7 @@ micromamba env create -f environment.yml
 micromamba activate fhi
 
 # Install dependencies (Option B: venv)
-python3.11 -m venv .venv && source .venv/bin/activate
+python3.13 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt -r requirements-dev.txt
 
 # Run development server
@@ -24,9 +24,9 @@ pip install -r requirements.txt -r requirements-dev.txt
 tox
 
 # Run specific test suites
-tox -e py311-django50-sync       # Synchronous tests
-tox -e py311-django50-async      # Async tests (parallelized)
-tox -e py311-django50-sync-actor # Ray actor tests
+tox -e py313-django52-sync       # Synchronous tests
+tox -e py313-django52-async      # Async tests (parallelized)
+tox -e py313-django52-sync-actor # Ray actor tests
 
 # Run single test file
 python manage.py run_test --test-file tests/async/test_appeal_file_view.py
