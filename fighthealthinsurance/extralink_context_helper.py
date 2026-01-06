@@ -6,6 +6,7 @@ for use in appeal generation and chat interfaces.
 """
 
 from typing import List
+
 from loguru import logger
 
 from fighthealthinsurance.models import ExtraLinkDocument, MicrositeExtraLink

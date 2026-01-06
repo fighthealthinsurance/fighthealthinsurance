@@ -1,7 +1,9 @@
-import ray
-from fighthealthinsurance.fax_actor import FaxActor
-import time
 import asyncio
+import time
+
+import ray
+
+from fighthealthinsurance.fax_actor import FaxActor
 
 
 @ray.remote(max_restarts=-1, max_task_retries=-1)

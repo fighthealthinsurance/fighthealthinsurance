@@ -1,13 +1,12 @@
 import asyncio
-from typing import List, Optional, Dict, Any, cast, Callable, Coroutine
+from typing import Any, Callable, Coroutine, Dict, List, Optional, cast
+
 from loguru import logger
 
-from fighthealthinsurance.models import Denial, GenericContextGeneration
-from fighthealthinsurance.utils import (
-    best_within_timelimit,
-)
-from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.microsites import get_microsite
+from fighthealthinsurance.ml.ml_router import ml_router
+from fighthealthinsurance.models import Denial, GenericContextGeneration
+from fighthealthinsurance.utils import best_within_timelimit
 
 
 class MLCitationsHelper:

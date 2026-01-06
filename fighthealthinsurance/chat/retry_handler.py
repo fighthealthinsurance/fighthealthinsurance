@@ -5,23 +5,13 @@ Provides retry logic with fallback strategies for handling LLM failures
 gracefully. Uses parallel calls to multiple backends with quality scoring.
 """
 
-from typing import (
-    Awaitable,
-    Callable,
-    Dict,
-    List,
-    Optional,
-    Tuple,
-)
+from typing import Awaitable, Callable, Dict, List, Optional, Tuple
 
 from loguru import logger
 
-from fighthealthinsurance.ml.ml_models import RemoteModelLike
-from fighthealthinsurance.chat.llm_client import (
-    build_retry_calls,
-    MIN_RESPONSE_LENGTH,
-)
+from fighthealthinsurance.chat.llm_client import MIN_RESPONSE_LENGTH, build_retry_calls
 from fighthealthinsurance.chat.safety_filters import detect_false_promises
+from fighthealthinsurance.ml.ml_models import RemoteModelLike
 from fighthealthinsurance.utils import best_within_timelimit
 
 

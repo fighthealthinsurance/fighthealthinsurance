@@ -5,10 +5,11 @@ This actor runs once at deploy time to pre-fetch external documents
 from microsites and PubMed articles from microsite search terms.
 """
 
-import os
-import ray
 import asyncio
+import os
 import time
+
+import ray
 from loguru import logger
 
 
@@ -143,9 +144,10 @@ class ExtraLinkPrefetchActor:
         logger.info("Starting PubMed pre-fetch")
 
         try:
-            from fighthealthinsurance.pubmed_tools import PubMedTools
-            from fighthealthinsurance.microsites import get_all_microsites
             from asgiref.sync import sync_to_async
+
+            from fighthealthinsurance.microsites import get_all_microsites
+            from fighthealthinsurance.pubmed_tools import PubMedTools
 
             pubmed_tools = PubMedTools()
             microsites = await sync_to_async(get_all_microsites)()

@@ -6,6 +6,7 @@ articles at deploy time. It's designed to run once per deployment.
 """
 
 from typing import Any
+
 from django.core.management.base import BaseCommand
 
 
@@ -14,6 +15,7 @@ class Command(BaseCommand):
 
     def handle(self, *args: str, **options: Any):
         import ray
+
         from fighthealthinsurance.extralink_prefetch_actor_ref import (
             extralink_prefetch_actor_ref,
         )

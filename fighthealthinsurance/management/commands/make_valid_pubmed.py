@@ -1,8 +1,9 @@
 from typing import Any
 
-from fighthealthinsurance.models import PubMedArticleSummarized
 from django.core.management.base import BaseCommand
 from django.db import models
+
+from fighthealthinsurance.models import PubMedArticleSummarized
 
 
 class Command(BaseCommand):

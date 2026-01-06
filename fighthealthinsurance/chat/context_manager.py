@@ -12,7 +12,6 @@ from loguru import logger
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.utils import ensure_message_alternation
 
-
 # Configuration
 DEFAULT_MESSAGES_TO_KEEP = 20
 SUMMARIZATION_INTERVAL = 10

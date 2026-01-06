@@ -1,7 +1,5 @@
-import stripe
-from loguru import logger
-from typing import *
 import json
+from typing import *
 
 from django.conf import settings
 from django.http import HttpResponse
@@ -9,13 +7,15 @@ from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.views import View, generic
 
-from fighthealthinsurance import forms as core_forms
-from fighthealthinsurance import common_view_logic
+import stripe
+from loguru import logger
+
+from fighthealthinsurance import common_view_logic, forms as core_forms
 from fighthealthinsurance.generate_appeal import *
 from fighthealthinsurance.helpers.fax_helpers import SendFaxHelper
 from fighthealthinsurance.models import *
-from fighthealthinsurance.utils import *
 from fighthealthinsurance.stripe_utils import get_or_create_price
+from fighthealthinsurance.utils import *
 
 
 class FaxFollowUpView(generic.FormView):

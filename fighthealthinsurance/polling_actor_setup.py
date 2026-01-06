@@ -1,8 +1,10 @@
+import time
+
+import ray
+
+from fighthealthinsurance.chooser_refill_actor_ref import chooser_refill_actor_ref
 from fighthealthinsurance.email_polling_actor_ref import email_polling_actor_ref
 from fighthealthinsurance.fax_polling_actor_ref import fax_polling_actor_ref
-from fighthealthinsurance.chooser_refill_actor_ref import chooser_refill_actor_ref
-import time
-import ray
 
 print("Waiting for ray to (probably) launch.")
 time.sleep(60)

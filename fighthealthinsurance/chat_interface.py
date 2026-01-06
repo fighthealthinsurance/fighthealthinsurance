@@ -1,60 +1,48 @@
-import re
 import asyncio
 import json
-from asgiref.sync import sync_to_async
-from django.utils import timezone
-from loguru import logger
-from typing import (
-    Optional,
-    Callable,
-    Awaitable,
-    List,
-    Dict,
-    Tuple,
-    Any,
-    Union,
-)
-from fhi_users.models import User, ProfessionalUser
+import re
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, Union
 
-from fighthealthinsurance.extralink_context_helper import (
-    ExtraLinkContextHelper,
-)
-from fighthealthinsurance.ml.ml_router import ml_router
-from fighthealthinsurance.ml.ml_models import RemoteModelLike
-from fighthealthinsurance.models import (
-    OngoingChat,
-    Denial,
-    Appeal,
-    PriorAuthRequest,
-    ChatLeads,
-)
-from fighthealthinsurance.pubmed_tools import PubMedTools
+from django.utils import timezone
+
+from asgiref.sync import sync_to_async
+from loguru import logger
+
+from fhi_users.models import ProfessionalUser, User
 from fighthealthinsurance import settings
-from fighthealthinsurance.prompt_templates import get_intro_template
-from fighthealthinsurance.utils import best_within_timelimit
-from fighthealthinsurance.chat.safety_filters import (
-    detect_crisis_keywords,
-    CRISIS_RESOURCES,
-)
-from fighthealthinsurance.chat.tools.patterns import (
-    PUBMED_QUERY_REGEX as pubmed_query_terms_regex,
-    MEDICAID_INFO_REGEX as medicaid_info_lookup_regex,
-    MEDICAID_ELIGIBILITY_REGEX as medicaid_eligibility_regex,
-    CREATE_OR_UPDATE_APPEAL_REGEX as create_or_update_appeal_regex,
-    CREATE_OR_UPDATE_PRIOR_AUTH_REGEX as create_or_update_prior_auth_regex,
-)
-from fighthealthinsurance.chat.llm_client import (
-    build_llm_calls,
-    create_response_scorer,
-)
-from fighthealthinsurance.chat.retry_handler import (
-    retry_llm_with_fallback,
-    should_retry_response,
-)
 from fighthealthinsurance.chat.context_manager import (
     prepare_history_for_llm,
     should_store_summary,
 )
+from fighthealthinsurance.chat.llm_client import build_llm_calls, create_response_scorer
+from fighthealthinsurance.chat.retry_handler import (
+    retry_llm_with_fallback,
+    should_retry_response,
+)
+from fighthealthinsurance.chat.safety_filters import (
+    CRISIS_RESOURCES,
+    detect_crisis_keywords,
+)
+from fighthealthinsurance.chat.tools.patterns import (
+    CREATE_OR_UPDATE_APPEAL_REGEX as create_or_update_appeal_regex,
+    CREATE_OR_UPDATE_PRIOR_AUTH_REGEX as create_or_update_prior_auth_regex,
+    MEDICAID_ELIGIBILITY_REGEX as medicaid_eligibility_regex,
+    MEDICAID_INFO_REGEX as medicaid_info_lookup_regex,
+    PUBMED_QUERY_REGEX as pubmed_query_terms_regex,
+)
+from fighthealthinsurance.extralink_context_helper import ExtraLinkContextHelper
+from fighthealthinsurance.ml.ml_models import RemoteModelLike
+from fighthealthinsurance.ml.ml_router import ml_router
+from fighthealthinsurance.models import (
+    Appeal,
+    ChatLeads,
+    Denial,
+    OngoingChat,
+    PriorAuthRequest,
+)
+from fighthealthinsurance.prompt_templates import get_intro_template
+from fighthealthinsurance.pubmed_tools import PubMedTools
+from fighthealthinsurance.utils import best_within_timelimit
 
 
 class ChatInterface:

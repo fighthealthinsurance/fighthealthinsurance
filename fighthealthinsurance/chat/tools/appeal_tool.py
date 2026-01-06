@@ -7,7 +7,8 @@ or update appeal records linked to the current chat.
 
 import json
 import re
-from typing import Optional, Tuple, Callable, Awaitable, Any
+from typing import Any, Awaitable, Callable, Optional, Tuple
+
 from asgiref.sync import sync_to_async
 from loguru import logger
 

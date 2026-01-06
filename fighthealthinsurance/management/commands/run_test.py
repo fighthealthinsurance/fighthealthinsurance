@@ -1,9 +1,10 @@
-import subprocess
 import os
+import subprocess
 import webbrowser
+
+from django.conf import settings
 from django.core.management.base import BaseCommand
 from django.test.utils import get_runner
-from django.conf import settings
 
 
 class Command(BaseCommand):

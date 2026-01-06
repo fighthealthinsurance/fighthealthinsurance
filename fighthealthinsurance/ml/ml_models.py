@@ -1,19 +1,20 @@
-from asgiref.sync import sync_to_async, async_to_sync
-
-from abc import abstractmethod
 import asyncio
-import aiohttp
 import itertools
 import os
 import re
 import sys
 import traceback
+from abc import abstractmethod
 from concurrent.futures import Future
 from dataclasses import dataclass
-from typing import Callable, ClassVar, List, Optional, Tuple, Iterable, Union
-from loguru import logger
-from fighthealthinsurance.utils import ensure_message_alternation
+from typing import Callable, ClassVar, Iterable, List, Optional, Tuple, Union
+
+import aiohttp
 import requests
+from asgiref.sync import async_to_sync, sync_to_async
+from loguru import logger
+
+from fighthealthinsurance.utils import ensure_message_alternation
 
 # Import the appropriate async_timeout based on Python version
 if sys.version_info >= (3, 11):
@@ -25,8 +26,8 @@ from llm_result_utils.cleaner_utils import CleanerUtils
 from llm_result_utils.llm_utils import LLMResponseUtils
 
 from fighthealthinsurance.exec import *
-from fighthealthinsurance.utils import all_concrete_subclasses
 from fighthealthinsurance.process_denial import DenialBase
+from fighthealthinsurance.utils import all_concrete_subclasses
 
 
 class RemoteModelLike(DenialBase):
@@ -2338,8 +2339,9 @@ class TailscaleModelBackend(RemoteFullOpenLike):
         Returns:
             The resolved IP address if successful, None otherwise
         """
-        import dns.resolver
         import concurrent.futures
+
+        import dns.resolver
 
         # Check cache first
         if hostname in cls._resolved_ips:

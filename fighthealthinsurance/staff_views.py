@@ -1,29 +1,28 @@
 import datetime
 
-import ray
-
+from django.db import transaction
 from django.http import HttpResponse
 from django.views import View, generic
-from django.db import transaction
+
+import ray
 from loguru import logger
 
-from fighthealthinsurance import common_view_logic
-from fighthealthinsurance import forms as core_forms
+from fighthealthinsurance import common_view_logic, forms as core_forms
+from fighthealthinsurance.followup_emails import (
+    FollowUpEmailSender,
+    ThankyouEmailSender,
+)
 from fighthealthinsurance.forms import FollowUpTestForm
 from fighthealthinsurance.helpers.fax_helpers import SendFaxHelper
+from fighthealthinsurance.mailing_list_actor_ref import mailing_list_actor_ref
 from fighthealthinsurance.models import (
     Denial,
     FollowUpSched,
     MailingListSubscriber,
+    ProfessionalDomainRelation,
     ProfessionalUser,
     UserDomain,
-    ProfessionalDomainRelation,
 )
-from fighthealthinsurance.followup_emails import (
-    ThankyouEmailSender,
-    FollowUpEmailSender,
-)
-from fighthealthinsurance.mailing_list_actor_ref import mailing_list_actor_ref
 from fighthealthinsurance.type_utils import User
 from fighthealthinsurance.utils import mask_email_for_logging
 

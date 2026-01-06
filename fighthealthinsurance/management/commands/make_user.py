@@ -1,15 +1,17 @@
 from typing import Any
-from django.core.management.base import BaseCommand, CommandParser, CommandError
-from django.core.validators import validate_email
-from django.core.exceptions import ValidationError
+
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
+from django.core.management.base import BaseCommand, CommandError, CommandParser
+from django.core.validators import validate_email
+
 from fhi_users.auth.auth_utils import combine_domain_and_username
 from fhi_users.models import (
-    UserDomain,
-    PatientUser,
     PatientDomainRelation,
-    ProfessionalUser,
+    PatientUser,
     ProfessionalDomainRelation,
+    ProfessionalUser,
+    UserDomain,
 )
 
 

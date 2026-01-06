@@ -1,7 +1,10 @@
-import re
 import csv
-import icd10
+import re
 
+import icd10
+from loguru import logger
+
+from fighthealthinsurance.denial_base import DenialBase
 from fighthealthinsurance.models import (
     AppealTemplates,
     DenialTypes,
@@ -10,8 +13,6 @@ from fighthealthinsurance.models import (
     Procedures,
     Regulator,
 )
-from fighthealthinsurance.denial_base import DenialBase
-from loguru import logger
 
 
 # Process all of our "expert system" rules.

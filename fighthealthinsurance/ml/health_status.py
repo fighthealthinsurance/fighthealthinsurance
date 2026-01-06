@@ -12,15 +12,15 @@ Trade-offs:
 """
 
 import concurrent.futures
+import os
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import List, Optional, Dict, Any
+from typing import Any, Dict, List, Optional
+
 from loguru import logger
 
 from fighthealthinsurance.ml import ml_router as ml_router_module
-import os
-
 
 REFRESH_INTERVAL_SECONDS = 60 * 60  # hourly
 

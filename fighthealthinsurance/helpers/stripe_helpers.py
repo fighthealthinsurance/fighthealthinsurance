@@ -8,16 +8,17 @@ from typing import Any, Optional
 from urllib.parse import urlencode
 
 from django.urls import reverse
+
 from loguru import logger
 
+from fhi_users import emails as fhi_emails
+from fhi_users.models import ProfessionalUser, UserDomain
 from fighthealthinsurance.models import (
     FaxesToSend,
     InterestedProfessional,
     LostStripeSession,
     StripeWebhookEvents,
 )
-from fhi_users.models import ProfessionalUser, UserDomain
-from fhi_users import emails as fhi_emails
 
 
 class StripeWebhookHelper:

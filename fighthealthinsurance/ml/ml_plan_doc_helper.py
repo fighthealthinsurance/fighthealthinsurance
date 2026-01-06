@@ -9,13 +9,13 @@ Uses internal ML models to:
 
 import asyncio
 import re
-from typing import Optional, List, Set
-from loguru import logger
+from typing import List, Optional, Set
 
 import pymupdf
+from loguru import logger
 
-from fighthealthinsurance.models import Denial, PlanDocuments
 from fighthealthinsurance.ml.ml_router import ml_router
+from fighthealthinsurance.models import Denial, PlanDocuments
 
 
 class MLPlanDocHelper:

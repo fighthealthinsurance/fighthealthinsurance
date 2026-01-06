@@ -9,10 +9,11 @@ This module provides health checks for the three polling actors:
 It checks if actors are alive and returns their status.
 """
 
-import ray
-from typing import Dict, Any, List, Optional
-from loguru import logger
 from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
+
+import ray
+from loguru import logger
 
 
 @dataclass
@@ -115,9 +116,9 @@ def relaunch_actors(force: bool = False) -> Dict[str, Any]:
     Returns:
         Dict with status of relaunch operation.
     """
+    from fighthealthinsurance.chooser_refill_actor_ref import chooser_refill_actor_ref
     from fighthealthinsurance.email_polling_actor_ref import email_polling_actor_ref
     from fighthealthinsurance.fax_polling_actor_ref import fax_polling_actor_ref
-    from fighthealthinsurance.chooser_refill_actor_ref import chooser_refill_actor_ref
 
     results: Dict[str, Dict[str, Any]] = {
         "email_polling_actor": {"status": "pending"},

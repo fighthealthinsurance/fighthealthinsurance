@@ -5,24 +5,26 @@ This module provides functionality to fetch and extract text from external docum
 linked in microsites. Supports PDF, DOCX, HTML, and plain text documents.
 """
 
-import aiohttp
 import asyncio
 import hashlib
 import tempfile
 import time
 from typing import Dict, List, Optional, Tuple
-from loguru import logger
-from bs4 import BeautifulSoup
-import PyPDF2
-from django.db import models
-from asgiref.sync import sync_to_async
 
+from django.db import models
+
+import aiohttp
+import PyPDF2
+from asgiref.sync import sync_to_async
+from bs4 import BeautifulSoup
+from loguru import logger
+
+from fighthealthinsurance.microsites import get_all_microsites
 from fighthealthinsurance.models import (
     ExtraLinkDocument,
-    MicrositeExtraLink,
     ExtraLinkFetchLog,
+    MicrositeExtraLink,
 )
-from fighthealthinsurance.microsites import get_all_microsites
 
 
 class ExtraLinkFetcher:

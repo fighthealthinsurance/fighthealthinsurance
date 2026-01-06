@@ -1,5 +1,5 @@
-from typing import Tuple, Optional
 from abc import ABC, abstractmethod
+from typing import Optional, Tuple
 
 
 class DenialBase(ABC):

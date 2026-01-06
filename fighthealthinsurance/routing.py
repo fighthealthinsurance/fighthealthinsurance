@@ -1,9 +1,10 @@
 from django.urls import path
+
 from fighthealthinsurance.websockets import (
+    OngoingChatConsumer,
+    PriorAuthConsumer,
     StreamingAppealsBackend,
     StreamingEntityBackend,
-    PriorAuthConsumer,
-    OngoingChatConsumer,
 )
 
 websocket_urlpatterns = [

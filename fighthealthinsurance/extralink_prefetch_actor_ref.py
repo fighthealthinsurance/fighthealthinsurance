@@ -5,6 +5,7 @@ Provides a cached reference to the extralink pre-fetch actor.
 """
 
 from functools import cached_property
+
 from fighthealthinsurance.base_actor_ref import BaseActorRef
 from fighthealthinsurance.extralink_prefetch_actor import ExtraLinkPrefetchActor
 

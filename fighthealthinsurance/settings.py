@@ -11,21 +11,24 @@ https://docs.djangoproject.com/en/4.0/ref/settings/
 """
 
 import os
-from pathlib import Path
 import re
+import time
 import traceback
 from functools import cached_property
+from pathlib import Path
 from typing import Optional
-from configurations import Configuration
-from fighthealthinsurance.combined_storage import CombinedStorage
-import minio as m
+
 from django.core.files.storage import Storage
-from minio_storage.storage import MinioStorage
-import time
-from dj_easy_log import load_loguru
+
+import minio as m
+from configurations import Configuration
 from corsheaders.defaults import default_methods
-from fighthealthinsurance.utils import get_env_variable
+from dj_easy_log import load_loguru
+from minio_storage.storage import MinioStorage
 from stopit import ThreadingTimeout as Timeout
+
+from fighthealthinsurance.combined_storage import CombinedStorage
+from fighthealthinsurance.utils import get_env_variable
 
 os.environ.setdefault(
     "DJANGO_SETTINGS_MODULE",
@@ -758,9 +761,10 @@ TEST_RUNNER = "django_nose.NoseTestSuiteRunner"
 import os as _os
 
 if _os.getenv("DJANGO_CONFIGURATION") in {"Test", "TestSync", "TestActor"}:
-    from loguru import logger as _logger
-    import sys as _sys
     import logging as _logging
+    import sys as _sys
+
+    from loguru import logger as _logger
 
     # Replace any existing sinks with a safe stderr sink that ignores writes after teardown
     _logger.remove()
