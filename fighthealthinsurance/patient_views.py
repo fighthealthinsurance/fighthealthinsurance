@@ -9,26 +9,19 @@ import typing
 from datetime import date, timedelta
 
 from django.contrib.auth import get_user_model
-from django.contrib.auth.decorators import login_required
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.core.files.uploadedfile import UploadedFile
-from django.http import (
-    FileResponse,
-    Http404,
-    HttpResponse,
-    HttpResponseRedirect,
-)
-from django.shortcuts import get_object_or_404, redirect, render
-from django.urls import reverse, reverse_lazy
+from django.http import Http404, HttpResponse, HttpResponseRedirect
+from django.shortcuts import get_object_or_404
+from django.urls import reverse_lazy
 from django.views import View
-from django.views.generic import CreateView, DeleteView, TemplateView, UpdateView
+from django.views.generic import CreateView, TemplateView, UpdateView
 
 from django_encrypted_filefield.crypt import Cryptographer
 from fhi_users.models import PatientUser
 from fighthealthinsurance.forms import InsuranceCallLogForm, PatientEvidenceForm
 from fighthealthinsurance.models import (
     Appeal,
-    Denial,
     InsuranceCallLog,
     PatientEvidence,
 )

@@ -1,13 +1,14 @@
 """Tests for secure data deletion with email confirmation."""
 
 import datetime
-from unittest.mock import patch, Mock
-import pytest
-from django.test import TestCase, Client
+from unittest.mock import Mock, patch
+
+from django.test import Client, TestCase
 from django.urls import reverse
 from django.utils import timezone
 
-from fighthealthinsurance.models import Denial, DataDeletionRequest
+import pytest
+from fighthealthinsurance.models import DataDeletionRequest, Denial
 
 
 class DataDeletionRequestModelTest(TestCase):

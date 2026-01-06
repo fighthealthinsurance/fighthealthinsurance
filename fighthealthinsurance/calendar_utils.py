@@ -6,10 +6,11 @@ to receive reminders about insurance appeal follow-ups at 2, 30, and 90 day inte
 """
 
 from datetime import datetime, timedelta
-from typing import Any, Optional, cast
+from typing import Any, cast
 
-from icalendar import Alarm, Calendar, Event, vText
 from django.utils import timezone
+
+from icalendar import Alarm, Calendar, Event
 
 
 def generate_followup_ics(denial: Any, email: str) -> bytes:
