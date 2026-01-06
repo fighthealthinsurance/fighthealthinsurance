@@ -345,7 +345,7 @@ class ExtraLinkFetcher:
         """
         text_parts = []
 
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=True) as tmp:
             tmp.write(content)
             tmp.flush()
 
@@ -388,12 +388,12 @@ class ExtraLinkFetcher:
         Raises:
             Exception: If DOCX extraction fails
         """
-        with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp_in:
+        with tempfile.NamedTemporaryFile(suffix=".docx", delete=True) as tmp_in:
             tmp_in.write(content)
             tmp_in.flush()
 
             with tempfile.NamedTemporaryFile(
-                suffix=".txt", delete=False, mode="w"
+                suffix=".txt", delete=True, mode="w"
             ) as tmp_out:
                 tmp_out.close()
 

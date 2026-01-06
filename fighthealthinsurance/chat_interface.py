@@ -14,7 +14,6 @@ from typing import (
     Any,
     Union,
 )
-import threading
 from fhi_users.models import User, ProfessionalUser
 
 from fighthealthinsurance.extralink_context_helper import (
@@ -886,7 +885,7 @@ class ChatInterface:
 
                     microsite = get_microsite(microsite_slug)
                     if microsite:
-                        microsite_update_lock_for_chat = threading.Lock()
+                        microsite_update_lock_for_chat = asyncio.Lock()
                         if microsite.extralinks:
 
                             async def fetch_extra_links_and_store():
@@ -1151,23 +1150,22 @@ class ChatInterface:
             await self.send_message_to_client(final_response_text)
         else:
             # Provide more helpful error message based on context
-            if self.use_external_models:
-                err_msg = (
-                    "Sorry, all available models (including backup models) are currently "
-                    "experiencing issues. Please try again in a few moments. "
-                    "If the problem persists, try refreshing the page or starting a new chat."
-                )
-            else:
+            err_msg = (
+                "Sorry, all available models (including backup models) are currently "
+                "experiencing issues. Please try again in a few moments. "
+                "If the problem persists, try refreshing the page or starting a new chat."
+            )
+            if not self.use_external_models:
                 err_msg = (
                     "Sorry, our primary models are currently busy or experiencing issues. "
                     "You can enable 'Use backup models' in settings to allow fallback to "
                     "additional model providers when our primary models are unavailable."
                 )
-                logger.error(
-                    f"Failed to generate response for user_message: '{user_message}' in chat {chat.id} "
-                    f"after trying all models. use_external_models={self.use_external_models}"
-                )
-                await self.send_error_message(err_msg)
+            logger.error(
+                f"Failed to generate response for user_message: '{user_message}' in chat {chat.id} "
+                f"after trying all models. use_external_models={self.use_external_models}"
+            )
+            await self.send_error_message(err_msg)
 
     async def replay_chat_history(self):
         """Sends the existing chat history to the client."""
