@@ -903,7 +903,7 @@ class ChatInterface:
 
                                     if extralink_context:
                                         # Append to chat summary to the ongoing summary
-                                        with microsite_update_lock_for_chat:
+                                        async with microsite_update_lock_for_chat:
                                             chat_obj = await OngoingChat.objects.aget(
                                                 id=chat.id
                                             )
@@ -917,7 +917,7 @@ class ChatInterface:
                                             chat_obj.summary_for_next_call[-1] = (
                                                 f"{last_summary}\n\nExtralink context:\n{extralink_context}"
                                             )
-                                        await chat_obj.asave()
+                                            await chat_obj.asave()
 
                                     logger.info(
                                         f"Added {len(extralink_context)} chars of extralink context to chat"
@@ -986,7 +986,7 @@ class ChatInterface:
                                         pubmed_context = "\n".join(context_parts)
 
                                         # Append to chat summary to the ongoing summary
-                                        with microsite_update_lock_for_chat:
+                                        async with microsite_update_lock_for_chat:
                                             chat_obj = await OngoingChat.objects.aget(
                                                 id=chat.id
                                             )

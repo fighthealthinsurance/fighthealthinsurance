@@ -130,10 +130,10 @@ class ExtraLinkContextHelper:
                 MicrositeExtraLink.objects.filter(
                     microsite_slug=microsite_slug,
                     document__fetch_status="success",
-                    priority__in=["high", "medium"],
+                    priority__in=[0, 1],  # 0=highest, 1=medium
                 )
                 .select_related("document")
-                .order_by("-priority")[:max_citations]
+                .order_by("priority")[:max_citations]
             ):
 
                 title = link.title or "Medical guideline"

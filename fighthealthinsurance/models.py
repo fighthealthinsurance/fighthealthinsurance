@@ -696,14 +696,9 @@ class MicrositeExtraLink(models.Model):
 
     # Ordering and importance
     display_order = models.IntegerField(default=0)
-    priority = models.CharField(
-        max_length=20,
-        choices=[
-            ("high", "High Priority"),
-            ("medium", "Medium Priority"),
-            ("low", "Low Priority"),
-        ],
-        default="medium",
+    priority = models.IntegerField(
+        default=1,
+        help_text="Priority level: 0=highest, 1=medium, 2=low",
     )
 
     # Timestamps

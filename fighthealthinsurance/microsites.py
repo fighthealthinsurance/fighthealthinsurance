@@ -100,8 +100,8 @@ class Microsite:
         )
 
         # Optional extralinks (external documents/PDFs/guidelines)
-        # Each entry should have: url (required), title, description, category, priority
-        self.extralinks: list[dict[str, str]] = data.get("extralinks", [])
+        # Each entry should have: url (required), title, description, category, priority (int: 0=highest)
+        self.extralinks: list[dict] = data.get("extralinks", [])
 
         # Validate extralinks structure
         for link in self.extralinks:
@@ -112,6 +112,11 @@ class Microsite:
             if "url" not in link:
                 raise MicrositeValidationError(
                     f"Extralink missing required 'url' field: {link}"
+                )
+            # Validate priority if present (should be integer)
+            if "priority" in link and not isinstance(link["priority"], int):
+                raise MicrositeValidationError(
+                    f"Extralink priority must be an integer (0=highest), got {type(link['priority'])}: {link}"
                 )
 
         # Optional WIP (work-in-progress) flag

@@ -45,12 +45,12 @@ class TestExtraLinkModels(TestCase):
             microsite_slug="test-microsite",
             document=doc,
             title="Test Document",
-            priority="high",
+            priority=0,
         )
 
         self.assertEqual(link.microsite_slug, "test-microsite")
         self.assertEqual(link.document, doc)
-        self.assertEqual(link.priority, "high")
+        self.assertEqual(link.priority, 0)
 
     def test_unique_constraint(self):
         """Test that microsite_slug + document must be unique."""
@@ -79,17 +79,20 @@ class TestExtraLinkModels(TestCase):
             )
 
 
-@pytest.mark.asyncio
-class TestExtraLinkContextHelper(TestCase):
+class TestExtraLinkContextHelper:
     """Test the ExtraLinkContextHelper service."""
 
+    @pytest.mark.asyncio
+    @pytest.mark.django_db
     async def test_get_context_for_microsite_empty(self):
         """Test getting context when no extralinks exist."""
         context = await ExtraLinkContextHelper.get_context_for_microsite(
             "nonexistent-microsite"
         )
-        self.assertEqual(context, "")
+        assert context == ""
 
+    @pytest.mark.asyncio
+    @pytest.mark.django_db
     async def test_get_context_for_microsite_with_documents(self):
         """Test getting context with extralink documents."""
         # Create test documents
@@ -114,7 +117,7 @@ class TestExtraLinkContextHelper(TestCase):
             microsite_slug="test-microsite",
             document=doc1,
             title="Medical Guidelines",
-            priority="high",
+            priority=0,
             display_order=1,
         )
 
@@ -122,7 +125,7 @@ class TestExtraLinkContextHelper(TestCase):
             microsite_slug="test-microsite",
             document=doc2,
             title="Treatment Protocols",
-            priority="medium",
+            priority=1,
             display_order=2,
         )
 
@@ -132,12 +135,14 @@ class TestExtraLinkContextHelper(TestCase):
         )
 
         # Should include both documents
-        self.assertIn("Medical Guidelines", context)
-        self.assertIn("Treatment Protocols", context)
-        self.assertIn(url1, context)
-        self.assertIn(url2, context)
-        self.assertIn("medical guidelines", context.lower())
+        assert "Medical Guidelines" in context
+        assert "Treatment Protocols" in context
+        assert url1 in context
+        assert url2 in context
+        assert "medical guidelines" in context.lower()
 
+    @pytest.mark.asyncio
+    @pytest.mark.django_db
     async def test_get_extralink_citations(self):
         """Test getting citations from extralinks."""
         # Create test document
@@ -153,7 +158,7 @@ class TestExtraLinkContextHelper(TestCase):
             microsite_slug="test-microsite",
             document=doc,
             title="Clinical Guidelines",
-            priority="high",
+            priority=0,
         )
 
         # Get citations
@@ -161,10 +166,12 @@ class TestExtraLinkContextHelper(TestCase):
             "test-microsite"
         )
 
-        self.assertEqual(len(citations), 1)
-        self.assertIn("Clinical Guidelines", citations[0])
-        self.assertIn(url, citations[0])
+        assert len(citations) == 1
+        assert "Clinical Guidelines" in citations[0]
+        assert url in citations[0]
 
+    @pytest.mark.asyncio
+    @pytest.mark.django_db
     async def test_priority_ordering(self):
         """Test that high priority documents come first."""
         # Create documents with different priorities
@@ -189,14 +196,14 @@ class TestExtraLinkContextHelper(TestCase):
             microsite_slug="test-microsite",
             document=doc1,
             title="Low Priority",
-            priority="low",
+            priority=2,
         )
 
         await MicrositeExtraLink.objects.acreate(
             microsite_slug="test-microsite",
             document=doc2,
             title="High Priority",
-            priority="high",
+            priority=0,
         )
 
         # Get context
@@ -207,13 +214,15 @@ class TestExtraLinkContextHelper(TestCase):
         # High priority should appear first
         high_pos = context.find("High Priority")
         low_pos = context.find("Low Priority")
-        self.assertLess(high_pos, low_pos)
+        assert high_pos < low_pos
 
+    @pytest.mark.asyncio
+    @pytest.mark.django_db
     async def test_has_extralinks(self):
         """Test checking if a microsite has extralinks."""
         # Should return False for non-existent microsite
         has_links = await ExtraLinkContextHelper.has_extralinks("nonexistent")
-        self.assertFalse(has_links)
+        assert has_links is False
 
         # Create a document and link
         url = "https://example.com/test.pdf"
@@ -230,4 +239,4 @@ class TestExtraLinkContextHelper(TestCase):
 
         # Should return True now
         has_links = await ExtraLinkContextHelper.has_extralinks("has-links")
-        self.assertTrue(has_links)
+        assert has_links is True

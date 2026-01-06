@@ -14,7 +14,6 @@ class Command(BaseCommand):
 
     def handle(self, *args: str, **options: Any):
         import ray
-        import time
         from fighthealthinsurance.extralink_prefetch_actor_ref import (
             extralink_prefetch_actor_ref,
         )
