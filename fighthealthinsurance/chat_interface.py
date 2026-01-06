@@ -1047,8 +1047,8 @@ class ChatInterface:
         if should_store_summary(chat.summary_for_next_call, summarized_context):
             if not chat.summary_for_next_call:
                 chat.summary_for_next_call = []
-                chat.summary_for_next_call.append(summarized_context)
-                logger.info(f"Stored updated summary for chat {chat.id}")
+            chat.summary_for_next_call.append(summarized_context)
+            logger.info(f"Stored updated summary for chat {chat.id}")
 
         final_response_text = None
         final_context_part = None
