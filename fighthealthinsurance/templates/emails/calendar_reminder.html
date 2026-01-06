@@ -52,8 +52,8 @@
         <div style="background-color: #fff; border: 1px solid #ddd; padding: 15px; margin: 20px 0; border-radius: 5px;">
             <h3 style="margin-top: 0; color: #333;">📄 Your Appeal Summary</h3>
             <p style="margin-bottom: 5px;"><strong>Insurance:</strong> {{ insurance_company }}</p>
-            {% if denial.claim_type %}
-            <p style="margin-bottom: 5px;"><strong>Procedure/Claim:</strong> {{ denial.claim_type }}</p>
+            {% if denial.procedure %}
+            <p style="margin-bottom: 5px;"><strong>Procedure/Claim:</strong> {{ denial.procedure }}</p>
             {% endif %}
         </div>
         {% endif %}
