@@ -1122,8 +1122,9 @@ class ChatInterface:
                     }
                 )
 
-            if not chat.summary_for_next_call:
-                chat.summary_for_next_call = []
+            if should_store_summary(chat.summary_for_next_call, final_context_part):
+                if not chat.summary_for_next_call:
+                    chat.summary_for_next_call = []
                 chat.summary_for_next_call.append(final_context_part)
 
             chat.chat_history.append(
