@@ -574,8 +574,8 @@ class PubMedQueryData(models.Model):
 
 
 class ExtraLinkDocument(
-    ExportModelOperationsMixin("ExtraLinkDocument"), models.Model
-):  # type: ignore
+    ExportModelOperationsMixin("ExtraLinkDocument"), models.Model  # type: ignore
+):
     """
     Stores external document content fetched from microsite extralinks.
     Cached documents are reused across microsites to avoid redundant fetching.

@@ -23,11 +23,11 @@ class ExtraLinkPrefetchActorRef(BaseActorRef):
         Returns:
             Tuple of (actor_ref, task_ref)
         """
-        self.actor = super().get()
-        task = self.actor.prefetch_all.remote()
+        actor = self.get()
+        task = actor.prefetch_all.remote()
         print(f"Started extralink pre-fetch task: {task}")
 
-        return (self.extralink_prefetch_actor, task)
+        return (actor, task)
 
 
 extralink_prefetch_actor_ref = ExtraLinkPrefetchActorRef()

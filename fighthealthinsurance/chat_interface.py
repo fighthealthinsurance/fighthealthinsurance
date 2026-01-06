@@ -884,7 +884,7 @@ class ChatInterface:
                         fire_and_forget_in_new_threadpool,
                     )
 
-                    microsite = get_microsite(chat.microsite_slug)
+                    microsite = get_microsite(microsite_slug)
                     if microsite:
                         microsite_update_lock_for_chat = threading.Lock()
                         if microsite.extralinks:
