@@ -15,9 +15,10 @@ from django.template.loader import render_to_string
 from django.urls import reverse
 from django.utils import timezone
 
+from loguru import logger
+
 from fighthealthinsurance.calendar_utils import generate_followup_ics
 from fighthealthinsurance.models import CalendarReminder
-from loguru import logger
 
 
 def _get_calendar_download_url(denial: Any) -> str:

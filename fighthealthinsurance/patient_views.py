@@ -18,14 +18,11 @@ from django.views import View
 from django.views.generic import CreateView, TemplateView, UpdateView
 
 from django_encrypted_filefield.crypt import Cryptographer
+from loguru import logger
+
 from fhi_users.models import PatientUser
 from fighthealthinsurance.forms import InsuranceCallLogForm, PatientEvidenceForm
-from fighthealthinsurance.models import (
-    Appeal,
-    InsuranceCallLog,
-    PatientEvidence,
-)
-from loguru import logger
+from fighthealthinsurance.models import Appeal, InsuranceCallLog, PatientEvidence
 
 if typing.TYPE_CHECKING:
     from django.contrib.auth.models import User
