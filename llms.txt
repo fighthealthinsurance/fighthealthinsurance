@@ -7,17 +7,19 @@ Fight Health Insurance is a web application that assists users in generating per
 ## Core Features
 
 - **Appeal Letter Generation**: AI-powered generation of persuasive appeal letters based on denial details
-- **Prior Authorization Support**: Automated prior authorization request generation
-- **Multi-channel Delivery**: Send appeals via email, fax, or download as PDF
+- **Prior Authorization Support**: Automated prior authorization request generation (professional only)
+- **Multi-channel Delivery**: Send appeals and prior auths via fax, or download as PDF
 - **Real-time Streaming**: WebSocket-based streaming for long-running ML operations
 - **Chat Interface**: AI-powered conversational assistance for appeal creation
-- **Multi-tenant Support**: Healthcare professional domains with user management
+- **Multi-tenant Support**: Healthcare professional domains with user management (professional only)
 
 ## Documentation
 
 - [README.md](README.md): Quick start guide and project overview
-- [CLAUDE.md](CLAUDE.md): Development guide with architecture details
+- [CLAUDE.md](CLAUDE.md): Development guide with architecture details for AI agents.
 - [Streaming-APIs-Spec.md](Streaming-APIs-Spec.md): WebSocket API specifications
+
+Note: the APIs are intended only for internal use by Fight Health Insurance & Fight Paperwork. External API usage is available on request.
 
 ## Project Structure
 
@@ -28,7 +30,7 @@ Fight Health Insurance is a web application that assists users in generating per
   - [chat_interface.py](fighthealthinsurance/chat_interface.py): AI-powered chat assistance
   - [generate_appeal.py](fighthealthinsurance/generate_appeal.py): Appeal generation logic
   - [generate_prior_auth.py](fighthealthinsurance/generate_prior_auth.py): Prior auth generation
-  - [websockets.py](fighthealthinsurance/websockets.py): Django Channels WebSocket consumers
+  - [websockets.py](fighthealthinsurance/websockets.py): Django Channels WebSocket consumers connecting to appeal generation, chat interface, and entity extraction.
   - [models.py](fighthealthinsurance/models.py): Database models (~30+ with encrypted PII)
   - [ml/](fighthealthinsurance/ml/): ML integration layer
   - [forms/](fighthealthinsurance/forms/): Django forms

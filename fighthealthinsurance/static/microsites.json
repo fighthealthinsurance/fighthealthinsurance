@@ -38,22 +38,6 @@
       "MRI appropriateness criteria low back pain red flags",
       "evidence-based guidelines MRI neurologic symptoms",
       "impact of delayed MRI diagnosis outcomes"
-    ],
-    "extralinks": [
-      {
-        "url": "https://example.com/acr-mri-guidelines.pdf",
-        "title": "ACR Appropriateness Criteria for MRI",
-        "description": "American College of Radiology guidelines for MRI use",
-        "category": "Clinical Guidelines",
-        "priority": 0
-      },
-      {
-        "url": "https://example.com/spine-imaging-guidelines.pdf",
-        "title": "Spine Imaging Guidelines",
-        "description": "Evidence-based guidelines for spine MRI",
-        "category": "Clinical Guidelines",
-        "priority": 1
-      }
     ]
   },
   "ct-scan-denial": {
