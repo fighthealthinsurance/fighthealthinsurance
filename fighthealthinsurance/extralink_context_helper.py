@@ -55,7 +55,7 @@ class ExtraLinkContextHelper:
                     document__fetch_status="success",
                 )
                 .select_related("document")
-                .order_by("-priority", "display_order")[:max_docs]
+                .order_by("priority", "display_order")[:max_docs]
             ):
                 links.append(link)
 

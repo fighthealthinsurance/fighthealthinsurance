@@ -475,6 +475,15 @@ class ExtraLinkFetcher:
             microsite_data: List of (microsite_slug, link_data) tuples
         """
         for slug, link_data in microsite_data:
+            priority_map = {"high": 0, "medium": 1, "low": 2,
+                            "0": 0, "1": 1, "2": 2,
+                            0: 0, 1: 1, 2: 2}
+            priority_raw = link_data.get("priority")
+            priority = (
+                priority_map.get(priority_raw, 1)
+                if isinstance(priority_raw, str)
+                else (priority_raw if priority_raw is not None else 1)
+            )
             await MicrositeExtraLink.objects.aget_or_create(
                 microsite_slug=slug,
                 document=doc,
@@ -482,7 +491,7 @@ class ExtraLinkFetcher:
                     "title": link_data.get("title", ""),
                     "description": link_data.get("description", ""),
                     "category": link_data.get("category", ""),
-                    "priority": link_data.get("priority", "medium"),
+                    "priority": priority,
                     "display_order": 0,  # Can be updated later if needed
                 },
             )
