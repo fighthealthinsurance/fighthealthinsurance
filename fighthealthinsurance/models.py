@@ -15,12 +15,11 @@ from django.db.models.functions import Now
 from django_encrypted_filefield.crypt import Cryptographer
 from django_encrypted_filefield.fields import EncryptedFileField
 from django_prometheus.models import ExportModelOperationsMixin
-from loguru import logger
-from regex_field.fields import RegexField
-
 from fhi_users.models import *
 from fighthealthinsurance.type_utils import User
 from fighthealthinsurance.utils import sekret_gen
+from loguru import logger
+from regex_field.fields import RegexField
 
 
 class GenericQuestionGeneration(ExportModelOperationsMixin("GenericQuestionGeneration"), models.Model):  # type: ignore

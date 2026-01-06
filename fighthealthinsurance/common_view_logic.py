@@ -34,24 +34,23 @@ import pymupdf
 import ray
 import uszipcode
 from asgiref.sync import async_to_sync, sync_to_async
-from loguru import logger
-from PyPDF2 import PdfMerger
-from stopit.utils import TimeoutException
-
 from fhi_users import emails as fhi_emails
 from fhi_users.audit import TrackingInfo
 from fhi_users.models import ProfessionalUser, UserDomain
 from fighthealthinsurance import stripe_utils
+from fighthealthinsurance.calendar_emails import send_initial_calendar_email
 from fighthealthinsurance.fax_actor_ref import fax_actor_ref
 from fighthealthinsurance.form_utils import *
 from fighthealthinsurance.generate_appeal import *
 from fighthealthinsurance.ml.ml_appeal_questions_helper import MLAppealQuestionsHelper
 from fighthealthinsurance.ml.ml_citations_helper import MLCitationsHelper
 from fighthealthinsurance.ml.ml_plan_doc_helper import MLPlanDocHelper
-from fighthealthinsurance.calendar_emails import send_initial_calendar_email
 from fighthealthinsurance.models import *
 from fighthealthinsurance.process_denial import ProcessDenialCodes
 from fighthealthinsurance.utils import interleave_iterator_for_keep_alive
+from loguru import logger
+from PyPDF2 import PdfMerger
+from stopit.utils import TimeoutException
 
 from .pubmed_tools import PubMedTools
 from .utils import (

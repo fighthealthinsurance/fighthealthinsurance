@@ -2,12 +2,11 @@
 
 import datetime
 from unittest.mock import Mock
-from django.test import TestCase, Client, RequestFactory
-from django.urls import reverse
-from django.template import Context, Template
-from django.contrib.auth.models import AnonymousUser
 
-from fighthealthinsurance.models import Denial, DataDeletionRequest
+from django.test import Client, TestCase
+from django.urls import reverse
+
+from fighthealthinsurance.models import DataDeletionRequest, Denial
 
 
 class CalendarEmailTemplateTest(TestCase):
@@ -138,7 +137,9 @@ class DeletionTemplateTest(TestCase):
 
         url = reverse("confirm_deletion", kwargs={"token": "test-token-456"})
 
-        with patch("fighthealthinsurance.helpers.data_helpers.RemoveDataHelper.remove_data_for_email"):
+        with patch(
+            "fighthealthinsurance.helpers.data_helpers.RemoveDataHelper.remove_data_for_email"
+        ):
             response = self.client.post(url)
 
         self.assertEqual(response.status_code, 200)

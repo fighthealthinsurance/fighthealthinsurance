@@ -2,13 +2,14 @@
 
 import datetime
 from unittest.mock import Mock, patch
-import pytest
+
 from django.test import TestCase
 from django.utils import timezone
 
-from fighthealthinsurance.models import Denial, CalendarReminder
-from fighthealthinsurance.calendar_utils import generate_followup_ics
+import pytest
 from fighthealthinsurance.calendar_emails import CalendarReminderSender
+from fighthealthinsurance.calendar_utils import generate_followup_ics
+from fighthealthinsurance.models import CalendarReminder, Denial
 
 
 class CalendarUtilsTest(TestCase):
