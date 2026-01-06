@@ -1,15 +1,17 @@
-from typing import Tuple, Union
-import ray
-from fighthealthinsurance.fax_utils import *
+import asyncio
+import time
 import uuid
 from datetime import timedelta
-import time
-import asyncio
+from typing import Tuple, Union
 
 from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
-from django.utils import timezone
 from django.urls import reverse
+from django.utils import timezone
+
+import ray
+
+from fighthealthinsurance.fax_utils import *
 from fighthealthinsurance.utils import get_env_variable
 
 
@@ -61,8 +63,9 @@ class FaxActor:
         return fax.delete()
 
     def test_migrate(self):
-        from fighthealthinsurance.models import FaxesToSend
         from django.core.management import call_command
+
+        from fighthealthinsurance.models import FaxesToSend
 
         self._require_test_env()
 

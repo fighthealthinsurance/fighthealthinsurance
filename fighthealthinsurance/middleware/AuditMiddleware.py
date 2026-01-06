@@ -8,6 +8,7 @@ import time
 from typing import Callable
 
 from django.http import HttpRequest, HttpResponse
+
 from loguru import logger
 
 
@@ -44,7 +45,7 @@ class AuditMiddleware:
         """Log the API request. Errors are swallowed."""
         try:
             # Import here to avoid circular imports and allow lazy loading
-            from fhi_users.audit import log_api_access, is_audit_enabled
+            from fhi_users.audit import is_audit_enabled, log_api_access
 
             if not is_audit_enabled():
                 return

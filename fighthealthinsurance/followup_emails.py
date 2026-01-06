@@ -5,9 +5,11 @@ from django.db.models import QuerySet
 from django.db.utils import NotSupportedError
 from django.urls import reverse
 from django.utils import timezone
+
+from loguru import logger
+
 from fighthealthinsurance.models import FollowUpSched, InterestedProfessional
 from fighthealthinsurance.utils import send_fallback_email
-from loguru import logger
 
 
 class ThankyouEmailSender(object):

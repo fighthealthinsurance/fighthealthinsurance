@@ -20,9 +20,9 @@ from django.http import (
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template import loader
 from django.urls import reverse
+from django.utils.decorators import method_decorator
 from django.utils.safestring import mark_safe
 from django.views import View, generic
-from django.utils.decorators import method_decorator
 from django.views.decorators.clickjacking import xframe_options_exempt
 from django.views.decorators.csrf import csrf_exempt, ensure_csrf_cookie
 from django.views.decorators.http import require_http_methods
@@ -1807,7 +1807,7 @@ def create_pwyw_checkout(request: HttpRequest) -> HttpResponse:
         ):
             base_url = request.build_absolute_uri(return_url)
             # Add donation=success parameter
-            from urllib.parse import urlparse, urlunparse, parse_qs, urlencode
+            from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
             parsed = urlparse(base_url)
             query_params = parse_qs(parsed.query)
@@ -2046,6 +2046,7 @@ class DenialLanguageLibraryView(TemplateView):
 
         # Load denial language data
         import json
+
         from django.contrib.staticfiles.storage import staticfiles_storage
 
         try:

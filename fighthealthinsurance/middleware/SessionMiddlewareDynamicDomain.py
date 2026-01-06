@@ -1,7 +1,7 @@
-from loguru import logger
-
 from django.conf import settings
 from django.utils.deprecation import MiddlewareMixin
+
+from loguru import logger
 
 
 class SessionMiddlewareDynamicDomain(MiddlewareMixin):

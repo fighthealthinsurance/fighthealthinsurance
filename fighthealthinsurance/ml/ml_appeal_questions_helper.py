@@ -1,11 +1,13 @@
-from typing import List, Tuple, Optional, cast, Callable, Coroutine, Any
-from loguru import logger
 import asyncio
+import re
 import time
+from typing import Any, Callable, Coroutine, List, Optional, Tuple, cast
+
+from loguru import logger
+
+from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.models import Denial, GenericQuestionGeneration
 from fighthealthinsurance.utils import best_within_timelimit
-from fighthealthinsurance.ml.ml_router import ml_router
-import re
 
 
 class MLAppealQuestionsHelper:

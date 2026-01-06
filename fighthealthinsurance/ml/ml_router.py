@@ -1,7 +1,7 @@
 import asyncio
-from typing import List
+from typing import List, Optional
+
 from loguru import logger
-from typing import Optional
 
 from fighthealthinsurance.ml.ml_models import *
 

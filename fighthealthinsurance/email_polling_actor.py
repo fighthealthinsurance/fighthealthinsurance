@@ -1,12 +1,12 @@
-import os
-
-import ray
-import time
 import asyncio
 import datetime
+import os
+import time
 
-from asgiref.sync import sync_to_async
 from django.utils import timezone
+
+import ray
+from asgiref.sync import sync_to_async
 
 from fighthealthinsurance.utils import get_env_variable
 
@@ -30,8 +30,8 @@ class EmailPollingActor:
         print(f"wsgi started")
         # Now we can import the follow up e-mails logic
         from fighthealthinsurance.followup_emails import (
-            ThankyouEmailSender,
             FollowUpEmailSender,
+            ThankyouEmailSender,
         )
 
         self.followup_sender = FollowUpEmailSender()
@@ -93,6 +93,7 @@ class EmailPollingActor:
         """Clear emails from denials 30 days after follow-up was sent for users who didn't opt in."""
         try:
             from django.db.models import Q
+
             from fighthealthinsurance.models import Denial, FollowUpSched
 
             cutoff_datetime = timezone.now() - datetime.timedelta(days=30)

@@ -10,11 +10,7 @@ from typing import Optional
 import ray
 
 from fighthealthinsurance.fax_actor_ref import fax_actor_ref
-from fighthealthinsurance.models import (
-    Appeal,
-    Denial,
-    FaxesToSend,
-)
+from fighthealthinsurance.models import Appeal, Denial, FaxesToSend
 
 
 @dataclass

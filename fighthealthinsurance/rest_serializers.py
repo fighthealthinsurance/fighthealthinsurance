@@ -1,51 +1,49 @@
+from typing import List, Optional
+
 from django import forms
 from django.urls import reverse
 
+from drf_braces.serializers.form_serializer import FormSerializer
+from drf_spectacular.utils import extend_schema_field
 from loguru import logger
-
-from drf_braces.serializers.form_serializer import (
-    FormSerializer,
-)
-from fighthealthinsurance import forms as core_forms
-from fighthealthinsurance.models import (
-    Appeal,
-    DemoRequests,
-    MailingListSubscriber,
-    ProposedAppeal,
-    AppealAttachment,
-    Denial,
-    PubMedMiniArticle,
-    PriorAuthRequest,
-    ProposedPriorAuth,
-    OngoingChat,
-)
 from rest_framework import serializers
 
 from fhi_users.auth import rest_serializers as auth_serializers
-from typing import Optional, List
-from drf_spectacular.utils import extend_schema_field
-
-# Import common field types from serializers package
-from fighthealthinsurance.serializers.fields import (
-    StringListField,
-    DictionaryListField,
-    DictionaryStringField,
-    DenialTypesSerializer,
-    DenialTypesListField,
+from fighthealthinsurance import forms as core_forms
+from fighthealthinsurance.models import (
+    Appeal,
+    AppealAttachment,
+    DemoRequests,
+    Denial,
+    MailingListSubscriber,
+    OngoingChat,
+    PriorAuthRequest,
+    ProposedAppeal,
+    ProposedPriorAuth,
+    PubMedMiniArticle,
 )
 
 # Import common serializers
 from fighthealthinsurance.serializers.common import (
-    NextStepInfoSerializableSerializer,
-    StatusResponseSerializer,
-    LiveModelsStatusSerializer,
+    AbsoluteStatisticsSerializer,
     ActorHealthStatusSerializer,
     ErrorSerializer,
+    LiveModelsStatusSerializer,
+    NextStepInfoSerializableSerializer,
     NotPaidErrorSerializer,
-    SuccessSerializer,
-    StatisticsSerializer,
-    AbsoluteStatisticsSerializer,
     SearchResultSerializer,
+    StatisticsSerializer,
+    StatusResponseSerializer,
+    SuccessSerializer,
+)
+
+# Import common field types from serializers package
+from fighthealthinsurance.serializers.fields import (
+    DenialTypesListField,
+    DenialTypesSerializer,
+    DictionaryListField,
+    DictionaryStringField,
+    StringListField,
 )
 
 # Legacy alias for backwards compatibility (typo in original name)

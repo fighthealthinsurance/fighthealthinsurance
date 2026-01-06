@@ -14,27 +14,24 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 
+import os
 from typing import List, Union
 
-from django.urls import URLPattern, URLResolver
-from django.contrib import admin
-from django.http import HttpRequest, HttpResponseBase
-from django.contrib.admin.views.decorators import staff_member_required
-from django.contrib.staticfiles.urls import staticfiles_urlpatterns
-from django.urls import include, path, re_path
-from django.views.decorators.cache import cache_control, cache_page
-from django.views.decorators.csrf import csrf_exempt
-from django.views.generic.base import RedirectView
-from django.contrib.staticfiles.storage import staticfiles_storage
 from django.conf import settings
 from django.conf.urls.static import static
-
-from fighthealthinsurance import views
-from fighthealthinsurance import fax_views
-from fighthealthinsurance import staff_views
-from fighthealthinsurance.sitemap import sitemap_view
+from django.contrib import admin
+from django.contrib.admin.views.decorators import staff_member_required
+from django.contrib.staticfiles.storage import staticfiles_storage
+from django.contrib.staticfiles.urls import staticfiles_urlpatterns
+from django.http import HttpRequest, HttpResponseBase
+from django.urls import URLPattern, URLResolver, include, path, re_path
+from django.views.decorators.cache import cache_control, cache_page
+from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.debug import sensitive_post_parameters
-import os
+from django.views.generic.base import RedirectView
+
+from fighthealthinsurance import fax_views, staff_views, views
+from fighthealthinsurance.sitemap import sitemap_view
 
 
 def trigger_error(request: HttpRequest) -> HttpResponseBase:

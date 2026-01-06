@@ -5,21 +5,13 @@ Extracts core LLM calling logic from ChatInterface for reusability and testing.
 """
 
 import re
-from typing import (
-    Awaitable,
-    Callable,
-    Dict,
-    List,
-    Optional,
-    Tuple,
-)
+from typing import Awaitable, Callable, Dict, List, Optional, Tuple
 
 from loguru import logger
 
-from fighthealthinsurance.ml.ml_models import RemoteModelLike
 from fighthealthinsurance.chat.safety_filters import detect_false_promises
 from fighthealthinsurance.chat.tools.patterns import ALL_TOOL_PATTERNS as tools_regex
-
+from fighthealthinsurance.ml.ml_models import RemoteModelLike
 
 # Response patterns that indicate a bad/leaked response
 BAD_RESPONSE_PATTERNS = re.compile(

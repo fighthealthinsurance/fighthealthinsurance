@@ -4,7 +4,7 @@ This module contains templates for both professional and patient users.
 """
 
 import string
-from typing import Dict, Optional, Any
+from typing import Any, Dict, Optional
 
 
 class PromptTemplate:

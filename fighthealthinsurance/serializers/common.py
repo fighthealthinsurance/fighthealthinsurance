@@ -7,10 +7,7 @@ used across multiple endpoints.
 
 from rest_framework import serializers
 
-from fighthealthinsurance.serializers.fields import (
-    StringListField,
-    DictionaryListField,
-)
+from fighthealthinsurance.serializers.fields import DictionaryListField, StringListField
 
 
 class NextStepInfoSerializableSerializer(serializers.Serializer):

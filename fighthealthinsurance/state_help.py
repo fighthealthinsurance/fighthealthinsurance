@@ -12,6 +12,7 @@ from functools import lru_cache
 from typing import Any, Optional
 
 from django.contrib.staticfiles.storage import staticfiles_storage
+
 from loguru import logger
 
 

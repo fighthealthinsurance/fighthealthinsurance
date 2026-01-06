@@ -1,23 +1,24 @@
 import asyncio
 import itertools
+import json
 import random
 import re
 import time
 import traceback
 from concurrent.futures import Future
-from typing import Any, Coroutine, Iterator, List, Optional, Tuple, Callable
+from typing import Any, Callable, Coroutine, Iterator, List, Optional, Tuple
+
 from loguru import logger
+from typing_extensions import reveal_type
 
 from fighthealthinsurance.denial_base import DenialBase
+
 from .exec import executor
 from .ml.ml_models import RemoteFullOpenLike, RemoteModelLike
 from .ml.ml_router import ml_router
 from .process_denial import ProcessDenialRegex
-from .utils import as_available_nested, best_within_timelimit
-from typing_extensions import reveal_type
 from .pubmed_tools import PubMedTools
-
-import json
+from .utils import as_available_nested, best_within_timelimit
 
 
 class AppealTemplateGenerator(object):
@@ -279,8 +280,9 @@ class AppealGenerator(object):
         # Load known companies from database dynamically
         known_companies: list[str] = []
         try:
-            from fighthealthinsurance.models import InsuranceCompany
             from asgiref.sync import sync_to_async
+
+            from fighthealthinsurance.models import InsuranceCompany
 
             # Get all insurance companies from database
             companies = await sync_to_async(

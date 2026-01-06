@@ -1,12 +1,12 @@
 import os
 import smtplib
+import time
 from typing import Optional, Tuple
 
 import ray
-import time
+from loguru import logger
 
 from fighthealthinsurance.utils import get_env_variable
-from loguru import logger
 
 name = "MailingListActor"
 

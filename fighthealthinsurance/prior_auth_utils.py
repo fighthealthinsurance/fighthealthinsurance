@@ -1,9 +1,10 @@
-from typing import Dict, Any, Optional
-from loguru import logger
-from fighthealthinsurance.models import PriorAuthRequest, ProposedPriorAuth, UserDomain
 import re
-
 from datetime import date
+from typing import Any, Dict, Optional
+
+from loguru import logger
+
+from fighthealthinsurance.models import PriorAuthRequest, ProposedPriorAuth, UserDomain
 
 
 class PriorAuthTextSubstituter:

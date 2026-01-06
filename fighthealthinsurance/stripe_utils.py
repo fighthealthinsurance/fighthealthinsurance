@@ -1,13 +1,16 @@
-import stripe
+from typing import Any, Dict, Optional, Tuple
+
 from django.conf import settings
-from typing import Tuple, Dict, Any, Optional
-from fighthealthinsurance.models import (
-    StripeProduct,
-    StripePrice,
-    StripeMeter,
-    LostStripeMeters,
-)
+
+import stripe
 from loguru import logger
+
+from fighthealthinsurance.models import (
+    LostStripeMeters,
+    StripeMeter,
+    StripePrice,
+    StripeProduct,
+)
 
 
 def get_or_create_price(

@@ -1,8 +1,8 @@
 from typing import Any
 
 from django import template
-from django.urls import reverse
 from django.http import HttpRequest
+from django.urls import reverse
 
 register = template.Library()
 
