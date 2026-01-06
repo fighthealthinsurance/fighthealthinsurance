@@ -5,35 +5,27 @@ Provides a cached reference to the extralink pre-fetch actor.
 """
 
 from functools import cached_property
-from loguru import logger
+from fighthealthinsurance.base_actor_ref import BaseActorRef
 from fighthealthinsurance.extralink_prefetch_actor import ExtraLinkPrefetchActor
 
 
-class ExtraLinkPrefetchActorRef:
+class ExtraLinkPrefetchActorRef(BaseActorRef):
     """Reference to the extralink pre-fetch actor."""
 
-    extralink_prefetch_actor = None
+    actor_class = ExtraLinkPrefetchActor
+    actor_name = "extralink_prefetch_actor"
+    has_run_method = False
 
-    @cached_property
-    def get(self):
+    def start(self):
         """
         Get or create the extralink pre-fetch actor.
 
         Returns:
             Tuple of (actor_ref, task_ref)
         """
-        name = "extralink_prefetch_actor"
-        if self.extralink_prefetch_actor is None:
-            self.extralink_prefetch_actor = ExtraLinkPrefetchActor.options(
-                name=name,
-                lifetime="detached",  # Survives creator process
-                namespace="fhi",
-                get_if_exists=True,  # Reuse if already exists
-            ).remote()
-
-        # Start the pre-fetch task (one-time execution)
-        task = self.extralink_prefetch_actor.prefetch_all.remote()
-        logger.info(f"Started extralink pre-fetch task: {task}")
+        self.actor = super().get()
+        task = self.actor.prefetch_all.remote()
+        print(f"Started extralink pre-fetch task: {task}")
 
         return (self.extralink_prefetch_actor, task)
 

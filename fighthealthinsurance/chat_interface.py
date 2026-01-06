@@ -876,7 +876,8 @@ class ChatInterface:
         is_patient = self.is_patient
         if is_new_chat:
             # If this chat is from a microsite, automatically search PubMed with microsite search terms
-            if chat.microsite_slug:
+            microsite_slug = chat.microsite_slug
+            if microsite_slug:
                 try:
                     from fighthealthinsurance.microsites import get_microsite
                     from fighthealthinsurance.utils import (
@@ -896,7 +897,7 @@ class ChatInterface:
                                     )
 
                                     extralink_context = await ExtraLinkContextHelper.get_context_for_microsite(
-                                        chat.microsite_slug,
+                                        microsite_slug,
                                         max_docs=5,
                                         max_chars_per_doc=2000,
                                     )

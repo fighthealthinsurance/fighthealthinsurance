@@ -22,7 +22,7 @@ class Command(BaseCommand):
         print("Starting extralink pre-fetch actor...")
 
         try:
-            actor_ref, task = extralink_prefetch_actor_ref.get
+            actor_ref, task = extralink_prefetch_actor_ref.start()
             print(f"Actor launched: {actor_ref}")
             print(f"Pre-fetch task started: {task}")
 
