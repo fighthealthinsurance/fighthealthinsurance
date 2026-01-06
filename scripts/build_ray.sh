@@ -4,7 +4,8 @@ set -ex
 pwd
 
 # Ray doesn't publish combiend aarch64 & amd64 images because idk.
-RAY_VERSION=2.43.0-py312
+# Note: you must update requirements.txt if you change the Ray version.
+RAY_VERSION=2.53.0-py313
 RAY_BASE=${RAY_BASE:-${MYORG}/fhi-ray}
 RAY_IMAGE=${RAY_BASE}:${RAY_VERSION}
 

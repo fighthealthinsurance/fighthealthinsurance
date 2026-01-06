@@ -1,30 +1,32 @@
-from fighthealthinsurance.models import (
-    PubMedArticleSummarized,
-    PubMedQueryData,
-    PubMedMiniArticle,
-)
-from asgiref.sync import sync_to_async, async_to_sync
-from fighthealthinsurance.utils import pubmed_fetcher
-from fighthealthinsurance.microsites import get_microsite
-from .utils import markdown_escape, _try_pandoc_engines
-from concurrent.futures import Future
-from metapub import FindIt
-
 import asyncio
-from .models import Denial
 import json
+import subprocess
+import sys
+import tempfile
+from concurrent.futures import Future
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional, Set, Tuple
+
+import aiohttp
+import eutils
 import PyPDF2
 import requests
-import aiohttp
-from fighthealthinsurance.ml.ml_router import ml_router
-import tempfile
-from typing import List, Optional, Dict, Tuple, Any, Set
-from .exec import pubmed_executor
-import subprocess
+from asgiref.sync import async_to_sync, sync_to_async
 from loguru import logger
-import eutils
-from datetime import datetime, timedelta
-import sys
+from metapub import FindIt
+
+from fighthealthinsurance.microsites import get_microsite
+from fighthealthinsurance.ml.ml_router import ml_router
+from fighthealthinsurance.models import (
+    PubMedArticleSummarized,
+    PubMedMiniArticle,
+    PubMedQueryData,
+)
+from fighthealthinsurance.utils import pubmed_fetcher
+
+from .exec import pubmed_executor
+from .models import Denial
+from .utils import _try_pandoc_engines, markdown_escape
 
 if sys.version_info >= (3, 11):
     from asyncio import timeout as async_timeout

@@ -9,6 +9,7 @@ https://docs.djangoproject.com/en/4.1/howto/deployment/asgi/
 
 import os
 import sys
+
 from fighthealthinsurance.env_utils import get_env_variable
 
 # Use stderr for startup messages since logging may not be configured yet
@@ -22,11 +23,13 @@ os.environ.setdefault(
 )
 os.environ.setdefault("DJANGO_CONFIGURATION", env)
 
-# We make sure we have the env variables configured first
-from configurations.asgi import get_asgi_application
-from fighthealthinsurance.routing import websocket_urlpatterns
 from channels.auth import AuthMiddlewareStack
 from channels.routing import ProtocolTypeRouter, URLRouter
+
+# We make sure we have the env variables configured first
+from configurations.asgi import get_asgi_application
+
+from fighthealthinsurance.routing import websocket_urlpatterns
 
 application = ProtocolTypeRouter(
     {

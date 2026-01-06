@@ -7,11 +7,12 @@ to look up Medicaid information and check eligibility.
 
 import json
 import re
-from typing import Optional, Tuple, Callable, Awaitable, Any, List
+from typing import Any, Awaitable, Callable, List, Optional, Tuple
+
 from loguru import logger
 
 from .base_tool import BaseTool
-from .patterns import MEDICAID_INFO_REGEX, MEDICAID_ELIGIBILITY_REGEX
+from .patterns import MEDICAID_ELIGIBILITY_REGEX, MEDICAID_INFO_REGEX
 
 
 class MedicaidInfoTool(BaseTool):

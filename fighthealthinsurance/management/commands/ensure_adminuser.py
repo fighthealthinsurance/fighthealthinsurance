@@ -1,7 +1,6 @@
 # See https://stackoverflow.com/questions/39744593/how-to-create-a-django-superuser-if-it-doesnt-exist-non-interactively
 # Covered by https://stackoverflow.com/help/licensing
 import os
-
 from typing import Any
 
 from django.contrib.auth import get_user_model

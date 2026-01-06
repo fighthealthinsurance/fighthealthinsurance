@@ -8,7 +8,6 @@ from urllib.parse import urlencode
 
 from django import forms
 from django.conf import settings
-from django.contrib.auth import get_user_model
 from django.contrib.staticfiles.storage import staticfiles_storage
 from django.core.exceptions import SuspiciousOperation
 from django.http import (
@@ -24,9 +23,9 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.template import loader
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.decorators import method_decorator
 from django.utils.safestring import mark_safe
 from django.views import View, generic
-from django.utils.decorators import method_decorator
 from django.views.decorators.clickjacking import xframe_options_exempt
 from django.views.decorators.csrf import csrf_exempt, ensure_csrf_cookie
 from django.views.decorators.http import require_http_methods
@@ -44,6 +43,7 @@ from fighthealthinsurance.chat_forms import UserConsentForm
 from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
 from fighthealthinsurance.helpers.stripe_helpers import StripeWebhookHelper
 from fighthealthinsurance.models import StripeRecoveryInfo
+from fighthealthinsurance.type_utils import User
 
 
 class BlogPostMetadata(TypedDict, total=False):
@@ -57,12 +57,6 @@ class BlogPostMetadata(TypedDict, total=False):
     excerpt: str
     tags: list[str]
     readTime: str
-
-
-if typing.TYPE_CHECKING:
-    from django.contrib.auth.models import User
-else:
-    User = get_user_model()
 
 
 # Insurance Bullshit Bingo phrases - humorous but factual common denial reasons
@@ -1991,7 +1985,7 @@ def create_pwyw_checkout(request: HttpRequest) -> HttpResponse:
         ):
             base_url = request.build_absolute_uri(return_url)
             # Add donation=success parameter
-            from urllib.parse import urlparse, urlunparse, parse_qs, urlencode
+            from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
             parsed = urlparse(base_url)
             query_params = parse_qs(parsed.query)
@@ -2230,6 +2224,7 @@ class DenialLanguageLibraryView(TemplateView):
 
         # Load denial language data
         import json
+
         from django.contrib.staticfiles.storage import staticfiles_storage
 
         try:

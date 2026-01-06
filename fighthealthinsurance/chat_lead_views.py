@@ -1,12 +1,11 @@
-from rest_framework import viewsets, status
-from rest_framework.response import Response
-from rest_framework.request import Request
-from rest_framework.decorators import action
-
 from loguru import logger
+from rest_framework import status, viewsets
+from rest_framework.decorators import action
+from rest_framework.request import Request
+from rest_framework.response import Response
 
-from fighthealthinsurance.models import ChatLeads, MailingListSubscriber
 from fighthealthinsurance.chat_lead_serializers import ChatLeadsSerializer
+from fighthealthinsurance.models import ChatLeads, MailingListSubscriber
 
 
 class ChatLeadsViewSet(viewsets.GenericViewSet):

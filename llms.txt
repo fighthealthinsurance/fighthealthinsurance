@@ -1,0 +1,45 @@
+# Fight Health Insurance
+
+> A Django application that helps patients appeal health insurance denials using AI-powered appeal letter generation.
+
+Fight Health Insurance is a web application that assists users in generating persuasive appeal letters when their health insurance claims are denied. The system combines a modern web interface with machine learning integration to create effective appeals, supporting both synchronous and asynchronous workflows with WebSocket streaming for real-time generation.
+
+## Core Features
+
+- **Appeal Letter Generation**: AI-powered generation of persuasive appeal letters based on denial details
+- **Prior Authorization Support**: Automated prior authorization request generation
+- **Multi-channel Delivery**: Send appeals via email, fax, or download as PDF
+- **Real-time Streaming**: WebSocket-based streaming for long-running ML operations
+- **Chat Interface**: AI-powered conversational assistance for appeal creation
+- **Multi-tenant Support**: Healthcare professional domains with user management
+
+## Documentation
+
+- [README.md](README.md): Quick start guide and project overview
+- [CLAUDE.md](CLAUDE.md): Development guide with architecture details
+- [Streaming-APIs-Spec.md](Streaming-APIs-Spec.md): WebSocket API specifications
+
+## Project Structure
+
+- [fighthealthinsurance/](fighthealthinsurance/): Main Django application
+  - [views.py](fighthealthinsurance/views.py): Primary web view handlers
+  - [rest_views.py](fighthealthinsurance/rest_views.py): REST API endpoints (DRF)
+  - [common_view_logic.py](fighthealthinsurance/common_view_logic.py): Main business logic
+  - [chat_interface.py](fighthealthinsurance/chat_interface.py): AI-powered chat assistance
+  - [generate_appeal.py](fighthealthinsurance/generate_appeal.py): Appeal generation logic
+  - [generate_prior_auth.py](fighthealthinsurance/generate_prior_auth.py): Prior auth generation
+  - [websockets.py](fighthealthinsurance/websockets.py): Django Channels WebSocket consumers
+  - [models.py](fighthealthinsurance/models.py): Database models (~30+ with encrypted PII)
+  - [ml/](fighthealthinsurance/ml/): ML integration layer
+  - [forms/](fighthealthinsurance/forms/): Django forms
+  - [templates/](fighthealthinsurance/templates/): Django templates
+  - [static/js/](fighthealthinsurance/static/js/): React/TypeScript frontend
+- [fhi_users/](fhi_users/): User management app
+  - [models.py](fhi_users/models.py): PatientUser and ProfessionalUser models
+- [charts/](charts/): Analytics and visualization
+- [tests/](tests/): Test suites (async, sync, sync-actor, selenium)
+- [scripts/](scripts/): Utility scripts
+
+## API Endpoints
+
+REST API endpoints are under `/ziggy/rest/` prefix with OpenAPI documentation via drf-spectacular.

@@ -1,30 +1,31 @@
-import json
-import uuid
-from loguru import logger
 import asyncio
-from django.utils import timezone
-from asgiref.sync import sync_to_async
-from typing import AsyncIterator, Optional
+import json
 import re
-from fighthealthinsurance.ml.ml_router import ml_router
+import uuid
+from typing import AsyncIterator, Optional
 
-from django.core.validators import validate_email
 from django.core.exceptions import ValidationError
+from django.core.validators import validate_email
+from django.utils import timezone
 
+from asgiref.sync import sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
+from loguru import logger
 
+from fhi_users.audit import TrackingInfo, extract_tracking_info_from_scope
 from fighthealthinsurance import common_view_logic
+from fighthealthinsurance.generate_prior_auth import prior_auth_generator
+from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.models import (
-    PriorAuthRequest,
-    ProposedPriorAuth,
-    OngoingChat,
-    ProfessionalUser,
     ChatLeads,
     Denial,
+    OngoingChat,
+    PriorAuthRequest,
+    ProfessionalUser,
+    ProposedPriorAuth,
 )
-from fighthealthinsurance.generate_prior_auth import prior_auth_generator
+
 from .chat_interface import ChatInterface
-from fhi_users.audit import extract_tracking_info_from_scope, TrackingInfo
 
 
 class StreamingAppealsBackend(AsyncWebsocketConsumer):

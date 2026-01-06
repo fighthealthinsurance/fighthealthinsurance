@@ -1,9 +1,10 @@
-from pathlib import Path
-from typing import Any, Dict, Tuple, List, Optional, Sequence
+import difflib
 import json
 import re
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Sequence, Tuple
+
 import pandas as pd
-import difflib
 
 # Look for data/ next to the repo root
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"

@@ -20,6 +20,7 @@ from django.contrib.sites.requests import RequestSite
 from django.contrib.staticfiles.storage import staticfiles_storage
 from django.http import HttpRequest, HttpResponse
 from django.urls import reverse
+
 from loguru import logger
 
 

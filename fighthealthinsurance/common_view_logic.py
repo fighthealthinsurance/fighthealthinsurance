@@ -1,66 +1,66 @@
-from urllib.parse import urlencode
-import asyncstdlib as a
-from asgiref.sync import sync_to_async, async_to_sync
 import asyncio
 import datetime
 import json
+import os
+import re
+import tempfile
+import time
+import typing
+import uuid
 from dataclasses import dataclass
 from string import Template
-import typing
 from typing import (
+    Any,
     AsyncIterator,
     Awaitable,
-    Any,
     Coroutine,
+    Iterable,
+    Iterator,
+    List,
     Optional,
     Tuple,
-    Iterable,
-    List,
-    Iterator,
 )
-from loguru import logger
-from PyPDF2 import PdfMerger
-import pymupdf
-import ray
-import tempfile
-import os
-import uuid
-import re
-import time
-from stopit.utils import TimeoutException
+from urllib.parse import urlencode
 
 from django.core.files import File
 from django.core.validators import validate_email
+from django.db.models import QuerySet
 from django.forms import Form
 from django.template.loader import render_to_string
-from django.db.models import QuerySet
 from django.urls import reverse
 
-
+import asyncstdlib as a
+import pymupdf
+import ray
 import uszipcode
-from fighthealthinsurance.process_denial import ProcessDenialCodes
+from asgiref.sync import async_to_sync, sync_to_async
+from loguru import logger
+from PyPDF2 import PdfMerger
+from stopit.utils import TimeoutException
+
+from fhi_users import emails as fhi_emails
+from fhi_users.audit import TrackingInfo
+from fhi_users.models import ProfessionalUser, UserDomain
+from fighthealthinsurance import stripe_utils
 from fighthealthinsurance.fax_actor_ref import fax_actor_ref
 from fighthealthinsurance.form_utils import *
 from fighthealthinsurance.generate_appeal import *
-from fighthealthinsurance.models import *
-from fighthealthinsurance.utils import interleave_iterator_for_keep_alive
-from fighthealthinsurance.ml.ml_citations_helper import MLCitationsHelper
 from fighthealthinsurance.ml.ml_appeal_questions_helper import MLAppealQuestionsHelper
+from fighthealthinsurance.ml.ml_citations_helper import MLCitationsHelper
 from fighthealthinsurance.ml.ml_plan_doc_helper import MLPlanDocHelper
-from fighthealthinsurance import stripe_utils
 from fighthealthinsurance.calendar_emails import send_initial_calendar_email
-from fhi_users.models import ProfessionalUser, UserDomain
-from fhi_users import emails as fhi_emails
-from fhi_users.audit import TrackingInfo
+from fighthealthinsurance.models import *
+from fighthealthinsurance.process_denial import ProcessDenialCodes
+from fighthealthinsurance.utils import interleave_iterator_for_keep_alive
+
 from .pubmed_tools import PubMedTools
 from .utils import (
-    check_call,
-    send_fallback_email,
-    fire_and_forget_in_new_threadpool,
-    execute_critical_optional_fireandforget,
     _try_pandoc_engines,
+    check_call,
+    execute_critical_optional_fireandforget,
+    fire_and_forget_in_new_threadpool,
+    send_fallback_email,
 )
-
 
 appealGenerator = AppealGenerator()
 

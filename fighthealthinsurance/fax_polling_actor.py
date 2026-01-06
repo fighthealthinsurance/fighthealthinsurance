@@ -1,7 +1,9 @@
-import ray
-from fighthealthinsurance.fax_actor import FaxActor
-import time
 import asyncio
+import time
+
+import ray
+
+from fighthealthinsurance.fax_actor import FaxActor
 
 
 @ray.remote(max_restarts=-1, max_task_retries=-1)
@@ -22,6 +24,10 @@ class FaxPollingActor:
 
     async def hello(self) -> str:
         return "Hi"
+
+    async def health_check(self) -> bool:
+        """Check if the actor is healthy and running."""
+        return getattr(self, "running", False)
 
     async def run(self) -> bool:
         print(f"Starting run")

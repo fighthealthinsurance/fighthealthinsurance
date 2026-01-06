@@ -6,8 +6,9 @@ from django import forms
 import pymupdf
 import requests
 from bs4 import BeautifulSoup
-from fighthealthinsurance.models import Denial, PlanDocuments
 from loguru import logger
+
+from fighthealthinsurance.models import Denial, PlanDocuments
 
 
 class InsuranceQuestions(forms.Form):

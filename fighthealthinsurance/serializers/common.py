@@ -7,10 +7,7 @@ used across multiple endpoints.
 
 from rest_framework import serializers
 
-from fighthealthinsurance.serializers.fields import (
-    StringListField,
-    DictionaryListField,
-)
+from fighthealthinsurance.serializers.fields import DictionaryListField, StringListField
 
 
 class NextStepInfoSerializableSerializer(serializers.Serializer):
@@ -33,6 +30,17 @@ class LiveModelsStatusSerializer(serializers.Serializer):
 
     alive_models = serializers.IntegerField()
     last_checked = serializers.FloatField(allow_null=True)
+    details = serializers.ListField(
+        child=serializers.DictField(), required=False, allow_null=True
+    )
+    message = serializers.CharField(required=False)
+
+
+class ActorHealthStatusSerializer(serializers.Serializer):
+    """Serializer for Ray actor health status endpoint response."""
+
+    alive_actors = serializers.IntegerField()
+    total_actors = serializers.IntegerField()
     details = serializers.ListField(
         child=serializers.DictField(), required=False, allow_null=True
     )

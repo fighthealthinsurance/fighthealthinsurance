@@ -7,12 +7,14 @@ relevant medical literature.
 
 import asyncio
 import re
-from typing import Optional, Tuple, Union, Callable, Awaitable, Any
+from typing import Any, Awaitable, Callable, Optional, Tuple, Union
+
 from loguru import logger
+
+from fighthealthinsurance.pubmed_tools import PubMedTools
 
 from .base_tool import BaseTool
 from .patterns import PUBMED_QUERY_REGEX
-from fighthealthinsurance.pubmed_tools import PubMedTools
 
 
 class PubMedTool(BaseTool):

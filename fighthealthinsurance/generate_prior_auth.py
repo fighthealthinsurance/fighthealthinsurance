@@ -1,18 +1,19 @@
-from concurrent.futures import Future
-from typing import Any, List, Dict, AsyncIterator
-from loguru import logger
 import asyncio
-import uuid
 import datetime
+import random
+import uuid
+from concurrent.futures import Future
+from typing import Any, AsyncIterator, Dict, List
 
+from asgiref.sync import async_to_sync, sync_to_async
+from loguru import logger
+
+from fighthealthinsurance.exec import executor
 from fighthealthinsurance.ml.ml_models import RemoteModelLike
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.models import PriorAuthRequest, ProposedPriorAuth
-from fighthealthinsurance.utils import as_available
-from asgiref.sync import sync_to_async, async_to_sync
-import random
-from fighthealthinsurance.exec import executor
 from fighthealthinsurance.prior_auth_utils import PriorAuthTextSubstituter
+from fighthealthinsurance.utils import as_available
 
 
 class PriorAuthGenerator:

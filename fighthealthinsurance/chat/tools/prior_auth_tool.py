@@ -7,7 +7,8 @@ or update prior authorization records linked to the current chat.
 
 import json
 import re
-from typing import Optional, Tuple, Callable, Awaitable, Any
+from typing import Any, Awaitable, Callable, Optional, Tuple
+
 from loguru import logger
 
 from .base_tool import BaseTool

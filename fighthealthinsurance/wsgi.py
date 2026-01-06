@@ -10,6 +10,7 @@ https://docs.djangoproject.com/en/4.1/howto/deployment/wsgi/
 import os
 
 from configurations.wsgi import get_wsgi_application
+
 from fighthealthinsurance.utils import get_env_variable
 
 os.environ.setdefault(

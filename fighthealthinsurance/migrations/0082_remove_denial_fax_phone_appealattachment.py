@@ -2,9 +2,11 @@
 
 import django.core.files.storage
 import django.db.models.deletion
-import django_encrypted_filefield.fields
-import fighthealthinsurance.combined_storage
 from django.db import migrations, models
+
+import django_encrypted_filefield.fields
+
+import fighthealthinsurance.combined_storage
 
 
 class Migration(migrations.Migration):

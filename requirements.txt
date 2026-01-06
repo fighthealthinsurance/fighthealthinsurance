@@ -10,7 +10,7 @@ bokeh
 numpy
 channels
 chardet
-django>=5.0; python_version >= "3.10"
+django~=5.2.9
 django-cms
 djangocms-attributes-field
 django_compressor
@@ -34,6 +34,7 @@ django-tables2
 django-treebeard
 django-types
 django_user_agents
+dnspython
 django-otp
 django-two-factor-auth
 django-mfa2
@@ -56,7 +57,6 @@ nest_asyncio
 packaging>=20.0
 pandoc
 paramiko
-pycairo==1.26.1  # Pin to version with reliable pre-built wheels
 Pillow
 pyarrow
 pymupdf
@@ -65,12 +65,11 @@ PyPDF2
 pyright
 pytesseract # We either need easyocr + opencv-python OR pytesseract + tesseract (so alt is easyocr>=1.7.0 opencv-python)
 python-decouple==3.8
-python-Levenshtein
+levenshtein==0.27.1
 pytz
 pyyaml
-RapidFuzz==2.15.1 # See https://github.com/mindee/doctr/issues/1186
-ray==2.43.0
-ray[client]==2.43.0
+ray==2.53.0 # Must update build_ray
+ray[client]==2.53.0 # Must update build_ray
 requests
 sentry-sdk[django]
 setuptools>=58

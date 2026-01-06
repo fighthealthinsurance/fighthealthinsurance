@@ -289,7 +289,6 @@ async def _generate_chat_candidates(task: ChooserTask):
     from asgiref.sync import sync_to_async
 
     # Generate synthetic chat prompt using ML
-
     # Use ML to generate a synthetic conversation with some back-and-forth
     generation_models = ml_router.generate_text_backends()
     if not generation_models:

@@ -1,13 +1,11 @@
 import typing
 
-from django.urls import include
-from django.urls import path
 from django.conf import settings
-
-from fighthealthinsurance import rest_views
-from fighthealthinsurance import chat_lead_views
+from django.urls import include, path
 
 from rest_framework import routers
+
+from fighthealthinsurance import chat_lead_views, rest_views
 
 if settings.DEBUG:
     RouterClass: typing.Type[routers.BaseRouter] = routers.DefaultRouter
@@ -69,6 +67,11 @@ urlpatterns = [
         "live_models_status",
         rest_views.LiveModelsStatus.as_view(),
         name="live_models_status",
+    ),
+    path(
+        "actor_health_status",
+        rest_views.ActorHealthStatus.as_view(),
+        name="actor_health_status",
     ),
     # Router
     path("", include(router.urls)),

@@ -1,45 +1,45 @@
-from django.core.mail import EmailMultiAlternatives
-from django.template.loader import render_to_string
-from django.conf import settings
-
-import time
-import random
-import string
-import asyncstdlib
 import asyncio
-from inspect import isabstract
 import concurrent
 import os
+import random
 import re
+import string
 import threading
+import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from functools import reduce
+from inspect import isabstract
+from subprocess import CalledProcessError
 from typing import (
+    Any,
+    AsyncGenerator,
     AsyncIterator,
+    Awaitable,
+    Callable,
+    Coroutine,
+    Dict,
+    Generic,
     Iterator,
     List,
     Optional,
-    TypeVar,
-    Awaitable,
-    Callable,
-    Any,
-    Generic,
-    Dict,
-    Tuple,
-    Coroutine,
     Sequence,
+    Tuple,
+    TypeVar,
     Union,
     cast,
-    AsyncGenerator,
 )
 from uuid import UUID
-from subprocess import CalledProcessError
-from loguru import logger
 
+from django.conf import settings
+from django.core.mail import EmailMultiAlternatives
+from django.template.loader import render_to_string
+
+import asyncstdlib
 import requests
+from loguru import logger
+from markdown_strings import esc_format
 from metapub import PubMedFetcher
 from requests.exceptions import RequestException
-from markdown_strings import esc_format
 
 from fighthealthinsurance.env_utils import *
 

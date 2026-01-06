@@ -1,19 +1,20 @@
-from asgiref.sync import sync_to_async, async_to_sync
-
-from abc import abstractmethod
 import asyncio
-import aiohttp
 import itertools
 import os
 import re
 import sys
 import traceback
+from abc import abstractmethod
 from concurrent.futures import Future
 from dataclasses import dataclass
-from typing import Callable, ClassVar, List, Optional, Tuple, Iterable, Union
-from loguru import logger
-from fighthealthinsurance.utils import ensure_message_alternation
+from typing import Callable, ClassVar, Iterable, List, Optional, Tuple, Union
+
+import aiohttp
 import requests
+from asgiref.sync import async_to_sync, sync_to_async
+from loguru import logger
+
+from fighthealthinsurance.utils import ensure_message_alternation
 
 # Import the appropriate async_timeout based on Python version
 if sys.version_info >= (3, 11):
@@ -25,8 +26,8 @@ from llm_result_utils.cleaner_utils import CleanerUtils
 from llm_result_utils.llm_utils import LLMResponseUtils
 
 from fighthealthinsurance.exec import *
-from fighthealthinsurance.utils import all_concrete_subclasses
 from fighthealthinsurance.process_denial import DenialBase
+from fighthealthinsurance.utils import all_concrete_subclasses
 
 
 class RemoteModelLike(DenialBase):
@@ -2301,6 +2302,10 @@ class TailscaleModelBackend(RemoteFullOpenLike):
     ]
 
     _discovered_hosts: ClassVar[dict[str, str]] = {}
+    _resolved_ips: ClassVar[dict[str, str]] = {}  # hostname -> IP mapping
+
+    # Tailscale DNS server
+    TAILSCALE_DNS: ClassVar[str] = "100.100.100.100"
 
     # DNS resolution timeout in seconds
     DNS_TIMEOUT: ClassVar[float] = 2.0
@@ -2324,48 +2329,57 @@ class TailscaleModelBackend(RemoteFullOpenLike):
         return False
 
     @classmethod
-    async def _resolve_tailscale_host_async(
-        cls, hostname: str, timeout: float = 2.0
-    ) -> Optional[str]:
-        """
-        Try to resolve a Tailscale hostname via DNS asynchronously with timeout.
-
-        Args:
-            hostname: The hostname to resolve
-            timeout: Maximum time to wait for DNS resolution in seconds
-
-        Returns:
-            The hostname if resolution succeeds, None otherwise
-        """
-        import socket
-
-        loop = asyncio.get_event_loop()
-        try:
-            # Run DNS resolution in executor with timeout
-            async with async_timeout(timeout):
-                await loop.run_in_executor(None, socket.gethostbyname, hostname)
-            return hostname
-        except (socket.gaierror, asyncio.TimeoutError, TimeoutError):
-            return None
-
-    @classmethod
     def _resolve_tailscale_host(cls, hostname: str) -> Optional[str]:
         """
-        Try to resolve a Tailscale hostname via DNS synchronously with timeout.
+        Try to resolve a Tailscale hostname via explicit Tailscale DNS with timeout.
 
-        This is a sync wrapper for use in the models() classmethod.
+        Uses Tailscale DNS (100.100.100.100) explicitly since containers don't
+        automatically use it. Caches resolved IPs.
+
+        Returns:
+            The resolved IP address if successful, None otherwise
         """
-        import socket
         import concurrent.futures
 
+        import dns.resolver
+
+        # Check cache first
+        if hostname in cls._resolved_ips:
+            logger.debug(
+                f"Using cached IP for {hostname}: {cls._resolved_ips[hostname]}"
+            )
+            return cls._resolved_ips[hostname]
+
         try:
+            # Configure resolver to use Tailscale DNS
+            resolver = dns.resolver.Resolver(configure=False)
+            resolver.nameservers = [cls.TAILSCALE_DNS]
+            resolver.timeout = cls.DNS_TIMEOUT
+            resolver.lifetime = cls.DNS_TIMEOUT
+
             # Use ThreadPoolExecutor to add timeout to blocking DNS call
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(socket.gethostbyname, hostname)
-                future.result(timeout=cls.DNS_TIMEOUT)
-            return hostname
-        except (socket.gaierror, concurrent.futures.TimeoutError, TimeoutError) as e:
+                future = executor.submit(resolver.resolve, hostname, "A")
+                answers = future.result(timeout=cls.DNS_TIMEOUT)
+
+                # Get the first A record
+                ip_address = str(answers[0])
+                logger.info(f"Resolved {hostname} to {ip_address} via Tailscale DNS")
+
+                # Cache the result
+                cls._resolved_ips[hostname] = ip_address
+                return ip_address
+        except (
+            dns.resolver.NXDOMAIN,
+            dns.resolver.NoAnswer,
+            dns.resolver.Timeout,
+            concurrent.futures.TimeoutError,
+            TimeoutError,
+        ) as e:
             logger.debug(f"Skipping {hostname}: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Skipping {hostname}: unexecpted error {e}")
             return None
 
     @classmethod
@@ -2376,15 +2390,18 @@ class TailscaleModelBackend(RemoteFullOpenLike):
         for friendly_name, model_path in cls.DISCOVERABLE_MODELS:
             # Try azure-{name} pattern
             hostname = f"azure-{friendly_name}"
-            if cls._resolve_tailscale_host(hostname):
-                logger.info(f"Discovered Tailscale model backend: {hostname}")
+            resolved_ip = cls._resolve_tailscale_host(hostname)
+            if resolved_ip:
+                logger.info(
+                    f"Discovered Tailscale model backend: {hostname} -> {resolved_ip}"
+                )
                 cls._discovered_hosts[friendly_name] = hostname
                 discovered.append(
                     ModelDescription(
-                        cost=5,  # Low cost since it's our own infrastructure
+                        cost=5,  # Low cost since it's on credits.
                         name=f"ts-{friendly_name}",
                         internal_name=model_path,
-                        model=cls(model=model_path, host=hostname),
+                        model=cls(model=model_path, host=resolved_ip),
                     )
                 )
 

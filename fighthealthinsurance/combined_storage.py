@@ -1,12 +1,11 @@
-from typing import Optional, List
+from typing import IO, Any, List, Optional
 
 from django.core.files.base import File
 from django.core.files.storage import Storage
 from django.utils.deconstruct import deconstructible
 
-from stopit import ThreadingTimeout as Timeout
-from typing import Any, Optional, IO
 from loguru import logger
+from stopit import ThreadingTimeout as Timeout
 
 
 @deconstructible(path="fighthealthinsurance.combined_storage.CombinedStorage")

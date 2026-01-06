@@ -1,6 +1,7 @@
-from typing import Optional
-from decouple import config, UndefinedValueError
 import os
+from typing import Optional
+
+from decouple import UndefinedValueError, config
 
 
 def get_env_variable(var_name: str, default: Optional[str] = None) -> str:
