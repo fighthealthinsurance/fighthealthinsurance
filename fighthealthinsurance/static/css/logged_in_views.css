@@ -336,6 +336,46 @@ textarea:focus-visible {
 }
 
 /* ====================
+   Data Deletion Pages
+   ==================== */
+.deletion-page-container {
+    margin-top: 12vh !important;
+}
+
+/* ====================
+   Account Prompt Banner
+   ==================== */
+.account-prompt-banner {
+    background-color: #d4edda;
+    border-width: 2px;
+    margin-top: 20px;
+    margin-bottom: 20px;
+}
+
+.account-prompt-banner ul {
+    padding-left: 20px;
+}
+
+.account-prompt-banner .text-muted {
+    font-size: 0.9em;
+    color: #666;
+}
+
+.account-prompt-banner .signup-btn {
+    font-weight: bold;
+    padding: 12px 30px;
+}
+
+.account-prompt-banner .small-text {
+    font-size: 0.85em;
+    color: #666;
+}
+
+.account-prompt-banner a.login-link {
+    color: #28a745;
+}
+
+/* ====================
    Print Styles
    ==================== */
 @media print {
