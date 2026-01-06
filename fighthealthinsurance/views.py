@@ -34,6 +34,9 @@ from django.views.generic.edit import FormView
 
 import stripe
 from django_encrypted_filefield.crypt import Cryptographer
+from loguru import logger
+from PIL import Image
+
 from fighthealthinsurance import common_view_logic, forms as core_forms, models
 from fighthealthinsurance.calendar_utils import generate_followup_ics
 from fighthealthinsurance.chat_forms import UserConsentForm
@@ -41,8 +44,6 @@ from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
 from fighthealthinsurance.helpers.stripe_helpers import StripeWebhookHelper
 from fighthealthinsurance.models import StripeRecoveryInfo
 from fighthealthinsurance.type_utils import User
-from loguru import logger
-from PIL import Image
 
 
 class BlogPostMetadata(TypedDict, total=False):
