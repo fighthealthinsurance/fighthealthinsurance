@@ -1090,6 +1090,30 @@ class Appeal(ExportModelOperationsMixin("Appeal"), models.Model):  # type: ignor
     notes = models.TextField(max_length=3000000000, null=True, blank=True)
     # Track whether an appeal was successful (not just if it got a response)
     success = models.BooleanField(default=False, null=True)
+
+    # Progress tracking fields (Phase 3.2)
+    appeal_status = models.CharField(
+        max_length=50,
+        choices=[
+            ("draft", "Draft"),
+            ("sent", "Sent to Insurance"),
+            ("awaiting_decision", "Awaiting Decision"),
+            ("decision_received", "Decision Received"),
+        ],
+        default="draft",
+        help_text="Current status of appeal (patient-tracked)",
+    )
+    decision_expected_date = models.DateField(
+        null=True,
+        blank=True,
+        help_text="Date by which patient expects to hear decision (typically 30-60 days after sent)",
+    )
+    decision_received_date = models.DateField(
+        null=True,
+        blank=True,
+        help_text="Date patient received decision from insurance",
+    )
+
     mod_date = models.DateField(auto_now=True, null=True)
     creation_date = models.DateField(auto_now_add=True, null=True)
     billed = models.BooleanField(default=False)
