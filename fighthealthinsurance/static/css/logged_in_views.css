@@ -376,6 +376,57 @@ textarea:focus-visible {
 }
 
 /* ====================
+   Appeal Progress Timeline
+   ==================== */
+.appeal-timeline {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.timeline-step {
+    padding: 0.25rem 0.75rem;
+    border-radius: 1rem;
+    font-size: 0.85rem;
+    background-color: #e9ecef;
+    color: #6c757d;
+    white-space: nowrap;
+}
+
+.timeline-step.active {
+    background-color: #fff3cd;
+    color: #856404;
+    font-weight: 600;
+}
+
+.timeline-step.completed {
+    background-color: #d1e7dd;
+    color: #0f5132;
+}
+
+.timeline-step.success-step {
+    background-color: #198754;
+    color: white;
+}
+
+.timeline-arrow {
+    color: #dee2e6;
+    font-weight: bold;
+}
+
+@media (max-width: 767px) {
+    .appeal-timeline {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    .timeline-arrow {
+        transform: rotate(90deg);
+        margin: -0.25rem 0;
+    }
+}
+
+/* ====================
    Print Styles
    ==================== */
 @media print {
