@@ -7,6 +7,7 @@ from django_recaptcha.fields import ReCaptchaField, ReCaptchaV2Checkbox
 
 from fighthealthinsurance.form_utils import *
 from fighthealthinsurance.models import (
+    Appeal,
     DenialTypes,
     InsuranceCallLog,
     InsuranceCompany,
@@ -581,6 +582,21 @@ class InsuranceCallLogForm(forms.ModelForm):
         label="Include in appeal documentation",
         help_text="Check this if you want to reference this call in your appeal letter.",
     )
+    appeal = forms.ModelChoiceField(
+        queryset=Appeal.objects.none(),
+        required=False,
+        widget=forms.Select(attrs={"class": "form-select"}),
+        label="Link to Appeal",
+        help_text="Optionally link this call log to a specific appeal.",
+    )
+
+    def __init__(self, *args, user=None, **kwargs):
+        """Initialize form and filter appeals by user if provided."""
+        super().__init__(*args, **kwargs)
+        if user:
+            self.fields["appeal"].queryset = Appeal.filter_to_allowed_appeals(
+                user
+            ).order_by("-creation_date")
 
     class Meta:
         model = InsuranceCallLog
@@ -602,6 +618,7 @@ class InsuranceCallLogForm(forms.ModelForm):
             "call_duration_minutes",
             "wait_time_minutes",
             "include_in_appeal",
+            "appeal",
         ]
 
 
@@ -689,6 +706,13 @@ class PatientEvidenceForm(forms.ModelForm):
         label="Include in appeal documentation",
         help_text="Check this to include this evidence when building your appeal.",
     )
+    appeal = forms.ModelChoiceField(
+        queryset=Appeal.objects.none(),
+        required=False,
+        widget=forms.Select(attrs={"class": "form-select"}),
+        label="Link to Appeal",
+        help_text="Optionally link this evidence to a specific appeal.",
+    )
 
     class Meta:
         model = PatientEvidence
@@ -701,7 +725,16 @@ class PatientEvidenceForm(forms.ModelForm):
             "text_content",
             "source",
             "include_in_appeal",
+            "appeal",
         ]
+
+    def __init__(self, *args, user=None, **kwargs):
+        """Initialize form and filter appeals by user if provided."""
+        super().__init__(*args, **kwargs)
+        if user:
+            self.fields["appeal"].queryset = Appeal.filter_to_allowed_appeals(
+                user
+            ).order_by("-creation_date")
 
     def clean_file(self):
         """

@@ -258,6 +258,12 @@ class CallLogCreateView(PatientRequiredMixin, CreateView):
     template_name = "patient_call_log_form.html"
     success_url = reverse_lazy("patient-dashboard")
 
+    def get_form_kwargs(self):
+        """Pass user to form so it can filter appeals queryset."""
+        kwargs = super().get_form_kwargs()
+        kwargs["user"] = self.request.user
+        return kwargs
+
     def get_context_data(self, **kwargs):
         """Add editing flag to template context."""
         context = super().get_context_data(**kwargs)
@@ -287,6 +293,12 @@ class CallLogEditView(PatientRequiredMixin, UpdateView):
         user: User = self.request.user  # type: ignore
         return InsuranceCallLog.filter_to_allowed_call_logs(user)
 
+    def get_form_kwargs(self):
+        """Pass user to form so it can filter appeals queryset."""
+        kwargs = super().get_form_kwargs()
+        kwargs["user"] = self.request.user
+        return kwargs
+
     def get_context_data(self, **kwargs):
         """Add editing flag to template context."""
         context = super().get_context_data(**kwargs)
@@ -310,6 +322,12 @@ class EvidenceCreateView(PatientRequiredMixin, CreateView):
     form_class = PatientEvidenceForm
     template_name = "patient_evidence_form.html"
     success_url = reverse_lazy("patient-dashboard")
+
+    def get_form_kwargs(self):
+        """Pass user to form so it can filter appeals queryset."""
+        kwargs = super().get_form_kwargs()
+        kwargs["user"] = self.request.user
+        return kwargs
 
     def get_context_data(self, **kwargs):
         """Add editing flag to template context."""
@@ -361,6 +379,12 @@ class EvidenceEditView(PatientRequiredMixin, UpdateView):
         # Only allow editing own evidence
         user: User = self.request.user  # type: ignore
         return PatientEvidence.filter_to_allowed_evidence(user)
+
+    def get_form_kwargs(self):
+        """Pass user to form so it can filter appeals queryset."""
+        kwargs = super().get_form_kwargs()
+        kwargs["user"] = self.request.user
+        return kwargs
 
     def get_context_data(self, **kwargs):
         """Add editing flag and object to template context."""
