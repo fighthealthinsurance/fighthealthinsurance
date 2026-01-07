@@ -12,6 +12,7 @@ body {
     background: #ffffff;
     font-family: 'Poppins', sans-serif;
     overflow-x: hidden;
+    position: relative; /* For skip link positioning */
 }
 
 /*---
