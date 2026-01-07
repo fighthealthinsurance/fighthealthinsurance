@@ -21,17 +21,29 @@
     color: #7B920A;
 }
 
-/* Mobile: Stack tabs vertically on small screens */
+/* Mobile: Stack tabs vertically on small screens with sticky positioning */
 @media (max-width: 767px) {
     .nav-tabs {
         flex-direction: column;
         border-bottom: none;
+        position: sticky;
+        top: 0;
+        z-index: 1020;
+        background-color: white;
+        padding-top: 0.5rem;
+        padding-bottom: 0.5rem;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        margin-bottom: 1rem;
     }
 
     .nav-tabs .nav-link {
         border: 1px solid #dee2e6;
         border-radius: 0;
         margin-bottom: -1px;
+        min-height: 48px; /* Enhanced tap target */
+        display: flex;
+        align-items: center;
+        padding: 0.75rem 1.25rem;
     }
 
     .nav-tabs .nav-link.active {
@@ -49,6 +61,32 @@
 
 .card {
     margin-bottom: 1.5rem;
+}
+
+/* Mobile: Enhanced tap targets for cards */
+@media (max-width: 767px) {
+    .card .btn {
+        min-height: 48px;
+        font-size: 1rem;
+        padding: 0.75rem 1rem;
+    }
+
+    .card-header {
+        padding: 1rem;
+        min-height: 48px;
+    }
+
+    .card-body {
+        padding: 1rem;
+    }
+
+    /* Larger tap targets for clickable card elements */
+    .card a,
+    .card button {
+        min-height: 44px;
+        display: inline-flex;
+        align-items: center;
+    }
 }
 
 /* ====================
