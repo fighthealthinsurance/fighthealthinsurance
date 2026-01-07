@@ -64,8 +64,8 @@ class MicrositeExtralinksTaskTest(APITestCase):
             {"url": "https://example.com/doc1.pdf", "title": "Test Document"}
         ]
         mock_microsite.pubmed_search_terms = []
-        # Mock the async method get_extralink_context
-        mock_microsite.get_extralink_context = AsyncMock(return_value="Mock extralink context")
+        # Mock the async method get_combined_context
+        mock_microsite.get_combined_context = AsyncMock(return_value="Mock combined context")
         mock_get_microsite.return_value = mock_microsite
 
         try:
@@ -101,16 +101,16 @@ class MicrositeExtralinksTaskTest(APITestCase):
 
             self.assertIn("content", response)
 
-            # Verify fire_and_forget was called with extralinks task
+            # Verify fire_and_forget was called with microsite context task
             mock_fire_and_forget.assert_called_once()
             call_args = mock_fire_and_forget.call_args[0][0]
 
             self.assertIsInstance(call_args, list)
-            self.assertEqual(len(call_args), 1, "Should have exactly 1 task (extralinks)")
+            self.assertEqual(len(call_args), 1, "Should have exactly 1 task (microsite context)")
 
             task = call_args[0]
             self.assertTrue(asyncio.iscoroutine(task))
-            self.assertIn("fetch_extra_links_and_store", task.__name__)
+            self.assertIn("fetch_microsite_context", task.__name__)
 
             await communicator.disconnect()
         finally:
@@ -155,8 +155,8 @@ class MicrositePubmedTaskTest(APITestCase):
         mock_microsite.default_procedure = "Asthma Treatment"
         mock_microsite.extralinks = []
         mock_microsite.pubmed_search_terms = ["asthma inhaler", "bronchodilator"]
-        # Mock the async method get_pubmed_context
-        mock_microsite.get_pubmed_context = AsyncMock(return_value=("Mock pubmed context\n- PMID: 12345", 1))
+        # Mock the async method get_combined_context
+        mock_microsite.get_combined_context = AsyncMock(return_value="Mock combined context with PubMed")
         mock_get_microsite.return_value = mock_microsite
 
         try:
@@ -192,16 +192,16 @@ class MicrositePubmedTaskTest(APITestCase):
 
             self.assertIn("content", response)
 
-            # Verify fire_and_forget was called with pubmed task
+            # Verify fire_and_forget was called with microsite context task
             mock_fire_and_forget.assert_called_once()
             call_args = mock_fire_and_forget.call_args[0][0]
 
             self.assertIsInstance(call_args, list)
-            self.assertEqual(len(call_args), 1, "Should have exactly 1 task (pubmed)")
+            self.assertEqual(len(call_args), 1, "Should have exactly 1 task (microsite context)")
 
             task = call_args[0]
             self.assertTrue(asyncio.iscoroutine(task))
-            self.assertIn("search_and_store_pubmed", task.__name__)
+            self.assertIn("fetch_microsite_context", task.__name__)
 
             await communicator.disconnect()
         finally:
@@ -211,15 +211,15 @@ class MicrositePubmedTaskTest(APITestCase):
 
 
 class MicrositeBothTasksTest(APITestCase):
-    """Test that both extralinks and pubmed tasks are collected together."""
+    """Test that microsite context with both extralinks and pubmed is fetched together."""
 
-    async def test_both_tasks_collected_together(self):
+    async def test_combined_context_fetched(self):
         """
         Verify that when a microsite has both extralinks and pubmed_search_terms,
-        both tasks are collected into the same list and passed to fire_and_forget.
+        a single task is created that fetches both via get_combined_context.
 
-        This is the key regression test for the bug where the tasks were collected in separate
-        calls due to incorrect indentation.
+        This test ensures the refactored approach uses get_combined_context
+        instead of separate tasks.
         """
         mock_model = MockChatModel()
         mock_model.set_next_response("Test response", "Test summary")
@@ -250,9 +250,8 @@ class MicrositeBothTasksTest(APITestCase):
             {"url": "https://example.com/doc.pdf", "title": "Doc"}
         ]
         mock_microsite.pubmed_search_terms = ["test treatment"]
-        # Mock both async methods
-        mock_microsite.get_extralink_context = AsyncMock(return_value="Mock extralink context")
-        mock_microsite.get_pubmed_context = AsyncMock(return_value=("Mock pubmed context\n- PMID: 12345", 1))
+        # Mock the combined context method
+        mock_microsite.get_combined_context = AsyncMock(return_value="Mock combined context with both extralinks and PubMed")
         mock_get_microsite.return_value = mock_microsite
 
         try:
@@ -288,20 +287,19 @@ class MicrositeBothTasksTest(APITestCase):
 
             self.assertIn("content", response)
 
-            # CRITICAL: Verify fire_and_forget was called ONCE with BOTH tasks
-            # If the bug were present, it would be called twice (once for extralinks, once for pubmed)
+            # Verify fire_and_forget was called ONCE with a single microsite context task
             mock_fire_and_forget.assert_called_once()
             call_args = mock_fire_and_forget.call_args[0][0]
 
             self.assertIsInstance(call_args, list)
             self.assertEqual(
-                len(call_args), 2, "Should have exactly 2 tasks (extralinks + pubmed)"
+                len(call_args), 1, "Should have exactly 1 task (combined microsite context)"
             )
 
-            # Verify both task types are present
-            task_names = [task.__name__ for task in call_args]
-            self.assertIn("fetch_extra_links_and_store", task_names)
-            self.assertIn("search_and_store_pubmed", task_names)
+            # Verify the task is fetch_microsite_context
+            task = call_args[0]
+            self.assertTrue(asyncio.iscoroutine(task))
+            self.assertIn("fetch_microsite_context", task.__name__)
 
             await communicator.disconnect()
         finally:
