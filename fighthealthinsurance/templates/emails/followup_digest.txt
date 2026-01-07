@@ -1,0 +1,73 @@
+Your Weekly Appeal Follow-up Digest
+===========================================
+
+Hi {{ user.first_name|default:user.email }},
+
+Here's your weekly summary of upcoming tasks and important deadlines for your health insurance appeals.
+
+{% if overdue_decisions %}
+⏰ DECISIONS EXPECTED ({{ overdue_count }})
+-------------------------------------------
+You should have received decisions on these appeals:
+
+{% for appeal in overdue_decisions %}
+• {{ appeal.for_denial.procedure|default:"Appeal" }}
+  Expected by: {{ appeal.decision_expected_date|date:"M d, Y" }}
+  {% if appeal.for_denial.insurance_company %}Insurance: {{ appeal.for_denial.insurance_company }}{% endif %}
+
+{% endfor %}
+Action: Check with your insurance company or update the status in your dashboard.
+
+{% endif %}
+{% if upcoming_followups %}
+📅 UPCOMING FOLLOW-UPS ({{ upcoming_count }})
+-------------------------------------------
+You have follow-ups scheduled for the next 7 days:
+
+{% for log in upcoming_followups %}
+• {{ log.follow_up_date|date:"D, M d" }} - {{ log.get_call_type_display }}
+  {% if log.reason_for_call %}Reason: {{ log.reason_for_call|truncatewords:10 }}{% endif %}
+  {% if log.follow_up_notes %}Notes: {{ log.follow_up_notes|truncatewords:15 }}{% endif %}
+
+{% endfor %}
+{% endif %}
+{% if active_appeals %}
+📋 ACTIVE APPEALS ({{ active_count }})
+-------------------------------------------
+{% for appeal in active_appeals %}
+• {{ appeal.for_denial.procedure|default:"Appeal" }}
+  Status: {{ appeal.get_appeal_status_display }}
+  Created: {{ appeal.creation_date|date:"M d, Y" }}
+
+{% endfor %}
+{% endif %}
+{% if recent_calls %}
+📞 RECENT CALL ACTIVITY (Last 7 days)
+-------------------------------------------
+{% for call in recent_calls %}
+• {{ call.call_date|date:"M d" }} - {{ call.get_call_type_display }}
+  Outcome: {{ call.get_outcome_display }}
+  {% if call.representative_name %}Rep: {{ call.representative_name }}{% endif %}
+
+{% endfor %}
+{% endif %}
+
+💡 TIPS FOR STAYING ORGANIZED
+-------------------------------------------
+• Document every phone call immediately after it happens
+• Save all emails and letters from your insurance company
+• Follow up on promises made by representatives
+• Keep copies of all submitted documents
+• Set calendar reminders for important dates
+
+-------------------------------------------
+View Your Dashboard: {{ dashboard_url }}
+-------------------------------------------
+
+Questions? Reply to this email or visit https://www.fighthealthinsurance.com
+
+Keep fighting!
+The Fight Health Insurance Team
+
+---
+To unsubscribe from these digests, update your preferences in your dashboard.
