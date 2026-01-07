@@ -589,3 +589,115 @@ class DashboardNavigationTests(TestCase):
         self.client.login(username=self.user.username, password=self.password)
         response = self.client.get(reverse("patient-dashboard"))
         self.assertContains(response, reverse("scan"))
+
+
+class LoggedInAppealCreationTests(TestCase):
+    """Tests for appeal creation while logged in - Phase 1 critical bug fix."""
+
+    def setUp(self) -> None:
+        self.client = Client()
+        self.password = "TestPass123!"
+        self.user = User.objects.create_user(
+            username="logged_in_patient",
+            password=self.password,
+            email="logged_in@example.com",
+            is_active=True,
+        )
+
+    def test_logged_in_appeal_links_to_patient_user(self) -> None:
+        """
+        Test that when a logged-in user creates an appeal via /scan,
+        the denial is automatically linked to their PatientUser.
+        """
+        # Login
+        self.client.login(username=self.user.username, password=self.password)
+
+        # POST to /scan to create a denial
+        denial_data = {
+            "denial_text": "Your claim for physical therapy has been denied.",
+            "email": self.user.email,
+            "pii": True,
+            "tos": True,
+            "privacy": True,
+            "zip": "12345",
+        }
+        response = self.client.post(reverse("scan"), data=denial_data, follow=False)
+
+        # Should redirect to next step (health history form)
+        if response.status_code != 302:
+            # Print form errors for debugging
+            if hasattr(response, "context") and response.context and "form" in response.context:
+                print(f"Form errors: {response.context['form'].errors}")
+        self.assertEqual(response.status_code, 302)
+
+        # Check that a denial was created and linked to a PatientUser
+        denial = Denial.objects.filter(hashed_email=Denial.get_hashed_email(self.user.email)).first()
+        self.assertIsNotNone(denial, "Denial should be created")
+        self.assertIsNotNone(denial.patient_user, "Denial should be linked to PatientUser")
+        self.assertEqual(denial.patient_user.user.id, self.user.id, "Denial should be linked to correct user")
+
+        # Verify PatientUser was created automatically
+        patient_user = PatientUser.objects.get(user=self.user)
+        self.assertTrue(patient_user.active)
+
+    def test_logged_in_appeal_appears_in_dashboard(self) -> None:
+        """
+        Test that appeals created while logged in appear in the patient dashboard.
+        This is the end-to-end verification of Phase 1.1 fix.
+        """
+        # Login
+        self.client.login(username=self.user.username, password=self.password)
+
+        # Create a denial as if the user went through /scan
+        patient_user = PatientUser.objects.create(user=self.user, active=True)
+        denial = Denial.objects.create(
+            hashed_email=Denial.get_hashed_email(self.user.email),
+            denial_text="Test denial for logged in user",
+            patient_user=patient_user,
+            procedure="MRI Scan",
+            diagnosis="Back Pain",
+        )
+        appeal = Appeal.objects.create(
+            for_denial=denial,
+            hashed_email=Denial.get_hashed_email(self.user.email),
+            patient_user=patient_user,
+            appeal_text="Test appeal text",
+            patient_visible=True,
+        )
+
+        # Navigate to dashboard
+        response = self.client.get(reverse("patient-dashboard"))
+
+        # Verify the appeal appears
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "MRI Scan")
+        self.assertContains(response, "Back Pain")
+
+    def test_anonymous_then_login_appeal_not_migrated_yet(self) -> None:
+        """
+        Test that appeals created anonymously don't automatically appear after login.
+        This documents current behavior before Phase 1.2 (migration) is implemented.
+        """
+        # Create an anonymous denial (no patient_user)
+        denial = Denial.objects.create(
+            hashed_email=Denial.get_hashed_email(self.user.email),
+            denial_text="Anonymous denial",
+            patient_user=None,  # Anonymous
+            procedure="X-Ray",
+        )
+        appeal = Appeal.objects.create(
+            for_denial=denial,
+            hashed_email=Denial.get_hashed_email(self.user.email),
+            patient_user=None,  # Anonymous
+            appeal_text="Anonymous appeal",
+        )
+
+        # Now login
+        self.client.login(username=self.user.username, password=self.password)
+
+        # Navigate to dashboard
+        response = self.client.get(reverse("patient-dashboard"))
+
+        # Anonymous appeal should NOT appear (no migration yet)
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, "X-Ray")

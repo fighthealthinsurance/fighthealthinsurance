@@ -42,7 +42,7 @@ from fighthealthinsurance.calendar_utils import generate_followup_ics
 from fighthealthinsurance.chat_forms import UserConsentForm
 from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
 from fighthealthinsurance.helpers.stripe_helpers import StripeWebhookHelper
-from fighthealthinsurance.models import StripeRecoveryInfo
+from fighthealthinsurance.models import Denial, StripeRecoveryInfo
 from fighthealthinsurance.type_utils import User
 
 
@@ -1310,6 +1310,26 @@ class InitialProcessView(generic.FormView):
         denial_response = common_view_logic.DenialCreatorHelper.create_or_update_denial(
             **cleaned_data,
         )
+
+        # Link denial to PatientUser if user is authenticated
+        if self.request.user.is_authenticated:
+            from fhi_users.models import PatientUser
+
+            patient_user, created = PatientUser.objects.get_or_create(
+                user=self.request.user,
+                defaults={"active": True},
+            )
+            # Get the actual Denial model instance and link it to the patient user
+            denial = Denial.objects.get(denial_id=denial_response.denial_id)
+            denial.patient_user = patient_user
+            denial.save(update_fields=["patient_user"])
+            if created:
+                logger.info(
+                    f"Created PatientUser {patient_user.id} for user {self.request.user.id}"
+                )
+            logger.info(
+                f"Linked denial {denial_response.uuid} to patient user {patient_user.id}"
+            )
 
         # Store the denial ID in the session to maintain state across the multi-step form process
         # This allows the SessionRequiredMixin to verify the user is working with a valid denial
