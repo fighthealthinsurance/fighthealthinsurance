@@ -595,6 +595,7 @@ a.link:hover::after {
     max-width: 1200px;
     margin-left: auto;
     margin-right: auto;
+    margin-top: 2rem;
     padding: 0 15px;
 }
 
