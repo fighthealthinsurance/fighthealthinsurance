@@ -128,6 +128,137 @@ class Microsite:
     def __repr__(self) -> str:
         return f"<Microsite: {self.slug}>"
 
+    async def get_extralink_context(
+        self,
+        max_docs: int = 5,
+        max_chars_per_doc: int = 2000,
+    ) -> str:
+        """
+        Get formatted context from extralink documents for this microsite.
+
+        Args:
+            max_docs: Maximum number of documents to include
+            max_chars_per_doc: Maximum characters per document
+
+        Returns:
+            Formatted markdown context string, or empty string if unavailable.
+        """
+        from fighthealthinsurance.extralink_context_helper import (
+            ExtraLinkContextHelper,
+        )
+
+        return await ExtraLinkContextHelper.fetch_extralink_context_for_microsite(
+            self.slug,
+            max_docs=max_docs,
+            max_chars_per_doc=max_chars_per_doc,
+        )
+
+    async def get_pubmed_context(
+        self,
+        pubmed_tools,
+        max_terms: int = 3,
+        max_articles_per_term: int = 5,
+        max_total_articles: int = 20,
+        since: str = "2020",
+    ) -> str:
+        """
+        Get formatted PubMed search results context for this microsite.
+
+        Args:
+            pubmed_tools: PubMed tools instance for searching
+            max_terms: Maximum number of search terms to use
+            max_articles_per_term: Maximum articles per search term
+            max_total_articles: Maximum total articles to include
+            since: Only include articles published since this year
+
+        Returns:
+            Formatted context string with PubMed IDs, or empty string if no results.
+        """
+        if not self.pubmed_search_terms:
+            return ""
+
+        try:
+            all_articles = []
+            # Trigger PubMed searches for each search term
+            for search_term in self.pubmed_search_terms[:max_terms]:
+                try:
+                    articles = await pubmed_tools.find_pubmed_article_ids_for_query(
+                        search_term, since=since
+                    )
+                    if articles:
+                        logger.debug(
+                            f"Found {len(articles)} articles for search term: {search_term}"
+                        )
+                        all_articles.extend(articles[:max_articles_per_term])
+                except Exception as e:
+                    logger.warning(
+                        f"Error searching PubMed for '{search_term}': {e}"
+                    )
+
+            if all_articles:
+                # Build context string from articles
+                context_parts = [
+                    f"PubMed search results for {self.default_procedure}:"
+                ]
+                for pmid in all_articles[:max_total_articles]:
+                    context_parts.append(f"- PMID: {pmid}")
+
+                return "\n".join(context_parts)
+
+            return ""
+
+        except Exception as e:
+            logger.opt(exception=True).warning(
+                f"Error getting PubMed context for microsite {self.slug}: {e}"
+            )
+            return ""
+
+    async def get_combined_context(
+        self,
+        pubmed_tools=None,
+        max_extralink_docs: int = 5,
+        max_extralink_chars: int = 2000,
+        max_pubmed_terms: int = 3,
+        max_pubmed_articles: int = 20,
+    ) -> str:
+        """
+        Get combined extralink and PubMed context for this microsite.
+
+        Args:
+            pubmed_tools: Optional PubMed tools instance. If None, only extralinks are fetched.
+            max_extralink_docs: Maximum extralink documents
+            max_extralink_chars: Maximum chars per extralink document
+            max_pubmed_terms: Maximum PubMed search terms
+            max_pubmed_articles: Maximum total PubMed articles
+
+        Returns:
+            Combined formatted context string.
+        """
+        import asyncio
+
+        contexts = []
+
+        # Fetch extralinks if available
+        if self.extralinks:
+            extralink_context = await self.get_extralink_context(
+                max_docs=max_extralink_docs,
+                max_chars_per_doc=max_extralink_chars,
+            )
+            if extralink_context:
+                contexts.append(extralink_context)
+
+        # Fetch PubMed if available and tools provided
+        if pubmed_tools and self.pubmed_search_terms:
+            pubmed_context = await self.get_pubmed_context(
+                pubmed_tools,
+                max_terms=max_pubmed_terms,
+                max_total_articles=max_pubmed_articles,
+            )
+            if pubmed_context:
+                contexts.append(pubmed_context)
+
+        return "\n\n".join(contexts) if contexts else ""
+
 
 @lru_cache(maxsize=1)
 def _find_microsites_json() -> Optional[str]:

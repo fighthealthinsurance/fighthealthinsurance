@@ -883,8 +883,7 @@ class ChatInterface:
                                 async def fetch_extra_links_and_store():
                                     """Fetch extralink context in background and append to chat context."""
                                     try:
-                                        extralink_context = await ExtraLinkContextHelper.fetch_extralink_context_for_microsite(
-                                            microsite_slug,
+                                        extralink_context = await microsite.get_extralink_context(
                                             max_docs=5,
                                             max_chars_per_doc=2000,
                                         )
@@ -937,69 +936,34 @@ class ChatInterface:
                                             f"Searching medical literature for {safe_procedure}..."
                                         )
 
-                                        all_articles = []
-                                        # Trigger PubMed searches for each search term
-                                        for (
-                                            search_term
-                                        ) in microsite.pubmed_search_terms[:3]:
-                                            try:
-                                                # Sanitize search term for display
-                                                safe_search_term = str(search_term)[:50]
-                                                await self.send_status_message(
-                                                    f"Searching: {safe_search_term}..."
-                                                )
-                                                articles = await self.pubmed_tools.find_pubmed_article_ids_for_query(
-                                                    search_term, since="2020"
-                                                )
-                                                if articles:
-                                                    logger.info(
-                                                        f"Found {len(articles)} articles for search term: {search_term}"
-                                                    )
-                                                    all_articles.extend(
-                                                        articles[:5]
-                                                    )  # Limit to 5 per search term
-                                            except Exception as e:
-                                                logger.warning(
-                                                    f"Error searching PubMed for '{search_term}': {e}"
-                                                )
-                                            # Store the results in chat context
-                                            if all_articles:
-                                                # Build context string from articles
-                                                context_parts = [
-                                                    f"PubMed search results for {microsite.default_procedure}:"
-                                                ]
-                                                for pmid in all_articles[
-                                                    :20
-                                                ]:  # Limit total to 20
-                                                    context_parts.append(
-                                                        f"- PMID: {pmid}"
-                                                    )
+                                        pubmed_context = await microsite.get_pubmed_context(
+                                            self.pubmed_tools,
+                                            max_terms=3,
+                                            max_articles_per_term=5,
+                                            max_total_articles=20,
+                                        )
 
-                                                pubmed_context = "\n".join(
-                                                    context_parts
-                                                )
-
-                                                # Append to chat summary to the ongoing summary
-                                                async with (
-                                                    microsite_update_lock_for_chat
-                                                ):
-                                                    chat_obj = (
-                                                        await OngoingChat.objects.aget(
-                                                            id=chat.id
-                                                        )
+                                        if pubmed_context:
+                                            # Count articles from context
+                                            article_count = pubmed_context.count("PMID:")
+                                            
+                                            # Append to chat summary
+                                            async with microsite_update_lock_for_chat:
+                                                chat_obj = (
+                                                    await OngoingChat.objects.aget(
+                                                        id=chat.id
                                                     )
-                                                    if (
-                                                        not chat_obj.summary_for_next_call
-                                                    ):
-                                                        chat_obj.summary_for_next_call = [
-                                                            ""
-                                                        ]
-                                                    if not chat_obj.summary_for_next_call[
+                                                )
+                                                if not chat_obj.summary_for_next_call:
+                                                    chat_obj.summary_for_next_call = [
+                                                        ""
+                                                    ]
+                                                if not chat_obj.summary_for_next_call[
+                                                    -1
+                                                ]:
+                                                    chat_obj.summary_for_next_call[
                                                         -1
-                                                    ]:
-                                                        chat_obj.summary_for_next_call[
-                                                            -1
-                                                        ] = ""
+                                                    ] = ""
                                                 last_summary = (
                                                     chat_obj.summary_for_next_call[-1]
                                                 )
@@ -1008,23 +972,23 @@ class ChatInterface:
                                                 )
                                                 await chat_obj.asave()
 
-                                                logger.info(
-                                                    f"Stored {len(all_articles)} PubMed articles in chat context"
-                                                )
-                                                await self.send_status_message(
-                                                    f"Medical literature search complete - found {len(all_articles)} relevant articles"
-                                                )
-                                            else:
-                                                await self.send_status_message(
-                                                    "Medical literature search complete"
-                                                )
+                                            logger.info(
+                                                f"Stored {article_count} PubMed articles in chat context"
+                                            )
+                                            await self.send_status_message(
+                                                f"Medical literature search complete - found {article_count} relevant articles"
+                                            )
+                                        else:
+                                            await self.send_status_message(
+                                                "Medical literature search complete"
+                                            )
                                     except Exception as e:
                                         logger.opt(exception=True).warning(
                                             f"Error in background PubMed search: {e}"
                                         )
 
-                                    # Add pubmed task
-                                    microsite_tasks.append(search_and_store_pubmed())
+                                # Add pubmed task
+                                microsite_tasks.append(search_and_store_pubmed())
 
                             # Collect the microsite context
                             if microsite_tasks and len(microsite_tasks) > 0:

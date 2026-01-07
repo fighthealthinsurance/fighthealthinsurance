@@ -2152,28 +2152,25 @@ class AppealsBackendHelper:
         # Get extralink context if available (optional, non-blocking)
         extralink_context: Optional[str] = None
         if denial.microsite_slug:
-            from fighthealthinsurance.extralink_context_helper import (
-                ExtraLinkContextHelper,
-            )
+            from fighthealthinsurance.microsites import get_microsite
 
-            extralink_context = (
-                await ExtraLinkContextHelper.fetch_extralink_context_for_microsite(
-                    denial.microsite_slug,
+            microsite = get_microsite(denial.microsite_slug)
+            if microsite:
+                extralink_context = await microsite.get_extralink_context(
                     max_docs=3,
                     max_chars_per_doc=1500,
                 )
-            )
-            if extralink_context:
-                # Append to ml_citation_context or pubmed_context
-                if ml_citation_context:
-                    ml_citation_context = (
-                        f"{ml_citation_context}\n\n{extralink_context}"
-                    )
-                elif pubmed_context:
-                    pubmed_context = f"{pubmed_context}\n\n{extralink_context}"
-                else:
-                    # Use extralink context as standalone context
-                    ml_citation_context = extralink_context
+                if extralink_context:
+                    # Append to ml_citation_context or pubmed_context
+                    if ml_citation_context:
+                        ml_citation_context = (
+                            f"{ml_citation_context}\n\n{extralink_context}"
+                        )
+                    elif pubmed_context:
+                        pubmed_context = f"{pubmed_context}\n\n{extralink_context}"
+                    else:
+                        # Use extralink context as standalone context
+                        ml_citation_context = extralink_context
 
         async def save_appeal(appeal_text: str) -> dict[str, str]:
             # Save all of the proposed appeals, so we can use RL later.
