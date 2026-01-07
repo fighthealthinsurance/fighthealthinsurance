@@ -936,17 +936,15 @@ class ChatInterface:
                                             f"Searching medical literature for {safe_procedure}..."
                                         )
 
-                                        pubmed_context = await microsite.get_pubmed_context(
+                                        pubmed_context, article_count = await microsite.get_pubmed_context(
                                             self.pubmed_tools,
                                             max_terms=3,
                                             max_articles_per_term=5,
                                             max_total_articles=20,
+                                            return_count=True,
                                         )
 
                                         if pubmed_context:
-                                            # Count articles from context
-                                            article_count = pubmed_context.count("PMID:")
-                                            
                                             # Append to chat summary
                                             async with microsite_update_lock_for_chat:
                                                 chat_obj = (

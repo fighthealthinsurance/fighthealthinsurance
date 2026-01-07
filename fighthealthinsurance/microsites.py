@@ -160,7 +160,8 @@ class Microsite:
         max_articles_per_term: int = 5,
         max_total_articles: int = 20,
         since: str = "2020",
-    ) -> str:
+        return_count: bool = False,
+    ) -> str | tuple[str, int]:
         """
         Get formatted PubMed search results context for this microsite.
 
@@ -170,12 +171,14 @@ class Microsite:
             max_articles_per_term: Maximum articles per search term
             max_total_articles: Maximum total articles to include
             since: Only include articles published since this year
+            return_count: If True, return tuple of (context, article_count)
 
         Returns:
             Formatted context string with PubMed IDs, or empty string if no results.
+            If return_count is True, returns tuple of (context, article_count).
         """
         if not self.pubmed_search_terms:
-            return ""
+            return ("", 0) if return_count else ""
 
         try:
             all_articles = []
@@ -200,18 +203,20 @@ class Microsite:
                 context_parts = [
                     f"PubMed search results for {self.default_procedure}:"
                 ]
-                for pmid in all_articles[:max_total_articles]:
+                limited_articles = all_articles[:max_total_articles]
+                for pmid in limited_articles:
                     context_parts.append(f"- PMID: {pmid}")
 
-                return "\n".join(context_parts)
+                context = "\n".join(context_parts)
+                return (context, len(limited_articles)) if return_count else context
 
-            return ""
+            return ("", 0) if return_count else ""
 
         except Exception as e:
             logger.opt(exception=True).warning(
                 f"Error getting PubMed context for microsite {self.slug}: {e}"
             )
-            return ""
+            return ("", 0) if return_count else ""
 
     async def get_combined_context(
         self,
@@ -234,18 +239,15 @@ class Microsite:
         Returns:
             Combined formatted context string.
         """
-        import asyncio
-
         contexts = []
 
         # Fetch extralinks if available
-        if self.extralinks:
-            extralink_context = await self.get_extralink_context(
-                max_docs=max_extralink_docs,
-                max_chars_per_doc=max_extralink_chars,
-            )
-            if extralink_context:
-                contexts.append(extralink_context)
+        extralink_context = await self.get_extralink_context(
+            max_docs=max_extralink_docs,
+            max_chars_per_doc=max_extralink_chars,
+        )
+        if extralink_context:
+            contexts.append(extralink_context)
 
         # Fetch PubMed if available and tools provided
         if pubmed_tools and self.pubmed_search_terms:
