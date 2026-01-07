@@ -745,6 +745,15 @@ class PatientEvidenceForm(forms.ModelForm):
 class CallLogFilterForm(forms.Form):
     """Form for filtering call logs in the patient dashboard."""
 
+    search = forms.CharField(
+        required=False,
+        widget=forms.TextInput(
+            attrs={
+                "class": "form-control form-control-sm",
+                "placeholder": "Search logs...",
+            }
+        ),
+    )
     call_type = forms.ChoiceField(
         choices=[("", "All Types")] + list(InsuranceCallLog.CALL_TYPE_CHOICES),
         required=False,
@@ -778,6 +787,15 @@ class CallLogFilterForm(forms.Form):
 class EvidenceFilterForm(forms.Form):
     """Form for filtering evidence in the patient dashboard."""
 
+    search = forms.CharField(
+        required=False,
+        widget=forms.TextInput(
+            attrs={
+                "class": "form-control form-control-sm",
+                "placeholder": "Search evidence...",
+            }
+        ),
+    )
     evidence_type = forms.ChoiceField(
         choices=[("", "All Types")] + list(PatientEvidence.EVIDENCE_TYPE_CHOICES),
         required=False,
