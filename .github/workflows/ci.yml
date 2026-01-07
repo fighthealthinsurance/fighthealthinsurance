@@ -81,9 +81,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - python: '3.11'
-            toxpy: '311'
-            django: '52'
           - python: '3.12'
             toxpy: '312'
             django: '52'

@@ -32,15 +32,29 @@ fi
 REQ_CHECKSUM_FILE=".requirements_checksum"
 CURRENT_REQ_CHECKSUM=""
 STORED_REQ_CHECKSUM=""
+NEEDS_INSTALL=false
 
 if [ -f "requirements.txt" ] && [ -f "requirements-dev.txt" ]; then
   CURRENT_REQ_CHECKSUM=$(md5sum requirements.txt requirements-dev.txt | sort | md5sum | cut -d ' ' -f 1)
   if [ -f "$REQ_CHECKSUM_FILE" ]; then
     STORED_REQ_CHECKSUM=$(cat "$REQ_CHECKSUM_FILE")
+  else
+    # No checksum file = fresh setup, need to install
+    NEEDS_INSTALL=true
   fi
 
   if [ "$CURRENT_REQ_CHECKSUM" != "$STORED_REQ_CHECKSUM" ]; then
-    echo "Requirements files have changed. Updating dependencies..."
+    NEEDS_INSTALL=true
+  fi
+
+  # Also check if key dependencies are actually installed
+  if ! python -c 'import configurations' >/dev/null 2>&1; then
+    echo "Dependencies missing in current environment. Installing..."
+    NEEDS_INSTALL=true
+  fi
+
+  if [ "$NEEDS_INSTALL" = true ]; then
+    echo "Installing/updating dependencies..."
     pip install -r requirements.txt
     pip install -r requirements-dev.txt
     echo "$CURRENT_REQ_CHECKSUM" > "$REQ_CHECKSUM_FILE"
