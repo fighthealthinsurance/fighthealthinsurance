@@ -2373,6 +2373,7 @@ class TailscaleModelBackend(RemoteFullOpenLike):
             dns.resolver.NXDOMAIN,
             dns.resolver.NoAnswer,
             dns.resolver.Timeout,
+            dns.resolver.NoNameservers,
             concurrent.futures.TimeoutError,
             TimeoutError,
         ) as e:
