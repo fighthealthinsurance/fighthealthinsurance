@@ -591,18 +591,24 @@ a.link:hover::after {
 }
 
 .generic-main-content {
-    width: 80%;
-    max-width: 1200px;
-    margin-left: auto;
-    margin-right: auto;
-    margin-top: 2rem;
-    padding: 0 15px;
+    display: block !important;
+    width: 80% !important;
+    max-width: 1200px !important;
+    margin: 2rem auto 0 auto !important;
+    padding: 0 15px !important;
+    box-sizing: border-box !important;
+}
+
+/* Ensure child elements don't overflow */
+.generic-main-content > * {
+    max-width: 100%;
+    box-sizing: border-box;
 }
 
 /* Mobile: use more of the screen width */
 @media (max-width: 768px) {
     .generic-main-content {
-        width: 95%;
+        width: 95%; 
         padding: 0 10px;
     }
 }
