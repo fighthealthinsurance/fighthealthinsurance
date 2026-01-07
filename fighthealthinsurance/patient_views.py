@@ -11,6 +11,8 @@ from datetime import date, timedelta
 from django.contrib.auth import get_user_model
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.core.files.uploadedfile import UploadedFile
+from django.core.paginator import Paginator
+from django.db.models import Q
 from django.http import Http404, HttpResponse, HttpResponseRedirect
 from django.shortcuts import get_object_or_404
 from django.urls import reverse_lazy
@@ -21,7 +23,12 @@ from django_encrypted_filefield.crypt import Cryptographer
 from loguru import logger
 
 from fhi_users.models import PatientUser
-from fighthealthinsurance.forms import InsuranceCallLogForm, PatientEvidenceForm
+from fighthealthinsurance.forms import (
+    CallLogFilterForm,
+    EvidenceFilterForm,
+    InsuranceCallLogForm,
+    PatientEvidenceForm,
+)
 from fighthealthinsurance.models import Appeal, InsuranceCallLog, PatientEvidence
 
 if typing.TYPE_CHECKING:
@@ -106,15 +113,71 @@ class PatientDashboardView(PatientRequiredMixin, TemplateView):
             .order_by("-creation_date")[:20]
         )
 
-        # Get patient's call logs
-        call_logs = InsuranceCallLog.filter_to_allowed_call_logs(user).order_by(
-            "-call_date"
-        )[:20]
+        # Get patient's call logs with filtering
+        call_log_filter_form = CallLogFilterForm(self.request.GET or None)
+        call_logs = InsuranceCallLog.filter_to_allowed_call_logs(user)
 
-        # Get patient's evidence
-        evidence = PatientEvidence.filter_to_allowed_evidence(user).order_by(
-            "-created_at"
-        )[:20]
+        # Apply call log filters if form is valid
+        if call_log_filter_form.is_valid():
+            data = call_log_filter_form.cleaned_data
+
+            if data.get("call_type"):
+                call_logs = call_logs.filter(call_type=data["call_type"])
+
+            if data.get("outcome"):
+                call_logs = call_logs.filter(outcome=data["outcome"])
+
+            if data.get("date_from"):
+                call_logs = call_logs.filter(call_date__gte=data["date_from"])
+
+            if data.get("date_to"):
+                call_logs = call_logs.filter(call_date__lte=data["date_to"])
+
+            if data.get("search"):
+                # Search across multiple fields
+                search_term = data["search"]
+                call_logs = call_logs.filter(
+                    Q(reason_for_call__icontains=search_term)
+                    | Q(representative_name__icontains=search_term)
+                    | Q(reference_number__icontains=search_term)
+                    | Q(case_number__icontains=search_term)
+                )
+
+        # Paginate call logs
+        call_logs_all = call_logs.order_by("-call_date")
+        call_log_paginator = Paginator(call_logs_all, 20)
+        call_log_page_number = self.request.GET.get("call_log_page", 1)
+        call_logs = call_log_paginator.get_page(call_log_page_number)
+
+        # Get patient's evidence with filtering
+        evidence_filter_form = EvidenceFilterForm(self.request.GET or None)
+        evidence = PatientEvidence.filter_to_allowed_evidence(user)
+
+        # Apply evidence filters if form is valid
+        if evidence_filter_form.is_valid():
+            data = evidence_filter_form.cleaned_data
+
+            if data.get("evidence_type"):
+                evidence = evidence.filter(evidence_type=data["evidence_type"])
+
+            if data.get("include_in_appeal"):
+                # Convert string "true"/"false" to boolean
+                include_val = data["include_in_appeal"] == "true"
+                evidence = evidence.filter(include_in_appeal=include_val)
+
+            if data.get("search"):
+                # Search title and description
+                search_term = data["search"]
+                evidence = evidence.filter(
+                    Q(title__icontains=search_term)
+                    | Q(description__icontains=search_term)
+                )
+
+        # Paginate evidence
+        evidence_all = evidence.order_by("-created_at")
+        evidence_paginator = Paginator(evidence_all, 20)
+        evidence_page_number = self.request.GET.get("evidence_page", 1)
+        evidence = evidence_paginator.get_page(evidence_page_number)
 
         # Get upcoming follow-ups (next 14 days)
         today = date.today()
@@ -178,6 +241,9 @@ class PatientDashboardView(PatientRequiredMixin, TemplateView):
                 "pending_followups_count": pending_followups_count,
                 "won_appeals_count": won_appeals_count,
                 "overdue_decisions": overdue_decisions,
+                # Filter forms
+                "call_log_filter_form": call_log_filter_form,
+                "evidence_filter_form": evidence_filter_form,
             }
         )
 

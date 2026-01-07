@@ -196,6 +196,39 @@
                 <strong>Why log your calls?</strong> Insurance companies often "lose" records or provide inconsistent information. Documenting your calls with reference numbers, representative names, and key statements creates evidence for your appeals.
             </div>
 
+            <!-- Call Log Filter Form -->
+            <div class="card mb-3">
+                <div class="card-body">
+                    <form method="get" id="call-log-filter-form">
+                        <div class="row g-2 align-items-end">
+                            <div class="col-md-3">
+                                <label for="{{ call_log_filter_form.search.id_for_label }}" class="form-label small">Search</label>
+                                {{ call_log_filter_form.search }}
+                            </div>
+                            <div class="col-md-2">
+                                <label for="{{ call_log_filter_form.call_type.id_for_label }}" class="form-label small">Type</label>
+                                {{ call_log_filter_form.call_type }}
+                            </div>
+                            <div class="col-md-2">
+                                <label for="{{ call_log_filter_form.outcome.id_for_label }}" class="form-label small">Outcome</label>
+                                {{ call_log_filter_form.outcome }}
+                            </div>
+                            <div class="col-md-2">
+                                <label for="{{ call_log_filter_form.date_from.id_for_label }}" class="form-label small">From Date</label>
+                                {{ call_log_filter_form.date_from }}
+                            </div>
+                            <div class="col-md-2">
+                                <label for="{{ call_log_filter_form.date_to.id_for_label }}" class="form-label small">To Date</label>
+                                {{ call_log_filter_form.date_to }}
+                            </div>
+                            <div class="col-md-1">
+                                <button type="submit" class="btn btn-primary btn-sm w-100">Filter</button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
             {% if call_logs %}
             <div class="row">
                 {% for log in call_logs %}
@@ -240,6 +273,35 @@
                 </div>
                 {% endfor %}
             </div>
+
+            <!-- Call Log Pagination -->
+            {% if call_logs.has_other_pages %}
+            <nav aria-label="Call log pagination">
+                <ul class="pagination justify-content-center">
+                    {% if call_logs.has_previous %}
+                    <li class="page-item">
+                        <a class="page-link" href="?call_log_page={{ call_logs.previous_page_number }}{% if request.GET.search %}&search={{ request.GET.search }}{% endif %}{% if request.GET.call_type %}&call_type={{ request.GET.call_type }}{% endif %}{% if request.GET.outcome %}&outcome={{ request.GET.outcome }}{% endif %}{% if request.GET.date_from %}&date_from={{ request.GET.date_from }}{% endif %}{% if request.GET.date_to %}&date_to={{ request.GET.date_to }}{% endif %}">Previous</a>
+                    </li>
+                    {% endif %}
+
+                    {% for num in call_logs.paginator.page_range %}
+                        {% if call_logs.number == num %}
+                        <li class="page-item active"><span class="page-link">{{ num }}</span></li>
+                        {% elif num > call_logs.number|add:'-3' and num < call_logs.number|add:'3' %}
+                        <li class="page-item">
+                            <a class="page-link" href="?call_log_page={{ num }}{% if request.GET.search %}&search={{ request.GET.search }}{% endif %}{% if request.GET.call_type %}&call_type={{ request.GET.call_type }}{% endif %}{% if request.GET.outcome %}&outcome={{ request.GET.outcome }}{% endif %}{% if request.GET.date_from %}&date_from={{ request.GET.date_from }}{% endif %}{% if request.GET.date_to %}&date_to={{ request.GET.date_to }}{% endif %}">{{ num }}</a>
+                        </li>
+                        {% endif %}
+                    {% endfor %}
+
+                    {% if call_logs.has_next %}
+                    <li class="page-item">
+                        <a class="page-link" href="?call_log_page={{ call_logs.next_page_number }}{% if request.GET.search %}&search={{ request.GET.search }}{% endif %}{% if request.GET.call_type %}&call_type={{ request.GET.call_type }}{% endif %}{% if request.GET.outcome %}&outcome={{ request.GET.outcome }}{% endif %}{% if request.GET.date_from %}&date_from={{ request.GET.date_from }}{% endif %}{% if request.GET.date_to %}&date_to={{ request.GET.date_to }}{% endif %}">Next</a>
+                    </li>
+                    {% endif %}
+                </ul>
+            </nav>
+            {% endif %}
             {% else %}
             <div class="text-center py-5">
                 <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" fill="currentColor" class="bi bi-telephone text-muted mb-3" viewBox="0 0 16 16">
@@ -268,6 +330,31 @@
             <!-- Evidence Info Card -->
             <div class="alert alert-info mb-4">
                 <strong>Build your case.</strong> Upload documents, screenshots, EOBs, and notes that support your appeal. Mark items to include in your appeal letter.
+            </div>
+
+            <!-- Evidence Filter Form -->
+            <div class="card mb-3">
+                <div class="card-body">
+                    <form method="get" id="evidence-filter-form">
+                        <div class="row g-2 align-items-end">
+                            <div class="col-md-4">
+                                <label for="{{ evidence_filter_form.search.id_for_label }}" class="form-label small">Search</label>
+                                {{ evidence_filter_form.search }}
+                            </div>
+                            <div class="col-md-3">
+                                <label for="{{ evidence_filter_form.evidence_type.id_for_label }}" class="form-label small">Type</label>
+                                {{ evidence_filter_form.evidence_type }}
+                            </div>
+                            <div class="col-md-3">
+                                <label for="{{ evidence_filter_form.include_in_appeal.id_for_label }}" class="form-label small">Appeal Status</label>
+                                {{ evidence_filter_form.include_in_appeal }}
+                            </div>
+                            <div class="col-md-2">
+                                <button type="submit" class="btn btn-primary btn-sm w-100">Filter</button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
             </div>
 
             {% if evidence %}
@@ -308,6 +395,35 @@
                 </div>
                 {% endfor %}
             </div>
+
+            <!-- Evidence Pagination -->
+            {% if evidence.has_other_pages %}
+            <nav aria-label="Evidence pagination">
+                <ul class="pagination justify-content-center">
+                    {% if evidence.has_previous %}
+                    <li class="page-item">
+                        <a class="page-link" href="?evidence_page={{ evidence.previous_page_number }}{% if request.GET.search %}&search={{ request.GET.search }}{% endif %}{% if request.GET.evidence_type %}&evidence_type={{ request.GET.evidence_type }}{% endif %}{% if request.GET.include_in_appeal %}&include_in_appeal={{ request.GET.include_in_appeal }}{% endif %}">Previous</a>
+                    </li>
+                    {% endif %}
+
+                    {% for num in evidence.paginator.page_range %}
+                        {% if evidence.number == num %}
+                        <li class="page-item active"><span class="page-link">{{ num }}</span></li>
+                        {% elif num > evidence.number|add:'-3' and num < evidence.number|add:'3' %}
+                        <li class="page-item">
+                            <a class="page-link" href="?evidence_page={{ num }}{% if request.GET.search %}&search={{ request.GET.search }}{% endif %}{% if request.GET.evidence_type %}&evidence_type={{ request.GET.evidence_type }}{% endif %}{% if request.GET.include_in_appeal %}&include_in_appeal={{ request.GET.include_in_appeal }}{% endif %}">{{ num }}</a>
+                        </li>
+                        {% endif %}
+                    {% endfor %}
+
+                    {% if evidence.has_next %}
+                    <li class="page-item">
+                        <a class="page-link" href="?evidence_page={{ evidence.next_page_number }}{% if request.GET.search %}&search={{ request.GET.search }}{% endif %}{% if request.GET.evidence_type %}&evidence_type={{ request.GET.evidence_type }}{% endif %}{% if request.GET.include_in_appeal %}&include_in_appeal={{ request.GET.include_in_appeal }}{% endif %}">Next</a>
+                    </li>
+                    {% endif %}
+                </ul>
+            </nav>
+            {% endif %}
             {% else %}
             <div class="text-center py-5">
                 <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" fill="currentColor" class="bi bi-folder2-open text-muted mb-3" viewBox="0 0 16 16">
