@@ -382,7 +382,11 @@ async def _interleave_iterator_for_keep_alive(
             c = None
 
 
-async def fire_and_forget_in_new_threadpool(task: Coroutine) -> None:
+async def fire_and_forget_in_new_threadpool_tasks(task: Coroutine) -> None:
+    return await fire_and_forget_in_new_threadpool([task])
+
+
+async def fire_and_forget_in_new_threadpool_tasks(tasks: list[Coroutine]) -> None:
     """
     Runs an asynchronous coroutine in a separate thread with its own event loop.
 
@@ -390,6 +394,12 @@ async def fire_and_forget_in_new_threadpool(task: Coroutine) -> None:
     and the function does not wait for completion or return a result.
     """
     logger.debug(f"Starting fire and forget task {task}")
+
+    async def run_all_tasks() -> None:
+        await asyncio.gather(*tasks)
+        return
+
+    task = run_all_tasks()
 
     def run_async_task() -> None:
         loop = asyncio.new_event_loop()

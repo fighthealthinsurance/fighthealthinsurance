@@ -40,6 +40,7 @@ from fighthealthinsurance.models import (
     OngoingChat,
     PriorAuthRequest,
 )
+from fighthealthinsurance.microsites import get_microsite
 from fighthealthinsurance.prompt_templates import get_intro_template
 from fighthealthinsurance.pubmed_tools import PubMedTools
 from fighthealthinsurance.utils import best_within_timelimit
@@ -725,22 +726,22 @@ class ChatInterface:
             # Add to chat history
             if not chat.chat_history:
                 chat.chat_history = []
-                chat.chat_history.append(
-                    {
-                        "role": "user",
-                        "content": user_message,
-                        "timestamp": timezone.now().isoformat(),
-                    }
-                )
-                chat.chat_history.append(
-                    {
-                        "role": "assistant",
-                        "content": crisis_response,
-                        "timestamp": timezone.now().isoformat(),
-                    }
-                )
-                await chat.asave()
-                # Don't continue with normal processing - let the user respond
+            chat.chat_history.append(
+                {
+                    "role": "user",
+                    "content": user_message,
+                    "timestamp": timezone.now().isoformat(),
+                }
+            )
+            chat.chat_history.append(
+                {
+                    "role": "assistant",
+                    "content": crisis_response,
+                    "timestamp": timezone.now().isoformat(),
+                }
+            )
+            await chat.asave()
+            # Don't continue with normal processing - let the user respond
             return
 
         # Handle chat ↔ appeal/prior auth linking if requested
@@ -794,23 +795,23 @@ class ChatInterface:
             await asyncio.sleep(0.01)
             if not chat.chat_history:
                 chat.chat_history = []
-                chat.chat_history.append(
-                    {
-                        "role": "user",
-                        "content": link_message,
-                        "timestamp": timezone.now().isoformat(),
-                    }
-                )
-                chat.chat_history.append(
-                    {
-                        "role": "assistant",
-                        "content": user_facing_message,
-                        "timestamp": timezone.now().isoformat(),
-                    }
-                )
-                await asyncio.gather(
-                    chat.asave(), self.send_message_to_client(user_facing_message)
-                )
+            chat.chat_history.append(
+                {
+                    "role": "user",
+                    "content": link_message,
+                    "timestamp": timezone.now().isoformat(),
+                }
+            )
+            chat.chat_history.append(
+                {
+                    "role": "assistant",
+                    "content": user_facing_message,
+                    "timestamp": timezone.now().isoformat(),
+                }
+            )
+            await asyncio.gather(
+                chat.asave(), self.send_message_to_client(user_facing_message)
+            )
             return
 
         # Get primary and fallback models based on user preference
@@ -866,13 +867,9 @@ class ChatInterface:
             microsite_slug = chat.microsite_slug
             if microsite_slug:
                 try:
-                    from fighthealthinsurance.microsites import get_microsite
-                    from fighthealthinsurance.utils import (
-                        fire_and_forget_in_new_threadpool,
-                    )
-
                     microsite = get_microsite(microsite_slug)
                     if microsite:
+                        fire_and_forget_tasks = []
                         microsite_update_lock_for_chat = asyncio.Lock()
                         if microsite.extralinks:
 
@@ -915,9 +912,7 @@ class ChatInterface:
                                         f"Error loading extralink context: {e}"
                                     )
 
-                            await fire_and_forget_in_new_threadpool(
-                                fetch_extra_links_and_store()
-                            )
+                            fire_and_forget_tasks.append(fetch_extra_links_and_store())
                         if microsite.pubmed_search_terms:
                             logger.info(
                                 f"Triggering background PubMed searches for microsite {chat.microsite_slug}"
@@ -1006,8 +1001,10 @@ class ChatInterface:
                                     )
 
                         # Fire off the search in the background (non-blocking)
-                        await fire_and_forget_in_new_threadpool(
-                            search_and_store_pubmed()
+                        fire_and_forget_tasks.append(search_and_store_pubmed())
+                    if fire_and_forget_tasks and len(fire_and_forget_tasks) > 0:
+                        await fire_and_forget_in_new_threadpool_tasks(
+                            fire_and_forget_tasks
                         )
                 except Exception as e:
                     logger.warning(f"Error loading microsite data for chat: {e}")
