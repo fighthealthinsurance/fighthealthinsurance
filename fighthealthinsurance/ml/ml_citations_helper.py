@@ -3,6 +3,9 @@ from typing import Any, Callable, Coroutine, Dict, List, Optional, cast
 
 from loguru import logger
 
+from fighthealthinsurance.extralink_context_helper import (
+    ExtraLinkContextHelper,
+)
 from fighthealthinsurance.microsites import get_microsite
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.models import Denial, GenericContextGeneration
@@ -172,10 +175,6 @@ class MLCitationsHelper:
                             result.extend(microsite.evidence_snippets)
 
                         # Add extralink citations
-                        from fighthealthinsurance.extralink_context_helper import (
-                            ExtraLinkContextHelper,
-                        )
-
                         extralink_citations = (
                             await ExtraLinkContextHelper.get_extralink_citations(
                                 denial.microsite_slug,
@@ -222,10 +221,6 @@ class MLCitationsHelper:
                             result.extend(microsite.evidence_snippets)
 
                         # Add extralink citations
-                        from fighthealthinsurance.extralink_context_helper import (
-                            ExtraLinkContextHelper,
-                        )
-
                         extralink_citations = (
                             await ExtraLinkContextHelper.get_extralink_citations(
                                 denial.microsite_slug,
@@ -288,10 +283,6 @@ class MLCitationsHelper:
                             result.extend(microsite.evidence_snippets)
 
                         # Add extralink citations
-                        from fighthealthinsurance.extralink_context_helper import (
-                            ExtraLinkContextHelper,
-                        )
-
                         extralink_citations = (
                             await ExtraLinkContextHelper.get_extralink_citations(
                                 denial.microsite_slug,
