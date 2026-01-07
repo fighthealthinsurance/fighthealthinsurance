@@ -148,6 +148,18 @@ class PatientDashboardView(PatientRequiredMixin, TemplateView):
         # Won appeals: success=True
         won_appeals_count = all_appeals.filter(success=True).count()
 
+        # Find appeals with overdue decisions
+        overdue_decisions = []
+        for appeal in all_appeals:
+            if (
+                appeal.decision_expected_date
+                and appeal.decision_expected_date < today
+                and appeal.appeal_status != "decision_received"
+                and not appeal.success
+                and not appeal.decision_received_date
+            ):
+                overdue_decisions.append(appeal)
+
         context.update(
             {
                 "appeals": appeals,
@@ -165,6 +177,7 @@ class PatientDashboardView(PatientRequiredMixin, TemplateView):
                 "active_appeals_count": active_appeals_count,
                 "pending_followups_count": pending_followups_count,
                 "won_appeals_count": won_appeals_count,
+                "overdue_decisions": overdue_decisions,
             }
         )
 
