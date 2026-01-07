@@ -883,11 +883,7 @@ class ChatInterface:
                                 async def fetch_extra_links_and_store():
                                     """Fetch extralink context in background and append to chat context."""
                                     try:
-                                        logger.info(
-                                            f"Loading extralink context for microsite {chat.microsite_slug}"
-                                        )
-
-                                        extralink_context = await ExtraLinkContextHelper.get_context_for_microsite(
+                                        extralink_context = await ExtraLinkContextHelper.fetch_extralink_context_for_microsite(
                                             microsite_slug,
                                             max_docs=5,
                                             max_chars_per_doc=2000,
@@ -918,12 +914,8 @@ class ChatInterface:
                                                     f"{last_summary}\n\nExtralink context:\n{extralink_context}"
                                                 )
                                                 await chat_obj.asave()
-
-                                        logger.info(
-                                            f"Added {len(extralink_context)} chars of extralink context to chat"
-                                        )
                                     except Exception as e:
-                                        logger.warning(
+                                        logger.opt(exception=True).warning(
                                             f"Error loading extralink context: {e}"
                                         )
 
