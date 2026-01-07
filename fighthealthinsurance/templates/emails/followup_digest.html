@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Your Weekly Appeal Follow-up Digest</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: #ffffff;
+            border-radius: 8px;
+            padding: 30px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #7B920A;
+            border-bottom: 3px solid #7B920A;
+            padding-bottom: 10px;
+            margin-bottom: 20px;
+        }
+        h2 {
+            color: #495057;
+            font-size: 18px;
+            margin-top: 25px;
+            margin-bottom: 15px;
+        }
+        .section {
+            margin-bottom: 25px;
+            padding: 15px;
+            background-color: #f8f9fa;
+            border-left: 4px solid #7B920A;
+            border-radius: 4px;
+        }
+        .urgent {
+            background-color: #fff3cd;
+            border-left-color: #ffc107;
+        }
+        .item {
+            margin-bottom: 12px;
+            padding-left: 10px;
+        }
+        .item-title {
+            font-weight: 600;
+            color: #333;
+        }
+        .item-detail {
+            color: #666;
+            font-size: 14px;
+            margin-top: 3px;
+        }
+        .badge {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-right: 5px;
+        }
+        .badge-warning {
+            background-color: #ffc107;
+            color: #000;
+        }
+        .badge-info {
+            background-color: #0dcaf0;
+            color: #000;
+        }
+        .badge-success {
+            background-color: #198754;
+            color: #fff;
+        }
+        .tips {
+            background-color: #d1e7dd;
+            border-left-color: #198754;
+            padding: 15px;
+            margin-top: 25px;
+        }
+        .tips ul {
+            margin: 10px 0;
+            padding-left: 20px;
+        }
+        .tips li {
+            margin-bottom: 8px;
+        }
+        .cta-button {
+            display: inline-block;
+            padding: 12px 30px;
+            background: linear-gradient(to right, #ADD100 0%, #7B920A 51%, #ADD100 100%);
+            background-size: 200% auto;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            font-weight: 600;
+            margin: 20px 0;
+            text-align: center;
+        }
+        .cta-button:hover {
+            background-position: right center;
+        }
+        .footer {
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #dee2e6;
+            text-align: center;
+            color: #666;
+            font-size: 14px;
+        }
+        .emoji {
+            font-size: 20px;
+            margin-right: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Your Weekly Appeal Follow-up Digest</h1>
+
+        <p>Hi <strong>{{ user.first_name|default:user.email }}</strong>,</p>
+
+        <p>Here's your weekly summary of upcoming tasks and important deadlines for your health insurance appeals.</p>
+
+        {% if overdue_decisions %}
+        <div class="section urgent">
+            <h2><span class="emoji">⏰</span>Decisions Expected ({{ overdue_count }})</h2>
+            <p><strong>You should have received decisions on these appeals:</strong></p>
+            {% for appeal in overdue_decisions %}
+            <div class="item">
+                <div class="item-title">
+                    <span class="badge badge-warning">OVERDUE</span>
+                    {{ appeal.for_denial.procedure|default:"Appeal" }}
+                </div>
+                <div class="item-detail">
+                    Expected by: <strong>{{ appeal.decision_expected_date|date:"M d, Y" }}</strong>
+                    {% if appeal.for_denial.insurance_company %}
+                    <br>Insurance: {{ appeal.for_denial.insurance_company }}
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+            <p style="margin-top: 15px; font-size: 14px;">
+                <strong>Action:</strong> Check with your insurance company or update the status in your dashboard.
+            </p>
+        </div>
+        {% endif %}
+
+        {% if upcoming_followups %}
+        <div class="section">
+            <h2><span class="emoji">📅</span>Upcoming Follow-ups ({{ upcoming_count }})</h2>
+            <p><strong>You have follow-ups scheduled for the next 7 days:</strong></p>
+            {% for log in upcoming_followups %}
+            <div class="item">
+                <div class="item-title">
+                    <span class="badge badge-info">{{ log.follow_up_date|date:"D, M d" }}</span>
+                    {{ log.get_call_type_display }}
+                </div>
+                <div class="item-detail">
+                    {% if log.reason_for_call %}
+                    Reason: {{ log.reason_for_call|truncatewords:10 }}<br>
+                    {% endif %}
+                    {% if log.follow_up_notes %}
+                    Notes: {{ log.follow_up_notes|truncatewords:15 }}
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        {% if active_appeals %}
+        <div class="section">
+            <h2><span class="emoji">📋</span>Active Appeals ({{ active_count }})</h2>
+            {% for appeal in active_appeals %}
+            <div class="item">
+                <div class="item-title">
+                    <span class="badge badge-success">ACTIVE</span>
+                    {{ appeal.for_denial.procedure|default:"Appeal" }}
+                </div>
+                <div class="item-detail">
+                    Status: {{ appeal.get_appeal_status_display }}<br>
+                    Created: {{ appeal.creation_date|date:"M d, Y" }}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        {% if recent_calls %}
+        <div class="section">
+            <h2><span class="emoji">📞</span>Recent Call Activity (Last 7 days)</h2>
+            {% for call in recent_calls %}
+            <div class="item">
+                <div class="item-title">
+                    {{ call.call_date|date:"M d" }} - {{ call.get_call_type_display }}
+                </div>
+                <div class="item-detail">
+                    Outcome: {{ call.get_outcome_display }}
+                    {% if call.representative_name %}<br>Rep: {{ call.representative_name }}{% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <div class="tips">
+            <h2><span class="emoji">💡</span>Tips for Staying Organized</h2>
+            <ul>
+                <li>Document every phone call <strong>immediately</strong> after it happens</li>
+                <li>Save all emails and letters from your insurance company</li>
+                <li>Follow up on promises made by representatives</li>
+                <li>Keep copies of all submitted documents</li>
+                <li>Set calendar reminders for important dates</li>
+            </ul>
+        </div>
+
+        <div style="text-align: center;">
+            <a href="{{ dashboard_url }}" class="cta-button">View Your Dashboard</a>
+        </div>
+
+        <div class="footer">
+            <p><strong>Questions?</strong> Reply to this email or visit <a href="https://www.fighthealthinsurance.com">fighthealthinsurance.com</a></p>
+            <p>Keep fighting! 💪<br>The Fight Health Insurance Team</p>
+            <p style="font-size: 12px; color: #999; margin-top: 15px;">
+                To unsubscribe from these digests, update your preferences in your dashboard.
+            </p>
+        </div>
+    </div>
+</body>
+</html>
