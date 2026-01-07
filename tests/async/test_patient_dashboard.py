@@ -684,3 +684,116 @@ class LoggedInAppealCreationTests(TestCase):
         # Anonymous appeal should NOT appear (no migration yet)
         self.assertEqual(response.status_code, 200)
         self.assertNotContains(response, "X-Ray")
+
+
+class FileUploadSecurityTests(TestCase):
+    """Tests for file upload validation in PatientEvidenceForm - Phase 1.4."""
+
+    def setUp(self) -> None:
+        self.client = Client()
+        self.password = "TestPass123!"
+        self.user = User.objects.create_user(
+            username="file_upload_test",
+            password=self.password,
+            email="upload@example.com",
+            is_active=True,
+        )
+        self.patient = PatientUser.objects.create(user=self.user, active=True)
+        self.client.login(username=self.user.username, password=self.password)
+
+    def test_evidence_upload_file_size_limit(self) -> None:
+        """Test that files larger than 10MB are rejected."""
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from fighthealthinsurance.forms import PatientEvidenceForm
+
+        # Create a mock file that's too large (11MB)
+        large_file = SimpleUploadedFile(
+            "large_file.pdf",
+            b"x" * (11 * 1024 * 1024),  # 11MB
+            content_type="application/pdf",
+        )
+
+        form_data = {
+            "evidence_type": "document",
+            "title": "Test Evidence",
+        }
+        form = PatientEvidenceForm(data=form_data, files={"file": large_file})
+
+        self.assertFalse(form.is_valid())
+        self.assertIn("file", form.errors)
+        self.assertIn("10MB limit", str(form.errors["file"]))
+
+    def test_evidence_upload_malicious_file_blocked(self) -> None:
+        """Test that executable files are rejected."""
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from fighthealthinsurance.forms import PatientEvidenceForm
+
+        # Try to upload an executable file
+        exe_file = SimpleUploadedFile(
+            "malicious.exe",
+            b"MZ\x90\x00",  # DOS header for EXE files
+            content_type="application/x-msdownload",
+        )
+
+        form_data = {
+            "evidence_type": "document",
+            "title": "Malicious File",
+        }
+        form = PatientEvidenceForm(data=form_data, files={"file": exe_file})
+
+        self.assertFalse(form.is_valid())
+        self.assertIn("file", form.errors)
+        self.assertIn("not allowed", str(form.errors["file"]))
+
+    def test_evidence_upload_valid_pdf(self) -> None:
+        """Test that valid PDF files are accepted."""
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from fighthealthinsurance.forms import PatientEvidenceForm
+
+        # Create a small valid PDF
+        pdf_file = SimpleUploadedFile(
+            "test.pdf",
+            b"%PDF-1.4\nTest content",  # Minimal PDF
+            content_type="application/pdf",
+        )
+
+        form_data = {
+            "evidence_type": "eob",
+            "title": "Test EOB",
+        }
+        form = PatientEvidenceForm(data=form_data, files={"file": pdf_file})
+
+        self.assertTrue(form.is_valid(), f"Form errors: {form.errors}")
+
+    def test_evidence_upload_valid_image(self) -> None:
+        """Test that valid image files are accepted."""
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from fighthealthinsurance.forms import PatientEvidenceForm
+
+        # Create a small valid PNG
+        png_file = SimpleUploadedFile(
+            "test.png",
+            b"\x89PNG\r\n\x1a\n" + b"\x00" * 100,  # PNG header + padding
+            content_type="image/png",
+        )
+
+        form_data = {
+            "evidence_type": "screenshot",
+            "title": "Test Screenshot",
+        }
+        form = PatientEvidenceForm(data=form_data, files={"file": png_file})
+
+        self.assertTrue(form.is_valid(), f"Form errors: {form.errors}")
+
+    def test_evidence_upload_no_file_is_valid(self) -> None:
+        """Test that evidence can be created without a file (text-only)."""
+        from fighthealthinsurance.forms import PatientEvidenceForm
+
+        form_data = {
+            "evidence_type": "notes",  # Personal Notes
+            "title": "Text Note",
+            "text_content": "This is a text-only note without a file.",
+        }
+        form = PatientEvidenceForm(data=form_data)
+
+        self.assertTrue(form.is_valid(), f"Form errors: {form.errors}")

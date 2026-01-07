@@ -703,6 +703,44 @@ class PatientEvidenceForm(forms.ModelForm):
             "include_in_appeal",
         ]
 
+    def clean_file(self):
+        """
+        Validate uploaded file for size and type.
+
+        Security checks:
+        - Maximum file size: 10MB
+        - Allowed MIME types: PDF, images, Word docs, text files
+        """
+        file = self.cleaned_data.get("file")
+        if file:
+            # File size validation (10MB limit)
+            max_size = 10 * 1024 * 1024  # 10MB in bytes
+            if file.size > max_size:
+                raise forms.ValidationError(
+                    f"File size exceeds 10MB limit. Your file is {file.size / (1024 * 1024):.1f}MB."
+                )
+
+            # MIME type validation
+            allowed_types = [
+                "application/pdf",  # PDF
+                "image/jpeg",  # JPEG images
+                "image/jpg",  # JPEG images (alternative)
+                "image/png",  # PNG images
+                "image/gif",  # GIF images
+                "image/webp",  # WebP images
+                "application/msword",  # DOC
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",  # DOCX
+                "text/plain",  # TXT
+            ]
+
+            if file.content_type not in allowed_types:
+                raise forms.ValidationError(
+                    f'File type "{file.content_type}" is not allowed. '
+                    f"Allowed types: PDF, images (JPEG, PNG, GIF, WebP), Word documents, and text files."
+                )
+
+        return file
+
 
 class CallLogFilterForm(forms.Form):
     """Form for filtering call logs in the patient dashboard."""
