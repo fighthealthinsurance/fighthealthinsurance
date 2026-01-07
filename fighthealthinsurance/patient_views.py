@@ -128,6 +128,26 @@ class PatientDashboardView(PatientRequiredMixin, TemplateView):
             .order_by("follow_up_date")[:5]
         )
 
+        # Calculate dashboard stats
+        all_appeals = Appeal.filter_to_allowed_appeals(user)
+
+        # Active appeals: not sent OR sent but no decision yet (success=None or False)
+        from django.db.models import Q
+
+        active_appeals_count = all_appeals.filter(
+            Q(sent=False) | Q(sent=True, success__isnull=True) | Q(sent=True, success=False)
+        ).count()
+
+        # Pending follow-ups: any follow-ups with date >= today
+        pending_followups_count = (
+            InsuranceCallLog.filter_to_allowed_call_logs(user)
+            .filter(follow_up_date__gte=today)
+            .count()
+        )
+
+        # Won appeals: success=True
+        won_appeals_count = all_appeals.filter(success=True).count()
+
         context.update(
             {
                 "appeals": appeals,
@@ -141,6 +161,10 @@ class PatientDashboardView(PatientRequiredMixin, TemplateView):
                     user
                 ).count(),
                 "upcoming_followups": upcoming_followups,
+                # Dashboard stats
+                "active_appeals_count": active_appeals_count,
+                "pending_followups_count": pending_followups_count,
+                "won_appeals_count": won_appeals_count,
             }
         )
 
