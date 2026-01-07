@@ -8,7 +8,7 @@ This module handles sending weekly digest emails to logged-in patients with:
 """
 
 from datetime import date, timedelta
-from typing import List
+from typing import List, Optional
 
 from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
@@ -39,9 +39,11 @@ class FollowupDigestSender:
         next_week = today + timedelta(days=7)
 
         # Get all active patient users with valid emails
-        candidates = PatientUser.objects.filter(
-            active=True, user__email__isnull=False
-        ).exclude(user__email="").exclude(user__email__endswith="-fake@fighthealthinsurance.com")
+        candidates = (
+            PatientUser.objects.filter(active=True, user__email__isnull=False)
+            .exclude(user__email="")
+            .exclude(user__email__endswith="-fake@fighthealthinsurance.com")
+        )
 
         # Filter to users who have something to report
         candidates_with_activity = []
@@ -54,10 +56,9 @@ class FollowupDigestSender:
             )
 
             # Check for upcoming follow-ups
-            upcoming_followups = (
-                InsuranceCallLog.filter_to_allowed_call_logs(user)
-                .filter(follow_up_date__gte=today, follow_up_date__lte=next_week)
-            )
+            upcoming_followups = InsuranceCallLog.filter_to_allowed_call_logs(
+                user
+            ).filter(follow_up_date__gte=today, follow_up_date__lte=next_week)
 
             # Check for overdue decisions
             overdue_appeals = Appeal.filter_to_allowed_appeals(user).filter(
@@ -166,9 +167,7 @@ class FollowupDigestSender:
                 and context["overdue_count"] == 0
                 and context["active_count"] == 0
             ):
-                logger.info(
-                    f"Skipping digest for {to_email} - no activity to report"
-                )
+                logger.info(f"Skipping digest for {to_email} - no activity to report")
                 return False
 
             # Render plain text content
@@ -217,7 +216,7 @@ class FollowupDigestSender:
             logger.error(f"Failed to send follow-up digest to {to_email}: {e}")
             return False
 
-    def send_all(self, count: int = None) -> int:
+    def send_all(self, count: Optional[int] = None) -> int:
         """Send digest emails to all candidate patient users.
 
         Args:
@@ -240,7 +239,5 @@ class FollowupDigestSender:
             if self._send_digest_email(patient_user):
                 sent_count += 1
 
-        logger.info(
-            f"Sent {sent_count} out of {total} follow-up digest emails"
-        )
+        logger.info(f"Sent {sent_count} out of {total} follow-up digest emails")
         return sent_count

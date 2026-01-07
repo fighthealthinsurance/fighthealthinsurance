@@ -1,6 +1,6 @@
 """Management command to send weekly follow-up digest emails to patient users."""
 
-from typing import Any
+from typing import Any, Optional
 
 from django.core.management.base import BaseCommand, CommandParser
 
@@ -25,8 +25,8 @@ class Command(BaseCommand):
 
     def handle(self, *args: str, **options: Any) -> None:
         sender = FollowupDigestSender()
-        count = options.get("count")
-        dry_run = options.get("dry_run", False)
+        count: Optional[int] = options.get("count")
+        dry_run: bool = options.get("dry_run", False)
 
         candidates = sender._find_candidates()
         candidate_count = candidates.count()
@@ -42,9 +42,7 @@ class Command(BaseCommand):
         )
 
         if dry_run:
-            self.stdout.write(
-                self.style.WARNING("Dry run mode - not sending emails.")
-            )
+            self.stdout.write(self.style.WARNING("Dry run mode - not sending emails."))
             for candidate in candidates[:count] if count else candidates:
                 user = candidate.user
                 context = sender._generate_digest_context(candidate)

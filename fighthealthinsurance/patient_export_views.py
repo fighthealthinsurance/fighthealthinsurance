@@ -5,7 +5,7 @@ CSV format is more practical than PDF for data analysis and import into spreadsh
 """
 
 import csv
-from datetime import date, timedelta
+from datetime import date
 from typing import Any
 
 from django.http import HttpResponse
@@ -32,9 +32,8 @@ class CallLogExportView(PatientRequiredMixin, View):
         user: User = request.user  # type: ignore
 
         # Get all call logs for user
-        call_logs = (
-            InsuranceCallLog.filter_to_allowed_call_logs(user)
-            .order_by("-call_date")
+        call_logs = InsuranceCallLog.filter_to_allowed_call_logs(user).order_by(
+            "-call_date"
         )
 
         # Create CSV response
@@ -75,7 +74,11 @@ class CallLogExportView(PatientRequiredMixin, View):
         for log in call_logs:
             writer.writerow(
                 [
-                    log.call_date.strftime("%Y-%m-%d %H:%M:%S") if log.call_date else "",
+                    (
+                        log.call_date.strftime("%Y-%m-%d %H:%M:%S")
+                        if log.call_date
+                        else ""
+                    ),
                     log.get_call_type_display() if log.call_type else "",
                     log.department or "",
                     log.representative_name or "",
@@ -87,7 +90,11 @@ class CallLogExportView(PatientRequiredMixin, View):
                     log.promises_made or "",
                     log.call_notes or "",
                     log.get_outcome_display() if log.outcome else "",
-                    log.follow_up_date.strftime("%Y-%m-%d") if log.follow_up_date else "",
+                    (
+                        log.follow_up_date.strftime("%Y-%m-%d")
+                        if log.follow_up_date
+                        else ""
+                    ),
                     log.follow_up_notes or "",
                     log.call_duration_minutes or "",
                     log.wait_time_minutes or "",
@@ -115,9 +122,8 @@ class EvidenceExportView(PatientRequiredMixin, View):
         user: User = request.user  # type: ignore
 
         # Get all evidence for user
-        evidence = (
-            PatientEvidence.filter_to_allowed_evidence(user)
-            .order_by("-created_at")
+        evidence = PatientEvidence.filter_to_allowed_evidence(user).order_by(
+            "-created_at"
         )
 
         # Create CSV response
@@ -153,11 +159,19 @@ class EvidenceExportView(PatientRequiredMixin, View):
                     item.title or "",
                     item.get_evidence_type_display() if item.evidence_type else "",
                     item.description or "",
-                    item.date_of_evidence.strftime("%Y-%m-%d") if item.date_of_evidence else "",
+                    (
+                        item.date_of_evidence.strftime("%Y-%m-%d")
+                        if item.date_of_evidence
+                        else ""
+                    ),
                     "Yes" if item.file else "No",
                     item.text_content or "",
                     item.source or "",
-                    item.created_at.strftime("%Y-%m-%d %H:%M:%S") if item.created_at else "",
+                    (
+                        item.created_at.strftime("%Y-%m-%d %H:%M:%S")
+                        if item.created_at
+                        else ""
+                    ),
                     "Yes" if item.include_in_appeal else "No",
                     (
                         f"{item.appeal.for_denial.procedure} ({item.appeal.uuid})"
