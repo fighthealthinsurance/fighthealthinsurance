@@ -30,7 +30,13 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.debug import sensitive_post_parameters
 from django.views.generic.base import RedirectView
 
-from fighthealthinsurance import fax_views, patient_views, staff_views, views
+from fighthealthinsurance import (
+    fax_views,
+    patient_export_views,
+    patient_views,
+    staff_views,
+    views,
+)
 from fighthealthinsurance.sitemap import sitemap_view
 
 
@@ -435,6 +441,16 @@ urlpatterns += [
         "my/evidence/<uuid:uuid>/download",
         patient_views.EvidenceDownloadView.as_view(),
         name="patient-evidence-download",
+    ),
+    path(
+        "my/export/call-logs",
+        patient_export_views.CallLogExportView.as_view(),
+        name="patient-call-log-export",
+    ),
+    path(
+        "my/export/evidence",
+        patient_export_views.EvidenceExportView.as_view(),
+        name="patient-evidence-export",
     ),
 ]
 
