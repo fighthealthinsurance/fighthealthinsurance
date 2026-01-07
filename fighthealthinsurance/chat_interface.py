@@ -1031,8 +1031,8 @@ class ChatInterface:
                                             f"Error in background PubMed search: {e}"
                                         )
 
-                                    # Add pubmed task
-                                    microsite_tasks.append(search_and_store_pubmed())
+                                # Add pubmed task
+                                microsite_tasks.append(search_and_store_pubmed())
 
                             # Collect the microsite context
                             if microsite_tasks and len(microsite_tasks) > 0:
