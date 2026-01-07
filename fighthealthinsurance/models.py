@@ -615,7 +615,7 @@ class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # t
         if self.combined_document:
             return self.combined_document.read()
         elif self.combined_document_enc:
-            cryptographer = Cryptographer(settings.COMBINED_STORAGE)
+            cryptographer = Cryptographer()
             try:
                 return cryptographer.decrypt(self.combined_document_enc.read())
             except:
