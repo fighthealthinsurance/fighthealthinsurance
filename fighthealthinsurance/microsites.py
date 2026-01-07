@@ -11,7 +11,7 @@ import json
 import os
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 from django.conf import settings
 from django.contrib.staticfiles.storage import staticfiles_storage
@@ -161,7 +161,7 @@ class Microsite:
         max_total_articles: int = 20,
         since: str = "2020",
         return_count: bool = False,
-    ) -> str | tuple[str, int]:
+    ) -> Union[str, tuple[str, int]]:
         """
         Get formatted PubMed search results context for this microsite.
 
