@@ -64,6 +64,8 @@ class MicrositeExtralinksTaskTest(APITestCase):
             {"url": "https://example.com/doc1.pdf", "title": "Test Document"}
         ]
         mock_microsite.pubmed_search_terms = []
+        # Mock the async method get_extralink_context
+        mock_microsite.get_extralink_context = AsyncMock(return_value="Mock extralink context")
         mock_get_microsite.return_value = mock_microsite
 
         try:
@@ -153,6 +155,8 @@ class MicrositePubmedTaskTest(APITestCase):
         mock_microsite.default_procedure = "Asthma Treatment"
         mock_microsite.extralinks = []
         mock_microsite.pubmed_search_terms = ["asthma inhaler", "bronchodilator"]
+        # Mock the async method get_pubmed_context
+        mock_microsite.get_pubmed_context = AsyncMock(return_value=("Mock pubmed context\n- PMID: 12345", 1))
         mock_get_microsite.return_value = mock_microsite
 
         try:
@@ -246,6 +250,9 @@ class MicrositeBothTasksTest(APITestCase):
             {"url": "https://example.com/doc.pdf", "title": "Doc"}
         ]
         mock_microsite.pubmed_search_terms = ["test treatment"]
+        # Mock both async methods
+        mock_microsite.get_extralink_context = AsyncMock(return_value="Mock extralink context")
+        mock_microsite.get_pubmed_context = AsyncMock(return_value=("Mock pubmed context\n- PMID: 12345", 1))
         mock_get_microsite.return_value = mock_microsite
 
         try:
