@@ -31,6 +31,42 @@
         </div>
     </div>
 
+    <!-- Quick Stats Cards -->
+    <div class="row mb-4">
+        <div class="col-md-3 col-sm-6 mb-3">
+            <div class="card stats-card border-0 shadow-sm">
+                <div class="card-body text-center">
+                    <div class="stats-number text-primary">{{ active_appeals_count }}</div>
+                    <div class="stats-label">Active Appeals</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3 col-sm-6 mb-3">
+            <div class="card stats-card border-0 shadow-sm">
+                <div class="card-body text-center">
+                    <div class="stats-number text-warning">{{ pending_followups_count }}</div>
+                    <div class="stats-label">Pending Follow-ups</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3 col-sm-6 mb-3">
+            <div class="card stats-card border-0 shadow-sm">
+                <div class="card-body text-center">
+                    <div class="stats-number text-success">{{ won_appeals_count }}</div>
+                    <div class="stats-label">Appeals Won</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3 col-sm-6 mb-3">
+            <div class="card stats-card border-0 shadow-sm">
+                <div class="card-body text-center">
+                    <div class="stats-number text-info">{{ evidence_count }}</div>
+                    <div class="stats-label">Documents</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Dashboard Navigation Tabs -->
     <ul class="nav nav-tabs mb-4" id="dashboardTabs" role="tablist">
         <li class="nav-item" role="presentation">
