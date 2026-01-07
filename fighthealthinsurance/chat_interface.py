@@ -45,7 +45,7 @@ from fighthealthinsurance.prompt_templates import get_intro_template
 from fighthealthinsurance.pubmed_tools import PubMedTools
 from fighthealthinsurance.utils import (
     best_within_timelimit,
-    fire_and_forget_in_new_threadpool_tasks,
+    fire_and_forget_in_new_threadpool,
 )
 
 
