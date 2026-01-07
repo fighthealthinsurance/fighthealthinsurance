@@ -382,8 +382,8 @@ async def _interleave_iterator_for_keep_alive(
             c = None
 
 
-async def fire_and_forget_in_new_threadpool_tasks(task: Coroutine) -> None:
-    return await fire_and_forget_in_new_threadpool([task])
+async def fire_and_forget_in_new_threadpool(task: Coroutine) -> None:
+    return await fire_and_forget_in_new_threadpool_tasks([task])
 
 
 async def fire_and_forget_in_new_threadpool_tasks(tasks: list[Coroutine]) -> None:
