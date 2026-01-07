@@ -878,14 +878,20 @@ class ChatInterface:
                             try:
                                 # Send status message if PubMed search is available
                                 if microsite.pubmed_search_terms:
-                                    safe_procedure = str(microsite.default_procedure)[:100]
+                                    safe_procedure = str(microsite.default_procedure)[
+                                        :100
+                                    ]
                                     await self.send_status_message(
                                         f"Searching medical literature for {safe_procedure}..."
                                     )
 
                                 # Fetch combined context (both extralinks and PubMed if available)
                                 combined_context = await microsite.get_combined_context(
-                                    pubmed_tools=self.pubmed_tools if microsite.pubmed_search_terms else None,
+                                    pubmed_tools=(
+                                        self.pubmed_tools
+                                        if microsite.pubmed_search_terms
+                                        else None
+                                    ),
                                     max_extralink_docs=5,
                                     max_extralink_chars=2000,
                                     max_pubmed_terms=3,
@@ -894,18 +900,20 @@ class ChatInterface:
 
                                 if combined_context:
                                     # Append to chat summary
-                                    chat_obj = await OngoingChat.objects.aget(id=chat.id)
+                                    chat_obj = await OngoingChat.objects.aget(
+                                        id=chat.id
+                                    )
                                     if not chat_obj.summary_for_next_call:
                                         chat_obj.summary_for_next_call = [""]
                                     if not chat_obj.summary_for_next_call[-1]:
                                         chat_obj.summary_for_next_call[-1] = ""
-                                    
+
                                     last_summary = chat_obj.summary_for_next_call[-1]
                                     chat_obj.summary_for_next_call[-1] = (
                                         f"{last_summary}\n\nMicrosite context:\n{combined_context}"
                                     )
                                     await chat_obj.asave()
-                                    
+
                                     logger.info(
                                         f"Stored microsite context for {microsite.slug} in chat"
                                     )

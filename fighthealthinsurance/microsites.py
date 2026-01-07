@@ -11,12 +11,15 @@ import json
 import os
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import TYPE_CHECKING, Any, Optional, Union
 
 from django.conf import settings
 from django.contrib.staticfiles.storage import staticfiles_storage
 
 from loguru import logger
+
+if TYPE_CHECKING:
+    from fighthealthinsurance.pubmed_tools import PubMedTools
 
 
 class MicrositeValidationError(ValueError):
@@ -155,7 +158,7 @@ class Microsite:
 
     async def get_pubmed_context(
         self,
-        pubmed_tools,
+        pubmed_tools: "PubMedTools",
         max_terms: int = 3,
         max_articles_per_term: int = 5,
         max_total_articles: int = 20,
@@ -194,15 +197,11 @@ class Microsite:
                         )
                         all_articles.extend(articles[:max_articles_per_term])
                 except Exception as e:
-                    logger.warning(
-                        f"Error searching PubMed for '{search_term}': {e}"
-                    )
+                    logger.warning(f"Error searching PubMed for '{search_term}': {e}")
 
             if all_articles:
                 # Build context string from articles
-                context_parts = [
-                    f"PubMed search results for {self.default_procedure}:"
-                ]
+                context_parts = [f"PubMed search results for {self.default_procedure}:"]
                 limited_articles = all_articles[:max_total_articles]
                 for pmid in limited_articles:
                     context_parts.append(f"- PMID: {pmid}")
@@ -220,7 +219,7 @@ class Microsite:
 
     async def get_combined_context(
         self,
-        pubmed_tools=None,
+        pubmed_tools: Optional["PubMedTools"] = None,
         max_extralink_docs: int = 5,
         max_extralink_chars: int = 2000,
         max_pubmed_terms: int = 3,
