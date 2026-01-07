@@ -1000,12 +1000,12 @@ class ChatInterface:
                                         f"Error in background PubMed search: {e}"
                                     )
 
-                        # Fire off the search in the background (non-blocking)
-                        fire_and_forget_tasks.append(search_and_store_pubmed())
-                    if fire_and_forget_tasks and len(fire_and_forget_tasks) > 0:
-                        await fire_and_forget_in_new_threadpool_tasks(
-                            fire_and_forget_tasks
-                        )
+                            # Fire off the search in the background (non-blocking)
+                            fire_and_forget_tasks.append(search_and_store_pubmed())
+                        if fire_and_forget_tasks and len(fire_and_forget_tasks) > 0:
+                            await fire_and_forget_in_new_threadpool_tasks(
+                                fire_and_forget_tasks
+                            )
                 except Exception as e:
                     logger.warning(f"Error loading microsite data for chat: {e}")
 
