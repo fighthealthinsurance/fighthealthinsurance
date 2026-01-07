@@ -136,7 +136,6 @@ class ExtraLinkContextHelper:
                 .select_related("document")
                 .order_by("priority")[:max_citations]
             ):
-
                 title = link.title or "Medical guideline"
                 url = link.document.url
 
