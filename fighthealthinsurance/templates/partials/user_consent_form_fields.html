@@ -58,14 +58,14 @@
     <div class="form-check mb-3">
         {{ form.tos_agreement }}
         <label for="tos" class="form-check-label">
-            I agree to the <a href="{% url 'tos' %}" target="_blank">Terms of Service</a> and will only use this website to generate my own health insurance appeals. I will not use this website to treat and diagnose any disease or condition or assist in either of those.*
+            I agree to the <a href="{% url brand_url_names.tos %}" target="_blank">Terms of Service</a> and will only use this website to generate my own health insurance appeals. I will not use this website to treat and diagnose any disease or condition or assist in either of those.*
         </label>
     </div>
 
     <div class="form-check mb-3">
         {{ form.privacy_policy }}
         <label for="privacy" class="form-check-label">
-            I have read and understand the <a href="{% url 'privacy_policy' %}" target="_blank">Privacy Policy</a>.*
+            I have read and understand the <a href="{% url brand_url_names.privacy_policy %}" target="_blank">Privacy Policy</a>.*
         </label>
     </div>
 

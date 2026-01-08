@@ -2,6 +2,45 @@
 
 from django.urls import reverse
 
+from fighthealthinsurance.brand_config import get_brand_config
+
+
+def brand_context(request):
+    """
+    Add brand configuration to template context.
+
+    Requires BrandMiddleware to run first.
+
+    Provides:
+    - brand: Full BrandConfig object
+    - is_amc: Boolean indicating if current brand is Appeal My Claims
+    - is_fhi: Boolean indicating if current brand is Fight Health Insurance
+    - brand_url_names: Dict of brand-aware URL names for key pages
+    """
+    brand = getattr(request, "brand", None)
+    if not brand:
+        # Fallback if middleware didn't run
+        brand = get_brand_config("fhi")
+
+    # Provide brand-aware URL names so templates can use {% url brand_url_names.privacy_policy %}
+    # This ensures AMC pages link to AMC privacy policy, FHI pages link to FHI privacy policy
+    url_prefix = "amc_" if brand.slug == "amc" else ""
+    brand_url_names = {
+        "privacy_policy": f"{url_prefix}privacy_policy",
+        "tos": f"{url_prefix}tos",
+        "about": f"{url_prefix}about" if url_prefix else "about",
+        "contact": f"{url_prefix}contact" if url_prefix else "contact",
+        "root": f"{url_prefix}root" if url_prefix else "root",
+        "scan": f"{url_prefix}scan" if url_prefix else "scan",
+    }
+
+    return {
+        "brand": brand,
+        "is_amc": brand.slug == "amc",
+        "is_fhi": brand.slug == "fhi",
+        "brand_url_names": brand_url_names,
+    }
+
 
 def form_persistence_context(request):
     """
@@ -24,10 +63,11 @@ def canonical_url_context(request):
     """
     Add canonical URL context variable.
 
+    Now brand-aware - uses the brand's canonical domain instead of hardcoded FHI.
+
     This provides:
-    - canonical_url: The canonical URL for the current page, always pointing to
-      https://www.fighthealthinsurance.com regardless of the domain used to access
-      the site.
+    - canonical_url: The canonical URL for the current page, pointing to the
+      appropriate brand domain (fighthealthinsurance.com or appealmyclaims.com)
 
     Views can override the canonical URL by setting request.canonical_url before
     this context processor runs (e.g., in middleware or view code).
@@ -43,7 +83,12 @@ def canonical_url_context(request):
     if hasattr(request, "canonical_url") and request.canonical_url:
         return {"canonical_url": request.canonical_url}
 
-    canonical_domain = "https://www.fighthealthinsurance.com"
+    # Get canonical domain from brand config
+    brand = getattr(request, "brand", None)
+    if brand:
+        canonical_domain = brand.canonical_domain
+    else:
+        canonical_domain = "https://www.fighthealthinsurance.com"
 
     # Try to use resolver_match to get the canonical path from URL patterns
     resolver_match = getattr(request, "resolver_match", None)
@@ -64,6 +109,13 @@ def canonical_url_context(request):
     else:
         # Fall back to the request path if no resolver_match
         path = request.path
+
+    # Strip /appealmyclaims prefix from path for canonical URL
+    # (canonical should point to root path on brand's domain)
+    if path.startswith("/appealmyclaims/"):
+        path = path[len("/appealmyclaims") :]
+    elif path == "/appealmyclaims":
+        path = "/"
 
     # Build the canonical URL without query parameters
     canonical = f"{canonical_domain}{path}"

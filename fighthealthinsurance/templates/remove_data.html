@@ -10,7 +10,7 @@ Delete Your Data
         <div class="caption d-flex flex-column align-items-center justify-content-center">
             <div class="col-md-offset-1 col-md-10 text-align-center d-flex flex-column align-items-center justify-content-center">
                 <h1 class="delete-header">Delete your Data</h1>
-                <p>We take several steps to protect your data privacy. You can learn more about our <a href="{% url 'privacy_policy' %}" target="_blank" rel="noopener noreferrer">privacy practices in our privacy policy.</a></p>
+                <p>We take several steps to protect your data privacy. You can learn more about our <a href="{% url brand_url_names.privacy_policy %}" target="_blank" rel="noopener noreferrer">privacy practices in our privacy policy.</a></p>
                     <p>To help us delete your data, please provide the email address you used.</p>
                 <form action="{% url 'remove_data' %}" method="post" class="d-flex flex-column align-items-start">
                   {% csrf_token %}

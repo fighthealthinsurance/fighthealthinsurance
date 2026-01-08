@@ -121,7 +121,7 @@ Upload your Health Insurance Denial
 		</div>
 		<div class="form-check">
 		<input type="checkbox" id="privacy" name="privacy" class="form-check-input">
-		<label for="privacy" class="form-check-label">I have read and understand the <a class="link" href="{% url 'privacy_policy' %}">privacy
+		<label for="privacy" class="form-check-label">I have read and understand the <a class="link" href="{% url brand_url_names.privacy_policy %}">privacy
 		    policy.</a>
 		</label>
 		</div>
@@ -131,7 +131,7 @@ Upload your Health Insurance Denial
 		</div>
 		<div class="form-check">
 		<input type="checkbox" id="tos" name="tos" class="form-check-input">
-		<label for="tos" class="form-check-label">I agree to the <a href="{% url 'tos' %}">terms of service</a> and will only use this website to generate my own health insurance appeals. I will not use this website to treat and diagnose any disease or condition or assist in either of those.</label>
+		<label for="tos" class="form-check-label">I agree to the <a href="{% url brand_url_names.tos %}">terms of service</a> and will only use this website to generate my own health insurance appeals. I will not use this website to treat and diagnose any disease or condition or assist in either of those.</label>
 		</div>
 		<b>Optional</b>:
 			<div class="form-check">
@@ -198,7 +198,7 @@ Upload your Health Insurance Denial
 	</form>
 
 	<p>
-	  * We attempt not to store the fields marked with a single asterisk (*) on our server, instead they are stored in your web browser (like a cookie). You can remove this either in your web browser or in our <a href="{% url 'privacy_policy' %}">privacy policy</a> page. If you choose to subscribe to the mailing list we will transfer your name and e-mail to the server for subscription.
+	  * We attempt not to store the fields marked with a single asterisk (*) on our server, instead they are stored in your web browser (like a cookie). You can remove this either in your web browser or in our <a href="{% url brand_url_names.privacy_policy %}">privacy policy</a> page. If you choose to subscribe to the mailing list we will transfer your name and e-mail to the server for subscription.
 	</p>
 	<p>
 	    ** We hash your email before storing it in our database, this allows you to request removal from our database (should you wish) without us having to store your raw e-mail.
@@ -207,9 +207,17 @@ Upload your Health Insurance Denial
 		after reviewing your denial with a better template if our machine learning model does not find a good
 		model on the first pass-through. You may choose to use a different or temporary email
 	    service, like <a href="https://proton.me/">proton mail.</a> Please review our <a
-		href="{% url 'privacy_policy' %}">privacy policy</a> for more details. If you choose to subscribe to the mailing list we will transfer your name and e-mail to the server for subscription and it will be stored in a non-hashed format for the mailing list subscription.
+		href="{% url brand_url_names.privacy_policy %}">privacy policy</a> for more details. If you choose to subscribe to the mailing list we will transfer your name and e-mail to the server for subscription and it will be stored in a non-hashed format for the mailing list subscription.
 	</p>
     </div>
 </section>
+
+{% if is_amc %}
+<div style="margin:2rem 0; padding:1.5rem; background:#f8f9fa; border-radius:5px; text-align:center;">
+    <p style="margin:0; color:#666;">
+        Powered by <a href="https://www.fighthealthinsurance.com" target="_blank" rel="noopener noreferrer" style="color:var(--brand-primary-color); font-weight:bold;">Fight Health Insurance</a>
+    </p>
+</div>
+{% endif %}
 
 {% endblock content %}
