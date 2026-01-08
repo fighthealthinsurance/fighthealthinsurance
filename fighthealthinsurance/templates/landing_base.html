@@ -11,9 +11,14 @@
 	<div class="item item-first">
 	    <div class="caption d-flex flex-column align-items-center justify-content-center">
 		<div class="hero-inner">
-		  <h3 class="hero-tagline">Make your health insurance company cry too</h3>
-		      <h1 class="hero-headline">Fight Health Insurance</h1>
+		  <h3 class="hero-tagline">{{ brand.tagline }}</h3>
+		      <h1 class="hero-headline">{{ brand.name }}</h1>
+	      {% if is_fhi %}
 	      <p class="hero-subcopy">Generate your healthcare claim appeal in minutes with AI. Free for everyone.</p>
+	      {% else %}
+	      <p class="hero-subcopy">Use AI to generate your health insurance appeal in minutes.</p>
+	      {% endif %}
+	      {% if is_fhi %}
 	      <div class="hero-cta-group">
 	        <a href="{% url 'scan' %}" class="section-btn btn btn-default smoothScroll primary-cta" id="scanlink">Generate an Appeal</a>
 	      </div>
@@ -23,9 +28,15 @@
 	        <a href="{% url 'how-to-help' %}" class="btn btn-outline-green smoothScroll tertiary-cta" id="howtohelp">How to Help</a>
 	        <a href="{% url 'pro_version' %}" class="btn btn-outline-green smoothScroll tertiary-cta" id="professional">Professionals</a>
 	      </div>
+	      {% else %}
+	      <div class="hero-cta-group">
+	        <a href="{% url 'scan' %}" class="section-btn btn btn-default smoothScroll primary-cta" id="scanlink">Get Started</a>
+	      </div>
+	      {% endif %}
+	      {% if is_fhi %}
 	      <div class="value-prop-container">
 		        <div class="benefits-card">
-		          <h5 class="benefits-title">Why Fight Health Insurance?</h5>
+		          <h5 class="benefits-title">Why {{ brand.name }}?</h5>
 		          <ul class="benefits-list">
 		            <li>
 		              <span class="benefit-icon" aria-hidden="true">🔒</span>
@@ -79,6 +90,7 @@
 		          <p>Guidance + options. Free. Pay if it helps.</p>
 		        </div>
 		      </section>
+	      {% endif %}
 	</div>
                     <div id="model-status"></div>
 		</div>

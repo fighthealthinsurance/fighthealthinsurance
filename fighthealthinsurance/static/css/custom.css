@@ -1,3 +1,14 @@
+/* Text-based logo styling (for brands without logo images) */
+.logo-text {
+    font-size: 1.8rem;
+    font-weight: 700;
+    color: var(--brand-primary-color);
+    text-decoration: none;
+    display: inline-block;
+    padding: 0.5rem 0;
+    line-height: 1.2;
+}
+
 /* Skip link for keyboard navigation (accessibility) */
 .skip-link {
     position: absolute;
@@ -12,7 +23,7 @@
 }
 .skip-link:focus {
     top: 0;
-    outline: 2px solid #a5c422;
+    outline: 2px solid var(--brand-primary-color);
     outline-offset: 2px;
 }
 
@@ -113,7 +124,7 @@ header {
 }
 
 a.link {
-    color: #a5c422 !important;
+    color: var(--brand-primary-color) !important;
     transition: all 1s !important;
     display: inline-block;
     position: relative;
@@ -127,7 +138,7 @@ a.link::after {
     height: 2px;
     bottom: 0;
     left: 0;
-    background-color: #a5c422;
+    background-color: var(--brand-primary-color);
     transform-origin: bottom right;
     transition: transform 0.25s ease-out;
 }
@@ -255,7 +266,7 @@ a.link:hover::after {
 .primary-cta {font-size:1.15rem !important; font-weight:700 !important; padding: 0 1.8rem !important; box-shadow: 0 4px 16px rgba(165, 196, 34, 0.4) !important; transform: scale(1); transition: all 0.2s ease !important; line-height: 1.5 !important; margin: 0 !important;}
 .primary-cta:hover {transform: scale(1.03); box-shadow: 0 6px 24px rgba(165, 196, 34, 0.6) !important;}
 .secondary-cta, .tertiary-cta {background:rgba(255,255,255,0.15) !important; backdrop-filter: blur(5px); border:2px solid rgba(255,255,255,0.6) !important; color:#fff !important; box-shadow:0 2px 8px rgba(0,0,0,0.2) !important; font-weight: 500 !important; transition: all 0.2s ease !important; font-size:1.15rem !important; padding: 0 1.8rem !important; line-height: 1.5 !important;}
-.secondary-cta:hover, .tertiary-cta:hover {background:#a5c422 !important; color:#fff !important; border-color: #a5c422 !important;}
+.secondary-cta:hover, .tertiary-cta:hover {background:var(--brand-primary-color) !important; color:#fff !important; border-color: var(--brand-primary-color) !important;}
 
 /* Value Proposition Two-Column Layout */
 #home .hero-inner .value-prop-container {
@@ -279,7 +290,7 @@ a.link:hover::after {
     font-size: 1.1rem;
     font-weight: 700;
     margin-bottom: 0.5rem;
-    color: #a5c422;
+    color: var(--brand-primary-color);
     text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.3);
 }
 #home .hero-inner .value-prop-container .benefits-card .benefits-list {
@@ -308,7 +319,7 @@ a.link:hover::after {
     display: block !important; 
     font-size: 0.95rem !important; 
     font-weight: 600 !important; 
-    color: #a5c422 !important; 
+    color: var(--brand-primary-color) !important; 
     margin-bottom: .2rem !important; 
     text-shadow: 1px 1px 3px rgba(0,0,0,0.25) !important;
 }
@@ -344,7 +355,7 @@ a.link:hover::after {
     margin: 0 0 0.5rem !important;
     font-size: 1.1rem !important;
     font-weight: 700 !important;
-    color: #a5c422 !important;
+    color: var(--brand-primary-color) !important;
     text-align: center !important;
     text-shadow: 1px 1px 3px rgba(0,0,0,0.3) !important;
 }
@@ -406,7 +417,7 @@ a.link:hover::after {
 }
 #home .hero-inner .payment-card-wrapper .pwyw-panel .pwyw-option input[type=radio] {
     margin: 0 !important;
-    accent-color: #a5c422 !important;
+    accent-color: var(--brand-primary-color) !important;
     width: 12px !important;
     height: 12px !important;
     cursor: pointer !important;
@@ -475,17 +486,17 @@ a.link:hover::after {
 .pwyw-subcopy {font-size:0.95rem; line-height:1.5rem; margin:0 0 1rem; color:#fff; text-shadow: 1px 1px 2px rgba(0,0,0,0.2);}
 .pwyw-options {display:flex; flex-wrap:wrap; gap:.8rem;}
 .pwyw-option {background: rgba(255, 255, 255, 0.3); backdrop-filter: blur(5px); padding:.7rem .85rem; border-radius:10px; display:flex; align-items:center; gap:.55rem; cursor:pointer; font-size:0.95rem; flex:1 1 150px; min-width:150px; border:1px solid rgba(255, 255, 255, 0.4); position:relative; color: #fff; font-weight: 500;}
-.pwyw-option input[type=radio] {margin:0; accent-color:#a5c422;}
+.pwyw-option input[type=radio] {margin:0; accent-color:var(--brand-primary-color);}
 .pwyw-option small {display:block; font-size:.72rem; opacity:.9; color: #fff;}
 .pwyw-option.custom {flex:1 1 165px;}
 .custom-wrapper {display:flex; align-items:center; gap:.45rem; width:100%;}
 .pwyw-custom-input {flex:1; background:rgba(255,255,255,0.9); border:1px solid rgba(255,255,255,0.5); color:#333; border-radius:6px; padding:.35rem .5rem; font-size:.75rem;}
 .pwyw-actions {display:flex; align-items:center; gap:1rem; margin-top:.85rem;}
 .pwyw-submit {min-width:180px;}
-.pwyw-thanks {font-size:.7rem; color:#a5c422;}
+.pwyw-thanks {font-size:.7rem; color:var(--brand-primary-color);}
 
 /* Outline variant for chat/pro buttons */
-.btn-outline-green {background:transparent; border:2px solid #a5c422; color:#a5c422; transition:.3s;}
+.btn-outline-green {background:transparent; border:2px solid var(--brand-primary-color); color:var(--brand-primary-color); transition:.3s;}
 .btn-outline-green:hover {background:#000; color:#fff;}
 
 /* Pro version text container */
@@ -502,7 +513,7 @@ a.link:hover::after {
 /* Fax PWYW modifications */
 .fax-pwyw-group {display:flex; flex-wrap:wrap; gap:.6rem; margin:.75rem 0 1rem;}
 .fax-pwyw-group label {background:#f7f7f7; padding:.5rem .75rem; border-radius:8px; border:1px solid #ddd; font-size:.75rem; flex:1 1 120px; cursor:pointer; position:relative;}
-.fax-pwyw-group input[type=radio] {margin-right:.35rem; accent-color:#a5c422;}
+.fax-pwyw-group input[type=radio] {margin-right:.35rem; accent-color:var(--brand-primary-color);}
 .fax-custom-input {width:100%; margin-top:.4rem; padding:.35rem .5rem; font-size:.7rem; border:1px solid #ccc; border-radius:6px;}
 
 /* Mobile adjustments */
@@ -622,7 +633,7 @@ a.link:hover::after {
 }
 
 .cat-submit-button {
-    background: #a5c422;
+    background: var(--brand-primary-color);
     text-align: center;
     color:#ffffff !important;
     border: none;
@@ -815,7 +826,7 @@ a.link:hover::after {
     padding: 1.5rem;
     border-radius: 12px;
     box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
-    border-left: 4px solid #a5c422;
+    border-left: 4px solid var(--brand-primary-color);
     transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 .testimonial-card:hover {
@@ -832,7 +843,7 @@ a.link:hover::after {
 .testimonial-quote::before {
     content: '"';
     font-size: 2rem;
-    color: #a5c422;
+    color: var(--brand-primary-color);
     line-height: 0;
     margin-right: 0.25rem;
 }
@@ -895,7 +906,7 @@ a.link:hover::after {
     box-shadow: 0 4px 14px rgba(0,0,0,.25);
     max-width: 680px;
     border: 1px solid rgba(255, 255, 255, 0.3);
-    border-top: 4px solid #a5c422;
+    border-top: 4px solid var(--brand-primary-color);
 }
 .share-title {
     margin: 0 0 .5rem;
@@ -960,7 +971,7 @@ a.link:hover::after {
     color: #fff;
 }
 .share-btn-email {
-    background: #a5c422;
+    background: var(--brand-primary-color);
     color: #fff;
 }
 .share-btn-email:hover {
@@ -974,7 +985,7 @@ section:not(.slider) .share-panel {
     background: #fff;
     color: #333;
     border: 1px solid #e0e0e0;
-    border-top: 4px solid #a5c422;
+    border-top: 4px solid var(--brand-primary-color);
     box-shadow: 0 2px 12px rgba(0,0,0,0.08);
 }
 .container .share-title,
@@ -1010,7 +1021,7 @@ section:not(.slider) .share-subcopy {
     background: #fff !important;
     color: #333 !important;
     border: 1px solid #e0e0e0;
-    border-top: 4px solid #a5c422;
+    border-top: 4px solid var(--brand-primary-color);
     box-shadow: 0 2px 12px rgba(0,0,0,0.08);
     width: 100%;
     max-width: 680px;
@@ -1058,7 +1069,7 @@ section:not(.slider) .share-subcopy {
     color: #333;
 }
 .appeal-donate-wrapper .pwyw-thanks {
-    color: #a5c422;
+    color: var(--brand-primary-color);
 }
 
 /* Centered content on desktop for appeal pages */
@@ -1077,7 +1088,7 @@ section:not(.slider) .share-subcopy {
 /* Note: Base .alert-box is defined at top of file */
 .alert-box-success {
     background: #e8f5e9;
-    border-left-color: #a5c422;
+    border-left-color: var(--brand-primary-color);
 }
 .alert-box-warning {
     background: #fff3cd;
@@ -1148,7 +1159,7 @@ section:not(.slider) .share-subcopy {
 }
 .status-code {
     font-size: 6rem;
-    color: #a5c422;
+    color: var(--brand-primary-color);
     margin-bottom: 1rem;
 }
 .status-title {
@@ -1245,7 +1256,7 @@ section:not(.slider) .share-subcopy {
     align-items: center;
     justify-content: center;
     background: #fff;
-    border: 2px solid #a5c422;
+    border: 2px solid var(--brand-primary-color);
     border-radius: 8px;
     padding: 0.5rem;
     font-size: 0.85rem;
@@ -1264,7 +1275,7 @@ section:not(.slider) .share-subcopy {
 }
 
 .bingo-free-space {
-    background: #a5c422 !important;
+    background: var(--brand-primary-color) !important;
     color: white !important;
     font-weight: bold;
     font-size: 1rem;

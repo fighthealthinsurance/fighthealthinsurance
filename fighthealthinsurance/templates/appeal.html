@@ -174,4 +174,13 @@ Fight Your Health Insurance Denial: Edit and send in your appeal
 <p>
 * We'll do our best to include a summary or abstract if available from PubMed.
 </p>
+
+{% if is_amc %}
+<div style="margin:2rem 0; padding:1.5rem; background:#f8f9fa; border-radius:5px; text-align:center;">
+    <p style="margin:0; color:#666;">
+        Powered by <a href="https://www.fighthealthinsurance.com" target="_blank" rel="noopener noreferrer" style="color:var(--brand-primary-color); font-weight:bold;">Fight Health Insurance</a>
+    </p>
+</div>
+{% endif %}
+
 {% endblock content %}

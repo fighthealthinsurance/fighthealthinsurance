@@ -398,6 +398,78 @@ urlpatterns += [
 ]
 
 
+# AppealMyClaims path-based brand access
+# These URLs map to the same views but with /appealmyclaims/ prefix
+# Brand middleware will detect and apply AMC branding
+urlpatterns += [
+    path(
+        "appealmyclaims/",
+        cache_control(public=True)(cache_page(60 * 60 * 2)(views.IndexView.as_view())),
+        name="amc_root",
+    ),
+    path(
+        "appealmyclaims/scan",
+        sensitive_post_parameters("email")(views.InitialProcessView.as_view()),
+        name="amc_scan",
+    ),
+    path(
+        "appealmyclaims/chat",
+        sensitive_post_parameters()(views.chat_interface_view),
+        name="amc_chat",
+    ),
+    path(
+        "appealmyclaims/explain-denial",
+        views.ExplainDenialView.as_view(),
+        name="amc_explain_denial",
+    ),
+    path(
+        "appealmyclaims/categorize",
+        views.EntityExtractView.as_view(),
+        name="amc_categorize",
+    ),
+    path(
+        "appealmyclaims/find_next_steps",
+        sensitive_post_parameters("email")(views.FindNextSteps.as_view()),
+        name="amc_find_next_steps",
+    ),
+    path(
+        "appealmyclaims/generate_appeal",
+        sensitive_post_parameters("email")(views.GenerateAppeal.as_view()),
+        name="amc_generate_appeal",
+    ),
+    path(
+        "appealmyclaims/choose_appeal",
+        sensitive_post_parameters("email")(views.ChooseAppeal.as_view()),
+        name="amc_choose_appeal",
+    ),
+    path(
+        "appealmyclaims/about-us",
+        cache_control(public=True)(cache_page(60 * 60 * 2)(views.AboutView.as_view())),
+        name="amc_about",
+    ),
+    path(
+        "appealmyclaims/contact",
+        cache_control(public=True)(
+            cache_page(60 * 60 * 2)(views.ContactView.as_view())
+        ),
+        name="amc_contact",
+    ),
+    path(
+        "appealmyclaims/privacy_policy",
+        cache_control(public=True)(
+            cache_page(60 * 60 * 2)(views.PrivacyPolicyView.as_view())
+        ),
+        name="amc_privacy_policy",
+    ),
+    path(
+        "appealmyclaims/tos",
+        cache_control(public=True)(
+            cache_page(60 * 60 * 2)(views.TermsOfServiceView.as_view())
+        ),
+        name="amc_tos",
+    ),
+]
+
 urlpatterns += staticfiles_urlpatterns()
 
 # Serve static files in development

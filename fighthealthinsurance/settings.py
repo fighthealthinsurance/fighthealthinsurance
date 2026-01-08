@@ -123,6 +123,7 @@ class Base(Configuration):
     SESSION_COOKIE_DOMAIN_DYNAMIC = [
         ".fightpaperwork.com",
         ".fighthealthinsurance.com",
+        ".appealmyclaims.com",
         ".localhost",
         "localhost",
     ]
@@ -180,6 +181,7 @@ class Base(Configuration):
         "fighthealthinsurance.middleware.CsrfCookieToHeaderMiddleware",
         "corsheaders.middleware.CorsMiddleware",
         "django_prometheus.middleware.PrometheusBeforeMiddleware",
+        "fighthealthinsurance.middleware.BrandMiddleware.BrandMiddleware",
         "fighthealthinsurance.middleware.SessionMiddlewareDynamicDomain",
         "django.contrib.sessions.middleware.SessionMiddleware",
         "django.contrib.auth.middleware.AuthenticationMiddleware",
@@ -211,6 +213,7 @@ class Base(Configuration):
                     "django.template.context_processors.request",
                     "django.contrib.auth.context_processors.auth",
                     "django.contrib.messages.context_processors.messages",
+                    "fighthealthinsurance.context_processors.brand_context",
                     "fighthealthinsurance.context_processors.form_persistence_context",
                     "fighthealthinsurance.context_processors.canonical_url_context",
                 ],
@@ -356,6 +359,9 @@ class Base(Configuration):
         "https://www.fightpaperwork.com",
         "https://www.fighthealthinsurance.com",
         "https://api.fighthealthinsurance.com",
+        "https://appealmyclaims.com",
+        "https://www.appealmyclaims.com",
+        "https://*.appealmyclaims.com",
         "https://*.fightpaperwork.com",
         "https://api.fightpaperwork.com",
         "https://*.fighthealthinsurance.com",
@@ -607,6 +613,8 @@ class Prod(Base):
         "www.fightpaperwork.com",
         "api.fightpaperwork.com",
         "staging.fighthealthinsurance.com",
+        "appealmyclaims.com",
+        "www.appealmyclaims.com",
     ]
 
     # HSTS - tell browsers to always use HTTPS

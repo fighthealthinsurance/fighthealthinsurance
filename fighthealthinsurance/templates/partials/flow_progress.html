@@ -50,16 +50,16 @@
 }
 
 .flow-progress-step.completed .flow-progress-circle {
-    background: #a5c422;
-    border-color: #a5c422;
+    background: var(--brand-primary-color);
+    border-color: var(--brand-primary-color);
     color: white;
 }
 
 .flow-progress-step.active .flow-progress-circle {
     background: white;
-    border-color: #a5c422;
-    color: #a5c422;
-    box-shadow: 0 0 0 4px rgba(165, 196, 34, 0.2);
+    border-color: var(--brand-primary-color);
+    color: var(--brand-primary-color);
+    box-shadow: 0 0 0 4px rgba(var(--brand-primary-color-rgb, 165, 196, 34), 0.2);
 }
 
 .flow-progress-label {
@@ -89,7 +89,7 @@
 
 .flow-progress-line-fill {
     height: 100%;
-    background: #a5c422;
+    background: var(--brand-primary-color);
     transition: width 0.3s ease;
 }
 
