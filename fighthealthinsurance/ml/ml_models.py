@@ -1,8 +1,10 @@
 import asyncio
 import itertools
 import os
+import random
 import re
 import sys
+import threading
 import traceback
 from abc import abstractmethod
 from concurrent.futures import Future
@@ -14,7 +16,7 @@ import requests
 from asgiref.sync import async_to_sync, sync_to_async
 from loguru import logger
 
-from fighthealthinsurance.utils import ensure_message_alternation
+from fighthealthinsurance.utils import ensure_message_alternation, RateLimiter
 
 # Import the appropriate async_timeout based on Python version
 if sys.version_info >= (3, 11):
@@ -2268,7 +2270,7 @@ class DeepInfra(RemoteFullOpenLike):
                 internal_name="meta-llama/Meta-Llama-3.1-70B-Instruct",
             ),
             ModelDescription(
-                cost=5,
+                cost=8,
                 name="meta-llama/llama-3.2-3B-instruct",
                 internal_name="meta-llama/Llama-3.2-3B-Instruct",
             ),
@@ -2283,6 +2285,296 @@ class DeepInfra(RemoteFullOpenLike):
                 internal_name="deepseek-ai/DeepSeek-R1-Turbo",
             ),
         ]
+
+
+class RemoteGroq(RemoteFullOpenLike):
+    """
+    Groq API backend for ultra-fast LLM inference.
+    
+    Features:
+    - Per-model rate limiting (RPM + RPD) with auto-recovery
+    - Load balancing across quality tier models (Scout, Maverick, Versatile)
+    - Automatic fallback to Instant tier when quality models are rate limited
+    - Graceful 429 handling with Retry-After support
+    
+    All models support 128K input context.
+    
+    Models are organized into tiers:
+    - Quality tier (cost=4): Scout, Maverick, Versatile - randomized selection
+    - Speed tier (cost=6): Instant - fallback when quality exhausted
+    
+    Environment variables:
+    - GROQ_API_KEY: API key for Groq (required)
+    - GROQ_RPM_LIMIT: Requests per minute limit (default: 30)
+    - GROQ_RPD_LIMIT: Requests per day limit (default: 1000)
+    """
+    
+    # Model specifications - all models support 128K input context
+    MODEL_SPECS: ClassVar[dict[str, dict]] = {
+        "meta-llama/llama-4-maverick-17b-128e-instruct": {
+            "tier": "quality",
+            "description": "Llama 4 Maverick",
+        },
+        "meta-llama/llama-4-scout-17b-16e-instruct": {
+            "tier": "quality", 
+            "description": "Llama 4 Scout - newest model",
+        },
+        "meta-llama/llama-3.3-70b-versatile": {
+            "tier": "quality",
+            "description": "Llama 3.3 70B - high quality, versatile",
+        },
+        "meta-llama/llama-3.1-8b-instant": {
+            "tier": "speed",
+            "description": "Llama 3.1 8B - fastest response, fallback tier",
+        },
+    }
+    
+    # Shared rate limiters per model (class-level, initialized lazily)
+    _rate_limiters: ClassVar[dict[str, RateLimiter]] = {}
+    _rate_limiter_lock: ClassVar[threading.Lock] = threading.Lock()
+
+    def __init__(self, model: str, dual_mode: bool = False):
+        """
+        Initialize a Groq model backend.
+        
+        Args:
+            model: The Groq model identifier (e.g., 'llama-3.3-70b-versatile')
+            dual_mode: Whether to run primary and backup concurrently
+        """
+        api_base = "https://api.groq.com/openai/v1"
+        token = os.getenv("GROQ_API_KEY")
+        if token is None or len(token) < 1:
+            raise Exception("No API key found for Groq (set GROQ_API_KEY)")
+        
+        # All Groq models support 128K input context
+        super().__init__(
+            api_base, token, model=model, dual_mode=dual_mode, max_len=128000
+        )
+        
+        # Initialize rate limiter for this model (shared across instances)
+        self._ensure_rate_limiter(model)
+        
+        model_spec = self.MODEL_SPECS.get(model, {})
+        logger.debug(
+            f"RemoteGroq initialized: model={model}, "
+            f"tier={model_spec.get('tier', 'unknown')}"
+        )
+
+    @classmethod
+    def _ensure_rate_limiter(cls, model: str) -> None:
+        """
+        Ensure a rate limiter exists for the given model.
+        Creates one if it doesn't exist (thread-safe).
+        """
+        if model not in cls._rate_limiters:
+            with cls._rate_limiter_lock:
+                # Double-check after acquiring lock
+                if model not in cls._rate_limiters:
+                    rpm_limit = int(os.getenv("GROQ_RPM_LIMIT", "30"))
+                    rpd_limit = int(os.getenv("GROQ_RPD_LIMIT", "1000"))
+                    cls._rate_limiters[model] = RateLimiter(
+                        rpm_limit=rpm_limit,
+                        rpd_limit=rpd_limit,
+                        name=f"groq-{model}",
+                    )
+                    logger.info(
+                        f"Created rate limiter for groq-{model}: "
+                        f"rpm={rpm_limit}, rpd={rpd_limit}"
+                    )
+
+    @property
+    def rate_limiter(self) -> RateLimiter:
+        """Get the rate limiter for this model instance."""
+        return self._rate_limiters[self.model]
+
+    @property
+    def supports_system(self):
+        return True
+
+    @property
+    def external(self):
+        return True
+
+    def get_tier(self) -> str:
+        """Get the tier (quality/speed) for this model."""
+        return self.MODEL_SPECS.get(self.model, {}).get("tier", "unknown")
+
+    @classmethod
+    def select_available_model(cls) -> Optional[str]:
+        """
+        Select an available model based on rate limits.
+        
+        Strategy:
+        1. Among quality tier models with available rate limit, randomize selection
+        2. If all quality models exhausted, fall back to speed tier
+        3. If no models available, return None
+            
+        Returns:
+            Model name to use, or None if all models are rate limited
+        """
+        available_quality = []
+        available_speed = []
+        
+        for model_name, spec in cls.MODEL_SPECS.items():
+            # Check rate limit
+            cls._ensure_rate_limiter(model_name)
+            if not cls._rate_limiters[model_name].can_request():
+                logger.debug(f"Groq model {model_name} skipped: rate limited")
+                continue
+            
+            # Categorize by tier
+            if spec["tier"] == "quality":
+                available_quality.append(model_name)
+            else:
+                available_speed.append(model_name)
+        
+        # Prefer quality tier with random selection for load balancing
+        if available_quality:
+            selected = random.choice(available_quality)
+            logger.debug(
+                f"Groq model selection: {selected} (quality tier, "
+                f"{len(available_quality)} available)"
+            )
+            return selected
+        
+        # Fall back to speed tier
+        if available_speed:
+            selected = available_speed[0]  # Usually just llama-3.1-8b-instant
+            logger.info(
+                f"Groq model selection: {selected} (speed tier fallback, "
+                f"quality tier exhausted)"
+            )
+            return selected
+        
+        logger.warning("Groq model selection: No models available (all rate limited)")
+        return None
+
+    async def _infer(
+        self,
+        system_prompts: list[str],
+        prompt: str,
+        patient_context: Optional[str] = None,
+        plan_context: Optional[str] = None,
+        pubmed_context: Optional[str] = None,
+        ml_citations_context: Optional[str] = None,
+        history: Optional[List[dict[str, str]]] = None,
+        temperature: Optional[float] = 0.7,
+    ) -> Optional[Tuple[str, List[str]]]:
+        """
+        Perform inference with rate limit checking and 429 handling.
+        
+        Checks the rate limiter before making the API call. If rate limited,
+        returns None immediately to allow fallback to other backends.
+        On 429 response, marks the limiter as exhausted and returns None.
+        
+        Args:
+            system_prompts: System prompts for the model
+            prompt: User prompt
+            patient_context: Optional patient health context
+            plan_context: Optional insurance plan context
+            pubmed_context: Optional PubMed citations context
+            ml_citations_context: Optional ML-generated citations
+            history: Optional conversation history
+            temperature: Optional temperature override
+            
+        Returns:
+            Tuple of (response_text, context_parts) or None if rate limited/failed
+        """
+        # Check rate limit before making request
+        if not self.rate_limiter.can_request():
+            logger.debug(
+                f"RemoteGroq._infer: Skipping {self.model} - rate limited"
+            )
+            return None
+        
+        # Record the request attempt
+        self.rate_limiter.record_request()
+        
+        try:
+            # Call parent implementation
+            result = await super()._infer(
+                system_prompts=system_prompts,
+                prompt=prompt,
+                patient_context=patient_context,
+                plan_context=plan_context,
+                pubmed_context=pubmed_context,
+                ml_citations_context=ml_citations_context,
+                history=history,
+                temperature=temperature,
+            )
+            return result
+            
+        except aiohttp.ClientResponseError as e:
+            if e.status == 429:
+                # Rate limited by Groq - parse Retry-After if available
+                retry_after = 60.0  # Default fallback
+                if hasattr(e, 'headers') and e.headers:
+                    retry_header = e.headers.get('Retry-After', '')
+                    if retry_header:
+                        try:
+                            retry_after = float(retry_header)
+                        except ValueError:
+                            pass
+                
+                self.rate_limiter.mark_exhausted(retry_after)
+                logger.warning(
+                    f"RemoteGroq._infer: 429 from Groq for {self.model}, "
+                    f"backing off for {retry_after}s"
+                )
+                return None
+            else:
+                # Re-raise other HTTP errors
+                raise
+        except Exception as e:
+            logger.warning(f"RemoteGroq._infer error for {self.model}: {e}")
+            return None
+
+    @classmethod
+    def models(cls) -> List[ModelDescription]:
+        """
+        Return available Groq models with cost tiers.
+        
+        Quality tier models (Scout, Maverick, Versatile) have lower cost
+        to be preferred over DeepInfra. Speed tier (Instant) has higher
+        cost to only be used as fallback.
+        """
+        # Check if API key is configured
+        if not os.getenv("GROQ_API_KEY"):
+            logger.debug("RemoteGroq.models: GROQ_API_KEY not set, skipping")
+            return []
+        
+        return [
+            # Quality tier - cost=4 (between AlphaRemoteInternal=3 and DeepInfra>=8)
+            ModelDescription(
+                cost=4,
+                name="groq/llama-4-maverick-17b-128e-instruct",
+                internal_name="meta-llama/llama-4-maverick-17b-128e-instruct",
+            ),
+            ModelDescription(
+                cost=4,
+                name="groq/llama-4-scout-17b-16e-instruct",
+                internal_name="meta-llama/llama-4-scout-17b-16e-instruct",
+            ),
+            ModelDescription(
+                cost=4,
+                name="groq/llama-3.3-70b-versatile",
+                internal_name="meta-llama/llama-3.3-70b-versatile",
+            ),
+            # Speed tier - higher cost, only used when quality tier exhausted
+            ModelDescription(
+                cost=6,
+                name="groq/llama-3.1-8b-instant",
+                internal_name="meta-llama/llama-3.1-8b-instant",
+            ),
+        ]
+
+    def model_is_ok(self) -> bool:
+        """
+        Check if the model is available (API key set and not rate limited).
+        """
+        if not os.getenv("GROQ_API_KEY"):
+            return False
+        return self.rate_limiter.can_request()
 
 
 class TailscaleModelBackend(RemoteFullOpenLike):
