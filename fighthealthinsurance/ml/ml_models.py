@@ -1594,6 +1594,9 @@ class RemoteOpenLike(RemoteModel):
                     },
                 ) as response:
                     logger.debug(f"Got response {response}...")
+                    # Raise ClientResponseError for HTTP error status codes (4xx, 5xx)
+                    # This allows subclasses to catch and handle specific errors like 429
+                    response.raise_for_status()
                     json_result = await response.json()
                     if "object" in json_result and json_result["object"] != "error":
                         logger.debug(f"Response {json_result} on {self} Looks ok")
@@ -1601,6 +1604,13 @@ class RemoteOpenLike(RemoteModel):
                         logger.debug(
                             f"***WARNING*** Response {response} / {json_result} on {self} looks _bad_ with {model}"
                         )
+        except aiohttp.ClientResponseError as e:
+            # Re-raise HTTP errors to allow subclasses (e.g., RemoteGroq) to handle
+            # specific status codes like 429 rate limiting
+            logger.debug(
+                f"HTTP error {e.status} from {api_base} for model {model}: {e.message}"
+            )
+            raise
         except aiohttp.client_exceptions.ContentTypeError:
             logger.debug(
                 f"Unexpected content type response (often missing model) on {api_base}"
