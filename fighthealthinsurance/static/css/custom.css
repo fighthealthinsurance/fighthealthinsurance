@@ -608,7 +608,7 @@ a.link:hover::after {
 /* Mobile: use more of the screen width */
 @media (max-width: 768px) {
     .generic-main-content {
-        width: 95%; 
+        width: 95%;
         padding: 0 10px;
     }
 }
