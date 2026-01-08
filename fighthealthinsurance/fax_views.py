@@ -1,5 +1,5 @@
 import json
-from typing import *
+from typing import List, Optional, Tuple
 
 from django.conf import settings
 from django.http import HttpResponse
@@ -15,7 +15,6 @@ from fighthealthinsurance.generate_appeal import *
 from fighthealthinsurance.helpers.fax_helpers import SendFaxHelper
 from fighthealthinsurance.models import *
 from fighthealthinsurance.stripe_utils import get_or_create_price
-from fighthealthinsurance.utils import *
 
 
 class FaxFollowUpView(generic.FormView):

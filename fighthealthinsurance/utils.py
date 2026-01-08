@@ -51,13 +51,13 @@ pubmed_fetcher = PubMedFetcher()
 class RateLimiter:
     """
     Rate limiter with sliding window RPM and daily RPD limits.
-    
+
     Tracks requests per minute (RPM) using a sliding window of timestamps,
     and requests per day (RPD) using a daily counter that resets at midnight UTC.
     Supports temporary exhaustion marking when external rate limits (429) are hit.
-    
+
     Thread-safe via locking for concurrent access.
-    
+
     Example:
         limiter = RateLimiter(rpm_limit=30, rpd_limit=1000, name="groq-llama-70b")
         if limiter.can_request():
@@ -66,7 +66,7 @@ class RateLimiter:
         else:
             # skip or fallback
     """
-    
+
     def __init__(
         self,
         rpm_limit: int = 30,
@@ -75,7 +75,7 @@ class RateLimiter:
     ):
         """
         Initialize the rate limiter.
-        
+
         Args:
             rpm_limit: Maximum requests per minute (sliding window)
             rpd_limit: Maximum requests per day (resets at midnight UTC)
@@ -84,35 +84,35 @@ class RateLimiter:
         self.rpm_limit = rpm_limit
         self.rpd_limit = rpd_limit
         self.name = name
-        
+
         # Sliding window for RPM - stores timestamps of requests
         self._request_timestamps: deque[float] = deque()
-        
+
         # Daily counter for RPD
         self._daily_count: int = 0
         self._current_day: str = self._get_utc_date()
-        
+
         # Temporary exhaustion tracking (e.g., from 429 response)
         self._exhausted_until: Optional[float] = None
-        
+
         # Thread safety
         self._lock = threading.Lock()
-        
+
         logger.debug(
             f"RateLimiter initialized for {name}: "
             f"rpm_limit={rpm_limit}, rpd_limit={rpd_limit}"
         )
-    
+
     def _get_utc_date(self) -> str:
         """Get current UTC date as string for daily reset tracking."""
         return datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    
+
     def _cleanup_old_timestamps(self, now: float) -> None:
         """Remove timestamps older than 60 seconds from the sliding window."""
         cutoff = now - 60.0
         while self._request_timestamps and self._request_timestamps[0] < cutoff:
             self._request_timestamps.popleft()
-    
+
     def _check_daily_reset(self) -> None:
         """Reset daily counter if we've crossed into a new UTC day."""
         current_day = self._get_utc_date()
@@ -123,17 +123,17 @@ class RateLimiter:
             )
             self._daily_count = 0
             self._current_day = current_day
-    
+
     def can_request(self) -> bool:
         """
         Check if a request is allowed under current rate limits.
-        
+
         Returns:
             True if request is allowed, False if rate limited
         """
         with self._lock:
             now = time.time()
-            
+
             # Check temporary exhaustion (e.g., from 429 response)
             if self._exhausted_until is not None:
                 if now < self._exhausted_until:
@@ -146,10 +146,10 @@ class RateLimiter:
                     # Exhaustion period has passed
                     logger.info(f"RateLimiter {self.name}: Exhaustion period ended")
                     self._exhausted_until = None
-            
+
             # Check daily reset
             self._check_daily_reset()
-            
+
             # Check RPD limit
             if self._daily_count >= self.rpd_limit:
                 logger.debug(
@@ -157,7 +157,7 @@ class RateLimiter:
                     f"({self._daily_count}/{self.rpd_limit})"
                 )
                 return False
-            
+
             # Cleanup old timestamps and check RPM limit
             self._cleanup_old_timestamps(now)
             if len(self._request_timestamps) >= self.rpm_limit:
@@ -166,9 +166,9 @@ class RateLimiter:
                     f"({len(self._request_timestamps)}/{self.rpm_limit})"
                 )
                 return False
-            
+
             return True
-    
+
     def record_request(self) -> None:
         """
         Record a request for rate limiting tracking.
@@ -179,21 +179,21 @@ class RateLimiter:
             self._check_daily_reset()
             self._request_timestamps.append(now)
             self._daily_count += 1
-            
+
             logger.debug(
                 f"RateLimiter {self.name}: Request recorded - "
                 f"RPM: {len(self._request_timestamps)}/{self.rpm_limit}, "
                 f"RPD: {self._daily_count}/{self.rpd_limit}"
             )
-    
+
     def mark_exhausted(self, retry_after_seconds: float = 60.0) -> None:
         """
         Mark the rate limiter as temporarily exhausted.
-        
+
         Use this when receiving a 429 response from the API to respect
         the server's rate limiting. The limiter will auto-recover after
         the specified duration.
-        
+
         Args:
             retry_after_seconds: Seconds to wait before allowing requests again
         """
@@ -203,11 +203,11 @@ class RateLimiter:
                 f"RateLimiter {self.name}: Marked exhausted for "
                 f"{retry_after_seconds:.1f}s (likely 429 response)"
             )
-    
+
     def get_status(self) -> dict:
         """
         Get current rate limiter status for monitoring/debugging.
-        
+
         Returns:
             Dict with current RPM count, RPD count, limits, and exhaustion state
         """
@@ -215,14 +215,15 @@ class RateLimiter:
             now = time.time()
             self._cleanup_old_timestamps(now)
             self._check_daily_reset()
-            
+
             return {
                 "name": self.name,
                 "rpm_current": len(self._request_timestamps),
                 "rpm_limit": self.rpm_limit,
                 "rpd_current": self._daily_count,
                 "rpd_limit": self.rpd_limit,
-                "exhausted": self._exhausted_until is not None and now < self._exhausted_until,
+                "exhausted": self._exhausted_until is not None
+                and now < self._exhausted_until,
                 "exhausted_until": self._exhausted_until,
             }
 
