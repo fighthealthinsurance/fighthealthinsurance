@@ -4,7 +4,6 @@ from django import forms
 from django.forms import CheckboxInput, ModelForm, Textarea
 
 from django_recaptcha.fields import ReCaptchaField, ReCaptchaV2Checkbox
-
 from fighthealthinsurance.form_utils import *
 from fighthealthinsurance.models import (
     Appeal,
@@ -594,9 +593,11 @@ class InsuranceCallLogForm(forms.ModelForm):
         """Initialize form and filter appeals by user if provided."""
         super().__init__(*args, **kwargs)
         if user:
-            self.fields["appeal"].queryset = Appeal.filter_to_allowed_appeals(
-                user
-            ).order_by("-creation_date")
+            appeal_field = self.fields["appeal"]
+            if isinstance(appeal_field, forms.ModelChoiceField):
+                appeal_field.queryset = Appeal.filter_to_allowed_appeals(user).order_by(
+                    "-creation_date"
+                )
 
     class Meta:
         model = InsuranceCallLog
@@ -732,9 +733,11 @@ class PatientEvidenceForm(forms.ModelForm):
         """Initialize form and filter appeals by user if provided."""
         super().__init__(*args, **kwargs)
         if user:
-            self.fields["appeal"].queryset = Appeal.filter_to_allowed_appeals(
-                user
-            ).order_by("-creation_date")
+            appeal_field = self.fields["appeal"]
+            if isinstance(appeal_field, forms.ModelChoiceField):
+                appeal_field.queryset = Appeal.filter_to_allowed_appeals(user).order_by(
+                    "-creation_date"
+                )
 
     def clean_file(self):
         """
