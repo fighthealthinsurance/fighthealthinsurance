@@ -38,6 +38,36 @@ def trigger_error(request: HttpRequest) -> HttpResponseBase:
     raise Exception("Test error")
 
 
+def add_brand_patterns(
+    patterns: List[Union[URLPattern, URLResolver]], prefix: str, name_prefix: str
+) -> List[Union[URLPattern, URLResolver]]:
+    """
+    Create branded URL patterns by prefixing routes and names.
+
+    Takes a list of URL patterns and creates new patterns with:
+    - Route prefixed with the given prefix (e.g., "appealmyclaims/")
+    - Name prefixed with the given name prefix (e.g., "amc_")
+
+    Args:
+        patterns: List of URLPattern/URLResolver objects to duplicate
+        prefix: String to prepend to each route (e.g., "appealmyclaims/")
+        name_prefix: String to prepend to each URL name (e.g., "amc_")
+
+    Returns:
+        List of new URL patterns with branded routes and names
+    """
+    branded_patterns = []
+    for pattern in patterns:
+        if isinstance(pattern, URLPattern) and pattern.name:
+            # Create new path with prefixed route and name
+            new_route = f"{prefix}{pattern.pattern}"
+            new_name = f"{name_prefix}{pattern.name}"
+            branded_patterns.append(
+                path(new_route, pattern.callback, name=new_name)
+            )
+    return branded_patterns
+
+
 urlpatterns: List[Union[URLPattern, URLResolver]] = [
     # Internal-ish-views
     path("ziggy/rest/", include("fighthealthinsurance.rest_urls")),
@@ -397,78 +427,81 @@ urlpatterns += [
     ),
 ]
 
-
-# AppealMyClaims path-based brand access
-# These URLs map to the same views but with /appealmyclaims/ prefix
-# Brand middleware will detect and apply AMC branding
-urlpatterns += [
+# Define patterns that should be available under branded paths
+# These will be automatically duplicated for each brand (e.g., /appealmyclaims/)
+brandable_patterns = [
     path(
-        "appealmyclaims/",
+        "",
         cache_control(public=True)(cache_page(60 * 60 * 2)(views.IndexView.as_view())),
-        name="amc_root",
+        name="root",
     ),
     path(
-        "appealmyclaims/scan",
+        "scan",
         sensitive_post_parameters("email")(views.InitialProcessView.as_view()),
-        name="amc_scan",
+        name="scan",
     ),
     path(
-        "appealmyclaims/chat",
+        "chat",
         sensitive_post_parameters()(views.chat_interface_view),
-        name="amc_chat",
+        name="chat",
     ),
     path(
-        "appealmyclaims/explain-denial",
+        "explain-denial",
         views.ExplainDenialView.as_view(),
-        name="amc_explain_denial",
+        name="explain_denial",
     ),
     path(
-        "appealmyclaims/categorize",
+        "categorize",
         views.EntityExtractView.as_view(),
-        name="amc_categorize",
+        name="categorize",
     ),
     path(
-        "appealmyclaims/find_next_steps",
+        "find_next_steps",
         sensitive_post_parameters("email")(views.FindNextSteps.as_view()),
-        name="amc_find_next_steps",
+        name="find_next_steps",
     ),
     path(
-        "appealmyclaims/generate_appeal",
+        "generate_appeal",
         sensitive_post_parameters("email")(views.GenerateAppeal.as_view()),
-        name="amc_generate_appeal",
+        name="generate_appeal",
     ),
     path(
-        "appealmyclaims/choose_appeal",
+        "choose_appeal",
         sensitive_post_parameters("email")(views.ChooseAppeal.as_view()),
-        name="amc_choose_appeal",
+        name="choose_appeal",
     ),
     path(
-        "appealmyclaims/about-us",
+        "about-us",
         cache_control(public=True)(cache_page(60 * 60 * 2)(views.AboutView.as_view())),
-        name="amc_about",
+        name="about",
     ),
     path(
-        "appealmyclaims/contact",
+        "contact",
         cache_control(public=True)(
             cache_page(60 * 60 * 2)(views.ContactView.as_view())
         ),
-        name="amc_contact",
+        name="contact",
     ),
     path(
-        "appealmyclaims/privacy_policy",
+        "privacy_policy",
         cache_control(public=True)(
             cache_page(60 * 60 * 2)(views.PrivacyPolicyView.as_view())
         ),
-        name="amc_privacy_policy",
+        name="privacy_policy",
     ),
     path(
-        "appealmyclaims/tos",
+        "tos",
         cache_control(public=True)(
             cache_page(60 * 60 * 2)(views.TermsOfServiceView.as_view())
         ),
-        name="amc_tos",
+        name="tos",
     ),
 ]
+
+# AppealMyClaims path-based brand access
+# Create AMC-branded URLs with /appealmyclaims/ prefix
+# Brand middleware will detect and apply AMC branding
+urlpatterns += add_brand_patterns(brandable_patterns, "appealmyclaims/", "amc_")
 
 urlpatterns += staticfiles_urlpatterns()
 

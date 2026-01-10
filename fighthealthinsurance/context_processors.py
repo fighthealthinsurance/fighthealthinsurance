@@ -24,15 +24,19 @@ def brand_context(request):
 
     # Provide brand-aware URL names so templates can use {% url brand_url_names.privacy_policy %}
     # This ensures AMC pages link to AMC privacy policy, FHI pages link to FHI privacy policy
+    # Define all URL keys that should be brand-aware
+    # Only include keys that exist as named URLs in BOTH FHI and AMC routes
+    BRAND_URL_KEYS = [
+        "privacy_policy",
+        "tos",
+        "about",
+        "contact",
+        "root",
+        "scan",
+    ]
+
     url_prefix = "amc_" if brand.slug == "amc" else ""
-    brand_url_names = {
-        "privacy_policy": f"{url_prefix}privacy_policy",
-        "tos": f"{url_prefix}tos",
-        "about": f"{url_prefix}about" if url_prefix else "about",
-        "contact": f"{url_prefix}contact" if url_prefix else "contact",
-        "root": f"{url_prefix}root" if url_prefix else "root",
-        "scan": f"{url_prefix}scan" if url_prefix else "scan",
-    }
+    brand_url_names = {key: f"{url_prefix}{key}" for key in BRAND_URL_KEYS}
 
     return {
         "brand": brand,
