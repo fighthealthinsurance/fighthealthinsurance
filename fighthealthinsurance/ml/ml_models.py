@@ -9,8 +9,6 @@ import traceback
 from abc import abstractmethod
 from concurrent.futures import Future
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from email.utils import parsedate_to_datetime
 from typing import Callable, ClassVar, Iterable, List, Optional, Tuple, Union
 
 import aiohttp
@@ -2303,6 +2301,10 @@ class RemoteGroq(RemoteFullOpenLike):
     """
     Groq API backend for ultra-fast LLM inference.
 
+    Note: Groq (https://groq.com) is a hardware/cloud company specializing in
+    LPU (Language Processing Unit) chips for fast inference. Not to be confused
+    with Grok, the xAI chatbot.
+
     Features:
     - Per-model backoff when rate limited (429 responses)
     - Load balancing across quality tier models (Scout, Maverick, Versatile)
@@ -2513,23 +2515,14 @@ class RemoteGroq(RemoteFullOpenLike):
                     retry_header = e.headers.get("Retry-After", "")
                     if retry_header:
                         try:
-                            # Try parsing as delay-seconds first
+                            # Most APIs send delay-seconds (e.g., "30")
                             retry_after = float(retry_header)
                         except ValueError:
-                            # If not a number, try parsing as HTTP-date
-                            try:
-                                retry_date = parsedate_to_datetime(retry_header)
-                                now = datetime.now(timezone.utc)
-                                retry_after = max(
-                                    0.0, (retry_date - now).total_seconds()
-                                )
-                            except (ValueError, TypeError):
-                                # If HTTP-date parsing fails, keep the default retry_after value
-                                # This is intentional - we fall back to the default 60s delay
-                                logger.debug(
-                                    f"RemoteGroq._infer: Invalid Retry-After header "
-                                    f"'{retry_header}' for {self.model}; using default {retry_after}s"
-                                )
+                            # If not a number, use default (HTTP-date format is rare)
+                            logger.debug(
+                                f"RemoteGroq._infer: Non-numeric Retry-After header "
+                                f"'{retry_header}' for {self.model}; using default {retry_after}s"
+                            )
 
                 self.rate_limiter.mark_exhausted(retry_after)
                 logger.warning(

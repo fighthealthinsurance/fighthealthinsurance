@@ -13,7 +13,6 @@ import asyncio
 import os
 import time
 import unittest
-from datetime import datetime, timezone, timedelta
 from unittest.mock import patch, MagicMock, AsyncMock
 
 import aiohttp
@@ -316,21 +315,18 @@ class TestRemoteGroqInfer(unittest.TestCase):
         asyncio.run(self.async_test_infer_handles_429())
 
     @patch.dict(os.environ, {"GROQ_API_KEY": "test-key"})
-    async def async_test_infer_handles_429_with_http_date(self):
-        """Test that _infer handles 429 response with HTTP-date Retry-After."""
+    async def async_test_infer_handles_429_with_non_numeric_retry_after(self):
+        """Test that _infer handles 429 with non-numeric Retry-After (uses default)."""
         model = RemoteGroq(model="meta-llama/llama-3.3-70b-versatile")
 
-        # Create a future HTTP date (2 minutes from now)
-        future_time = datetime.now(timezone.utc) + timedelta(minutes=2)
-        http_date = future_time.strftime("%a, %d %b %Y %H:%M:%S GMT")
-
-        # Create a mock 429 error with HTTP-date Retry-After
+        # Create a mock 429 error with non-numeric Retry-After (e.g., HTTP-date format)
+        # Since we no longer parse HTTP-date, this should fall back to default 60s
         error = aiohttp.ClientResponseError(
             request_info=MagicMock(),
             history=(),
             status=429,
             message="Rate limited",
-            headers={"Retry-After": http_date},
+            headers={"Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT"},
         )
 
         # Mock parent _infer to raise 429
@@ -344,16 +340,16 @@ class TestRemoteGroqInfer(unittest.TestCase):
         # Should return None
         self.assertIsNone(result)
 
-        # Should have marked the limiter as exhausted with calculated delay
+        # Should have marked the limiter as exhausted with default 60s
         status = model.rate_limiter.get_status()
         self.assertTrue(status["exhausted"])
-        # The delay should be approximately 120 seconds (2 minutes)
-        self.assertGreater(status["exhausted_until"], time.time() + 100)
-        self.assertLess(status["exhausted_until"], time.time() + 140)
+        # Default is 60 seconds
+        self.assertGreater(status["exhausted_until"], time.time() + 50)
+        self.assertLess(status["exhausted_until"], time.time() + 70)
 
-    def test_infer_handles_429_with_http_date(self):
-        """Run the async test for HTTP-date Retry-After."""
-        asyncio.run(self.async_test_infer_handles_429_with_http_date())
+    def test_infer_handles_429_with_non_numeric_retry_after(self):
+        """Run the async test for non-numeric Retry-After."""
+        asyncio.run(self.async_test_infer_handles_429_with_non_numeric_retry_after())
 
     @patch.dict(os.environ, {"GROQ_API_KEY": "test-key"})
     async def async_test_infer_handles_429_with_invalid_retry_after(self):
