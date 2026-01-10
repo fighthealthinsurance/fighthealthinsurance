@@ -142,10 +142,10 @@
                 <ul class="nav navbar-nav navbar-right">
                     {% if user.is_authenticated %}
                     <li class="nav-item"><a href="{% url 'patient-dashboard' %}" class="nav-link">My Dashboard</a></li>
-                    <li class="nav-item"><a href="{% url 'account_logout' %}" class="nav-link">Sign Out</a></li>
+                    <li class="nav-item"><a href="/v0/auth/logout" class="nav-link">Sign Out</a></li>
                     {% else %}
-                    <li class="nav-item"><a href="{% url 'account_login' %}" class="nav-link" title="Optional: Track your appeals and documents">Sign In <span class="text-muted" style="font-size: 0.85em;">(Optional)</span></a></li>
-                    <li class="nav-item"><a href="{% url 'account_signup' %}" class="nav-link" title="Optional: Create an account to track appeals">Sign Up <span class="text-muted" style="font-size: 0.85em;">(Optional)</span></a></li>
+                    <li class="nav-item"><a href="/v0/auth/login" class="nav-link" title="Optional: Track your appeals and documents">Sign In <span class="text-muted" style="font-size: 0.85em;">(Optional)</span></a></li>
+                    {% comment %}TODO: Add signup URL when view is created{% endcomment %}
                     {% endif %}
                     <li class="nav-item"><a href="{% url 'chat' %}" class="nav-link">Chat</a></li>
                     <li class="nav-item"><a href="{% url 'explain_denial' %}" class="nav-link">Explain Denial</a></li>
