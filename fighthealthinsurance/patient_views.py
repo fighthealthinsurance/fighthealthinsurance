@@ -20,8 +20,6 @@ from django.views import View
 from django.views.generic import CreateView, TemplateView, UpdateView
 
 from django_encrypted_filefield.crypt import Cryptographer
-from loguru import logger
-
 from fhi_users.models import PatientUser
 from fighthealthinsurance.forms import (
     CallLogFilterForm,
@@ -30,6 +28,7 @@ from fighthealthinsurance.forms import (
     PatientEvidenceForm,
 )
 from fighthealthinsurance.models import Appeal, InsuranceCallLog, PatientEvidence
+from loguru import logger
 
 if typing.TYPE_CHECKING:
     from django.contrib.auth.models import User
@@ -198,7 +197,9 @@ class PatientDashboardView(PatientRequiredMixin, TemplateView):
         from django.db.models import Q
 
         active_appeals_count = all_appeals.filter(
-            Q(sent=False) | Q(sent=True, success__isnull=True) | Q(sent=True, success=False)
+            Q(sent=False)
+            | Q(sent=True, success__isnull=True)
+            | Q(sent=True, success=False)
         ).count()
 
         # Pending follow-ups: any follow-ups with date >= today

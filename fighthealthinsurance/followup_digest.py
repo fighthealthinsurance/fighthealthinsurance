@@ -15,10 +15,9 @@ from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
 from django.urls import reverse
 
-from loguru import logger
-
 from fhi_users.models import PatientUser
 from fighthealthinsurance.models import Appeal, InsuranceCallLog
+from loguru import logger
 
 
 class FollowupDigestSender:
