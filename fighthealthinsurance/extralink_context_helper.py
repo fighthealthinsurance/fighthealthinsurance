@@ -180,3 +180,51 @@ class ExtraLinkContextHelper:
 
         except Exception:
             return False
+
+    @staticmethod
+    async def fetch_extralink_context_for_microsite(
+        microsite_slug: str,
+        max_docs: int = 5,
+        max_chars_per_doc: int = 2000,
+    ) -> str:
+        """
+        Fetch extralink context for a microsite with error handling and logging.
+
+        This is a convenience method that wraps get_context_for_microsite with
+        additional checking and logging suitable for use in both chat and appeal
+        generation workflows.
+
+        Args:
+            microsite_slug: The microsite identifier
+            max_docs: Maximum number of documents to include
+            max_chars_per_doc: Maximum characters per document
+
+        Returns:
+            Formatted markdown context string, or empty string if unavailable.
+        """
+        if not microsite_slug:
+            return ""
+
+        try:
+            logger.info(f"Loading extralink context for microsite {microsite_slug}")
+            
+            extralink_context = await ExtraLinkContextHelper.get_context_for_microsite(
+                microsite_slug,
+                max_docs=max_docs,
+                max_chars_per_doc=max_chars_per_doc,
+            )
+
+            if extralink_context:
+                logger.info(
+                    f"Added {len(extralink_context)} chars of extralink context"
+                )
+            else:
+                logger.debug(f"No extralink context available for {microsite_slug}")
+
+            return extralink_context
+
+        except Exception as e:
+            logger.opt(exception=True).warning(
+                f"Error loading extralink context for {microsite_slug}: {e}"
+            )
+            return ""
