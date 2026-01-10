@@ -6,9 +6,7 @@ import re
 import string
 import threading
 import time
-from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor
-from datetime import datetime, timezone
 from functools import reduce
 from inspect import isabstract
 from subprocess import CalledProcessError
@@ -50,182 +48,122 @@ pubmed_fetcher = PubMedFetcher()
 
 class RateLimiter:
     """
-    Rate limiter with sliding window RPM and daily RPD limits.
+    Lightweight rate limiter for 429 backoff handling.
 
-    Tracks requests per minute (RPM) using a sliding window of timestamps,
-    and requests per day (RPD) using a daily counter that resets at midnight UTC.
-    Supports temporary exhaustion marking when external rate limits (429) are hit.
+    In a multi-container environment, client-side RPM/RPD tracking is inaccurate
+    since each container has its own counter. Instead, we rely on the API's 429
+    responses as the source of truth and back off when rate limited.
 
-    Thread-safe via locking for concurrent access.
+    When a 429 is received, call mark_exhausted() with the Retry-After value.
+    The limiter will block requests until the backoff period expires.
+
+    Lock-free design: simple timestamp comparison is safe for this use case.
+    Worst-case race (two requests both pass can_request, both get 429, both
+    call mark_exhausted) is harmless - the exhaustion time just gets set twice.
 
     Example:
-        limiter = RateLimiter(rpm_limit=30, rpd_limit=1000, name="groq-llama-70b")
+        limiter = RateLimiter(name="groq-llama-70b")
         if limiter.can_request():
-            limiter.record_request()
-            # make API call
+            try:
+                # make API call
+            except RateLimitError as e:
+                limiter.mark_exhausted(e.retry_after)
         else:
-            # skip or fallback
+            # skip or fallback - currently backing off from a 429
     """
 
     def __init__(
         self,
+        name: str = "default",
+        # Legacy parameters kept for backwards compatibility but ignored
         rpm_limit: int = 30,
         rpd_limit: int = 1000,
-        name: str = "default",
     ):
         """
         Initialize the rate limiter.
 
         Args:
-            rpm_limit: Maximum requests per minute (sliding window)
-            rpd_limit: Maximum requests per day (resets at midnight UTC)
             name: Identifier for logging purposes
+            rpm_limit: Ignored (kept for backwards compatibility)
+            rpd_limit: Ignored (kept for backwards compatibility)
         """
-        self.rpm_limit = rpm_limit
-        self.rpd_limit = rpd_limit
         self.name = name
 
-        # Sliding window for RPM - stores timestamps of requests
-        self._request_timestamps: deque[float] = deque()
-
-        # Daily counter for RPD
-        self._daily_count: int = 0
-        self._current_day: str = self._get_utc_date()
-
-        # Temporary exhaustion tracking (e.g., from 429 response)
+        # Exhaustion tracking - timestamp when we can resume requests
         self._exhausted_until: Optional[float] = None
 
-        # Thread safety
-        self._lock = threading.Lock()
-
-        logger.debug(
-            f"RateLimiter initialized for {name}: "
-            f"rpm_limit={rpm_limit}, rpd_limit={rpd_limit}"
-        )
-
-    def _get_utc_date(self) -> str:
-        """Get current UTC date as string for daily reset tracking."""
-        return datetime.now(timezone.utc).strftime("%Y-%m-%d")
-
-    def _cleanup_old_timestamps(self, now: float) -> None:
-        """Remove timestamps older than 60 seconds from the sliding window."""
-        cutoff = now - 60.0
-        while self._request_timestamps and self._request_timestamps[0] < cutoff:
-            self._request_timestamps.popleft()
-
-    def _check_daily_reset(self) -> None:
-        """Reset daily counter if we've crossed into a new UTC day."""
-        current_day = self._get_utc_date()
-        if current_day != self._current_day:
-            logger.info(
-                f"RateLimiter {self.name}: Daily reset - "
-                f"previous count was {self._daily_count}"
-            )
-            self._daily_count = 0
-            self._current_day = current_day
+        logger.debug(f"RateLimiter initialized for {name} (exhaustion-only mode)")
 
     def can_request(self) -> bool:
         """
-        Check if a request is allowed under current rate limits.
+        Check if a request is allowed (not in backoff period).
 
         Returns:
-            True if request is allowed, False if rate limited
+            True if request is allowed, False if backing off from a 429
         """
-        with self._lock:
-            now = time.time()
+        now = time.time()
 
-            # Check temporary exhaustion (e.g., from 429 response)
-            if self._exhausted_until is not None:
-                if now < self._exhausted_until:
-                    logger.debug(
-                        f"RateLimiter {self.name}: Temporarily exhausted, "
-                        f"resuming in {self._exhausted_until - now:.1f}s"
-                    )
-                    return False
-                else:
-                    # Exhaustion period has passed
-                    logger.info(f"RateLimiter {self.name}: Exhaustion period ended")
-                    self._exhausted_until = None
-
-            # Check daily reset
-            self._check_daily_reset()
-
-            # Check RPD limit
-            if self._daily_count >= self.rpd_limit:
+        # Check if we're in a backoff period from a previous 429
+        exhausted_until = self._exhausted_until
+        if exhausted_until is not None:
+            if now < exhausted_until:
                 logger.debug(
-                    f"RateLimiter {self.name}: RPD limit reached "
-                    f"({self._daily_count}/{self.rpd_limit})"
+                    f"RateLimiter {self.name}: Backing off, "
+                    f"resuming in {exhausted_until - now:.1f}s"
                 )
                 return False
+            else:
+                # Backoff period has passed
+                logger.info(f"RateLimiter {self.name}: Backoff period ended")
+                self._exhausted_until = None
 
-            # Cleanup old timestamps and check RPM limit
-            self._cleanup_old_timestamps(now)
-            if len(self._request_timestamps) >= self.rpm_limit:
-                logger.debug(
-                    f"RateLimiter {self.name}: RPM limit reached "
-                    f"({len(self._request_timestamps)}/{self.rpm_limit})"
-                )
-                return False
-
-            return True
+        return True
 
     def record_request(self) -> None:
         """
-        Record a request for rate limiting tracking.
-        Call this after successfully initiating an API call.
-        """
-        with self._lock:
-            now = time.time()
-            self._check_daily_reset()
-            self._request_timestamps.append(now)
-            self._daily_count += 1
+        Legacy method - no longer tracks requests.
 
-            logger.debug(
-                f"RateLimiter {self.name}: Request recorded - "
-                f"RPM: {len(self._request_timestamps)}/{self.rpm_limit}, "
-                f"RPD: {self._daily_count}/{self.rpd_limit}"
-            )
+        In multi-container deployments, client-side request counting is
+        inaccurate. We now rely solely on 429 responses from the API.
+        This method is kept for backwards compatibility but is a no-op.
+        """
+        pass
 
     def mark_exhausted(self, retry_after_seconds: float = 60.0) -> None:
         """
-        Mark the rate limiter as temporarily exhausted.
+        Mark the rate limiter as temporarily exhausted (backing off).
 
-        Use this when receiving a 429 response from the API to respect
-        the server's rate limiting. The limiter will auto-recover after
-        the specified duration.
+        Call this when receiving a 429 response from the API. The limiter
+        will block requests until the backoff period expires.
 
         Args:
             retry_after_seconds: Seconds to wait before allowing requests again
+                                 (typically from the Retry-After header)
         """
-        with self._lock:
-            self._exhausted_until = time.time() + retry_after_seconds
-            logger.warning(
-                f"RateLimiter {self.name}: Marked exhausted for "
-                f"{retry_after_seconds:.1f}s (likely 429 response)"
-            )
+        self._exhausted_until = time.time() + retry_after_seconds
+        logger.warning(
+            f"RateLimiter {self.name}: Backing off for "
+            f"{retry_after_seconds:.1f}s (429 response)"
+        )
 
     def get_status(self) -> dict:
         """
         Get current rate limiter status for monitoring/debugging.
 
         Returns:
-            Dict with current RPM count, RPD count, limits, and exhaustion state
+            Dict with name and exhaustion state
         """
-        with self._lock:
-            now = time.time()
-            self._cleanup_old_timestamps(now)
-            self._check_daily_reset()
+        now = time.time()
+        exhausted_until = self._exhausted_until
 
-            return {
-                "name": self.name,
-                "rpm_current": len(self._request_timestamps),
-                "rpm_limit": self.rpm_limit,
-                "rpd_current": self._daily_count,
-                "rpd_limit": self.rpd_limit,
-                "exhausted": self._exhausted_until is not None
-                and now < self._exhausted_until,
-                "exhausted_until": self._exhausted_until,
-            }
+        return {
+            "name": self.name,
+            "exhausted": exhausted_until is not None and now < exhausted_until,
+            "exhausted_until": exhausted_until,
+            "seconds_remaining": (
+                max(0.0, exhausted_until - now) if exhausted_until else 0.0
+            ),
+        }
 
 
 U = TypeVar("U")

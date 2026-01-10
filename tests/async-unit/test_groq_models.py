@@ -48,7 +48,7 @@ class TestRemoteGroqInit(unittest.TestCase):
         if "GROQ_API_KEY" in os.environ:
             del os.environ["GROQ_API_KEY"]
 
-        with self.assertRaises(Exception) as context:
+        with self.assertRaises(EnvironmentError) as context:
             RemoteGroq(model="meta-llama/llama-3.3-70b-versatile")
 
         self.assertIn("GROQ_API_KEY", str(context.exception))
@@ -60,18 +60,6 @@ class TestRemoteGroqInit(unittest.TestCase):
 
         self.assertIn("meta-llama/llama-3.3-70b-versatile", RemoteGroq._rate_limiters)
         self.assertIsInstance(model.rate_limiter, RateLimiter)
-
-    @patch.dict(
-        os.environ,
-        {"GROQ_API_KEY": "test-key", "GROQ_RPM_LIMIT": "20", "GROQ_RPD_LIMIT": "500"},
-    )
-    def test_init_respects_env_rate_limits(self):
-        """Test RemoteGroq uses environment variable rate limits."""
-        RemoteGroq._rate_limiters.clear()  # Clear to force re-creation
-        model = RemoteGroq(model="meta-llama/llama-3.3-70b-versatile")
-
-        self.assertEqual(model.rate_limiter.rpm_limit, 20)
-        self.assertEqual(model.rate_limiter.rpd_limit, 500)
 
     @patch.dict(os.environ, {"GROQ_API_KEY": "test-key"})
     def test_all_models_use_128k_context(self):
@@ -293,33 +281,6 @@ class TestRemoteGroqInfer(unittest.TestCase):
     def test_infer_checks_rate_limit(self):
         """Run the async test."""
         asyncio.run(self.async_test_infer_checks_rate_limit())
-
-    @patch.dict(os.environ, {"GROQ_API_KEY": "test-key"})
-    async def async_test_infer_records_request(self):
-        """Test that _infer records the request in rate limiter."""
-        model = RemoteGroq(model="meta-llama/llama-3.3-70b-versatile")
-
-        initial_count = model.rate_limiter.get_status()["rpd_current"]
-
-        # Mock the parent _infer to avoid actual API call
-        with patch.object(
-            RemoteGroq.__bases__[0],
-            "_infer",
-            new_callable=AsyncMock,
-            return_value=("Response", []),
-        ):
-            await model._infer(
-                system_prompts=["You are helpful."], prompt="Test prompt"
-            )
-
-        new_count = model.rate_limiter.get_status()["rpd_current"]
-
-        # Should have recorded the request
-        self.assertEqual(new_count, initial_count + 1)
-
-    def test_infer_records_request(self):
-        """Run the async test."""
-        asyncio.run(self.async_test_infer_records_request())
 
     @patch.dict(os.environ, {"GROQ_API_KEY": "test-key"})
     async def async_test_infer_handles_429(self):

@@ -2304,7 +2304,7 @@ class RemoteGroq(RemoteFullOpenLike):
     Groq API backend for ultra-fast LLM inference.
 
     Features:
-    - Per-model rate limiting (RPM + RPD) with auto-recovery
+    - Per-model backoff when rate limited (429 responses)
     - Load balancing across quality tier models (Scout, Maverick, Versatile)
     - Automatic fallback to Instant tier when quality models are rate limited
     - Graceful 429 handling with Retry-After support
@@ -2317,8 +2317,6 @@ class RemoteGroq(RemoteFullOpenLike):
 
     Environment variables:
     - GROQ_API_KEY: API key for Groq (required)
-    - GROQ_RPM_LIMIT: Requests per minute limit (default: 30)
-    - GROQ_RPD_LIMIT: Requests per day limit (default: 1000)
     """
 
     # Model specifications - all models support 128K input context
@@ -2385,17 +2383,10 @@ class RemoteGroq(RemoteFullOpenLike):
             with cls._rate_limiter_lock:
                 # Double-check after acquiring lock
                 if model not in cls._rate_limiters:
-                    rpm_limit = int(os.getenv("GROQ_RPM_LIMIT", "30"))
-                    rpd_limit = int(os.getenv("GROQ_RPD_LIMIT", "1000"))
                     cls._rate_limiters[model] = RateLimiter(
-                        rpm_limit=rpm_limit,
-                        rpd_limit=rpd_limit,
                         name=f"groq-{model}",
                     )
-                    logger.info(
-                        f"Created rate limiter for groq-{model}: "
-                        f"rpm={rpm_limit}, rpd={rpd_limit}"
-                    )
+                    logger.info(f"Created rate limiter for groq-{model}")
 
     @property
     def rate_limiter(self) -> RateLimiter:
@@ -2495,13 +2486,10 @@ class RemoteGroq(RemoteFullOpenLike):
         Returns:
             Tuple of (response_text, context_parts) or None if rate limited/failed
         """
-        # Check rate limit before making request
+        # Check if we're backing off from a previous 429
         if not self.rate_limiter.can_request():
-            logger.debug(f"RemoteGroq._infer: Skipping {self.model} - rate limited")
+            logger.debug(f"RemoteGroq._infer: Skipping {self.model} - backing off")
             return None
-
-        # Record the request attempt
-        self.rate_limiter.record_request()
 
         try:
             # Call parent implementation
@@ -2542,7 +2530,6 @@ class RemoteGroq(RemoteFullOpenLike):
                                     f"RemoteGroq._infer: Invalid Retry-After header "
                                     f"'{retry_header}' for {self.model}; using default {retry_after}s"
                                 )
-                                pass
 
                 self.rate_limiter.mark_exhausted(retry_after)
                 logger.warning(
