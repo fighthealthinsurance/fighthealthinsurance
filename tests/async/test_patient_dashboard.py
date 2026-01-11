@@ -797,3 +797,295 @@ class FileUploadSecurityTests(TestCase):
         form = PatientEvidenceForm(data=form_data)
 
         self.assertTrue(form.is_valid(), f"Form errors: {form.errors}")
+
+
+class CallLogExportTests(TestCase):
+    """Tests for CSV export of call logs - Phase 6.3."""
+
+    def setUp(self) -> None:
+        self.client = Client()
+        self.password = "TestPass123!"
+        self.user = User.objects.create_user(
+            username="export_test",
+            password=self.password,
+            email="export@example.com",
+            is_active=True,
+        )
+        self.patient = PatientUser.objects.create(user=self.user, active=True)
+
+    def test_call_log_export_requires_login(self) -> None:
+        """Test that CSV export requires authentication."""
+        url = reverse("patient-call-log-export")
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("login", response.url.lower())
+
+    def test_call_log_export_empty(self) -> None:
+        """Test exporting when no call logs exist."""
+        self.client.login(username=self.user.username, password=self.password)
+        url = reverse("patient-call-log-export")
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "text/csv")
+        self.assertIn(
+            "attachment; filename=",
+            response["Content-Disposition"],
+        )
+        self.assertIn("call_logs_", response["Content-Disposition"])
+
+        # Should contain headers even if empty
+        content = response.content.decode("utf-8")
+        self.assertIn("Call Date", content)
+        self.assertIn("Call Type", content)
+        self.assertIn("Representative Name", content)
+
+    def test_call_log_export_with_data(self) -> None:
+        """Test exporting call logs with data."""
+        self.client.login(username=self.user.username, password=self.password)
+
+        # Create call logs
+        call1 = InsuranceCallLog.objects.create(
+            patient_user=self.patient,
+            call_date=timezone.make_aware(datetime(2024, 12, 15, 10, 30)),
+            call_type="claim_status",
+            department="Claims",
+            representative_name="Jane Doe",
+            representative_id="EMP123",
+            reference_number="REF-001",
+            reason_for_call="Check claim status",
+            key_statements="Will be approved soon",
+            outcome="positive",
+        )
+
+        call2 = InsuranceCallLog.objects.create(
+            patient_user=self.patient,
+            call_date=timezone.make_aware(datetime(2024, 12, 16, 14, 0)),
+            call_type="inquiry",
+            department="Benefits",
+            representative_name="John Smith",
+            outcome="pending",
+        )
+
+        url = reverse("patient-call-log-export")
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode("utf-8")
+
+        # Check headers
+        self.assertIn("Call Date", content)
+        self.assertIn("Call Type", content)
+
+        # Check data
+        self.assertIn("Jane Doe", content)
+        self.assertIn("John Smith", content)
+        self.assertIn("REF-001", content)
+        self.assertIn("Claims", content)
+        self.assertIn("Benefits", content)
+        self.assertIn("Check claim status", content)
+
+    def test_call_log_export_only_own_logs(self) -> None:
+        """Test that export only includes user's own call logs."""
+        self.client.login(username=self.user.username, password=self.password)
+
+        # Create our call log
+        InsuranceCallLog.objects.create(
+            patient_user=self.patient,
+            call_date=timezone.now(),
+            call_type="inquiry",
+            reason_for_call="My call",
+            outcome="pending",
+        )
+
+        # Create another user's call log
+        other_user = User.objects.create_user(
+            username="other_export",
+            password=self.password,
+            email="other@example.com",
+        )
+        other_patient = PatientUser.objects.create(user=other_user, active=True)
+        InsuranceCallLog.objects.create(
+            patient_user=other_patient,
+            call_date=timezone.now(),
+            call_type="inquiry",
+            reason_for_call="Other user call",
+            outcome="pending",
+        )
+
+        url = reverse("patient-call-log-export")
+        response = self.client.get(url)
+
+        content = response.content.decode("utf-8")
+        self.assertIn("My call", content)
+        self.assertNotIn("Other user call", content)
+
+    def test_call_log_export_csv_format(self) -> None:
+        """Test that export is properly formatted CSV."""
+        import csv
+
+        self.client.login(username=self.user.username, password=self.password)
+
+        InsuranceCallLog.objects.create(
+            patient_user=self.patient,
+            call_date=timezone.now(),
+            call_type="claim_status",
+            representative_name="Test Rep",
+            outcome="positive",
+        )
+
+        url = reverse("patient-call-log-export")
+        response = self.client.get(url)
+
+        content = response.content.decode("utf-8")
+        reader = csv.DictReader(io.StringIO(content))
+
+        # Should be parseable CSV
+        rows = list(reader)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["Representative Name"], "Test Rep")
+        self.assertEqual(rows[0]["Outcome"], "positive")
+
+
+class EvidenceExportTests(TestCase):
+    """Tests for CSV export of patient evidence - Phase 6.3."""
+
+    def setUp(self) -> None:
+        self.client = Client()
+        self.password = "TestPass123!"
+        self.user = User.objects.create_user(
+            username="evidence_export_test",
+            password=self.password,
+            email="evidenceexport@example.com",
+            is_active=True,
+        )
+        self.patient = PatientUser.objects.create(user=self.user, active=True)
+
+    def test_evidence_export_requires_login(self) -> None:
+        """Test that CSV export requires authentication."""
+        url = reverse("patient-evidence-export")
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("login", response.url.lower())
+
+    def test_evidence_export_empty(self) -> None:
+        """Test exporting when no evidence exists."""
+        self.client.login(username=self.user.username, password=self.password)
+        url = reverse("patient-evidence-export")
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "text/csv")
+        self.assertIn("evidence_", response["Content-Disposition"])
+
+        # Should contain headers even if empty
+        content = response.content.decode("utf-8")
+        self.assertIn("Evidence Type", content)
+        self.assertIn("Title", content)
+        self.assertIn("Description", content)
+
+    def test_evidence_export_with_data(self) -> None:
+        """Test exporting evidence with data."""
+        self.client.login(username=self.user.username, password=self.password)
+
+        # Create evidence items
+        PatientEvidence.objects.create(
+            patient_user=self.patient,
+            evidence_type="eob",
+            title="December EOB",
+            description="Explanation of benefits",
+            source="Insurance portal",
+            text_content="EOB text content",
+        )
+
+        PatientEvidence.objects.create(
+            patient_user=self.patient,
+            evidence_type="document",
+            title="Medical Records",
+            description="Doctor visit notes",
+        )
+
+        url = reverse("patient-evidence-export")
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode("utf-8")
+
+        # Check data is present
+        self.assertIn("December EOB", content)
+        self.assertIn("Medical Records", content)
+        self.assertIn("Explanation of benefits", content)
+        self.assertIn("Doctor visit notes", content)
+        self.assertIn("Insurance portal", content)
+
+    def test_evidence_export_only_own_evidence(self) -> None:
+        """Test that export only includes user's own evidence."""
+        self.client.login(username=self.user.username, password=self.password)
+
+        # Create our evidence
+        PatientEvidence.objects.create(
+            patient_user=self.patient,
+            evidence_type="notes",
+            title="My Notes",
+        )
+
+        # Create another user's evidence
+        other_user = User.objects.create_user(
+            username="other_evidence_export",
+            password=self.password,
+            email="otherevidence@example.com",
+        )
+        other_patient = PatientUser.objects.create(user=other_user, active=True)
+        PatientEvidence.objects.create(
+            patient_user=other_patient,
+            evidence_type="notes",
+            title="Other User Notes",
+        )
+
+        url = reverse("patient-evidence-export")
+        response = self.client.get(url)
+
+        content = response.content.decode("utf-8")
+        self.assertIn("My Notes", content)
+        self.assertNotIn("Other User Notes", content)
+
+    def test_evidence_export_csv_format(self) -> None:
+        """Test that export is properly formatted CSV."""
+        import csv
+
+        self.client.login(username=self.user.username, password=self.password)
+
+        PatientEvidence.objects.create(
+            patient_user=self.patient,
+            evidence_type="screenshot",
+            title="Test Screenshot",
+            description="A test screenshot",
+        )
+
+        url = reverse("patient-evidence-export")
+        response = self.client.get(url)
+
+        content = response.content.decode("utf-8")
+        reader = csv.DictReader(io.StringIO(content))
+
+        # Should be parseable CSV
+        rows = list(reader)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["Title"], "Test Screenshot")
+        self.assertEqual(rows[0]["Description"], "A test screenshot")
+
+    def test_evidence_export_includes_uuid(self) -> None:
+        """Test that export includes UUID for record tracking."""
+        self.client.login(username=self.user.username, password=self.password)
+
+        evidence = PatientEvidence.objects.create(
+            patient_user=self.patient,
+            evidence_type="notes",
+            title="Test",
+        )
+
+        url = reverse("patient-evidence-export")
+        response = self.client.get(url)
+
+        content = response.content.decode("utf-8")
+        self.assertIn(str(evidence.uuid), content)
