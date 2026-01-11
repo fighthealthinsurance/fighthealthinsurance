@@ -324,3 +324,205 @@ Denial-Happy Insurance Company"""
         self.assert_text("Save Your Appeals", "body")
         self.assert_text("Create Free Account", "body")
         self.assert_element('a[href="/v0/auth/signup"]')
+
+    def test_anonymous_appeal_then_upgrade_to_account(self):
+        """
+        COMPREHENSIVE E2E: Anonymous user upgrades to account.
+
+        Flow:
+        1. Start on home page
+        2. Generate appeal as anonymous user
+        3. See account creation prompt
+        4. Click to create account (the "upgrade")
+        5. Verify anonymous appeal does NOT appear in dashboard (security)
+        6. Generate NEW appeal while logged in
+        7. Verify new appeal DOES appear in dashboard
+        """
+        anon_email = "upgrade_e2e@example.com"
+        anon_password = "UpgradePass123!"
+
+        # Step 1: Start on home page
+        self.open(f"{self.live_server_url}/")
+        self.assert_title_eventually(
+            "Fight Your Health Insurance Denial -- Use AI to Generate Your Health Insurance Appeal"
+        )
+
+        # Step 2: Click "Generate Appeal" from home page
+        self.click('a[id="scanlink"]')
+        self.assert_title_eventually("Upload your Health Insurance Denial")
+
+        # Step 3: Fill out denial form as anonymous user
+        self.type("input#store_fname", "Anonymous")
+        self.type("input#store_lname", "Upgrader")
+        self.type("input#email", anon_email)
+
+        anon_denial_text = """Dear Anonymous Upgrader;
+
+Your claim for X-Ray has been denied as not medically necessary.
+We believe this is experimental.
+
+Sincerely,
+Stingy Insurance Co"""
+
+        self.type("textarea#denial_text", anon_denial_text)
+        self.click("input#pii")
+        self.click("input#privacy")
+        self.click("input#tos")
+        self.click("button#submit")
+
+        # Step 4: Skip through appeal generation flow (anonymous)
+        self.assert_title_eventually("Optional: Health History")
+        self.click("button#next")
+        self.assert_title_eventually("Optional: Add Plan Documents")
+        self.click("button#next")
+        self.assert_title_eventually("Categorize Your Denial")
+
+        # Fill categorization
+        self.select_option_by_value("select#id_denial_type", "2")
+        self.type("input#id_procedure", "X-Ray")
+        self.type("input#id_diagnosis", "Broken Arm")
+        self.click("button#submit_cat")
+
+        self.assert_title_eventually("Additional Resources & Questions")
+        self.type("input#id_medical_reason", "Medical necessity for diagnosis")
+        self.click("input#submit")
+
+        # Step 5: Should reach appeal result page
+        self.assert_title_eventually(
+            "Fight Your Health Insurance Denial: Choose an Appeal"
+        )
+
+        # Verify anonymous denial was created
+        anon_denial = Denial.objects.get(
+            hashed_email=Denial.get_hashed_email(anon_email),
+            patient_user__isnull=True  # No patient_user = anonymous
+        )
+        self.assertEqual(anon_denial.procedure, "X-Ray")
+
+        # Give appeal time to generate
+        time.sleep(2)
+
+        # Verify anonymous appeal exists
+        anon_appeals = Appeal.objects.filter(
+            for_denial=anon_denial,
+            patient_user__isnull=True
+        )
+        self.assertGreater(anon_appeals.count(), 0, "Anonymous appeal should exist")
+
+        # Step 6: See the account creation prompt banner
+        self.assert_text("Save Your Appeals", "body")
+        self.assert_text("Create Free Account", "body")
+
+        # Step 7: Click "Create Free Account" button to upgrade
+        self.click('a[href="/v0/auth/signup"]')
+        self.assert_title_eventually("Create Account (Optional)")
+
+        # Step 8: Fill out signup form (THE UPGRADE)
+        self.type("input#email", anon_email)  # Same email as anonymous appeal
+        self.type("input#password", anon_password)
+        self.type("input#confirm_password", anon_password)
+        self.type("input#first_name", "Anonymous")
+        self.type("input#last_name", "Upgrader")
+
+        # Submit signup
+        self.click("button[type='submit']")
+
+        # Step 9: Should be redirected to dashboard
+        self.assert_title_eventually("My Dashboard")
+
+        # Verify user and patient were created
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        user = User.objects.get(email=anon_email)
+        patient = PatientUser.objects.get(user=user)
+        self.assertTrue(patient.active)
+
+        # Step 10: IMPORTANT - Verify anonymous appeal does NOT appear in dashboard
+        # (Security: we don't automatically migrate old anonymous appeals)
+        # The dashboard should be empty or show a message about no appeals
+
+        # Check that X-Ray appeal is NOT visible in dashboard
+        try:
+            # If we can't find "X-Ray" text, that's good - it means it's not showing
+            self.assert_text("X-Ray", "body")
+            self.fail("Anonymous appeal should NOT appear in dashboard after account creation")
+        except AssertionError:
+            # This is expected - the anonymous appeal should not be visible
+            pass
+
+        # Step 11: Generate a NEW appeal while logged in
+        self.click('a[href="/scan"]')
+        self.assert_title_eventually("Upload your Health Insurance Denial")
+
+        # Fill out new denial
+        self.type("input#store_fname", "Anonymous")
+        self.type("input#store_lname", "Upgrader")
+        if self.is_element_visible("input#email"):
+            self.type("input#email", anon_email)
+
+        new_denial_text = """Dear Anonymous Upgrader;
+
+Your claim for MRI Scan has been denied as not medically necessary.
+
+Sincerely,
+Stingy Insurance Co"""
+
+        self.type("textarea#denial_text", new_denial_text)
+        self.click("input#pii")
+        self.click("input#privacy")
+        self.click("input#tos")
+        self.click("button#submit")
+
+        # Skip through flow
+        self.assert_title_eventually("Optional: Health History")
+        self.click("button#next")
+        self.assert_title_eventually("Optional: Add Plan Documents")
+        self.click("button#next")
+        self.assert_title_eventually("Categorize Your Denial")
+
+        self.select_option_by_value("select#id_denial_type", "2")
+        self.type("input#id_procedure", "MRI Scan")
+        self.type("input#id_diagnosis", "Brain Injury")
+        self.click("button#submit_cat")
+
+        self.assert_title_eventually("Additional Resources & Questions")
+        self.type("input#id_medical_reason", "Necessary for brain injury diagnosis")
+        self.click("input#submit")
+
+        # Should reach appeal result
+        self.assert_title_eventually(
+            "Fight Your Health Insurance Denial: Choose an Appeal"
+        )
+
+        # Verify new logged-in denial was created
+        logged_in_denial = Denial.objects.get(
+            patient_user=patient,
+            procedure="MRI Scan"
+        )
+        self.assertEqual(logged_in_denial.diagnosis, "Brain Injury")
+
+        time.sleep(2)
+
+        # Verify logged-in appeal exists
+        logged_in_appeals = Appeal.objects.filter(
+            patient_user=patient,
+            patient_visible=True
+        )
+        self.assertGreater(logged_in_appeals.count(), 0, "Logged-in appeal should exist")
+
+        # Step 12: Navigate to dashboard
+        self.click('a[href="/my/dashboard"]')
+        self.assert_title_eventually("My Dashboard")
+
+        # Step 13: Verify NEW appeal (MRI Scan) DOES appear in dashboard
+        self.assert_text("MRI Scan", "body")
+        self.assert_text("Brain Injury", "body")
+
+        # Step 14: Verify OLD anonymous appeal (X-Ray) still does NOT appear
+        # (We should only see MRI Scan, not X-Ray)
+        page_content = self.get_page_source()
+        mri_count = page_content.count("MRI Scan")
+        xray_count = page_content.count("X-Ray")
+
+        self.assertGreater(mri_count, 0, "MRI Scan should appear in dashboard")
+        self.assertEqual(xray_count, 0, "X-Ray (anonymous appeal) should NOT appear in dashboard")
