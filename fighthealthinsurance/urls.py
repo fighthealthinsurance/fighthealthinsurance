@@ -59,8 +59,11 @@ def add_brand_patterns(
     branded_patterns = []
     for pattern in patterns:
         if isinstance(pattern, URLPattern) and pattern.name:
+            # Extract the route string from the pattern
+            # pattern.pattern is a RoutePattern object with a _route attribute
+            original_route = str(pattern.pattern)
             # Create new path with prefixed route and name
-            new_route = f"{prefix}{pattern.pattern}"
+            new_route = f"{prefix}{original_route}"
             new_name = f"{name_prefix}{pattern.name}"
             branded_patterns.append(
                 path(new_route, pattern.callback, name=new_name)
@@ -215,11 +218,7 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         sensitive_post_parameters("email")(views.OCRView.as_view()),
         name="server_side_ocr",
     ),
-    path(
-        "about-us",
-        cache_control(public=True)(cache_page(60 * 60 * 2)(views.AboutView.as_view())),
-        name="about",
-    ),
+    # FHI-specific routes (not branded)
     path(
         "how-to-help",
         cache_control(public=True)(
@@ -308,45 +307,9 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
     path("share_appeal", views.ShareAppealView.as_view(), name="share_appeal"),
     path("remove_data", views.RemoveDataView.as_view(), name="remove_data"),
     path(
-        "tos",
-        cache_control(public=True)(
-            cache_page(60 * 60 * 2)(views.TermsOfServiceView.as_view())
-        ),
-        name="tos",
-    ),
-    path(
-        "privacy_policy",
-        cache_control(public=True)(
-            cache_page(60 * 60 * 2)(views.PrivacyPolicyView.as_view())
-        ),
-        name="privacy_policy",
-    ),
-    path(
         "mhmda",
         cache_control(public=True)(cache_page(60 * 60 * 2)(views.MHMDAView.as_view())),
         name="mhmda",
-    ),
-    path(
-        "find_next_steps",
-        sensitive_post_parameters("email")(views.FindNextSteps.as_view()),
-        name="find_next_steps",
-    ),
-    path(
-        "generate_appeal",
-        sensitive_post_parameters("email")(views.GenerateAppeal.as_view()),
-        name="generate_appeal",
-    ),
-    path(
-        "choose_appeal",
-        sensitive_post_parameters("email")(views.ChooseAppeal.as_view()),
-        name="choose_appeal",
-    ),
-    path(
-        "contact",
-        cache_control(public=True)(
-            cache_page(60 * 60 * 2)(views.ContactView.as_view())
-        ),
-        name="contact",
     ),
     path(
         "sitemap.xml",
@@ -364,29 +327,9 @@ if os.getenv("BRB") == "BRB":
     urlpatterns += [
         path(r"", views.BRB.as_view(), name="root"),
     ]
-else:
-    urlpatterns += [
-        path(
-            "",
-            cache_control(public=True)(
-                cache_page(60 * 60 * 2)(views.IndexView.as_view())
-            ),
-            name="root",
-        )
-    ]
 
-# For people in flow
+# Non-branded utility routes
 urlpatterns += [
-    path(
-        "scan",
-        sensitive_post_parameters("email")(views.InitialProcessView.as_view()),
-        name="scan",
-    ),
-    path(
-        "chat",
-        sensitive_post_parameters()(views.chat_interface_view),
-        name="chat",
-    ),
     path(
         "chat/",
         sensitive_post_parameters()(views.chat_interface_view),
@@ -418,12 +361,6 @@ urlpatterns += [
             cache_page(60 * 60 * 24)(views.MicrositeDirectoryView.as_view())
         ),
         name="microsite_directory",
-    ),
-    # Explain my Denial page
-    path(
-        "explain-denial",
-        views.ExplainDenialView.as_view(),
-        name="explain_denial",
     ),
 ]
 
@@ -497,6 +434,14 @@ brandable_patterns = [
         name="tos",
     ),
 ]
+
+# Add brandable patterns to main site (FHI) - unless BRB mode overrides root
+if os.getenv("BRB") != "BRB":
+    # Add all brandable patterns including root
+    urlpatterns += brandable_patterns
+else:
+    # BRB mode is active - add all brandable patterns EXCEPT root (which is handled above)
+    urlpatterns += [p for p in brandable_patterns if p.name != "root"]
 
 # AppealMyClaims path-based brand access
 # Create AMC-branded URLs with /appealmyclaims/ prefix
