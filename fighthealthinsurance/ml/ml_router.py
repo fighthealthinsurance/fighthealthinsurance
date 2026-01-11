@@ -1,4 +1,5 @@
 import asyncio
+import os
 from typing import List, Optional
 
 from loguru import logger
@@ -69,9 +70,62 @@ class MLRouter(object):
             for x in sorted(building_external_models_by_cost)
             if x.model is not None
         ]
+        logger.info(
+            f"MLRouter initialized with {len(self.all_models_by_cost)} total models, "
+            f"{len(self.internal_models_by_cost)} internal, {len(self.external_models_by_cost)} external"
+        )
+        logger.info(f"All loaded models: {[str(m) for m in self.all_models_by_cost]}")
         logger.debug(
             f"Built {self} with i:{self.internal_models_by_cost} a:{self.all_models_by_cost}"
         )
+
+    def _get_forced_models(
+        self, task_description: str = ""
+    ) -> Optional[list[RemoteModelLike]]:
+        """Check for FORCE_MODEL environment variable and return forced models if set.
+
+        Args:
+            task_description: Optional description for logging (e.g., "for text generation")
+
+        Returns:
+            List of forced models if FORCE_MODEL is set and models are found, None otherwise
+        """
+        forced_model = os.getenv("FORCE_MODEL")
+        if not forced_model:
+            return None
+
+        logger.info(f"FORCE_MODEL is set to: {forced_model} {task_description}")
+        logger.info(
+            f"Available models to choose from: {[type(m).__name__ for m in self.all_models_by_cost]}"
+        )
+
+        if forced_model == "groq":
+            # Find all groq models by checking the class type
+            groq_models = [
+                m for m in self.all_models_by_cost if type(m).__name__ == "RemoteGroq"
+            ]
+            if groq_models:
+                logger.info(
+                    f"✓ Forcing {len(groq_models)} groq models {task_description}: {[getattr(m, 'model', type(m).__name__) for m in groq_models]}"
+                )
+                return groq_models
+            else:
+                logger.warning(
+                    f"No groq models found! Available model types: {[type(m).__name__ for m in self.all_models_by_cost]}"
+                )
+        elif forced_model in self.models_by_name:
+            # Force a specific model by name
+            forced_models = self.models_by_name[forced_model]
+            if forced_models:
+                logger.info(
+                    f"✓ Forcing model {forced_model} {task_description}: {[getattr(m, 'model', type(m).__name__) for m in forced_models]}"
+                )
+                return forced_models
+
+        logger.warning(
+            f"Forced model {forced_model} not found, falling back to default"
+        )
+        return None
 
     def entity_extract_backends(self, use_external) -> list[RemoteModelLike]:
         """Backends for entity extraction."""
@@ -82,6 +136,11 @@ class MLRouter(object):
 
     def generate_text_backends(self) -> list[RemoteModelLike]:
         """Return models for text generation tasks like prior authorization and ongoing chat."""
+        # Check for forced model override
+        forced_models = self._get_forced_models("for text generation")
+        if forced_models:
+            return forced_models
+
         # First try to find specific text generation models
         if "meta-llama/Llama-4-Scout-17B-16E-Instruct" in self.models_by_name:
             return self.cheapest("meta-llama/Llama-4-Scout-17B-16E-Instruct")
@@ -176,6 +235,11 @@ class MLRouter(object):
         Returns:
             List of RemoteModelLike models suitable for chat tasks
         """
+        # Check for forced model override
+        forced_models = self._get_forced_models()
+        if forced_models:
+            return forced_models
+
         models = []
         # Try each fhi model twice
         fhi_models = [
@@ -183,9 +247,21 @@ class MLRouter(object):
         ]
         if fhi_models:
             models += self.models_by_name[fhi_models[0]] * 2
+            logger.debug(
+                f"get_chat_backends: Added FHI model {fhi_models[0]} (tried twice)"
+            )
         if use_external:
-            models += self.external_models_by_cost[:2]
-        models += self.internal_models_by_cost[:6]
+            external_to_add = self.external_models_by_cost[:2]
+            models += external_to_add
+            logger.debug(
+                f"get_chat_backends: Added external models {external_to_add} (use_external=True)"
+            )
+        internal_to_add = self.internal_models_by_cost[:6]
+        models += internal_to_add
+        logger.debug(f"get_chat_backends: Added internal models {internal_to_add}")
+        logger.debug(
+            f"get_chat_backends: Final model list ({len(models)} models): {[str(m) for m in models]}"
+        )
         return models
 
     def get_chat_backends_with_fallback(

@@ -34,9 +34,9 @@ class TestRemoteGroqInit(unittest.TestCase):
     @patch.dict(os.environ, {"GROQ_API_KEY": "test-key"})
     def test_init_with_valid_api_key(self):
         """Test RemoteGroq initializes with valid API key."""
-        model = RemoteGroq(model="meta-llama/llama-3.3-70b-versatile")
+        model = RemoteGroq(model="llama-3.3-70b-versatile")
 
-        self.assertEqual(model.model, "meta-llama/llama-3.3-70b-versatile")
+        self.assertEqual(model.model, "llama-3.3-70b-versatile")
         self.assertTrue(model.supports_system)
         self.assertTrue(model.external)
 
@@ -48,16 +48,16 @@ class TestRemoteGroqInit(unittest.TestCase):
             del os.environ["GROQ_API_KEY"]
 
         with self.assertRaises(EnvironmentError) as context:
-            RemoteGroq(model="meta-llama/llama-3.3-70b-versatile")
+            RemoteGroq(model="llama-3.3-70b-versatile")
 
         self.assertIn("GROQ_API_KEY", str(context.exception))
 
     @patch.dict(os.environ, {"GROQ_API_KEY": "test-key"})
     def test_init_creates_rate_limiter(self):
         """Test RemoteGroq creates a rate limiter for the model."""
-        model = RemoteGroq(model="meta-llama/llama-3.3-70b-versatile")
+        model = RemoteGroq(model="llama-3.3-70b-versatile")
 
-        self.assertIn("meta-llama/llama-3.3-70b-versatile", RemoteGroq._rate_limiters)
+        self.assertIn("llama-3.3-70b-versatile", RemoteGroq._rate_limiters)
         self.assertIsInstance(model.rate_limiter, RateLimiter)
 
     @patch.dict(os.environ, {"GROQ_API_KEY": "test-key"})
@@ -72,11 +72,11 @@ class TestRemoteGroqModels(unittest.TestCase):
     """Tests for RemoteGroq.models() class method."""
 
     @patch.dict(os.environ, {"GROQ_API_KEY": "test-key"})
-    def test_models_returns_four_models(self):
-        """Test models() returns all four Groq models."""
+    def test_models_returns_two_models(self):
+        """Test models() returns two Groq models."""
         models = RemoteGroq.models()
 
-        self.assertEqual(len(models), 4)
+        self.assertEqual(len(models), 2)
 
     @patch.dict(os.environ, {"GROQ_API_KEY": "test-key"})
     def test_models_have_correct_names(self):
@@ -84,8 +84,6 @@ class TestRemoteGroqModels(unittest.TestCase):
         models = RemoteGroq.models()
         model_names = [m.name for m in models]
 
-        self.assertIn("groq/llama-4-maverick-17b-128e-instruct", model_names)
-        self.assertIn("groq/llama-4-scout-17b-16e-instruct", model_names)
         self.assertIn("groq/llama-3.3-70b-versatile", model_names)
         self.assertIn("groq/llama-3.1-8b-instant", model_names)
 
@@ -95,11 +93,7 @@ class TestRemoteGroqModels(unittest.TestCase):
         models = RemoteGroq.models()
         models_by_name = {m.name: m for m in models}
 
-        # Quality tier models should have cost=4
-        self.assertEqual(
-            models_by_name["groq/llama-4-maverick-17b-128e-instruct"].cost, 4
-        )
-        self.assertEqual(models_by_name["groq/llama-4-scout-17b-16e-instruct"].cost, 4)
+        # Quality tier model should have cost=4
         self.assertEqual(models_by_name["groq/llama-3.3-70b-versatile"].cost, 4)
 
         # Speed tier model should have cost=6
@@ -139,9 +133,7 @@ class TestRemoteGroqTiers(unittest.TestCase):
     def test_quality_tier_models(self):
         """Test quality tier models are correctly identified."""
         quality_models = [
-            "meta-llama/llama-4-maverick-17b-128e-instruct",
-            "meta-llama/llama-4-scout-17b-16e-instruct",
-            "meta-llama/llama-3.3-70b-versatile",
+            "llama-3.3-70b-versatile",
         ]
 
         for model_name in quality_models:
@@ -153,7 +145,7 @@ class TestRemoteGroqTiers(unittest.TestCase):
     @patch.dict(os.environ, {"GROQ_API_KEY": "test-key"})
     def test_speed_tier_model(self):
         """Test speed tier model is correctly identified."""
-        model = RemoteGroq(model="meta-llama/llama-3.1-8b-instant")
+        model = RemoteGroq(model="llama-3.1-8b-instant")
 
         self.assertEqual(model.get_tier(), "speed")
 
@@ -172,14 +164,7 @@ class TestRemoteGroqModelSelection(unittest.TestCase):
 
         # Should select from quality tier
         self.assertIsNotNone(selected)
-        self.assertIn(
-            selected,
-            [
-                "meta-llama/llama-4-maverick-17b-128e-instruct",
-                "meta-llama/llama-4-scout-17b-16e-instruct",
-                "meta-llama/llama-3.3-70b-versatile",
-            ],
-        )
+        self.assertEqual(selected, "llama-3.3-70b-versatile")
 
     @patch.dict(os.environ, {"GROQ_API_KEY": "test-key"})
     def test_select_returns_none_when_all_rate_limited(self):
@@ -205,25 +190,18 @@ class TestRemoteGroqLoadBalancing(unittest.TestCase):
         RemoteGroq._rate_limiters.clear()
 
     @patch.dict(os.environ, {"GROQ_API_KEY": "test-key"})
-    def test_load_balancing_randomizes_quality_tier(self):
-        """Test that selection randomizes across quality tier models."""
+    def test_load_balancing_selects_quality_tier(self):
+        """Test that selection uses quality tier model."""
         selected_models = set()
 
         # Make many selections and track which models are selected
-        for _ in range(100):
+        for _ in range(10):
             selected = RemoteGroq.select_available_model()
             if selected:
                 selected_models.add(selected)
 
-        # Should have selected multiple different quality tier models
-        quality_models = {
-            "meta-llama/llama-4-maverick-17b-128e-instruct",
-            "meta-llama/llama-4-scout-17b-16e-instruct",
-            "meta-llama/llama-3.3-70b-versatile",
-        }
-
-        # At least 2 different models should have been selected
-        self.assertGreaterEqual(len(selected_models & quality_models), 2)
+        # Should have selected the quality tier model
+        self.assertEqual(selected_models, {"llama-3.3-70b-versatile"})
 
 
 class TestRemoteGroqFallback(unittest.TestCase):
@@ -240,19 +218,13 @@ class TestRemoteGroqFallback(unittest.TestCase):
         for model_name in RemoteGroq.MODEL_SPECS.keys():
             RemoteGroq._ensure_rate_limiter(model_name)
 
-        # Exhaust all quality tier models
-        quality_models = [
-            "meta-llama/llama-4-maverick-17b-128e-instruct",
-            "meta-llama/llama-4-scout-17b-16e-instruct",
-            "meta-llama/llama-3.3-70b-versatile",
-        ]
-        for model_name in quality_models:
-            RemoteGroq._rate_limiters[model_name].mark_exhausted(60.0)
+        # Exhaust the quality tier model
+        RemoteGroq._rate_limiters["llama-3.3-70b-versatile"].mark_exhausted(60.0)
 
         selected = RemoteGroq.select_available_model()
 
         # Should fall back to Instant
-        self.assertEqual(selected, "meta-llama/llama-3.1-8b-instant")
+        self.assertEqual(selected, "llama-3.1-8b-instant")
 
 
 class TestRemoteGroqInfer(unittest.TestCase):
@@ -265,7 +237,7 @@ class TestRemoteGroqInfer(unittest.TestCase):
     @patch.dict(os.environ, {"GROQ_API_KEY": "test-key"})
     async def async_test_infer_checks_rate_limit(self):
         """Test that _infer checks rate limit before calling API."""
-        model = RemoteGroq(model="meta-llama/llama-3.3-70b-versatile")
+        model = RemoteGroq(model="llama-3.3-70b-versatile")
 
         # Exhaust the rate limiter
         model.rate_limiter.mark_exhausted(60.0)
@@ -284,7 +256,7 @@ class TestRemoteGroqInfer(unittest.TestCase):
     @patch.dict(os.environ, {"GROQ_API_KEY": "test-key"})
     async def async_test_infer_handles_429(self):
         """Test that _infer handles 429 response and marks exhausted."""
-        model = RemoteGroq(model="meta-llama/llama-3.3-70b-versatile")
+        model = RemoteGroq(model="llama-3.3-70b-versatile")
 
         # Create a mock 429 error
         error = aiohttp.ClientResponseError(
@@ -317,7 +289,7 @@ class TestRemoteGroqInfer(unittest.TestCase):
     @patch.dict(os.environ, {"GROQ_API_KEY": "test-key"})
     async def async_test_infer_handles_429_with_non_numeric_retry_after(self):
         """Test that _infer handles 429 with non-numeric Retry-After (uses default)."""
-        model = RemoteGroq(model="meta-llama/llama-3.3-70b-versatile")
+        model = RemoteGroq(model="llama-3.3-70b-versatile")
 
         # Create a mock 429 error with non-numeric Retry-After (e.g., HTTP-date format)
         # Since we no longer parse HTTP-date, this should fall back to default 60s
@@ -354,7 +326,7 @@ class TestRemoteGroqInfer(unittest.TestCase):
     @patch.dict(os.environ, {"GROQ_API_KEY": "test-key"})
     async def async_test_infer_handles_429_with_invalid_retry_after(self):
         """Test that _infer handles 429 response with invalid Retry-After."""
-        model = RemoteGroq(model="meta-llama/llama-3.3-70b-versatile")
+        model = RemoteGroq(model="llama-3.3-70b-versatile")
 
         # Create a mock 429 error with invalid Retry-After
         error = aiohttp.ClientResponseError(
@@ -398,14 +370,14 @@ class TestRemoteGroqModelIsOk(unittest.TestCase):
     @patch.dict(os.environ, {"GROQ_API_KEY": "test-key"})
     def test_model_is_ok_when_available(self):
         """Test model_is_ok returns True when not rate limited."""
-        model = RemoteGroq(model="meta-llama/llama-3.3-70b-versatile")
+        model = RemoteGroq(model="llama-3.3-70b-versatile")
 
         self.assertTrue(model.model_is_ok())
 
     @patch.dict(os.environ, {"GROQ_API_KEY": "test-key"})
     def test_model_is_ok_false_when_rate_limited(self):
         """Test model_is_ok returns False when rate limited."""
-        model = RemoteGroq(model="meta-llama/llama-3.3-70b-versatile")
+        model = RemoteGroq(model="llama-3.3-70b-versatile")
 
         model.rate_limiter.mark_exhausted(60.0)
 
@@ -416,7 +388,7 @@ class TestRemoteGroqModelIsOk(unittest.TestCase):
         """Test model_is_ok returns False without API key."""
         # Need to create model with key, then remove key
         os.environ["GROQ_API_KEY"] = "test-key"
-        model = RemoteGroq(model="meta-llama/llama-3.3-70b-versatile")
+        model = RemoteGroq(model="llama-3.3-70b-versatile")
 
         # Remove key
         del os.environ["GROQ_API_KEY"]

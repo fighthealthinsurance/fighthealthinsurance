@@ -1579,22 +1579,46 @@ class RemoteOpenLike(RemoteModel):
                         }
                     ]
                 messages = ensure_message_alternation(messages)
+
+                # Strip unsupported fields like 'timestamp' from messages
+                # Some APIs (e.g., Groq) don't support extra fields
+                cleaned_messages = []
+                for msg in messages:
+                    cleaned_msg = {"role": msg["role"], "content": msg["content"]}
+                    # Preserve any tool_calls if present (for function calling)
+                    if "tool_calls" in msg:
+                        cleaned_msg["tool_calls"] = msg["tool_calls"]
+                    if "name" in msg:
+                        cleaned_msg["name"] = msg["name"]
+                    cleaned_messages.append(cleaned_msg)
+
                 logger.debug(
-                    f"Using messages: {messages} from prompt {prompt} for {model}"
+                    f"Using messages: {cleaned_messages} from prompt {prompt} for {model}"
                 )
                 async with s.post(
                     url,
                     headers={"Authorization": f"Bearer {self.token}"},
                     json={
                         "model": model,
-                        "messages": messages,
+                        "messages": cleaned_messages,
                         "temperature": temperature,
                     },
                 ) as response:
                     logger.debug(f"Got response {response}...")
                     # Raise ClientResponseError for HTTP error status codes (4xx, 5xx)
                     # This allows subclasses to catch and handle specific errors like 429
-                    response.raise_for_status()
+                    try:
+                        response.raise_for_status()
+                    except aiohttp.ClientResponseError as e:
+                        # Log the response body for debugging 400 errors
+                        try:
+                            error_body = await response.text()
+                            logger.error(
+                                f"HTTP {e.status} error from {api_base} for model {model}: {error_body}"
+                            )
+                        except:
+                            pass
+                        raise
                     json_result = await response.json()
                     if "object" in json_result and json_result["object"] != "error":
                         logger.debug(f"Response {json_result} on {self} Looks ok")
@@ -2323,19 +2347,11 @@ class RemoteGroq(RemoteFullOpenLike):
 
     # Model specifications - all models support 128K input context
     MODEL_SPECS: ClassVar[dict[str, dict[str, str]]] = {
-        "meta-llama/llama-4-maverick-17b-128e-instruct": {
-            "tier": "quality",
-            "description": "Llama 4 Maverick",
-        },
-        "meta-llama/llama-4-scout-17b-16e-instruct": {
-            "tier": "quality",
-            "description": "Llama 4 Scout - 16 expert variant",
-        },
-        "meta-llama/llama-3.3-70b-versatile": {
+        "llama-3.3-70b-versatile": {
             "tier": "quality",
             "description": "Llama 3.3 70B - high quality, versatile",
         },
-        "meta-llama/llama-3.1-8b-instant": {
+        "llama-3.1-8b-instant": {
             "tier": "speed",
             "description": "Llama 3.1 8B - fastest response, fallback tier",
         },
@@ -2555,24 +2571,14 @@ class RemoteGroq(RemoteFullOpenLike):
             # Quality tier - cost=4 (between AlphaRemoteInternal=3 and DeepInfra>=8)
             ModelDescription(
                 cost=4,
-                name="groq/llama-4-maverick-17b-128e-instruct",
-                internal_name="meta-llama/llama-4-maverick-17b-128e-instruct",
-            ),
-            ModelDescription(
-                cost=4,
-                name="groq/llama-4-scout-17b-16e-instruct",
-                internal_name="meta-llama/llama-4-scout-17b-16e-instruct",
-            ),
-            ModelDescription(
-                cost=4,
                 name="groq/llama-3.3-70b-versatile",
-                internal_name="meta-llama/llama-3.3-70b-versatile",
+                internal_name="llama-3.3-70b-versatile",
             ),
             # Speed tier - higher cost, only used when quality tier exhausted
             ModelDescription(
                 cost=6,
                 name="groq/llama-3.1-8b-instant",
-                internal_name="meta-llama/llama-3.1-8b-instant",
+                internal_name="llama-3.1-8b-instant",
             ),
         ]
 
