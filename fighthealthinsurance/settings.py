@@ -387,9 +387,12 @@ class Base(Configuration):
 
     @cached_property
     def EXTERNAL_STORAGE_B(self) -> Optional[Storage]:
-        from django.core.files.storage import FileSystemStorage
+        try:
+            from django.core.files.storage import FileSystemStorage
 
-        return FileSystemStorage(location=self.EXTERNAL_STORAGE_LOCATION_B)
+            return FileSystemStorage(location=self.EXTERNAL_STORAGE_LOCATION_B)
+        except Exception as e:
+            return None
 
     @cached_property
     def EXTERNAL_STORAGE_C(self) -> Optional[Storage]:
@@ -717,15 +720,20 @@ class Prod(Base):
     MINIO_STORAGE_ACCESS_KEY = os.getenv("EX_MINIO_ACCESS", None)
     MINIO_STORAGE_SECRET_KEY = os.getenv("EX_MINIO_SECRET", None)
     MINIO_STORAGE_REGION = os.getenv("EX_MINIO_REGION", None)
-    MINIO_STORAGE_ENDPOINT = os.getenv("EX_MINIO_HOST_ENDPOINT", None)
+    MINIO_STORAGE_ENDPOINT = os.getenv(
+        "EX_MINIO_HOST_ENDPOINT", os.getenv("EX_MINIO_HOST", None)
+    )
     MINIO_CERT_CHECK = os.getenv("EX_MINIO_CERT_CHECK", "True") == "True"
     MINIO_STORAGE_USE_HTTPS = os.getenv("EX_MINIO_USE_HTTPS", "True") == "True"
     MINIO_STORAGE_MEDIA_BUCKET_NAME = os.getenv("EX_MINIO_BUCKET")
 
     @cached_property
     def EXTERNAL_STORAGE_B(self):
+        print(
+            f"Creating connection to {self.MINIO_STORAGE_ENDPOINT} region {self.MINIO_STORAGE_REGION}"
+        )
         try:
-            with Timeout(30.0) as _timeout_ctx:
+            with Timeout(20.0) as _timeout_ctx:
                 if (
                     self.MINIO_STORAGE_ENDPOINT is not None
                     and self.MINIO_STORAGE_ACCESS_KEY is not None
@@ -737,20 +745,27 @@ class Prod(Base):
                         access_key=self.MINIO_STORAGE_ACCESS_KEY,
                         secret_key=self.MINIO_STORAGE_SECRET_KEY,
                         region=self.MINIO_STORAGE_REGION,
-                        secure=self.MINIO_STORAGE_USE_HTTPS,
+                        secure=True,
                     )
+                    bucket = self.MINIO_STORAGE_MEDIA_BUCKET_NAME
+                    print(
+                        f"Created client for minio at {self.MINIO_STORAGE_ENDPOINT} connecting to bucket {bucket}"
+                    )
+                    check = minio_client.list_objects(bucket)
+                    next(check, None)
+                    print(f"Check passed, making MinioStorage object.")
                     minio = MinioStorage(
                         minio_client,
-                        bucket_name=self.MINIO_STORAGE_MEDIA_BUCKET_NAME,
-                        auto_create_bucket=True,
+                        bucket_name=bucket,
+                        auto_create_bucket=False,  # B2 issues
                     )
+                    print(f"Connected to minio at {self.MINIO_STORAGE_ENDPOINT}")
+
                     return minio
                 else:
                     raise Exception("No storage endpoint configured")
         except Exception as e:
-            print(
-                f"Failed to setup minio storage to {self.MINIO_STORAGE_ENDPOINT} -- {e}"
-            )
+            print(f"Failed to setup minio storage to {self.MINIO_STORAGE_ENDPOINT}")
             print(traceback.format_exc())
             return None
 

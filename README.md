@@ -10,7 +10,7 @@ The [ML model is generated using this repo](https://github.com/fighthealthinsura
 
 ### Prerequisites
 
-- Python 3.13
+- Python 3.12 (3.13 is partially supported)
 - System dependencies: `tesseract-ocr`, `texlive`
 
 On Ubuntu/Debian:

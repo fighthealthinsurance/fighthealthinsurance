@@ -592,8 +592,19 @@ a.link:hover::after {
 
 .generic-main-content {
     width: 80%;
-    margin-top: 2.5rem !important;
-    margin-top: 15vh;
+    max-width: 1200px;
+    margin-left: auto;
+    margin-right: auto;
+    margin-top: 2rem;
+    padding: 0 15px;
+}
+
+/* Mobile: use more of the screen width */
+@media (max-width: 768px) {
+    .generic-main-content {
+        width: 95%;
+        padding: 0 10px;
+    }
 }
 
 .post-infered-table {
