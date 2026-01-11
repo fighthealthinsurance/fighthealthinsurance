@@ -5,7 +5,7 @@ from django.views import generic, View
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth import get_user_model
 from .auth_utils import combine_domain_and_username, resolve_domain_id
-from .auth_forms import LoginForm
+from .auth_forms import LoginForm, PatientSignupForm
 from django.utils.http import urlsafe_base64_decode
 from django.utils.encoding import force_str
 from django.contrib.auth.tokens import default_token_generator
@@ -77,3 +77,37 @@ class VerifyEmailView(View):
             return HttpResponseRedirect(reverse_lazy("login"))
         else:
             return HttpResponse("Activation link is invalid!")
+
+
+class PatientSignupView(generic.FormView):
+    """Simple signup view for patient users."""
+
+    template_name = "signup.html"
+    form_class = PatientSignupForm
+
+    def form_valid(self, form):
+        from fhi_users.models import PatientUser
+
+        email = form.cleaned_data["email"]
+        password = form.cleaned_data["password"]
+        first_name = form.cleaned_data.get("first_name", "")
+        last_name = form.cleaned_data.get("last_name", "")
+
+        # Create user with email as username
+        user = User.objects.create_user(
+            username=email,
+            email=email,
+            password=password,
+            first_name=first_name,
+            last_name=last_name,
+            is_active=True,
+        )
+
+        # Create associated PatientUser
+        PatientUser.objects.create(user=user, active=True)
+
+        # Log the user in
+        login(self.request, user)
+
+        # Redirect to dashboard
+        return HttpResponseRedirect(reverse("patient-dashboard"))

@@ -1,0 +1,89 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}
+Create Account (Optional)
+{% endblock title %}
+
+{% block content %}
+<div class="container">
+  <div class="card card-login mx-auto mt-5">
+    <div class="card-header">
+      Create Free Account <span class="text-muted" style="font-size: 0.9em;">(Optional)</span>
+    </div>
+    <div class="card-body">
+      <div class="alert alert-info">
+        <strong>Note:</strong> You can use Fight Health Insurance without an account!
+        Creating an account is <strong>optional</strong> and lets you:
+        <ul class="mb-0 mt-2">
+          <li>Track your appeals in one place</li>
+          <li>Log phone calls with insurance companies</li>
+          <li>Upload and manage evidence documents</li>
+          <li>Access your data from any device</li>
+        </ul>
+      </div>
+
+      {% if form.errors %}
+      <div class="alert alert-danger">
+        {% for field, errors in form.errors.items %}
+          {% for error in errors %}
+            <div>{{ error }}</div>
+          {% endfor %}
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      <form action="{% url 'signup' %}" method="post" id="signupForm">
+        {% csrf_token %}
+
+        <div class="form-group">
+          <label for="email">Email Address *</label>
+          <input type="email" id="email" name="email" class="form-control"
+                 placeholder="your.email@example.com" required="required"
+                 value="{{ form.email.value|default:'' }}">
+          <small class="form-text text-muted">{{ form.email.help_text }}</small>
+        </div>
+
+        <div class="form-group">
+          <label for="password">Password *</label>
+          <input type="password" id="password" name="password" class="form-control"
+                 placeholder="Choose a strong password" required="required">
+          <small class="form-text text-muted">{{ form.password.help_text }}</small>
+        </div>
+
+        <div class="form-group">
+          <label for="confirm_password">Confirm Password *</label>
+          <input type="password" id="confirm_password" name="confirm_password"
+                 class="form-control" placeholder="Re-enter your password" required="required">
+          <small class="form-text text-muted">{{ form.confirm_password.help_text }}</small>
+        </div>
+
+        <div class="form-group">
+          <label for="first_name">First Name</label>
+          <input type="text" id="first_name" name="first_name" class="form-control"
+                 placeholder="Optional" value="{{ form.first_name.value|default:'' }}">
+          <small class="form-text text-muted">{{ form.first_name.help_text }}</small>
+        </div>
+
+        <div class="form-group">
+          <label for="last_name">Last Name</label>
+          <input type="text" id="last_name" name="last_name" class="form-control"
+                 placeholder="Optional" value="{{ form.last_name.value|default:'' }}">
+          <small class="form-text text-muted">{{ form.last_name.help_text }}</small>
+        </div>
+
+        <button class="btn btn-success btn-block" type="submit">Create Account</button>
+
+        <div class="text-center mt-3">
+          <p class="mb-0">
+            Already have an account?
+            <a href="/v0/auth/login">Log in</a>
+          </p>
+          <p class="mt-2 mb-0">
+            <a href="{% url 'scan' %}" class="text-muted">Skip and generate an appeal without an account</a>
+          </p>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock content %}
