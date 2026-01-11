@@ -145,7 +145,7 @@
                     <li class="nav-item"><a href="/v0/auth/logout" class="nav-link">Sign Out</a></li>
                     {% else %}
                     <li class="nav-item"><a href="/v0/auth/login" class="nav-link" title="Optional: Track your appeals and documents">Sign In <span class="text-muted" style="font-size: 0.85em;">(Optional)</span></a></li>
-                    {% comment %}TODO: Add signup URL when view is created{% endcomment %}
+                    <li class="nav-item"><a href="/v0/auth/signup" class="nav-link" title="Optional: Create an account to track appeals">Sign Up <span class="text-muted" style="font-size: 0.85em;">(Optional)</span></a></li>
                     {% endif %}
                     <li class="nav-item"><a href="{% url 'chat' %}" class="nav-link">Chat</a></li>
                     <li class="nav-item"><a href="{% url 'explain_denial' %}" class="nav-link">Explain Denial</a></li>
