@@ -65,9 +65,7 @@ def add_brand_patterns(
             # Create new path with prefixed route and name
             new_route = f"{prefix}{original_route}"
             new_name = f"{name_prefix}{pattern.name}"
-            branded_patterns.append(
-                path(new_route, pattern.callback, name=new_name)
-            )
+            branded_patterns.append(path(new_route, pattern.callback, name=new_name))
     return branded_patterns
 
 
