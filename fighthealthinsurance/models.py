@@ -7,6 +7,7 @@ import typing
 import uuid
 
 from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.db import models
 from django.db.models import Q
 from django.db.models.functions import Now
@@ -204,6 +205,106 @@ class FollowUpSched(models.Model):
 
     def __str__(self):
         return f"{self.email} on {self.follow_up_date}"
+
+
+class DataDeletionRequest(models.Model):
+    """
+    Tracks pending data deletion requests requiring email confirmation.
+
+    Implements a two-step deletion process with email verification to prevent
+    unauthorized data deletion by bad actors. Tokens expire after 24 hours.
+
+    Attributes:
+        id: Auto-incrementing primary key
+        email: Email address requesting deletion
+        hashed_email: Hashed version for denial lookup
+        token: Unique confirmation token (sent via email)
+        created_at: Timestamp when request was created
+        confirmed: Whether the deletion was confirmed via email
+        confirmed_at: Timestamp when confirmation occurred
+        ip_address: IP address of requester (for audit trail)
+
+    """
+
+    id = models.AutoField(primary_key=True)
+    email = models.CharField(max_length=300)
+    hashed_email = models.CharField(max_length=300)
+    token = models.CharField(max_length=100, unique=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    confirmed = models.BooleanField(default=False)
+    confirmed_at = models.DateTimeField(null=True)
+    ip_address = models.GenericIPAddressField(null=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["token"]),
+            models.Index(fields=["hashed_email"]),
+            models.Index(fields=["created_at"]),
+        ]
+
+    def __str__(self):
+        status = "confirmed" if self.confirmed else "pending"
+        return f"Deletion request for {self.email} ({status})"
+
+    def is_expired(self):
+        """
+        Check if the confirmation token has expired.
+
+        Returns:
+            bool: True if more than 24 hours have passed since creation
+
+        """
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        return timezone.now() > self.created_at + timedelta(hours=24)
+
+
+class CalendarReminder(models.Model):
+    """
+    Schedules calendar reminder emails at 2/30/90 day intervals after appeal submission.
+
+    Sends reminder emails to users (both logged-in and anonymous) at strategic intervals
+    to check on their insurance appeal status. Works in conjunction with .ics file generation
+    for calendar integration.
+
+    Attributes:
+        id: Auto-incrementing primary key
+        email: Email address to send reminder to
+        denial: Associated denial (for cascade deletion)
+        reminder_date: Date when reminder should be sent
+        reminder_type: Type of reminder (2day, 30day, or 90day)
+        reminder_sent: Whether the reminder has been sent
+        reminder_sent_date: Timestamp when reminder was sent
+        created_at: When this reminder was created
+
+    """
+
+    REMINDER_TYPE_CHOICES = [
+        ("2day", "2 Day Follow-up"),
+        ("30day", "30 Day Follow-up"),
+        ("90day", "90 Day Follow-up"),
+    ]
+
+    id = models.AutoField(primary_key=True)
+    email = models.CharField(max_length=300)
+    denial = models.ForeignKey("Denial", on_delete=models.CASCADE)
+    reminder_date = models.DateField()
+    reminder_type = models.CharField(max_length=10, choices=REMINDER_TYPE_CHOICES)
+    reminder_sent = models.BooleanField(default=False)
+    reminder_sent_date = models.DateTimeField(null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["email", "reminder_date"]),
+            models.Index(fields=["denial"]),
+            models.Index(fields=["reminder_sent", "reminder_date"]),
+        ]
+
+    def __str__(self):
+        return f"{self.get_reminder_type_display()} for {self.email} on {self.reminder_date}"
 
 
 class PlanType(models.Model):
@@ -989,6 +1090,30 @@ class Appeal(ExportModelOperationsMixin("Appeal"), models.Model):  # type: ignor
     notes = models.TextField(max_length=3000000000, null=True, blank=True)
     # Track whether an appeal was successful (not just if it got a response)
     success = models.BooleanField(default=False, null=True)
+
+    # Progress tracking fields (Phase 3.2)
+    appeal_status = models.CharField(
+        max_length=50,
+        choices=[
+            ("draft", "Draft"),
+            ("sent", "Sent to Insurance"),
+            ("awaiting_decision", "Awaiting Decision"),
+            ("decision_received", "Decision Received"),
+        ],
+        default="draft",
+        help_text="Current status of appeal (patient-tracked)",
+    )
+    decision_expected_date = models.DateField(
+        null=True,
+        blank=True,
+        help_text="Date by which patient expects to hear decision (typically 30-60 days after sent)",
+    )
+    decision_received_date = models.DateField(
+        null=True,
+        blank=True,
+        help_text="Date patient received decision from insurance",
+    )
+
     mod_date = models.DateField(auto_now=True, null=True)
     creation_date = models.DateField(auto_now_add=True, null=True)
     billed = models.BooleanField(default=False)
@@ -1636,3 +1761,332 @@ class ChooserSkip(ExportModelOperationsMixin("ChooserSkip"), models.Model):  # t
             str: A string in the form "Skip of Task {task_id} by {session_key}".
         """
         return f"Skip of Task {self.task_id} by {self.session_key}"
+
+
+# Patient Call Log & Evidence Tracking Models
+
+
+class InsuranceCallLog(ExportModelOperationsMixin("InsuranceCallLog"), models.Model):  # type: ignore
+    """
+    Tracks phone calls patients make to their insurance company.
+    Insurers often 'lose' records or provide inconsistent information.
+    This helps patients document their interactions for appeals.
+    """
+
+    CALL_TYPE_CHOICES = [
+        ("inquiry", "General Inquiry"),
+        ("prior_auth", "Prior Authorization"),
+        ("claim_status", "Claim Status"),
+        ("appeal_status", "Appeal Status"),
+        ("benefits", "Benefits Verification"),
+        ("complaint", "Complaint/Grievance"),
+        ("other", "Other"),
+    ]
+
+    OUTCOME_CHOICES = [
+        ("pending", "Pending/In Progress"),
+        ("resolved", "Resolved"),
+        ("escalated", "Escalated"),
+        ("transferred", "Transferred"),
+        ("callback", "Callback Requested"),
+        ("denied", "Request Denied"),
+        ("approved", "Request Approved"),
+        ("no_resolution", "No Resolution"),
+    ]
+
+    id = models.AutoField(primary_key=True)
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+
+    # Link to patient
+    patient_user = models.ForeignKey(
+        PatientUser,
+        on_delete=models.CASCADE,
+        related_name="call_logs",
+        null=True,
+        blank=True,
+    )
+
+    # Optional link to denial/appeal for context
+    denial = models.ForeignKey(
+        "Denial",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="call_logs",
+    )
+    appeal = models.ForeignKey(
+        "Appeal",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="call_logs",
+    )
+
+    # Call details
+    call_date = models.DateTimeField(help_text="Date and time of the call")
+    call_type = models.CharField(
+        max_length=20, choices=CALL_TYPE_CHOICES, default="inquiry"
+    )
+
+    # Contact information
+    department = models.CharField(
+        max_length=200, blank=True, help_text="Department or queue contacted"
+    )
+    representative_name = models.CharField(
+        max_length=200, blank=True, help_text="Name of representative spoken to"
+    )
+    representative_id = models.CharField(
+        max_length=100, blank=True, help_text="Employee ID or badge number if provided"
+    )
+
+    # Reference numbers - crucial for appeals
+    reference_number = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="Call reference/confirmation number",
+    )
+    case_number = models.CharField(
+        max_length=100, blank=True, help_text="Case or ticket number if assigned"
+    )
+
+    # Call content
+    reason_for_call = models.TextField(
+        help_text="Why you called - the question or issue"
+    )
+    key_statements = models.TextField(
+        blank=True,
+        help_text="Important statements made by the representative (quotes if possible)",
+    )
+    promises_made = models.TextField(
+        blank=True,
+        help_text="Any commitments or promises made by the representative",
+    )
+    call_notes = models.TextField(
+        blank=True, help_text="Additional notes about the call"
+    )
+
+    # Outcome tracking
+    outcome = models.CharField(
+        max_length=20, choices=OUTCOME_CHOICES, default="pending"
+    )
+    follow_up_date = models.DateField(
+        null=True, blank=True, help_text="Date for follow-up if needed"
+    )
+    follow_up_notes = models.TextField(
+        blank=True, help_text="Notes for follow-up action"
+    )
+
+    # Call duration (optional but useful)
+    call_duration_minutes = models.PositiveIntegerField(
+        null=True, blank=True, help_text="Approximate call duration in minutes"
+    )
+    wait_time_minutes = models.PositiveIntegerField(
+        null=True, blank=True, help_text="Time spent on hold/waiting"
+    )
+
+    # Include in appeal
+    include_in_appeal = models.BooleanField(
+        default=False,
+        help_text="Whether to include this call log as evidence in appeals",
+    )
+
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-call_date"]
+        indexes = [
+            models.Index(fields=["patient_user", "-call_date"]),
+            models.Index(fields=["denial"]),
+            models.Index(fields=["appeal"]),
+            models.Index(fields=["reference_number"]),
+        ]
+        verbose_name = "Insurance Call Log"
+        verbose_name_plural = "Insurance Call Logs"
+
+    def __str__(self):
+        date_str = self.call_date.strftime("%Y-%m-%d") if self.call_date else "Unknown"
+        return f"Call on {date_str}: {self.get_call_type_display()}"
+
+    @classmethod
+    def filter_to_allowed_call_logs(cls, current_user: User):
+        """Filter call logs to only those the user has permission to access."""
+        if current_user.is_superuser or current_user.is_staff:
+            return cls.objects.all()
+
+        # Patients can only see their own call logs
+        try:
+            patient = PatientUser.objects.get(user=current_user, active=True)
+            return cls.objects.filter(patient_user=patient)
+        except PatientUser.DoesNotExist:
+            pass
+
+        # Professionals can see call logs for denials/appeals they have access to
+        try:
+            professional = ProfessionalUser.objects.get(user=current_user, active=True)
+            allowed_denials = Denial.filter_to_allowed_denials(current_user)
+            allowed_appeals = Appeal.filter_to_allowed_appeals(current_user)
+            return cls.objects.filter(
+                Q(denial__in=allowed_denials) | Q(appeal__in=allowed_appeals)
+            )
+        except ProfessionalUser.DoesNotExist:
+            pass
+
+        return cls.objects.none()
+
+    def format_for_appeal(self) -> str:
+        """Format this call log entry for inclusion in an appeal letter."""
+        lines = []
+        date_str = self.call_date.strftime("%B %d, %Y at %I:%M %p")
+        lines.append(f"**Phone Call Record - {date_str}**")
+
+        if self.department:
+            lines.append(f"- Department: {self.department}")
+        if self.representative_name:
+            lines.append(f"- Representative: {self.representative_name}")
+        if self.representative_id:
+            lines.append(f"- Representative ID: {self.representative_id}")
+        if self.reference_number:
+            lines.append(f"- Reference Number: {self.reference_number}")
+        if self.case_number:
+            lines.append(f"- Case Number: {self.case_number}")
+
+        lines.append(f"- Reason for Call: {self.reason_for_call}")
+
+        if self.key_statements:
+            lines.append(f"- Key Statements: {self.key_statements}")
+        if self.promises_made:
+            lines.append(f"- Commitments Made: {self.promises_made}")
+
+        lines.append(f"- Outcome: {self.get_outcome_display()}")
+
+        return "\n".join(lines)
+
+
+class PatientEvidence(ExportModelOperationsMixin("PatientEvidence"), models.Model):  # type: ignore
+    """
+    Stores evidence and documentation patients collect to support their appeals.
+    This can include documents, notes, screenshots, or other supporting materials.
+    """
+
+    EVIDENCE_TYPE_CHOICES = [
+        ("document", "Document/Letter"),
+        ("screenshot", "Screenshot"),
+        ("eob", "Explanation of Benefits"),
+        ("medical_record", "Medical Record"),
+        ("prescription", "Prescription"),
+        ("referral", "Referral"),
+        ("prior_auth", "Prior Authorization"),
+        ("correspondence", "Insurance Correspondence"),
+        ("research", "Research/Article"),
+        ("notes", "Personal Notes"),
+        ("other", "Other"),
+    ]
+
+    id = models.AutoField(primary_key=True)
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+
+    # Link to patient
+    patient_user = models.ForeignKey(
+        PatientUser,
+        on_delete=models.CASCADE,
+        related_name="evidence",
+        null=True,
+        blank=True,
+    )
+
+    # Optional link to denial/appeal
+    denial = models.ForeignKey(
+        "Denial",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="patient_evidence",
+    )
+    appeal = models.ForeignKey(
+        "Appeal",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="patient_evidence",
+    )
+
+    # Evidence details
+    evidence_type = models.CharField(
+        max_length=20, choices=EVIDENCE_TYPE_CHOICES, default="document"
+    )
+    title = models.CharField(max_length=300, help_text="Brief title for this evidence")
+    description = models.TextField(
+        blank=True, help_text="Description of what this evidence shows"
+    )
+    date_of_evidence = models.DateField(
+        null=True,
+        blank=True,
+        help_text="Date on the document or when evidence was created",
+    )
+
+    # File storage (encrypted)
+    file = EncryptedFileField(null=True, blank=True, storage=settings.COMBINED_STORAGE)
+    filename = models.CharField(max_length=255, blank=True)
+    mime_type = models.CharField(max_length=127, blank=True)
+
+    # Text content for notes or extracted text
+    text_content = models.TextField(blank=True, help_text="Text content or notes")
+
+    # Source information
+    source = models.CharField(
+        max_length=300,
+        blank=True,
+        help_text="Where this evidence came from (e.g., 'MyChart portal', 'Insurance website')",
+    )
+
+    # Include in appeal
+    include_in_appeal = models.BooleanField(
+        default=False,
+        help_text="Whether to include this evidence in appeals",
+    )
+
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["patient_user", "-created_at"]),
+            models.Index(fields=["denial"]),
+            models.Index(fields=["appeal"]),
+            models.Index(fields=["evidence_type"]),
+        ]
+        verbose_name = "Patient Evidence"
+        verbose_name_plural = "Patient Evidence"
+
+    def __str__(self):
+        return f"{self.get_evidence_type_display()}: {self.title}"
+
+    @classmethod
+    def filter_to_allowed_evidence(cls, current_user: User):
+        """Filter evidence to only those the user has permission to access."""
+        if current_user.is_superuser or current_user.is_staff:
+            return cls.objects.all()
+
+        # Patients can only see their own evidence
+        try:
+            patient = PatientUser.objects.get(user=current_user, active=True)
+            return cls.objects.filter(patient_user=patient)
+        except PatientUser.DoesNotExist:
+            pass
+
+        # Professionals can see evidence for denials/appeals they have access to
+        try:
+            professional = ProfessionalUser.objects.get(user=current_user, active=True)
+            allowed_denials = Denial.filter_to_allowed_denials(current_user)
+            allowed_appeals = Appeal.filter_to_allowed_appeals(current_user)
+            return cls.objects.filter(
+                Q(denial__in=allowed_denials) | Q(appeal__in=allowed_appeals)
+            )
+        except ProfessionalUser.DoesNotExist:
+            pass
+
+        return cls.objects.none()

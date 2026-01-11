@@ -1,0 +1,481 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="{% static 'css/logged_in_views.css' %}">
+{% endblock extra_head %}
+
+{% block title %}My Dashboard - Fight Health Insurance{% endblock title %}
+{% block metatitle %}Patient Dashboard - Fight Health Insurance{% endblock metatitle %}
+{% block metadescription %}View and manage your appeals, call logs, and evidence. Track your interactions with insurance companies.{% endblock metadescription %}
+
+{% block content %}
+<div class="container mt-4" style="margin-top: 12vh !important;">
+    <!-- Dashboard Header -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center flex-wrap">
+                <div>
+                    <h2>My Dashboard</h2>
+                    <p class="text-muted mb-0">Welcome back{% if user.first_name %}, {{ user.first_name }}{% endif %}! Manage your appeals and documentation.</p>
+                </div>
+                <div class="mt-2 mt-md-0">
+                    <a href="{% url 'scan' %}" class="btn btn-green">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-plus-lg me-1" viewBox="0 0 16 16">
+                            <path fill-rule="evenodd" d="M8 2a.5.5 0 0 1 .5.5v5h5a.5.5 0 0 1 0 1h-5v5a.5.5 0 0 1-1 0v-5h-5a.5.5 0 0 1 0-1h5v-5A.5.5 0 0 1 8 2"/>
+                        </svg>
+                        New Appeal
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Stats Cards -->
+    <div class="row mb-4">
+        <div class="col-md-3 col-sm-6 mb-3">
+            <div class="card stats-card border-0 shadow-sm">
+                <div class="card-body text-center">
+                    <div class="stats-number text-primary">{{ active_appeals_count }}</div>
+                    <div class="stats-label">Active Appeals</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3 col-sm-6 mb-3">
+            <div class="card stats-card border-0 shadow-sm">
+                <div class="card-body text-center">
+                    <div class="stats-number text-warning">{{ pending_followups_count }}</div>
+                    <div class="stats-label">Pending Follow-ups</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3 col-sm-6 mb-3">
+            <div class="card stats-card border-0 shadow-sm">
+                <div class="card-body text-center">
+                    <div class="stats-number text-success">{{ won_appeals_count }}</div>
+                    <div class="stats-label">Appeals Won</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3 col-sm-6 mb-3">
+            <div class="card stats-card border-0 shadow-sm">
+                <div class="card-body text-center">
+                    <div class="stats-number text-info">{{ evidence_count }}</div>
+                    <div class="stats-label">Documents</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Decision Expected Alert -->
+    {% if overdue_decisions %}
+    <div class="alert alert-warning mb-4" role="alert">
+        <strong>⏰ Decision Expected</strong>
+        <p class="mb-2">You should have received decisions on the following appeals:</p>
+        <ul class="mb-0">
+            {% for appeal in overdue_decisions %}
+            <li>
+                {{ appeal.for_denial.procedure|default:"Appeal" }}
+                (expected by {{ appeal.decision_expected_date|date:"M d, Y" }})
+                <a href="{% url 'appeal_file_view' appeal_uuid=appeal.uuid %}" class="ms-2">View Appeal</a>
+            </li>
+            {% endfor %}
+        </ul>
+        <small class="text-muted d-block mt-2">If you received a decision, update the status or contact your insurance company if delayed.</small>
+    </div>
+    {% endif %}
+
+    <!-- Dashboard Navigation Tabs -->
+    <ul class="nav nav-tabs mb-4" id="dashboardTabs" role="tablist">
+        <li class="nav-item" role="presentation">
+            <button class="nav-link active" id="appeals-tab" data-bs-toggle="tab" data-bs-target="#appeals" type="button" role="tab" aria-controls="appeals" aria-selected="true">
+                My Appeals
+                {% if appeals_count %}<span class="badge bg-primary ms-1">{{ appeals_count }}</span>{% endif %}
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="call-logs-tab" data-bs-toggle="tab" data-bs-target="#call-logs" type="button" role="tab" aria-controls="call-logs" aria-selected="false">
+                Call Log
+                {% if call_logs_count %}<span class="badge bg-secondary ms-1">{{ call_logs_count }}</span>{% endif %}
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="evidence-tab" data-bs-toggle="tab" data-bs-target="#evidence" type="button" role="tab" aria-controls="evidence" aria-selected="false">
+                Evidence
+                {% if evidence_count %}<span class="badge bg-secondary ms-1">{{ evidence_count }}</span>{% endif %}
+            </button>
+        </li>
+    </ul>
+
+    <!-- Tab Content -->
+    <div class="tab-content" id="dashboardTabContent">
+        <!-- Appeals Tab -->
+        <div class="tab-pane fade show active" id="appeals" role="tabpanel" aria-labelledby="appeals-tab">
+            {% if appeals %}
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Date</th>
+                            <th>Procedure/Diagnosis</th>
+                            <th>Insurance</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for appeal in appeals %}
+                        <tr>
+                            <td>{{ appeal.creation_date|date:"M d, Y" }}</td>
+                            <td>
+                                {% if appeal.for_denial.procedure %}{{ appeal.for_denial.procedure }}{% endif %}
+                                {% if appeal.for_denial.diagnosis %}<br><small class="text-muted">{{ appeal.for_denial.diagnosis }}</small>{% endif %}
+                            </td>
+                            <td>{{ appeal.for_denial.insurance_company|default:"—" }}</td>
+                            <td>
+                                <div class="appeal-timeline">
+                                    <span class="timeline-step {% if appeal.appeal_status == 'draft' %}active{% elif appeal.sent %}completed{% endif %}">
+                                        Draft
+                                    </span>
+                                    <span class="timeline-arrow">→</span>
+                                    <span class="timeline-step {% if appeal.appeal_status == 'sent' or appeal.appeal_status == 'awaiting_decision' %}active{% elif appeal.sent %}completed{% endif %}">
+                                        Sent
+                                    </span>
+                                    <span class="timeline-arrow">→</span>
+                                    <span class="timeline-step {% if appeal.appeal_status == 'awaiting_decision' %}active{% elif appeal.appeal_status == 'decision_received' or appeal.success %}completed{% endif %}">
+                                        Decision Expected
+                                        {% if appeal.decision_expected_date and not appeal.success and not appeal.decision_received_date %}
+                                            <small class="d-block text-muted">by {{ appeal.decision_expected_date|date:"M d" }}</small>
+                                        {% endif %}
+                                    </span>
+                                    {% if appeal.success %}
+                                        <span class="timeline-arrow">→</span>
+                                        <span class="timeline-step completed success-step">Won! 🎉</span>
+                                    {% elif appeal.decision_received_date %}
+                                        <span class="timeline-arrow">→</span>
+                                        <span class="timeline-step completed">Received {{ appeal.decision_received_date|date:"M d" }}</span>
+                                    {% endif %}
+                                </div>
+                            </td>
+                            <td>
+                                <a href="{% url 'appeal_file_view' appeal_uuid=appeal.uuid %}" class="btn btn-sm btn-outline-primary" target="_blank">View</a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="text-center py-5">
+                <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" fill="currentColor" class="bi bi-file-earmark-text text-muted mb-3" viewBox="0 0 16 16">
+                    <path d="M5.5 7a.5.5 0 0 0 0 1h5a.5.5 0 0 0 0-1zM5 9.5a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1-.5-.5m0 2a.5.5 0 0 1 .5-.5h2a.5.5 0 0 1 0 1h-2a.5.5 0 0 1-.5-.5"/>
+                    <path d="M9.5 0H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V4.5zm0 1v2A1.5 1.5 0 0 0 11 4.5h2V14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1z"/>
+                </svg>
+                <h5>No Appeals Yet</h5>
+                <p class="text-muted">When you generate appeals, they'll appear here.</p>
+                <a href="{% url 'scan' %}" class="btn btn-green">Generate Your First Appeal</a>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Call Logs Tab -->
+        <div class="tab-pane fade" id="call-logs" role="tabpanel" aria-labelledby="call-logs-tab">
+            <!-- Add Call Log Button -->
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 class="mb-0">Insurance Call Log</h5>
+                <div class="btn-group" role="group">
+                    <a href="{% url 'patient-call-log-create' %}" class="btn btn-primary btn-sm">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-plus-lg me-1" viewBox="0 0 16 16">
+                            <path fill-rule="evenodd" d="M8 2a.5.5 0 0 1 .5.5v5h5a.5.5 0 0 1 0 1h-5v5a.5.5 0 0 1-1 0v-5h-5a.5.5 0 0 1 0-1h5v-5A.5.5 0 0 1 8 2"/>
+                        </svg>
+                        Log a Call
+                    </a>
+                    {% if call_logs_count > 0 %}
+                    <a href="{% url 'patient-call-log-export' %}" class="btn btn-outline-secondary btn-sm">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-download me-1" viewBox="0 0 16 16">
+                            <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5"/>
+                            <path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708z"/>
+                        </svg>
+                        Export CSV
+                    </a>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Call Log Info Card -->
+            <div class="alert alert-info mb-4">
+                <strong>Why log your calls?</strong> Insurance companies often "lose" records or provide inconsistent information. Documenting your calls with reference numbers, representative names, and key statements creates evidence for your appeals.
+            </div>
+
+            <!-- Call Log Filter Form -->
+            <div class="card mb-3">
+                <div class="card-body">
+                    <form method="get" id="call-log-filter-form">
+                        <div class="row g-2 align-items-end">
+                            <div class="col-md-3">
+                                <label for="{{ call_log_filter_form.search.id_for_label }}" class="form-label small">Search</label>
+                                {{ call_log_filter_form.search }}
+                            </div>
+                            <div class="col-md-2">
+                                <label for="{{ call_log_filter_form.call_type.id_for_label }}" class="form-label small">Type</label>
+                                {{ call_log_filter_form.call_type }}
+                            </div>
+                            <div class="col-md-2">
+                                <label for="{{ call_log_filter_form.outcome.id_for_label }}" class="form-label small">Outcome</label>
+                                {{ call_log_filter_form.outcome }}
+                            </div>
+                            <div class="col-md-2">
+                                <label for="{{ call_log_filter_form.date_from.id_for_label }}" class="form-label small">From Date</label>
+                                {{ call_log_filter_form.date_from }}
+                            </div>
+                            <div class="col-md-2">
+                                <label for="{{ call_log_filter_form.date_to.id_for_label }}" class="form-label small">To Date</label>
+                                {{ call_log_filter_form.date_to }}
+                            </div>
+                            <div class="col-md-1">
+                                <button type="submit" class="btn btn-primary btn-sm w-100">Filter</button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            {% if call_logs %}
+            <div class="row">
+                {% for log in call_logs %}
+                <div class="col-12 mb-3">
+                    <div class="card {% if log.include_in_appeal %}border-success{% endif %}">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <div>
+                                <strong>{{ log.call_date|date:"M d, Y" }} at {{ log.call_date|time:"g:i A" }}</strong>
+                                <span class="badge bg-secondary ms-2">{{ log.get_call_type_display }}</span>
+                                <span class="badge {% if log.outcome == 'approved' %}bg-success{% elif log.outcome == 'denied' %}bg-danger{% elif log.outcome == 'pending' %}bg-warning text-dark{% else %}bg-info{% endif %} ms-1">{{ log.get_outcome_display }}</span>
+                                {% if log.include_in_appeal %}
+                                <span class="badge bg-success ms-1">In Appeal</span>
+                                {% endif %}
+                            </div>
+                            <div>
+                                <a href="{% url 'patient-call-log-edit' uuid=log.uuid %}" class="btn btn-sm btn-outline-secondary">Edit</a>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-md-6">
+                                    {% if log.department %}<p class="mb-1"><strong>Department:</strong> {{ log.department }}</p>{% endif %}
+                                    {% if log.representative_name %}<p class="mb-1"><strong>Representative:</strong> {{ log.representative_name }}{% if log.representative_id %} (ID: {{ log.representative_id }}){% endif %}</p>{% endif %}
+                                    {% if log.reference_number %}<p class="mb-1"><strong>Reference #:</strong> <code>{{ log.reference_number }}</code></p>{% endif %}
+                                    {% if log.case_number %}<p class="mb-1"><strong>Case #:</strong> <code>{{ log.case_number }}</code></p>{% endif %}
+                                </div>
+                                <div class="col-md-6">
+                                    {% if log.call_duration_minutes %}<p class="mb-1"><strong>Duration:</strong> {{ log.call_duration_minutes }} min{% if log.wait_time_minutes %} ({{ log.wait_time_minutes }} min on hold){% endif %}</p>{% endif %}
+                                    {% if log.follow_up_date %}<p class="mb-1"><strong>Follow-up:</strong> {{ log.follow_up_date|date:"M d, Y" }}</p>{% endif %}
+                                </div>
+                            </div>
+                            <hr>
+                            <p class="mb-1"><strong>Reason:</strong> {{ log.reason_for_call }}</p>
+                            {% if log.key_statements %}
+                            <p class="mb-1"><strong>Key Statements:</strong> <em>"{{ log.key_statements }}"</em></p>
+                            {% endif %}
+                            {% if log.promises_made %}
+                            <p class="mb-1"><strong>Promises Made:</strong> {{ log.promises_made }}</p>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+
+            <!-- Call Log Pagination -->
+            {% if call_logs.has_other_pages %}
+            <nav aria-label="Call log pagination">
+                <ul class="pagination justify-content-center">
+                    {% if call_logs.has_previous %}
+                    <li class="page-item">
+                        <a class="page-link" href="?call_log_page={{ call_logs.previous_page_number }}{% if request.GET.search %}&search={{ request.GET.search }}{% endif %}{% if request.GET.call_type %}&call_type={{ request.GET.call_type }}{% endif %}{% if request.GET.outcome %}&outcome={{ request.GET.outcome }}{% endif %}{% if request.GET.date_from %}&date_from={{ request.GET.date_from }}{% endif %}{% if request.GET.date_to %}&date_to={{ request.GET.date_to }}{% endif %}">Previous</a>
+                    </li>
+                    {% endif %}
+
+                    {% for num in call_logs.paginator.page_range %}
+                        {% if call_logs.number == num %}
+                        <li class="page-item active"><span class="page-link">{{ num }}</span></li>
+                        {% elif num > call_logs.number|add:'-3' and num < call_logs.number|add:'3' %}
+                        <li class="page-item">
+                            <a class="page-link" href="?call_log_page={{ num }}{% if request.GET.search %}&search={{ request.GET.search }}{% endif %}{% if request.GET.call_type %}&call_type={{ request.GET.call_type }}{% endif %}{% if request.GET.outcome %}&outcome={{ request.GET.outcome }}{% endif %}{% if request.GET.date_from %}&date_from={{ request.GET.date_from }}{% endif %}{% if request.GET.date_to %}&date_to={{ request.GET.date_to }}{% endif %}">{{ num }}</a>
+                        </li>
+                        {% endif %}
+                    {% endfor %}
+
+                    {% if call_logs.has_next %}
+                    <li class="page-item">
+                        <a class="page-link" href="?call_log_page={{ call_logs.next_page_number }}{% if request.GET.search %}&search={{ request.GET.search }}{% endif %}{% if request.GET.call_type %}&call_type={{ request.GET.call_type }}{% endif %}{% if request.GET.outcome %}&outcome={{ request.GET.outcome }}{% endif %}{% if request.GET.date_from %}&date_from={{ request.GET.date_from }}{% endif %}{% if request.GET.date_to %}&date_to={{ request.GET.date_to }}{% endif %}">Next</a>
+                    </li>
+                    {% endif %}
+                </ul>
+            </nav>
+            {% endif %}
+            {% else %}
+            <div class="text-center py-5">
+                <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" fill="currentColor" class="bi bi-telephone text-muted mb-3" viewBox="0 0 16 16">
+                    <path d="M3.654 1.328a.678.678 0 0 0-1.015-.063L1.605 2.3c-.483.484-.661 1.169-.45 1.77a17.6 17.6 0 0 0 4.168 6.608 17.6 17.6 0 0 0 6.608 4.168c.601.211 1.286.033 1.77-.45l1.034-1.034a.678.678 0 0 0-.063-1.015l-2.307-1.794a.68.68 0 0 0-.58-.122l-2.19.547a1.75 1.75 0 0 1-1.657-.459L5.482 8.062a1.75 1.75 0 0 1-.46-1.657l.548-2.19a.68.68 0 0 0-.122-.58zM1.884.511a1.745 1.745 0 0 1 2.612.163L6.29 2.98c.329.423.445.974.315 1.494l-.547 2.19a.68.68 0 0 0 .178.643l2.457 2.457a.68.68 0 0 0 .644.178l2.189-.547a1.75 1.75 0 0 1 1.494.315l2.306 1.794c.829.645.905 1.87.163 2.611l-1.034 1.034c-.74.74-1.846 1.065-2.877.702a18.6 18.6 0 0 1-7.01-4.42 18.6 18.6 0 0 1-4.42-7.009c-.362-1.03-.037-2.137.703-2.877z"/>
+                </svg>
+                <h5>No Calls Logged Yet</h5>
+                <p class="text-muted">Keep track of your insurance company interactions to strengthen your appeals.</p>
+                <a href="{% url 'patient-call-log-create' %}" class="btn btn-primary">Log Your First Call</a>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Evidence Tab -->
+        <div class="tab-pane fade" id="evidence" role="tabpanel" aria-labelledby="evidence-tab">
+            <!-- Add Evidence Button -->
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 class="mb-0">My Evidence</h5>
+                <div class="btn-group" role="group">
+                    <a href="{% url 'patient-evidence-create' %}" class="btn btn-primary btn-sm">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-plus-lg me-1" viewBox="0 0 16 16">
+                            <path fill-rule="evenodd" d="M8 2a.5.5 0 0 1 .5.5v5h5a.5.5 0 0 1 0 1h-5v5a.5.5 0 0 1-1 0v-5h-5a.5.5 0 0 1 0-1h5v-5A.5.5 0 0 1 8 2"/>
+                        </svg>
+                        Add Evidence
+                    </a>
+                    {% if evidence_count > 0 %}
+                    <a href="{% url 'patient-evidence-export' %}" class="btn btn-outline-secondary btn-sm">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-download me-1" viewBox="0 0 16 16">
+                            <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5"/>
+                            <path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708z"/>
+                        </svg>
+                        Export CSV
+                    </a>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Evidence Info Card -->
+            <div class="alert alert-info mb-4">
+                <strong>Build your case.</strong> Upload documents, screenshots, EOBs, and notes that support your appeal. Mark items to include in your appeal letter.
+            </div>
+
+            <!-- Evidence Filter Form -->
+            <div class="card mb-3">
+                <div class="card-body">
+                    <form method="get" id="evidence-filter-form">
+                        <div class="row g-2 align-items-end">
+                            <div class="col-md-4">
+                                <label for="{{ evidence_filter_form.search.id_for_label }}" class="form-label small">Search</label>
+                                {{ evidence_filter_form.search }}
+                            </div>
+                            <div class="col-md-3">
+                                <label for="{{ evidence_filter_form.evidence_type.id_for_label }}" class="form-label small">Type</label>
+                                {{ evidence_filter_form.evidence_type }}
+                            </div>
+                            <div class="col-md-3">
+                                <label for="{{ evidence_filter_form.include_in_appeal.id_for_label }}" class="form-label small">Appeal Status</label>
+                                {{ evidence_filter_form.include_in_appeal }}
+                            </div>
+                            <div class="col-md-2">
+                                <button type="submit" class="btn btn-primary btn-sm w-100">Filter</button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            {% if evidence %}
+            <div class="row">
+                {% for item in evidence %}
+                <div class="col-md-6 col-lg-4 mb-3">
+                    <div class="card h-100 {% if item.include_in_appeal %}border-success{% endif %}">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between align-items-start mb-2">
+                                <span class="badge bg-secondary">{{ item.get_evidence_type_display }}</span>
+                                {% if item.include_in_appeal %}
+                                <span class="badge bg-success">In Appeal</span>
+                                {% endif %}
+                            </div>
+                            <h6 class="card-title">{{ item.title }}</h6>
+                            {% if item.description %}
+                            <p class="card-text small text-muted">{{ item.description|truncatechars:100 }}</p>
+                            {% endif %}
+                            {% if item.date_of_evidence %}
+                            <p class="card-text small"><strong>Date:</strong> {{ item.date_of_evidence|date:"M d, Y" }}</p>
+                            {% endif %}
+                            {% if item.source %}
+                            <p class="card-text small"><strong>Source:</strong> {{ item.source }}</p>
+                            {% endif %}
+                        </div>
+                        <div class="card-footer bg-transparent">
+                            <div class="d-flex justify-content-between">
+                                <small class="text-muted">Added {{ item.created_at|date:"M d" }}</small>
+                                <div>
+                                    {% if item.file %}
+                                    <a href="{% url 'patient-evidence-download' uuid=item.uuid %}" class="btn btn-sm btn-outline-primary">Download</a>
+                                    {% endif %}
+                                    <a href="{% url 'patient-evidence-edit' uuid=item.uuid %}" class="btn btn-sm btn-outline-secondary">Edit</a>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+
+            <!-- Evidence Pagination -->
+            {% if evidence.has_other_pages %}
+            <nav aria-label="Evidence pagination">
+                <ul class="pagination justify-content-center">
+                    {% if evidence.has_previous %}
+                    <li class="page-item">
+                        <a class="page-link" href="?evidence_page={{ evidence.previous_page_number }}{% if request.GET.search %}&search={{ request.GET.search }}{% endif %}{% if request.GET.evidence_type %}&evidence_type={{ request.GET.evidence_type }}{% endif %}{% if request.GET.include_in_appeal %}&include_in_appeal={{ request.GET.include_in_appeal }}{% endif %}">Previous</a>
+                    </li>
+                    {% endif %}
+
+                    {% for num in evidence.paginator.page_range %}
+                        {% if evidence.number == num %}
+                        <li class="page-item active"><span class="page-link">{{ num }}</span></li>
+                        {% elif num > evidence.number|add:'-3' and num < evidence.number|add:'3' %}
+                        <li class="page-item">
+                            <a class="page-link" href="?evidence_page={{ num }}{% if request.GET.search %}&search={{ request.GET.search }}{% endif %}{% if request.GET.evidence_type %}&evidence_type={{ request.GET.evidence_type }}{% endif %}{% if request.GET.include_in_appeal %}&include_in_appeal={{ request.GET.include_in_appeal }}{% endif %}">{{ num }}</a>
+                        </li>
+                        {% endif %}
+                    {% endfor %}
+
+                    {% if evidence.has_next %}
+                    <li class="page-item">
+                        <a class="page-link" href="?evidence_page={{ evidence.next_page_number }}{% if request.GET.search %}&search={{ request.GET.search }}{% endif %}{% if request.GET.evidence_type %}&evidence_type={{ request.GET.evidence_type }}{% endif %}{% if request.GET.include_in_appeal %}&include_in_appeal={{ request.GET.include_in_appeal }}{% endif %}">Next</a>
+                    </li>
+                    {% endif %}
+                </ul>
+            </nav>
+            {% endif %}
+            {% else %}
+            <div class="text-center py-5">
+                <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" fill="currentColor" class="bi bi-folder2-open text-muted mb-3" viewBox="0 0 16 16">
+                    <path d="M1 3.5A1.5 1.5 0 0 1 2.5 2h2.764c.958 0 1.76.56 2.311 1.184C7.985 3.648 8.48 4 9 4h4.5A1.5 1.5 0 0 1 15 5.5v.64c.57.265.94.876.856 1.546l-.64 5.124A2.5 2.5 0 0 1 12.733 15H3.266a2.5 2.5 0 0 1-2.481-2.19l-.64-5.124A1.5 1.5 0 0 1 1 6.14zM2 6h12v-.5a.5.5 0 0 0-.5-.5H9c-.964 0-1.71-.629-2.174-1.154C6.374 3.334 5.82 3 5.264 3H2.5a.5.5 0 0 0-.5.5zm-.367 1a.5.5 0 0 0-.496.562l.64 5.124A1.5 1.5 0 0 0 3.266 14h9.468a1.5 1.5 0 0 0 1.489-1.314l.64-5.124A.5.5 0 0 0 14.367 7z"/>
+                </svg>
+                <h5>No Evidence Added Yet</h5>
+                <p class="text-muted">Upload documents, screenshots, and notes to support your appeals.</p>
+                <a href="{% url 'patient-evidence-create' %}" class="btn btn-primary">Add Your First Evidence</a>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Follow-up Reminders -->
+    {% if upcoming_followups %}
+    <div class="card mt-4 border-warning">
+        <div class="card-header bg-warning text-dark">
+            <strong>Upcoming Follow-ups</strong>
+        </div>
+        <div class="card-body">
+            <ul class="list-unstyled mb-0">
+                {% for log in upcoming_followups %}
+                <li class="mb-2">
+                    <strong>{{ log.follow_up_date|date:"M d, Y" }}</strong> - {{ log.follow_up_notes|default:"Follow up on call" }}
+                    <a href="{% url 'patient-call-log-edit' uuid=log.uuid %}" class="btn btn-sm btn-outline-primary ms-2">View</a>
+                </li>
+                {% endfor %}
+            </ul>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock content %}

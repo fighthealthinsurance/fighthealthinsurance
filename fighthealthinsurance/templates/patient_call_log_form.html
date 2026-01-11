@@ -1,0 +1,200 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}{% if editing %}Edit{% else %}Log{% endif %} Insurance Call - Fight Health Insurance{% endblock title %}
+{% block metatitle %}{% if editing %}Edit{% else %}Log{% endif %} Insurance Call - Fight Health Insurance{% endblock metatitle %}
+{% block metadescription %}Document your insurance company phone call to create evidence for your appeal.{% endblock metadescription %}
+
+{% block content %}
+<div class="container mt-4" style="margin-top: 12vh !important;">
+    <div class="row">
+        <div class="col-lg-8 mx-auto">
+            <!-- Breadcrumb -->
+            <nav aria-label="breadcrumb" class="mb-3">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="{% url 'patient-dashboard' %}">Dashboard</a></li>
+                    <li class="breadcrumb-item active" aria-current="page">{% if editing %}Edit{% else %}Log{% endif %} Call</li>
+                </ol>
+            </nav>
+
+            <div class="card">
+                <div class="card-header">
+                    <h4 class="mb-0">{% if editing %}Edit{% else %}Log{% endif %} Insurance Call</h4>
+                </div>
+                <div class="card-body">
+                    <!-- Tips -->
+                    <div class="alert alert-info mb-4">
+                        <h6 class="alert-heading">Tips for Effective Call Documentation</h6>
+                        <ul class="mb-0 small">
+                            <li><strong>Always ask for a reference number</strong> - This is your proof the call happened</li>
+                            <li><strong>Get the representative's name and ID</strong> - Write it down immediately</li>
+                            <li><strong>Quote them directly</strong> - Write exactly what they say, especially promises</li>
+                            <li><strong>Note the time</strong> - Including how long you waited on hold</li>
+                        </ul>
+                    </div>
+
+                    <form method="post" novalidate>
+                        {% csrf_token %}
+
+                        <!-- Call Date & Type -->
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <label for="id_call_date" class="form-label">{{ form.call_date.label }} <span class="text-danger">*</span></label>
+                                {{ form.call_date }}
+                                {% if form.call_date.errors %}
+                                <div class="invalid-feedback d-block">{{ form.call_date.errors.0 }}</div>
+                                {% endif %}
+                            </div>
+                            <div class="col-md-6">
+                                <label for="id_call_type" class="form-label">{{ form.call_type.label }} <span class="text-danger">*</span></label>
+                                {{ form.call_type }}
+                                {% if form.call_type.errors %}
+                                <div class="invalid-feedback d-block">{{ form.call_type.errors.0 }}</div>
+                                {% endif %}
+                            </div>
+                        </div>
+
+                        <!-- Department & Representative -->
+                        <h6 class="border-bottom pb-2 mb-3">Who did you speak with?</h6>
+                        <div class="row mb-3">
+                            <div class="col-md-4">
+                                <label for="id_department" class="form-label">{{ form.department.label }}</label>
+                                {{ form.department }}
+                            </div>
+                            <div class="col-md-4">
+                                <label for="id_representative_name" class="form-label">{{ form.representative_name.label }}</label>
+                                {{ form.representative_name }}
+                            </div>
+                            <div class="col-md-4">
+                                <label for="id_representative_id" class="form-label">{{ form.representative_id.label }}</label>
+                                {{ form.representative_id }}
+                            </div>
+                        </div>
+
+                        <!-- Reference Numbers -->
+                        <h6 class="border-bottom pb-2 mb-3">Reference Numbers <span class="badge bg-warning text-dark">Important!</span></h6>
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <label for="id_reference_number" class="form-label">{{ form.reference_number.label }}</label>
+                                {{ form.reference_number }}
+                                {% if form.reference_number.help_text %}
+                                <div class="form-text">{{ form.reference_number.help_text }}</div>
+                                {% endif %}
+                            </div>
+                            <div class="col-md-6">
+                                <label for="id_case_number" class="form-label">{{ form.case_number.label }}</label>
+                                {{ form.case_number }}
+                            </div>
+                        </div>
+
+                        <!-- Call Content -->
+                        <h6 class="border-bottom pb-2 mb-3">What happened on the call?</h6>
+                        <div class="mb-3">
+                            <label for="id_reason_for_call" class="form-label">{{ form.reason_for_call.label }} <span class="text-danger">*</span></label>
+                            {{ form.reason_for_call }}
+                            {% if form.reason_for_call.errors %}
+                            <div class="invalid-feedback d-block">{{ form.reason_for_call.errors.0 }}</div>
+                            {% endif %}
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="id_key_statements" class="form-label">{{ form.key_statements.label }}</label>
+                            {{ form.key_statements }}
+                            {% if form.key_statements.help_text %}
+                            <div class="form-text">{{ form.key_statements.help_text }}</div>
+                            {% endif %}
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="id_promises_made" class="form-label">{{ form.promises_made.label }}</label>
+                            {{ form.promises_made }}
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="id_call_notes" class="form-label">{{ form.call_notes.label }}</label>
+                            {{ form.call_notes }}
+                        </div>
+
+                        <!-- Outcome -->
+                        <h6 class="border-bottom pb-2 mb-3">Outcome & Follow-up</h6>
+                        <div class="row mb-3">
+                            <div class="col-md-4">
+                                <label for="id_outcome" class="form-label">{{ form.outcome.label }} <span class="text-danger">*</span></label>
+                                {{ form.outcome }}
+                            </div>
+                            <div class="col-md-4">
+                                <label for="id_follow_up_date" class="form-label">{{ form.follow_up_date.label }}</label>
+                                {{ form.follow_up_date }}
+                                {% if form.follow_up_date.help_text %}
+                                <div class="form-text">{{ form.follow_up_date.help_text }}</div>
+                                {% endif %}
+                            </div>
+                            <div class="col-md-4">
+                                <!-- Spacer for layout -->
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="id_follow_up_notes" class="form-label">{{ form.follow_up_notes.label }}</label>
+                            {{ form.follow_up_notes }}
+                        </div>
+
+                        <!-- Duration -->
+                        <h6 class="border-bottom pb-2 mb-3">Call Duration (Optional)</h6>
+                        <div class="row mb-3">
+                            <div class="col-md-4">
+                                <label for="id_call_duration_minutes" class="form-label">{{ form.call_duration_minutes.label }}</label>
+                                {{ form.call_duration_minutes }}
+                            </div>
+                            <div class="col-md-4">
+                                <label for="id_wait_time_minutes" class="form-label">{{ form.wait_time_minutes.label }}</label>
+                                {{ form.wait_time_minutes }}
+                            </div>
+                        </div>
+
+                        <!-- Include in Appeal -->
+                        <div class="mb-4">
+                            <div class="form-check">
+                                {{ form.include_in_appeal }}
+                                <label class="form-check-label" for="id_include_in_appeal">
+                                    {{ form.include_in_appeal.label }}
+                                </label>
+                                {% if form.include_in_appeal.help_text %}
+                                <div class="form-text">{{ form.include_in_appeal.help_text }}</div>
+                                {% endif %}
+                            </div>
+                        </div>
+
+                        <!-- Submit -->
+                        <div class="d-flex justify-content-between">
+                            <a href="{% url 'patient-dashboard' %}" class="btn btn-outline-secondary">Cancel</a>
+                            <div>
+                                {% if editing %}
+                                <button type="submit" name="delete" class="btn btn-outline-danger me-2" onclick="return confirm('Are you sure you want to delete this call log?');">Delete</button>
+                                {% endif %}
+                                <button type="submit" class="btn btn-green">{% if editing %}Save Changes{% else %}Save Call Log{% endif %}</button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock content %}
+
+{% block extra_style %}
+<style>
+    .btn-green {
+        background: linear-gradient(to right, #ADD100 0%, #7B920A 51%, #ADD100 100%);
+        background-size: 200% auto;
+        border: none;
+        color: white;
+        transition: 0.5s;
+    }
+    .btn-green:hover {
+        background-position: right center;
+        color: white;
+    }
+</style>
+{% endblock extra_style %}

@@ -1,0 +1,62 @@
+CALENDAR REMINDERS SET!
+========================================
+
+Hi there,
+
+Great news! We've created calendar reminders to help you follow up on your {{ insurance_company }} appeal.
+
+CALENDAR FILE ATTACHED
+----------------------
+
+This email includes a .ics calendar file that you can import into:
+- Google Calendar
+- Apple Calendar
+- Outlook
+- Any other calendar app
+
+YOUR REMINDERS
+--------------
+
+We've set up reminders at strategic intervals:
+
+* 2 days - Initial follow-up to check appeal status
+* 30 days - Monthly check on appeal progress
+* 90 days - Quarterly follow-up on appeal
+
+IMPORTANT: ADD US TO YOUR CONTACTS!
+------------------------------------
+
+Please mark emails from support42@fighthealthinsurance.com as NOT SPAM
+
+Add us to your contacts to ensure you receive these important reminders.
+Check your spam folder if you don't see our emails!
+
+HELPFUL REMINDER
+----------------
+
+These calendar reminders are helpful, but they're not perfect. We're a
+small scrappy startup doing our best!
+
+We recommend: Set your own reminders too, and save important documents
+outside of Fight Health Insurance as a backup.
+
+CAN'T FIND THE ATTACHMENT?
+--------------------------
+
+Download the calendar file here:
+{{ calendar_download_url }}
+
+NEED HELP?
+----------
+
+Visit https://www.fighthealthinsurance.com for more resources and support.
+
+Best of luck with your appeal!
+
+— The Fight Health Insurance Team
+
+========================================
+Fight Health Insurance | Helping patients fight unfair denials
+Website: https://www.fighthealthinsurance.com
+Contact: https://www.fighthealthinsurance.com/contact
+Privacy: https://www.fighthealthinsurance.com/privacy_policy

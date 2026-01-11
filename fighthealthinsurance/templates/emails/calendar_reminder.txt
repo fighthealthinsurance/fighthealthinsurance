@@ -1,0 +1,69 @@
+TIME TO FOLLOW UP!
+========================================
+
+Hi there,
+
+This is your {{ reminder_type }} reminder to check on your {{ insurance_company }} appeal.
+
+ACTION ITEMS
+------------
+
+1. Call {{ insurance_company }} to check on your appeal status
+2. Ask for a reference number and the name of the person you spoke with
+3. Document the conversation and outcome
+4. If denied, consider your next steps (external review, etc.)
+
+{% if reminder_type_code == "2day" %}
+CREATE A FREE ACCOUNT
+---------------------
+
+Track your appeals and never lose important documents!
+
+Benefits of creating an account:
+* Save all your appeals in one place
+* Track outcomes and follow-ups
+* Access your appeals from any device
+* Add notes and call logs
+
+Create your free account here:
+https://www.fighthealthinsurance.com/v0/auth/signup
+
+IMPORTANT: We store data for 90 days. We're a small scrappy startup -
+please save important documents outside of FHI too! Only appeals created
+AFTER account signup will appear in your dashboard (for your security).
+{% endif %}
+
+DOWNLOAD CALENDAR FILE
+----------------------
+
+Need to add the calendar reminders again?
+{{ calendar_download_url }}
+
+{% if selected_appeal %}
+YOUR APPEAL SUMMARY
+-------------------
+
+Insurance: {{ insurance_company }}{% if denial.claim_type %}
+Procedure/Claim: {{ denial.claim_type }}{% endif %}
+{% endif %}
+
+NEED HELP?
+----------
+
+Visit https://www.fighthealthinsurance.com for:
+* Tips on following up with insurance companies
+* Resources for external reviews
+* State-specific help and guidance
+
+REMINDER: Add support42@fighthealthinsurance.com to your contacts to
+ensure you receive future reminders!
+
+Good luck with your follow-up!
+
+— The Fight Health Insurance Team
+
+========================================
+Fight Health Insurance | Helping patients fight unfair denials
+Website: https://www.fighthealthinsurance.com
+Contact: https://www.fighthealthinsurance.com/contact
+Privacy: https://www.fighthealthinsurance.com/privacy_policy

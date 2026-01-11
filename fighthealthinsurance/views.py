@@ -15,11 +15,14 @@ from django.http import (
     HttpResponse,
     HttpResponseBase,
     HttpResponseForbidden,
+    HttpResponseNotFound,
     HttpResponseRedirect,
+    HttpResponseServerError,
 )
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template import loader
 from django.urls import reverse
+from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.utils.safestring import mark_safe
 from django.views import View, generic
@@ -35,10 +38,11 @@ from loguru import logger
 from PIL import Image
 
 from fighthealthinsurance import common_view_logic, forms as core_forms, models
+from fighthealthinsurance.calendar_utils import generate_followup_ics
 from fighthealthinsurance.chat_forms import UserConsentForm
 from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
 from fighthealthinsurance.helpers.stripe_helpers import StripeWebhookHelper
-from fighthealthinsurance.models import StripeRecoveryInfo
+from fighthealthinsurance.models import Denial, StripeRecoveryInfo
 from fighthealthinsurance.type_utils import User
 
 
@@ -593,7 +597,7 @@ class ShareAppealView(View):
 
 
 class RemoveDataView(View):
-    """View for users to request deletion of their data."""
+    """View for users to request deletion of their data with email confirmation."""
 
     def get(self, request):
         return render(
@@ -610,12 +614,48 @@ class RemoveDataView(View):
 
         if form.is_valid():
             email = form.cleaned_data["email"]
-            RemoveDataHelper.remove_data_for_email(email)
+            hashed_email = models.Denial.get_hashed_email(email)
+
+            # Generate unique token for confirmation
+            import secrets
+
+            token = secrets.token_urlsafe(32)
+
+            # Get client IP for audit trail
+            x_forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
+            if x_forwarded_for:
+                ip_address = x_forwarded_for.split(",")[0]
+            else:
+                ip_address = request.META.get("REMOTE_ADDR")
+
+            # Create deletion request
+            deletion_request = models.DataDeletionRequest.objects.create(
+                email=email,
+                hashed_email=hashed_email,
+                token=token,
+                ip_address=ip_address,
+            )
+
+            # Send confirmation email
+            confirmation_url = request.build_absolute_uri(
+                reverse("confirm_deletion", kwargs={"token": token})
+            )
+
+            from fighthealthinsurance.utils import send_fallback_email
+
+            send_fallback_email(
+                subject="Confirm Data Deletion - Fight Health Insurance",
+                template_name="emails/deletion_confirmation",
+                context={"confirmation_url": confirmation_url},
+                to_email=email,
+            )
+
             return render(
                 request,
-                "removed_data.html",
+                "deletion_requested.html",
                 context={
-                    "title": "Remove My Data",
+                    "title": "Deletion Requested",
+                    "email": email,
                 },
             )
 
@@ -627,6 +667,144 @@ class RemoveDataView(View):
                 "form": form,
             },
         )
+
+
+class ConfirmDataDeletionView(View):
+    """View for confirming data deletion via email token."""
+
+    def _validate_deletion_request(self, token: str):
+        """Validate deletion request token and return error context if invalid.
+
+        Returns:
+            tuple: (deletion_request, error_context) where error_context is None if valid
+        """
+        try:
+            deletion_request = models.DataDeletionRequest.objects.get(token=token)
+
+            # Check if already confirmed
+            if deletion_request.confirmed:
+                return deletion_request, {
+                    "title": "Already Deleted",
+                    "error_title": "Data Already Deleted",
+                    "error_message": "This deletion request has already been completed.",
+                }
+
+            # Check if expired
+            if deletion_request.is_expired():
+                return deletion_request, {
+                    "title": "Link Expired",
+                    "error_title": "Confirmation Link Expired",
+                    "error_message": "This confirmation link has expired. Deletion links are valid for 24 hours.",
+                }
+
+            return deletion_request, None
+
+        except models.DataDeletionRequest.DoesNotExist:
+            return None, {
+                "title": "Invalid Link",
+                "error_title": "Invalid Deletion Link",
+                "error_message": "This deletion link is not valid. It may have been copied incorrectly.",
+            }
+
+    def get(self, request, token):
+        """Display confirmation page for valid, non-expired tokens."""
+        deletion_request, error_context = self._validate_deletion_request(token)
+
+        if error_context:
+            return render(request, "deletion_error.html", context=error_context)
+
+        # Show confirmation page
+        return render(
+            request,
+            "deletion_confirm_page.html",
+            context={
+                "title": "Confirm Deletion",
+                "email": deletion_request.email,
+                "token": token,
+            },
+        )
+
+    def post(self, request, token):
+        """Process the confirmed deletion."""
+        deletion_request, error_context = self._validate_deletion_request(token)
+
+        if error_context:
+            # If already confirmed, show success instead of error
+            if deletion_request and deletion_request.confirmed:
+                return render(
+                    request, "deletion_confirmed.html", {"title": "Data Deleted"}
+                )
+            return render(request, "deletion_error.html", context=error_context)
+
+        # Perform the deletion
+        email = deletion_request.email
+        RemoveDataHelper.remove_data_for_email(email)
+
+        # Mark as confirmed
+        deletion_request.confirmed = True
+        deletion_request.confirmed_at = timezone.now()
+        deletion_request.save()
+
+        logger.info(
+            f"Data deletion confirmed and completed for {email} (token: {token[:8]}...)"
+        )
+
+        return render(request, "deletion_confirmed.html", {"title": "Data Deleted"})
+
+
+class DownloadCalendarView(View):
+    """View for downloading .ics calendar file with follow-up reminders."""
+
+    def get(self, request, denial_uuid, hashed_email):
+        """Generate and return .ics file for a denial's follow-up reminders.
+
+        Args:
+            denial_uuid: UUID of the denial
+            hashed_email: Hashed email for verification
+
+        Returns:
+            HttpResponse: .ics file download or 404 if denial not found/email mismatch
+        """
+        try:
+            # Get the denial
+            denial = models.Denial.objects.get(uuid=denial_uuid)
+
+            # Verify hashed email matches for security
+            if denial.hashed_email != hashed_email:
+                logger.warning(
+                    f"Calendar download attempt with mismatched email for denial {denial_uuid}"
+                )
+                return HttpResponseNotFound("Denial not found")
+
+            # Verify raw_email is available
+            if not denial.raw_email:
+                logger.warning(
+                    f"Calendar download attempt for denial {denial_uuid} with no email"
+                )
+                return HttpResponseNotFound("Denial not found")
+
+            # Generate .ics file
+            ics_content = generate_followup_ics(denial, denial.raw_email)
+
+            # Create response with .ics file
+            response = HttpResponse(ics_content, content_type="text/calendar")
+            response["Content-Disposition"] = (
+                f'attachment; filename="fhi_appeal_reminders_{denial_uuid}.ics"'
+            )
+
+            logger.info(f"Calendar file downloaded for denial {denial_uuid}")
+            return response
+
+        except models.Denial.DoesNotExist:
+            logger.warning(
+                f"Calendar download attempt for non-existent denial {denial_uuid}"
+            )
+            return HttpResponseNotFound("Denial not found")
+        except Exception as e:
+            logger.error(
+                f"Error generating calendar file for denial {denial_uuid}: {e}"
+            )
+            return HttpResponseServerError("Error generating calendar file")
 
 
 class RecommendAppeal(View):
@@ -1132,6 +1310,26 @@ class InitialProcessView(generic.FormView):
         denial_response = common_view_logic.DenialCreatorHelper.create_or_update_denial(
             **cleaned_data,
         )
+
+        # Link denial to PatientUser if user is authenticated
+        if self.request.user.is_authenticated:
+            from fhi_users.models import PatientUser
+
+            patient_user, created = PatientUser.objects.get_or_create(
+                user=self.request.user,
+                defaults={"active": True},
+            )
+            # Get the actual Denial model instance and link it to the patient user
+            denial = Denial.objects.get(denial_id=denial_response.denial_id)
+            denial.patient_user = patient_user
+            denial.save(update_fields=["patient_user"])
+            if created:
+                logger.info(
+                    f"Created PatientUser {patient_user.id} for user {self.request.user.id}"
+                )
+            logger.info(
+                f"Linked denial {denial_response.uuid} to patient user {patient_user.id}"
+            )
 
         # Store the denial ID in the session to maintain state across the multi-step form process
         # This allows the SessionRequiredMixin to verify the user is working with a valid denial

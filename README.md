@@ -152,12 +152,17 @@ mypy --config-file mypy.ini -p fighthealthinsurance -p fhi_users
 
 - `fighthealthinsurance/` - Main Django application
   - `views.py` - Primary appeal flow views
+  - `patient_views.py` - Patient dashboard (call logs, evidence, appeals tracking)
+  - `patient_export_views.py` - CSV export functionality
   - `rest_views.py` - REST API endpoints
   - `common_view_logic.py` - Shared business logic
   - `chat_interface.py` - Chat-based appeal assistance
+  - `followup_digest.py` - Weekly digest email sender
+  - `calendar_emails.py` - Calendar reminder email sender
   - `models.py` - Database models
   - `forms/` - Django forms
   - `ml/` - Machine learning integration
+  - `management/commands/` - CLI commands (send_followup_digest, send_calendar_reminders, etc.)
 - `fhi_users/` - User management app
 - `templates/` - Django templates
 - `static/` - Frontend assets (CSS, JS)
