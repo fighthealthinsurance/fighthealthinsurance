@@ -442,9 +442,19 @@ else:
     urlpatterns += [p for p in brandable_patterns if p.name != "root"]
 
 # AppealMyClaims path-based brand access
-# Create AMC-branded URLs with /appealmyclaims/ prefix
-# Brand middleware will detect and apply AMC branding
-urlpatterns += add_brand_patterns(brandable_patterns, "appealmyclaims/", "amc_")
+# AMC uses a single-page flow with upload form on landing page (not FHI's multi-page flow)
+urlpatterns += [
+    path(
+        "appealmyclaims/",
+        sensitive_post_parameters("email")(views.AMCIndexView.as_view()),
+        name="amc_root",
+    )
+]
+# Add other AMC-branded URLs (scan, about, privacy, etc.) with /appealmyclaims/ prefix
+# Note: amc_root is handled above, so filter it out to avoid duplication
+urlpatterns += add_brand_patterns(
+    [p for p in brandable_patterns if p.name != "root"], "appealmyclaims/", "amc_"
+)
 
 urlpatterns += staticfiles_urlpatterns()
 

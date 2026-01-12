@@ -2117,3 +2117,14 @@ class StateHelpView(TemplateView):
             context["title"] = f"{state.name} Health Insurance Help"
 
         return context
+
+
+class AMCIndexView(InitialProcessView):
+    """
+    AppealMyClaims landing page with embedded upload form.
+
+    Single-page flow where users can upload and start their appeal
+    directly from the homepage without clicking through.
+    """
+
+    template_name = "amc_index.html"

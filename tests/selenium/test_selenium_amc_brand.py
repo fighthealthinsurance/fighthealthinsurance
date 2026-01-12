@@ -59,11 +59,11 @@ class SeleniumTestAMCBranding(FHISeleniumBase, StaticLiveServerTestCase):
         # Check for Appeal My Claims text logo (since AMC uses text logo, not image)
         self.assert_text("Appeal My Claims")
 
-        # Check welcome header
-        self.assert_text("Welcome to Appeal My Claims")
+        # Check welcome header from real AMC site
+        self.assert_text("Healthcare Appeal Helper")
 
-        # Check subcopy is AMC-specific
-        self.assert_text("Use AI to generate your health insurance appeal in minutes")
+        # Check main headline from real AMC site
+        self.assert_text("Denied by your insurance?")
 
         # Verify minimal navigation - should NOT have these FHI-specific links
         with pytest.raises(Exception):
@@ -199,7 +199,7 @@ class SeleniumTestAMCAppealFlow(FHISeleniumBase, StaticLiveServerTestCase):
         time.sleep(1)
 
         # Verify we're on AMC version
-        self.assert_text("Welcome to Appeal My Claims")
+        self.assert_text("Appeal My Claims")
 
         # The "Powered by FHI" should be present on this page too
         # (we added it to scrub.html)
