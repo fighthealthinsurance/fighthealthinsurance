@@ -194,6 +194,94 @@ class MLRouter(object):
             models = self.all_models_by_cost[:6] if self.all_models_by_cost else []
         return models
 
+    def generate_text_backend_names(self, use_external: bool = False) -> list[str]:
+        """
+        Return model NAMES for text generation, preserving multi-backend support.
+
+        WHY THIS APPROACH:
+        Returns model names (strings) instead of model instances to preserve the ability
+        to call multiple backend servers running the same model. When a model name is
+        returned, the caller looks it up in models_by_name to get ALL instances (e.g.,
+        3 different servers running "fhi-2025") and tries them sequentially as fallbacks.
+
+        If we returned model instances directly, we'd lose multi-backend redundancy since
+        each backend class only creates ONE instance per model name, even if multiple
+        servers are available.
+
+        FLOW:
+        1. Router returns ["fhi-2025", "sonar"]
+        2. Caller looks up models_by_name["fhi-2025"] → [server1, server2, server3]
+        3. Caller tries server1, if fails → server2, if fails → server3
+
+        Args:
+            use_external: Whether to include external models
+
+        Returns:
+            List of model names (not instances) to use for text generation
+        """
+        # Check for forced model override
+        forced_model = os.getenv("FORCE_MODEL")
+        if forced_model:
+            logger.info(f"FORCE_MODEL={forced_model} for text generation")
+
+            if forced_model == "groq":
+                if not use_external:
+                    logger.warning(
+                        "FORCE_MODEL=groq ignored for text generation because use_external=False"
+                    )
+                    return []
+                # Find groq model names
+                groq_names = []
+                for name, instances in self.models_by_name.items():
+                    if any(isinstance(m, RemoteGroq) for m in instances):
+                        groq_names.append(name)
+                if groq_names:
+                    # Return only first groq model name to avoid double-fanout
+                    logger.info(f"✓ Forcing groq model name: {groq_names[0]}")
+                    return [groq_names[0]]
+                else:
+                    logger.warning("No groq models found!")
+                    return []
+
+            elif forced_model in self.models_by_name:
+                # Check if allowed based on use_external
+                instances = self.models_by_name[forced_model]
+                if not use_external:
+                    internal_instances = [m for m in instances if not m.external]
+                    if not internal_instances:
+                        logger.warning(
+                            f"FORCE_MODEL={forced_model} ignored because use_external=False and all instances are external"
+                        )
+                        return []
+                logger.info(f"✓ Forcing model name: {forced_model}")
+                return [forced_model]
+            else:
+                logger.warning(f"FORCE_MODEL={forced_model} not found")
+                return []
+
+        # No forced model - build list based on use_external
+        names = []
+
+        # Add internal model names (fhi-* models)
+        for name, instances in self.models_by_name.items():
+            if not instances:
+                continue
+            # Check if any instance is internal
+            has_internal = any(not m.external for m in instances)
+            if has_internal:
+                names.append(name)
+
+        # Add external model names if allowed
+        if use_external:
+            for name, instances in self.models_by_name.items():
+                if name not in names and instances:
+                    # Check if any instance is external
+                    has_external = any(m.external for m in instances)
+                    if has_external:
+                        names.append(name)
+
+        return names
+
     def full_qa_backends(self, use_external=False) -> list[RemoteModelLike]:
         """
         Return models for handling question-answer pairs for appeal generation.

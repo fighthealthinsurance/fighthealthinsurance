@@ -735,9 +735,9 @@ class AppealGenerator(object):
 
         # TODO: use the streaming and cancellable APIs (maybe some fancy JS on the client side?)
 
-        # Call model directly (no longer need name lookup)
+        # For any model that we have a prompt for try to call it and return futures
         def get_model_result(
-            model: RemoteModelLike,
+            model_name: str,
             prompt: str,
             patient_context: Optional[str],
             plan_context: Optional[str],
@@ -746,26 +746,33 @@ class AppealGenerator(object):
             ml_citations_context: Optional[List[str]] = None,
             prof_pov: bool = False,
         ) -> List[Future[Tuple[str, Optional[str]]]]:
-            model_name = getattr(model, "model", None) or type(model).__name__
-            logger.debug(f"Getting result on {model} ({model_name})")
+            logger.debug(f"Looking up on {model_name}")
+            if model_name not in ml_router.models_by_name:
+                logger.debug(f"No backend for {model_name}")
+                return []
+            model_backends = ml_router.models_by_name[model_name]
             if prompt is None:
                 logger.debug(f"No prompt for {model_name} skipping")
                 return []
-            try:
-                result = _get_model_result(
-                    model=model,
-                    prompt=prompt,
-                    patient_context=patient_context,
-                    plan_context=plan_context,
-                    infer_type=infer_type,
-                    pubmed_context=pubmed_context,
-                    ml_citations_context=ml_citations_context,
-                    prof_pov=prof_pov,
-                )
-                if result is not None:
-                    return result
-            except Exception as e:
-                logger.debug(f"Model {model_name} failed {e}")
+            for model in model_backends:
+                try:
+                    logger.debug(f"Getting result on {model} backend for {model_name}")
+                    result = _get_model_result(
+                        model=model,
+                        prompt=prompt,
+                        patient_context=patient_context,
+                        plan_context=plan_context,
+                        infer_type=infer_type,
+                        pubmed_context=pubmed_context,
+                        ml_citations_context=ml_citations_context,
+                        prof_pov=prof_pov,
+                    )
+
+                    if result is not None:
+                        return result
+                except Exception as e:
+                    logger.debug(f"Backend {model} failed {e}")
+            logger.debug(f"All backends for {model_name} failed")
             return []
 
         def _get_model_result(
@@ -845,18 +852,18 @@ class AppealGenerator(object):
                 f"Summary of relevant plan document sections:\n{denial.plan_documents_summary}"
             )
         plan_context = "\n\n".join(plan_context_parts) if plan_context_parts else None
-        # Get models from router (respects FORCE_MODEL, cost ordering, single-Groq limiting)
-        primary_models = ml_router.generate_text_backends(
+        # Get model names from router (respects FORCE_MODEL, use_external, multi-backend support)
+        primary_model_names = ml_router.generate_text_backend_names(
             use_external=denial.use_external
         )
-        backup_models = ml_router.generate_text_backends(
+        backup_model_names = ml_router.generate_text_backend_names(
             use_external=denial.use_external
         )
 
-        # Build calls using model instances instead of hardcoded names
+        # Build calls using model names (preserves multi-backend lookup)
         calls = [
             {
-                "model": model,
+                "model_name": model_name,
                 "prompt": open_prompt,
                 "patient_context": medical_context,
                 "plan_context": plan_context,
@@ -865,12 +872,12 @@ class AppealGenerator(object):
                 "ml_citations_context": ml_citations_context,
                 "prof_pov": prof_pov,
             }
-            for model in primary_models
+            for model_name in primary_model_names
         ]
-        # Backup calls use same models but will be tried if primary fails
+        # Backup calls use same model names but will be tried if primary fails
         backup_calls = [
             {
-                "model": model,
+                "model_name": model_name,
                 "prompt": open_prompt,
                 "patient_context": medical_context,
                 "plan_context": plan_context,
@@ -879,18 +886,18 @@ class AppealGenerator(object):
                 "ml_citations_context": ml_citations_context,
                 "prof_pov": prof_pov,
             }
-            for model in backup_models
+            for model_name in backup_model_names
         ]
 
         # If we need to know the medical reason ask our friendly LLMs
         static_appeal = template_generator.generate_static()
         initial_appeals = non_ai_appeals
         if static_appeal is None:
-            # Add medically_necessary calls for all selected models
+            # Add medically_necessary calls for all selected model names
             calls.extend(
                 [
                     {
-                        "model": model,
+                        "model_name": model_name,
                         "prompt": open_medically_necessary_prompt,
                         "patient_context": medical_context,
                         "infer_type": "medically_necessary",
@@ -899,7 +906,7 @@ class AppealGenerator(object):
                         "ml_citations_context": ml_citations_context,
                         "prof_pov": prof_pov,
                     }
-                    for model in primary_models
+                    for model_name in primary_model_names
                 ]
             )
             logger.debug(f"Looking at provided medical reasons {medical_reasons}.")
