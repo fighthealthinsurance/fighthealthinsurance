@@ -1403,16 +1403,9 @@ section:not(.slider) .share-subcopy {
 }
 
 /* Appeals page layout - centered content with margins */
-#output-container,
-.appeals-content-centered {
+#output-container {
     max-width: 1200px;
     margin: 0 auto;
-    padding: 0 20px;
-}
-
-.appeals-content-centered p {
-    max-width: 1200px;
-    margin: 1rem auto;
     padding: 0 20px;
 }
 
