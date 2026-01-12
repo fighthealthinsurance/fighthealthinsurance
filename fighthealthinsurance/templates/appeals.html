@@ -61,9 +61,11 @@ Fight Your Health Insurance Denial: Choose an Appeal
   </div>
     <!-- </div> -->
 
-<p>
-  When you choose a specific appeal, we <b>save that appeal to our database for model training and review</b>.
-</p>
+<div class="appeals-content-centered">
+  <p>
+    When you choose a specific appeal, we <b>save that appeal to our database for model training and review</b>.
+  </p>
+</div>
 <div id="base-form" style="display: none;">
 <form action="{% url 'choose_appeal' %}" method="post" class="col-md-12 d-flex flex-column align-items-center" id="form">
   {% csrf_token %}
