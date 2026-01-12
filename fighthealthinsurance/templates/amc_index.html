@@ -1,0 +1,294 @@
+{% extends 'base.html' %}
+{% block title %}{{ brand.name }}{% endblock title %}
+{% load compress %}
+{% load static %}
+
+{% block scriptmagic %}
+<!-- Google Fonts: Manrope -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+  /* AMC Brand Styling */
+  body {
+    font-family: 'Manrope', sans-serif;
+    background-color: #f5f8fa;
+  }
+
+  .form-control, .form-check-label, .form-label {
+    font-family: 'Manrope', sans-serif;
+  }
+
+  .amc-hero {
+    background: linear-gradient(135deg, #1976d2 0%, #1565c0 100%);
+  }
+
+  .btn-primary {
+    background-color: #1976d2;
+    border-color: #1976d2;
+    font-weight: 600;
+    transition: all 0.3s ease;
+  }
+
+  .btn-primary:hover {
+    background-color: #1565c0;
+    border-color: #1565c0;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(25, 118, 210, 0.3);
+  }
+
+  .wizard-tab.active {
+    color: #1976d2 !important;
+    border-bottom-color: #1976d2 !important;
+  }
+
+  .amc-sidebar-card a {
+    color: #1976d2;
+    text-decoration: none;
+  }
+
+  .amc-sidebar-card a:hover {
+    text-decoration: underline;
+  }
+
+  .amc-footer-info a {
+    color: #1976d2;
+  }
+</style>
+
+<script type="module">
+  import * as main from '{% static "js/dist/scrub.bundle.js" %}';
+</script>
+<script>
+  document.addEventListener('DOMContentLoaded', function() {
+    var form = document.getElementById('amc_appeal_form');
+    if (form) {
+      form.addEventListener('submit', function() {
+        if (window.trackUETConversion) {
+          window.trackUETConversion('denial_appeal_start', {
+            event_category: 'conversion',
+            event_label: 'Denial Form Submitted'
+          });
+        }
+      });
+    }
+  });
+</script>
+{% endblock scriptmagic %}
+
+{% block content %}
+<!-- AMC Hero Section -->
+<section class="amc-hero" style="color: white; padding: 3rem 0 2rem; text-align: center;">
+    <div class="container">
+        <h1 style="font-size: 2.5rem; font-weight: 700; margin-bottom: 1rem;">Healthcare Appeal Helper</h1>
+        <h2 style="font-size: 1.75rem; font-weight: 600; margin-bottom: 0.5rem;">Denied by your insurance?</h2>
+        <p style="font-size: 1.25rem; margin-bottom: 0.5rem;">You're not alone—and you can fight back.</p>
+        <p style="font-size: 1.1rem; margin-bottom: 0.5rem;">Over 80% of prior authorization appeals are successful. Let's help you be one of them.</p>
+        <p style="font-size: 0.9rem; font-style: italic; opacity: 0.9;">Source: Kaiser Family Foundation</p>
+    </div>
+</section>
+
+<!-- Main Content Area with Form and Sidebar -->
+<section class="amc-main-section" style="padding: 3rem 0;">
+    <div class="container">
+        <div class="row">
+            <!-- Main Form Column -->
+            <div class="col-lg-8 col-md-7">
+                {% if form.errors %}
+                <div class="form-errors alert alert-danger">
+                    {{ form.errors }}
+                </div>
+                {% endif %}
+
+                <!-- Multi-step wizard tabs -->
+                <div class="amc-wizard-tabs" style="display: flex; justify-content: center; margin-bottom: 2rem; border-bottom: 2px solid #e5e7eb;">
+                    <div class="wizard-tab active" style="padding: 1rem 2rem; border-bottom: 3px solid #1976d2; font-weight: 600;">
+                        Patient Information
+                    </div>
+                    <div class="wizard-tab" style="padding: 1rem 2rem; color: #6b7280;">
+                        Denial Details
+                    </div>
+                    <div class="wizard-tab" style="padding: 1rem 2rem; color: #6b7280;">
+                        Appeal Letter
+                    </div>
+                </div>
+
+                <!-- Step 1: Patient Information -->
+                <div class="amc-step-intro" style="margin-bottom: 2rem;">
+                    <h3 style="font-size: 1.5rem; font-weight: 600; margin-bottom: 0.5rem;">Let's start with some basic information</h3>
+                    <p style="color: #6b7280; margin-bottom: 0.5rem;">Who is writing this appeal?</p>
+                    <p style="color: #6b7280; font-style: italic;">The appeal will be written from the patient's perspective</p>
+                </div>
+
+                <div class="amc-form-card" style="background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+                    <h4 style="font-size: 1.25rem; font-weight: 600; margin-bottom: 1.5rem; color: #1f2937;">Patient Information</h4>
+
+                    <form method="post" action="{% url 'process' %}" id="amc_appeal_form" enctype="multipart/form-data">
+                        {% csrf_token %}
+
+                        <div class="form-group mb-3">
+                            <label for="patient_full_name" class="form-label" style="font-weight: 500;">
+                                Patient's Full Name *
+                            </label>
+                            <input type="text" id="patient_full_name" name="patient_full_name" class="form-control" required>
+                        </div>
+
+                        <h5 style="font-size: 1.1rem; font-weight: 600; margin: 2rem 0 1rem; color: #1f2937;">Insurance Information</h5>
+
+                        <div class="form-group mb-3">
+                            <label for="insurance_company" class="form-label" style="font-weight: 500;">
+                                Insurance Company Name *
+                            </label>
+                            <input type="text" id="insurance_company" name="insurance_company" class="form-control" required>
+                        </div>
+
+                        <div class="form-group mb-3">
+                            <label for="claim_number" class="form-label" style="font-weight: 500;">
+                                Claim Number *
+                            </label>
+                            <input type="text" id="claim_number" name="claim_number" class="form-control" required>
+                        </div>
+
+                        <div class="form-group mb-3">
+                            <label for="group_policy_id" class="form-label" style="font-weight: 500;">
+                                Group/Policy ID *
+                            </label>
+                            <small class="form-text text-muted d-block mb-1">Group number or Policy ID from insurance card</small>
+                            <input type="text" id="group_policy_id" name="group_policy_id" class="form-control" required>
+                        </div>
+
+                        <div class="form-group mb-3">
+                            <label for="denial_date" class="form-label" style="font-weight: 500;">
+                                Date of Denial *
+                            </label>
+                            <input type="date" id="denial_date" name="denial_date" class="form-control" required placeholder="mm/dd/yyyy">
+                        </div>
+
+                        <!-- Hidden fields for email and consent (required by backend) -->
+                        <div class="form-group mb-3">
+                            <label for="email" class="form-label" style="font-weight: 500;">
+                                Email Address *
+                            </label>
+                            <small class="form-text text-muted d-block mb-1">We'll send your appeal letter to this address</small>
+                            <input type="email" id="email" name="email" class="form-control" required>
+                        </div>
+
+                        <!-- Denial text field (hidden for now, will be in step 2) -->
+                        <input type="hidden" id="denial_text" name="denial_text" value="Claim denied - details to be provided in next step">
+
+                        <hr style="margin: 2rem 0; border-color: #e5e7eb;">
+
+                        <!-- Required Consents -->
+                        <h5 style="font-size: 1.1rem; font-weight: 600; margin-bottom: 1rem; color: #1f2937;">Required Agreements</h5>
+
+                        <div class="form-check mb-3">
+                            <input type="checkbox" id="tos" name="tos" class="form-check-input" required>
+                            <label for="tos" class="form-check-label">
+                                I agree to the <a href="{% url brand_url_names.tos %}" target="_blank" style="color: #1976d2;">Terms of Service</a> and will only use this website to generate my own health insurance appeals. I will not use this website to treat and diagnose any disease or condition or assist in either of those. *
+                            </label>
+                        </div>
+
+                        <div class="form-check mb-3">
+                            <input type="checkbox" id="privacy" name="privacy" class="form-check-input" required>
+                            <label for="privacy" class="form-check-label">
+                                I have read and understand the <a href="{% url brand_url_names.privacy_policy %}" target="_blank" style="color: #1976d2;">Privacy Policy</a>. *
+                            </label>
+                        </div>
+
+                        <div class="form-check mb-3">
+                            <input type="checkbox" id="pii" name="pii" class="form-check-input" required>
+                            <label for="pii" class="form-check-label">
+                                I have removed my personal identifiable information (PII) from the text areas above. *
+                            </label>
+                        </div>
+
+                        <!-- Optional Consents -->
+                        <h5 style="font-size: 1.1rem; font-weight: 600; margin: 1.5rem 0 1rem; color: #1f2937;">Optional</h5>
+
+                        <div class="form-check mb-3">
+                            <input type="checkbox" id="store_raw_email" name="store_raw_email" value="checked" class="form-check-input">
+                            <label for="store_raw_email" class="form-check-label">
+                                Store my email to follow-up with me (for the duration of automated follow ups + 30 days)
+                            </label>
+                        </div>
+
+                        <div class="form-check mb-3">
+                            <input type="checkbox" id="use_external_models" name="use_external_models" value="checked" class="form-check-input">
+                            <label for="use_external_models" class="form-check-label">
+                                Increase the number of possible appeals and use external models. This involves sharing your data with 3rd parties subject to their own terms of service.
+                            </label>
+                        </div>
+
+                        <div class="form-check mb-3">
+                            <input type="checkbox" id="subscribe" name="subscribe" value="checked" checked class="form-check-input">
+                            <label for="subscribe" class="form-check-label">
+                                Subscribe to our mailing list for updates and news. We will store your e-mail for this option if selected.
+                            </label>
+                        </div>
+
+                        <div class="form-actions text-center mt-4">
+                            <button type="submit" class="btn btn-primary btn-lg" id="submit" style="padding: 0.75rem 2rem; font-size: 1.1rem;">
+                                Continue to Denial Details
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Sidebar Column -->
+            <div class="col-lg-4 col-md-5">
+                <!-- Know Your Rights -->
+                <div class="amc-sidebar-card" style="background: #f9fafb; padding: 1.5rem; border-radius: 8px; margin-bottom: 1.5rem; border-left: 4px solid #1976d2;">
+                    <h4 style="font-size: 1.1rem; font-weight: 600; margin-bottom: 1rem; color: #1f2937;">Know Your Rights</h4>
+                    <ul style="padding-left: 1.25rem; margin: 0; line-height: 1.8; color: #4b5563;">
+                        <li>You have the right to appeal any denied insurance claim</li>
+                        <li>Insurance companies must provide a reason for denial</li>
+                        <li>You can request an external review if internal appeals fail</li>
+                        <li>Time limits apply - most appeals must be filed within 180 days</li>
+                    </ul>
+                </div>
+
+                <!-- Appeal Success Rates -->
+                <div class="amc-sidebar-card" style="background: #f0f9ff; padding: 1.5rem; border-radius: 8px; margin-bottom: 1.5rem; border-left: 4px solid #1976d2;">
+                    <h4 style="font-size: 1.1rem; font-weight: 600; margin-bottom: 1rem; color: #1f2937;">Appeal Success Rates</h4>
+                    <p style="margin-bottom: 0.75rem; line-height: 1.8; color: #4b5563;"><strong>83%</strong> of prior authorization appeals are fully or partially successful according to Kaiser Family Foundation.</p>
+                    <p style="margin-bottom: 0.75rem; line-height: 1.8; color: #4b5563;"><strong>50-60%</strong> of claim denials can be overturned on the first appeal attempt.</p>
+                    <p style="margin-bottom: 0; line-height: 1.8; color: #4b5563;"><strong>Documentation is key:</strong> Appeals with supporting medical information are more likely to succeed.</p>
+                </div>
+
+                <!-- Need More Help? -->
+                <div class="amc-sidebar-card" style="background: #f9fafb; padding: 1.5rem; border-radius: 8px; border-left: 4px solid #1976d2;">
+                    <h4 style="font-size: 1.1rem; font-weight: 600; margin-bottom: 1rem; color: #1f2937;">Need More Help?</h4>
+                    <p style="margin-bottom: 1rem; color: #4b5563;">These resources offer additional guidance for navigating insurance appeals:</p>
+                    <ul style="padding-left: 1.25rem; margin: 0; line-height: 1.8;">
+                        <li><a href="https://www.patientadvocate.org/" target="_blank">Patient Advocate Foundation</a></li>
+                        <li><a href="https://www.healthcare.gov/appeal-insurance-company-decision/" target="_blank">Healthcare.gov Appeals Guide</a></li>
+                        <li><a href="https://www.cms.gov/marketplace/resources/consumer-assistance/appeals" target="_blank">External Appeals Information</a></li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- AMC Footer Content -->
+<section class="amc-footer-info" style="background: #f9fafb; padding: 2rem 0; margin-top: 3rem; border-top: 1px solid #e5e7eb;">
+    <div class="container text-center">
+        <h3 style="font-size: 1.5rem; font-weight: 600; margin-bottom: 0.5rem; color: #1f2937;">Healthcare Appeal Helper</h3>
+        <p style="color: #6b7280; margin-bottom: 1.5rem;">Helping patients successfully appeal denied insurance claims.</p>
+
+        <div style="margin-bottom: 1rem;">
+            <h4 style="font-size: 1.1rem; font-weight: 600; margin-bottom: 0.5rem; color: #1f2937;">Resources</h4>
+            <p style="margin: 0;">
+                <a href="https://www.cms.gov/marketplace/resources/consumer-assistance/appeals" target="_blank" style="margin: 0 1rem;">External Appeals Information</a>
+                <a href="https://www.healthcare.gov/appeal-insurance-company-decision/" target="_blank" style="margin: 0 1rem;">Healthcare.gov Appeals</a>
+                <a href="https://www.patientadvocate.org/" target="_blank" style="margin: 0 1rem;">Patient Advocate Foundation</a>
+            </p>
+        </div>
+
+        <p style="font-size: 0.9rem; color: #6b7280; margin-bottom: 0.25rem;">AI-enhanced letter generation</p>
+        <p style="font-size: 0.85rem; color: #9ca3af; margin: 0;">© 2026 Healthcare Appeal Helper</p>
+    </div>
+</section>
+{% endblock content %}
