@@ -1,6 +1,6 @@
 import asyncio
 import os
-from typing import List, Optional
+from typing import List, Optional, Sequence
 
 from loguru import logger
 
@@ -80,7 +80,7 @@ class MLRouter(object):
         )
 
     @staticmethod
-    def _keep_single_groq(models: list[RemoteModelLike]) -> list[RemoteModelLike]:
+    def _keep_single_groq(models: Sequence[RemoteModelLike]) -> list[RemoteModelLike]:
         """
         Return the models list but with at most one Groq backend to avoid double fanout.
         Goal is to reduce load on Groq due to usage limits.
@@ -175,7 +175,8 @@ class MLRouter(object):
             models += self.internal_models_by_cost[:6]
         if use_external and self.external_models_by_cost:
             models += self.external_models_by_cost[:4]
-        if not models:
+        # Only fall back to all_models if use_external is True
+        if not models and use_external:
             models = self.all_models_by_cost[:6] if self.all_models_by_cost else []
         return models
 
