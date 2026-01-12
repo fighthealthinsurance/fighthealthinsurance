@@ -1401,3 +1401,14 @@ section:not(.slider) .share-subcopy {
 .form-input-state {
     width: 60px;
 }
+
+/* Appeals page layout - centered content with margins */
+#output-container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 20px;
+}
+
+.form-nav-centered {
+    padding: 0 20px;
+}
