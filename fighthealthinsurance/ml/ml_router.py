@@ -137,10 +137,24 @@ class MLRouter(object):
             # Force a specific model by name
             forced_models = self.models_by_name[forced_model]
             if forced_models:
-                logger.info(
-                    f"✓ Forcing model {forced_model} {task_description}: {[getattr(m, 'model', type(m).__name__) for m in forced_models]}"
-                )
-                return forced_models
+                # Filter by use_external flag
+                if not use_external:
+                    filtered_models = [m for m in forced_models if not m.external]
+                    if filtered_models:
+                        logger.info(
+                            f"✓ Forcing model {forced_model} {task_description} (filtered to internal only): {[getattr(m, 'model', type(m).__name__) for m in filtered_models]}"
+                        )
+                        return filtered_models
+                    else:
+                        logger.warning(
+                            f"FORCE_MODEL={forced_model} ignored {task_description} because use_external=False and all instances are external"
+                        )
+                        return None
+                else:
+                    logger.info(
+                        f"✓ Forcing model {forced_model} {task_description}: {[getattr(m, 'model', type(m).__name__) for m in forced_models]}"
+                    )
+                    return forced_models
 
         logger.warning(
             f"Forced model {forced_model} not found, falling back to default"
