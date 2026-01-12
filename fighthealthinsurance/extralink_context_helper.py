@@ -207,7 +207,7 @@ class ExtraLinkContextHelper:
 
         try:
             logger.info(f"Loading extralink context for microsite {microsite_slug}")
-            
+
             extralink_context = await ExtraLinkContextHelper.get_context_for_microsite(
                 microsite_slug,
                 max_docs=max_docs,
