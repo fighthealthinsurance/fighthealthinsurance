@@ -686,6 +686,7 @@ class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # t
             dict: Parameters for _assemble_appeal_pdf()
         """
         denial = self.denial_id
+        assert denial is not None  # Validated in _validate_regeneration_requirements()
         logger.debug(f"Using denial {denial.denial_id} for regeneration")
 
         # Get patient name from FaxesToSend or fallback
