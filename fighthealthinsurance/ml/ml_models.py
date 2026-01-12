@@ -1584,16 +1584,37 @@ class RemoteOpenLike(RemoteModel):
                 # Some APIs (e.g., Groq) don't support extra fields
                 cleaned_messages = []
                 for msg in messages:
-                    cleaned_msg = {"role": msg["role"], "content": msg["content"]}
+                    cleaned_msg = {}
+                    role = msg.get("role")
+                    content = msg.get("content")
+                    if role is not None:
+                        cleaned_msg["role"] = role
+                    if content is not None:
+                        cleaned_msg["content"] = content
                     # Preserve any tool_calls if present (for function calling)
-                    if "tool_calls" in msg:
-                        cleaned_msg["tool_calls"] = msg["tool_calls"]
-                    if "name" in msg:
-                        cleaned_msg["name"] = msg["name"]
+                    tool_calls = msg.get("tool_calls")
+                    if tool_calls is not None:
+                        cleaned_msg["tool_calls"] = tool_calls
+                    if msg.get("role") == "tool":
+                        tool_call_id = msg.get("tool_call_id")
+                        if tool_call_id is not None:
+                            cleaned_msg["tool_call_id"] = tool_call_id
+                    name = msg.get("name")
+                    if name is not None:
+                        cleaned_msg["name"] = name
                     cleaned_messages.append(cleaned_msg)
 
+                summary_msg_log = [
+                    {
+                        "role": m.get("role"),
+                        "content_len": len(m.get("content") or ""),
+                        "has_tool_calls": bool(m.get("tool_calls")),
+                        "has_tool_call_id": bool(m.get("tool_call_id")),
+                    }
+                    for m in cleaned_messages
+                ]
                 logger.debug(
-                    f"Using messages: {cleaned_messages} from prompt {prompt} for {model}"
+                    f"Prepared {len(cleaned_messages)} messages for model {model}: {summary_msg_log}"
                 )
                 async with s.post(
                     url,
@@ -1613,11 +1634,14 @@ class RemoteOpenLike(RemoteModel):
                         # Log the response body for debugging 400 errors
                         try:
                             error_body = await response.text()
-                            logger.error(
-                                f"HTTP {e.status} error from {api_base} for model {model}: {error_body}"
+                            truncated_body = error_body[:500]
+                            logger.debug(
+                                f"HTTP {e.status} error from {api_base} for model {model}: body_prefix={truncated_body!r}"
                             )
-                        except:
-                            pass
+                        except Exception as exc:
+                            logger.debug(
+                                f"HTTP {e.status} error from {api_base} for model {model}: failed to read error body due to {exc}"
+                            )
                         raise
                     json_result = await response.json()
                     if "object" in json_result and json_result["object"] != "error":
@@ -2331,15 +2355,15 @@ class RemoteGroq(RemoteFullOpenLike):
 
     Features:
     - Per-model backoff when rate limited (429 responses)
-    - Load balancing across quality tier models (Scout, Maverick, Versatile)
+    - Load balancing across available Groq models (Versatile quality tier; Instant speed tier)
     - Automatic fallback to Instant tier when quality models are rate limited
     - Graceful 429 handling with Retry-After support
 
     All models support 128K input context.
 
     Models are organized into tiers:
-    - Quality tier (cost=4): Scout, Maverick, Versatile - randomized selection
-    - Speed tier (cost=6): Instant - fallback when quality exhausted
+    - Quality tier (cost=4): llama-3.3-70b-versatile - randomized when multiple quality models are available
+    - Speed tier (cost=6): llama-3.1-8b-instant - fallback when quality exhausted
 
     Environment variables:
     - GROQ_API_KEY: API key for Groq (required)
@@ -2436,6 +2460,9 @@ class RemoteGroq(RemoteFullOpenLike):
         Returns:
             Model name to use, or None if all models are rate limited
         """
+        if not os.getenv("GROQ_API_KEY"):
+            logger.debug("RemoteGroq.select_available_model: GROQ_API_KEY not set")
+            return None
         available_quality = []
         available_speed = []
 
@@ -2540,6 +2567,8 @@ class RemoteGroq(RemoteFullOpenLike):
                                 f"'{retry_header}' for {self.model}; using default {retry_after}s"
                             )
 
+                retry_after = max(1.0, min(retry_after, 600.0))
+
                 self.rate_limiter.mark_exhausted(retry_after)
                 logger.warning(
                     f"RemoteGroq._infer: 429 from Groq for {self.model}, "
@@ -2558,9 +2587,9 @@ class RemoteGroq(RemoteFullOpenLike):
         """
         Return available Groq models with cost tiers.
 
-        Quality tier models (Scout, Maverick, Versatile) have lower cost
-        to be preferred over DeepInfra. Speed tier (Instant) has higher
-        cost to only be used as fallback.
+        Quality tier models (Versatile) have lower cost to be preferred
+        over DeepInfra. Speed tier (Instant) has higher cost to only be
+        used as fallback. Only Groq-hosted models are listed here.
         """
         # Check if API key is configured
         if not os.getenv("GROQ_API_KEY"):

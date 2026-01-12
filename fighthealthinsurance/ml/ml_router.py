@@ -79,8 +79,24 @@ class MLRouter(object):
             f"Built {self} with i:{self.internal_models_by_cost} a:{self.all_models_by_cost}"
         )
 
+    @staticmethod
+    def _keep_single_groq(models: list[RemoteModelLike]) -> list[RemoteModelLike]:
+        """
+        Return the models list but with at most one Groq backend to avoid double fanout.
+        Goal is to reduce load on Groq due to usage limits.
+        """
+        seen_groq = False
+        filtered: list[RemoteModelLike] = []
+        for m in models:
+            if isinstance(m, RemoteGroq):
+                if seen_groq:
+                    continue
+                seen_groq = True
+            filtered.append(m)
+        return filtered
+
     def _get_forced_models(
-        self, task_description: str = ""
+        self, task_description: str = "", *, use_external: bool = True
     ) -> Optional[list[RemoteModelLike]]:
         """Check for FORCE_MODEL environment variable and return forced models if set.
 
@@ -100,15 +116,19 @@ class MLRouter(object):
         )
 
         if forced_model == "groq":
-            # Find all groq models by checking the class type
             groq_models = [
-                m for m in self.all_models_by_cost if type(m).__name__ == "RemoteGroq"
+                m for m in self.all_models_by_cost if isinstance(m, RemoteGroq)
             ]
             if groq_models:
+                if not use_external:
+                    logger.warning(
+                        f"FORCE_MODEL=groq ignored {task_description} because use_external=False"
+                    )
+                    return None
                 logger.info(
                     f"✓ Forcing {len(groq_models)} groq models {task_description}: {[getattr(m, 'model', type(m).__name__) for m in groq_models]}"
                 )
-                return groq_models
+                return self._keep_single_groq(groq_models)
             else:
                 logger.warning(
                     f"No groq models found! Available model types: {[type(m).__name__ for m in self.all_models_by_cost]}"
@@ -134,10 +154,14 @@ class MLRouter(object):
         else:
             return self.internal_models_by_cost
 
-    def generate_text_backends(self) -> list[RemoteModelLike]:
+    def generate_text_backends(
+        self, use_external: bool = False
+    ) -> list[RemoteModelLike]:
         """Return models for text generation tasks like prior authorization and ongoing chat."""
         # Check for forced model override
-        forced_models = self._get_forced_models("for text generation")
+        forced_models = self._get_forced_models(
+            "for text generation", use_external=use_external
+        )
         if forced_models:
             return forced_models
 
@@ -145,8 +169,15 @@ class MLRouter(object):
         if "meta-llama/Llama-4-Scout-17B-16E-Instruct" in self.models_by_name:
             return self.cheapest("meta-llama/Llama-4-Scout-17B-16E-Instruct")
 
-        # Fall back to any available models
-        return self.all_models_by_cost[:6] if self.all_models_by_cost else []
+        # Fall back to internal models, optionally appending external if allowed
+        models: list[RemoteModelLike] = []
+        if self.internal_models_by_cost:
+            models += self.internal_models_by_cost[:6]
+        if use_external and self.external_models_by_cost:
+            models += self.external_models_by_cost[:4]
+        if not models:
+            models = self.all_models_by_cost[:6] if self.all_models_by_cost else []
+        return models
 
     def full_qa_backends(self, use_external=False) -> list[RemoteModelLike]:
         """
@@ -236,7 +267,7 @@ class MLRouter(object):
             List of RemoteModelLike models suitable for chat tasks
         """
         # Check for forced model override
-        forced_models = self._get_forced_models()
+        forced_models = self._get_forced_models("for chat", use_external=use_external)
         if forced_models:
             return forced_models
 
@@ -251,7 +282,7 @@ class MLRouter(object):
                 f"get_chat_backends: Added FHI model {fhi_models[0]} (tried twice)"
             )
         if use_external:
-            external_to_add = self.external_models_by_cost[:2]
+            external_to_add = self._keep_single_groq(self.external_models_by_cost[:2])
             models += external_to_add
             logger.debug(
                 f"get_chat_backends: Added external models {external_to_add} (use_external=True)"
@@ -279,13 +310,19 @@ class MLRouter(object):
             - primary_models: FHI/internal models to try first
             - fallback_models: External models to try if primary fails (empty if use_external=False)
         """
+        forced_models = self._get_forced_models("for chat", use_external=use_external)
+        if forced_models:
+            return forced_models, []
+
         # Reuse get_chat_backends for primary models (allows test mocking to work)
         primary_models = self.get_chat_backends(use_external=False)
 
         fallback_models: list[RemoteModelLike] = []
         if use_external:
             # Get external models sorted by quality for fallback
-            external_models = [m for m in self.all_models_by_cost if m.external]
+            external_models = self._keep_single_groq(
+                [m for m in self.all_models_by_cost if m.external]
+            )
             # Prefer higher quality models for chat fallback
             fallback_models = sorted(external_models, key=lambda m: -m.quality())[:4]
 
