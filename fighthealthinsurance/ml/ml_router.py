@@ -259,26 +259,35 @@ class MLRouter(object):
                 logger.warning(f"FORCE_MODEL={forced_model} not found")
                 return []
 
-        # No forced model - build list based on use_external
+        # No forced model - build list based on use_external with cost ordering
         names = []
+        seen = set()
 
-        # Add internal model names (fhi-* models)
-        for name, instances in self.models_by_name.items():
-            if not instances:
-                continue
-            # Check if any instance is internal
-            has_internal = any(not m.external for m in instances)
-            if has_internal:
-                names.append(name)
+        # Helper to extract model name and add to list
+        def add_model_name(model):
+            model_name = getattr(model, "model", None)
+            if not model_name:
+                # Find name from models_by_name
+                for name, instances in self.models_by_name.items():
+                    if model in instances:
+                        model_name = name
+                        break
+            if model_name and model_name not in seen:
+                names.append(model_name)
+                seen.add(model_name)
+                return True
+            return False
 
-        # Add external model names if allowed
         if use_external:
-            for name, instances in self.models_by_name.items():
-                if name not in names and instances:
-                    # Check if any instance is external
-                    has_external = any(m.external for m in instances)
-                    if has_external:
-                        names.append(name)
+            # Internal + external: take internal first, then external
+            for model in self.internal_models_by_cost[:6]:
+                add_model_name(model)
+            for model in self.external_models_by_cost[:4]:
+                add_model_name(model)
+        else:
+            # Internal only
+            for model in self.internal_models_by_cost:
+                add_model_name(model)
 
         return names
 

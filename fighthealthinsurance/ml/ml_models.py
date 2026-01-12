@@ -1581,35 +1581,16 @@ class RemoteOpenLike(RemoteModel):
                 messages = ensure_message_alternation(messages)
 
                 # Strip unsupported fields like 'timestamp' from messages
-                # Some APIs (e.g., Groq) don't support extra fields
-                cleaned_messages = []
-                for msg in messages:
-                    cleaned_msg = {}
-                    role = msg.get("role")
-                    content = msg.get("content")
-                    if role is not None:
-                        cleaned_msg["role"] = role
-                    if content is not None:
-                        cleaned_msg["content"] = content
-                    # Preserve any tool_calls if present (for function calling)
-                    tool_calls = msg.get("tool_calls")
-                    if tool_calls is not None:
-                        cleaned_msg["tool_calls"] = tool_calls
-                    if msg.get("role") == "tool":
-                        tool_call_id = msg.get("tool_call_id")
-                        if tool_call_id is not None:
-                            cleaned_msg["tool_call_id"] = tool_call_id
-                    name = msg.get("name")
-                    if name is not None:
-                        cleaned_msg["name"] = name
-                    cleaned_messages.append(cleaned_msg)
+                # Some APIs (e.g., Groq) don't support extra fields beyond role/content
+                cleaned_messages = [
+                    {"role": msg.get("role"), "content": msg.get("content")}
+                    for msg in messages
+                ]
 
                 summary_msg_log = [
                     {
                         "role": m.get("role"),
                         "content_len": len(m.get("content") or ""),
-                        "has_tool_calls": bool(m.get("tool_calls")),
-                        "has_tool_call_id": bool(m.get("tool_call_id")),
                     }
                     for m in cleaned_messages
                 ]
