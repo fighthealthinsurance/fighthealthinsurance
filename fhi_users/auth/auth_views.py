@@ -104,7 +104,34 @@ class PatientSignupView(generic.FormView):
         )
 
         # Create associated PatientUser
-        PatientUser.objects.create(user=user, active=True)
+        patient_user = PatientUser.objects.create(user=user, active=True)
+
+        # Link anonymous appeals to the new account if emails match
+        try:
+            from fighthealthinsurance.models import Denial
+            from fighthealthinsurance.utils import hash_for_link
+            import logging
+
+            logger = logging.getLogger(__name__)
+
+            hashed = hash_for_link(email)
+            anonymous_denials = Denial.objects.filter(
+                hashed_email=hashed, patient_user__isnull=True
+            )
+            if anonymous_denials.exists():
+                count = anonymous_denials.update(patient_user=patient_user)
+                logger.info(
+                    f"Migrated {count} anonymous denials to patient user {patient_user.id} "
+                    f"for email {email}"
+                )
+        except Exception as e:
+            # Log but don't fail signup if migration fails
+            import logging
+
+            logger = logging.getLogger(__name__)
+            logger.error(
+                f"Failed to migrate anonymous denials for {email}: {e}", exc_info=True
+            )
 
         # Log the user in
         login(self.request, user)
