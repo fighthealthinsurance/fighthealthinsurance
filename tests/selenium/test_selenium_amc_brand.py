@@ -271,9 +271,9 @@ class SeleniumTestBrandColorScheme(FHISeleniumBase, StaticLiveServerTestCase):
         # The brand color is injected in a <style> tag in the head
         page_source = self.get_page_source()
 
-        # Should contain the blue color for AMC
-        assert "#2563eb" in page_source, "AMC blue color not found in page source"
-        assert "--brand-primary-color" in page_source, "CSS variable not found"
+        # Should contain the blue color for AMC (Material UI blue #1976d2)
+        assert "#1976d2" in page_source, "AMC blue color not found in page source"
+        assert "--mui-primary-main" in page_source, "Material UI CSS variable not found"
 
     def test_fhi_has_green_css_variable(self):
         """Test that FHI pages inject green color CSS variable."""

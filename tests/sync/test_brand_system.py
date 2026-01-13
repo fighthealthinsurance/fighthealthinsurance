@@ -57,7 +57,7 @@ class BrandDetectionTest(TestCase):
         brand = get_brand_config("amc")
         self.assertEqual(brand.slug, "amc")
         self.assertEqual(brand.name, "Appeal My Claims")
-        self.assertEqual(brand.primary_color, "#2563eb")
+        self.assertEqual(brand.primary_color, "#1976d2")  # Material UI blue
         self.assertFalse(brand.show_full_nav)
         self.assertIsNone(brand.logo_url)
         self.assertEqual(brand.logo_text, "Appeal My Claims")

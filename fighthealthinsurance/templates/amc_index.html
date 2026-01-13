@@ -10,10 +10,19 @@
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 
 <style>
-  /* AMC Brand Styling */
+  /* Material UI AMC Styling */
+  :root {
+    --mui-primary-main: #1976d2;
+    --mui-secondary-main: #34a0a4;
+    --mui-background-default: #f5f8fa;
+    --mui-text-primary: rgba(0, 0, 0, .87);
+  }
+
   body {
     font-family: 'Manrope', sans-serif;
-    background-color: #f5f8fa;
+    background-color: var(--mui-background-default);
+    color: var(--mui-text-primary);
+    line-height: 1.6;
   }
 
   .form-control, .form-check-label, .form-label {
@@ -21,30 +30,37 @@
   }
 
   .amc-hero {
-    background: linear-gradient(135deg, #2563eb 0%, #1e40af 100%);
+    background: linear-gradient(135deg, var(--mui-primary-main) 0%, #1565c0 100%);
   }
 
   .btn-primary {
-    background-color: #2563eb;
-    border-color: #2563eb;
+    background-color: var(--mui-primary-main);
+    border-color: var(--mui-primary-main);
     font-weight: 600;
-    transition: all 0.3s ease;
+    text-transform: none;
+    border-radius: 4px;
+    padding: 8px 22px;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   }
 
   .btn-primary:hover {
-    background-color: #1e40af;
-    border-color: #1e40af;
-    transform: translateY(-2px);
-    box-shadow: 0 4px 8px rgba(37, 99, 235, 0.3);
+    background-color: #1565c0;
+    border-color: #1565c0;
+    box-shadow: 0 2px 4px -1px rgba(0,0,0,0.2), 0 4px 5px 0 rgba(0,0,0,0.14), 0 1px 10px 0 rgba(0,0,0,0.12);
   }
 
   .wizard-tab.active {
-    color: #2563eb !important;
-    border-bottom-color: #2563eb !important;
+    color: var(--mui-primary-main) !important;
+    border-bottom-color: var(--mui-primary-main) !important;
+  }
+
+  .amc-sidebar-card {
+    box-shadow: 0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.24);
+    transition: all 0.3s cubic-bezier(.25,.8,.25,1);
   }
 
   .amc-sidebar-card a {
-    color: #2563eb;
+    color: var(--mui-primary-main);
     text-decoration: none;
   }
 
@@ -53,7 +69,18 @@
   }
 
   .amc-footer-info a {
-    color: #2563eb;
+    color: var(--mui-primary-main);
+  }
+
+  .form-control {
+    border-radius: 4px;
+    border: 1px solid rgba(0, 0, 0, 0.23);
+    padding: 10px 14px;
+  }
+
+  .form-control:focus {
+    border-color: var(--mui-primary-main);
+    box-shadow: 0 0 0 0.2rem rgba(25, 118, 210, 0.25);
   }
 </style>
 
@@ -103,7 +130,7 @@
 
                 <!-- Multi-step wizard tabs -->
                 <div class="amc-wizard-tabs" style="display: flex; justify-content: center; margin-bottom: 2rem; border-bottom: 2px solid #e5e7eb;">
-                    <div class="wizard-tab active" style="padding: 1rem 2rem; border-bottom: 3px solid #2563eb; font-weight: 600;">
+                    <div class="wizard-tab active" style="padding: 1rem 2rem; border-bottom: 3px solid #1976d2; font-weight: 600;">
                         Patient Information
                     </div>
                     <div class="wizard-tab" style="padding: 1rem 2rem; color: #6b7280;">
@@ -185,14 +212,14 @@
                         <div class="form-check mb-3">
                             <input type="checkbox" id="tos" name="tos" class="form-check-input" required>
                             <label for="tos" class="form-check-label">
-                                I agree to the <a href="{% url brand_url_names.tos %}" target="_blank" style="color: #2563eb;">Terms of Service</a> and will only use this website to generate my own health insurance appeals. I will not use this website to treat and diagnose any disease or condition or assist in either of those. *
+                                I agree to the <a href="{% url brand_url_names.tos %}" target="_blank" style="color: #1976d2;">Terms of Service</a> and will only use this website to generate my own health insurance appeals. I will not use this website to treat and diagnose any disease or condition or assist in either of those. *
                             </label>
                         </div>
 
                         <div class="form-check mb-3">
                             <input type="checkbox" id="privacy" name="privacy" class="form-check-input" required>
                             <label for="privacy" class="form-check-label">
-                                I have read and understand the <a href="{% url brand_url_names.privacy_policy %}" target="_blank" style="color: #2563eb;">Privacy Policy</a>. *
+                                I have read and understand the <a href="{% url brand_url_names.privacy_policy %}" target="_blank" style="color: #1976d2;">Privacy Policy</a>. *
                             </label>
                         </div>
 
@@ -239,7 +266,7 @@
             <!-- Sidebar Column -->
             <div class="col-lg-4 col-md-5">
                 <!-- Know Your Rights -->
-                <div class="amc-sidebar-card" style="background: #f9fafb; padding: 1.5rem; border-radius: 8px; margin-bottom: 1.5rem; border-left: 4px solid #2563eb;">
+                <div class="amc-sidebar-card" style="background: #f9fafb; padding: 1.5rem; border-radius: 8px; margin-bottom: 1.5rem; border-left: 4px solid #1976d2;">
                     <h4 style="font-size: 1.1rem; font-weight: 600; margin-bottom: 1rem; color: #1f2937;">Know Your Rights</h4>
                     <ul style="padding-left: 1.25rem; margin: 0; line-height: 1.8; color: #4b5563;">
                         <li>You have the right to appeal any denied insurance claim</li>
@@ -250,7 +277,7 @@
                 </div>
 
                 <!-- Appeal Success Rates -->
-                <div class="amc-sidebar-card" style="background: #f0f9ff; padding: 1.5rem; border-radius: 8px; margin-bottom: 1.5rem; border-left: 4px solid #2563eb;">
+                <div class="amc-sidebar-card" style="background: #f0f9ff; padding: 1.5rem; border-radius: 8px; margin-bottom: 1.5rem; border-left: 4px solid #1976d2;">
                     <h4 style="font-size: 1.1rem; font-weight: 600; margin-bottom: 1rem; color: #1f2937;">Appeal Success Rates</h4>
                     <p style="margin-bottom: 0.75rem; line-height: 1.8; color: #4b5563;"><strong>83%</strong> of prior authorization appeals are fully or partially successful according to Kaiser Family Foundation.</p>
                     <p style="margin-bottom: 0.75rem; line-height: 1.8; color: #4b5563;"><strong>50-60%</strong> of claim denials can be overturned on the first appeal attempt.</p>
@@ -258,7 +285,7 @@
                 </div>
 
                 <!-- Need More Help? -->
-                <div class="amc-sidebar-card" style="background: #f9fafb; padding: 1.5rem; border-radius: 8px; border-left: 4px solid #2563eb;">
+                <div class="amc-sidebar-card" style="background: #f9fafb; padding: 1.5rem; border-radius: 8px; border-left: 4px solid #1976d2;">
                     <h4 style="font-size: 1.1rem; font-weight: 600; margin-bottom: 1rem; color: #1f2937;">Need More Help?</h4>
                     <p style="margin-bottom: 1rem; color: #4b5563;">These resources offer additional guidance for navigating insurance appeals:</p>
                     <ul style="padding-left: 1.25rem; margin: 0; line-height: 1.8;">

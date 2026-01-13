@@ -53,7 +53,7 @@ BRANDS = {
         domain="appealmyclaims.com",
         logo_url=None,
         logo_text="Appeal My Claims",
-        primary_color="#2563eb",  # Blue
+        primary_color="#1976d2",  # Material UI blue (matches real appealmyclaims.com)
         tagline="Generate your appeal in minutes",
         footer_text='Powered by <a href="https://www.fighthealthinsurance.com" target="_blank" rel="noopener noreferrer">Fight Health Insurance</a>',
         social_links={},  # No social links for AMC
