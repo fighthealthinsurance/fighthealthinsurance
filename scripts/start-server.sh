@@ -20,6 +20,11 @@ elif [ -n "$POLLING_ACTORS" ]; then
   python manage.py launch_polling_actors || (echo "Error starting ray actor?" && sleep 480)
   sleep 10
   exit 0
+elif [ -n "$PREFETCH_EXTRALINKS" ]; then
+  # Launch extralink pre-fetch (one-time job, non-blocking)
+  python manage.py launch_prefetch_actor || echo "Pre-fetch failed (non-blocking)"
+  sleep 10
+  exit 0
 fi
 # Same for dev _except_ we don't exit when were done since we use the locally created sqllite db to party on.
 if [ "$ENVIRONMENT" == "Dev" ]; then

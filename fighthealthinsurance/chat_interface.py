@@ -30,6 +30,7 @@ from fighthealthinsurance.chat.tools.patterns import (
     MEDICAID_INFO_REGEX as medicaid_info_lookup_regex,
     PUBMED_QUERY_REGEX as pubmed_query_terms_regex,
 )
+from fighthealthinsurance.extralink_context_helper import ExtraLinkContextHelper
 from fighthealthinsurance.ml.ml_models import RemoteModelLike
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.models import (
@@ -39,9 +40,13 @@ from fighthealthinsurance.models import (
     OngoingChat,
     PriorAuthRequest,
 )
+from fighthealthinsurance.microsites import get_microsite
 from fighthealthinsurance.prompt_templates import get_intro_template
 from fighthealthinsurance.pubmed_tools import PubMedTools
-from fighthealthinsurance.utils import best_within_timelimit
+from fighthealthinsurance.utils import (
+    best_within_timelimit,
+    fire_and_forget_in_new_threadpool,
+)
 
 
 class ChatInterface:
@@ -862,98 +867,76 @@ class ChatInterface:
         is_patient = self.is_patient
         if is_new_chat:
             # If this chat is from a microsite, automatically search PubMed with microsite search terms
-            if chat.microsite_slug:
+            microsite_slug = chat.microsite_slug
+            if microsite_slug:
                 try:
-                    from fighthealthinsurance.microsites import get_microsite
-                    from fighthealthinsurance.utils import (
-                        fire_and_forget_in_new_threadpool,
-                    )
+                    microsite = get_microsite(microsite_slug)
+                    if microsite:
 
-                    microsite = get_microsite(chat.microsite_slug)
-                    if microsite and microsite.pubmed_search_terms:
-                        logger.info(
-                            f"Triggering background PubMed searches for microsite {chat.microsite_slug}"
-                        )
-
-                        # Create background task for PubMed searches
-                        async def search_and_store_pubmed():
-                            """Search PubMed in background and append results to chat context."""
+                        async def fetch_microsite_context():
+                            """Fetch microsite context."""
                             try:
-                                # Sanitize the procedure name for display
-                                safe_procedure = str(microsite.default_procedure)[:100]
-                                await self.send_status_message(
-                                    f"Searching medical literature for {safe_procedure}..."
+                                # Send status message if PubMed search is available
+                                if microsite.pubmed_search_terms:
+                                    safe_procedure = str(microsite.default_procedure)[
+                                        :100
+                                    ]
+                                    await self.send_status_message(
+                                        f"Searching medical literature for {safe_procedure}..."
+                                    )
+
+                                # Fetch combined context (both extralinks and PubMed if available)
+                                combined_context = await microsite.get_combined_context(
+                                    pubmed_tools=(
+                                        self.pubmed_tools
+                                        if microsite.pubmed_search_terms
+                                        else None
+                                    ),
+                                    max_extralink_docs=5,
+                                    max_extralink_chars=2000,
+                                    max_pubmed_terms=3,
+                                    max_pubmed_articles=20,
                                 )
 
-                                all_articles = []
-                                # Trigger PubMed searches for each search term
-                                for search_term in microsite.pubmed_search_terms[:3]:
-                                    try:
-                                        # Sanitize search term for display
-                                        safe_search_term = str(search_term)[:50]
-                                        await self.send_status_message(
-                                            f"Searching: {safe_search_term}..."
-                                        )
-                                        articles = await self.pubmed_tools.find_pubmed_article_ids_for_query(
-                                            search_term, since="2020"
-                                        )
-                                        if articles:
-                                            logger.info(
-                                                f"Found {len(articles)} articles for search term: {search_term}"
-                                            )
-                                            all_articles.extend(
-                                                articles[:5]
-                                            )  # Limit to 5 per search term
-                                    except Exception as e:
-                                        logger.warning(
-                                            f"Error searching PubMed for '{search_term}': {e}"
-                                        )
-
-                                # Store the results in chat context
-                                if all_articles:
-                                    # Build context string from articles
-                                    context_parts = [
-                                        f"PubMed search results for {microsite.default_procedure}:"
-                                    ]
-                                    for pmid in all_articles[:10]:  # Limit total to 10
-                                        context_parts.append(f"- PMID: {pmid}")
-
-                                    pubmed_context = "\n".join(context_parts)
-
+                                if combined_context:
                                     # Append to chat summary
                                     chat_obj = await OngoingChat.objects.aget(
                                         id=chat.id
                                     )
                                     if not chat_obj.summary_for_next_call:
-                                        chat_obj.summary_for_next_call = []
-                                    chat_obj.summary_for_next_call.append(
-                                        pubmed_context
+                                        chat_obj.summary_for_next_call = [""]
+                                    if not chat_obj.summary_for_next_call[-1]:
+                                        chat_obj.summary_for_next_call[-1] = ""
+
+                                    last_summary = chat_obj.summary_for_next_call[-1]
+                                    chat_obj.summary_for_next_call[-1] = (
+                                        f"{last_summary}\n\nMicrosite context:\n{combined_context}"
                                     )
                                     await chat_obj.asave()
 
                                     logger.info(
-                                        f"Stored {len(all_articles)} PubMed articles in chat context"
+                                        f"Stored microsite context for {microsite.slug} in chat"
                                     )
-                                    await self.send_status_message(
-                                        f"Medical literature search complete - found {len(all_articles)} relevant articles"
-                                    )
-                                else:
+
+                                # Send completion message if PubMed search was performed
+                                if microsite.pubmed_search_terms:
                                     await self.send_status_message(
                                         "Medical literature search complete"
                                     )
                             except Exception as e:
                                 logger.opt(exception=True).warning(
-                                    f"Error in background PubMed search: {e}"
+                                    f"Error loading microsite context: {e}"
                                 )
 
-                        # Fire off the search in the background (non-blocking)
                         await fire_and_forget_in_new_threadpool(
-                            search_and_store_pubmed()
+                            fetch_microsite_context()
                         )
-
+                    else:
+                        logger.warning(
+                            f"Could not find microsite for slug {microsite_slug}"
+                        )
                 except Exception as e:
-                    logger.warning(f"Error loading microsite data for chat: {e}")
-
+                    logger.warning(f"Error loading microsite for chat {chat.id}: {e}")
             # If this is a trial professional user, add a banner message to the chat history
             if is_trial_professional:
                 trial_banner = {
@@ -1064,9 +1047,10 @@ class ChatInterface:
                     }
                 )
 
-            if not chat.summary_for_next_call:
-                chat.summary_for_next_call = []
-            chat.summary_for_next_call.append(final_context_part)
+            if should_store_summary(chat.summary_for_next_call, final_context_part):
+                if not chat.summary_for_next_call:
+                    chat.summary_for_next_call = []
+                chat.summary_for_next_call.append(final_context_part)
 
             chat.chat_history.append(
                 {
@@ -1080,13 +1064,12 @@ class ChatInterface:
             await self.send_message_to_client(final_response_text)
         else:
             # Provide more helpful error message based on context
-            if self.use_external_models:
-                err_msg = (
-                    "Sorry, all available models (including backup models) are currently "
-                    "experiencing issues. Please try again in a few moments. "
-                    "If the problem persists, try refreshing the page or starting a new chat."
-                )
-            else:
+            err_msg = (
+                "Sorry, all available models (including backup models) are currently "
+                "experiencing issues. Please try again in a few moments. "
+                "If the problem persists, try refreshing the page or starting a new chat."
+            )
+            if not self.use_external_models:
                 err_msg = (
                     "Sorry, our primary models are currently busy or experiencing issues. "
                     "You can enable 'Use backup models' in settings to allow fallback to "

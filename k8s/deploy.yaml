@@ -54,6 +54,36 @@ spec:
           imagePullPolicy: Always
       restartPolicy: OnFailure
 ---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: web-extralink-prefetch
+  namespace: totallylegitco
+spec:
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        group: fight-health-insurance-prod-webbackend-batch
+        special: web-prefetch-job
+    spec:
+      containers:
+        - image: ${FHI_BASE}:${FHI_VERSION}
+          name: totallylegitco
+          env:
+          - name: PREFETCH_EXTRALINKS
+            value: "1"
+          - name: BRB
+            value: "LIVE"
+          envFrom:
+          - secretRef:
+              name: fight-health-insurance-secret
+          - secretRef:
+              name: fight-health-insurance-primary-secret
+          imagePullPolicy: Always
+      restartPolicy: OnFailure
+      activeDeadlineSeconds: 900
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:

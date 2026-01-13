@@ -3,6 +3,9 @@ from typing import Any, Callable, Coroutine, Dict, List, Optional, cast
 
 from loguru import logger
 
+from fighthealthinsurance.extralink_context_helper import (
+    ExtraLinkContextHelper,
+)
 from fighthealthinsurance.microsites import get_microsite
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.models import Denial, GenericContextGeneration
@@ -170,6 +173,19 @@ class MLCitationsHelper:
                                 f"Adding {len(microsite.evidence_snippets)} microsite evidence snippets"
                             )
                             result.extend(microsite.evidence_snippets)
+
+                        # Add extralink citations
+                        extralink_citations = (
+                            await ExtraLinkContextHelper.get_extralink_citations(
+                                denial.microsite_slug,
+                                max_citations=3,
+                            )
+                        )
+                        if extralink_citations:
+                            logger.debug(
+                                f"Adding {len(extralink_citations)} extralink citations"
+                            )
+                            result.extend(extralink_citations)
                     except Exception as e:
                         logger.opt(exception=True).warning(
                             f"Failed to load microsite evidence snippets: {e}"
@@ -193,20 +209,34 @@ class MLCitationsHelper:
             # Only proceed if we have backends to use
             if not partial_citation_backends:
                 logger.debug("No citation backends available for generic citations")
-                # Even without backends, check for microsite evidence snippets
+                # Even without backends, check for microsite evidence snippets and extralinks
+                result = []
                 if denial and denial.microsite_slug:
                     try:
                         microsite = get_microsite(denial.microsite_slug)
                         if microsite and microsite.evidence_snippets:
                             logger.debug(
-                                f"Returning {len(microsite.evidence_snippets)} microsite evidence snippets (no backends)"
+                                f"Adding {len(microsite.evidence_snippets)} microsite evidence snippets (no backends)"
                             )
-                            return microsite.evidence_snippets
+                            result.extend(microsite.evidence_snippets)
+
+                        # Add extralink citations
+                        extralink_citations = (
+                            await ExtraLinkContextHelper.get_extralink_citations(
+                                denial.microsite_slug,
+                                max_citations=3,
+                            )
+                        )
+                        if extralink_citations:
+                            logger.debug(
+                                f"Adding {len(extralink_citations)} extralink citations (no backends)"
+                            )
+                            result.extend(extralink_citations)
                     except Exception as e:
                         logger.opt(exception=True).warning(
-                            f"Failed to load microsite evidence snippets: {e}"
+                            f"Failed to load microsite evidence snippets/extralinks: {e}"
                         )
-                return []
+                return result
 
             # Create tasks for partial backends
             partial_awaitables = []
@@ -251,9 +281,22 @@ class MLCitationsHelper:
                                 f"Adding {len(microsite.evidence_snippets)} microsite evidence snippets to generated citations"
                             )
                             result.extend(microsite.evidence_snippets)
+
+                        # Add extralink citations
+                        extralink_citations = (
+                            await ExtraLinkContextHelper.get_extralink_citations(
+                                denial.microsite_slug,
+                                max_citations=3,
+                            )
+                        )
+                        if extralink_citations:
+                            logger.debug(
+                                f"Adding {len(extralink_citations)} extralink citations to generated citations"
+                            )
+                            result.extend(extralink_citations)
                     except Exception as e:
                         logger.opt(exception=True).warning(
-                            f"Failed to load microsite evidence snippets: {e}"
+                            f"Failed to load microsite evidence snippets/extralinks: {e}"
                         )
 
                 # If we have citations, cache them for future use
