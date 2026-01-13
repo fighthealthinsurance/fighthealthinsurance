@@ -56,7 +56,7 @@ def add_brand_patterns(
     Returns:
         List of new URL patterns with branded routes and names
     """
-    branded_patterns = []
+    branded_patterns: List[Union[URLPattern, URLResolver]] = []
     for pattern in patterns:
         if isinstance(pattern, URLPattern) and pattern.name:
             # Extract the route string from the pattern
