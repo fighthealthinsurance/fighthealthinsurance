@@ -1,8 +1,10 @@
 import asyncio
 import itertools
 import os
+import random
 import re
 import sys
+import threading
 import traceback
 from abc import abstractmethod
 from concurrent.futures import Future
@@ -14,7 +16,7 @@ import requests
 from asgiref.sync import async_to_sync, sync_to_async
 from loguru import logger
 
-from fighthealthinsurance.utils import ensure_message_alternation
+from fighthealthinsurance.utils import ensure_message_alternation, RateLimiter
 
 # Import the appropriate async_timeout based on Python version
 if sys.version_info >= (3, 11):
@@ -1577,19 +1579,51 @@ class RemoteOpenLike(RemoteModel):
                         }
                     ]
                 messages = ensure_message_alternation(messages)
+
+                # Strip unsupported fields like 'timestamp' from messages
+                # Some APIs (e.g., Groq) don't support extra fields beyond role/content
+                cleaned_messages = [
+                    {"role": msg.get("role"), "content": msg.get("content")}
+                    for msg in messages
+                ]
+
+                summary_msg_log = [
+                    {
+                        "role": m.get("role"),
+                        "content_len": len(m.get("content") or ""),
+                    }
+                    for m in cleaned_messages
+                ]
                 logger.debug(
-                    f"Using messages: {messages} from prompt {prompt} for {model}"
+                    f"Prepared {len(cleaned_messages)} messages for model {model}: {summary_msg_log}"
                 )
                 async with s.post(
                     url,
                     headers={"Authorization": f"Bearer {self.token}"},
                     json={
                         "model": model,
-                        "messages": messages,
+                        "messages": cleaned_messages,
                         "temperature": temperature,
                     },
                 ) as response:
                     logger.debug(f"Got response {response}...")
+                    # Raise ClientResponseError for HTTP error status codes (4xx, 5xx)
+                    # This allows subclasses to catch and handle specific errors like 429
+                    try:
+                        response.raise_for_status()
+                    except aiohttp.ClientResponseError as e:
+                        # Log the response body for debugging 400 errors
+                        try:
+                            error_body = await response.text()
+                            truncated_body = error_body[:500]
+                            logger.debug(
+                                f"HTTP {e.status} error from {api_base} for model {model}: body_prefix={truncated_body!r}"
+                            )
+                        except Exception as exc:
+                            logger.debug(
+                                f"HTTP {e.status} error from {api_base} for model {model}: failed to read error body due to {exc}"
+                            )
+                        raise
                     json_result = await response.json()
                     if "object" in json_result and json_result["object"] != "error":
                         logger.debug(f"Response {json_result} on {self} Looks ok")
@@ -1597,6 +1631,13 @@ class RemoteOpenLike(RemoteModel):
                         logger.debug(
                             f"***WARNING*** Response {response} / {json_result} on {self} looks _bad_ with {model}"
                         )
+        except aiohttp.ClientResponseError as e:
+            # Re-raise HTTP errors to allow subclasses (e.g., RemoteGroq) to handle
+            # specific status codes like 429 rate limiting
+            logger.debug(
+                f"HTTP error {e.status} from {api_base} for model {model}: {e.message}"
+            )
+            raise
         except aiohttp.client_exceptions.ContentTypeError:
             logger.debug(
                 f"Unexpected content type response (often missing model) on {api_base}"
@@ -2268,7 +2309,7 @@ class DeepInfra(RemoteFullOpenLike):
                 internal_name="meta-llama/Meta-Llama-3.1-70B-Instruct",
             ),
             ModelDescription(
-                cost=5,
+                cost=8,
                 name="meta-llama/llama-3.2-3B-instruct",
                 internal_name="meta-llama/Llama-3.2-3B-Instruct",
             ),
@@ -2283,6 +2324,281 @@ class DeepInfra(RemoteFullOpenLike):
                 internal_name="deepseek-ai/DeepSeek-R1-Turbo",
             ),
         ]
+
+
+class RemoteGroq(RemoteFullOpenLike):
+    """
+    Groq API backend for ultra-fast LLM inference.
+
+    Note: Groq (https://groq.com) is a hardware/cloud company specializing in
+    LPU (Language Processing Unit) chips for fast inference. Not to be confused
+    with Grok, the xAI chatbot.
+
+    Features:
+    - Per-model backoff when rate limited (429 responses)
+    - Load balancing across available Groq models (Versatile quality tier; Instant speed tier)
+    - Automatic fallback to Instant tier when quality models are rate limited
+    - Graceful 429 handling with Retry-After support
+
+    All models support 128K input context.
+
+    Models are organized into tiers:
+    - Quality tier (cost=4): llama-3.3-70b-versatile - randomized when multiple quality models are available
+    - Speed tier (cost=6): llama-3.1-8b-instant - fallback when quality exhausted
+
+    Environment variables:
+    - GROQ_API_KEY: API key for Groq (required)
+    """
+
+    # Model specifications - all models support 128K input context
+    MODEL_SPECS: ClassVar[dict[str, dict[str, str]]] = {
+        "llama-3.3-70b-versatile": {
+            "tier": "quality",
+            "description": "Llama 3.3 70B - high quality, versatile",
+        },
+        "llama-3.1-8b-instant": {
+            "tier": "speed",
+            "description": "Llama 3.1 8B - fastest response, fallback tier",
+        },
+    }
+
+    # Shared rate limiters per model (class-level, initialized lazily)
+    _rate_limiters: ClassVar[dict[str, RateLimiter]] = {}
+    _rate_limiter_lock: ClassVar[threading.Lock] = threading.Lock()
+
+    def __init__(self, model: str, dual_mode: bool = False):
+        """
+        Initialize a Groq model backend.
+
+        Args:
+            model: The Groq model identifier (e.g., 'llama-3.3-70b-versatile')
+            dual_mode: Whether to run primary and backup concurrently
+        """
+        api_base = "https://api.groq.com/openai/v1"
+        token = os.getenv("GROQ_API_KEY")
+        if token is None or len(token) < 1:
+            raise EnvironmentError(
+                "No API key found for Groq. Please set the GROQ_API_KEY environment variable "
+                "in your environment or .env file."
+            )
+
+        # All Groq models support 128K input context
+        super().__init__(
+            api_base, token, model=model, dual_mode=dual_mode, max_len=128000
+        )
+
+        # Initialize rate limiter for this model (shared across instances)
+        self._ensure_rate_limiter(model)
+
+        model_spec = self.MODEL_SPECS.get(model, {})
+        logger.debug(
+            f"RemoteGroq initialized: model={model}, "
+            f"tier={model_spec.get('tier', 'unknown')}"
+        )
+
+    @classmethod
+    def _ensure_rate_limiter(cls, model: str) -> None:
+        """
+        Ensure a rate limiter exists for the given model.
+        Creates one if it doesn't exist (thread-safe).
+        """
+        if model not in cls._rate_limiters:
+            with cls._rate_limiter_lock:
+                # Double-check after acquiring lock
+                if model not in cls._rate_limiters:
+                    cls._rate_limiters[model] = RateLimiter(
+                        name=f"groq-{model}",
+                    )
+                    logger.info(f"Created rate limiter for groq-{model}")
+
+    @property
+    def rate_limiter(self) -> RateLimiter:
+        """Get the rate limiter for this model instance."""
+        return self._rate_limiters[self.model]
+
+    @property
+    def supports_system(self):
+        return True
+
+    @property
+    def external(self):
+        return True
+
+    def get_tier(self) -> str:
+        """Get the tier (quality/speed) for this model."""
+        return self.MODEL_SPECS.get(self.model, {}).get("tier", "unknown")
+
+    @classmethod
+    def select_available_model(cls) -> Optional[str]:
+        """
+        Select an available model based on rate limits.
+
+        Strategy:
+        1. Among quality tier models with available rate limit, randomize selection
+        2. If all quality models exhausted, fall back to speed tier
+        3. If no models available, return None
+
+        Returns:
+            Model name to use, or None if all models are rate limited
+        """
+        if not os.getenv("GROQ_API_KEY"):
+            logger.debug("RemoteGroq.select_available_model: GROQ_API_KEY not set")
+            return None
+        available_quality = []
+        available_speed = []
+
+        for model_name, spec in cls.MODEL_SPECS.items():
+            # Check rate limit
+            cls._ensure_rate_limiter(model_name)
+            if not cls._rate_limiters[model_name].can_request():
+                logger.debug(f"Groq model {model_name} skipped: rate limited")
+                continue
+
+            # Categorize by tier
+            if spec["tier"] == "quality":
+                available_quality.append(model_name)
+            else:
+                available_speed.append(model_name)
+
+        # Prefer quality tier with random selection for load balancing
+        if available_quality:
+            selected = random.choice(available_quality)
+            logger.debug(
+                f"Groq model selection: {selected} (quality tier, "
+                f"{len(available_quality)} available)"
+            )
+            return selected
+
+        # Fall back to speed tier
+        if available_speed:
+            selected = available_speed[0]  # Usually just llama-3.1-8b-instant
+            logger.info(
+                f"Groq model selection: {selected} (speed tier fallback, "
+                f"quality tier exhausted)"
+            )
+            return selected
+
+        logger.warning("Groq model selection: No models available (all rate limited)")
+        return None
+
+    async def _infer(
+        self,
+        system_prompts: list[str],
+        prompt: str,
+        patient_context: Optional[str] = None,
+        plan_context: Optional[str] = None,
+        pubmed_context: Optional[str] = None,
+        ml_citations_context: Optional[List[str]] = None,
+        history: Optional[List[dict[str, str]]] = None,
+        temperature: float = 0.7,
+    ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
+        """
+        Perform inference with rate limit checking and 429 handling.
+
+        Checks the rate limiter before making the API call. If rate limited,
+        returns None immediately to allow fallback to other backends.
+        On 429 response, marks the limiter as exhausted and returns None.
+
+        Args:
+            system_prompts: System prompts for the model
+            prompt: User prompt
+            patient_context: Optional patient health context
+            plan_context: Optional insurance plan context
+            pubmed_context: Optional PubMed citations context
+            ml_citations_context: Optional ML-generated citations
+            history: Optional conversation history
+            temperature: Optional temperature override
+
+        Returns:
+            Tuple of (response_text, context_parts) or None if rate limited/failed
+        """
+        # Check if we're backing off from a previous 429
+        if not self.rate_limiter.can_request():
+            logger.debug(f"RemoteGroq._infer: Skipping {self.model} - backing off")
+            return None
+
+        try:
+            # Call parent implementation
+            result = await super()._infer(
+                system_prompts=system_prompts,
+                prompt=prompt,
+                patient_context=patient_context,
+                plan_context=plan_context,
+                pubmed_context=pubmed_context,
+                ml_citations_context=ml_citations_context,
+                history=history,
+                temperature=temperature,
+            )
+            return result
+
+        except aiohttp.ClientResponseError as e:
+            if e.status == 429:
+                # Rate limited by Groq - parse Retry-After if available
+                retry_after = 60.0  # Default fallback
+                if hasattr(e, "headers") and e.headers:
+                    retry_header = e.headers.get("Retry-After", "")
+                    if retry_header:
+                        try:
+                            # Most APIs send delay-seconds (e.g., "30")
+                            retry_after = float(retry_header)
+                        except ValueError:
+                            # If not a number, use default (HTTP-date format is rare)
+                            logger.debug(
+                                f"RemoteGroq._infer: Non-numeric Retry-After header "
+                                f"'{retry_header}' for {self.model}; using default {retry_after}s"
+                            )
+
+                retry_after = max(1.0, min(retry_after, 600.0))
+
+                self.rate_limiter.mark_exhausted(retry_after)
+                logger.warning(
+                    f"RemoteGroq._infer: 429 from Groq for {self.model}, "
+                    f"backing off for {retry_after}s"
+                )
+                return None
+            else:
+                # Re-raise other HTTP errors
+                raise
+        except Exception as e:
+            logger.warning(f"RemoteGroq._infer error for {self.model}: {e}")
+            return None
+
+    @classmethod
+    def models(cls) -> List[ModelDescription]:
+        """
+        Return available Groq models with cost tiers.
+
+        Quality tier models (Versatile) have lower cost to be preferred
+        over DeepInfra. Speed tier (Instant) has higher cost to only be
+        used as fallback. Only Groq-hosted models are listed here.
+        """
+        # Check if API key is configured
+        if not os.getenv("GROQ_API_KEY"):
+            logger.debug("RemoteGroq.models: GROQ_API_KEY not set, skipping")
+            return []
+
+        return [
+            # Quality tier - cost=4 (between AlphaRemoteInternal=3 and DeepInfra>=8)
+            ModelDescription(
+                cost=4,
+                name="groq/llama-3.3-70b-versatile",
+                internal_name="llama-3.3-70b-versatile",
+            ),
+            # Speed tier - higher cost, only used when quality tier exhausted
+            ModelDescription(
+                cost=6,
+                name="groq/llama-3.1-8b-instant",
+                internal_name="llama-3.1-8b-instant",
+            ),
+        ]
+
+    def model_is_ok(self) -> bool:
+        """
+        Check if the model is available (API key set and not rate limited).
+        """
+        if not os.getenv("GROQ_API_KEY"):
+            return False
+        return self.rate_limiter.can_request()
 
 
 class TailscaleModelBackend(RemoteFullOpenLike):

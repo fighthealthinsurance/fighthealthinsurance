@@ -852,12 +852,10 @@ class AppealGenerator(object):
                 f"Summary of relevant plan document sections:\n{denial.plan_documents_summary}"
             )
         plan_context = "\n\n".join(plan_context_parts) if plan_context_parts else None
-        # Find any FHI model dynamically
-        fhi_model_names = [
-            name for name in ml_router.models_by_name.keys() if name.startswith("fhi-")
-        ]
+        # Primary: Always internal models only (fast, local)
+        model_names = ml_router.generate_text_backend_names(use_external=False)
 
-        # Call all fhi based models.
+        # Build calls using model names (preserves multi-backend lookup)
         calls = [
             {
                 "model_name": model_name,
@@ -869,71 +867,34 @@ class AppealGenerator(object):
                 "ml_citations_context": ml_citations_context,
                 "prof_pov": prof_pov,
             }
-            for model_name in fhi_model_names
-        ]
-        # And call them in backup mode too
-        backup_calls = [
-            {
-                "model_name": model_name,
-                "prompt": open_prompt,
-                "patient_context": medical_context,
-                "plan_context": plan_context,
-                "infer_type": "full",
-                "pubmed_context": pubmed_context,
-                "ml_citations_context": ml_citations_context,
-                "prof_pov": prof_pov,
-            }
-            for model_name in fhi_model_names
+            for model_name in model_names
         ]
 
+        # Backup: Only if user opted in to external, use internal+external together
+        backup_calls = []
         if denial.use_external:
-            calls.extend(
-                [
-                    {
-                        "model_name": "sonar",
-                        "prompt": open_prompt,
-                        "patient_context": medical_context,
-                        "infer_type": "full",
-                        "plan_context": plan_context,
-                        "pubmed_context": pubmed_context,
-                        "ml_citations_context": ml_citations_context,
-                        "prof_pov": prof_pov,
-                    }
-                ]
+            backup_model_names = ml_router.generate_text_backend_names(
+                use_external=True
             )
-            calls.extend(
-                [
-                    {
-                        "model_name": "meta-llama/llama-3.2-405b-instruct",
-                        "prompt": open_prompt,
-                        "patient_context": medical_context,
-                        "infer_type": "full",
-                        "plan_context": plan_context,
-                        "pubmed_context": pubmed_context,
-                        "ml_citations_context": ml_citations_context,
-                        "prof_pov": prof_pov,
-                    }
-                ]
-            )
-            backup_calls.extend(
-                [
-                    {
-                        "model_name": "meta-llama/llama-3.1-405b-instruct",
-                        "prompt": open_prompt,
-                        "patient_context": medical_context,
-                        "infer_type": "full",
-                        "plan_context": plan_context,
-                        "pubmed_context": pubmed_context,
-                        "ml_citations_context": ml_citations_context,
-                        "prof_pov": prof_pov,
-                    }
-                ]
-            )
+            backup_calls = [
+                {
+                    "model_name": model_name,
+                    "prompt": open_prompt,
+                    "patient_context": medical_context,
+                    "plan_context": plan_context,
+                    "infer_type": "full",
+                    "pubmed_context": pubmed_context,
+                    "ml_citations_context": ml_citations_context,
+                    "prof_pov": prof_pov,
+                }
+                for model_name in backup_model_names
+            ]
 
         # If we need to know the medical reason ask our friendly LLMs
         static_appeal = template_generator.generate_static()
         initial_appeals = non_ai_appeals
         if static_appeal is None:
+            # Add medically_necessary calls for all selected model names
             calls.extend(
                 [
                     {
@@ -946,24 +907,9 @@ class AppealGenerator(object):
                         "ml_citations_context": ml_citations_context,
                         "prof_pov": prof_pov,
                     }
-                    for model_name in fhi_model_names
+                    for model_name in model_names
                 ]
             )
-            if denial.use_external:
-                backup_calls.extend(
-                    [
-                        {
-                            "model_name": "sonar",
-                            "prompt": open_medically_necessary_prompt,
-                            "patient_context": medical_context,
-                            "infer_type": "medically_necessary",
-                            "plan_context": plan_context,
-                            "pubmed_context": pubmed_context,
-                            "ml_citations_context": ml_citations_context,
-                            "prof_pov": prof_pov,
-                        },
-                    ]
-                )
             logger.debug(f"Looking at provided medical reasons {medical_reasons}.")
             for reason in medical_reasons:
                 logger.debug(f"Using medical necessity reason {reason}")
