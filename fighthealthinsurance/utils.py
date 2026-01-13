@@ -457,14 +457,14 @@ async def _interleave_iterator_for_keep_alive(
     iterator: AsyncIterator[str], timeout: int = 20
 ) -> AsyncIterator[str]:
     """
-    Yields strings from an async iterator, interleaving empty strings as keep-alive signals.
+    Yields strings from an async iterator, interleaving newlines as keep-alive signals.
 
-    This generator yields an empty string before and after each item from the input iterator,
+    This generator yields a newline string before and after each item from the input iterator,
     and also yields an empty string every `timeout` seconds if no new item is available.
     Handles timeouts, cancellations, and exceptions by yielding empty strings to maintain
     connection liveness.
     """
-    yield ""
+    yield "\n"
     await asyncio.sleep(0)
     # Keep track of the next elem pointer
     c = None
@@ -474,21 +474,21 @@ async def _interleave_iterator_for_keep_alive(
                 # Keep wait_for from cancelling it
                 c = asyncio.shield(iterator.__anext__())
             await asyncio.sleep(0)
-            yield ""
+            yield "\n"
             # Use asyncio.wait_for to handle timeout for fetching record
             record = await asyncio.wait_for(c, timeout)
             # Success, we can clear the next elem pointer
             c = None
             yield record
             await asyncio.sleep(0)
-            yield ""
+            yield "\n"
         except asyncio.TimeoutError:
-            yield ""
+            yield "\n"
             continue
         except asyncio.exceptions.CancelledError:
             # If the iterator is cancelled, we should stop
             logger.debug("Cancellation of task in interleaved generator")
-            yield ""
+            yield "\n"
             # Properly retrieve any pending exception from the shielded future
             await _retrieve_pending_future(c)
             c = None
@@ -497,7 +497,7 @@ async def _interleave_iterator_for_keep_alive(
             break
         except Exception as e:
             logger.opt(exception=True).error(f"Error in generator: {e}")
-            yield ""
+            yield "\n"
             # Properly retrieve any pending exception from the shielded future
             await _retrieve_pending_future(c)
             c = None

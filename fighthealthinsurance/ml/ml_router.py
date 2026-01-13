@@ -343,6 +343,8 @@ class MLRouter(object):
         # Only use Perplexity models for citations
         if "sonar-reasoning" in self.models_by_name:
             return self.cheapest("sonar-reasoning")
+        if "sonar" in self.models_by_name:
+            return self.cheapest("sonar")
 
         return []
 
