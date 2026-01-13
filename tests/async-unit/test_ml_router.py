@@ -7,6 +7,72 @@ from fighthealthinsurance.ml.ml_router import MLRouter
 from fighthealthinsurance.ml.ml_models import RemoteModelLike
 
 
+class TestMLRouterGenerateTextBackendNames(unittest.TestCase):
+    """Tests for MLRouter.generate_text_backend_names method."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        self.router = MLRouter()
+
+    def test_generate_text_backend_names_returns_friendly_names(self):
+        """Test that generate_text_backend_names returns friendly names (keys from models_by_name).
+
+        This is a regression test for a bug where the method was returning internal
+        model paths (e.g., 'TotallyLegitCo/fighthealthinsurance_model_v0.5') instead
+        of friendly names (e.g., 'fhi-legacy').
+        """
+        # Create mock models
+        mock_model1 = MagicMock(spec=RemoteModelLike)
+        mock_model1.external = False
+        mock_model1.model = "internal/path/model1"  # Internal path, NOT friendly name
+
+        mock_model2 = MagicMock(spec=RemoteModelLike)
+        mock_model2.external = False
+        mock_model2.model = "internal/path/model2"
+
+        # Set up router with friendly names as keys
+        self.router.internal_models_by_cost = [mock_model1, mock_model2]
+        self.router.models_by_name = {
+            "friendly-name-1": [mock_model1],
+            "friendly-name-2": [mock_model2],
+        }
+
+        # Get the names
+        names = self.router.generate_text_backend_names(use_external=False)
+
+        # Names should be the friendly names (keys), not internal paths
+        for name in names:
+            self.assertIn(
+                name,
+                self.router.models_by_name,
+                f"Returned name '{name}' is not a key in models_by_name. "
+                f"Available keys: {list(self.router.models_by_name.keys())}",
+            )
+            # Should NOT be the internal path
+            self.assertNotIn(
+                "/",
+                name,
+                f"Name '{name}' looks like an internal path, not a friendly name",
+            )
+
+    def test_generate_text_backend_names_can_be_looked_up(self):
+        """Test that all returned names can be looked up in models_by_name.
+
+        This ensures the names returned are actually usable for model lookup.
+        """
+        # Use real router initialization (which may have real or no models)
+        names = self.router.generate_text_backend_names(use_external=False)
+
+        # Every name returned should be a valid key in models_by_name
+        for name in names:
+            self.assertIn(
+                name,
+                self.router.models_by_name,
+                f"Name '{name}' returned by generate_text_backend_names cannot be "
+                f"looked up in models_by_name. This would cause 'No backend for {name}' errors.",
+            )
+
+
 class TestMLRouterChatBackends(unittest.TestCase):
     """Tests for MLRouter chat-related methods."""
 

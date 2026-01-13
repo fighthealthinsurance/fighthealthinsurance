@@ -265,13 +265,13 @@ class MLRouter(object):
 
         # Helper to extract model name and add to list
         def add_model_name(model):
-            model_name = getattr(model, "model", None)
-            if not model_name:
-                # Find name from models_by_name
-                for name, instances in self.models_by_name.items():
-                    if model in instances:
-                        model_name = name
-                        break
+            # Find the friendly name from models_by_name (e.g., "fhi-legacy")
+            # NOT the internal model path (e.g., "TotallyLegitCo/fighthealthinsurance_model_v0.5")
+            model_name = None
+            for name, instances in self.models_by_name.items():
+                if model in instances:
+                    model_name = name
+                    break
             if model_name and model_name not in seen:
                 names.append(model_name)
                 seen.add(model_name)
