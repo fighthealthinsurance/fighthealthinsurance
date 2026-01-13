@@ -40,6 +40,13 @@ class TestMLRouterGenerateTextBackendNames(unittest.TestCase):
         # Get the names
         names = self.router.generate_text_backend_names(use_external=False)
 
+        # Ensure at least one model is returned so the test is meaningful
+        self.assertGreater(
+            len(names),
+            0,
+            "Expected at least one model name to be returned for this test to be meaningful",
+        )
+
         # Names should be the friendly names (keys), not internal paths
         for name in names:
             self.assertIn(
