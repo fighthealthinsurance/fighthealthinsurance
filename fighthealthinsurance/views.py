@@ -1313,23 +1313,31 @@ class InitialProcessView(generic.FormView):
 
         # Link denial to PatientUser if user is authenticated
         if self.request.user.is_authenticated:
-            from fhi_users.models import PatientUser
+            try:
+                from fhi_users.models import PatientUser
 
-            patient_user, created = PatientUser.objects.get_or_create(
-                user=self.request.user,
-                defaults={"active": True},
-            )
-            # Get the actual Denial model instance and link it to the patient user
-            denial = Denial.objects.get(denial_id=denial_response.denial_id)
-            denial.patient_user = patient_user
-            denial.save(update_fields=["patient_user"])
-            if created:
-                logger.info(
-                    f"Created PatientUser {patient_user.id} for user {self.request.user.id}"
+                patient_user, created = PatientUser.objects.get_or_create(
+                    user=self.request.user,
+                    defaults={"active": True},
                 )
-            logger.info(
-                f"Linked denial {denial_response.uuid} to patient user {patient_user.id}"
-            )
+                # Get the actual Denial model instance and link it to the patient user
+                denial = Denial.objects.get(denial_id=denial_response.denial_id)
+                denial.patient_user = patient_user
+                denial.save(update_fields=["patient_user"])
+                if created:
+                    logger.info(
+                        f"Created PatientUser {patient_user.id} for user {self.request.user.id}"
+                    )
+                logger.info(
+                    f"Linked denial {denial_response.uuid} to patient user {patient_user.id}"
+                )
+            except Exception as e:
+                # Log error but don't fail the appeal creation
+                logger.error(
+                    f"Failed to link denial {denial_response.uuid} to patient: {e}",
+                    exc_info=True,
+                )
+                # Continue with appeal generation even if linking fails
 
         # Store the denial ID in the session to maintain state across the multi-step form process
         # This allows the SessionRequiredMixin to verify the user is working with a valid denial
