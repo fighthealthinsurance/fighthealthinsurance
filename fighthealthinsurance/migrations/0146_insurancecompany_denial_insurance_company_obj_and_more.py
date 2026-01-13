@@ -7,7 +7,6 @@ import regex_field.fields
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
         ("fighthealthinsurance", "0145_stripe_webhook_events_unique_constraint"),
     ]

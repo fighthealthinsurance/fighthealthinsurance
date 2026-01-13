@@ -1,5 +1,6 @@
 import asyncio
-from typing import List, Optional
+import os
+from typing import List, Optional, Sequence
 
 from loguru import logger
 
@@ -69,9 +70,96 @@ class MLRouter(object):
             for x in sorted(building_external_models_by_cost)
             if x.model is not None
         ]
+        logger.info(
+            f"MLRouter initialized with {len(self.all_models_by_cost)} total models, "
+            f"{len(self.internal_models_by_cost)} internal, {len(self.external_models_by_cost)} external"
+        )
+        logger.info(f"All loaded models: {[str(m) for m in self.all_models_by_cost]}")
         logger.debug(
             f"Built {self} with i:{self.internal_models_by_cost} a:{self.all_models_by_cost}"
         )
+
+    @staticmethod
+    def _keep_single_groq(models: Sequence[RemoteModelLike]) -> list[RemoteModelLike]:
+        """
+        Return the models list but with at most one Groq backend to avoid double fanout.
+        Goal is to reduce load on Groq due to usage limits.
+        """
+        seen_groq = False
+        filtered: list[RemoteModelLike] = []
+        for m in models:
+            if isinstance(m, RemoteGroq):
+                if seen_groq:
+                    continue
+                seen_groq = True
+            filtered.append(m)
+        return filtered
+
+    def _get_forced_models(
+        self, task_description: str = "", *, use_external: bool = True
+    ) -> Optional[list[RemoteModelLike]]:
+        """Check for FORCE_MODEL environment variable and return forced models if set.
+
+        Args:
+            task_description: Optional description for logging (e.g., "for text generation")
+
+        Returns:
+            List of forced models if FORCE_MODEL is set and models are found, None otherwise
+        """
+        forced_model = os.getenv("FORCE_MODEL")
+        if not forced_model:
+            return None
+
+        logger.info(f"FORCE_MODEL is set to: {forced_model} {task_description}")
+        logger.info(
+            f"Available models to choose from: {[type(m).__name__ for m in self.all_models_by_cost]}"
+        )
+
+        if forced_model == "groq":
+            groq_models = [
+                m for m in self.all_models_by_cost if isinstance(m, RemoteGroq)
+            ]
+            if groq_models:
+                if not use_external:
+                    logger.warning(
+                        f"FORCE_MODEL=groq ignored {task_description} because use_external=False"
+                    )
+                    return None
+                logger.info(
+                    f"✓ Forcing {len(groq_models)} groq models {task_description}: {[getattr(m, 'model', type(m).__name__) for m in groq_models]}"
+                )
+                return self._keep_single_groq(groq_models)
+            else:
+                logger.warning(
+                    f"No groq models found! Available model types: {[type(m).__name__ for m in self.all_models_by_cost]}"
+                )
+        elif forced_model in self.models_by_name:
+            # Force a specific model by name
+            forced_models = self.models_by_name[forced_model]
+            if forced_models:
+                # Filter by use_external flag
+                if not use_external:
+                    filtered_models = [m for m in forced_models if not m.external]
+                    if filtered_models:
+                        logger.info(
+                            f"✓ Forcing model {forced_model} {task_description} (filtered to internal only): {[getattr(m, 'model', type(m).__name__) for m in filtered_models]}"
+                        )
+                        return filtered_models
+                    else:
+                        logger.warning(
+                            f"FORCE_MODEL={forced_model} ignored {task_description} because use_external=False and all instances are external"
+                        )
+                        return None
+                else:
+                    logger.info(
+                        f"✓ Forcing model {forced_model} {task_description}: {[getattr(m, 'model', type(m).__name__) for m in forced_models]}"
+                    )
+                    return forced_models
+
+        logger.warning(
+            f"Forced model {forced_model} not found, falling back to default"
+        )
+        return None
 
     def entity_extract_backends(self, use_external) -> list[RemoteModelLike]:
         """Backends for entity extraction."""
@@ -80,14 +168,128 @@ class MLRouter(object):
         else:
             return self.internal_models_by_cost
 
-    def generate_text_backends(self) -> list[RemoteModelLike]:
+    def generate_text_backends(
+        self, use_external: bool = False
+    ) -> list[RemoteModelLike]:
         """Return models for text generation tasks like prior authorization and ongoing chat."""
+        # Check for forced model override
+        forced_models = self._get_forced_models(
+            "for text generation", use_external=use_external
+        )
+        if forced_models:
+            return forced_models
+
         # First try to find specific text generation models
         if "meta-llama/Llama-4-Scout-17B-16E-Instruct" in self.models_by_name:
             return self.cheapest("meta-llama/Llama-4-Scout-17B-16E-Instruct")
 
-        # Fall back to any available models
-        return self.all_models_by_cost[:6] if self.all_models_by_cost else []
+        # Fall back to internal models, optionally appending external if allowed
+        models: list[RemoteModelLike] = []
+        if self.internal_models_by_cost:
+            models += self.internal_models_by_cost[:6]
+        if use_external and self.external_models_by_cost:
+            models += self.external_models_by_cost[:4]
+        # Only fall back to all_models if use_external is True
+        if not models and use_external:
+            models = self.all_models_by_cost[:6] if self.all_models_by_cost else []
+        return models
+
+    def generate_text_backend_names(self, use_external: bool = False) -> list[str]:
+        """
+        Return model NAMES for text generation, preserving multi-backend support.
+
+        WHY THIS APPROACH:
+        Returns model names (strings) instead of model instances to preserve the ability
+        to call multiple backend servers running the same model. When a model name is
+        returned, the caller looks it up in models_by_name to get ALL instances (e.g.,
+        3 different servers running "fhi-2025") and tries them sequentially as fallbacks.
+
+        If we returned model instances directly, we'd lose multi-backend redundancy since
+        each backend class only creates ONE instance per model name, even if multiple
+        servers are available.
+
+        FLOW:
+        1. Router returns ["fhi-2025", "sonar"]
+        2. Caller looks up models_by_name["fhi-2025"] → [server1, server2, server3]
+        3. Caller tries server1, if fails → server2, if fails → server3
+
+        Args:
+            use_external: Whether to include external models
+
+        Returns:
+            List of model names (not instances) to use for text generation
+        """
+        # Check for forced model override
+        forced_model = os.getenv("FORCE_MODEL")
+        if forced_model:
+            logger.info(f"FORCE_MODEL={forced_model} for text generation")
+
+            if forced_model == "groq":
+                if not use_external:
+                    logger.warning(
+                        "FORCE_MODEL=groq ignored for text generation because use_external=False"
+                    )
+                    return []
+                # Find groq model names
+                groq_names = []
+                for name, instances in self.models_by_name.items():
+                    if any(isinstance(m, RemoteGroq) for m in instances):
+                        groq_names.append(name)
+                if groq_names:
+                    # Return only first groq model name to avoid double-fanout
+                    logger.info(f"✓ Forcing groq model name: {groq_names[0]}")
+                    return [groq_names[0]]
+                else:
+                    logger.warning("No groq models found!")
+                    return []
+
+            elif forced_model in self.models_by_name:
+                # Check if allowed based on use_external
+                instances = self.models_by_name[forced_model]
+                if not use_external:
+                    internal_instances = [m for m in instances if not m.external]
+                    if not internal_instances:
+                        logger.warning(
+                            f"FORCE_MODEL={forced_model} ignored because use_external=False and all instances are external"
+                        )
+                        return []
+                logger.info(f"✓ Forcing model name: {forced_model}")
+                return [forced_model]
+            else:
+                logger.warning(f"FORCE_MODEL={forced_model} not found")
+                return []
+
+        # No forced model - build list based on use_external with cost ordering
+        names = []
+        seen = set()
+
+        # Helper to extract model name and add to list
+        def add_model_name(model):
+            model_name = getattr(model, "model", None)
+            if not model_name:
+                # Find name from models_by_name
+                for name, instances in self.models_by_name.items():
+                    if model in instances:
+                        model_name = name
+                        break
+            if model_name and model_name not in seen:
+                names.append(model_name)
+                seen.add(model_name)
+                return True
+            return False
+
+        if use_external:
+            # Internal + external: take internal first, then external
+            for model in self.internal_models_by_cost[:6]:
+                add_model_name(model)
+            for model in self.external_models_by_cost[:4]:
+                add_model_name(model)
+        else:
+            # Internal only
+            for model in self.internal_models_by_cost:
+                add_model_name(model)
+
+        return names
 
     def full_qa_backends(self, use_external=False) -> list[RemoteModelLike]:
         """
@@ -141,6 +343,8 @@ class MLRouter(object):
         # Only use Perplexity models for citations
         if "sonar-reasoning" in self.models_by_name:
             return self.cheapest("sonar-reasoning")
+        if "sonar" in self.models_by_name:
+            return self.cheapest("sonar")
 
         return []
 
@@ -176,6 +380,11 @@ class MLRouter(object):
         Returns:
             List of RemoteModelLike models suitable for chat tasks
         """
+        # Check for forced model override
+        forced_models = self._get_forced_models("for chat", use_external=use_external)
+        if forced_models:
+            return forced_models
+
         models = []
         # Try each fhi model twice
         fhi_models = [
@@ -183,9 +392,21 @@ class MLRouter(object):
         ]
         if fhi_models:
             models += self.models_by_name[fhi_models[0]] * 2
+            logger.debug(
+                f"get_chat_backends: Added FHI model {fhi_models[0]} (tried twice)"
+            )
         if use_external:
-            models += self.external_models_by_cost[:2]
-        models += self.internal_models_by_cost[:6]
+            external_to_add = self._keep_single_groq(self.external_models_by_cost[:2])
+            models += external_to_add
+            logger.debug(
+                f"get_chat_backends: Added external models {external_to_add} (use_external=True)"
+            )
+        internal_to_add = self.internal_models_by_cost[:6]
+        models += internal_to_add
+        logger.debug(f"get_chat_backends: Added internal models {internal_to_add}")
+        logger.debug(
+            f"get_chat_backends: Final model list ({len(models)} models): {[str(m) for m in models]}"
+        )
         return models
 
     def get_chat_backends_with_fallback(
@@ -203,13 +424,19 @@ class MLRouter(object):
             - primary_models: FHI/internal models to try first
             - fallback_models: External models to try if primary fails (empty if use_external=False)
         """
+        forced_models = self._get_forced_models("for chat", use_external=use_external)
+        if forced_models:
+            return forced_models, []
+
         # Reuse get_chat_backends for primary models (allows test mocking to work)
         primary_models = self.get_chat_backends(use_external=False)
 
         fallback_models: list[RemoteModelLike] = []
         if use_external:
             # Get external models sorted by quality for fallback
-            external_models = [m for m in self.all_models_by_cost if m.external]
+            external_models = self._keep_single_groq(
+                [m for m in self.all_models_by_cost if m.external]
+            )
             # Prefer higher quality models for chat fallback
             fallback_models = sorted(external_models, key=lambda m: -m.quality())[:4]
 

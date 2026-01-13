@@ -45,6 +45,127 @@ from fighthealthinsurance.env_utils import *
 
 pubmed_fetcher = PubMedFetcher()
 
+
+class RateLimiter:
+    """
+    Lightweight rate limiter for 429 backoff handling.
+
+    In a multi-container environment, client-side RPM/RPD tracking is inaccurate
+    since each container has its own counter. Instead, we rely on the API's 429
+    responses as the source of truth and back off when rate limited.
+
+    When a 429 is received, call mark_exhausted() with the Retry-After value.
+    The limiter will block requests until the backoff period expires.
+
+    Lock-free design: simple timestamp comparison is safe for this use case.
+    Worst-case race (two requests both pass can_request, both get 429, both
+    call mark_exhausted) is harmless - the exhaustion time just gets set twice.
+
+    Example:
+        limiter = RateLimiter(name="groq-llama-70b")
+        if limiter.can_request():
+            try:
+                # make API call
+            except RateLimitError as e:
+                limiter.mark_exhausted(e.retry_after)
+        else:
+            # skip or fallback - currently backing off from a 429
+    """
+
+    def __init__(
+        self,
+        name: str = "default",
+        # Legacy parameters kept for backwards compatibility but ignored
+        rpm_limit: int = 30,
+        rpd_limit: int = 1000,
+    ):
+        """
+        Initialize the rate limiter.
+
+        Args:
+            name: Identifier for logging purposes
+            rpm_limit: Ignored (kept for backwards compatibility)
+            rpd_limit: Ignored (kept for backwards compatibility)
+        """
+        self.name = name
+
+        # Exhaustion tracking - timestamp when we can resume requests
+        self._exhausted_until: Optional[float] = None
+
+        logger.debug(f"RateLimiter initialized for {name} (exhaustion-only mode)")
+
+    def can_request(self) -> bool:
+        """
+        Check if a request is allowed (not in backoff period).
+
+        Returns:
+            True if request is allowed, False if backing off from a 429
+        """
+        now = time.time()
+
+        # Check if we're in a backoff period from a previous 429
+        exhausted_until = self._exhausted_until
+        if exhausted_until is not None:
+            if now < exhausted_until:
+                logger.debug(
+                    f"RateLimiter {self.name}: Backing off, "
+                    f"resuming in {exhausted_until - now:.1f}s"
+                )
+                return False
+            else:
+                # Backoff period has passed
+                logger.info(f"RateLimiter {self.name}: Backoff period ended")
+                self._exhausted_until = None
+
+        return True
+
+    def record_request(self) -> None:
+        """
+        Legacy method - no longer tracks requests.
+
+        In multi-container deployments, client-side request counting is
+        inaccurate. We now rely solely on 429 responses from the API.
+        This method is kept for backwards compatibility but is a no-op.
+        """
+        pass
+
+    def mark_exhausted(self, retry_after_seconds: float = 60.0) -> None:
+        """
+        Mark the rate limiter as temporarily exhausted (backing off).
+
+        Call this when receiving a 429 response from the API. The limiter
+        will block requests until the backoff period expires.
+
+        Args:
+            retry_after_seconds: Seconds to wait before allowing requests again
+                                 (typically from the Retry-After header)
+        """
+        self._exhausted_until = time.time() + retry_after_seconds
+        logger.warning(
+            f"RateLimiter {self.name}: Backing off for "
+            f"{retry_after_seconds:.1f}s (429 response)"
+        )
+
+    def get_status(self) -> dict:
+        """
+        Get current rate limiter status for monitoring/debugging.
+
+        Returns:
+            Dict with name and exhaustion state
+        """
+        now = time.time()
+        exhausted_until = self._exhausted_until
+
+        return {
+            "name": self.name,
+            "exhausted": exhausted_until is not None and now < exhausted_until,
+            "exhausted_until": exhausted_until,
+            "seconds_remaining": (
+                max(0.0, exhausted_until - now) if exhausted_until else 0.0
+            ),
+        }
+
+
 U = TypeVar("U")
 T = TypeVar("T")
 
@@ -336,14 +457,14 @@ async def _interleave_iterator_for_keep_alive(
     iterator: AsyncIterator[str], timeout: int = 20
 ) -> AsyncIterator[str]:
     """
-    Yields strings from an async iterator, interleaving empty strings as keep-alive signals.
+    Yields strings from an async iterator, interleaving newlines as keep-alive signals.
 
-    This generator yields an empty string before and after each item from the input iterator,
+    This generator yields a newline string before and after each item from the input iterator,
     and also yields an empty string every `timeout` seconds if no new item is available.
     Handles timeouts, cancellations, and exceptions by yielding empty strings to maintain
     connection liveness.
     """
-    yield ""
+    yield "\n"
     await asyncio.sleep(0)
     # Keep track of the next elem pointer
     c = None
@@ -353,21 +474,21 @@ async def _interleave_iterator_for_keep_alive(
                 # Keep wait_for from cancelling it
                 c = asyncio.shield(iterator.__anext__())
             await asyncio.sleep(0)
-            yield ""
+            yield "\n"
             # Use asyncio.wait_for to handle timeout for fetching record
             record = await asyncio.wait_for(c, timeout)
             # Success, we can clear the next elem pointer
             c = None
             yield record
             await asyncio.sleep(0)
-            yield ""
+            yield "\n"
         except asyncio.TimeoutError:
-            yield ""
+            yield "\n"
             continue
         except asyncio.exceptions.CancelledError:
             # If the iterator is cancelled, we should stop
             logger.debug("Cancellation of task in interleaved generator")
-            yield ""
+            yield "\n"
             # Properly retrieve any pending exception from the shielded future
             await _retrieve_pending_future(c)
             c = None
@@ -376,7 +497,7 @@ async def _interleave_iterator_for_keep_alive(
             break
         except Exception as e:
             logger.opt(exception=True).error(f"Error in generator: {e}")
-            yield ""
+            yield "\n"
             # Properly retrieve any pending exception from the shielded future
             await _retrieve_pending_future(c)
             c = None

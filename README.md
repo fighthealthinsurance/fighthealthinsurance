@@ -10,7 +10,7 @@ The [ML model is generated using this repo](https://github.com/fighthealthinsura
 
 ### Prerequisites
 
-- Python 3.13
+- Python 3.12 (3.13 is partially supported)
 - System dependencies: `tesseract-ocr`, `texlive`
 
 On Ubuntu/Debian:
@@ -48,6 +48,10 @@ pip install -r requirements-dev.txt
 
 # Run the local server
 ./scripts/run_local.sh
+
+# Note: For WebSocket support (chat interface, real-time updates),
+# do NOT use the --devserver flag. The default uvicorn server
+# properly supports WebSockets/ASGI, but runserver_plus does not.
 ```
 
 ### Connecting to an ML Backend
