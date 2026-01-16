@@ -18,6 +18,16 @@ from loguru import logger
 from regex_field.fields import RegexField
 
 from fhi_users.models import *
+from fighthealthinsurance.constants import (
+    FHI_COMPANY_NAME,
+    FHI_PHONE_NUMBER,
+    FHI_FAX_NUMBER,
+)
+from fighthealthinsurance.exceptions import (
+    MissingDocumentError,
+    DocumentRegenerationError,
+    MissingRequiredDataError,
+)
 from fighthealthinsurance.type_utils import User
 from fighthealthinsurance.utils import sekret_gen
 
@@ -612,19 +622,18 @@ class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # t
     )
 
     def _get_contents(self):
-        if self.combined_document:
-            return self.combined_document.read()
-        elif self.combined_document_enc:
-            cryptographer = Cryptographer()
-            try:
-                return cryptographer.decrypt(self.combined_document_enc.read())
-            except:
-                logger.opt(exception=True).debug(
-                    f"Error reading encrypted document, sometimes this mean it was not encrypted falling back"
-                )
-                self.combined_document_enc.read()
-        else:
-            raise Exception("No file found (encrypted or unencrypted)")
+        """
+        Get decrypted document contents. Legacy method - prefer get_fax_document().
+
+        Returns:
+            bytes: Decrypted document contents
+
+        Raises:
+            MissingRequiredDataError: If required data for regeneration is missing
+            DocumentRegenerationError: If PDF generation fails
+            MissingDocumentError: If document cannot be retrieved or regenerated
+        """
+        return self.get_fax_document(return_encrypted=False)
 
     def _get_filename(self) -> str:
         if self.combined_document:
@@ -632,17 +641,357 @@ class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # t
         elif self.combined_document_enc:
             return self.combined_document_enc.name  # type: ignore
         else:
-            raise Exception("No file found (encrypted or unencrypted)")
+            raise MissingDocumentError("No file found (encrypted or unencrypted)")
 
     def get_temporary_document_path(self):
-        with tempfile.NamedTemporaryFile(
-            suffix=self._get_filename(), mode="w+b", delete=False
-        ) as f:
-            f.write(self._get_contents())
+        """
+        Create temporary file with fax document contents.
+
+        Returns:
+            str: Path to temporary file (caller responsible for cleanup)
+
+        Raises:
+            Exception: If document cannot be retrieved or regenerated
+        """
+        contents = self.get_fax_document(return_encrypted=False)
+        with tempfile.NamedTemporaryFile(suffix=".pdf", mode="w+b", delete=False) as f:
+            f.write(contents)
             f.flush()
             f.close()
             os.sync()
             return f.name
+
+    def _validate_regeneration_requirements(self) -> None:
+        """
+        Validate that all required data is present for document regeneration.
+
+        Raises:
+            MissingRequiredDataError: If appeal_text or denial_id is missing
+        """
+        if not self.appeal_text:
+            error_msg = f"Cannot regenerate fax {self.fax_id}: missing appeal_text"
+            logger.error(error_msg)
+            raise MissingRequiredDataError(error_msg)
+
+        if not self.denial_id:
+            error_msg = f"Cannot regenerate fax {self.fax_id}: missing denial_id"
+            logger.error(error_msg)
+            raise MissingRequiredDataError(error_msg)
+
+    def _gather_appeal_parameters(self) -> dict:
+        """
+        Gather all parameters needed for PDF generation from stored data.
+
+        Returns:
+            dict: Parameters for _assemble_appeal_pdf()
+        """
+        denial = self.denial_id
+        assert denial is not None  # Validated in _validate_regeneration_requirements()
+        logger.debug(f"Using denial {denial.denial_id} for regeneration")
+
+        # Get patient name from FaxesToSend or fallback
+        patient_name = self.name or "Patient"
+
+        # Get insurance company
+        insurance_company = denial.insurance_company or "Insurance Company"
+
+        # Get claim ID
+        claim_id = denial.claim_id
+
+        # Get fax number
+        fax_phone = self.destination or denial.appeal_fax_number or ""
+
+        # Get professional info if available
+        professional_name = None
+        professional_fax_number = None
+        professional = denial.primary_professional or denial.creating_professional
+        if professional:
+            professional_name = professional.get_display_name()
+            professional_fax_number = professional.fax_number
+            logger.debug(f"Using professional: {professional_name}")
+
+        # Parse PubMed IDs
+        pubmed_ids_parsed = None
+        if self.pmids:
+            if isinstance(self.pmids, list):
+                pubmed_ids_parsed = self.pmids
+            else:
+                # Non-list format - log and skip
+                logger.debug(
+                    f"PubMed IDs in unexpected format: {type(self.pmids)}, skipping"
+                )
+
+        return {
+            "insurance_company": insurance_company,
+            "fax_phone": fax_phone,
+            "completed_appeal_text": self.appeal_text,
+            "company_name": FHI_COMPANY_NAME,
+            "patient_name": patient_name,
+            "claim_id": claim_id,
+            "include_cover": True,
+            "health_history": self.health_history,
+            "patient_address": None,
+            "patient_fax": None,
+            "company_phone_number": FHI_PHONE_NUMBER,
+            "company_fax_number": FHI_FAX_NUMBER,
+            "professional_fax_number": professional_fax_number,
+            "professional_name": professional_name,
+            "pubmed_ids_parsed": pubmed_ids_parsed,
+        }
+
+    def _generate_pdf_document(self, parameters: dict) -> str:
+        """
+        Generate PDF document using AppealAssemblyHelper.
+
+        Args:
+            parameters: Dict of parameters for _assemble_appeal_pdf()
+
+        Returns:
+            str: Path to generated PDF file (caller responsible for cleanup)
+
+        Raises:
+            DocumentRegenerationError: If PDF generation fails
+        """
+        # Import here to avoid circular imports
+        from fighthealthinsurance.common_view_logic import AppealAssemblyHelper
+
+        # Create temporary file for output
+        target_file = tempfile.NamedTemporaryFile(
+            suffix=".pdf", prefix="regenerated_fax", mode="w+b", delete=False
+        )
+        target_path = target_file.name
+        target_file.close()
+        logger.debug(f"Target file: {target_path}")
+
+        # Create AppealAssemblyHelper and generate PDF
+        try:
+            helper = AppealAssemblyHelper()
+            result_path: str = helper._assemble_appeal_pdf(
+                **parameters,
+                target=target_path,
+            )
+
+            if not result_path or not os.path.exists(result_path):
+                raise DocumentRegenerationError(
+                    f"PDF generation failed: no file created"
+                )
+
+            logger.debug(f"Successfully regenerated document at {result_path}")
+            return result_path
+
+        except DocumentRegenerationError:
+            # Re-raise our own exceptions
+            raise
+        except Exception as e:
+            logger.opt(exception=True).error(
+                f"Failed to regenerate document for fax {self.fax_id}: {e}"
+            )
+            # Clean up target file if it exists
+            if os.path.exists(target_path):
+                try:
+                    os.unlink(target_path)
+                except:
+                    pass
+            raise DocumentRegenerationError(
+                f"Failed to regenerate document for fax {self.fax_id}: {e}"
+            ) from e
+
+    def _regenerate_document_from_appeal_data(self) -> str:
+        """
+        Regenerate fax document from stored appeal data.
+
+        Returns:
+            str: Path to regenerated PDF file (caller responsible for cleanup)
+
+        Raises:
+            MissingRequiredDataError: If required data is missing
+            DocumentRegenerationError: If PDF generation fails
+        """
+        logger.debug(f"Regenerating document for fax {self.fax_id}")
+
+        # Validate required data
+        self._validate_regeneration_requirements()
+
+        # Gather parameters for PDF generation
+        parameters = self._gather_appeal_parameters()
+
+        # Generate the PDF
+        return self._generate_pdf_document(parameters)
+
+    def _format_document_output(
+        self, decrypted_bytes: bytes, return_encrypted: bool
+    ) -> bytes:
+        """
+        Format document bytes according to requested encryption state.
+
+        Args:
+            decrypted_bytes: Decrypted document bytes
+            return_encrypted: If True, encrypt the bytes before returning
+
+        Returns:
+            bytes: Document in requested format (encrypted or decrypted)
+        """
+        if return_encrypted:
+            encrypted: bytes = Cryptographer.encrypted(decrypted_bytes)
+            return encrypted
+        return decrypted_bytes
+
+    def _read_and_decrypt_file(
+        self, file_field, field_name: str
+    ) -> typing.Optional[bytes]:
+        """
+        Helper to read and decrypt a file field.
+
+        Args:
+            file_field: Django FileField or EncryptedFileField
+            field_name: Name of the field for logging
+
+        Returns:
+            Decrypted bytes if successful, None if field is empty or decryption fails
+        """
+        try:
+            with file_field.open() as file:
+                encrypted_bytes: bytes = file.read()
+                if not encrypted_bytes:
+                    return None
+
+                # Try to decrypt (EncryptedFileField stores encrypted data)
+                try:
+                    decrypted_bytes: bytes = Cryptographer.decrypted(encrypted_bytes)
+                    logger.debug(
+                        f"Successfully read and decrypted {field_name} for fax {self.fax_id}"
+                    )
+                    return decrypted_bytes
+                except Exception as decrypt_error:
+                    # Decryption failed - treat as corrupted/missing
+                    logger.opt(exception=True).warning(
+                        f"Decryption failed for {field_name} on fax {self.fax_id}: {decrypt_error}. "
+                        f"Document may be corrupted. Will attempt regeneration."
+                    )
+                    return None
+        except Exception as e:
+            logger.opt(exception=True).debug(
+                f"Error reading {field_name} for fax {self.fax_id}: {e}"
+            )
+            return None
+
+    def get_fax_document(self, return_encrypted: bool = False) -> bytes:
+        """
+        Get fax document bytes, regenerating from appeal data if necessary.
+
+        This method provides resilient access to fax documents by trying multiple
+        sources in order:
+        1. Primary storage (combined_document_enc) - decrypts if successful
+        2. Alternate storage (combined_document) - unencrypted format
+        3. Related Appeal.document_enc - decrypts if successful
+        4. Regeneration from stored appeal data - creates new PDF
+
+        If any decryption fails (corrupted data), we treat it as missing and regenerate.
+
+        Args:
+            return_encrypted: If False (default), returns decrypted bytes ready for faxing.
+                            If True, returns encrypted bytes suitable for storage.
+
+        Returns:
+            bytes: Document content in requested format (encrypted or decrypted)
+
+        Raises:
+            MissingRequiredDataError: If required data for regeneration is missing
+                                     (appeal_text, denial_id)
+            DocumentRegenerationError: If PDF generation fails
+            MissingDocumentError: If document cannot be found in any source and
+                                 regeneration fails for other reasons
+
+        Examples:
+            # Get decrypted document for sending fax (most common use case)
+            pdf_bytes = fax.get_fax_document()
+
+            # Get encrypted document for storage operations
+            encrypted_bytes = fax.get_fax_document(return_encrypted=True)
+        """
+        # Try primary storage: combined_document_enc (encrypted)
+        if self.combined_document_enc:
+            decrypted_bytes = self._read_and_decrypt_file(
+                self.combined_document_enc, "combined_document_enc"
+            )
+            if decrypted_bytes:
+                return self._format_document_output(decrypted_bytes, return_encrypted)
+
+        # Try alternate storage: combined_document (unencrypted)
+        if self.combined_document:
+            try:
+                logger.debug(f"Reading unencrypted document for fax {self.fax_id}")
+                with self.combined_document.open() as file:
+                    unencrypted_bytes: bytes = file.read()
+                    if unencrypted_bytes:
+                        logger.debug(
+                            f"Successfully read unencrypted document for fax {self.fax_id}"
+                        )
+                        return self._format_document_output(
+                            unencrypted_bytes, return_encrypted
+                        )
+            except Exception as e:
+                logger.opt(exception=True).debug(
+                    f"Error reading unencrypted document for fax {self.fax_id}: {e}"
+                )
+
+        # Try Appeal fallback: for_appeal.document_enc
+        if self.for_appeal and self.for_appeal.document_enc:
+            logger.warning(
+                f"Fax {self.fax_id} document missing, trying Appeal {self.for_appeal.uuid} document"
+            )
+            decrypted_bytes = self._read_and_decrypt_file(
+                self.for_appeal.document_enc,
+                f"Appeal {self.for_appeal.uuid} document_enc",
+            )
+            if decrypted_bytes:
+                return self._format_document_output(decrypted_bytes, return_encrypted)
+
+        # Last resort: Regenerate from stored appeal data
+        logger.warning(
+            f"All document sources missing or corrupted for fax {self.fax_id}, regenerating from appeal data"
+        )
+
+        try:
+            regenerated_path = self._regenerate_document_from_appeal_data()
+
+            # Read the regenerated PDF
+            with open(regenerated_path, "rb") as f:
+                regenerated_bytes = f.read()
+
+            # Clean up temporary file
+            try:
+                os.unlink(regenerated_path)
+            except Exception as cleanup_error:
+                logger.opt(exception=True).debug(
+                    f"Failed to clean up temporary file {regenerated_path}: {cleanup_error}"
+                )
+
+            # Save regenerated document to database (field handles encryption automatically)
+            logger.info(f"Saving regenerated document for fax {self.fax_id}")
+            from django.core.files.base import ContentFile
+
+            self.combined_document_enc.save(
+                f"fax_{self.fax_id}_regenerated.pdf",
+                ContentFile(
+                    regenerated_bytes
+                ),  # Pass unencrypted, field encrypts automatically
+                save=True,
+            )
+
+            # Return in requested format
+            return self._format_document_output(regenerated_bytes, return_encrypted)
+
+        except (MissingRequiredDataError, DocumentRegenerationError):
+            # Re-raise our own specific exceptions
+            raise
+        except Exception as e:
+            logger.opt(exception=True).error(
+                f"Failed to regenerate document for fax {self.fax_id}: {e}"
+            )
+            raise MissingDocumentError(
+                f"Cannot retrieve or regenerate fax document: {e}"
+            ) from e
 
     class Meta:
         indexes = [
