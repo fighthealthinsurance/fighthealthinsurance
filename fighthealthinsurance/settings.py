@@ -155,6 +155,7 @@ class Base(Configuration):
         "django_prometheus",
         "drf_spectacular",
         "corsheaders",
+        "api"
     ]
 
     COMPRESS_JS_FILTERS = [
