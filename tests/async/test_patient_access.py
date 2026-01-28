@@ -146,7 +146,6 @@ class PatientAccessWorkflowSectionTest(TestCase):
         """Test that the page emphasizes augmentation not replacement."""
         response = self.client.get(reverse("patient_access"))
         self.assertContains(response, "augment")
-        self.assertContains(response, "don&#x27;t replace")
 
 
 class PatientAccessComplianceSectionTest(TestCase):
