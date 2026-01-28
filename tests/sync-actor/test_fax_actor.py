@@ -63,7 +63,7 @@ class TestFaxActor(TransactionTestCase):
             )
 
             # Call the method and verify results
-            (t, f) = ray.get(self.fax_actor.send_delayed_faxes.remote())
+            t, f = ray.get(self.fax_actor.send_delayed_faxes.remote())
             self.assertEqual(f, 0)
             self.assertEqual(t, 1)
         finally:
@@ -88,5 +88,5 @@ class TestFaxActor(TransactionTestCase):
         )
 
         # Call the method and verify results
-        (t, f) = ray.get(self.fax_actor.send_delayed_faxes.remote())
+        t, f = ray.get(self.fax_actor.send_delayed_faxes.remote())
         self.assertEqual(t, 0)

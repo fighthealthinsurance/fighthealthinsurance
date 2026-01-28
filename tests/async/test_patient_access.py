@@ -7,6 +7,7 @@ This module tests:
 - Navigation dropdown functionality
 - Links to microsites and microsite directory
 """
+
 from django.test import TestCase, Client
 from django.urls import reverse
 

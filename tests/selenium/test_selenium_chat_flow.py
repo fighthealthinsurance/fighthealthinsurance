@@ -99,8 +99,7 @@ class SeleniumChatFlowTest(FHISeleniumBase, StaticLiveServerTestCase):
         self.wait(2)
 
         # Verify that the email is available in user info for sending
-        user_info = self.execute_script(
-            """
+        user_info = self.execute_script("""
             // Check if userInfoStorage module is available
             if (window.userInfoStorage && window.userInfoStorage.getUserInfo) {
                 return window.userInfoStorage.getUserInfo();
@@ -108,24 +107,21 @@ class SeleniumChatFlowTest(FHISeleniumBase, StaticLiveServerTestCase):
             // Fallback to direct localStorage access
             const stored = localStorage.getItem('fhi_user_info');
             return stored ? JSON.parse(stored) : null;
-        """
-        )
+        """)
 
         assert user_info is not None, "User info should be available"
         assert user_info.get("email") == test_email, f"Email should be {test_email}"
 
         # Verify the chat interface has the data it needs to send to backend
         # by checking that a message would include the email
-        message_would_include_email = self.execute_script(
-            f"""
+        message_would_include_email = self.execute_script(f"""
             const userInfo = localStorage.getItem('fhi_user_info');
             if (userInfo) {{
                 const parsed = JSON.parse(userInfo);
                 return parsed.email === '{test_email}';
             }}
             return false;
-        """
-        )
+        """)
 
         assert message_would_include_email, "Message data should include correct email"
         print(
@@ -147,16 +143,14 @@ class SeleniumChatFlowTest(FHISeleniumBase, StaticLiveServerTestCase):
         self.wait(1)
 
         # Verify getUserInfo() returns correct data
-        user_info = self.execute_script(
-            """
+        user_info = self.execute_script("""
             if (window.userInfoStorage && window.userInfoStorage.getUserInfo) {
                 return window.userInfoStorage.getUserInfo();
             }
             // Fallback: parse from localStorage directly
             const stored = localStorage.getItem('fhi_user_info');
             return stored ? JSON.parse(stored) : null;
-        """
-        )
+        """)
 
         assert user_info is not None, "getUserInfo() should return user data"
         assert user_info["email"] == test_email, f"Email should be {test_email}"
