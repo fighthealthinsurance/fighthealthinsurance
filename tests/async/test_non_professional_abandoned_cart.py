@@ -5,7 +5,7 @@ from unittest.mock import patch
 from django.urls import reverse
 from django.test import Client
 from fighthealthinsurance.models import LostStripeSession, StripeRecoveryInfo
-from fighthealthinsurance.common_view_logic import StripeWebhookHelper
+from fighthealthinsurance.helpers.stripe_helpers import StripeWebhookHelper
 
 
 @pytest.mark.django_db

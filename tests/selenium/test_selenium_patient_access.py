@@ -46,7 +46,7 @@ class SeleniumTestPatientAccessPage(FHISeleniumBase, StaticLiveServerTestCase):
         self.assert_text("Book a Demo", "a.primary-cta")
         # Verify it's a mailto link
         href = self.get_attribute("a.primary-cta", "href")
-        self.assertIn("mailto:enterprise@fighthealthinsurance.com", href)
+        self.assertIn("mailto:support42@fighthealthinsurance.com", href)
 
     def test_patient_access_sections_present(self):
         """Test that all main sections are present on the page."""
