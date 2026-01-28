@@ -171,12 +171,10 @@ class ExtraLinkContextHelper:
             return False
 
         try:
-            count = await MicrositeExtraLink.objects.filter(
+            return await MicrositeExtraLink.objects.filter(
                 microsite_slug=microsite_slug,
                 document__fetch_status="success",
-            ).acount()
-
-            return count > 0
+            ).aexists()
 
         except Exception:
             return False
@@ -206,7 +204,7 @@ class ExtraLinkContextHelper:
             return ""
 
         try:
-            logger.info(f"Loading extralink context for microsite {microsite_slug}")
+            logger.debug(f"Loading extralink context for microsite {microsite_slug}")
 
             extralink_context = await ExtraLinkContextHelper.get_context_for_microsite(
                 microsite_slug,
@@ -215,7 +213,7 @@ class ExtraLinkContextHelper:
             )
 
             if extralink_context:
-                logger.info(
+                logger.debug(
                     f"Added {len(extralink_context)} chars of extralink context"
                 )
             else:

@@ -395,43 +395,48 @@ class ExtraLinkFetcher:
         Raises:
             Exception: If DOCX extraction fails
         """
-        with tempfile.NamedTemporaryFile(suffix=".docx", delete=True) as tmp_in:
-            tmp_in.write(content)
-            tmp_in.flush()
 
-            with tempfile.NamedTemporaryFile(
-                suffix=".txt", delete=True, mode="w"
-            ) as tmp_out:
-                tmp_out.close()
+        def _run_pandoc_sync(content_bytes: bytes) -> str:
+            """Synchronous helper to run pandoc subprocess."""
+            import subprocess
 
-                try:
-                    # Try using pandoc to convert to plain text
-                    import subprocess
+            with tempfile.NamedTemporaryFile(suffix=".docx", delete=True) as tmp_in:
+                tmp_in.write(content_bytes)
+                tmp_in.flush()
 
-                    subprocess.run(
-                        [
-                            "pandoc",
-                            tmp_in.name,
-                            "-t",
-                            "plain",
-                            "-o",
-                            tmp_out.name,
-                        ],
-                        check=True,
-                        capture_output=True,
-                        timeout=30,
-                    )
+                with tempfile.NamedTemporaryFile(
+                    suffix=".txt", delete=True, mode="w"
+                ) as tmp_out:
+                    tmp_out.close()
 
-                    with open(tmp_out.name, "r") as f:
-                        text = f.read()
+                    try:
+                        subprocess.run(
+                            [
+                                "pandoc",
+                                tmp_in.name,
+                                "-t",
+                                "plain",
+                                "-o",
+                                tmp_out.name,
+                            ],
+                            check=True,
+                            capture_output=True,
+                            timeout=30,
+                        )
 
-                    return text
+                        with open(tmp_out.name, "r") as f:
+                            text = f.read()
 
-                except (subprocess.CalledProcessError, FileNotFoundError) as e:
-                    logger.debug(f"Pandoc extraction failed: {e}")
-                    # Pandoc not available or failed
-                    # In the future, could fall back to python-docx
-                    return ""
+                        return text
+
+                    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+                        logger.debug(f"Pandoc extraction failed: {e}")
+                        # Pandoc not available or failed
+                        # In the future, could fall back to python-docx
+                        return ""
+
+        # Run the blocking subprocess call via sync_to_async to avoid blocking event loop
+        return await sync_to_async(_run_pandoc_sync)(content)
 
     async def _extract_html_text(self, content: bytes) -> str:
         """

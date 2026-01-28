@@ -117,6 +117,11 @@ class Microsite:
                 raise MicrositeValidationError(
                     f"Extralink missing required 'url' field: {link}"
                 )
+            # Validate url is a non-empty string
+            if not isinstance(link["url"], str) or not link["url"].strip():
+                raise MicrositeValidationError(
+                    f"Extralink 'url' must be a non-empty string: {link}"
+                )
             # Validate priority if present (should be integer)
             if "priority" in link and not isinstance(link["priority"], int):
                 raise MicrositeValidationError(
@@ -257,7 +262,8 @@ class Microsite:
                 return_count=False,
             )
             # get_pubmed_context returns str when return_count=False
-            if pubmed_result and isinstance(pubmed_result, str):
+            # Use explicit type narrowing for mypy
+            if isinstance(pubmed_result, str) and pubmed_result:
                 contexts.append(pubmed_result)
 
         return "\n\n".join(contexts) if contexts else ""
