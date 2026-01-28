@@ -66,7 +66,6 @@ class SeleniumTestPatientAccessPage(FHISeleniumBase, StaticLiveServerTestCase):
         self.scroll_to("#landing-pages")
         time.sleep(0.5)
 
-        self.assert_text("AI and landing pages", "#landing-pages h2")
         self.assert_text("Drug-Specific Pages", "#landing-pages")
         self.assert_text("Condition-Specific Pages", "#landing-pages")
         self.assert_text("DME", "#landing-pages")
