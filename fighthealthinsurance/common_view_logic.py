@@ -1268,7 +1268,7 @@ class DenialCreatorHelper:
         diagnosis = None
 
         try:
-            (procedure, diagnosis) = await appealGenerator.get_procedure_and_diagnosis(
+            procedure, diagnosis = await appealGenerator.get_procedure_and_diagnosis(
                 denial_text=denial.denial_text
             )
 

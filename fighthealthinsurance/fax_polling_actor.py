@@ -37,7 +37,7 @@ class FaxPollingActor:
             await asyncio.sleep(1)
             try:
                 print(f"Checked for delayed remote faxes")
-                (c, f) = await self.fax_actor.send_delayed_faxes.remote()
+                c, f = await self.fax_actor.send_delayed_faxes.remote()
                 self.e += f
                 self.c += c
             except Exception as e:
