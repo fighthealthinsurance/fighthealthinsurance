@@ -270,6 +270,13 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         "pro_version", csrf_exempt(views.ProVersionView.as_view()), name="pro_version"
     ),
     path(
+        "professionals/patient-access",
+        cache_control(public=True)(
+            cache_page(60 * 60 * 2)(views.PatientAccessView.as_view())
+        ),
+        name="patient_access",
+    ),
+    path(
         "pro_version_thankyou",
         csrf_exempt(views.ProVersionThankYouView.as_view()),
         name="pro_version_thankyou",

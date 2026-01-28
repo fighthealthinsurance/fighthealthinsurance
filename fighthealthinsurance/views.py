@@ -199,6 +199,12 @@ class ProVersionView(generic.RedirectView):
     url = "https://www.fightpaperwork.com"
 
 
+class PatientAccessView(generic.TemplateView):
+    """Landing page for patient access and market access teams."""
+
+    template_name = "patient_access.html"
+
+
 class IndexView(generic.TemplateView):
     """Homepage view."""
 
