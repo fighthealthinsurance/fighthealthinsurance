@@ -84,22 +84,20 @@
   }
 </style>
 
-<script type="module">
-  import * as main from '{% static "js/dist/scrub.bundle.js" %}';
-</script>
 <script>
+  // Track CTA clicks for analytics
   document.addEventListener('DOMContentLoaded', function() {
-    var form = document.getElementById('amc_appeal_form');
-    if (form) {
-      form.addEventListener('submit', function() {
+    var ctaButtons = document.querySelectorAll('a[href*="scan"]');
+    ctaButtons.forEach(function(btn) {
+      btn.addEventListener('click', function() {
         if (window.trackUETConversion) {
-          window.trackUETConversion('denial_appeal_start', {
-            event_category: 'conversion',
-            event_label: 'Denial Form Submitted'
+          window.trackUETConversion('amc_cta_click', {
+            event_category: 'engagement',
+            event_label: 'Start Appeal CTA Clicked'
           });
         }
       });
-    }
+    });
   });
 </script>
 {% endblock scriptmagic %}
@@ -113,153 +111,83 @@
         <p style="font-size: 1.25rem; margin-bottom: 0.5rem;">You're not alone—and you can fight back.</p>
         <p style="font-size: 1.1rem; margin-bottom: 0.5rem;">Over 80% of prior authorization appeals are successful. Let's help you be one of them.</p>
         <p style="font-size: 0.9rem; font-style: italic; opacity: 0.9;">Source: Kaiser Family Foundation</p>
+        <div style="margin-top: 2rem;">
+            <a href="{% url brand_url_names.scan %}" class="btn btn-light btn-lg" style="padding: 0.75rem 2.5rem; font-size: 1.2rem; font-weight: 600; color: #1976d2;">
+                Start Your Appeal
+            </a>
+        </div>
     </div>
 </section>
 
-<!-- Main Content Area with Form and Sidebar -->
+<!-- How It Works Section -->
+<section class="amc-how-it-works" style="padding: 3rem 0; background: white;">
+    <div class="container">
+        <h2 style="text-align: center; font-size: 2rem; font-weight: 700; margin-bottom: 2.5rem; color: #1f2937;">How It Works</h2>
+        <div class="row">
+            <div class="col-md-4 text-center mb-4">
+                <div style="background: #e3f2fd; width: 80px; height: 80px; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 1rem; font-size: 2rem; color: #1976d2;">1</div>
+                <h3 style="font-size: 1.25rem; font-weight: 600; margin-bottom: 0.5rem;">Upload Your Denial</h3>
+                <p style="color: #6b7280;">Upload your denial letter or paste the text. We'll extract the key information.</p>
+            </div>
+            <div class="col-md-4 text-center mb-4">
+                <div style="background: #e3f2fd; width: 80px; height: 80px; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 1rem; font-size: 2rem; color: #1976d2;">2</div>
+                <h3 style="font-size: 1.25rem; font-weight: 600; margin-bottom: 0.5rem;">Review & Customize</h3>
+                <p style="color: #6b7280;">We generate a personalized appeal letter. Review and customize as needed.</p>
+            </div>
+            <div class="col-md-4 text-center mb-4">
+                <div style="background: #e3f2fd; width: 80px; height: 80px; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 1rem; font-size: 2rem; color: #1976d2;">3</div>
+                <h3 style="font-size: 1.25rem; font-weight: 600; margin-bottom: 0.5rem;">Send Your Appeal</h3>
+                <p style="color: #6b7280;">Download your letter or fax it directly to your insurance company.</p>
+            </div>
+        </div>
+        <div class="text-center mt-3">
+            <a href="{% url brand_url_names.scan %}" class="btn btn-primary btn-lg" style="padding: 0.75rem 2.5rem; font-size: 1.1rem;">
+                Get Started Now
+            </a>
+        </div>
+    </div>
+</section>
+
+<!-- Main Content Area with Info and Sidebar -->
 <section class="amc-main-section" style="padding: 3rem 0;">
     <div class="container">
         <div class="row">
-            <!-- Main Form Column -->
+            <!-- Main Info Column -->
             <div class="col-lg-8 col-md-7">
-                {% if form.errors %}
-                <div class="form-errors alert alert-danger">
-                    {{ form.errors }}
-                </div>
-                {% endif %}
-
-                <!-- Multi-step wizard tabs -->
-                <div class="amc-wizard-tabs" style="display: flex; justify-content: center; margin-bottom: 2rem; border-bottom: 2px solid #e5e7eb;">
-                    <div class="wizard-tab active" style="padding: 1rem 2rem; border-bottom: 3px solid #1976d2; font-weight: 600;">
-                        Patient Information
+                <div class="amc-form-card" style="background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 2rem;">
+                    <h3 style="font-size: 1.5rem; font-weight: 600; margin-bottom: 1.5rem; color: #1f2937;">Why Appeal Your Denial?</h3>
+                    <p style="margin-bottom: 1rem; line-height: 1.8; color: #4b5563;">
+                        Insurance denials are common, but many are overturned on appeal. Studies show that
+                        <strong>over 50% of denied claims are reversed</strong> when patients appeal.
+                        Don't accept "no" as the final answer.
+                    </p>
+                    <p style="margin-bottom: 1rem; line-height: 1.8; color: #4b5563;">
+                        Our AI-powered tool helps you craft a compelling, professional appeal letter that
+                        addresses the specific reasons for your denial and cites relevant medical guidelines.
+                    </p>
+                    <ul style="padding-left: 1.25rem; margin-bottom: 1.5rem; line-height: 2; color: #4b5563;">
+                        <li>Free to use - no payment required</li>
+                        <li>AI-generated appeal letters tailored to your situation</li>
+                        <li>Option to fax directly to your insurance company</li>
+                        <li>Privacy-focused - we don't store your personal information unless you ask</li>
+                    </ul>
+                    <div class="text-center">
+                        <a href="{% url brand_url_names.scan %}" class="btn btn-primary" style="padding: 0.6rem 2rem;">
+                            Start Your Appeal
+                        </a>
                     </div>
-                    <div class="wizard-tab" style="padding: 1rem 2rem; color: #6b7280;">
-                        Denial Details
-                    </div>
-                    <div class="wizard-tab" style="padding: 1rem 2rem; color: #6b7280;">
-                        Appeal Letter
-                    </div>
-                </div>
-
-                <!-- Step 1: Patient Information -->
-                <div class="amc-step-intro" style="margin-bottom: 2rem;">
-                    <h3 style="font-size: 1.5rem; font-weight: 600; margin-bottom: 0.5rem;">Let's start with some basic information</h3>
-                    <p style="color: #6b7280; margin-bottom: 0.5rem;">Who is writing this appeal?</p>
-                    <p style="color: #6b7280; font-style: italic;">The appeal will be written from the patient's perspective</p>
                 </div>
 
                 <div class="amc-form-card" style="background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-                    <h4 style="font-size: 1.25rem; font-weight: 600; margin-bottom: 1.5rem; color: #1f2937;">Patient Information</h4>
-
-                    <form method="post" action="{% url 'process' %}" id="amc_appeal_form" enctype="multipart/form-data">
-                        {% csrf_token %}
-
-                        <div class="form-group mb-3">
-                            <label for="patient_full_name" class="form-label" style="font-weight: 500;">
-                                Patient's Full Name *
-                            </label>
-                            <input type="text" id="patient_full_name" name="patient_full_name" class="form-control" required>
-                        </div>
-
-                        <h5 style="font-size: 1.1rem; font-weight: 600; margin: 2rem 0 1rem; color: #1f2937;">Insurance Information</h5>
-
-                        <div class="form-group mb-3">
-                            <label for="insurance_company" class="form-label" style="font-weight: 500;">
-                                Insurance Company Name *
-                            </label>
-                            <input type="text" id="insurance_company" name="insurance_company" class="form-control" required>
-                        </div>
-
-                        <div class="form-group mb-3">
-                            <label for="claim_number" class="form-label" style="font-weight: 500;">
-                                Claim Number *
-                            </label>
-                            <input type="text" id="claim_number" name="claim_number" class="form-control" required>
-                        </div>
-
-                        <div class="form-group mb-3">
-                            <label for="group_policy_id" class="form-label" style="font-weight: 500;">
-                                Group/Policy ID *
-                            </label>
-                            <small class="form-text text-muted d-block mb-1">Group number or Policy ID from insurance card</small>
-                            <input type="text" id="group_policy_id" name="group_policy_id" class="form-control" required>
-                        </div>
-
-                        <div class="form-group mb-3">
-                            <label for="denial_date" class="form-label" style="font-weight: 500;">
-                                Date of Denial *
-                            </label>
-                            <input type="date" id="denial_date" name="denial_date" class="form-control" required placeholder="mm/dd/yyyy">
-                        </div>
-
-                        <!-- Hidden fields for email and consent (required by backend) -->
-                        <div class="form-group mb-3">
-                            <label for="email" class="form-label" style="font-weight: 500;">
-                                Email Address *
-                            </label>
-                            <small class="form-text text-muted d-block mb-1">We'll send your appeal letter to this address</small>
-                            <input type="email" id="email" name="email" class="form-control" required>
-                        </div>
-
-                        <!-- Denial text field (hidden for now, will be in step 2) -->
-                        <input type="hidden" id="denial_text" name="denial_text" value="Claim denied - details to be provided in next step">
-
-                        <hr style="margin: 2rem 0; border-color: #e5e7eb;">
-
-                        <!-- Required Consents -->
-                        <h5 style="font-size: 1.1rem; font-weight: 600; margin-bottom: 1rem; color: #1f2937;">Required Agreements</h5>
-
-                        <div class="form-check mb-3">
-                            <input type="checkbox" id="tos" name="tos" class="form-check-input" required>
-                            <label for="tos" class="form-check-label">
-                                I agree to the <a href="{% url brand_url_names.tos %}" target="_blank" style="color: #1976d2;">Terms of Service</a> and will only use this website to generate my own health insurance appeals. I will not use this website to treat and diagnose any disease or condition or assist in either of those. *
-                            </label>
-                        </div>
-
-                        <div class="form-check mb-3">
-                            <input type="checkbox" id="privacy" name="privacy" class="form-check-input" required>
-                            <label for="privacy" class="form-check-label">
-                                I have read and understand the <a href="{% url brand_url_names.privacy_policy %}" target="_blank" style="color: #1976d2;">Privacy Policy</a>. *
-                            </label>
-                        </div>
-
-                        <div class="form-check mb-3">
-                            <input type="checkbox" id="pii" name="pii" class="form-check-input" required>
-                            <label for="pii" class="form-check-label">
-                                I have removed my personal identifiable information (PII) from the text areas above. *
-                            </label>
-                        </div>
-
-                        <!-- Optional Consents -->
-                        <h5 style="font-size: 1.1rem; font-weight: 600; margin: 1.5rem 0 1rem; color: #1f2937;">Optional</h5>
-
-                        <div class="form-check mb-3">
-                            <input type="checkbox" id="store_raw_email" name="store_raw_email" value="checked" class="form-check-input">
-                            <label for="store_raw_email" class="form-check-label">
-                                Store my email to follow-up with me (for the duration of automated follow ups + 30 days)
-                            </label>
-                        </div>
-
-                        <div class="form-check mb-3">
-                            <input type="checkbox" id="use_external_models" name="use_external_models" value="checked" class="form-check-input">
-                            <label for="use_external_models" class="form-check-label">
-                                Increase the number of possible appeals and use external models. This involves sharing your data with 3rd parties subject to their own terms of service.
-                            </label>
-                        </div>
-
-                        <div class="form-check mb-3">
-                            <input type="checkbox" id="subscribe" name="subscribe" value="checked" checked class="form-check-input">
-                            <label for="subscribe" class="form-check-label">
-                                Subscribe to our mailing list for updates and news. We will store your e-mail for this option if selected.
-                            </label>
-                        </div>
-
-                        <div class="form-actions text-center mt-4">
-                            <button type="submit" class="btn btn-primary btn-lg" id="submit" style="padding: 0.75rem 2rem; font-size: 1.1rem;">
-                                Continue to Denial Details
-                            </button>
-                        </div>
-                    </form>
+                    <h3 style="font-size: 1.5rem; font-weight: 600; margin-bottom: 1.5rem; color: #1f2937;">What You'll Need</h3>
+                    <p style="margin-bottom: 1rem; line-height: 1.8; color: #4b5563;">
+                        To create the most effective appeal, have the following ready:
+                    </p>
+                    <ul style="padding-left: 1.25rem; margin-bottom: 0; line-height: 2; color: #4b5563;">
+                        <li><strong>Your denial letter</strong> - the document from your insurance company explaining why your claim was denied</li>
+                        <li><strong>Your email address</strong> - we'll send you a copy of your appeal</li>
+                        <li><strong>Any supporting documents</strong> (optional) - medical records, doctor's notes, or other relevant information</li>
+                    </ul>
                 </div>
             </div>
 
