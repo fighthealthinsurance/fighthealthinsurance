@@ -60,16 +60,27 @@ metadata:
   name: web-extralink-prefetch
   namespace: totallylegitco
 spec:
-  ttlSecondsAfterFinished: 600
+  ttlSecondsAfterFinished: 120
   template:
     metadata:
       labels:
         group: fight-health-insurance-prod-webbackend-batch
         special: web-prefetch-job
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
       containers:
         - image: ${FHI_BASE}:${FHI_VERSION}
           name: totallylegitco
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
           env:
           - name: PREFETCH_EXTRALINKS
             value: "1"
@@ -81,6 +92,12 @@ spec:
           - secretRef:
               name: fight-health-insurance-primary-secret
           imagePullPolicy: Always
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
       restartPolicy: OnFailure
       activeDeadlineSeconds: 900
 ---

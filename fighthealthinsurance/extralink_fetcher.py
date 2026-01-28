@@ -261,8 +261,11 @@ class ExtraLinkFetcher:
             Exception: If fetch fails or file is too large
         """
         timeout = aiohttp.ClientTimeout(total=self.FETCH_TIMEOUT)
+        headers = {
+            "User-Agent": "FightHealthInsurance/1.0 (https://www.fighthealthinsurance.com; medical research bot)"
+        }
 
-        async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
             async with session.get(url, allow_redirects=True) as response:
                 response.raise_for_status()
 
@@ -359,8 +362,10 @@ class ExtraLinkFetcher:
                     if reader.is_encrypted:
                         try:
                             reader.decrypt("")
-                        except Exception:
-                            raise ValueError("PDF is encrypted and cannot be decrypted")
+                        except Exception as e:
+                            raise ValueError(
+                                "PDF is encrypted and cannot be decrypted"
+                            ) from e
 
                     # Extract text from each page
                     for page in reader.pages:

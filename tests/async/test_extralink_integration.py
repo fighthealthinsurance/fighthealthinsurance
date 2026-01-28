@@ -3,12 +3,13 @@ Integration tests for ExtraLink functionality.
 """
 
 import pytest
-from django.test import TestCase
+from django.db import IntegrityError
 from fighthealthinsurance.extralink_context_helper import ExtraLinkContextHelper
 from fighthealthinsurance.models import ExtraLinkDocument, MicrositeExtraLink
 
 
-class TestExtraLinkModels(TestCase):
+@pytest.mark.django_db
+class TestExtraLinkModels:
     """Test ExtraLink database models."""
 
     def test_extralink_document_creation(self):
@@ -24,14 +25,14 @@ class TestExtraLinkModels(TestCase):
             fetch_status="success",
         )
 
-        self.assertIsNotNone(doc.id)
-        self.assertEqual(doc.url, url)
-        self.assertEqual(doc.document_type, "pdf")
-        self.assertEqual(doc.fetch_status, "success")
+        assert doc.id is not None
+        assert doc.url == url
+        assert doc.document_type == "pdf"
+        assert doc.fetch_status == "success"
 
     def test_microsite_extralink_creation(self):
         """Test creating a MicrositeExtraLink."""
-        url = "https://example.com/test.pdf"
+        url = "https://example.com/test2.pdf"
         url_hash = ExtraLinkDocument.get_url_hash(url)
 
         doc = ExtraLinkDocument.objects.create(
@@ -48,13 +49,13 @@ class TestExtraLinkModels(TestCase):
             priority=0,
         )
 
-        self.assertEqual(link.microsite_slug, "test-microsite")
-        self.assertEqual(link.document, doc)
-        self.assertEqual(link.priority, 0)
+        assert link.microsite_slug == "test-microsite"
+        assert link.document == doc
+        assert link.priority == 0
 
     def test_unique_constraint(self):
         """Test that microsite_slug + document must be unique."""
-        url = "https://example.com/test.pdf"
+        url = "https://example.com/test3.pdf"
         url_hash = ExtraLinkDocument.get_url_hash(url)
 
         doc = ExtraLinkDocument.objects.create(
@@ -65,20 +66,19 @@ class TestExtraLinkModels(TestCase):
 
         # Create first link
         MicrositeExtraLink.objects.create(
-            microsite_slug="test-microsite",
+            microsite_slug="test-microsite-unique",
             document=doc,
         )
 
         # Attempting to create duplicate should fail
-        from django.db import IntegrityError
-
-        with self.assertRaises(IntegrityError):
+        with pytest.raises(IntegrityError):
             MicrositeExtraLink.objects.create(
-                microsite_slug="test-microsite",
+                microsite_slug="test-microsite-unique",
                 document=doc,
             )
 
 
+@pytest.mark.django_db
 class TestExtraLinkContextHelper:
     """Test the ExtraLinkContextHelper service."""
 

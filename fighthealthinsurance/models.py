@@ -650,7 +650,7 @@ class ExtraLinkDocument(
 
     class Meta:
         indexes = [
-            models.Index(fields=["url_hash"]),
+            # url_hash already has db_index=True from the field definition
             models.Index(fields=["fetch_status", "created_at"]),
             models.Index(fields=["document_type"]),
         ]

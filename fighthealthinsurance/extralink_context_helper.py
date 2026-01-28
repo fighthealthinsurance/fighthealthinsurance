@@ -9,7 +9,7 @@ from typing import List
 
 from loguru import logger
 
-from fighthealthinsurance.models import ExtraLinkDocument, MicrositeExtraLink
+from fighthealthinsurance.models import MicrositeExtraLink
 
 
 class ExtraLinkContextHelper:

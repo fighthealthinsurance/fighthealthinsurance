@@ -250,13 +250,15 @@ class Microsite:
 
         # Fetch PubMed if available and tools provided
         if pubmed_tools and self.pubmed_search_terms:
-            pubmed_context = await self.get_pubmed_context(
+            pubmed_result = await self.get_pubmed_context(
                 pubmed_tools,
                 max_terms=max_pubmed_terms,
                 max_total_articles=max_pubmed_articles,
+                return_count=False,
             )
-            if pubmed_context:
-                contexts.append(pubmed_context)
+            # get_pubmed_context returns str when return_count=False
+            if pubmed_result and isinstance(pubmed_result, str):
+                contexts.append(pubmed_result)
 
         return "\n\n".join(contexts) if contexts else ""
 

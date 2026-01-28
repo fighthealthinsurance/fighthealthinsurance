@@ -154,7 +154,7 @@ class ExtraLinkPrefetchActor:
 
             stats = {"fetched": 0, "failed": 0, "total": 0}
 
-            for slug, microsite in microsites.items():
+            for _slug, microsite in microsites.items():
                 if not microsite.pubmed_search_terms:
                     continue
 
@@ -175,6 +175,8 @@ class ExtraLinkPrefetchActor:
                                 article = await pubmed_tools.do_article_summary(pmid)
                                 if article:
                                     stats["fetched"] += 1
+                                # Rate limit to avoid overwhelming PubMed API
+                                await asyncio.sleep(0.1)
                             except Exception as e:
                                 logger.debug(f"Failed to fetch PMID {pmid}: {e}")
                                 stats["failed"] += 1
