@@ -68,7 +68,7 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - name: Setup node
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v6
 
       - name: Check npm build
         run:
@@ -417,7 +417,7 @@ jobs:
         uses: astral-sh/setup-uv@v3
 
       - name: Cache uv dependencies
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cache/uv
@@ -498,7 +498,7 @@ jobs:
         uses: astral-sh/setup-uv@v3
 
       - name: Cache uv dependencies
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cache/uv
