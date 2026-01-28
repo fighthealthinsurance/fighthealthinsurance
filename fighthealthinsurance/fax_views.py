@@ -141,7 +141,7 @@ class StageFaxView(generic.FormView):
             return render(self.request, "fax_thankyou.html")
 
         # Check if the product already exists
-        (product_id, price_id) = get_or_create_price(
+        product_id, price_id = get_or_create_price(
             product_name=f"Appeal Fax - ${fax_amount}",
             amount=fax_amount * 100,  # Convert to cents
             currency="usd",
