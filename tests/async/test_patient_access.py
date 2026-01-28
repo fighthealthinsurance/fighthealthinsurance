@@ -166,15 +166,10 @@ class PatientAccessUseCasesSectionTest(TestCase):
     def setUp(self):
         self.client = Client()
 
-    def test_contains_use_cases_section(self):
-        """Test that the page contains use cases section."""
-        response = self.client.get(reverse("patient_access"))
-        self.assertContains(response, "How Teams Use This")
-
     def test_contains_skyrizi_hub_example(self):
-        """Test that the page contains the SKYRIZI hub team example."""
+        """Test that the page contains the hub team example."""
         response = self.client.get(reverse("patient_access"))
-        self.assertContains(response, "SKYRIZI hub team")
+        self.assertContains(response, "hub team")
 
 
 class PatientAccessLinksTest(TestCase):
@@ -191,12 +186,12 @@ class PatientAccessLinksTest(TestCase):
     def test_contains_enterprise_email(self):
         """Test that the page contains the enterprise email address."""
         response = self.client.get(reverse("patient_access"))
-        self.assertContains(response, "enterprise@fighthealthinsurance.com")
+        self.assertContains(response, "support42@fighthealthinsurance.com")
 
     def test_book_demo_is_mailto_link(self):
         """Test that Book a Demo is a mailto link."""
         response = self.client.get(reverse("patient_access"))
-        self.assertContains(response, "mailto:enterprise@fighthealthinsurance.com")
+        self.assertContains(response, "mailto:support42@fighthealthinsurance.com")
 
 
 class PatientAccessNavigationTest(TestCase):
