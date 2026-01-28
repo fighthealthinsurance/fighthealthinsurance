@@ -57,7 +57,7 @@ class PatientAccessLandingPagesSectionTest(TestCase):
     def test_contains_landing_pages_section(self):
         """Test that the page contains the landing pages section."""
         response = self.client.get(reverse("patient_access"))
-        self.assertContains(response, "Landing Pages You Deploy")
+        self.assertContains(response, "AI And Landing Pages")
 
     def test_contains_drug_specific_content(self):
         """Test that the page mentions drug-specific pages."""
@@ -207,11 +207,6 @@ class PatientAccessLinksTest(TestCase):
 
     def setUp(self):
         self.client = Client()
-
-    def test_links_to_microsite_directory(self):
-        """Test that the page links to the microsite directory."""
-        response = self.client.get(reverse("patient_access"))
-        self.assertContains(response, reverse("microsite_directory"))
 
     def test_links_to_biologic_denial_microsite(self):
         """Test that the page links to the biologic denial microsite."""

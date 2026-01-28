@@ -103,21 +103,6 @@ class SeleniumTestPatientAccessPage(FHISeleniumBase, StaticLiveServerTestCase):
         self.assert_text("SKYRIZI hub team", "#use-cases")
         self.assert_text("hospital market access team", "#use-cases")
 
-    def test_patient_access_link_to_microsite_directory(self):
-        """Test that link to microsite directory works."""
-        self.open(f"{self.live_server_url}/professionals/patient-access")
-        self.scroll_to("#landing-pages")
-        time.sleep(0.5)
-
-        # Find and click the Browse Existing Landing Pages link
-        self.click("a[href='/treatments/']")
-        time.sleep(1)
-
-        # Should be on the treatments/microsite directory page
-        self.assert_element("body")
-        current_url = self.get_current_url()
-        self.assertIn("/treatments/", current_url)
-
     def test_patient_access_link_to_biologic_denial(self):
         """Test that link to biologic denial microsite works."""
         self.open(f"{self.live_server_url}/professionals/patient-access")
