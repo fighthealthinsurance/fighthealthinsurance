@@ -448,3 +448,84 @@ jobs:
           GOOGLE_CLIENT_SECRETS_TEXT: ${{ secrets.GOOGLE_CLIENT_SECRETS_TEXT }}
           STRIPE_TEST_SECRET_KEY: ${{ secrets.STRIPE_TEST_SECRET_KEY }}
           NOSTRIPE: true
+
+
+  tests-async-unit:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - python: '3.11'
+            toxpy: '311'
+            django: '52'
+          - python: '3.12'
+            toxpy: '312'
+            django: '52'
+          - python: '3.13'
+            toxpy: '313'
+            django: '52'
+
+    name: Run the async unit test suite (Python ${{ matrix.python }}, Django ${{ matrix.django }})
+    steps:
+      - name: Free up disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost ~/.rustup
+          sudo docker image prune -a -f
+          sudo apt-get clean
+          df -h
+
+      - uses: actions/checkout@v4
+
+      - name: Setup node
+        uses: actions/setup-node@v3
+
+      - name: Cache npm dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: npm-${{ hashFiles('fighthealthinsurance/static/js/package-lock.json') }}
+          restore-keys: npm-
+
+      - name: Install system level packages
+        run: sudo apt-get update && sudo apt-get install -y tesseract-ocr texlive  libgirepository1.0-dev pkg-config python3-dev && sudo apt-get clean
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Cache uv dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache/uv
+            .tox
+          key: uv-${{ matrix.python }}-${{ hashFiles('requirements.txt', 'requirements-dev.txt') }}
+          restore-keys: |
+            uv-${{ matrix.python }}-
+
+      - name: Install tox
+        run: uv tool install tox --with tox-uv
+
+      - name: Install pandoc
+        uses: pandoc/actions/setup@v1
+        with:
+          version: 2.19
+
+      - name: Build npm js (needed for the e2e tests in django)
+        run:
+          cd fighthealthinsurance/static/js && npm i && npm run build && npm cache clean --force
+
+      - name: Setup DB (long story)
+        run: uv venv && source .venv/bin/activate && uv pip install -r requirements.txt && python manage.py makemigrations && python manage.py migrate && ENVIRONMENT=Test ./manage.py migrate
+
+      - name: Run tests
+        run: ENVIRONMENT=Test tox -e py${{ matrix.toxpy }}-django${{ matrix.django }}-async-unit
+        env:
+          FARTS: "farts"
+          GOOGLE_CLIENT_SECRETS_TEXT: ${{ secrets.GOOGLE_CLIENT_SECRETS_TEXT }}
+          STRIPE_TEST_SECRET_KEY: ${{ secrets.STRIPE_TEST_SECRET_KEY }}
+          NOSTRIPE: true
