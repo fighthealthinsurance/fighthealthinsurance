@@ -373,14 +373,14 @@ class MicrositeViewTest(TestCase):
         """Test that the microsite route loads for a valid slug."""
         slugs = get_microsite_slugs()
         if slugs:
-            response = self.client.get(reverse("microsite", kwargs={"slug": slugs[0]}))
+            response = self.client.get(reverse("microsite", kwargs={"slug": slugs[0]}), follow=True)
             self.assertIn(response.status_code, (200, 301, 302))
 
 
     def test_microsite_route_returns_404_for_invalid_slug(self):
         """Test that the microsite route returns 404 for an invalid slug."""
         response = self.client.get(
-            reverse("microsite", kwargs={"slug": "nonexistent-microsite-slug"})
+            reverse("microsite", kwargs={"slug": "nonexistent-microsite-slug"}), follow=True
         )
         self.assertEqual(response.status_code, 404)
 
@@ -389,14 +389,14 @@ class MicrositeViewTest(TestCase):
         slugs = get_microsite_slugs()
         if slugs:
             microsite = get_microsite(slugs[0])
-            response = self.client.get(reverse("microsite", kwargs={"slug": slugs[0]}))
+            response = self.client.get(reverse("microsite", kwargs={"slug": slugs[0]}), follow=True)
             self.assertContains(response, microsite.title)
 
     def test_microsite_page_contains_start_appeal_button(self):
         """Test that the microsite page contains a Start Your Appeal button."""
         slugs = get_microsite_slugs()
         if slugs:
-            response = self.client.get(reverse("microsite", kwargs={"slug": slugs[0]}))
+            response = self.client.get(reverse("microsite", kwargs={"slug": slugs[0]}), follow=True)
             self.assertContains(response, "Start Your Appeal")
 
     def test_microsite_page_links_to_scan_with_default_procedure(self):
@@ -404,7 +404,7 @@ class MicrositeViewTest(TestCase):
         slugs = get_microsite_slugs()
         if slugs:
             microsite = get_microsite(slugs[0])
-            response = self.client.get(reverse("microsite", kwargs={"slug": slugs[0]}))
+            response = self.client.get(reverse("microsite", kwargs={"slug": slugs[0]}), follow=True)
             # Check that the link includes the default_procedure parameter
             self.assertContains(
                 response,
@@ -431,6 +431,7 @@ class MicrositeDefaultProcedureFlowTest(TestCase):
                 "microsite_slug": "mri-denial",
                 "microsite_title": "Appealing MRI Denials",
             },
+            follow=True,
         )
         self.assertIn(response.status_code, (200, 301, 302))
 
@@ -446,6 +447,7 @@ class MicrositeDefaultProcedureFlowTest(TestCase):
                 "microsite_slug": "mri-denial",
                 "microsite_title": "Appealing MRI Denials",
             },
+            follow=True,
         )
         self.assertIn(response.status_code, (200, 301, 302))
 
@@ -455,7 +457,7 @@ class MicrositeDefaultProcedureFlowTest(TestCase):
 
     def test_scan_page_works_without_microsite_params(self):
         """Test that the scan page works normally without microsite params."""
-        response = self.client.get(reverse("scan"))
+        response = self.client.get(reverse("scan"), follow=True)
         self.assertIn(response.status_code, (200, 301, 302))
 
         # Should not contain microsite-specific note
@@ -470,6 +472,7 @@ class MicrositeDefaultProcedureFlowTest(TestCase):
                 "microsite_slug": "mri-denial",
                 "microsite_title": "Appealing MRI Denials",
             },
+            follow=True,
         )
         self.assertIn(response.status_code, (200, 301, 302))
 
@@ -509,6 +512,7 @@ class MicrositeOverrideTest(TestCase):
                 "email": "test@example.com",
                 "semi_sekret": self.denial.semi_sekret,
             },
+            follow=True,
         )
 
         self.assertIn(response.status_code, (200, 301, 302))
@@ -531,7 +535,7 @@ class MicrositeSpecificTest(TestCase):
 
     def test_mri_denial_microsite_loads(self):
         """Test that the MRI denial microsite loads correctly."""
-        response = self.client.get(reverse("microsite", kwargs={"slug": "mri-denial"}))
+        response = self.client.get(reverse("microsite", kwargs={"slug": "mri-denial"}), follow=True)
         self.assertIn(
             response.status_code,
             (200, 301),
@@ -542,7 +546,8 @@ class MicrositeSpecificTest(TestCase):
     def test_ct_scan_denial_microsite_loads(self):
         """Test that the CT scan denial microsite loads correctly."""
         response = self.client.get(
-            reverse("microsite", kwargs={"slug": "ct-scan-denial"})
+            reverse("microsite", kwargs={"slug": "ct-scan-denial"}),
+            follow=True
         )
         self.assertIn(
             response.status_code,
@@ -567,7 +572,8 @@ class MedicareMicrositeTest(TestCase):
     def test_medicare_work_requirements_microsite_loads(self):
         """Test that the Medicare work requirements microsite loads correctly."""
         response = self.client.get(
-            reverse("microsite", kwargs={"slug": "medicare-work-requirements"})
+            reverse("microsite", kwargs={"slug": "medicare-work-requirements"}),
+            follow=True
         )
         self.assertIn(
             response.status_code,
@@ -587,7 +593,8 @@ class MedicareMicrositeTest(TestCase):
     def test_medicare_work_requirements_page_contains_medicare_content(self):
         """Test that the Medicare page contains Medicare-specific content."""
         response = self.client.get(
-            reverse("microsite", kwargs={"slug": "medicare-work-requirements"})
+            reverse("microsite", kwargs={"slug": "medicare-work-requirements"}),
+            follow=True
         )
         self.assertIn(response.status_code, (200, 301, 302))
 
@@ -597,7 +604,8 @@ class MedicareMicrositeTest(TestCase):
     def test_medicare_work_requirements_chat_link_includes_medicare_parameter(self):
         """Test that chat links from Medicare microsite include medicare=true parameter."""
         response = self.client.get(
-            reverse("microsite", kwargs={"slug": "medicare-work-requirements"})
+            reverse("microsite", kwargs={"slug": "medicare-work-requirements"}),
+            follow=True
         )
         self.assertIn(response.status_code, (200, 301, 302))
 
@@ -607,7 +615,8 @@ class MedicareMicrositeTest(TestCase):
     def test_medicare_work_requirements_chat_link_includes_default_procedure(self):
         """Test that chat links from Medicare microsite include default_procedure."""
         response = self.client.get(
-            reverse("microsite", kwargs={"slug": "medicare-work-requirements"})
+            reverse("microsite", kwargs={"slug": "medicare-work-requirements"}),
+            follow=True
         )
         self.assertIn(response.status_code, (200, 301, 302))
 
@@ -617,7 +626,8 @@ class MedicareMicrositeTest(TestCase):
     def test_medicare_work_requirements_chat_link_includes_microsite_slug(self):
         """Test that chat links from Medicare microsite include microsite_slug parameter."""
         response = self.client.get(
-            reverse("microsite", kwargs={"slug": "medicare-work-requirements"})
+            reverse("microsite", kwargs={"slug": "medicare-work-requirements"}),
+            follow=True
         )
         self.assertIn(response.status_code, (200, 301, 302))
 
@@ -676,6 +686,7 @@ class MedicareChatIntegrationTest(TestCase):
                 "default_procedure": "Medicare Services",
                 "medicare": "true",
             },
+            follow=True
         )
         self.assertIn(response.status_code, (200, 301, 302))
 
@@ -695,6 +706,7 @@ class MedicareChatIntegrationTest(TestCase):
                 "default_procedure": "Medicare Services",
                 "medicare": "true",
             },
+            follow=True
         )
         self.assertIn(response.status_code, (200, 301, 302))
 
@@ -717,6 +729,7 @@ class MedicareChatIntegrationTest(TestCase):
                 "medicare": "true",
                 "microsite_slug": "medicare-work-requirements",
             },
+            follow=True
         )
         self.assertIn(response.status_code, (200, 301, 302))
 
@@ -745,6 +758,7 @@ class MedicareChatIntegrationTest(TestCase):
                 "medicare": "true",
                 "microsite_slug": "medicare-work-requirements",
             },
+            follow=True,
         )
         self.assertIn(response.status_code, (200, 301, 302))
 
@@ -785,6 +799,7 @@ class MedicareChatIntegrationTest(TestCase):
                 "medicare": "true",
                 "microsite_slug": "medicare-work-requirements",
             },
+            follow=True
         )
         # Should redirect to consent page
         self.assertEqual(response.status_code, 302)
@@ -793,7 +808,7 @@ class MedicareChatIntegrationTest(TestCase):
     def test_medicare_microsite_chat_link_parameters(self):
         """Test that Medicare microsite chat links include all required parameters."""
         response = self.client.get(
-            reverse("microsite", kwargs={"slug": "medicare-work-requirements"})
+            reverse("microsite", kwargs={"slug": "medicare-work-requirements"}), follow=True
         )
         self.assertIn(response.status_code, (200, 301, 302))
 
@@ -805,7 +820,7 @@ class MedicareChatIntegrationTest(TestCase):
     def test_medicare_microsite_no_appeal_button(self):
         """Test that Medicare microsite doesn't show 'Start Your Appeal' button."""
         response = self.client.get(
-            reverse("microsite", kwargs={"slug": "medicare-work-requirements"})
+            reverse("microsite", kwargs={"slug": "medicare-work-requirements"}), follow=True
         )
         self.assertIn(response.status_code, (200, 301, 302))
 
@@ -817,7 +832,7 @@ class MedicareChatIntegrationTest(TestCase):
     def test_medicare_microsite_blog_link(self):
         """Test that Medicare microsite includes blog post link."""
         response = self.client.get(
-            reverse("microsite", kwargs={"slug": "medicare-work-requirements"})
+            reverse("microsite", kwargs={"slug": "medicare-work-requirements"}), follow=True
         )
         self.assertIn(response.status_code, (200, 301, 302))
 
@@ -841,6 +856,7 @@ class MedicareChatIntegrationTest(TestCase):
                 "medicare": "true",
                 "microsite_slug": "medicare-work-requirements",
             },
+            follow=True
         )
         self.assertIn(response.status_code, (200, 301, 302))
 
@@ -883,23 +899,23 @@ class MicrositeDirectoryViewTest(TestCase):
 
     def test_microsite_directory_uses_correct_template(self):
         """Test that the directory uses the correct template."""
-        response = self.client.get(reverse("microsite_directory"))
+        response = self.client.get(reverse("microsite_directory"), follow=True)
         self.assertTemplateUsed(response, "microsite_directory.html")
 
     def test_microsite_directory_has_title(self):
         """Test that the page has the correct title."""
-        response = self.client.get(reverse("microsite_directory"))
+        response = self.client.get(reverse("microsite_directory"), follow=True)
         self.assertContains(response, "Treatment & Drug Resources")
 
     def test_microsite_directory_lists_microsites(self):
         """Test that the directory page lists microsites."""
-        response = self.client.get(reverse("microsite_directory"))
+        response = self.client.get(reverse("microsite_directory"), follow=True)
         # Should contain links to individual microsite pages
         self.assertContains(response, "/microsite/")
 
     def test_microsite_directory_has_cta_buttons(self):
         """Test that the directory has call-to-action buttons."""
-        response = self.client.get(reverse("microsite_directory"))
+        response = self.client.get(reverse("microsite_directory"), follow=True)
         # Should have "Start Your Appeal" button
         self.assertContains(response, "Start Your Appeal")
         # Should have "Chat with AI" button
@@ -907,18 +923,18 @@ class MicrositeDirectoryViewTest(TestCase):
 
     def test_microsite_directory_has_fallback_message(self):
         """Test that the directory has fallback message for treatments not listed."""
-        response = self.client.get(reverse("microsite_directory"))
+        response = self.client.get(reverse("microsite_directory"), follow=True)
         self.assertContains(response, "Don't see your treatment?")
 
     def test_microsite_directory_context_has_microsites(self):
         """Test that context includes microsites."""
-        response = self.client.get(reverse("microsite_directory"))
+        response = self.client.get(reverse("microsite_directory"), follow=True)
         self.assertIn("microsites", response.context)
         self.assertIsInstance(response.context["microsites"], list)
 
     def test_microsite_directory_microsites_sorted_by_title(self):
         """Test that microsites are sorted alphabetically by title."""
-        response = self.client.get(reverse("microsite_directory"))
+        response = self.client.get(reverse("microsite_directory"), follow=True)
         microsites = response.context["microsites"]
         if len(microsites) > 1:
             titles = [m.title for m in microsites]
@@ -927,7 +943,7 @@ class MicrositeDirectoryViewTest(TestCase):
     def test_microsite_directory_links_work(self):
         """Test that microsite links from directory work."""
         # Get the directory page
-        response = self.client.get(reverse("microsite_directory"))
+        response = self.client.get(reverse("microsite_directory"), follow=True)
         self.assertIn(response.status_code, (200, 301, 302))
 
 
@@ -936,11 +952,11 @@ class MicrositeDirectoryViewTest(TestCase):
         if microsites:
             first_microsite = microsites[0]
             microsite_url = reverse("microsite", kwargs={"slug": first_microsite.slug})
-            microsite_response = self.client.get(microsite_url)
+            microsite_response = self.client.get(microsite_url, follow=True)
             self.assertIn(microsite_response.status_code, (200, 301, 302))
 
     def test_microsite_directory_in_sitemap(self):
         """Test that the microsite directory is included in the sitemap."""
-        response = self.client.get("/sitemap.xml")
+        response = self.client.get("/sitemap.xml", follow=True)
         self.assertIn(response.status_code, (200, 301, 302))
         self.assertContains(response, "/treatments/")

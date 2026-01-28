@@ -32,7 +32,7 @@ class TestLaunchPollingActorsCommand(TestCase):
             ray.shutdown()
 
     @mock.patch(
-        "fighthealthinsurance.management.commands.launch_polling_actors.relaunch_actors"
+        "fighthealthinsurance.actor_health_status.relaunch_actors"
     )
     def test_command_with_force(self, mock_relaunch):
         """Test the command with --force flag."""
