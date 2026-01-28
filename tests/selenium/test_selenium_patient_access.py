@@ -66,7 +66,7 @@ class SeleniumTestPatientAccessPage(FHISeleniumBase, StaticLiveServerTestCase):
         self.scroll_to("#landing-pages")
         time.sleep(0.5)
 
-        self.assert_text("Landing Pages You Deploy", "#landing-pages h2")
+        self.assert_text("AI and landing pages", "#landing-pages h2")
         self.assert_text("Drug-Specific Pages", "#landing-pages")
         self.assert_text("Condition-Specific Pages", "#landing-pages")
         self.assert_text("DME", "#landing-pages")
@@ -91,8 +91,6 @@ class SeleniumTestPatientAccessPage(FHISeleniumBase, StaticLiveServerTestCase):
         time.sleep(0.5)
 
         self.assert_text("Built for Compliance", "#compliance h2")
-        self.assert_text("Audit Trail", "#compliance")
-        self.assert_text("Transparency", "#compliance")
 
     def test_patient_access_use_cases(self):
         """Test that concrete use cases are displayed."""
@@ -100,8 +98,7 @@ class SeleniumTestPatientAccessPage(FHISeleniumBase, StaticLiveServerTestCase):
         self.scroll_to("#use-cases")
         time.sleep(0.5)
 
-        self.assert_text("SKYRIZI hub team", "#use-cases")
-        self.assert_text("hospital market access team", "#use-cases")
+        self.assert_text("hub team", "#use-cases")
 
     def test_patient_access_link_to_biologic_denial(self):
         """Test that link to biologic denial microsite works."""

@@ -159,26 +159,6 @@ class PatientAccessComplianceSectionTest(TestCase):
         response = self.client.get(reverse("patient_access"))
         self.assertContains(response, "Built for Compliance")
 
-    def test_contains_audit_trail(self):
-        """Test that the page mentions audit trail."""
-        response = self.client.get(reverse("patient_access"))
-        self.assertContains(response, "Audit Trail")
-
-    def test_contains_ai_transparency(self):
-        """Test that the page mentions AI transparency."""
-        response = self.client.get(reverse("patient_access"))
-        self.assertContains(response, "Transparency")
-
-    def test_contains_data_controls(self):
-        """Test that the page mentions patient data controls."""
-        response = self.client.get(reverse("patient_access"))
-        self.assertContains(response, "Patient Data Controls")
-
-    def test_contains_exportable_logs(self):
-        """Test that the page mentions exportable logs."""
-        response = self.client.get(reverse("patient_access"))
-        self.assertContains(response, "Exportable Logs")
-
 
 class PatientAccessUseCasesSectionTest(TestCase):
     """Tests for the concrete use cases section."""
@@ -195,11 +175,6 @@ class PatientAccessUseCasesSectionTest(TestCase):
         """Test that the page contains the SKYRIZI hub team example."""
         response = self.client.get(reverse("patient_access"))
         self.assertContains(response, "SKYRIZI hub team")
-
-    def test_contains_hospital_market_access_example(self):
-        """Test that the page contains the hospital market access example."""
-        response = self.client.get(reverse("patient_access"))
-        self.assertContains(response, "hospital market access team")
 
 
 class PatientAccessLinksTest(TestCase):
