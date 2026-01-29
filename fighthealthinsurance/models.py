@@ -600,9 +600,7 @@ class ExtraLinkDocument(
 
     # URL is the unique key for deduplication
     url = models.URLField(max_length=2000, unique=True, db_index=True)
-    url_hash = models.CharField(
-        max_length=64, unique=True
-    )  # SHA256 of URL
+    url_hash = models.CharField(max_length=64, unique=True)  # SHA256 of URL
 
     # Document metadata
     document_type = models.CharField(
