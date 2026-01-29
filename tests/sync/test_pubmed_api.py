@@ -103,8 +103,7 @@ class PubmedApiTest(APITestCase):
             abstract="""
             This study demonstrates the effectiveness of physical therapy for patients with rheumatoid arthritis...
             We need this to be loooong like over 500 chars so it triggers the summary
-            """
-            + str(list(range(0, 500))),
+            """ + str(list(range(0, 500))),
             article_url="https://pubmed.ncbi.nlm.nih.gov/12345678/",
         )
 

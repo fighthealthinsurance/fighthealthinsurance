@@ -8,7 +8,6 @@ from django.contrib.auth import get_user_model
 from fighthealthinsurance.models import StripeWebhookEvents, LostStripeSession
 from fighthealthinsurance.helpers.stripe_helpers import StripeWebhookHelper
 
-
 User = get_user_model()
 
 

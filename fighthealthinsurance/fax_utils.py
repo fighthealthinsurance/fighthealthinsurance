@@ -380,7 +380,7 @@ class HylaFaxClient(FaxSenderBase):
                         f"-z{uploaded_destination_file}",  # It is important this is last
                     ]
                 )
-                (exitcode, result_text) = await self._run_command(command)
+                exitcode, result_text = await self._run_command(command)
                 if exitcode != 0:
                     continue
                 if not blocking:
@@ -395,7 +395,7 @@ class HylaFaxClient(FaxSenderBase):
                     if match:
                         job_id = match.group(1)
                         print("Job ID:", job_id)
-                        (exit_code, result_text) = await self._run_command(
+                        exit_code, result_text = await self._run_command(
                             ["faxstat", "-d"]
                         )
                         if exit_code != 0:
@@ -451,7 +451,7 @@ class SshHylaFaxClient(HylaFaxClient):
             sftp_client = ssh.open_sftp()
             # Make the remote directory if needed.
             dir = os.path.dirname(target)
-            (exit_code, _result_text) = await self._run_command(["mkdir", "-p", dir])
+            exit_code, _result_text = await self._run_command(["mkdir", "-p", dir])
             if exit_code != 0:
                 print("Failed to make dir")
                 return None

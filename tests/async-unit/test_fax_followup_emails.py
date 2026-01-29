@@ -330,7 +330,7 @@ class TestFaxFollowUpView:
         new_fax_number = "8005559999"
 
         with patch(
-            "fighthealthinsurance.common_view_logic.SendFaxHelper.resend"
+            "fighthealthinsurance.helpers.SendFaxHelper.resend"
         ) as mock_resend:
             mock_resend.return_value = True
 
