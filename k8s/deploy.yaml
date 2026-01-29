@@ -61,6 +61,7 @@ metadata:
   namespace: totallylegitco
 spec:
   ttlSecondsAfterFinished: 120
+  activeDeadlineSeconds: 900
   template:
     metadata:
       labels:
@@ -99,7 +100,6 @@ spec:
         - name: tmp
           emptyDir: {}
       restartPolicy: OnFailure
-      activeDeadlineSeconds: 900
 ---
 apiVersion: apps/v1
 kind: Deployment

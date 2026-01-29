@@ -601,7 +601,7 @@ class ExtraLinkDocument(
     # URL is the unique key for deduplication
     url = models.URLField(max_length=2000, unique=True, db_index=True)
     url_hash = models.CharField(
-        max_length=64, unique=True, db_index=True
+        max_length=64, unique=True
     )  # SHA256 of URL
 
     # Document metadata
@@ -660,7 +660,6 @@ class ExtraLinkDocument(
 
     class Meta:
         indexes = [
-            # url_hash already has db_index=True from the field definition
             models.Index(fields=["fetch_status", "created_at"]),
             models.Index(fields=["document_type"]),
         ]
@@ -773,6 +772,9 @@ class ExtraLinkFetchLog(models.Model):
             models.Index(fields=["status", "timestamp"]),
         ]
         ordering = ["-timestamp"]
+
+    def __str__(self):
+        return f"FetchLog {self.id}: {self.status} at {self.timestamp}"
 
 
 class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # type: ignore
