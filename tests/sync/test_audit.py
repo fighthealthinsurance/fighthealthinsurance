@@ -24,7 +24,6 @@ from fhi_users.audit import (
 )
 from fhi_users.models import ProfessionalUser
 
-
 User = get_user_model()
 
 

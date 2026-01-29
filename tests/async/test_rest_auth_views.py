@@ -831,7 +831,7 @@ class TestE2EProfessionalUserSignupFlow(TestCase):
 
         # Simulate Stripe webhook call to trigger the email
         new_user = User.objects.get(email="testpro@example.com")
-        from fighthealthinsurance.common_view_logic import StripeWebhookHelper
+        from fighthealthinsurance.helpers.stripe_helpers import StripeWebhookHelper
 
         stripe_event = {
             "type": "checkout.session.completed",

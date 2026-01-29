@@ -20,7 +20,6 @@ from fighthealthinsurance.state_help import (
     MedicaidInfo,
 )
 
-
 # Sample state help data for testing
 SAMPLE_STATE_DATA = {
     "california": {

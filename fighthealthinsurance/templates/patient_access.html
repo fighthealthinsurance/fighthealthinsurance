@@ -1,0 +1,343 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Patient & Market Access Solutions - Fight Health Insurance{% endblock title %}
+{% block metatitle %}Patient & Market Access Solutions - Fight Health Insurance{% endblock metatitle %}
+{% block metadescription %}Deploy denial-specific AI and landing pages, control appeal evidence, and integrate human-in-the-loop workflows for patient access teams.{% endblock metadescription %}
+
+{% block content %}
+<!-- Hero Section -->
+<section id="patient-access-hero" class="slider" data-stellar-background-ratio="0.5">
+    <div class="row">
+        <div class="item item-first">
+            <div class="caption d-flex flex-column align-items-center justify-content-center">
+                <div class="hero-inner">
+                    <h3 class="hero-tagline">Patient access at scale. Without the spreadsheets.</h3>
+                    <h1 class="hero-headline">Appeal Infrastructure for Patient Access Teams</h1>
+                    <p class="hero-subcopy">
+                        Deploy denial-specific AI and landing pages for your drugs and conditions. Control the clinical evidence.
+                        Add human review when you need it. Built for hub teams, market access, and specialty pharmacies.
+                    </p>
+                    <div class="hero-cta-group">
+                        <a href="mailto:support42@fighthealthinsurance.com?subject=Patient%20Access%20Demo%20Request"
+                           class="section-btn btn btn-default smoothScroll primary-cta">
+                            Book a Demo
+                        </a>
+                    </div>
+                    <div class="hero-cta-group hero-cta-secondary">
+                        <a href="{% url 'microsite' slug='biologic-denial' %}" class="btn btn-outline-green tertiary-cta">
+                            See a sample page
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- AI And Landing Pages Section -->
+<section id="landing-pages" class="py-5">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-10 mx-auto">
+                <h2 class="text-center mb-4">AI And Landing Pages You Empower</h2>
+                <p class="text-center text-muted mb-5">
+                    Create branded, condition-specific AI and landing pages that guide patients through the appeal process
+                    with the right evidence and messaging for each denial type.
+                </p>
+
+                <div class="row g-4">
+                    <!-- Drug-Specific -->
+                    <div class="col-md-4">
+                        <div class="card h-100" style="border-left: 4px solid #a5c422;">
+                            <div class="card-body">
+                                <h5 class="card-title">Drug-Specific Pages</h5>
+                                <p class="card-text text-muted">
+                                    Deploy AI and landing pages for specific medications. A SKYRIZI hub team can create
+                                    a denial-specific page with approved clinical evidence and payer policy references.
+                                </p>
+                                <ul class="list-unstyled small text-muted">
+                                    <li>&#10003; SKYRIZI, Humira, specialty biologics</li>
+                                    <li>&#10003; Pre-populated clinical evidence</li>
+                                    <li>&#10003; Payer-specific policy arguments</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Condition-Specific -->
+                    <div class="col-md-4">
+                        <div class="card h-100" style="border-left: 4px solid #17a2b8;">
+                            <div class="card-body">
+                                <h5 class="card-title">Condition-Specific Pages</h5>
+                                <p class="card-text text-muted">
+                                    Customized AI and landing pages organized by condition help patients feel confident
+                                    and effectively appeal denials.
+                                </p>
+                                <ul class="list-unstyled small text-muted">
+                                    <li>&#10003; Hormone therapy, rare disease</li>
+                                    <li>&#10003; Mental health, chronic conditions</li>
+                                    <li>&#10003; Procedure-based denials</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- DME -->
+                    <div class="col-md-4">
+                        <div class="card h-100" style="border-left: 4px solid #6f42c1;">
+                            <div class="card-body">
+                                <h5 class="card-title">DME & Device Pages</h5>
+                                <p class="card-text text-muted">
+                                    Durable medical equipment denials have specific documentation requirements.
+                                    Device-specific pages ensure patients include the right clinical justification.
+                                </p>
+                                <ul class="list-unstyled small text-muted">
+                                    <li>&#10003; CPAP, wheelchairs, CGMs</li>
+                                    <li>&#10003; Medical necessity documentation</li>
+                                    <li>&#10003; Prior auth requirements</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Evidence Control Section -->
+<section id="evidence" class="py-5 bg-light">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <h2 class="text-center mb-4">Evidence You Control</h2>
+                <p class="text-center text-muted mb-5">
+                    Your team decides what clinical evidence, citations, and arguments go into the context
+		    for each landing page.
+                </p>
+
+                <div class="evidence-items">
+                    <div class="card mb-3">
+                        <div class="card-body">
+                            <p class="card-text mb-0">
+                                <i class="text-success me-2">&#10003;</i>
+                                <strong>Peer-reviewed studies and citations</strong> &mdash;
+                                Include specific PubMed references, clinical guidelines, and trial data that support medical necessity.
+                            </p>
+                        </div>
+                    </div>
+                    <div class="card mb-3">
+                        <div class="card-body">
+                            <p class="card-text mb-0">
+                                <i class="text-success me-2">&#10003;</i>
+                                <strong>Payer-specific policy arguments</strong> &mdash;
+                                Reference the payer's own coverage criteria and explain how the patient meets their requirements.
+                            </p>
+                        </div>
+                    </div>
+                    <div class="card mb-3">
+                        <div class="card-body">
+                            <p class="card-text mb-0">
+                                <i class="text-success me-2">&#10003;</i>
+                                <strong>Internal clinical evidence</strong> &mdash;
+                                Upload your organization's approved clinical messaging and real-world evidence.
+                            </p>
+                        </div>
+                    </div>
+                    <div class="card mb-3">
+                        <div class="card-body">
+                            <p class="card-text mb-0">
+                                <i class="text-success me-2">&#10003;</i>
+                                <strong>Branded clinical messaging</strong> &mdash;
+                                Consistent voice and approved language across all patient-facing appeal content.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Workflow Integration Section -->
+<section id="workflow" class="py-5">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-10 mx-auto">
+                <h2 class="text-center mb-4">Workflow Integration</h2>
+                <p class="text-center text-muted mb-5">
+                    Human review is optional. Choose the workflow that fits your compliance requirements and team capacity.
+                </p>
+
+                <div class="row g-4">
+                    <!-- Fully Automated -->
+                    <div class="col-md-6 col-lg-3">
+                        <div class="card h-100" style="border-left: 4px solid #28a745;">
+                            <div class="card-body">
+                                <h5 class="card-title">Fully Automated</h5>
+                                <p class="card-text text-muted small">
+                                    Patient self-serve. Appeals generated and delivered without manual intervention.
+                                    Your team monitors outcomes.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Human Reviewed -->
+                    <div class="col-md-6 col-lg-3">
+                        <div class="card h-100" style="border-left: 4px solid #17a2b8;">
+                            <div class="card-body">
+                                <h5 class="card-title">Human Reviewed</h5>
+                                <p class="card-text text-muted small">
+                                    Appeals flagged for review before delivery. Your specialists approve, edit,
+                                    or escalate as needed.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Co-Authored -->
+                    <div class="col-md-6 col-lg-3">
+                        <div class="card h-100" style="border-left: 4px solid #6f42c1;">
+                            <div class="card-body">
+                                <h5 class="card-title">Co-Authored</h5>
+                                <p class="card-text text-muted small">
+                                    Patient starts the appeal with AI assistance. Your specialist finishes
+                                    and adds clinical context.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Approval Gates -->
+                    <div class="col-md-6 col-lg-3">
+                        <div class="card h-100" style="border-left: 4px solid #fd7e14;">
+                            <div class="card-body">
+                                <h5 class="card-title">Approval Gates</h5>
+                                <p class="card-text text-muted small">
+                                    All appeals require explicit approval before delivery. Full control
+                                    for high-stakes contexts.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="alert alert-info mt-4 mb-0" role="alert">
+                    <strong>Your team stays in control.</strong> These workflows augment your patient access specialists.
+                    They don't replace them. Choose the level of oversight that matches your regulatory requirements.
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Use Cases Section -->
+<section id="use-cases" class="py-5 bg-light">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-10 mx-auto">
+                <h2 class="text-center mb-4">How Teams Can Use This</h2>
+
+                <div class="row g-4">
+                    <!-- SKYRIZI Example -->
+                    <div class="col-md-6">
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <h5 class="card-title text-success">Pharmaceutical Hub Team</h5>
+                                <p class="card-text">
+                                    A <strong>hub team</strong> deploys a denial-specific landing page for patients
+                                    who receive "step therapy required" denials. Pre-populate evidence such as:
+                                </p>
+                                <ul class="text-muted small">
+                                    <li>Approved clinical evidence for IL-23 inhibitors</li>
+                                    <li>Common payer policy references for step therapy exceptions</li>
+                                    <li>Guidance on documenting prior treatment failures</li>
+                                </ul>
+                                <p class="card-text small text-muted">
+                                    Hub specialists review flagged appeals and add patient-specific clinical context
+                                    before the appeal is finalized.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Compliance Section -->
+<section id="compliance" class="py-5">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <h2 class="text-center mb-4">Built for Compliance</h2>
+                <p class="text-center text-muted mb-5">
+                    Enterprise patient access requires audit trails, transparency, and data controls.
+                    We built these in from the start.
+                </p>
+	    </div>
+	</div>
+    </div>
+</section>
+
+
+<!-- CTA Section -->
+<section id="cta" class="py-5 bg-light">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto text-center">
+                <h2 class="mb-4">Ready to streamline patient access?</h2>
+                <p class="text-muted mb-4">
+                    We augment your patient access team with AI-powered appeal and prior authorization tools.
+                    Let's talk about how this fits your workflow.
+                </p>
+                <div class="d-flex flex-wrap justify-content-center gap-3">
+                    <a href="mailto:support42@fighthealthinsurance.com?subject=Patient%20Access%20Demo%20Request"
+                       class="btn btn-green btn-lg">
+                        Book a Demo
+                    </a>
+                    <a href="mailto:support42@fighthealthinsurance.com"
+                       class="btn btn-outline-green btn-lg">
+                        Email Us
+                    </a>
+                </div>
+                <p class="text-muted small mt-4 mb-0">
+                    Or explore a sample <a href="{% url 'microsite' slug='biologic-denial' %}">biologic denial landing page</a>
+                    to see how patients can experience a customized appeal process.
+                </p>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock content %}
+
+{% block extra_style %}
+<style>
+/* Patient Access page specific styles */
+#patient-access-hero {
+    min-height: 60vh;
+}
+
+#landing-pages .card,
+#evidence .card,
+#workflow .card,
+#use-cases .card,
+
+#landing-pages .card:hover,
+#workflow .card:hover,
+
+#use-cases .card {
+    border-top: 3px solid #a5c422;
+}
+
+.alert-info {
+    background-color: rgba(13, 110, 253, 0.1);
+    border: 1px solid rgba(13, 110, 253, 0.2);
+    color: #333;
+}
+</style>
+{% endblock extra_style %}

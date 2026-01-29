@@ -239,9 +239,22 @@ function processResponseChunk(chunk: string): void {
           .clone()
           .prop("id", `magic${appealId}`);
         clonedForm.removeAttr("style");
+        
+        // Add padding/margin to the cloned form container
+        clonedForm.css({
+          'padding': '0 20px',
+          'margin': '20px 0'
+        });
 
         const formElement = clonedForm.find("form");
         formElement.prop("id", `form_${appealId}`);
+        
+        // Add max-width and auto margins to center the form with buffer space
+        formElement.css({
+          'max-width': '1200px',
+          'margin': '0 auto',
+          'padding': '0 20px'
+        });
 
         const submitButton = clonedForm.find("button");
         submitButton.prop("id", `submit${appealId}`);

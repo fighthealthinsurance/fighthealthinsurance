@@ -3,7 +3,6 @@
 import pytest
 from django.test import Client
 
-
 # Pages that should have canonical URLs
 CANONICAL_URL_PAGES = [
     ("/", "https://www.fighthealthinsurance.com/"),

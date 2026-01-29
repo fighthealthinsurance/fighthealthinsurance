@@ -12,7 +12,6 @@ from fhi_users.models import (
     ExtraUserProperties,
 )
 
-
 User = get_user_model()
 
 

@@ -31,9 +31,7 @@ class TestLaunchPollingActorsCommand(TestCase):
         if ray.is_initialized():
             ray.shutdown()
 
-    @mock.patch(
-        "fighthealthinsurance.management.commands.launch_polling_actors.relaunch_actors"
-    )
+    @mock.patch("fighthealthinsurance.actor_health_status.relaunch_actors")
     def test_command_with_force(self, mock_relaunch):
         """Test the command with --force flag."""
         # Mock the relaunch_actors function
@@ -56,7 +54,7 @@ class TestLaunchPollingActorsCommand(TestCase):
         assert "chooser_refill_actor" in output
 
     @mock.patch(
-        "fighthealthinsurance.management.commands.launch_polling_actors.relaunch_actors"
+        "fighthealthinsurance.actor_health_status.relaunch_actors"
     )
     def test_command_with_force_handles_errors(self, mock_relaunch):
         """Test the command with --force flag when there are errors."""
