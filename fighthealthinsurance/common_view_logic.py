@@ -2149,6 +2149,31 @@ class AppealsBackendHelper:
         else:
             logger.debug("Too many retries, skipping ML/pubmed ctx")
 
+        # Get microsite context if available (optional, non-blocking)
+        microsite_context: Optional[str] = None
+        if denial.microsite_slug:
+            from fighthealthinsurance.microsites import get_microsite
+
+            microsite = get_microsite(denial.microsite_slug)
+            if microsite:
+                # Note: pubmed_tools not available in this context, so only extralinks will be fetched
+                microsite_context = await microsite.get_combined_context(
+                    pubmed_tools=None,
+                    max_extralink_docs=3,
+                    max_extralink_chars=1500,
+                )
+                if microsite_context:
+                    # Append to ml_citation_context or pubmed_context
+                    if ml_citation_context:
+                        ml_citation_context = (
+                            f"{ml_citation_context}\n\n{microsite_context}"
+                        )
+                    elif pubmed_context:
+                        pubmed_context = f"{pubmed_context}\n\n{microsite_context}"
+                    else:
+                        # Use microsite context as standalone context
+                        ml_citation_context = microsite_context
+
         async def save_appeal(appeal_text: str) -> dict[str, str]:
             # Save all of the proposed appeals, so we can use RL later.
             t = time.time()

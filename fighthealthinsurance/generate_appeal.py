@@ -9,7 +9,6 @@ from concurrent.futures import Future
 from typing import Any, Callable, Coroutine, Iterator, List, Optional, Tuple
 
 from loguru import logger
-from typing_extensions import reveal_type
 
 from fighthealthinsurance.denial_base import DenialBase
 
