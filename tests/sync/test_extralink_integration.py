@@ -145,6 +145,9 @@ class TestExtraLinkContextHelper:
     @pytest.mark.django_db
     async def test_get_extralink_citations(self):
         """Test getting citations from extralinks."""
+        # Use a unique microsite slug to avoid data leaking from other tests
+        microsite_slug = "test-microsite-citations"
+
         # Create test document
         url = "https://example.com/guidelines.pdf"
         doc = await ExtraLinkDocument.objects.acreate(
@@ -155,7 +158,7 @@ class TestExtraLinkContextHelper:
 
         # Link to microsite
         await MicrositeExtraLink.objects.acreate(
-            microsite_slug="test-microsite",
+            microsite_slug=microsite_slug,
             document=doc,
             title="Clinical Guidelines",
             priority=0,
@@ -163,7 +166,7 @@ class TestExtraLinkContextHelper:
 
         # Get citations
         citations = await ExtraLinkContextHelper.get_extralink_citations(
-            "test-microsite"
+            microsite_slug
         )
 
         assert len(citations) == 1
