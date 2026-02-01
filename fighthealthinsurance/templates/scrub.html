@@ -194,6 +194,9 @@ Upload your Health Insurance Denial
 	    <div class="hidden-error-message" id="need_denial" role="alert" aria-live="polite">
 	      We need you to provide your denial message from your insurance company in the text field right underneath the words "Your Insurance Denial" if you didn't get one you can write that you have not received a denial but describe what was denied (for example: The pharmacy said my PrEP was denied). Normally insurance companies are required to provide denials, but in our experience they do not always comply with that.
 	    </div>
+	    <div class="form-group mt-3">
+	      {{ form.captcha }}
+	    </div>
 	    <button type="submit" class="btn btn-green" id="submit">Submit</button>
 	</form>
 

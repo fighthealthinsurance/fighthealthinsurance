@@ -90,7 +90,13 @@ class BaseDenialForm(forms.Form):
 
 
 class DenialForm(BaseDenialForm):
-    pass
+    captcha = forms.CharField(required=False, widget=forms.HiddenInput())
+    # Conditionally enable reCAPTCHA based on environment (same pattern as PostInferedForm)
+    if "RECAPTCHA_PUBLIC_KEY" in os.environ and (
+        "RECAPTCHA_TESTING" not in os.environ
+        or os.environ["RECAPTCHA_TESTING"].lower() != "true"
+    ):
+        captcha = ReCaptchaField(widget=ReCaptchaV2Checkbox())
 
 
 class ProDenialForm(BaseDenialForm):

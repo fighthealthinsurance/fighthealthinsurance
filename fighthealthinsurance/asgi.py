@@ -48,9 +48,9 @@ if settings.SENTRY_ENDPOINT and not settings.DEBUG:
 
     def before_send_filter(event, hint):
         """
-        Filter out Ray client connection errors that are transient infrastructure
-        issues. Ray handles reconnection automatically, so these are noisy but
-        not actionable in Sentry. They're logged locally for debugging.
+        Filter out noisy infrastructure errors from Sentry:
+        - Ray client connection errors (transient, auto-recovered)
+        - Fuzz guard events (logged locally for investigation)
         """
         from loguru import logger
 
@@ -63,6 +63,20 @@ if settings.SENTRY_ENDPOINT and not settings.DEBUG:
             logger.warning(
                 f"Ray client connection issue (filtered from Sentry): {event.get('message', 'unknown')}"
             )
+            return None
+
+        # Filter fuzz guard module events (they're logged locally)
+        if "fuzz_guard" in logger_name.lower() or "fuzzguard" in logger_name.lower():
+            return None
+
+        # Check for fuzz_guard tag set by middleware
+        tags = event.get("tags", {})
+        if tags.get("fuzz_guard") is True:
+            return None
+
+        # Check transaction name for fuzz guard middleware
+        transaction = event.get("transaction", "")
+        if "FuzzGuardMiddleware" in transaction:
             return None
 
         # Check for specific gRPC error messages from Ray

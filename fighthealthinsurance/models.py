@@ -2176,3 +2176,98 @@ class ChooserSkip(ExportModelOperationsMixin("ChooserSkip"), models.Model):  # t
             str: A string in the form "Skip of Task {task_id} by {session_key}".
         """
         return f"Skip of Task {self.task_id} by {self.session_key}"
+
+
+class FuzzAttempt(ExportModelOperationsMixin("FuzzAttempt"), models.Model):  # type: ignore
+    """
+    Records detected fuzzing/scanning attempts with optional encrypted request captures.
+
+    Privacy design:
+    - IP is hashed with a configurable salt for privacy-preserving tracking
+    - IP prefix stored for aggregate analysis (IPv4 /24, IPv6 /64)
+    - Raw IP optionally stored based on FUZZ_GUARD_STORE_RAW_IP setting
+    - Full request capture encrypted with AES-256-GCM (via EncryptedFileField)
+    - Sensitive headers (Authorization, Cookie) only in encrypted blob, never plaintext
+    """
+
+    id = models.BigAutoField(primary_key=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    # IP tracking (privacy-aware)
+    ip_hash = models.CharField(
+        max_length=128,
+        db_index=True,
+        help_text="SHA-256 hash of IP address + salt",
+    )
+    ip_prefix = models.CharField(
+        max_length=64,
+        help_text="Network prefix (/24 for IPv4, /64 for IPv6)",
+    )
+    raw_ip = models.GenericIPAddressField(
+        null=True,
+        blank=True,
+        help_text="Raw IP only stored if FUZZ_GUARD_STORE_RAW_IP is True",
+    )
+
+    # User association (optional)
+    user = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="fuzz_attempts",
+    )
+    session_key = models.CharField(max_length=100, null=True, blank=True, db_index=True)
+    is_authenticated = models.BooleanField(default=False)
+
+    # Request details
+    method = models.CharField(max_length=20)
+    path = models.CharField(max_length=2048)
+    status_returned = models.PositiveSmallIntegerField()
+
+    # Detection metadata
+    reason = models.TextField(help_text="JSON list of triggered detection rules")
+    score = models.PositiveIntegerField(db_index=True)
+
+    # Request tracing
+    request_id = models.CharField(
+        max_length=64,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="Request ID from X-Request-ID header or generated UUID",
+    )
+
+    # Encrypted capture (for forensic analysis)
+    encrypted_blob = EncryptedFileField(
+        null=True,
+        blank=True,
+        storage=settings.COMBINED_STORAGE,
+        help_text="Encrypted JSON containing full request details including headers",
+    )
+    encrypted_blob_size = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Size of encrypted blob in bytes",
+    )
+    key_version = models.CharField(
+        max_length=32,
+        default="v1",
+        help_text="Encryption key version for future rotation support",
+    )
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["ip_hash", "created_at"]),
+            models.Index(fields=["score", "created_at"]),
+            models.Index(fields=["created_at"]),
+        ]
+        permissions = [
+            ("view_fuzz_capture", "Can view decrypted fuzz captures"),
+        ]
+        verbose_name = "Fuzz Attempt"
+        verbose_name_plural = "Fuzz Attempts"
+
+    def __str__(self):
+        return f"FuzzAttempt {self.id}: {self.method} {self.path[:50]} (score={self.score})"

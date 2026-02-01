@@ -37,6 +37,10 @@ from PIL import Image
 from fighthealthinsurance import common_view_logic, forms as core_forms, models
 from fighthealthinsurance.chat_forms import UserConsentForm
 from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
+from fighthealthinsurance.human_verification import (
+    HumanVerificationRequiredMixin,
+    set_human_verified,
+)
 from fighthealthinsurance.helpers.stripe_helpers import StripeWebhookHelper
 from fighthealthinsurance.models import StripeRecoveryInfo
 from fighthealthinsurance.type_utils import User
@@ -642,7 +646,7 @@ class RecommendAppeal(View):
         return render(request, "")
 
 
-class CategorizeReview(View):
+class CategorizeReview(HumanVerificationRequiredMixin, View):
     """View for the categorize/review page that supports GET for back navigation."""
 
     def get(self, request):
@@ -710,7 +714,7 @@ class CategorizeReview(View):
         )
 
 
-class FindNextSteps(View):
+class FindNextSteps(HumanVerificationRequiredMixin, View):
     """View for determining and displaying next steps after denial categorization."""
 
     def get(self, request):
@@ -803,7 +807,7 @@ class FindNextSteps(View):
         )
 
 
-class ChooseAppeal(View):
+class ChooseAppeal(HumanVerificationRequiredMixin, View):
     """View for selecting and finalizing appeal text before sending."""
 
     def post(self, request):
@@ -867,7 +871,7 @@ class ChooseAppeal(View):
         )
 
 
-class GenerateAppeal(View):
+class GenerateAppeal(HumanVerificationRequiredMixin, View):
     """View for generating appeal letters using ML models."""
 
     def get(self, request):
@@ -1077,6 +1081,9 @@ class InitialProcessView(generic.FormView):
         pass
 
     def form_valid(self, form):
+        # Mark session as human-verified (captcha passed)
+        set_human_verified(self.request)
+
         # Legacy doesn't have denial id
         cleaned_data = form.cleaned_data
         if "denial_id" in cleaned_data:
@@ -1275,7 +1282,9 @@ class SessionRequiredMixin(View):
         return reverse(url_name)
 
 
-class EntityExtractView(SessionRequiredMixin, generic.FormView):
+class EntityExtractView(
+    HumanVerificationRequiredMixin, SessionRequiredMixin, generic.FormView
+):
     """View for ML entity extraction from denial text (procedure, diagnosis, etc.)."""
 
     form_class = core_forms.EntityExtractForm
@@ -1359,7 +1368,9 @@ class EntityExtractView(SessionRequiredMixin, generic.FormView):
         )
 
 
-class PlanDocumentsView(SessionRequiredMixin, generic.FormView):
+class PlanDocumentsView(
+    HumanVerificationRequiredMixin, SessionRequiredMixin, generic.FormView
+):
     """View for collecting patient health history information."""
 
     form_class = core_forms.HealthHistory
@@ -1410,7 +1421,9 @@ class PlanDocumentsView(SessionRequiredMixin, generic.FormView):
         )
 
 
-class DenialCollectedView(SessionRequiredMixin, generic.FormView):
+class DenialCollectedView(
+    HumanVerificationRequiredMixin, SessionRequiredMixin, generic.FormView
+):
     """View for collecting plan documents related to the denial."""
 
     form_class = core_forms.PlanDocumentsForm

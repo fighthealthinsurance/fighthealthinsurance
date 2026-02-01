@@ -179,6 +179,7 @@ class Base(Configuration):
     MIDDLEWARE = [
         "fighthealthinsurance.middleware.CsrfCookieToHeaderMiddleware",
         "corsheaders.middleware.CorsMiddleware",
+        "fighthealthinsurance.middleware.FuzzGuardMiddleware",
         "django_prometheus.middleware.PrometheusBeforeMiddleware",
         "fighthealthinsurance.middleware.SessionMiddlewareDynamicDomain",
         "django.contrib.sessions.middleware.SessionMiddleware",
@@ -412,6 +413,52 @@ class Base(Configuration):
             self.EXTERNAL_STORAGE_B,
             self.EXTERNAL_STORAGE_C,
         )
+
+    # =============================================================================
+    # Fuzz Guard Configuration
+    # =============================================================================
+    # Detects and logs fuzzing/scanning attempts with configurable scoring
+
+    # Master enable/disable switch
+    FUZZ_GUARD_ENABLED = os.getenv("FUZZ_GUARD_ENABLED", "true").lower() == "true"
+
+    # Score threshold to trigger fuzz guard (requests scoring >= this are blocked)
+    FUZZ_GUARD_SCORE_THRESHOLD = int(os.getenv("FUZZ_GUARD_SCORE_THRESHOLD", "50"))
+
+    # Response delay (milliseconds) to slow down attackers
+    FUZZ_GUARD_DELAY_MIN_MS = int(os.getenv("FUZZ_GUARD_DELAY_MIN_MS", "500"))
+    FUZZ_GUARD_DELAY_MAX_MS = int(os.getenv("FUZZ_GUARD_DELAY_MAX_MS", "2000"))
+
+    # Probability of returning 418 I'm a teapot instead of 400 (0.0-1.0)
+    FUZZ_GUARD_TEAPOT_PROB = float(os.getenv("FUZZ_GUARD_TEAPOT_PROB", "0.10"))
+
+    # Rate limiting: requests per minute per IP hash before auto-blocking
+    FUZZ_GUARD_RATE_LIMIT_PER_MINUTE = int(
+        os.getenv("FUZZ_GUARD_RATE_LIMIT_PER_MINUTE", "60")
+    )
+
+    # Request body capture settings
+    FUZZ_GUARD_CAPTURE_BODY_BYTES = int(os.getenv("FUZZ_GUARD_CAPTURE_BODY_BYTES", "0"))
+    FUZZ_GUARD_CAPTURE_MULTIPART = (
+        os.getenv("FUZZ_GUARD_CAPTURE_MULTIPART", "false").lower() == "true"
+    )
+    FUZZ_GUARD_MAX_CAPTURE_SIZE = 64 * 1024  # 64KB max capture
+
+    # Data retention (days) - old fuzz attempts are purged
+    FUZZ_GUARD_RETENTION_DAYS = int(os.getenv("FUZZ_GUARD_RETENTION_DAYS", "3"))
+
+    # IP hashing salt (should be set to a unique value in production!)
+    FUZZ_GUARD_IP_SALT = os.getenv("FUZZ_GUARD_IP_SALT", "default-fuzz-salt-change-me")
+
+    # Store raw IP (only enable if legal/compliance allows)
+    FUZZ_GUARD_STORE_RAW_IP = (
+        os.getenv("FUZZ_GUARD_STORE_RAW_IP", "false").lower() == "true"
+    )
+
+    # Encryption keys for envelope encryption of request captures
+    # Should be base64-encoded 32-byte key for AES-256
+    FUZZ_LOG_MASTER_KEY = os.getenv("FUZZ_LOG_MASTER_KEY", "")
+    FUZZ_LOG_KEY_VERSION = os.getenv("FUZZ_LOG_KEY_VERSION", "v1")
 
     # Ignore some 404 errors
     IGNORABLE_404_URLS = [
