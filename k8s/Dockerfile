@@ -47,6 +47,7 @@ WORKDIR /opt/fighthealthinsurance/
 # Generate the blog metadata inside the container now that all of the files
 # are in the correct locations.
 RUN ./manage.py generate_blog_metadata
+RUN ./manage.py compress --force
 RUN sudo -u www-data HOME=$(pwd) python initial.py
 RUN mkdir -p ~www-data
 RUN chown -R www-data ~www-data
