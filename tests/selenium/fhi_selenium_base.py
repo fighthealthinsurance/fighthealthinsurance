@@ -36,3 +36,19 @@ class FHISeleniumBase(BaseCase, TestCase):
             lambda d: d.find_element(*element_locator) != None
         )
         return self.click(f"button#{target}")
+
+    def wait_for_page_ready(self, timeout=15):
+        """Wait for page JavaScript to complete loading."""
+        WebDriverWait(self.driver, timeout).until(
+            lambda d: d.execute_script("return document.readyState") == "complete"
+        )
+
+    def wait_for_clickable(self, selector, timeout=15):
+        """Wait for element to be clickable."""
+        WebDriverWait(self.driver, timeout).until(
+            EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
+        )
+
+    def wait_for_url_contains(self, text, timeout=15):
+        """Wait until URL contains specific text."""
+        WebDriverWait(self.driver, timeout).until(EC.url_contains(text))

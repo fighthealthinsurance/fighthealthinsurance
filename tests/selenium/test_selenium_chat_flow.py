@@ -417,7 +417,7 @@ class SeleniumExistingChatTest(FHISeleniumBase, StaticLiveServerTestCase):
 
         # Wait for chat interface
         self.wait_for_element("#chat-interface-root", timeout=10)
-        time.sleep(2)
+        self.wait_for_page_ready()
 
         # Verify chat ID was assigned
         chat_id = self.execute_script("return localStorage.getItem('fhi_chat_id');")
@@ -455,7 +455,7 @@ class SeleniumExistingChatTest(FHISeleniumBase, StaticLiveServerTestCase):
 
         # Wait for chat interface
         self.wait_for_element("#chat-interface-root", timeout=15)
-        time.sleep(2)
+        self.wait_for_page_ready()
 
         # User info should still be there
         user_info_json = self.execute_script(
@@ -479,7 +479,7 @@ class SeleniumExistingChatTest(FHISeleniumBase, StaticLiveServerTestCase):
 
         # Click New Chat button
         self.click("button:contains('New Chat')")
-        time.sleep(2)
+        self.wait_for_page_ready()
 
         # Chat ID should be cleared
         new_chat_id = self.execute_script("return localStorage.getItem('fhi_chat_id');")
@@ -516,7 +516,7 @@ class SeleniumExistingChatTest(FHISeleniumBase, StaticLiveServerTestCase):
 
         # Wait for chat
         self.wait_for_element("#chat-interface-root", timeout=10)
-        time.sleep(1)
+        self.wait_for_page_ready()
 
         # Check external models preference was saved
         external_pref = self.execute_script(
@@ -554,11 +554,11 @@ class SeleniumExistingChatTest(FHISeleniumBase, StaticLiveServerTestCase):
 
         # Wait for chat
         self.wait_for_element("#chat-interface-root", timeout=10)
-        time.sleep(1)
+        self.wait_for_page_ready()
 
         # Now visit explain denial - form should be pre-filled
         self.open(f"{self.live_server_url}/explain-denial")
-        time.sleep(1)
+        self.wait_for_page_ready()
 
         # Check pre-filled values
         fname = self.execute_script(
@@ -609,7 +609,7 @@ class SeleniumExistingChatTest(FHISeleniumBase, StaticLiveServerTestCase):
 
         # Wait for chat interface to load
         self.wait_for_element("#chat-interface-root", timeout=15)
-        time.sleep(2)
+        self.wait_for_page_ready()
 
         # Verify external models preference was saved to localStorage
         external_pref = self.execute_script(

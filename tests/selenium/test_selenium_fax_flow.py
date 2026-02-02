@@ -174,7 +174,7 @@ Cheap-O-Insurance-Corp""",
                 # Note: This may redirect to Stripe, which we can't complete in test
                 # But the fax number should be saved before redirect
                 self.click("button#fax_appeal")
-                time.sleep(1)
+                self.wait_for_page_ready()
 
             # Refresh denial from database
             denial.refresh_from_db()

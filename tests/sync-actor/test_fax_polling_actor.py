@@ -41,10 +41,15 @@ class TestFaxPollingActor(TestCase):
         # Start the actor running
         r = fax_polling_actor.run.remote()
 
-        # Give it some time to process
+        # Poll for completion rather than using a fixed sleep
         import time
-
-        time.sleep(4)
+        max_wait = 10  # seconds
+        start = time.time()
+        while time.time() - start < max_wait:
+            error_count = ray.get(fax_polling_actor.error_count.remote())
+            if error_count == 0:
+                break
+            time.sleep(0.5)
 
         # Note: for local testing since they're all getting different DBs we're
         # really just checking that it's able to start.
