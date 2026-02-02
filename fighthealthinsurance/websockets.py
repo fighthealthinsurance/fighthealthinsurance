@@ -516,7 +516,8 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
             logger.debug(f"Chat: {chat.id}")
 
             if not replay_requested:
-                if not message:
+                # Allow empty message when linking an appeal or prior auth
+                if not message and not iterate_on_appeal and not iterate_on_prior_auth:
                     await self.send_json_message(
                         {"error": "Message content is required."}
                     )  # Use helper

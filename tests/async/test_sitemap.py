@@ -107,3 +107,81 @@ class BlogSitemapTests(TestCase):
         # Should return empty list if file doesn't exist
         items = sitemap.items()
         self.assertIsInstance(items, list)
+
+
+class MicrositeSitemapTests(TestCase):
+    """Test the MicrositeSitemap class and WIP flag handling."""
+
+    def test_microsite_sitemap_excludes_wip_microsites(self):
+        """Test that microsites with wip=true are excluded from sitemap."""
+        from fighthealthinsurance.sitemap import MicrositeSitemap
+
+        sitemap = MicrositeSitemap()
+        items = sitemap.items()
+
+        # Get all microsites to check WIP status
+        from fighthealthinsurance.microsites import get_all_microsites
+
+        microsites = get_all_microsites()
+
+        for slug in items:
+            # All items in sitemap should NOT have wip=true
+            microsite = microsites.get(slug)
+            self.assertIsNotNone(microsite, f"Microsite {slug} not found in microsites")
+            self.assertFalse(
+                getattr(microsite, "wip", False),
+                f"WIP microsite {slug} should not be in sitemap",
+            )
+
+    def test_microsite_sitemap_includes_non_wip_microsites(self):
+        """Test that microsites without wip flag are included in sitemap."""
+        from fighthealthinsurance.sitemap import MicrositeSitemap
+        from fighthealthinsurance.microsites import get_all_microsites
+
+        sitemap = MicrositeSitemap()
+        items = sitemap.items()
+
+        microsites = get_all_microsites()
+
+        # Find at least one non-WIP microsite
+        non_wip_microsites = [
+            slug
+            for slug, microsite in microsites.items()
+            if not getattr(microsite, "wip", False)
+        ]
+
+        # There should be non-WIP microsites in the sitemap
+        self.assertGreater(
+            len(non_wip_microsites),
+            0,
+            "There should be at least one non-WIP microsite",
+        )
+
+        # All non-WIP microsites should be in the sitemap
+        for slug in non_wip_microsites:
+            self.assertIn(
+                slug, items, f"Non-WIP microsite {slug} should be in sitemap"
+            )
+
+    def test_full_sitemap_excludes_wip_microsites(self):
+        """Test that WIP microsites don't appear in the full sitemap XML."""
+        response = self.client.get("/sitemap.xml")
+        content = response.content.decode("utf-8")
+
+        # Get all WIP microsites
+        from fighthealthinsurance.microsites import get_all_microsites
+
+        microsites = get_all_microsites()
+        wip_microsites = [
+            slug
+            for slug, microsite in microsites.items()
+            if getattr(microsite, "wip", False)
+        ]
+
+        # WIP microsite URLs should not be in the sitemap
+        for slug in wip_microsites:
+            self.assertNotIn(
+                f"/start/{slug}",
+                content,
+                f"WIP microsite {slug} should not be in sitemap XML",
+            )

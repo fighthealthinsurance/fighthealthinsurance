@@ -966,3 +966,122 @@ class MicrositeDirectoryViewTest(TestCase):
         response = self.client.get("/sitemap.xml", follow=True)
         self.assertIn(response.status_code, (200, 301, 302))
         self.assertContains(response, "/treatments/")
+
+
+class MicrositeExtralinksValidationTest(TestCase):
+    """Tests for extralinks validation in Microsite class."""
+
+    def test_extralink_with_valid_url(self):
+        """Test that extralinks with valid URLs are accepted."""
+        from fighthealthinsurance.microsites import Microsite, MicrositeValidationError
+
+        data = {
+            "slug": "test-microsite",
+            "title": "Test Microsite",
+            "default_procedure": "Test Procedure",
+            "tagline": "Test tagline",
+            "hero_h1": "Test hero",
+            "hero_subhead": "Test subhead",
+            "intro": "Test intro",
+            "how_we_help": "How we help",
+            "cta": "Test CTA",
+            "extralinks": [{"url": "https://example.com/doc.pdf"}],
+        }
+        # Should not raise
+        microsite = Microsite(data)
+        self.assertEqual(len(microsite.extralinks), 1)
+
+    def test_extralink_with_empty_string_url_raises_error(self):
+        """Test that extralinks with empty string URLs raise validation error."""
+        from fighthealthinsurance.microsites import Microsite, MicrositeValidationError
+
+        data = {
+            "slug": "test-microsite",
+            "title": "Test Microsite",
+            "default_procedure": "Test Procedure",
+            "tagline": "Test tagline",
+            "hero_h1": "Test hero",
+            "hero_subhead": "Test subhead",
+            "intro": "Test intro",
+            "how_we_help": "How we help",
+            "cta": "Test CTA",
+            "extralinks": [{"url": ""}],
+        }
+        with self.assertRaises(MicrositeValidationError) as ctx:
+            Microsite(data)
+        self.assertIn("non-empty string", str(ctx.exception))
+
+    def test_extralink_with_whitespace_only_url_raises_error(self):
+        """Test that extralinks with whitespace-only URLs raise validation error."""
+        from fighthealthinsurance.microsites import Microsite, MicrositeValidationError
+
+        data = {
+            "slug": "test-microsite",
+            "title": "Test Microsite",
+            "default_procedure": "Test Procedure",
+            "tagline": "Test tagline",
+            "hero_h1": "Test hero",
+            "hero_subhead": "Test subhead",
+            "intro": "Test intro",
+            "how_we_help": "How we help",
+            "cta": "Test CTA",
+            "extralinks": [{"url": "   "}],
+        }
+        with self.assertRaises(MicrositeValidationError) as ctx:
+            Microsite(data)
+        self.assertIn("non-empty string", str(ctx.exception))
+
+    def test_extralink_with_non_string_url_raises_error(self):
+        """Test that extralinks with non-string URLs raise validation error."""
+        from fighthealthinsurance.microsites import Microsite, MicrositeValidationError
+
+        data = {
+            "slug": "test-microsite",
+            "title": "Test Microsite",
+            "default_procedure": "Test Procedure",
+            "tagline": "Test tagline",
+            "hero_h1": "Test hero",
+            "hero_subhead": "Test subhead",
+            "intro": "Test intro",
+            "how_we_help": "How we help",
+            "cta": "Test CTA",
+            "extralinks": [{"url": 123}],
+        }
+        with self.assertRaises(MicrositeValidationError) as ctx:
+            Microsite(data)
+        self.assertIn("non-empty string", str(ctx.exception))
+
+    def test_extralink_missing_url_raises_error(self):
+        """Test that extralinks missing the url key raise validation error."""
+        from fighthealthinsurance.microsites import Microsite, MicrositeValidationError
+
+        data = {
+            "slug": "test-microsite",
+            "title": "Test Microsite",
+            "default_procedure": "Test Procedure",
+            "tagline": "Test tagline",
+            "hero_h1": "Test hero",
+            "hero_subhead": "Test subhead",
+            "intro": "Test intro",
+            "how_we_help": "How we help",
+            "cta": "Test CTA",
+            "extralinks": [{"title": "Some title but no url"}],
+        }
+        with self.assertRaises(MicrositeValidationError) as ctx:
+            Microsite(data)
+        self.assertIn("missing required 'url' field", str(ctx.exception))
+
+    def test_all_real_microsites_have_valid_extralinks(self):
+        """Test that all real microsites in microsites.json have valid extralinks."""
+        microsites = load_microsites_json_directly()
+        for slug, microsite in microsites.items():
+            for i, link in enumerate(microsite.extralinks):
+                self.assertIsInstance(
+                    link["url"],
+                    str,
+                    f"Microsite '{slug}' extralink[{i}] url should be a string",
+                )
+                self.assertTrue(
+                    link["url"].strip(),
+                    f"Microsite '{slug}' extralink[{i}] url should not be empty",
+                )

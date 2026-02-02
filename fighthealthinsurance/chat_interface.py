@@ -30,6 +30,7 @@ from fighthealthinsurance.chat.tools.patterns import (
     MEDICAID_INFO_REGEX as medicaid_info_lookup_regex,
     PUBMED_QUERY_REGEX as pubmed_query_terms_regex,
 )
+from fighthealthinsurance.extralink_context_helper import ExtraLinkContextHelper
 from fighthealthinsurance.ml.ml_models import RemoteModelLike
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.models import (
@@ -39,9 +40,13 @@ from fighthealthinsurance.models import (
     OngoingChat,
     PriorAuthRequest,
 )
+from fighthealthinsurance.microsites import get_microsite
 from fighthealthinsurance.prompt_templates import get_intro_template
 from fighthealthinsurance.pubmed_tools import PubMedTools
-from fighthealthinsurance.utils import best_within_timelimit
+from fighthealthinsurance.utils import (
+    best_within_timelimit,
+    fire_and_forget_in_new_threadpool,
+)
 
 
 class ChatInterface:
@@ -92,6 +97,72 @@ class ChatInterface:
         except Exception as e:
             logger.warning(f"Could not generate detailed user info: {e}")
             return "a user"
+
+    async def _merge_summary_from_db(self, chat: OngoingChat) -> None:
+        """
+        Merge the latest summary_for_next_call from the DB into the in-memory chat object.
+
+        This handles race conditions where a background task (like fetch_microsite_context)
+        may have updated summary_for_next_call via a fresh DB query, but the main flow's
+        in-memory chat object is stale. We reload from DB and merge any microsite context
+        that exists in the DB but not in the in-memory object.
+        """
+        try:
+            db_chat = await OngoingChat.objects.aget(id=chat.id)
+            db_summary: Optional[List[str]] = db_chat.summary_for_next_call
+
+            if not db_summary:
+                return
+
+            # Check if DB has microsite context that the in-memory chat doesn't have
+            microsite_marker = "Microsite context:"
+            db_has_microsite = any(
+                microsite_marker in (str(entry) if entry else "")
+                for entry in db_summary
+            )
+
+            if not db_has_microsite:
+                return
+
+            # Check if in-memory chat already has this microsite context
+            in_memory_summary: List[str] = chat.summary_for_next_call or []
+            in_memory_has_microsite = any(
+                microsite_marker in (str(entry) if entry else "")
+                for entry in in_memory_summary
+            )
+
+            if in_memory_has_microsite:
+                return
+
+            # Merge the microsite context from DB into in-memory chat
+            # Find the DB entry with microsite context and merge it
+            for db_entry in db_summary:
+                db_entry_str = str(db_entry) if db_entry else ""
+                if db_entry_str and microsite_marker in db_entry_str:
+                    if not chat.summary_for_next_call:
+                        chat.summary_for_next_call = [""]
+                    if len(chat.summary_for_next_call) == 0:
+                        chat.summary_for_next_call.append("")
+
+                    # Extract the microsite portion and append it to the last entry
+                    microsite_start = db_entry_str.find(microsite_marker)
+                    microsite_text = db_entry_str[microsite_start:]
+
+                    last_summary = str(chat.summary_for_next_call[-1] or "")
+                    if microsite_marker not in last_summary:
+                        chat.summary_for_next_call[-1] = (
+                            f"{last_summary}\n\n{microsite_text}"
+                            if last_summary
+                            else microsite_text
+                        )
+                        logger.debug(
+                            f"Merged microsite context from DB into chat {chat.id}"
+                        )
+                    break
+        except OngoingChat.DoesNotExist:
+            logger.warning(f"Chat {chat.id} not found in DB during summary merge")
+        except Exception as e:
+            logger.warning(f"Error merging summary from DB for chat {chat.id}: {e}")
 
     async def _call_llm_with_actions(
         self,
@@ -742,6 +813,74 @@ class ChatInterface:
             # Don't continue with normal processing - let the user respond
             return
 
+        # Check if this is a new chat BEFORE any linking modifies chat_history
+        is_new_chat = not bool(chat.chat_history)
+
+        # Load microsite context on first interaction (before linking may return early)
+        if is_new_chat and chat.microsite_slug:
+            try:
+                microsite = get_microsite(chat.microsite_slug)
+                if microsite:
+
+                    async def fetch_microsite_context():
+                        """Fetch microsite context."""
+                        try:
+                            # Send status message if PubMed search is available
+                            if microsite.pubmed_search_terms:
+                                safe_procedure = str(microsite.default_procedure)[:100]
+                                await self.send_status_message(
+                                    f"Searching medical literature for {safe_procedure}..."
+                                )
+
+                            # Fetch combined context (both extralinks and PubMed if available)
+                            combined_context = await microsite.get_combined_context(
+                                pubmed_tools=(
+                                    self.pubmed_tools
+                                    if microsite.pubmed_search_terms
+                                    else None
+                                ),
+                                max_extralink_docs=5,
+                                max_extralink_chars=2000,
+                                max_pubmed_terms=3,
+                                max_pubmed_articles=20,
+                            )
+
+                            if combined_context:
+                                # Append to chat summary
+                                chat_obj = await OngoingChat.objects.aget(id=chat.id)
+                                if not chat_obj.summary_for_next_call:
+                                    chat_obj.summary_for_next_call = [""]
+                                if not chat_obj.summary_for_next_call[-1]:
+                                    chat_obj.summary_for_next_call[-1] = ""
+
+                                last_summary = chat_obj.summary_for_next_call[-1]
+                                chat_obj.summary_for_next_call[-1] = (
+                                    f"{last_summary}\n\nMicrosite context:\n{combined_context}"
+                                )
+                                await chat_obj.asave()
+
+                                logger.info(
+                                    f"Stored microsite context for {microsite.slug} in chat"
+                                )
+
+                            # Send completion message if PubMed search was performed
+                            if microsite.pubmed_search_terms:
+                                await self.send_status_message(
+                                    "Medical literature search complete"
+                                )
+                        except Exception as e:
+                            logger.opt(exception=True).warning(
+                                f"Error loading microsite context: {e}"
+                            )
+
+                    await fire_and_forget_in_new_threadpool(fetch_microsite_context())
+                else:
+                    logger.warning(
+                        f"Could not find microsite for slug {chat.microsite_slug}"
+                    )
+            except Exception as e:
+                logger.warning(f"Error loading microsite for chat {chat.id}: {e}")
+
         # Handle chat ↔ appeal/prior auth linking if requested
 
         link_message = None
@@ -807,6 +946,9 @@ class ChatInterface:
                     "timestamp": timezone.now().isoformat(),
                 }
             )
+            # Merge any microsite context from DB before saving to avoid overwriting
+            # background task updates
+            await self._merge_summary_from_db(chat)
             await asyncio.gather(
                 chat.asave(), self.send_message_to_client(user_facing_message)
             )
@@ -833,7 +975,6 @@ class ChatInterface:
                 ):
                     current_llm_context += chat.summary_for_next_call[-2]
 
-        is_new_chat = not bool(chat.chat_history)
         llm_input_message = user_message
 
         is_trial_professional = False
@@ -861,99 +1002,6 @@ class ChatInterface:
 
         is_patient = self.is_patient
         if is_new_chat:
-            # If this chat is from a microsite, automatically search PubMed with microsite search terms
-            if chat.microsite_slug:
-                try:
-                    from fighthealthinsurance.microsites import get_microsite
-                    from fighthealthinsurance.utils import (
-                        fire_and_forget_in_new_threadpool,
-                    )
-
-                    microsite = get_microsite(chat.microsite_slug)
-                    if microsite and microsite.pubmed_search_terms:
-                        logger.info(
-                            f"Triggering background PubMed searches for microsite {chat.microsite_slug}"
-                        )
-
-                        # Create background task for PubMed searches
-                        async def search_and_store_pubmed():
-                            """Search PubMed in background and append results to chat context."""
-                            try:
-                                # Sanitize the procedure name for display
-                                safe_procedure = str(microsite.default_procedure)[:100]
-                                await self.send_status_message(
-                                    f"Searching medical literature for {safe_procedure}..."
-                                )
-
-                                all_articles = []
-                                # Trigger PubMed searches for each search term
-                                for search_term in microsite.pubmed_search_terms[:3]:
-                                    try:
-                                        # Sanitize search term for display
-                                        safe_search_term = str(search_term)[:50]
-                                        await self.send_status_message(
-                                            f"Searching: {safe_search_term}..."
-                                        )
-                                        articles = await self.pubmed_tools.find_pubmed_article_ids_for_query(
-                                            search_term, since="2020"
-                                        )
-                                        if articles:
-                                            logger.info(
-                                                f"Found {len(articles)} articles for search term: {search_term}"
-                                            )
-                                            all_articles.extend(
-                                                articles[:5]
-                                            )  # Limit to 5 per search term
-                                    except Exception as e:
-                                        logger.warning(
-                                            f"Error searching PubMed for '{search_term}': {e}"
-                                        )
-
-                                # Store the results in chat context
-                                if all_articles:
-                                    # Build context string from articles
-                                    context_parts = [
-                                        f"PubMed search results for {microsite.default_procedure}:"
-                                    ]
-                                    for pmid in all_articles[:10]:  # Limit total to 10
-                                        context_parts.append(f"- PMID: {pmid}")
-
-                                    pubmed_context = "\n".join(context_parts)
-
-                                    # Append to chat summary
-                                    chat_obj = await OngoingChat.objects.aget(
-                                        id=chat.id
-                                    )
-                                    if not chat_obj.summary_for_next_call:
-                                        chat_obj.summary_for_next_call = []
-                                    chat_obj.summary_for_next_call.append(
-                                        pubmed_context
-                                    )
-                                    await chat_obj.asave()
-
-                                    logger.info(
-                                        f"Stored {len(all_articles)} PubMed articles in chat context"
-                                    )
-                                    await self.send_status_message(
-                                        f"Medical literature search complete - found {len(all_articles)} relevant articles"
-                                    )
-                                else:
-                                    await self.send_status_message(
-                                        "Medical literature search complete"
-                                    )
-                            except Exception as e:
-                                logger.opt(exception=True).warning(
-                                    f"Error in background PubMed search: {e}"
-                                )
-
-                        # Fire off the search in the background (non-blocking)
-                        await fire_and_forget_in_new_threadpool(
-                            search_and_store_pubmed()
-                        )
-
-                except Exception as e:
-                    logger.warning(f"Error loading microsite data for chat: {e}")
-
             # If this is a trial professional user, add a banner message to the chat history
             if is_trial_professional:
                 trial_banner = {
@@ -1064,9 +1112,10 @@ class ChatInterface:
                     }
                 )
 
-            if not chat.summary_for_next_call:
-                chat.summary_for_next_call = []
-            chat.summary_for_next_call.append(final_context_part)
+            if should_store_summary(chat.summary_for_next_call, final_context_part):
+                if not chat.summary_for_next_call:
+                    chat.summary_for_next_call = []
+                chat.summary_for_next_call.append(final_context_part)
 
             chat.chat_history.append(
                 {
@@ -1076,17 +1125,19 @@ class ChatInterface:
                 }
             )
 
+            # Merge any microsite context from DB before saving to avoid overwriting
+            # background task updates
+            await self._merge_summary_from_db(chat)
             await chat.asave()
             await self.send_message_to_client(final_response_text)
         else:
             # Provide more helpful error message based on context
-            if self.use_external_models:
-                err_msg = (
-                    "Sorry, all available models (including backup models) are currently "
-                    "experiencing issues. Please try again in a few moments. "
-                    "If the problem persists, try refreshing the page or starting a new chat."
-                )
-            else:
+            err_msg = (
+                "Sorry, all available models (including backup models) are currently "
+                "experiencing issues. Please try again in a few moments. "
+                "If the problem persists, try refreshing the page or starting a new chat."
+            )
+            if not self.use_external_models:
                 err_msg = (
                     "Sorry, our primary models are currently busy or experiencing issues. "
                     "You can enable 'Use backup models' in settings to allow fallback to "
