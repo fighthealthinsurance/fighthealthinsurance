@@ -98,6 +98,72 @@ class ChatInterface:
             logger.warning(f"Could not generate detailed user info: {e}")
             return "a user"
 
+    async def _merge_summary_from_db(self, chat: OngoingChat) -> None:
+        """
+        Merge the latest summary_for_next_call from the DB into the in-memory chat object.
+
+        This handles race conditions where a background task (like fetch_microsite_context)
+        may have updated summary_for_next_call via a fresh DB query, but the main flow's
+        in-memory chat object is stale. We reload from DB and merge any microsite context
+        that exists in the DB but not in the in-memory object.
+        """
+        try:
+            db_chat = await OngoingChat.objects.aget(id=chat.id)
+            db_summary: Optional[List[str]] = db_chat.summary_for_next_call
+
+            if not db_summary:
+                return
+
+            # Check if DB has microsite context that the in-memory chat doesn't have
+            microsite_marker = "Microsite context:"
+            db_has_microsite = any(
+                microsite_marker in (str(entry) if entry else "")
+                for entry in db_summary
+            )
+
+            if not db_has_microsite:
+                return
+
+            # Check if in-memory chat already has this microsite context
+            in_memory_summary: List[str] = chat.summary_for_next_call or []
+            in_memory_has_microsite = any(
+                microsite_marker in (str(entry) if entry else "")
+                for entry in in_memory_summary
+            )
+
+            if in_memory_has_microsite:
+                return
+
+            # Merge the microsite context from DB into in-memory chat
+            # Find the DB entry with microsite context and merge it
+            for db_entry in db_summary:
+                db_entry_str = str(db_entry) if db_entry else ""
+                if db_entry_str and microsite_marker in db_entry_str:
+                    if not chat.summary_for_next_call:
+                        chat.summary_for_next_call = [""]
+                    if len(chat.summary_for_next_call) == 0:
+                        chat.summary_for_next_call.append("")
+
+                    # Extract the microsite portion and append it to the last entry
+                    microsite_start = db_entry_str.find(microsite_marker)
+                    microsite_text = db_entry_str[microsite_start:]
+
+                    last_summary = str(chat.summary_for_next_call[-1] or "")
+                    if microsite_marker not in last_summary:
+                        chat.summary_for_next_call[-1] = (
+                            f"{last_summary}\n\n{microsite_text}"
+                            if last_summary
+                            else microsite_text
+                        )
+                        logger.debug(
+                            f"Merged microsite context from DB into chat {chat.id}"
+                        )
+                    break
+        except OngoingChat.DoesNotExist:
+            logger.warning(f"Chat {chat.id} not found in DB during summary merge")
+        except Exception as e:
+            logger.warning(f"Error merging summary from DB for chat {chat.id}: {e}")
+
     async def _call_llm_with_actions(
         self,
         model_backends: List[RemoteModelLike],
@@ -880,6 +946,9 @@ class ChatInterface:
                     "timestamp": timezone.now().isoformat(),
                 }
             )
+            # Merge any microsite context from DB before saving to avoid overwriting
+            # background task updates
+            await self._merge_summary_from_db(chat)
             await asyncio.gather(
                 chat.asave(), self.send_message_to_client(user_facing_message)
             )
@@ -1056,6 +1125,9 @@ class ChatInterface:
                 }
             )
 
+            # Merge any microsite context from DB before saving to avoid overwriting
+            # background task updates
+            await self._merge_summary_from_db(chat)
             await chat.asave()
             await self.send_message_to_client(final_response_text)
         else:
