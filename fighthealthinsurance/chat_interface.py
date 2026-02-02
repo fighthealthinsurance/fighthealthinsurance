@@ -747,6 +747,74 @@ class ChatInterface:
             # Don't continue with normal processing - let the user respond
             return
 
+        # Check if this is a new chat BEFORE any linking modifies chat_history
+        is_new_chat = not bool(chat.chat_history)
+
+        # Load microsite context on first interaction (before linking may return early)
+        if is_new_chat and chat.microsite_slug:
+            try:
+                microsite = get_microsite(chat.microsite_slug)
+                if microsite:
+
+                    async def fetch_microsite_context():
+                        """Fetch microsite context."""
+                        try:
+                            # Send status message if PubMed search is available
+                            if microsite.pubmed_search_terms:
+                                safe_procedure = str(microsite.default_procedure)[:100]
+                                await self.send_status_message(
+                                    f"Searching medical literature for {safe_procedure}..."
+                                )
+
+                            # Fetch combined context (both extralinks and PubMed if available)
+                            combined_context = await microsite.get_combined_context(
+                                pubmed_tools=(
+                                    self.pubmed_tools
+                                    if microsite.pubmed_search_terms
+                                    else None
+                                ),
+                                max_extralink_docs=5,
+                                max_extralink_chars=2000,
+                                max_pubmed_terms=3,
+                                max_pubmed_articles=20,
+                            )
+
+                            if combined_context:
+                                # Append to chat summary
+                                chat_obj = await OngoingChat.objects.aget(id=chat.id)
+                                if not chat_obj.summary_for_next_call:
+                                    chat_obj.summary_for_next_call = [""]
+                                if not chat_obj.summary_for_next_call[-1]:
+                                    chat_obj.summary_for_next_call[-1] = ""
+
+                                last_summary = chat_obj.summary_for_next_call[-1]
+                                chat_obj.summary_for_next_call[-1] = (
+                                    f"{last_summary}\n\nMicrosite context:\n{combined_context}"
+                                )
+                                await chat_obj.asave()
+
+                                logger.info(
+                                    f"Stored microsite context for {microsite.slug} in chat"
+                                )
+
+                            # Send completion message if PubMed search was performed
+                            if microsite.pubmed_search_terms:
+                                await self.send_status_message(
+                                    "Medical literature search complete"
+                                )
+                        except Exception as e:
+                            logger.opt(exception=True).warning(
+                                f"Error loading microsite context: {e}"
+                            )
+
+                    await fire_and_forget_in_new_threadpool(fetch_microsite_context())
+                else:
+                    logger.warning(
+                        f"Could not find microsite for slug {chat.microsite_slug}"
+                    )
+            except Exception as e:
+                logger.warning(f"Error loading microsite for chat {chat.id}: {e}")
+
         # Handle chat ↔ appeal/prior auth linking if requested
 
         link_message = None
@@ -838,7 +906,6 @@ class ChatInterface:
                 ):
                     current_llm_context += chat.summary_for_next_call[-2]
 
-        is_new_chat = not bool(chat.chat_history)
         llm_input_message = user_message
 
         is_trial_professional = False
@@ -866,77 +933,6 @@ class ChatInterface:
 
         is_patient = self.is_patient
         if is_new_chat:
-            # If this chat is from a microsite, automatically search PubMed with microsite search terms
-            microsite_slug = chat.microsite_slug
-            if microsite_slug:
-                try:
-                    microsite = get_microsite(microsite_slug)
-                    if microsite:
-
-                        async def fetch_microsite_context():
-                            """Fetch microsite context."""
-                            try:
-                                # Send status message if PubMed search is available
-                                if microsite.pubmed_search_terms:
-                                    safe_procedure = str(microsite.default_procedure)[
-                                        :100
-                                    ]
-                                    await self.send_status_message(
-                                        f"Searching medical literature for {safe_procedure}..."
-                                    )
-
-                                # Fetch combined context (both extralinks and PubMed if available)
-                                combined_context = await microsite.get_combined_context(
-                                    pubmed_tools=(
-                                        self.pubmed_tools
-                                        if microsite.pubmed_search_terms
-                                        else None
-                                    ),
-                                    max_extralink_docs=5,
-                                    max_extralink_chars=2000,
-                                    max_pubmed_terms=3,
-                                    max_pubmed_articles=20,
-                                )
-
-                                if combined_context:
-                                    # Append to chat summary
-                                    chat_obj = await OngoingChat.objects.aget(
-                                        id=chat.id
-                                    )
-                                    if not chat_obj.summary_for_next_call:
-                                        chat_obj.summary_for_next_call = [""]
-                                    if not chat_obj.summary_for_next_call[-1]:
-                                        chat_obj.summary_for_next_call[-1] = ""
-
-                                    last_summary = chat_obj.summary_for_next_call[-1]
-                                    chat_obj.summary_for_next_call[-1] = (
-                                        f"{last_summary}\n\nMicrosite context:\n{combined_context}"
-                                    )
-                                    await chat_obj.asave()
-
-                                    logger.info(
-                                        f"Stored microsite context for {microsite.slug} in chat"
-                                    )
-
-                                # Send completion message if PubMed search was performed
-                                if microsite.pubmed_search_terms:
-                                    await self.send_status_message(
-                                        "Medical literature search complete"
-                                    )
-                            except Exception as e:
-                                logger.opt(exception=True).warning(
-                                    f"Error loading microsite context: {e}"
-                                )
-
-                        await fire_and_forget_in_new_threadpool(
-                            fetch_microsite_context()
-                        )
-                    else:
-                        logger.warning(
-                            f"Could not find microsite for slug {microsite_slug}"
-                        )
-                except Exception as e:
-                    logger.warning(f"Error loading microsite for chat {chat.id}: {e}")
             # If this is a trial professional user, add a banner message to the chat history
             if is_trial_professional:
                 trial_banner = {
