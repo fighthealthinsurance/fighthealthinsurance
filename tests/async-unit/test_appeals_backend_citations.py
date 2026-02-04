@@ -6,7 +6,12 @@ from fighthealthinsurance.common_view_logic import AppealsBackendHelper
 from fighthealthinsurance.ml.ml_citations_helper import MLCitationsHelper
 
 
-@pytest.mark.skip(reason="All tests in this class were never running - mocking does not work correctly")
+@pytest.mark.skip(
+    reason="Integration tests for AppealsBackendHelper.generate_appeals require extensive mocking "
+    "of interdependent components (Denial objects, appealGenerator, sync_to_async, citation helpers, "
+    "PubMed tools, interleave_iterator). These tests need significant refactoring to match the "
+    "current implementation."
+)
 class TestAppealsBackendHelperWithCitations:
     """Tests for the AppealsBackendHelper class with ML citations integration."""
 
