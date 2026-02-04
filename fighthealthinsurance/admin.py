@@ -857,15 +857,17 @@ class FuzzAttemptAdmin(admin.ModelAdmin):
     @admin.display(description="Reasons")
     def reason_formatted(self, obj):
         """Format reasons as readable list."""
-        from django.utils.html import format_html
+        from django.utils.html import escape, format_html
         import json
 
         try:
             reasons = json.loads(obj.reason)
             if isinstance(reasons, list):
-                items = "".join(f"<li>{r}</li>" for r in reasons)
+                # Escape each item to prevent XSS
+                items = "".join(f"<li>{escape(str(r))}</li>" for r in reasons)
                 return format_html(
-                    f"<ul style='margin:0;padding-left:20px;'>{items}</ul>"
+                    "<ul style='margin:0;padding-left:20px;'>{}</ul>",
+                    format_html(items),
                 )
         except (json.JSONDecodeError, TypeError):
             pass

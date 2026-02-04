@@ -185,6 +185,7 @@ class TestFuzzAttemptModel(TestCase):
         )
         attempts = list(FuzzAttempt.objects.all())
         self.assertEqual(attempts[0].id, attempt2.id)  # Most recent first
+        self.assertEqual(attempts[1].id, attempt1.id)  # Older record second
 
     def test_request_id_stored(self):
         """Request ID should be stored when provided."""
@@ -214,5 +215,7 @@ class TestFuzzAttemptPermissions(TestCase):
             content_type=content_type,
             codename="view_fuzz_capture",
         ).first()
-        # Note: Permission might not exist until migrations run
-        # This test documents expected behavior
+        self.assertIsNotNone(
+            permission,
+            "Expected 'view_fuzz_capture' Permission for model FuzzAttempt to be defined",
+        )

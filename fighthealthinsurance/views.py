@@ -1142,6 +1142,9 @@ class InitialProcessView(generic.FormView):
         if referral_source_details:
             cleaned_data["referral_source_details"] = referral_source_details
 
+        # Remove captcha field - it's only for form validation, not for denial creation
+        cleaned_data.pop("captcha", None)
+
         denial_response = common_view_logic.DenialCreatorHelper.create_or_update_denial(
             **cleaned_data,
         )

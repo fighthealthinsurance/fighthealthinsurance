@@ -67,14 +67,19 @@ class TestFuzzGuardEndToEnd(TestCase):
         self.assertIn(response.status_code, [400, 418, 429])
 
     @override_settings(FUZZ_GUARD_ENABLED=False)
+    @override_settings(FUZZ_GUARD_ENABLED=False)
     def test_disabled_fuzz_guard_passes_all(self):
         """With FUZZ_GUARD_ENABLED=False, should not block."""
         # Even with scanner UA, should not return fuzz guard status codes
         # (though may return other errors like 404)
         response = self.client.get("/some-path", HTTP_USER_AGENT="sqlmap/1.4.7")
         # Should not be specifically blocked by fuzz guard
-        # 404 is expected for non-existent path, but not 400/418/429 from fuzz guard
-        # Note: This depends on middleware ordering and path handling
+        # 404 is expected for non-existent path, but not 418/429 from fuzz guard
+        self.assertNotIn(
+            response.status_code,
+            [418, 429],
+            "Fuzz guard should not block when FUZZ_GUARD_ENABLED=False",
+        )
 
 
 class TestHumanVerificationFlow(TestCase):

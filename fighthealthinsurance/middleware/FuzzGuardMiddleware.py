@@ -157,7 +157,8 @@ def get_client_ip(request: HttpRequest) -> str:
     if x_real_ip:
         return str(x_real_ip).strip()
 
-    return request.META.get("REMOTE_ADDR", "0.0.0.0")
+    remote_addr = request.META.get("REMOTE_ADDR", "0.0.0.0")
+    return str(remote_addr) if remote_addr else "0.0.0.0"
 
 
 def hash_ip(ip: str, salt: str) -> str:
@@ -460,7 +461,7 @@ class FuzzGuardMiddleware(MiddlewareMixin):
                 user=user,
                 session_key=session_key,
                 is_authenticated=is_authenticated,
-                method=request.method,
+                method=(request.method or "UNKNOWN")[:20],
                 path=request.path[:2048],
                 status_returned=status_code,
                 reason=json.dumps(reasons),
