@@ -10,7 +10,6 @@ from functools import wraps
 
 from django.http import HttpRequest, HttpResponse
 
-
 # The friendly message returned when verification is missing
 TEAPOT_MESSAGE = """Hi Friend, your browser appears to be misbehaving. If you've encountered this error while trying to appeal an insurance claim e-mail support42@fighthealthinsurance.com and we'll look into it. Similarly if you're performing fuzzing or other activities please e-mail support42@fighthealthinsurance.com and take a look at our terms of service in the meantime. kthnx byeeeee!"""
 

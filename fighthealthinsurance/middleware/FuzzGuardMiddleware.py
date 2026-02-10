@@ -33,7 +33,6 @@ from django.utils.deprecation import MiddlewareMixin
 
 from loguru import logger
 
-
 # =============================================================================
 # Detection Rules
 # =============================================================================

@@ -43,10 +43,11 @@ class Command(BaseCommand):
         from fighthealthinsurance.models import FuzzAttempt
 
         # Determine retention days
-        days = options.get("days")
-        if days is None:
-            days = getattr(settings, "FUZZ_GUARD_RETENTION_DAYS", 3)
-        days = int(days)  # Ensure it's an int for timedelta
+        days_opt = options.get("days")
+        if days_opt is not None:
+            days = int(days_opt)
+        else:
+            days = int(getattr(settings, "FUZZ_GUARD_RETENTION_DAYS", 3))
 
         dry_run = options.get("dry_run", False)
         batch_size = options.get("batch_size", 1000)

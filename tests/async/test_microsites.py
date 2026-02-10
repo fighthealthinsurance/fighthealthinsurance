@@ -505,6 +505,7 @@ class MicrositeOverrideTest(TestCase):
         """Test that the categorize page allows editing the prefilled procedure."""
         # Set up session with microsite data
         session = self.client.session
+        session["human_verified"] = True  # Required by HumanVerificationRequiredMixin
         session["denial_id"] = self.denial.denial_id
         session["default_procedure"] = "MRI Scan"
         session["microsite_title"] = "Appealing MRI Denials"
@@ -804,7 +805,7 @@ class MedicareChatIntegrationTest(TestCase):
                 "default_procedure": "Medicare Work Requirements",
                 "medicare": "true",
                 "microsite_slug": "medicare-work-requirements",
-            }
+            },
         )
         # Should redirect to consent page
         self.assertEqual(response.status_code, 302)
