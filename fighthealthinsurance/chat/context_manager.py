@@ -65,9 +65,15 @@ async def prepare_history_for_llm(
             summarize_callback,
         )
 
-    # Truncate to last N messages for the LLM
-    truncated_history = history_for_llm[-DEFAULT_MESSAGES_TO_KEEP:]
-    # Ensure alternation on truncated history in case slicing broke it
+    # Truncate to last N messages for the LLM, ensuring we start on a user
+    # message so that slicing doesn't break alternation (which would cause
+    # ensure_message_alternation to drop the leading assistant message,
+    # losing context).
+    start_idx = max(0, len(history_for_llm) - DEFAULT_MESSAGES_TO_KEEP)
+    if start_idx > 0 and history_for_llm[start_idx].get("role") == "assistant":
+        start_idx -= 1
+    truncated_history = history_for_llm[start_idx:]
+    # Still run ensure_message_alternation for any other edge cases
     truncated_history = ensure_message_alternation(truncated_history)
     logger.debug(f"Truncated history to last {DEFAULT_MESSAGES_TO_KEEP} messages")
 

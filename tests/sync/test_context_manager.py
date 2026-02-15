@@ -72,11 +72,41 @@ class TestPrepareHistoryForLLM:
             existing_summary=None,
         )
 
-        # Truncated history should be <= DEFAULT_MESSAGES_TO_KEEP
-        assert len(history) <= DEFAULT_MESSAGES_TO_KEEP
+        # Truncated history should be around DEFAULT_MESSAGES_TO_KEEP
+        # (may be +1 if we backed up to start on a user message)
+        assert len(history) <= DEFAULT_MESSAGES_TO_KEEP + 1
         # Full history should be preserved
         assert full_history is not None
         assert len(full_history) == 60
+
+    @pytest.mark.asyncio
+    async def test_truncation_preserves_alternation(self):
+        """Test that truncation starts on a user message to avoid dropping context."""
+        # Build history where naive slicing at -DEFAULT_MESSAGES_TO_KEEP
+        # would land on an assistant message
+        chat_history = []
+        # We need an odd number of messages before the keep window so the
+        # slice boundary falls on an assistant message.
+        total_pairs = (DEFAULT_MESSAGES_TO_KEEP // 2) + 5
+        for i in range(total_pairs):
+            chat_history.append({"role": "user", "content": f"Message {i}"})
+            chat_history.append({"role": "assistant", "content": f"Response {i}"})
+        # Add one extra user message so the -DEFAULT_MESSAGES_TO_KEEP index
+        # falls on an assistant message
+        chat_history.append({"role": "user", "content": "Extra"})
+
+        history, full_history, summary = await prepare_history_for_llm(
+            chat_history=chat_history,
+            existing_summary=None,
+        )
+
+        # History must start with a user message, not assistant
+        assert history[0]["role"] == "user"
+        # And alternation should be intact
+        for i in range(len(history) - 1):
+            assert history[i]["role"] != history[i + 1]["role"], (
+                f"Messages {i} and {i+1} have same role: {history[i]['role']}"
+            )
 
     @pytest.mark.asyncio
     async def test_message_alternation_applied(self):
