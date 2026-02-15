@@ -86,3 +86,4 @@ uszipcode
 uvicorn[standard]
 werkzeug
 python-dateutil
+setuptools
