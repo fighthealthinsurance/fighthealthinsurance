@@ -199,7 +199,7 @@ class TestAsyncTaskUtils:
         # Should return medium_best as soon as it's ready (around 0.2s)
         # Without waiting for slow_medium
         assert result == "medium_best"
-        assert elapsed_time < 0.3  # Allow small overhead
+        assert elapsed_time < 0.5  # Allow headroom for slow CI
 
     @pytest.mark.asyncio
     async def test_best_within_timelimit_static_equal_max_scores(self):

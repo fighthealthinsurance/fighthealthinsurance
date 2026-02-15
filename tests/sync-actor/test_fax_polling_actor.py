@@ -1,4 +1,5 @@
 import os
+import time
 
 import pytest
 import ray
@@ -41,17 +42,20 @@ class TestFaxPollingActor(TestCase):
         # Start the actor running
         r = fax_polling_actor.run.remote()
 
-        # Poll for completion rather than using a fixed sleep
-        import time
+        # Give run() time to start executing before polling
+        time.sleep(0.5)
+
+        # Poll until run() has executed by checking actor_error_count > 0
+        # (run() calls send_delayed_faxes which will fail in test, incrementing aec)
         max_wait = 10  # seconds
         start = time.time()
         while time.time() - start < max_wait:
-            error_count = ray.get(fax_polling_actor.error_count.remote())
-            if error_count == 0:
+            aec = ray.get(fax_polling_actor.actor_error_count.remote())
+            if aec > 0:
                 break
             time.sleep(0.5)
 
         # Note: for local testing since they're all getting different DBs we're
-        # really just checking that it's able to start.
-
-        self.assertEqual(0, ray.get(fax_polling_actor.error_count.remote()))
+        # really just checking that it's able to start and run.
+        aec = ray.get(fax_polling_actor.actor_error_count.remote())
+        self.assertGreater(aec, 0, "run() should have executed and hit an error in test")

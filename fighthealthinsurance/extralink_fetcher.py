@@ -460,7 +460,7 @@ class ExtraLinkFetcher:
                 tag.decompose()
 
             # Get text
-            text = soup.get_text(separator="\n", strip=True)
+            text: str = soup.get_text(separator="\n", strip=True)
 
             # Clean up whitespace
             lines = [line.strip() for line in text.splitlines()]

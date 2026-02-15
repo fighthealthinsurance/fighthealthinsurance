@@ -101,7 +101,7 @@ class TestAppealsBackendHelperWithCitations:
             patch(
                 "fighthealthinsurance.common_view_logic.MLCitationsHelper.generate_citations_for_denial",
                 new_callable=AsyncMock,
-                return_value=["ML Citation 1", "ML Citation 2"],
+                return_value="ML Citation 1",
             ) as mock_generate_citations,
             patch.object(
                 AppealsBackendHelper.pmt,
@@ -154,9 +154,7 @@ class TestAppealsBackendHelperWithCitations:
             # Verify make_appeals was called with ml_citations_context
             mock_make_appeals_wrapper.assert_called_once()
             call_kwargs = mock_make_appeals_wrapper.call_args[1]
-            assert call_kwargs.get("ml_citations_context") is None or isinstance(
-                call_kwargs.get("ml_citations_context"), (list, str, type(None))
-            )
+            assert call_kwargs["ml_citations_context"] == "ML Citation 1"
 
     @pytest.mark.asyncio
     async def test_pubmed_and_ml_citations_timeouts(self):
@@ -277,7 +275,7 @@ class TestAppealsBackendHelperWithCitations:
             patch(
                 "fighthealthinsurance.common_view_logic.MLCitationsHelper.generate_citations_for_denial",
                 new_callable=AsyncMock,
-                return_value=["ML Citation 1", "ML Citation 2"],
+                return_value="ML Citation 1",
             ) as mock_generate_citations,
             patch.object(
                 AppealsBackendHelper.pmt,
@@ -327,9 +325,4 @@ class TestAppealsBackendHelperWithCitations:
             mock_make_appeals_wrapper.assert_called_once()
             call_kwargs = mock_make_appeals_wrapper.call_args[1]
             assert call_kwargs["pubmed_context"] == "PubMed context data"
-            # ml_citations_context comes from asyncio.gather results[1]
-            # Since generate_citations_for_denial returns a list (not str),
-            # isinstance check in the code: isinstance(results[1], str) -> False
-            # So ml_citation_context will be None
-            # The implementation only accepts str results from gather
-            assert call_kwargs["ml_citations_context"] is None
+            assert call_kwargs["ml_citations_context"] == "ML Citation 1"

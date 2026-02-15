@@ -362,7 +362,7 @@ Cheap-O-Insurance-Corp"""
         self.assert_title_eventually("Optional: Health History")
         self.assert_element("textarea#health_history")
         # Wait for JavaScript to restore value from localStorage
-        self.wait_for_page_ready()
+        self.wait_for_page_ready(selector="textarea#health_history")
 
         # Verify health history preserved via localStorage
         health_history_value = self.get_value("textarea#health_history")
@@ -446,7 +446,7 @@ Sincerely, OtherInsuranceCo""",
 
         # On health history page for second appeal
         self.assert_title_eventually("Optional: Health History")
-        self.wait_for_page_ready()  # Wait for JS
+        self.wait_for_page_ready()
 
         # Health history should NOT have the first appeal's data
         health_value = self.get_value("textarea#health_history")
@@ -546,7 +546,7 @@ Sincerely, InsuranceCo""",
         ), f"Back button should result in GET, got {method_content}"
 
         # Health history should be restored from localStorage
-        self.wait_for_page_ready()
+        self.wait_for_page_ready(selector="textarea#health_history")
         health_value = self.get_value("textarea#health_history")
         assert (
             health_value == test_health
