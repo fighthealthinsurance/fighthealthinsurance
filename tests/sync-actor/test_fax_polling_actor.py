@@ -57,5 +57,4 @@ class TestFaxPollingActor(TestCase):
 
         # Note: for local testing since they're all getting different DBs we're
         # really just checking that it's able to start and run.
-        aec = ray.get(fax_polling_actor.actor_error_count.remote())
         self.assertGreater(aec, 0, "run() should have executed and hit an error in test")

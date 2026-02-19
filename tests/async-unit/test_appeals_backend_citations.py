@@ -5,6 +5,11 @@ import asyncio
 from fighthealthinsurance.common_view_logic import AppealsBackendHelper
 
 
+async def passthrough_interleave(iterator):
+    async for item in iterator:
+        yield item
+
+
 def _make_mock_denial():
     """Create a fully populated mock denial with all attributes generate_appeals needs."""
     denial = MagicMock()
@@ -29,8 +34,9 @@ def _make_mock_denial():
     denial.primary_professional = None
     denial.domain = None
 
-    # asave must be an async mock
+    # asave and arefresh_from_db must be async mocks
     denial.asave = AsyncMock()
+    denial.arefresh_from_db = AsyncMock()
 
     # denial_type.all() must return an empty async iterator
     async def empty_async_iter():
@@ -90,10 +96,6 @@ class TestAppealsBackendHelperWithCitations:
                 "fighthealthinsurance.common_view_logic.Denial.get_hashed_email",
                 return_value="hashed",
             ),
-            patch(
-                "fighthealthinsurance.common_view_logic.ProposedAppeal.objects.filter",
-                return_value=_make_empty_proposed_appeal_query(),
-            ),
             patch.object(
                 AppealsBackendHelper,
                 "regex_denial_processor",
@@ -134,10 +136,10 @@ class TestAppealsBackendHelperWithCitations:
             mock_pa_instance.asave = AsyncMock()
             mock_proposed_appeal_cls.return_value = mock_pa_instance
 
-            # interleave just passes through
-            async def passthrough_interleave(iterator):
-                async for item in iterator:
-                    yield item
+            # Configure ProposedAppeal.objects.filter to return empty async iterator
+            mock_proposed_appeal_cls.objects.filter.return_value = (
+                _make_empty_proposed_appeal_query()
+            )
 
             mock_interleave.side_effect = passthrough_interleave
 
@@ -177,10 +179,6 @@ class TestAppealsBackendHelperWithCitations:
                 "fighthealthinsurance.common_view_logic.Denial.get_hashed_email",
                 return_value="hashed",
             ),
-            patch(
-                "fighthealthinsurance.common_view_logic.ProposedAppeal.objects.filter",
-                return_value=_make_empty_proposed_appeal_query(),
-            ),
             patch.object(
                 AppealsBackendHelper,
                 "regex_denial_processor",
@@ -219,9 +217,10 @@ class TestAppealsBackendHelperWithCitations:
             mock_pa_instance.asave = AsyncMock()
             mock_proposed_appeal_cls.return_value = mock_pa_instance
 
-            async def passthrough_interleave(iterator):
-                async for item in iterator:
-                    yield item
+            # Configure ProposedAppeal.objects.filter to return empty async iterator
+            mock_proposed_appeal_cls.objects.filter.return_value = (
+                _make_empty_proposed_appeal_query()
+            )
 
             mock_interleave.side_effect = passthrough_interleave
 
@@ -264,10 +263,6 @@ class TestAppealsBackendHelperWithCitations:
                 "fighthealthinsurance.common_view_logic.Denial.get_hashed_email",
                 return_value="hashed",
             ),
-            patch(
-                "fighthealthinsurance.common_view_logic.ProposedAppeal.objects.filter",
-                return_value=_make_empty_proposed_appeal_query(),
-            ),
             patch.object(
                 AppealsBackendHelper,
                 "regex_denial_processor",
@@ -305,9 +300,10 @@ class TestAppealsBackendHelperWithCitations:
             mock_pa_instance.asave = AsyncMock()
             mock_proposed_appeal_cls.return_value = mock_pa_instance
 
-            async def passthrough_interleave(iterator):
-                async for item in iterator:
-                    yield item
+            # Configure ProposedAppeal.objects.filter to return empty async iterator
+            mock_proposed_appeal_cls.objects.filter.return_value = (
+                _make_empty_proposed_appeal_query()
+            )
 
             mock_interleave.side_effect = passthrough_interleave
 

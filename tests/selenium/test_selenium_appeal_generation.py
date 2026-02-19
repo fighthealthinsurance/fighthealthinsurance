@@ -448,8 +448,20 @@ Sincerely, OtherInsuranceCo""",
         self.assert_title_eventually("Optional: Health History")
         self.wait_for_page_ready()
 
-        # Health history should NOT have the first appeal's data
+        # Negative assertion: health history must NOT contain first appeal's
+        # data.  wait_for_page_ready returns as soon as readyState is
+        # "complete", but the localStorage restoration script may still be
+        # pending.  Poll for a bounded time so that if the script is going to
+        # restore the old value we catch it, rather than asserting before the
+        # script has had a chance to run.
+        deadline = time.time() + 2
         health_value = self.get_value("textarea#health_history")
+        while time.time() < deadline:
+            health_value = self.get_value("textarea#health_history")
+            if health_value == first_health:
+                break  # Restoration happened – fall through to the assertion
+            time.sleep(0.2)
+
         assert (
             health_value != first_health
         ), f"Second appeal should not restore first appeal's health history. Got: '{health_value}'"

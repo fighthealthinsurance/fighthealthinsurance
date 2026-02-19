@@ -290,43 +290,48 @@ class TestAsyncTaskUtils:
         assert result == "slow"
 
     @pytest.mark.asyncio
-    async def test_best_within_timelimit_static_extended_timeout_parameter(self):
-        """Test the configurable extended_timeout parameter.
+    async def test_best_within_timelimit_static_extended_timeout_no_completion(self):
+        """Test that extended_timeout too short causes failure.
 
-        Note: When no tasks complete within initial timeout, the function uses
-        FIRST_COMPLETED in extended timeout - returning the first task to complete,
-        regardless of score. This tests that behavior.
+        When no tasks complete within initial timeout and extended timeout is
+        also too short, ValueError should be raised.
         """
-        # Test 1: Extended timeout too short - neither task completes
-        task_medium_1 = self.async_task_with_delay("medium", 0.4)
-        task_slow_1 = self.async_task_with_delay("slow", 0.8)
+        task_medium = self.async_task_with_delay("medium", 0.4)
+        task_slow = self.async_task_with_delay("slow", 0.8)
 
-        task_scores_1 = {
-            task_medium_1: 1.0,
-            task_slow_1: 2.0,
+        task_scores = {
+            task_medium: 1.0,
+            task_slow: 2.0,
         }
 
         # With initial timeout of 0.1 and extended timeout of 0.1,
         # neither task completes (both need at least 0.4s total)
         with pytest.raises(ValueError, match="No tasks completed successfully"):
             await best_within_timelimit_static(
-                task_scores_1, timeout=0.1, extended_timeout=0.1
+                task_scores, timeout=0.1, extended_timeout=0.1
             )
 
-        # Test 2: Extended timeout long enough for faster task (fresh coroutines)
-        task_medium_2 = self.async_task_with_delay("medium", 0.4)
-        task_slow_2 = self.async_task_with_delay("slow", 0.8)
+    @pytest.mark.asyncio
+    async def test_best_within_timelimit_static_extended_timeout_first_completed(self):
+        """Test that extended_timeout long enough allows first task to complete.
 
-        task_scores_2 = {
-            task_medium_2: 1.0,
-            task_slow_2: 2.0,
+        When no tasks complete within initial timeout, the function uses
+        FIRST_COMPLETED in extended timeout - returning the first task to complete,
+        regardless of score.
+        """
+        task_medium = self.async_task_with_delay("medium", 0.4)
+        task_slow = self.async_task_with_delay("slow", 0.8)
+
+        task_scores = {
+            task_medium: 1.0,
+            task_slow: 2.0,
         }
 
         # With initial timeout of 0.1 but extended timeout of 0.5,
         # medium finishes first (at ~0.3s into extended) and is returned
         # because FIRST_COMPLETED is used in the extended timeout period
         result = await best_within_timelimit_static(
-            task_scores_2, timeout=0.1, extended_timeout=0.5
+            task_scores, timeout=0.1, extended_timeout=0.5
         )
         assert result == "medium"
 
@@ -403,16 +408,13 @@ class TestAsyncTaskUtils:
         optional = []
         fire_forget = []
 
-        # Iterate through results - function returns an async iterator
+        # Iterate through results - exceptions from required tasks are
+        # caught and logged internally by the generator, not propagated
         results = []
-        try:
-            async for result in execute_critical_optional_fireandforget(
-                critical, optional, fire_forget
-            ):
-                results.append(result)
-        except ValueError:
-            # The exception propagates when iterating
-            pass
+        async for result in execute_critical_optional_fireandforget(
+            critical, optional, fire_forget
+        ):
+            results.append(result)
 
         # At least the successful task should have completed
         assert "success" in results
