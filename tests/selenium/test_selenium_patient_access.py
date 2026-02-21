@@ -64,7 +64,7 @@ class SeleniumTestPatientAccessPage(FHISeleniumBase, StaticLiveServerTestCase):
         """Test the Landing Pages You Deploy section content."""
         self.open(f"{self.live_server_url}/professionals/patient-access")
         self.scroll_to("#landing-pages")
-        time.sleep(0.5)
+        self.wait_for_page_ready()
 
         self.assert_text("Drug-Specific Pages", "#landing-pages")
         self.assert_text("Condition-Specific Pages", "#landing-pages")
@@ -74,7 +74,7 @@ class SeleniumTestPatientAccessPage(FHISeleniumBase, StaticLiveServerTestCase):
         """Test that all workflow options are displayed."""
         self.open(f"{self.live_server_url}/professionals/patient-access")
         self.scroll_to("#workflow")
-        time.sleep(0.5)
+        self.wait_for_page_ready()
 
         self.assert_text("Workflow Integration", "#workflow h2")
         self.assert_text("Fully Automated", "#workflow")
@@ -87,7 +87,7 @@ class SeleniumTestPatientAccessPage(FHISeleniumBase, StaticLiveServerTestCase):
         """Test the compliance section content."""
         self.open(f"{self.live_server_url}/professionals/patient-access")
         self.scroll_to("#compliance")
-        time.sleep(0.5)
+        self.wait_for_page_ready()
 
         self.assert_text("Built for Compliance", "#compliance h2")
 
@@ -95,7 +95,7 @@ class SeleniumTestPatientAccessPage(FHISeleniumBase, StaticLiveServerTestCase):
         """Test that concrete use cases are displayed."""
         self.open(f"{self.live_server_url}/professionals/patient-access")
         self.scroll_to("#use-cases")
-        time.sleep(0.5)
+        self.wait_for_page_ready()
 
         self.assert_text("hub team", "#use-cases")
 
@@ -105,7 +105,7 @@ class SeleniumTestPatientAccessPage(FHISeleniumBase, StaticLiveServerTestCase):
 
         # Find and click the Try as a Patient link in the hero
         self.click("a[href*='biologic-denial']")
-        time.sleep(1)
+        self.wait_for_url_contains("biologic-denial")
 
         # Should be on the biologic denial microsite page
         current_url = self.get_current_url()
@@ -143,7 +143,7 @@ class SeleniumTestPatientAccessNavigation(FHISeleniumBase, StaticLiveServerTestC
 
         # Click the dropdown toggle
         self.click("#professionalDropdown")
-        time.sleep(0.5)
+        self.wait_for_clickable(".dropdown-menu.show")
 
         # Dropdown menu should be visible
         self.assert_element(".dropdown-menu.show")
@@ -152,7 +152,7 @@ class SeleniumTestPatientAccessNavigation(FHISeleniumBase, StaticLiveServerTestC
         """Test that dropdown contains Practices & Hospitals link."""
         self.open(f"{self.live_server_url}/")
         self.click("#professionalDropdown")
-        time.sleep(0.5)
+        self.wait_for_clickable(".dropdown-menu.show")
 
         self.assert_text("Practices", ".dropdown-menu")
 
@@ -160,7 +160,7 @@ class SeleniumTestPatientAccessNavigation(FHISeleniumBase, StaticLiveServerTestC
         """Test that dropdown contains Patient & Market Access link."""
         self.open(f"{self.live_server_url}/")
         self.click("#professionalDropdown")
-        time.sleep(0.5)
+        self.wait_for_clickable(".dropdown-menu.show")
 
         self.assert_text("Patient", ".dropdown-menu")
         self.assert_text("Market Access", ".dropdown-menu")
@@ -171,11 +171,11 @@ class SeleniumTestPatientAccessNavigation(FHISeleniumBase, StaticLiveServerTestC
 
         # Open dropdown
         self.click("#professionalDropdown")
-        time.sleep(0.5)
+        self.wait_for_clickable(".dropdown-menu.show")
 
         # Click patient access link
         self.click("a.dropdown-item[href*='patient-access']")
-        time.sleep(1)
+        self.wait_for_url_contains("patient-access")
 
         # Should be on patient access page
         current_url = self.get_current_url()

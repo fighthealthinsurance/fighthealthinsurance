@@ -42,7 +42,6 @@ class SeleniumTestMicrositeIntegration(FHISeleniumBase, StaticLiveServerTestCase
         self.click("a.primary-cta")
 
         # Should be on the scan page with microsite parameters
-        time.sleep(1)
         self.assert_title_eventually("Upload your Health Insurance Denial")
 
         # Fill out the form
@@ -59,7 +58,7 @@ class SeleniumTestMicrositeIntegration(FHISeleniumBase, StaticLiveServerTestCase
         self.click("button#submit")
 
         # Wait for redirect
-        time.sleep(2)
+        self.wait_for_page_ready()
 
         # Check that a denial was created with the microsite_slug
         denials = Denial.objects.filter(
@@ -88,7 +87,7 @@ class SeleniumTestMicrositeIntegration(FHISeleniumBase, StaticLiveServerTestCase
         self.click("a.secondary-cta")
 
         # Should redirect to chat consent page
-        time.sleep(1)
+        self.wait_for_page_ready()
 
         # Fill out the consent form
         self.type("input#store_fname", "Chat")
@@ -99,7 +98,7 @@ class SeleniumTestMicrositeIntegration(FHISeleniumBase, StaticLiveServerTestCase
         self.click("button[type='submit']")
 
         # Wait for redirect to chat interface
-        time.sleep(2)
+        self.wait_for_clickable("#chat-interface-root")
 
         # Check that we're on the chat page
         self.assert_element("#chat-interface-root")
@@ -116,7 +115,7 @@ class SeleniumTestMicrositeIntegration(FHISeleniumBase, StaticLiveServerTestCase
         self.click("a.secondary-cta")
 
         # Should redirect to chat consent page
-        time.sleep(1)
+        self.wait_for_page_ready()
 
         # Fill out the consent form
         self.type("input#store_fname", "PubMed")
@@ -127,7 +126,7 @@ class SeleniumTestMicrositeIntegration(FHISeleniumBase, StaticLiveServerTestCase
         self.click("button[type='submit']")
 
         # Wait for redirect to chat interface
-        time.sleep(2)
+        self.wait_for_clickable("#chat-interface-root")
 
         # Check that we're on the chat page (increase timeout for chat interface initialization)
         self.assert_element("#chat-interface-root", timeout=15)
@@ -135,7 +134,7 @@ class SeleniumTestMicrositeIntegration(FHISeleniumBase, StaticLiveServerTestCase
         # Wait for the chat to initialize
         # Note: In sync test environment, WebSockets don't work so we can't test
         # the actual PubMed search status messages. We verify the chat loads.
-        time.sleep(3)
+        self.wait_for_page_ready()
 
         # Check that the chat interface container is present
         # (React chat component may not fully render without WebSocket connection)
@@ -147,7 +146,7 @@ class SeleniumTestMicrositeIntegration(FHISeleniumBase, StaticLiveServerTestCase
 
         # Verify that an OngoingChat was created with the microsite_slug
         # Wait a bit more for background processing
-        time.sleep(3)
+        self.wait_for_page_ready()
         chats = OngoingChat.objects.filter(
             hashed_email=Denial.get_hashed_email("pubmed-search-test@example.com")
         )
@@ -218,7 +217,7 @@ class SeleniumTestMicrositeExistingUser(FHISeleniumBase, StaticLiveServerTestCas
         self.click("input#tos")
         self.click("input#privacy")
         self.click("button[type='submit']")
-        time.sleep(2)
+        self.wait_for_clickable("#chat-interface-root")
         self.assert_element("#chat-interface-root")
 
     def test_existing_user_microsite_chat_preserves_user_info(self):
@@ -236,7 +235,7 @@ class SeleniumTestMicrositeExistingUser(FHISeleniumBase, StaticLiveServerTestCas
         self.open(f"{self.live_server_url}/microsite/mri-denial")
         self.assert_element("a.secondary-cta")
         self.click("a.secondary-cta")
-        time.sleep(1)
+        self.wait_for_page_ready()
 
         # Should skip consent (already consented) or have pre-filled form
         # Check if we're on consent page with pre-filled info or directly on chat
@@ -253,7 +252,7 @@ class SeleniumTestMicrositeExistingUser(FHISeleniumBase, StaticLiveServerTestCas
             self.click("input#tos")
             self.click("input#privacy")
             self.click("button[type='submit']")
-            time.sleep(2)
+            self.wait_for_clickable("#chat-interface-root")
 
         # Should be on chat now
         self.assert_element("#chat-interface-root")
@@ -274,14 +273,14 @@ class SeleniumTestMicrositeExistingUser(FHISeleniumBase, StaticLiveServerTestCas
         # Now visit a different microsite
         self.open(f"{self.live_server_url}/microsite/mri-denial")
         self.click("a.secondary-cta")
-        time.sleep(1)
+        self.wait_for_page_ready()
 
         # Complete consent if needed
         if "chat-consent" in self.driver.current_url:
             self.click("input#tos")
             self.click("input#privacy")
             self.click("button[type='submit']")
-            time.sleep(2)
+            self.wait_for_clickable("#chat-interface-root")
 
         # Should be on chat with MRI context
         self.assert_element("#chat-interface-root")
@@ -303,7 +302,7 @@ class SeleniumTestMicrositeExistingUser(FHISeleniumBase, StaticLiveServerTestCas
         # Visit microsite and go to chat
         self.open(f"{self.live_server_url}/microsite/mri-denial")
         self.click("a.secondary-cta")
-        time.sleep(1)
+        self.wait_for_page_ready()
 
         # Fill consent with external models enabled
         self.type("input#store_fname", "Microsite")
@@ -313,7 +312,7 @@ class SeleniumTestMicrositeExistingUser(FHISeleniumBase, StaticLiveServerTestCas
         self.click("input#privacy")
         self.click("input#use_external_models")  # Enable external models
         self.click("button[type='submit']")
-        time.sleep(2)
+        self.wait_for_clickable("#chat-interface-root")
 
         # Verify external models preference saved
         external_pref = self.execute_script(

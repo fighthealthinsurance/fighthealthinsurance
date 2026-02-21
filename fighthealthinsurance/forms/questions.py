@@ -297,7 +297,7 @@ class GenderAffirmingCareQuestions(InsuranceQuestions):
                 try:
                     doc = pymupdf.open(path)
                     contents = ""
-                    for page in doc:
+                    for page in doc:  # type: ignore[attr-defined]
                         contents += page.get_text()
                 except RuntimeError:
                     logger.warning(f"Error reading {path}")

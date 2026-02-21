@@ -71,7 +71,7 @@ ray==2.53.0 # Must update build_ray
 ray[client]==2.53.0 # Must update build_ray
 requests
 sentry-sdk[django]
-setuptools>=58
+setuptools>=58,<81
 sorl-thumbnail
 sqlalchemy_mate==2.0.0.0 # uszipcode issue see https://github.com/MacHu-GWU/uszipcode-project/issues/79
 stopit

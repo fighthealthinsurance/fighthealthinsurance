@@ -36,3 +36,38 @@ class FHISeleniumBase(BaseCase, TestCase):
             lambda d: d.find_element(*element_locator) != None
         )
         return self.click(f"button#{target}")
+
+    def wait_for_page_ready(self, timeout=15, predicate=None, selector=None, localstorage_key=None):
+        """Wait for page JavaScript to complete loading.
+
+        Args:
+            timeout: Maximum wait time in seconds.
+            predicate: Optional callable(driver) -> bool to poll after readyState.
+            selector: Optional CSS selector; waits until the element has a non-empty value.
+            localstorage_key: Optional localStorage key; waits until the key exists.
+        """
+        WebDriverWait(self.driver, timeout).until(
+            lambda d: d.execute_script("return document.readyState") == "complete"
+        )
+        if predicate is not None:
+            WebDriverWait(self.driver, timeout).until(predicate)
+        elif selector is not None:
+            WebDriverWait(self.driver, timeout).until(
+                lambda d: d.find_element(By.CSS_SELECTOR, selector).get_attribute("value") not in (None, "")
+            )
+        elif localstorage_key is not None:
+            WebDriverWait(self.driver, timeout).until(
+                lambda d: d.execute_script(
+                    f"return localStorage.getItem('{localstorage_key}')"
+                ) is not None
+            )
+
+    def wait_for_clickable(self, selector, timeout=15):
+        """Wait for element to be clickable."""
+        WebDriverWait(self.driver, timeout).until(
+            EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
+        )
+
+    def wait_for_url_contains(self, text, timeout=15):
+        """Wait until URL contains specific text."""
+        WebDriverWait(self.driver, timeout).until(EC.url_contains(text))

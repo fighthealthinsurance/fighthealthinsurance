@@ -80,8 +80,8 @@ class SeleniumTestAppealGeneration(FHISeleniumBase, StaticLiveServerTestCase):
             file_input.send_keys(path_to_image)
             self.click("button#submit")
             # The OCR should process the image (even if it doesn't find text)
-            # Give it time to process
-            time.sleep(2)
+            # Wait for page to process and redirect
+            self.wait_for_page_ready()
             # After successful OCR, the view redirects to scrub.html (main denial form)
             self.assert_title_eventually("Upload your Health Insurance Denial")
 
@@ -362,7 +362,7 @@ Cheap-O-Insurance-Corp"""
         self.assert_title_eventually("Optional: Health History")
         self.assert_element("textarea#health_history")
         # Wait for JavaScript to restore value from localStorage
-        time.sleep(0.5)
+        self.wait_for_page_ready(selector="textarea#health_history")
 
         # Verify health history preserved via localStorage
         health_history_value = self.get_value("textarea#health_history")
@@ -446,10 +446,22 @@ Sincerely, OtherInsuranceCo""",
 
         # On health history page for second appeal
         self.assert_title_eventually("Optional: Health History")
-        time.sleep(0.5)  # Wait for JS
+        self.wait_for_page_ready()
 
-        # Health history should NOT have the first appeal's data
+        # Negative assertion: health history must NOT contain first appeal's
+        # data.  wait_for_page_ready returns as soon as readyState is
+        # "complete", but the localStorage restoration script may still be
+        # pending.  Poll for a bounded time so that if the script is going to
+        # restore the old value we catch it, rather than asserting before the
+        # script has had a chance to run.
+        deadline = time.time() + 2
         health_value = self.get_value("textarea#health_history")
+        while time.time() < deadline:
+            health_value = self.get_value("textarea#health_history")
+            if health_value == first_health:
+                break  # Restoration happened – fall through to the assertion
+            time.sleep(0.2)
+
         assert (
             health_value != first_health
         ), f"Second appeal should not restore first appeal's health history. Got: '{health_value}'"
@@ -546,7 +558,7 @@ Sincerely, InsuranceCo""",
         ), f"Back button should result in GET, got {method_content}"
 
         # Health history should be restored from localStorage
-        time.sleep(0.5)
+        self.wait_for_page_ready(selector="textarea#health_history")
         health_value = self.get_value("textarea#health_history")
         assert (
             health_value == test_health
