@@ -110,7 +110,7 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         name="send_mailing_list_mail",
     ),
     # Authentication
-    path("v0/auth/", include("fhi_users.urls")),
+    path("v0/auth/", include(("fhi_users.urls", "fhi_users"), namespace="fhi_users")),
     # stripe integration (TODO webhooks go here)
     # These are links we e-mail people so might have some extra junk.
     # So if there's an extra / or . at the end we ignore it.

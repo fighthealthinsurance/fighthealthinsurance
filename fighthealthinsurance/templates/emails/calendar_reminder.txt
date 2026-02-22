@@ -26,7 +26,7 @@ Benefits of creating an account:
 * Add notes and call logs
 
 Create your free account here:
-https://www.fighthealthinsurance.com/v0/auth/signup
+{{ signup_url }}
 
 IMPORTANT: We store data for 90 days. We're a small scrappy startup -
 please save important documents outside of FHI too! Only appeals created
@@ -43,8 +43,8 @@ Need to add the calendar reminders again?
 YOUR APPEAL SUMMARY
 -------------------
 
-Insurance: {{ insurance_company }}{% if denial.claim_type %}
-Procedure/Claim: {{ denial.claim_type }}{% endif %}
+Insurance: {{ insurance_company }}{% if denial.procedure %}
+Procedure/Claim: {{ denial.procedure }}{% endif %}
 {% endif %}
 
 NEED HELP?
@@ -55,7 +55,7 @@ Visit https://www.fighthealthinsurance.com for:
 * Resources for external reviews
 * State-specific help and guidance
 
-REMINDER: Add support42@fighthealthinsurance.com to your contacts to
+REMINDER: Add {{ default_from_email }} to your contacts to
 ensure you receive future reminders!
 
 Good luck with your follow-up!

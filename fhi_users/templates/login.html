@@ -15,7 +15,7 @@ Login
       {% if domain_invalid %}
       <div class="alert alert-danger">Domain or phone number not found</div>
       {% endif %}
-      <form action="{% url 'login' %}" method="post" id="loginForm">
+      <form action="{% url 'fhi_users:login' %}" method="post" id="loginForm">
 	{% csrf_token %}
         <div class="form-group">
           <div class="form-label-group">

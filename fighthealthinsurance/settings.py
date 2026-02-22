@@ -49,7 +49,7 @@ class Base(Configuration):
 
     # Audit logging - disabled by default, enable via environment variable
     ENABLE_AUDIT_LOGGING = os.getenv("ENABLE_AUDIT_LOGGING", "false").lower() == "true"
-    LOGIN_URL = "login"
+    LOGIN_URL = "fhi_users:login"
     LOGIN_REDIRECT_URL = "/"
     THUMBNAIL_DEBUG = True
     DEFF_FETCH_URL_NAME = "fake_fetch_url"

@@ -60,22 +60,15 @@ class PatientRequiredMixin(LoginRequiredMixin):
         if not request.user.is_authenticated:
             return self.handle_no_permission()
 
-        # Check if user has a PatientUser record
-        try:
-            self.patient_user = PatientUser.objects.get(user=request.user, active=True)
-        except PatientUser.DoesNotExist:
-            # User is logged in but doesn't have a patient account
-            # They might be a professional or need to create a patient profile
-            logger.info(
-                f"User {request.user.id} tried to access patient dashboard without patient record"
-            )
-            # For now, create a patient user automatically for logged-in users
-            self.patient_user, created = PatientUser.objects.get_or_create(
-                user=request.user,
-                defaults={"active": True},
-            )
-            if created:
-                logger.info(f"Created PatientUser for user {request.user.id}")
+        # Get or create PatientUser, reactivating inactive records
+        self.patient_user, created = PatientUser.objects.update_or_create(
+            user=request.user,
+            defaults={"active": True},
+        )
+        if created:
+            logger.info(f"Created PatientUser for user {request.user.id}")
+        elif not created:
+            logger.info(f"Reactivated/confirmed PatientUser for user {request.user.id}")
 
         return super().dispatch(request, *args, **kwargs)
 
@@ -458,8 +451,8 @@ class EvidenceDownloadView(PatientRequiredMixin, View):
             raise Http404("No file attached to this evidence")
 
         # Decrypt the file before returning
-        file = evidence.file.open()
-        decrypted_content = Cryptographer.decrypted(file.read())
+        with evidence.file.open() as f:
+            decrypted_content = Cryptographer.decrypted(f.read())
 
         response = HttpResponse(
             decrypted_content,

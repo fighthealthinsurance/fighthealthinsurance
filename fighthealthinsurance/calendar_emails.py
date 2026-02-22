@@ -90,11 +90,14 @@ def send_calendar_email_with_attachment(
 
         # Also send copy to support for monitoring (like send_fallback_email does)
         try:
+            bcc_emails = settings.BCC_EMAILS
+            if isinstance(bcc_emails, str):
+                bcc_emails = [bcc_emails]
             second_msg = EmailMultiAlternatives(
                 subject + " -- " + to_email,
                 text_content,
                 settings.DEFAULT_FROM_EMAIL,
-                to=["support42@fighthealthinsurance.com"],
+                to=bcc_emails,
             )
             second_msg.attach_alternative(html_content, "text/html")
             second_msg.attach(ics_filename, ics_content, "text/calendar")
@@ -138,6 +141,9 @@ def send_initial_calendar_email(denial: Any, email: str) -> bool:
             "insurance_company": insurance_company,
             "calendar_download_url": _get_calendar_download_url(denial),
             "denial": denial,
+            "default_from_email": settings.DEFAULT_FROM_EMAIL,
+            "signup_url": "https://www.fighthealthinsurance.com"
+            + reverse("fhi_users:signup"),
         }
 
         # Send email with attachment
@@ -266,6 +272,9 @@ class CalendarReminderSender:
                 denial.chose_appeal() if hasattr(denial, "chose_appeal") else None
             ),
             "reminder_type_code": calendar_reminder.reminder_type,
+            "default_from_email": settings.DEFAULT_FROM_EMAIL,
+            "signup_url": "https://www.fighthealthinsurance.com"
+            + reverse("fhi_users:signup"),
         }
 
         try:

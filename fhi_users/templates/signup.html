@@ -32,7 +32,7 @@ Create Account (Optional)
       </div>
       {% endif %}
 
-      <form action="{% url 'signup' %}" method="post" id="signupForm">
+      <form action="{% url 'fhi_users:signup' %}" method="post" id="signupForm">
         {% csrf_token %}
 
         <div class="form-group">
@@ -76,7 +76,7 @@ Create Account (Optional)
         <div class="text-center mt-3">
           <p class="mb-0">
             Already have an account?
-            <a href="/v0/auth/login">Log in</a>
+            <a href="{% url 'fhi_users:login' %}">Log in</a>
           </p>
           <p class="mt-2 mb-0">
             <a href="{% url 'scan' %}" class="text-muted">Skip and generate an appeal without an account</a>

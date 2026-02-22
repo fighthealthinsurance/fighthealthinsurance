@@ -13,7 +13,9 @@ import csv
 import json
 import sys
 from pathlib import Path
-from typing import Set, List, Dict, Any
+from typing import List, Dict, Any
+
+from microsoft_ads_utils import generate_keyword_variations
 
 
 def truncate_text(text: str, max_length: int) -> str:
@@ -21,56 +23,6 @@ def truncate_text(text: str, max_length: int) -> str:
     if len(text) <= max_length:
         return text
     return text[: max_length - 1].rstrip() + "…"
-
-
-def generate_keyword_variations(
-    procedure: str, condition: str = None, title: str = None
-) -> Set[str]:
-    """Generate keyword variations for a microsite."""
-    keywords = set()
-    procedure = procedure.lower().strip()
-    condition_lower = condition.lower().strip() if condition else None
-
-    # Core procedure keywords
-    keywords.add(procedure)
-    keywords.add(f"{procedure} appeal")
-    keywords.add(f"{procedure} denial")
-    keywords.add(f"{procedure} insurance denial")
-    keywords.add(f"{procedure} denied by insurance")
-    keywords.add(f"insurance denied {procedure}")
-    keywords.add(f"appeal {procedure} denial")
-    keywords.add(f"fight {procedure} denial")
-    keywords.add(f"{procedure} coverage denied")
-    keywords.add(f"{procedure} not covered")
-    keywords.add(f"{procedure} not medically necessary")
-    keywords.add(f"{procedure} pre authorization denied")
-    keywords.add(f"{procedure} preauth denial")
-    keywords.add(f"how to appeal {procedure} denial")
-    keywords.add(f"insurance won't cover {procedure}")
-    keywords.add(f"insurance refusing {procedure}")
-
-    # Add condition-based keywords if condition is provided
-    if condition_lower:
-        keywords.add(f"{condition_lower} treatment denial")
-        keywords.add(f"{condition_lower} {procedure}")
-        keywords.add(f"{condition_lower} {procedure} denied")
-        keywords.add(f"{procedure} for {condition_lower}")
-        keywords.add(f"{condition_lower} insurance denial")
-        keywords.add(f"{condition_lower} appeal")
-        keywords.add(f"insurance denied {condition_lower} treatment")
-        keywords.add(f"{condition_lower} medication denied")
-        keywords.add(f"{condition_lower} coverage denial")
-
-    # Generic appeal keywords with procedure
-    keywords.add(f"write appeal letter {procedure}")
-    keywords.add(f"appeal letter for {procedure}")
-    keywords.add(f"{procedure} appeal letter template")
-
-    # Insurance company specific (limited set)
-    for company in ["blue cross", "aetna", "united healthcare"]:
-        keywords.add(f"{company} denied {procedure}")
-
-    return keywords
 
 
 def generate_microsoft_ads_bulk_csv(
@@ -163,7 +115,7 @@ def generate_microsoft_ads_bulk_csv(
         })
 
         # 2b. Add keywords for this ad group
-        keywords = generate_keyword_variations(procedure, condition, ad_group_name)
+        keywords = generate_keyword_variations(procedure, condition)
 
         for keyword in sorted(keywords):
             # Exact match
