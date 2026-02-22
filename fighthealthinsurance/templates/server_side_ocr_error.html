@@ -8,8 +8,8 @@ Upload your Health Insurance Denial - Server Side Processing
 <div style="color:red">
   <h1>Error: {{ error }}</h1>
 </div>
-You may wish to <a href="{% url 'scan' %}">try client side OCR.</a>
-<form  method="post" action="{% url 'server_side_ocr' %}" enctype="multipart/form-data">
+You may wish to <a href="{% url brand_url_names.scan %}">try client side OCR.</a>
+<form  method="post" action="{% url brand_url_names.server_side_ocr %}" enctype="multipart/form-data">
     {% csrf_token %}
     <h2>Transfered to our server for Optical Character Recognition (OCR) (may be temporarily stored)</h2>
     <label class="custom-file-label" for="uploader">Scan & OCR your health insurance denial (select all pages)</label><br>

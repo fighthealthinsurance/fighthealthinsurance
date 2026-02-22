@@ -94,7 +94,7 @@ def get_brand_from_path(path: str) -> Optional[str]:
     Returns:
         Brand slug ('amc') or None if no path-based brand detected
     """
-    if path.startswith("/appealmyclaims/"):
+    if path == "/appealmyclaims" or path.startswith("/appealmyclaims/"):
         return "amc"
     return None
 

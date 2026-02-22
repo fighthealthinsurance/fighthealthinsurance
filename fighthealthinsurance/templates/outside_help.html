@@ -19,7 +19,7 @@ Additional Resources & Questions
   <p><strong>Ready to generate!</strong> Click the button below to create your personalized appeal letter.</p>
 </div>
 {% endif %}
-<form action="{% url 'generate_appeal' %}" method="post">
+<form action="{% url brand_url_names.generate_appeal %}" method="post">
   {% csrf_token %}
   {{ denial_form }}
   <table class="simple-table">
@@ -31,7 +31,7 @@ Additional Resources & Questions
       ← {{ back_label|default:"Back" }}
     </a>
     {% else %}
-    <a href="{% url 'scan' %}" class="btn-link-muted">
+    <a href="{% url brand_url_names.scan %}" class="btn-link-muted">
       Start over with a new denial
     </a>
     {% endif %}

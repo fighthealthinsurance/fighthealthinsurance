@@ -31,6 +31,7 @@ class BrandDetectionTest(TestCase):
 
     def test_path_detection_amc(self):
         """Test that /appealmyclaims/ path prefix is detected."""
+        self.assertEqual(get_brand_from_path("/appealmyclaims"), "amc")
         self.assertEqual(get_brand_from_path("/appealmyclaims/"), "amc")
         self.assertEqual(get_brand_from_path("/appealmyclaims/scan"), "amc")
         self.assertEqual(get_brand_from_path("/appealmyclaims/chat"), "amc")
@@ -178,10 +179,45 @@ class BrandRoutingTest(TestCase):
         self.assertEqual(response.context["brand"].slug, "amc")
 
     def test_appealmyclaims_scan_accessible(self):
-        """Test that /appealmyclaims/scan path is accessible."""
+        """Test that /appealmyclaims/scan uses AMC brand and AMC template."""
         response = self.client.get("/appealmyclaims/scan")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.context["brand"].slug, "amc")
+
+    def test_appealmyclaims_scan_uses_amc_template(self):
+        """Test that /appealmyclaims/scan uses the AMC-styled template."""
+        response = self.client.get("/appealmyclaims/scan")
+        self.assertEqual(response.status_code, 200)
+        # Check for AMC-specific content: stepper and Material UI styling
+        self.assertContains(response, "Upload Your Denial")
+        self.assertContains(response, "amc-stepper")
+        self.assertContains(response, "#1976d2")  # MUI primary blue
+        self.assertContains(response, "Manrope")  # AMC font
+
+    def test_appealmyclaims_scan_form_action(self):
+        """Test that AMC scan form posts to the AMC scan endpoint."""
+        response = self.client.get("/appealmyclaims/scan")
+        self.assertContains(response, 'action="/appealmyclaims/scan"')
+
+    def test_alt_root_redirects_to_appealmyclaims(self):
+        """Test that /alt/ redirects to /appealmyclaims/."""
+        response = self.client.get("/alt/")
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, "/appealmyclaims/")
+
+    def test_alt_scan_redirects_to_appealmyclaims_scan(self):
+        """Test that /alt/scan redirects to /appealmyclaims/scan."""
+        response = self.client.get("/alt/scan")
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, "/appealmyclaims/scan")
+
+    def test_fhi_scan_uses_standard_template(self):
+        """Test that /scan still uses the standard FHI template."""
+        response = self.client.get("/scan")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["brand"].slug, "fhi")
+        # FHI scan should NOT have AMC stepper
+        self.assertNotContains(response, "amc-stepper")
 
 
 class BrandAwareURLTest(TestCase):
@@ -211,6 +247,12 @@ class BrandAwareURLTest(TestCase):
         self.assertContains(response, 'href="/appealmyclaims/privacy_policy"')
         self.assertContains(response, 'href="/appealmyclaims/tos"')
 
+    def test_amc_brand_home_link_points_to_amc_root(self):
+        """Test that AMC pages use AMC root for the brand home/logo link."""
+        response = self.client.get("/appealmyclaims/scan")
+        self.assertContains(response, 'id="brand-home-link"')
+        self.assertContains(response, 'id="brand-home-link" href="/appealmyclaims/"')
+
     def test_amc_consent_uses_fhi_policies(self):
         """Test that AMC consent checkboxes reference FHI policies (same policies for both brands)."""
         response = self.client.get("/appealmyclaims/scan")
@@ -236,8 +278,8 @@ class BrandAwareURLTest(TestCase):
         # Check that subscribe checkbox is present
         self.assertContains(response_amc, 'id="subscribe"')
         self.assertContains(response_amc, 'name="subscribe"')
-        # Verify it's in the "Optional" section
-        self.assertContains(response_amc, "<b>Optional</b>")
+        # Verify it's in the optional section
+        self.assertContains(response_amc, "Optional Settings")
 
     def test_required_policies_are_mandatory(self):
         """Test that privacy policy and TOS agreements are required."""
@@ -254,3 +296,73 @@ class BrandAwareURLTest(TestCase):
         self.assertContains(response_amc, 'id="tos"')
         self.assertContains(response_amc, 'id="personalonly"')
         self.assertContains(response_amc, 'id="pii"')
+
+
+class AMCFlowTest(TestCase):
+    """Tests specific to the AMC-styled flow."""
+
+    def test_amc_landing_page_content(self):
+        """Test that AMC landing page has expected content."""
+        response = self.client.get("/appealmyclaims/")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Healthcare Appeal Helper")
+        self.assertContains(response, "Start Your Appeal")
+
+    def test_amc_scan_has_all_required_form_fields(self):
+        """Test that AMC scan has all form fields needed for backend processing."""
+        response = self.client.get("/appealmyclaims/scan")
+        self.assertEqual(response.status_code, 200)
+        # Contact fields
+        self.assertContains(response, 'id="store_fname"')
+        self.assertContains(response, 'id="store_lname"')
+        self.assertContains(response, 'id="email"')
+        self.assertContains(response, 'name="email"')
+        self.assertContains(response, 'id="store_street"')
+        self.assertContains(response, 'id="store_zip"')
+        # Denial fields
+        self.assertContains(response, 'name="denial_text"')
+        self.assertContains(response, 'id="denial_text"')
+        self.assertContains(response, 'id="uploader"')
+        # Scrub button
+        self.assertContains(response, 'id="scrub-2"')
+        # Submit
+        self.assertContains(response, 'id="submit"')
+
+    def test_amc_scan_has_error_divs(self):
+        """Test that AMC scan template has all required error message divs."""
+        response = self.client.get("/appealmyclaims/scan")
+        self.assertContains(response, 'id="email_error"')
+        self.assertContains(response, 'id="agree_chk_error"')
+        self.assertContains(response, 'id="pii_error"')
+        self.assertContains(response, 'id="need_denial"')
+
+    def test_amc_scan_has_stepper(self):
+        """Test that AMC scan shows the step indicator."""
+        response = self.client.get("/appealmyclaims/scan")
+        self.assertContains(response, "amc-stepper")
+        self.assertContains(response, "Upload Denial")
+        self.assertContains(response, "Review &amp; Customize")
+        self.assertContains(response, "Send Appeal")
+
+    def test_amc_scan_has_powered_by_fhi(self):
+        """Test that AMC scan page shows 'Powered by Fight Health Insurance'."""
+        response = self.client.get("/appealmyclaims/scan")
+        self.assertContains(response, "Powered by")
+        self.assertContains(response, "Fight Health Insurance")
+
+    def test_amc_scan_has_csrf_token(self):
+        """Test that AMC scan form includes CSRF token."""
+        response = self.client.get("/appealmyclaims/scan")
+        self.assertContains(response, "csrfmiddlewaretoken")
+
+    def test_fhi_scan_unchanged(self):
+        """Test that FHI scan page still uses the standard template."""
+        response = self.client.get("/scan")
+        self.assertEqual(response.status_code, 200)
+        # FHI should NOT have AMC stepper or Material UI colors
+        self.assertNotContains(response, "amc-stepper")
+        self.assertNotContains(response, "Manrope")
+        # FHI should still have its standard elements
+        self.assertContains(response, 'id="submit"')
+        self.assertContains(response, 'name="denial_text"')
+        self.assertContains(response, 'id="email"')

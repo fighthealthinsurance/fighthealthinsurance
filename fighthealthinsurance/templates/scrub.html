@@ -42,7 +42,7 @@ Upload your Health Insurance Denial
 	</div>
 	{% endif %}
 	<div class="main-form">
-	<form method="post" action="{% url 'process' %}" id="fuck_health_insurance_form" enctype="multipart/form-data">
+	<form method="post" action="{% url brand_url_names.process %}" id="fuck_health_insurance_form" enctype="multipart/form-data">
 		{% csrf_token %}
 		{% if default_procedure or default_condition %}
 		<input type="hidden" name="default_procedure" value="{{ default_procedure }}">

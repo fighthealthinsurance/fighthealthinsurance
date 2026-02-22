@@ -67,7 +67,7 @@ Fight Your Health Insurance Denial: Choose an Appeal
   </p>
 </div>
 <div id="base-form" style="display: none;">
-<form action="{% url 'choose_appeal' %}" method="post" class="col-md-12 d-flex flex-column align-items-center" id="form">
+<form action="{% url brand_url_names.choose_appeal %}" method="post" class="col-md-12 d-flex flex-column align-items-center" id="form">
   {% csrf_token %}
   <input type="hidden" name="email" value="{{ user_email }}">
   <input type="hidden" name="denial_id" value="{{ denial_id }}">
@@ -87,7 +87,7 @@ Fight Your Health Insurance Denial: Choose an Appeal
     ← {{ back_label|default:"Back" }}
   </a>
   {% endif %}
-  <a href="{% url 'scan' %}" class="btn-link-muted">
+  <a href="{% url brand_url_names.scan %}" class="btn-link-muted">
     Start over with a new denial
   </a>
 </div>

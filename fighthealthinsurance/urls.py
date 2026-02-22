@@ -194,28 +194,8 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         views.AppealFileView.as_view(),
         name="appeal_file_view",
     ),
-    path(
-        "process",
-        sensitive_post_parameters("email")(views.InitialProcessView.as_view()),
-        name="process",
-    ),
-    path(
-        "v0/combined_collected_view",
-        sensitive_post_parameters("email")(views.DenialCollectedView.as_view()),
-        name="dvc",
-    ),
-    path("v0/plan_documents", views.PlanDocumentsView.as_view(), name="hh"),
-    path("v0/categorize", views.EntityExtractView.as_view(), name="eev"),
-    path(
-        "categorize_review",
-        sensitive_post_parameters("email")(views.CategorizeReview.as_view()),
-        name="categorize_review",
-    ),
-    path(
-        "server_side_ocr",
-        sensitive_post_parameters("email")(views.OCRView.as_view()),
-        name="server_side_ocr",
-    ),
+    # Processing flow URLs (process, hh, dvc, eev, etc.) are now in
+    # brandable_patterns so they're available under both / and /appealmyclaims/
     # FHI-specific routes (not branded)
     path(
         "how-to-help",
@@ -335,6 +315,17 @@ if os.getenv("BRB") == "BRB":
 
 # Non-branded utility routes
 urlpatterns += [
+    # /alt/ redirects to the AMC-branded flow
+    path(
+        "alt/",
+        RedirectView.as_view(url="/appealmyclaims/", permanent=False),
+        name="alt_root",
+    ),
+    path(
+        "alt/scan",
+        RedirectView.as_view(url="/appealmyclaims/scan", permanent=False),
+        name="alt_scan",
+    ),
     path(
         "chat/",
         sensitive_post_parameters()(views.chat_interface_view),
@@ -412,6 +403,37 @@ brandable_patterns = [
         sensitive_post_parameters("email")(views.ChooseAppeal.as_view()),
         name="choose_appeal",
     ),
+    # Processing flow steps - needed under /appealmyclaims/ for brand continuity
+    path(
+        "process",
+        sensitive_post_parameters("email")(views.InitialProcessView.as_view()),
+        name="process",
+    ),
+    path(
+        "v0/plan_documents",
+        views.PlanDocumentsView.as_view(),
+        name="hh",
+    ),
+    path(
+        "v0/combined_collected_view",
+        sensitive_post_parameters("email")(views.DenialCollectedView.as_view()),
+        name="dvc",
+    ),
+    path(
+        "v0/categorize",
+        views.EntityExtractView.as_view(),
+        name="eev",
+    ),
+    path(
+        "categorize_review",
+        sensitive_post_parameters("email")(views.CategorizeReview.as_view()),
+        name="categorize_review",
+    ),
+    path(
+        "server_side_ocr",
+        sensitive_post_parameters("email")(views.OCRView.as_view()),
+        name="server_side_ocr",
+    ),
     path(
         "about-us",
         cache_control(public=True)(cache_page(60 * 60 * 2)(views.AboutView.as_view())),
@@ -449,7 +471,7 @@ else:
     urlpatterns += [p for p in brandable_patterns if p.name != "root"]
 
 # AppealMyClaims path-based brand access
-# AMC uses a single-page flow with upload form on landing page (not FHI's multi-page flow)
+# AMC uses its own landing page and AMC-styled scan template
 urlpatterns += [
     path(
         "appealmyclaims/",
@@ -457,12 +479,20 @@ urlpatterns += [
             cache_page(60 * 60 * 2)(views.AMCIndexView.as_view())
         ),
         name="amc_root",
-    )
+    ),
+    # AMC scan uses the AMC-styled intake form (not the default FHI scrub.html)
+    path(
+        "appealmyclaims/scan",
+        sensitive_post_parameters("email")(views.AMCInitialProcessView.as_view()),
+        name="amc_scan",
+    ),
 ]
-# Add other AMC-branded URLs (scan, about, privacy, etc.) with /appealmyclaims/ prefix
-# Note: amc_root is handled above, so filter it out to avoid duplication
+# Add other AMC-branded URLs (about, privacy, etc.) with /appealmyclaims/ prefix
+# Note: amc_root and amc_scan are handled above, so filter them out to avoid duplication
 urlpatterns += add_brand_patterns(
-    [p for p in brandable_patterns if p.name != "root"], "appealmyclaims/", "amc_"
+    [p for p in brandable_patterns if p.name not in ("root", "scan")],
+    "appealmyclaims/",
+    "amc_",
 )
 
 urlpatterns += staticfiles_urlpatterns()

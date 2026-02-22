@@ -55,6 +55,23 @@ class BlogPostMetadata(TypedDict, total=False):
     readTime: str
 
 
+def brand_reverse(request: HttpRequest, url_name: str, *args, **kwargs) -> str:
+    """Resolve a URL name with brand awareness.
+
+    If the current request is for the AMC brand, prepends 'amc_' to the
+    URL name so the generated URL stays under /appealmyclaims/.
+    Falls back to the unbranded URL name if the branded version doesn't exist.
+    """
+    brand_slug = getattr(request, "brand_slug", "fhi")
+    if brand_slug == "amc":
+        branded_name = f"amc_{url_name}"
+        try:
+            return reverse(branded_name, *args, **kwargs)
+        except Exception:
+            pass
+    return reverse(url_name, *args, **kwargs)
+
+
 # Insurance Bullshit Bingo phrases - humorous but factual common denial reasons
 BINGO_PHRASES = [
     "Not medically necessary",
@@ -1076,6 +1093,10 @@ class InitialProcessView(generic.FormView):
     def get_success_url(self):
         pass
 
+    def get_back_url(self) -> str:
+        """Return back URL used on step 2 page."""
+        return reverse("scan")
+
     def form_valid(self, form):
         # Legacy doesn't have denial id
         cleaned_data = form.cleaned_data
@@ -1177,21 +1198,40 @@ class InitialProcessView(generic.FormView):
             "health_history.html",
             context={
                 "form": form,
-                "next": reverse("hh"),
+                "next": brand_reverse(self.request, "hh"),
                 "current_step": 2,
-                "back_url": reverse("scan"),
+                "back_url": self.get_back_url(),
             },
         )
 
 
-def build_back_url(url_name: str, denial_id, email: str, semi_sekret: str) -> str:
+class AMCInitialProcessView(InitialProcessView):
+    """AMC-styled intake flow view with Material UI blue theme."""
+
+    template_name = "amc_scrub.html"
+
+    def get_back_url(self) -> str:
+        return reverse("amc_scan")
+
+
+def build_back_url(
+    url_name: str,
+    denial_id,
+    email: str,
+    semi_sekret: str,
+    request: typing.Optional[HttpRequest] = None,
+) -> str:
     """
     Build a back URL with denial ref parameters encoded.
     This allows the user to navigate back and still have the form fields populated.
+    If request is provided, uses brand-aware URL resolution.
     """
     from urllib.parse import urlencode
 
-    base_url = reverse(url_name)
+    if request is not None:
+        base_url = brand_reverse(request, url_name)
+    else:
+        base_url = reverse(url_name)
     params = urlencode(
         {
             "denial_id": denial_id,
@@ -1271,8 +1311,9 @@ class SessionRequiredMixin(View):
                 denial_ref.get("denial_id", ""),
                 denial_ref.get("email", ""),
                 denial_ref.get("semi_sekret", ""),
+                request=self.request,
             )
-        return reverse(url_name)
+        return brand_reverse(self.request, url_name)
 
 
 class EntityExtractView(SessionRequiredMixin, generic.FormView):
@@ -1291,7 +1332,7 @@ class EntityExtractView(SessionRequiredMixin, generic.FormView):
         """Add context needed for the template."""
         context = super().get_context_data(**kwargs)
         denial_ref = self.get_denial_ref_from_request()
-        context["next"] = reverse("eev")
+        context["next"] = brand_reverse(self.request, "eev")
         context["current_step"] = 4
         context["back_url"] = self.get_back_url("dvc", denial_ref)
         context["back_label"] = "Back to plan documents"
@@ -1342,6 +1383,7 @@ class EntityExtractView(SessionRequiredMixin, generic.FormView):
                 denial_response.denial_id,
                 email,
                 denial_response.semi_sekret,
+                request=self.request,
             ),
             "back_label": "Back to plan documents",
         }
@@ -1374,9 +1416,9 @@ class PlanDocumentsView(SessionRequiredMixin, generic.FormView):
     def get_context_data(self, **kwargs):
         """Add context needed for the template."""
         context = super().get_context_data(**kwargs)
-        context["next"] = reverse("hh")  # Form posts to itself
+        context["next"] = brand_reverse(self.request, "hh")  # Form posts to itself
         context["current_step"] = 2
-        context["back_url"] = reverse("scan")  # Scan doesn't need denial ref
+        context["back_url"] = brand_reverse(self.request, "scan")
         return context
 
     def form_valid(self, form):
@@ -1398,13 +1440,14 @@ class PlanDocumentsView(SessionRequiredMixin, generic.FormView):
             "plan_documents.html",
             context={
                 "form": new_form,
-                "next": reverse("dvc"),
+                "next": brand_reverse(self.request, "dvc"),
                 "current_step": 3,
                 "back_url": build_back_url(
                     "hh",
                     denial_response.denial_id,
                     email,
                     denial_response.semi_sekret,
+                    request=self.request,
                 ),
             },
         )
@@ -1426,7 +1469,7 @@ class DenialCollectedView(SessionRequiredMixin, generic.FormView):
         """Add context needed for the template."""
         context = super().get_context_data(**kwargs)
         denial_ref = self.get_denial_ref_from_request()
-        context["next"] = reverse("dvc")  # Form posts to itself
+        context["next"] = brand_reverse(self.request, "dvc")  # Form posts to itself
         context["current_step"] = 3
         context["back_url"] = self.get_back_url("hh", denial_ref)
         return context
@@ -1448,13 +1491,14 @@ class DenialCollectedView(SessionRequiredMixin, generic.FormView):
             "entity_extract.html",
             context={
                 "form": new_form,
-                "next": reverse("eev"),
+                "next": brand_reverse(self.request, "eev"),
                 "current_step": 4,
                 "back_url": build_back_url(
                     "hh",
                     form.cleaned_data["denial_id"],
                     form.cleaned_data["email"],
                     form.cleaned_data["semi_sekret"],
+                    request=self.request,
                 ),
                 "back_label": "Forgot some plan documents?",
                 "form_context": {

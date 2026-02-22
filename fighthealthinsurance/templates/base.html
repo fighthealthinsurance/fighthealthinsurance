@@ -140,7 +140,7 @@
         <div class="container">
 
             <!-- lOGO TEXT HERE -->
-            <a href="{% url 'root' %}">
+            <a id="brand-home-link" href="{% url brand_url_names.root %}">
                 {% if brand.logo_url %}
                     <img src="{% static brand.logo_url %}" alt="{{ brand.name }}" class="img-fluid logo" width="500" height="500">
                 {% else %}

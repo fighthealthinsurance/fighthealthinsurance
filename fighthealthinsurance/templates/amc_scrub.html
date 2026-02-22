@@ -1,0 +1,610 @@
+{% extends 'base.html' %}
+{% block title %}Upload Your Denial - {{ brand.name }}{% endblock title %}
+{% block metatitle %}Upload Your Denial - {{ brand.name }}{% endblock metatitle %}
+{% block metadescription %}Upload or paste your health insurance denial letter to generate a professional appeal with AI assistance.{% endblock metadescription %}
+
+{% load compress %}
+{% load static %}
+
+{% block scriptmagic %}
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+<script type="module">
+  import * as main from '{% static "js/dist/scrub.bundle.js" %}';
+</script>
+<script>
+  document.addEventListener('DOMContentLoaded', function() {
+    var form = document.getElementById('fuck_health_insurance_form');
+    if (form) {
+      form.addEventListener('submit', function() {
+        if (window.trackUETConversion) {
+          window.trackUETConversion('denial_appeal_start', {
+            event_category: 'conversion',
+            event_label: 'Denial Form Submitted (AMC Flow)'
+          });
+        }
+      });
+    }
+  });
+</script>
+{% endblock scriptmagic %}
+
+{% block extra_style %}
+<style>
+  :root {
+    --mui-primary: #1976d2;
+    --mui-primary-dark: #1565c0;
+    --mui-primary-light: #42a5f5;
+    --mui-bg: #f5f8fa;
+    --mui-text: rgba(0, 0, 0, .87);
+    --mui-text-secondary: #6b7280;
+    --mui-border: rgba(0, 0, 0, 0.23);
+    --mui-success: #2e7d32;
+    --mui-error: #d32f2f;
+  }
+
+  body {
+    font-family: 'Manrope', sans-serif;
+    background-color: var(--mui-bg);
+    color: var(--mui-text);
+  }
+
+  .form-control, .form-check-label, .form-label, .btn {
+    font-family: 'Manrope', sans-serif;
+  }
+
+  /* Stepper header */
+  .amc-stepper {
+    background: white;
+    border-bottom: 1px solid #e5e7eb;
+    padding: 1.5rem 0;
+    margin-bottom: 2rem;
+  }
+
+  .amc-stepper-inner {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 0;
+    max-width: 700px;
+    margin: 0 auto;
+  }
+
+  .amc-step {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .amc-step-num {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 0.875rem;
+  }
+
+  .amc-step.active .amc-step-num {
+    background: var(--mui-primary);
+    color: white;
+  }
+
+  .amc-step.completed .amc-step-num {
+    background: var(--mui-success);
+    color: white;
+  }
+
+  .amc-step.upcoming .amc-step-num {
+    background: #e5e7eb;
+    color: #9ca3af;
+  }
+
+  .amc-step-label {
+    font-size: 0.875rem;
+    font-weight: 500;
+  }
+
+  .amc-step.active .amc-step-label {
+    color: var(--mui-primary);
+    font-weight: 600;
+  }
+
+  .amc-step.upcoming .amc-step-label {
+    color: #9ca3af;
+  }
+
+  .amc-step-connector {
+    width: 60px;
+    height: 2px;
+    background: #e5e7eb;
+    margin: 0 0.75rem;
+  }
+
+  .amc-step.completed + .amc-step-connector {
+    background: var(--mui-success);
+  }
+
+  /* Page header */
+  .amc-page-header {
+    text-align: center;
+    margin-bottom: 2rem;
+  }
+
+  .amc-page-header h1 {
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: #1f2937;
+    margin-bottom: 0.5rem;
+  }
+
+  .amc-page-header p {
+    color: var(--mui-text-secondary);
+    font-size: 1rem;
+    margin: 0;
+  }
+
+  /* Form card */
+  .amc-form-card {
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.24);
+    padding: 2rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .amc-form-card h3 {
+    font-size: 1.15rem;
+    font-weight: 600;
+    color: #1f2937;
+    margin-bottom: 1.25rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 2px solid var(--mui-primary);
+    display: inline-block;
+  }
+
+  /* MUI-style form controls */
+  .amc-form-card .form-control {
+    border-radius: 4px;
+    border: 1px solid var(--mui-border);
+    padding: 10px 14px;
+    font-size: 0.95rem;
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+
+  .amc-form-card .form-control:focus {
+    border-color: var(--mui-primary);
+    box-shadow: 0 0 0 0.2rem rgba(25, 118, 210, 0.25);
+  }
+
+  .amc-form-card .form-label {
+    font-weight: 500;
+    font-size: 0.9rem;
+    color: #374151;
+    margin-bottom: 0.35rem;
+  }
+
+  .amc-form-card .form-check-label {
+    font-size: 0.9rem;
+    color: #4b5563;
+    line-height: 1.5;
+  }
+
+  .amc-form-card .form-check-input:checked {
+    background-color: var(--mui-primary);
+    border-color: var(--mui-primary);
+  }
+
+  .amc-form-card .form-group {
+    margin-bottom: 1rem;
+  }
+
+  .amc-form-card .together-form-group {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    margin-bottom: 1rem;
+  }
+
+  @media (max-width: 576px) {
+    .amc-form-card .together-form-group {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  /* Upload area */
+  .amc-upload-area {
+    border: 2px dashed var(--mui-border);
+    border-radius: 8px;
+    padding: 1.5rem;
+    text-align: center;
+    background: #fafafa;
+    margin-bottom: 1rem;
+    transition: border-color 0.2s;
+  }
+
+  .amc-upload-area:hover {
+    border-color: var(--mui-primary);
+  }
+
+  .amc-upload-area .form-control {
+    border: none;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  /* Buttons */
+  .btn-mui-primary {
+    background-color: var(--mui-primary);
+    border-color: var(--mui-primary);
+    color: white;
+    font-weight: 600;
+    text-transform: none;
+    border-radius: 4px;
+    padding: 10px 28px;
+    font-size: 1rem;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 1px 5px 0 rgba(0,0,0,0.12), 0 2px 2px 0 rgba(0,0,0,0.14);
+  }
+
+  .btn-mui-primary:hover {
+    background-color: var(--mui-primary-dark);
+    border-color: var(--mui-primary-dark);
+    color: white;
+    box-shadow: 0 2px 4px -1px rgba(0,0,0,0.2), 0 4px 5px 0 rgba(0,0,0,0.14), 0 1px 10px 0 rgba(0,0,0,0.12);
+  }
+
+  .btn-mui-outlined {
+    background: transparent;
+    border: 1px solid var(--mui-primary);
+    color: var(--mui-primary);
+    font-weight: 500;
+    border-radius: 4px;
+    padding: 6px 16px;
+    font-size: 0.875rem;
+    transition: all 0.2s;
+  }
+
+  .btn-mui-outlined:hover {
+    background: rgba(25, 118, 210, 0.04);
+    color: var(--mui-primary);
+  }
+
+  /* Policies section */
+  .amc-policies {
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 1.25rem;
+    margin-bottom: 1rem;
+  }
+
+  .amc-policies h4 {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #374151;
+    margin-bottom: 0.75rem;
+  }
+
+  .amc-policies .form-check {
+    margin-bottom: 0.6rem;
+  }
+
+  /* Optional section */
+  .amc-optional {
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    background: white;
+    overflow: hidden;
+  }
+
+  .amc-optional > summary {
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 0.95rem;
+    color: #374151;
+    padding: 1rem 1.25rem;
+    background: #f9fafb;
+    border-bottom: 1px solid #e5e7eb;
+    list-style: none;
+  }
+
+  .amc-optional > summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .amc-optional > summary::before {
+    content: "\25B6";
+    display: inline-block;
+    margin-right: 0.5rem;
+    font-size: 0.7rem;
+    transition: transform 0.2s;
+  }
+
+  .amc-optional[open] > summary::before {
+    transform: rotate(90deg);
+  }
+
+  .amc-optional-body {
+    padding: 1rem 1.25rem;
+  }
+
+  /* Info callout */
+  .amc-info {
+    background: #e3f2fd;
+    border-left: 4px solid var(--mui-primary);
+    border-radius: 0 4px 4px 0;
+    padding: 0.75rem 1rem;
+    margin-bottom: 1rem;
+    font-size: 0.875rem;
+    color: #1e3a5f;
+  }
+
+  /* Error messages - enhanced styling for AMC theme.
+     Visibility is controlled by .hidden-error-message / .visible classes in custom.css.
+     Only add visual enhancements here, not display/visibility rules. */
+  .hidden-error-message.visible {
+    background: #fef2f2;
+    border-left: 4px solid var(--mui-error);
+    border-radius: 0 4px 4px 0;
+    padding: 0.75rem 1rem;
+    margin-bottom: 0.75rem;
+    font-size: 0.875rem;
+    color: #991b1b;
+  }
+
+  /* Privacy notes */
+  .amc-privacy-notes {
+    background: #f9fafb;
+    border-radius: 8px;
+    padding: 1.25rem;
+    margin-top: 1.5rem;
+  }
+
+  .amc-privacy-notes p {
+    font-size: 0.8rem;
+    color: var(--mui-text-secondary);
+    line-height: 1.6;
+    margin-bottom: 0.75rem;
+  }
+
+  .amc-privacy-notes p:last-child {
+    margin-bottom: 0;
+  }
+
+  .amc-privacy-notes a {
+    color: var(--mui-primary);
+  }
+</style>
+{% endblock extra_style %}
+
+{% block content %}
+<!-- Stepper -->
+<div class="amc-stepper">
+  <div class="container">
+    <div class="amc-stepper-inner">
+      <div class="amc-step active">
+        <div class="amc-step-num">1</div>
+        <span class="amc-step-label">Upload Denial</span>
+      </div>
+      <div class="amc-step-connector"></div>
+      <div class="amc-step upcoming">
+        <div class="amc-step-num">2</div>
+        <span class="amc-step-label">Review &amp; Customize</span>
+      </div>
+      <div class="amc-step-connector"></div>
+      <div class="amc-step upcoming">
+        <div class="amc-step-num">3</div>
+        <span class="amc-step-label">Send Appeal</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<section style="padding-bottom: 3rem;">
+  <div class="container" style="max-width: 800px;">
+
+    <!-- Page header -->
+    <div class="amc-page-header">
+      <h1>Upload Your Denial</h1>
+      <p>Provide your denial letter and basic information so we can generate your appeal.</p>
+    </div>
+
+    {% if default_procedure or default_condition %}
+    <div class="amc-info" style="margin-bottom: 1.5rem;">
+      You started from the <strong>{{ microsite_title }}</strong> page. We'll pre-fill
+      {% if default_procedure %}your procedure as <strong>{{ default_procedure }}</strong>{% endif %}
+      {% if default_procedure and default_condition %} and {% endif %}
+      {% if default_condition %}your condition as <strong>{{ default_condition }}</strong>{% endif %}
+      later in the process.
+    </div>
+    {% endif %}
+
+    {% if form.errors %}
+    <div class="amc-info" style="background: #fef2f2; border-color: var(--mui-error); color: #991b1b; margin-bottom: 1.5rem;">
+      {{ form.errors }}
+    </div>
+    {% endif %}
+
+    <form method="post" action="{% url brand_url_names.scan %}" id="fuck_health_insurance_form" enctype="multipart/form-data">
+      {% csrf_token %}
+      {% if default_procedure or default_condition %}
+      <input type="hidden" name="default_procedure" value="{{ default_procedure }}">
+      <input type="hidden" name="default_condition" value="{{ default_condition }}">
+      <input type="hidden" name="microsite_slug" value="{{ microsite_slug }}">
+      <input type="hidden" name="microsite_title" value="{{ microsite_title }}">
+      {% endif %}
+
+      <!-- Contact Information -->
+      <div class="amc-form-card">
+        <h3>Contact Information</h3>
+        <div class="together-form-group">
+          <div>
+            <label for="store_fname" class="form-label">First Name *</label>
+            <input type="text" id="store_fname" class="form-control" placeholder="Your first name">
+          </div>
+          <div>
+            <label for="store_lname" class="form-label">Last Name *</label>
+            <input type="text" id="store_lname" class="form-control" placeholder="Your last name">
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="email" class="form-label">
+            <span id="email-label">Email **</span>
+          </label>
+          <input type="email" id="email" name="email" class="form-control" placeholder="your@email.com">
+        </div>
+        <div class="together-form-group">
+          <div>
+            <label for="store_street" class="form-label">Street Address *</label>
+            <input type="text" id="store_street" name="street" class="form-control" placeholder="e.g. 283 24th St">
+          </div>
+          <div>
+            <label for="store_zip" class="form-label">Zip Code</label>
+            <input type="text" id="store_zip" name="zip" class="form-control" placeholder="e.g. 94103">
+          </div>
+        </div>
+      </div>
+
+      <!-- Denial Information -->
+      <div class="amc-form-card">
+        <h3>Your Denial Letter</h3>
+
+        {% if upload_more %}
+        <div id="image_select_magic" style="visibility:visible">
+          <div class="amc-upload-area">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" stroke-width="1.5" style="margin-bottom: 0.5rem;">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="17 8 12 3 7 8"/>
+              <line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+            <p style="margin: 0 0 0.5rem; color: #6b7280; font-size: 0.95rem;">Upload your insurance denial letter</p>
+            <small style="color: #9ca3af;">Attach all denial pages (PDF, images, etc.)</small>
+            <div style="margin-top: 0.75rem;">
+              <input id="uploader" type="file" name="uploader" multiple="true" class="form-control">
+            </div>
+          </div>
+        </div>
+        {% endif %}
+
+        <div class="form-group">
+          <label for="denial_text" id="denial_text_label" class="form-label">
+            Denial Text
+          </label>
+          <small class="d-block mb-2" style="color: #6b7280;">
+            If you didn't upload a file, paste your denial letter text below. Please remove personal information (PII) or use the button below.
+          </small>
+          <textarea name="denial_text" id="denial_text" rows="12" form="fuck_health_insurance_form"
+            placeholder="Paste your denial letter text here..."
+            class="form-control">{{ocr_result}}</textarea>
+          <div style="margin-top: 0.75rem; display: flex; align-items: center; gap: 0.75rem;">
+            <button type="button" id="scrub-2" class="btn-mui-outlined">
+              Remove PII
+            </button>
+            <small style="color: #9ca3af;">Automatically remove names and addresses from scanned text</small>
+          </div>
+        </div>
+      </div>
+
+      <!-- Required Agreements -->
+      <div class="amc-form-card">
+        <h3>Required Agreements</h3>
+        <div class="amc-policies">
+          <div class="form-check">
+            <input type="checkbox" id="personalonly" name="personalonly" class="form-check-input">
+            <label for="personalonly" class="form-check-label">I am aware that <strong>this is for personal use only</strong>. <a href="{% url 'pro_version' %}" style="color: var(--mui-primary);">Professional version available here.</a></label>
+          </div>
+          <div class="form-check">
+            <input type="checkbox" id="privacy" name="privacy" class="form-check-input">
+            <label for="privacy" class="form-check-label">I have read and understand the <a href="{% url brand_url_names.privacy_policy %}" style="color: var(--mui-primary);">privacy policy</a>.</label>
+          </div>
+          <div class="form-check">
+            <input type="checkbox" id="pii" name="pii" class="form-check-input">
+            <label for="pii" class="form-check-label">I have removed my personal identifiable information (PII) from the text areas above.</label>
+          </div>
+          <div class="form-check" style="margin-bottom: 0;">
+            <input type="checkbox" id="tos" name="tos" class="form-check-input">
+            <label for="tos" class="form-check-label">I agree to the <a href="{% url brand_url_names.tos %}" style="color: var(--mui-primary);">terms of service</a> and will only use this to generate my own health insurance appeals.</label>
+          </div>
+        </div>
+
+        <!-- Optional Settings -->
+        <details class="amc-optional">
+          <summary>Optional Settings</summary>
+          <div class="amc-optional-body">
+            <div class="form-check mb-2">
+              <input type="checkbox" id="store_raw_email" name="store_raw_email" value="checked" class="form-check-input">
+              <label for="store_raw_email" class="form-check-label">Store my email for follow-up (retained for follow-up duration + 30 days) **</label>
+            </div>
+            <div class="form-check mb-2">
+              <input type="checkbox" id="use_external_models" name="use_external_models" value="checked" class="form-check-input">
+              <label for="use_external_models" class="form-check-label">Use external AI models for more appeal options. <strong>This involves sharing data with 3rd parties</strong> (OctoAI, Perplexity, TogetherAI, etc.).</label>
+            </div>
+            <div class="form-check mb-3">
+              <input type="checkbox" id="subscribe" name="subscribe" value="checked" checked class="form-check-input">
+              <label for="subscribe" class="form-check-label">Subscribe to updates from Fight Health Insurance.</label>
+            </div>
+            <div class="form-group mb-2">
+              <label for="referral_source" class="form-label">How did you hear about us?</label>
+              <select id="referral_source" name="referral_source" class="form-control">
+                <option value="">-- Please select --</option>
+                <option value="Search Engine (Google, Bing, etc.)">Search Engine (Google, Bing, etc.)</option>
+                <option value="Social Media (Facebook, Twitter, etc.)">Social Media (Facebook, Twitter, etc.)</option>
+                <option value="Friend or Family">Friend or Family</option>
+                <option value="Healthcare Provider">Healthcare Provider</option>
+                <option value="News Article or Blog">News Article or Blog</option>
+                <option value="Other">Other</option>
+              </select>
+            </div>
+            <div class="form-group mb-2">
+              <label for="referral_source_details" class="form-label">Details</label>
+              <input type="text" id="referral_source_details" name="referral_source_details" class="form-control" placeholder="E.g., which search engine, social media platform, or person's name">
+            </div>
+            <div class="form-check mt-3" style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 6px; padding: 0.75rem;">
+              <input type="checkbox" id="persistence_enabled" checked class="form-check-input">
+              <label for="persistence_enabled" class="form-check-label">
+                <strong>Remember form data</strong> - Keep entered information when navigating back (stored locally in your browser).
+                <br><small style="color: #92400e;">Uncheck this if using a public or shared computer.</small>
+              </label>
+            </div>
+          </div>
+        </details>
+      </div>
+
+      <!-- Error messages -->
+      <div class="hidden-error-message" id="email_error" role="alert" aria-live="polite">
+        We need your email to proceed. This allows us to delete your data later on request.
+      </div>
+      <div class="hidden-error-message" id="agree_chk_error" role="alert" aria-live="polite">
+        Please agree to all required terms to continue.
+      </div>
+      <div class="hidden-error-message" id="pii_error" role="alert" aria-live="polite">
+        Please confirm that you have removed your personal identifiable information (PII) from the text areas.
+      </div>
+      <div class="hidden-error-message" id="need_denial" role="alert" aria-live="polite">
+        Please provide your denial message from your insurance company. If you didn't receive one, describe what was denied (e.g., "The pharmacy said my PrEP was denied").
+      </div>
+
+      <!-- Submit -->
+      <div style="text-align: center; margin-top: 1.5rem;">
+        <button type="submit" class="btn-mui-primary" id="submit">
+          Generate Appeal Letter
+        </button>
+      </div>
+    </form>
+
+    <!-- Privacy notes -->
+    <div class="amc-privacy-notes">
+      <p>* Fields marked with a single asterisk are stored in your browser (like a cookie), not on our server. You can manage this in your browser settings or on our <a href="{% url brand_url_names.privacy_policy %}">privacy policy</a> page.</p>
+      <p>** We hash your email before storing it. If you opt in to follow-ups or faxing, we store your raw email temporarily. You may use a privacy-focused email service like <a href="https://proton.me/" rel="noopener noreferrer">Proton Mail</a>. See our <a href="{% url brand_url_names.privacy_policy %}">privacy policy</a> for details.</p>
+    </div>
+
+  </div>
+</section>
+
+{% include 'partials/powered_by_fhi.html' %}
+{% endblock content %}

@@ -33,6 +33,15 @@ def brand_context(request):
         "contact",
         "root",
         "scan",
+        "process",
+        "hh",
+        "dvc",
+        "eev",
+        "categorize_review",
+        "find_next_steps",
+        "generate_appeal",
+        "choose_appeal",
+        "server_side_ocr",
     ]
 
     url_prefix = "amc_" if brand.slug == "amc" else ""
