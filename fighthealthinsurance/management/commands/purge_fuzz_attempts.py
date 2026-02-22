@@ -88,8 +88,9 @@ class Command(BaseCommand):
             if not batch_ids:
                 break
 
-            # Delete associated files first
+            # Delete associated files first, skip records where file deletion fails
             batch_records = FuzzAttempt.objects.filter(id__in=batch_ids)
+            skip_ids = set()
             for record in batch_records:
                 if record.encrypted_blob:
                     try:
@@ -101,9 +102,13 @@ class Command(BaseCommand):
                                 f"  Failed to delete blob for record {record.id}: {e}"
                             )
                         )
+                        skip_ids.add(record.id)
 
-            # Delete records
-            deleted, _ = FuzzAttempt.objects.filter(id__in=batch_ids).delete()
+            # Delete records (excluding those with failed file deletion)
+            delete_ids = [id for id in batch_ids if id not in skip_ids]
+            if not delete_ids:
+                break
+            deleted, _ = FuzzAttempt.objects.filter(id__in=delete_ids).delete()
             deleted_total += deleted
             self.stdout.write(f"  Deleted batch of {deleted} records...")
 

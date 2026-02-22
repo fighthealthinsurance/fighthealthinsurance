@@ -425,10 +425,6 @@ class Base(Configuration):
     # Score threshold to trigger fuzz guard (requests scoring >= this are blocked)
     FUZZ_GUARD_SCORE_THRESHOLD = int(os.getenv("FUZZ_GUARD_SCORE_THRESHOLD", "50"))
 
-    # Response delay (milliseconds) to slow down attackers
-    FUZZ_GUARD_DELAY_MIN_MS = int(os.getenv("FUZZ_GUARD_DELAY_MIN_MS", "500"))
-    FUZZ_GUARD_DELAY_MAX_MS = int(os.getenv("FUZZ_GUARD_DELAY_MAX_MS", "2000"))
-
     # Probability of returning 418 I'm a teapot instead of 400 (0.0-1.0)
     FUZZ_GUARD_TEAPOT_PROB = float(os.getenv("FUZZ_GUARD_TEAPOT_PROB", "0.10"))
 

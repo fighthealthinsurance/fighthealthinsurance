@@ -7,9 +7,9 @@ from unittest.mock import MagicMock, patch
 
 from django.test import RequestFactory, TestCase, override_settings
 
+from fighthealthinsurance.human_verification import TEAPOT_MESSAGE
 from fighthealthinsurance.middleware.FuzzGuardMiddleware import (
     DENIAL_ID_PATTERN,
-    FUZZ_RESPONSE_MESSAGE,
     PROBE_PATH_PATTERNS,
     SCANNER_UA_REGEX,
     SQL_INJECTION_REGEX,
@@ -438,7 +438,7 @@ class TestResponseGeneration(TestCase):
     def test_blocked_response_contains_message(self):
         """Blocked response should contain the friendly message."""
         response = generate_fuzz_response(is_throttled=False, teapot_prob=0)
-        self.assertEqual(response.content.decode("utf-8"), FUZZ_RESPONSE_MESSAGE)
+        self.assertEqual(response.content.decode("utf-8"), TEAPOT_MESSAGE)
 
     def test_teapot_response_418_when_random_hits(self):
         """With teapot_prob=1.0, should return 418."""

@@ -2,12 +2,9 @@
 End-to-end integration tests for fuzz guard system.
 """
 
-from unittest.mock import patch
-
 from django.contrib.auth import get_user_model
-from django.contrib.sessions.middleware import SessionMiddleware
 from django.http import HttpResponse
-from django.test import Client, RequestFactory, TestCase, override_settings
+from django.test import Client, TestCase, override_settings
 
 from fighthealthinsurance.models import FuzzAttempt
 
@@ -49,13 +46,14 @@ class TestFuzzGuardEndToEnd(TestCase):
         self.assertTrue(any("scanner_ua" in r for r in reasons))
 
     @override_settings(FUZZ_GUARD_ENABLED=True, FUZZ_GUARD_SCORE_THRESHOLD=50)
-    def test_probe_path_blocked(self):
-        """Request to probe path should be blocked."""
+    def test_probe_path_with_scanner_ua_blocked(self):
+        """Request to probe path with scanner UA should be blocked (30+40 >= 50)."""
         response = self.client.get(
             "/wp-admin/",
-            HTTP_USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+            HTTP_USER_AGENT="sqlmap/1.4.7",
         )
-        self.assertIn(response.status_code, [400, 404, 418, 429])
+        # probe_path (30) + scanner_ua (40) = 70 >= threshold (50)
+        self.assertIn(response.status_code, [400, 418, 429])
 
     @override_settings(FUZZ_GUARD_ENABLED=True, FUZZ_GUARD_SCORE_THRESHOLD=50)
     def test_invalid_denial_id_blocked(self):
@@ -66,7 +64,6 @@ class TestFuzzGuardEndToEnd(TestCase):
         )
         self.assertIn(response.status_code, [400, 418, 429])
 
-    @override_settings(FUZZ_GUARD_ENABLED=False)
     @override_settings(FUZZ_GUARD_ENABLED=False)
     def test_disabled_fuzz_guard_passes_all(self):
         """With FUZZ_GUARD_ENABLED=False, should not block."""
@@ -229,23 +226,27 @@ class TestRateLimitingIntegration(TestCase):
 
     @override_settings(
         FUZZ_GUARD_ENABLED=True,
-        FUZZ_GUARD_SCORE_THRESHOLD=50,
-        FUZZ_GUARD_RATE_LIMIT_PER_MINUTE=5,
-        FUZZ_GUARD_DELAY_MIN_MS=0,
-        FUZZ_GUARD_DELAY_MAX_MS=0,
+        FUZZ_GUARD_SCORE_THRESHOLD=30,
+        FUZZ_GUARD_RATE_LIMIT_PER_MINUTE=3,
+        CACHES={
+            "default": {
+                "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+                "LOCATION": "fuzz-guard-test",
+            }
+        },
     )
     def test_rate_limit_triggers_429(self):
-        """Exceeding rate limit should return 429."""
-        # Make requests that trigger fuzz guard
-        for i in range(10):
+        """Exceeding rate limit should return 429 after enough blocked requests."""
+        # With threshold=30 and scanner_ua score=40, every request is blocked.
+        # After 3 blocked requests, rate limiting should kick in with 429.
+        got_429 = False
+        for _ in range(10):
             response = self.client.get("/scan", HTTP_USER_AGENT="sqlmap/1.4.7")
             if response.status_code == 429:
-                # Successfully triggered rate limit
-                self.assertEqual(response.status_code, 429)
-                return
+                got_429 = True
+                break
 
-        # If we get here, rate limiting may not have triggered
-        # This could happen if test isolation affects caching
+        self.assertTrue(got_429, "Rate limiting should have triggered 429 within 10 requests")
 
 
 class TestResponseFormatting(TestCase):
@@ -253,30 +254,27 @@ class TestResponseFormatting(TestCase):
 
     @override_settings(
         FUZZ_GUARD_ENABLED=True,
-        FUZZ_GUARD_SCORE_THRESHOLD=50,
-        FUZZ_GUARD_DELAY_MIN_MS=0,
-        FUZZ_GUARD_DELAY_MAX_MS=0,
+        FUZZ_GUARD_SCORE_THRESHOLD=30,
     )
     def test_blocked_response_is_plain_text(self):
         """Blocked response should be text/plain."""
         client = Client()
+        # scanner_ua scores 40 >= threshold 30, so this will be blocked
         response = client.get("/scan", HTTP_USER_AGENT="sqlmap/1.4.7")
-        if response.status_code in [400, 418, 429]:
-            self.assertEqual(response["Content-Type"], "text/plain")
+        self.assertIn(response.status_code, [400, 418, 429])
+        self.assertEqual(response["Content-Type"], "text/plain")
 
     @override_settings(
         FUZZ_GUARD_ENABLED=True,
-        FUZZ_GUARD_SCORE_THRESHOLD=50,
-        FUZZ_GUARD_DELAY_MIN_MS=0,
-        FUZZ_GUARD_DELAY_MAX_MS=0,
+        FUZZ_GUARD_SCORE_THRESHOLD=30,
     )
     def test_blocked_response_contains_message(self):
         """Blocked response should contain friendly message."""
         client = Client()
         response = client.get("/scan", HTTP_USER_AGENT="sqlmap/1.4.7")
-        if response.status_code in [400, 418, 429]:
-            content = response.content.decode("utf-8")
-            self.assertIn("Hi Friend", content)
+        self.assertIn(response.status_code, [400, 418, 429])
+        content = response.content.decode("utf-8")
+        self.assertIn("Hi Friend", content)
 
 
 class TestAdminAccessibility(TestCase):

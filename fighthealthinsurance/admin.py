@@ -1,5 +1,6 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
+from loguru import logger
 
 from fhi_users.audit import AuditLog
 from fhi_users.models import (
@@ -914,8 +915,8 @@ class FuzzAttemptAdmin(admin.ModelAdmin):
             if obj.encrypted_blob:
                 try:
                     obj.encrypted_blob.delete(save=False)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"Failed to delete encrypted_blob for FuzzAttempt {obj.id}: {e}")
         queryset.delete()
         self.message_user(request, f"Purged {count} fuzz attempt records.")
 

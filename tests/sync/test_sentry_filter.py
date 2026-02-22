@@ -2,9 +2,9 @@
 Tests for Sentry before_send_filter for fuzz guard events.
 """
 
-from unittest.mock import patch, MagicMock
+from django.test import TestCase
 
-from django.test import TestCase, override_settings
+from fighthealthinsurance.asgi import before_send_filter
 
 
 class TestSentryBeforeSendFilter(TestCase):
@@ -12,61 +12,7 @@ class TestSentryBeforeSendFilter(TestCase):
 
     def setUp(self):
         """Set up before_send_filter function for testing."""
-        # Import the filter function from asgi.py
-        # We need to test it in isolation
-        self.filter_func = self._create_filter_func()
-
-    def _create_filter_func(self):
-        """Create a test version of the before_send_filter function."""
-
-        def before_send_filter(event, hint):
-            """
-            Filter out noisy infrastructure errors from Sentry.
-            """
-            # Check logger name for Ray client internal loggers
-            logger_name = event.get("logger", "")
-            if logger_name in (
-                "ray.util.client.logsclient",
-                "ray.util.client.dataclient",
-            ):
-                return None
-
-            # Filter fuzz guard module events (they're logged locally)
-            if (
-                "fuzz_guard" in logger_name.lower()
-                or "fuzzguard" in logger_name.lower()
-            ):
-                return None
-
-            # Check for fuzz_guard tag set by middleware
-            tags = event.get("tags", {})
-            if tags.get("fuzz_guard") is True:
-                return None
-
-            # Check transaction name for fuzz guard middleware
-            transaction = event.get("transaction", "")
-            if "FuzzGuardMiddleware" in transaction:
-                return None
-
-            # Check for specific gRPC error messages from Ray
-            message = event.get("message", "") or ""
-            if "Logstream proxy failed to connect" in message:
-                return None
-            if "Unrecoverable error in data channel" in message:
-                return None
-
-            # Check exception values for Ray gRPC errors
-            exception_values = event.get("exception", {}).get("values", [])
-            for exc in exception_values:
-                exc_value = exc.get("value", "") or ""
-                if "Logstream proxy failed to connect" in exc_value:
-                    return None
-                if "grpc_status:5" in exc_value and "Channel for client" in exc_value:
-                    return None
-
-            return event
-
-        return before_send_filter
+        self.filter_func = before_send_filter
 
     def test_filters_fuzz_guard_logger_events(self):
         """Events from fuzz_guard logger should be filtered."""

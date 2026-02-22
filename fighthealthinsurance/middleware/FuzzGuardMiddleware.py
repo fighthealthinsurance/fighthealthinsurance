@@ -21,7 +21,6 @@ import ipaddress
 import json
 import random
 import re
-import time
 import uuid
 from typing import List, Optional, Tuple
 
@@ -31,6 +30,7 @@ from django.http import HttpRequest, HttpResponse
 from django.utils import timezone
 from django.utils.deprecation import MiddlewareMixin
 
+from fighthealthinsurance.human_verification import TEAPOT_MESSAGE
 from loguru import logger
 
 # =============================================================================
@@ -130,13 +130,6 @@ SQL_INJECTION_PATTERNS = [
 ]
 
 SQL_INJECTION_REGEX = re.compile("|".join(SQL_INJECTION_PATTERNS), re.IGNORECASE)
-
-
-# =============================================================================
-# Response Message
-# =============================================================================
-
-FUZZ_RESPONSE_MESSAGE = """Hi Friend, your browser appears to be misbehaving. If you've encountered this error while trying to appeal an insurance claim e-mail support42@fighthealthinsurance.com and we'll look into it. Similarly if you're performing fuzzing or other activities please e-mail support42@fighthealthinsurance.com and take a look at our terms of service in the meantime. kthnx byeeeee!"""
 
 
 # =============================================================================
@@ -313,7 +306,7 @@ def generate_fuzz_response(
             status_code = 400
 
     response = HttpResponse(
-        FUZZ_RESPONSE_MESSAGE,
+        TEAPOT_MESSAGE,
         content_type="text/plain",
         status=status_code,
     )
@@ -387,9 +380,9 @@ class FuzzGuardMiddleware(MiddlewareMixin):
                 f"ip_hash={ip_hash[:16]}... score={score} reasons={reasons}"
             )
 
-            # Store the attempt (async to not block response)
+            # Generate response first so we log the actual status code returned
             teapot_prob = getattr(settings, "FUZZ_GUARD_TEAPOT_PROB", 0.10)
-            status_code = self._determine_status_code(is_throttled, teapot_prob)
+            response = generate_fuzz_response(is_throttled, teapot_prob)
 
             self._store_fuzz_attempt(
                 request=request,
@@ -398,27 +391,12 @@ class FuzzGuardMiddleware(MiddlewareMixin):
                 score=score,
                 reasons=reasons,
                 request_id=request_id,
-                status_code=status_code,
+                status_code=response.status_code,
             )
 
-            # Add random delay to slow down attackers
-            delay_min = getattr(settings, "FUZZ_GUARD_DELAY_MIN_MS", 500) / 1000
-            delay_max = getattr(settings, "FUZZ_GUARD_DELAY_MAX_MS", 2000) / 1000
-            time.sleep(random.uniform(delay_min, delay_max))
-
-            # Return blocking response
-            response = generate_fuzz_response(is_throttled, teapot_prob)
             return response
 
         return None
-
-    def _determine_status_code(self, is_throttled: bool, teapot_prob: float) -> int:
-        """Determine the response status code."""
-        if is_throttled:
-            return 429
-        if random.random() < teapot_prob:
-            return 418
-        return 400
 
     def _store_fuzz_attempt(
         self,

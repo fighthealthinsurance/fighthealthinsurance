@@ -14,7 +14,7 @@ class Migration(migrations.Migration):
     dependencies = [
         (
             "fighthealthinsurance",
-            "0146_insurancecompany_denial_insurance_company_obj_and_more",
+            "0147_extralinkdocument_extralinkfetchlog_and_more",
         ),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
