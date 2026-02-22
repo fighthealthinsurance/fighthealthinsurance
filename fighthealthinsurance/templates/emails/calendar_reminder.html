@@ -37,7 +37,7 @@
                 <li>Add notes and call logs</li>
             </ul>
             <div style="text-align: center; margin-top: 15px;">
-                <a href="{{ signup_url }}" style="display: inline-block; background-color: #28a745; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; font-weight: bold;">Create Free Account</a>
+                <a href="{{ signup_url|default:'https://www.fighthealthinsurance.com/v0/auth/signup' }}" style="display: inline-block; background-color: #28a745; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; font-weight: bold;">Create Free Account</a>
             </div>
             <p style="margin-top: 15px; font-size: 13px; color: #666;"><strong>Important:</strong> We store data for 90 days. We're a small scrappy startup - please save important documents outside of FHI too! Only appeals created AFTER account signup will appear in your dashboard (for your security).</p>
         </div>
@@ -69,7 +69,7 @@
         </ul>
 
         <div style="background-color: #fff3cd; border: 1px solid #ffc107; padding: 15px; margin: 20px 0; border-radius: 5px;">
-            <p style="margin: 0; color: #856404;"><strong>📧 Reminder:</strong> Add {{ default_from_email }} to your contacts to ensure you receive future reminders!</p>
+            <p style="margin: 0; color: #856404;"><strong>📧 Reminder:</strong> Add {{ default_from_email|default:"support42@fighthealthinsurance.com" }} to your contacts to ensure you receive future reminders!</p>
         </div>
 
         <p style="margin-top: 30px;">Good luck with your follow-up!</p>

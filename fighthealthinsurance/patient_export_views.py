@@ -6,13 +6,27 @@ CSV format is more practical than PDF for data analysis and import into spreadsh
 
 import csv
 from datetime import date
-from typing import Any
-
 from django.http import HttpResponse
 from django.views import View
 
 from fighthealthinsurance.models import InsuranceCallLog, PatientEvidence
 from fighthealthinsurance.patient_views import PatientRequiredMixin
+
+# Characters that trigger formula interpretation in spreadsheet applications
+_CSV_INJECTION_CHARS = ("=", "+", "-", "@", "\t", "\r", "\n")
+
+
+def _sanitize_csv(value: str) -> str:
+    """Prefix values starting with formula-triggering characters with a single quote.
+
+    This prevents CSV injection (aka formula injection) where user-supplied values
+    starting with =, +, -, @ etc. could be interpreted as formulas by Excel,
+    Google Sheets, or LibreOffice Calc.
+    """
+    if value and value[0] in _CSV_INJECTION_CHARS:
+        return "'" + value
+    return value
+
 
 if __name__ != "__main__":
     from django.contrib.auth import get_user_model
@@ -32,8 +46,10 @@ class CallLogExportView(PatientRequiredMixin, View):
         user: User = request.user  # type: ignore
 
         # Get all call logs for user
-        call_logs = InsuranceCallLog.filter_to_allowed_call_logs(user).order_by(
-            "-call_date"
+        call_logs = (
+            InsuranceCallLog.filter_to_allowed_call_logs(user)
+            .select_related("appeal", "appeal__for_denial")
+            .order_by("-call_date")
         )
 
         # Create CSV response
@@ -49,7 +65,7 @@ class CallLogExportView(PatientRequiredMixin, View):
         # Write header row
         writer.writerow(
             [
-                "Date & Time",
+                "Call Date",
                 "Call Type",
                 "Department",
                 "Representative Name",
@@ -80,22 +96,22 @@ class CallLogExportView(PatientRequiredMixin, View):
                         else ""
                     ),
                     log.get_call_type_display() if log.call_type else "",
-                    log.department or "",
-                    log.representative_name or "",
-                    log.representative_id or "",
-                    log.reference_number or "",
-                    log.case_number or "",
-                    log.reason_for_call or "",
-                    log.key_statements or "",
-                    log.promises_made or "",
-                    log.call_notes or "",
+                    _sanitize_csv(log.department or ""),
+                    _sanitize_csv(log.representative_name or ""),
+                    _sanitize_csv(log.representative_id or ""),
+                    _sanitize_csv(log.reference_number or ""),
+                    _sanitize_csv(log.case_number or ""),
+                    _sanitize_csv(log.reason_for_call or ""),
+                    _sanitize_csv(log.key_statements or ""),
+                    _sanitize_csv(log.promises_made or ""),
+                    _sanitize_csv(log.call_notes or ""),
                     log.get_outcome_display() if log.outcome else "",
                     (
                         log.follow_up_date.strftime("%Y-%m-%d")
                         if log.follow_up_date
                         else ""
                     ),
-                    log.follow_up_notes or "",
+                    _sanitize_csv(log.follow_up_notes or ""),
                     log.call_duration_minutes or "",
                     log.wait_time_minutes or "",
                     "Yes" if log.include_in_appeal else "No",
@@ -122,8 +138,10 @@ class EvidenceExportView(PatientRequiredMixin, View):
         user: User = request.user  # type: ignore
 
         # Get all evidence for user
-        evidence = PatientEvidence.filter_to_allowed_evidence(user).order_by(
-            "-created_at"
+        evidence = (
+            PatientEvidence.filter_to_allowed_evidence(user)
+            .select_related("appeal", "appeal__for_denial")
+            .order_by("-created_at")
         )
 
         # Create CSV response
@@ -139,6 +157,7 @@ class EvidenceExportView(PatientRequiredMixin, View):
         # Write header row
         writer.writerow(
             [
+                "UUID",
                 "Title",
                 "Evidence Type",
                 "Description",
@@ -156,17 +175,18 @@ class EvidenceExportView(PatientRequiredMixin, View):
         for item in evidence:
             writer.writerow(
                 [
-                    item.title or "",
+                    str(item.uuid),
+                    _sanitize_csv(item.title or ""),
                     item.get_evidence_type_display() if item.evidence_type else "",
-                    item.description or "",
+                    _sanitize_csv(item.description or ""),
                     (
                         item.date_of_evidence.strftime("%Y-%m-%d")
                         if item.date_of_evidence
                         else ""
                     ),
                     "Yes" if item.file else "No",
-                    item.text_content or "",
-                    item.source or "",
+                    _sanitize_csv(item.text_content or ""),
+                    _sanitize_csv(item.source or ""),
                     (
                         item.created_at.strftime("%Y-%m-%d %H:%M:%S")
                         if item.created_at

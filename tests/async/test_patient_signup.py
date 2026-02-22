@@ -167,11 +167,10 @@ class PatientSignupViewTests(TestCase):
         self.assertNotContains(response, "Sign Up")
 
     def test_account_prompt_banner_has_signup_link(self) -> None:
-        """Test that the account prompt banner includes signup link."""
-        # The banner is shown on appeal pages
+        """Test that anonymous scan page includes a signup link."""
         response = self.client.get(reverse("scan"))
         self.assertContains(response, "/v0/auth/signup")
-        self.assertContains(response, "Create Free Account")
+        self.assertContains(response, "Sign Up")
 
 
 class PatientSignupFormTests(TestCase):

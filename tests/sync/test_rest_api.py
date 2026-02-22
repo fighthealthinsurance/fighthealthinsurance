@@ -1436,7 +1436,7 @@ class DuplicateUserDomainTest(APITestCase):
 
     def test_duplicate_domain_creation(self):
         """Test that creating a domain with an existing name returns a non-200 response."""
-        url = reverse("professional_user-list")
+        url = reverse("fhi_users:professional_user-list")
 
         # Data for creating a new professional with the same domain name
         data = {

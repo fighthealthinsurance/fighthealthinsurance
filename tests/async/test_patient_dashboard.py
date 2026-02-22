@@ -4,6 +4,7 @@ Tests call log and evidence tracking features for logged-in patients.
 """
 
 from datetime import date, datetime, timedelta
+import io
 
 from django.contrib.auth import get_user_model
 from django.test import Client, TestCase
@@ -855,7 +856,7 @@ class CallLogExportTests(TestCase):
             reference_number="REF-001",
             reason_for_call="Check claim status",
             key_statements="Will be approved soon",
-            outcome="positive",
+            outcome="approved",
         )
 
         call2 = InsuranceCallLog.objects.create(
@@ -931,7 +932,7 @@ class CallLogExportTests(TestCase):
             call_date=timezone.now(),
             call_type="claim_status",
             representative_name="Test Rep",
-            outcome="positive",
+            outcome="approved",
         )
 
         url = reverse("patient-call-log-export")
@@ -944,7 +945,7 @@ class CallLogExportTests(TestCase):
         rows = list(reader)
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["Representative Name"], "Test Rep")
-        self.assertEqual(rows[0]["Outcome"], "positive")
+        self.assertEqual(rows[0]["Outcome"], "Request Approved")
 
 
 class EvidenceExportTests(TestCase):

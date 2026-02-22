@@ -13,26 +13,14 @@ class Migration(migrations.Migration):
         migrations.AddIndex(
             model_name="denial",
             index=models.Index(
-                fields=["patient_user", "-created_at"],
+                fields=["patient_user", "-created"],
                 name="denial_patient_created_idx",
             ),
         ),
-        # Index for call logs query
-        migrations.AddIndex(
-            model_name="insurancecalllog",
-            index=models.Index(
-                fields=["patient_user", "-call_date"],
-                name="calllog_patient_date_idx",
-            ),
-        ),
-        # Index for evidence query
-        migrations.AddIndex(
-            model_name="patientevidence",
-            index=models.Index(
-                fields=["patient_user", "-created_at"],
-                name="evidence_patient_created_idx",
-            ),
-        ),
+        # Note: InsuranceCallLog(patient_user, -call_date) and
+        # PatientEvidence(patient_user, -created_at) indexes are already
+        # defined in their model Meta classes.
+        #
         # Index for follow-up queries (partial index for non-null follow_up_date)
         migrations.AddIndex(
             model_name="insurancecalllog",
