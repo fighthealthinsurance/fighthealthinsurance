@@ -859,6 +859,7 @@ class FuzzAttemptAdmin(admin.ModelAdmin):
     def reason_formatted(self, obj):
         """Format reasons as readable list."""
         from django.utils.html import escape, format_html
+        from django.utils.safestring import mark_safe
         import json
 
         try:
@@ -868,7 +869,7 @@ class FuzzAttemptAdmin(admin.ModelAdmin):
                 items = "".join(f"<li>{escape(str(r))}</li>" for r in reasons)
                 return format_html(
                     "<ul style='margin:0;padding-left:20px;'>{}</ul>",
-                    format_html(items),
+                    mark_safe(items),
                 )
         except (json.JSONDecodeError, TypeError):
             pass
