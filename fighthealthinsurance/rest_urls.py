@@ -55,6 +55,9 @@ router.register(
     basename="prior-auth-proposals",
 )
 router.register(r"chooser", rest_views.ChooserViewSet, basename="chooser")
+router.register(
+    r"amc-denials", rest_views.AnonymousDenialViewSet, basename="amc-denials"
+)
 
 urlpatterns = [
     # Non-viewset but still rest API endpoints.

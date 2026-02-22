@@ -178,26 +178,11 @@ class BrandRoutingTest(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.context["brand"].slug, "amc")
 
-    def test_appealmyclaims_scan_accessible(self):
-        """Test that /appealmyclaims/scan uses AMC brand and AMC template."""
+    def test_appealmyclaims_scan_redirects_to_wizard(self):
+        """Test that /appealmyclaims/scan redirects to /appealmyclaims/ (wizard)."""
         response = self.client.get("/appealmyclaims/scan")
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.context["brand"].slug, "amc")
-
-    def test_appealmyclaims_scan_uses_amc_template(self):
-        """Test that /appealmyclaims/scan uses the AMC-styled template."""
-        response = self.client.get("/appealmyclaims/scan")
-        self.assertEqual(response.status_code, 200)
-        # Check for AMC-specific content: stepper and Material UI styling
-        self.assertContains(response, "Upload Your Denial")
-        self.assertContains(response, "amc-stepper")
-        self.assertContains(response, "#1976d2")  # MUI primary blue
-        self.assertContains(response, "Manrope")  # AMC font
-
-    def test_appealmyclaims_scan_form_action(self):
-        """Test that AMC scan form posts to the AMC scan endpoint."""
-        response = self.client.get("/appealmyclaims/scan")
-        self.assertContains(response, 'action="/appealmyclaims/scan"')
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, "/appealmyclaims/")
 
     def test_alt_root_redirects_to_appealmyclaims(self):
         """Test that /alt/ redirects to /appealmyclaims/."""
@@ -216,8 +201,8 @@ class BrandRoutingTest(TestCase):
         response = self.client.get("/scan")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.context["brand"].slug, "fhi")
-        # FHI scan should NOT have AMC stepper
-        self.assertNotContains(response, "amc-stepper")
+        # FHI scan should NOT have AMC wizard root
+        self.assertNotContains(response, "amc-wizard-root")
 
 
 class BrandAwareURLTest(TestCase):
@@ -235,134 +220,133 @@ class BrandAwareURLTest(TestCase):
         self.assertContains(response, 'href="/privacy_policy"')
         self.assertContains(response, 'href="/tos"')
 
-    def test_amc_privacy_policy_url(self):
-        """Test that AMC pages link to AMC privacy policy."""
-        response = self.client.get("/appealmyclaims/scan")
-        self.assertIn("brand_url_names", response.context)
-        self.assertEqual(
-            response.context["brand_url_names"]["privacy_policy"], "amc_privacy_policy"
-        )
-        self.assertEqual(response.context["brand_url_names"]["tos"], "amc_tos")
-        # Verify the page contains the correct URL
-        self.assertContains(response, 'href="/appealmyclaims/privacy_policy"')
-        self.assertContains(response, 'href="/appealmyclaims/tos"')
-
-    def test_amc_brand_home_link_points_to_amc_root(self):
-        """Test that AMC pages use AMC root for the brand home/logo link."""
-        response = self.client.get("/appealmyclaims/scan")
-        self.assertContains(response, 'id="brand-home-link"')
-        self.assertContains(response, 'id="brand-home-link" href="/appealmyclaims/"')
-
-    def test_amc_consent_uses_fhi_policies(self):
-        """Test that AMC consent checkboxes reference FHI policies (same policies for both brands)."""
-        response = self.client.get("/appealmyclaims/scan")
-        # Both brands require agreement to privacy policy and TOS
-        self.assertContains(response, "I have read and understand the")
-        self.assertContains(response, "privacy policy")
-        self.assertContains(response, "I agree to the")
-        self.assertContains(response, "terms of service")
-
-    def test_mailing_list_subscription_is_optional(self):
-        """Test that mailing list subscription is optional (not required)."""
-        # FHI version
-        response_fhi = self.client.get("/scan")
-        # Check that subscribe checkbox is present
-        self.assertContains(response_fhi, 'id="subscribe"')
-        self.assertContains(response_fhi, 'name="subscribe"')
-        # Verify it's in the "Optional" section
-        self.assertContains(response_fhi, "<b>Optional</b>")
-        self.assertContains(response_fhi, "Subscribe to our mailing list")
-
-        # AMC version
-        response_amc = self.client.get("/appealmyclaims/scan")
-        # Check that subscribe checkbox is present
-        self.assertContains(response_amc, 'id="subscribe"')
-        self.assertContains(response_amc, 'name="subscribe"')
-        # Verify it's in the optional section
-        self.assertContains(response_amc, "Optional Settings")
-
-    def test_required_policies_are_mandatory(self):
-        """Test that privacy policy and TOS agreements are required."""
-        # FHI version
+    def test_required_policies_are_mandatory_fhi(self):
+        """Test that privacy policy and TOS agreements are required in FHI scan."""
         response_fhi = self.client.get("/scan")
         self.assertContains(response_fhi, 'id="privacy"')
         self.assertContains(response_fhi, 'id="tos"')
         self.assertContains(response_fhi, 'id="personalonly"')
         self.assertContains(response_fhi, 'id="pii"')
 
-        # AMC version
-        response_amc = self.client.get("/appealmyclaims/scan")
-        self.assertContains(response_amc, 'id="privacy"')
-        self.assertContains(response_amc, 'id="tos"')
-        self.assertContains(response_amc, 'id="personalonly"')
-        self.assertContains(response_amc, 'id="pii"')
 
+class AMCWizardTest(TestCase):
+    """Tests for the AMC React wizard flow."""
 
-class AMCFlowTest(TestCase):
-    """Tests specific to the AMC-styled flow."""
-
-    def test_amc_landing_page_content(self):
-        """Test that AMC landing page has expected content."""
+    def test_amc_wizard_loads(self):
+        """Test that /appealmyclaims/ loads the React wizard template."""
         response = self.client.get("/appealmyclaims/")
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Healthcare Appeal Helper")
-        self.assertContains(response, "Start Your Appeal")
+        self.assertContains(response, 'id="amc-wizard-root"')
+        self.assertContains(response, "amc_wizard.bundle.js")
 
-    def test_amc_scan_has_all_required_form_fields(self):
-        """Test that AMC scan has all form fields needed for backend processing."""
-        response = self.client.get("/appealmyclaims/scan")
-        self.assertEqual(response.status_code, 200)
-        # Contact fields
-        self.assertContains(response, 'id="store_fname"')
-        self.assertContains(response, 'id="store_lname"')
-        self.assertContains(response, 'id="email"')
-        self.assertContains(response, 'name="email"')
-        self.assertContains(response, 'id="store_street"')
-        self.assertContains(response, 'id="store_zip"')
-        # Denial fields
-        self.assertContains(response, 'name="denial_text"')
-        self.assertContains(response, 'id="denial_text"')
-        self.assertContains(response, 'id="uploader"')
-        # Scrub button
-        self.assertContains(response, 'id="scrub-2"')
-        # Submit
-        self.assertContains(response, 'id="submit"')
+    def test_amc_wizard_has_brand_context(self):
+        """Test that wizard has correct AMC brand context."""
+        response = self.client.get("/appealmyclaims/")
+        self.assertEqual(response.context["brand"].slug, "amc")
+        self.assertTrue(response.context["is_amc"])
 
-    def test_amc_scan_has_error_divs(self):
-        """Test that AMC scan template has all required error message divs."""
-        response = self.client.get("/appealmyclaims/scan")
-        self.assertContains(response, 'id="email_error"')
-        self.assertContains(response, 'id="agree_chk_error"')
-        self.assertContains(response, 'id="pii_error"')
-        self.assertContains(response, 'id="need_denial"')
+    def test_amc_wizard_passes_config_data(self):
+        """Test that wizard template passes required config data attributes."""
+        response = self.client.get("/appealmyclaims/")
+        self.assertContains(response, "data-csrf-token")
+        self.assertContains(response, "data-ws-host")
+        self.assertContains(response, "data-privacy-url")
+        self.assertContains(response, "data-tos-url")
 
-    def test_amc_scan_has_stepper(self):
-        """Test that AMC scan shows the step indicator."""
-        response = self.client.get("/appealmyclaims/scan")
-        self.assertContains(response, "amc-stepper")
-        self.assertContains(response, "Upload Denial")
-        self.assertContains(response, "Review &amp; Customize")
-        self.assertContains(response, "Send Appeal")
-
-    def test_amc_scan_has_powered_by_fhi(self):
-        """Test that AMC scan page shows 'Powered by Fight Health Insurance'."""
-        response = self.client.get("/appealmyclaims/scan")
-        self.assertContains(response, "Powered by")
-        self.assertContains(response, "Fight Health Insurance")
-
-    def test_amc_scan_has_csrf_token(self):
-        """Test that AMC scan form includes CSRF token."""
-        response = self.client.get("/appealmyclaims/scan")
-        self.assertContains(response, "csrfmiddlewaretoken")
+    def test_amc_wizard_loads_manrope_font(self):
+        """Test that AMC wizard loads the Manrope font."""
+        response = self.client.get("/appealmyclaims/")
+        self.assertContains(response, "Manrope")
 
     def test_fhi_scan_unchanged(self):
         """Test that FHI scan page still uses the standard template."""
         response = self.client.get("/scan")
         self.assertEqual(response.status_code, 200)
-        # FHI should NOT have AMC stepper or Material UI colors
-        self.assertNotContains(response, "amc-stepper")
-        self.assertNotContains(response, "Manrope")
+        # FHI should NOT have AMC wizard
+        self.assertNotContains(response, "amc-wizard-root")
+        self.assertNotContains(response, "amc_wizard.bundle.js")
         # FHI should still have its standard elements
         self.assertContains(response, 'id="submit"')
         self.assertContains(response, 'name="denial_text"')
         self.assertContains(response, 'id="email"')
+
+    def test_amc_about_page_still_works(self):
+        """Test that AMC branded static pages still work."""
+        response = self.client.get("/appealmyclaims/about-us")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["brand"].slug, "amc")
+
+    def test_amc_privacy_policy_still_works(self):
+        """Test that AMC branded privacy policy still works."""
+        response = self.client.get("/appealmyclaims/privacy_policy")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["brand"].slug, "amc")
+
+
+class AnonymousDenialAPITest(TestCase):
+    """Tests for the anonymous denial creation REST endpoint."""
+
+    def test_create_denial_requires_email(self):
+        """Test that email is required for denial creation."""
+        response = self.client.post(
+            "/ziggy/rest/amc-denials/",
+            data={
+                "denial_text": "My claim was denied.",
+                "pii": True,
+                "tos": True,
+                "privacy": True,
+            },
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_create_denial_requires_denial_text(self):
+        """Test that denial_text is required for denial creation."""
+        response = self.client.post(
+            "/ziggy/rest/amc-denials/",
+            data={
+                "email": "test@example.com",
+                "pii": True,
+                "tos": True,
+                "privacy": True,
+            },
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_create_denial_success(self):
+        """Test successful anonymous denial creation."""
+        response = self.client.post(
+            "/ziggy/rest/amc-denials/",
+            data={
+                "email": "test@example.com",
+                "denial_text": "Insurance Company: Aetna\nDenial Reason: Not medically necessary\nService Denied: MRI scan\nThe insurance company denied coverage for MRI scan stating: Not medically necessary.",
+                "zip": "94105",
+                "pii": True,
+                "tos": True,
+                "privacy": True,
+                "insurance_company": "Aetna",
+            },
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 201)
+        data = response.json()
+        self.assertIn("denial_id", data)
+        self.assertIn("semi_sekret", data)
+
+    def test_create_denial_is_anonymous(self):
+        """Test that no authentication is required."""
+        # This test verifies the endpoint works without auth headers
+        response = self.client.post(
+            "/ziggy/rest/amc-denials/",
+            data={
+                "email": "anon@example.com",
+                "denial_text": "My claim was denied for being out of network.",
+                "zip": "",
+                "pii": True,
+                "tos": True,
+                "privacy": True,
+            },
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 201, response.content)

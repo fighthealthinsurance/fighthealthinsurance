@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import typing
 from typing import Optional
 
@@ -2096,3 +2097,92 @@ class ChooserViewSet(viewsets.ViewSet):
             ).data,
             status=status.HTTP_200_OK,
         )
+
+
+class AnonymousDenialViewSet(viewsets.ViewSet):
+    """
+    Anonymous denial creation for consumer-facing flows (AMC wizard).
+
+    POST /ziggy/rest/amc-denials/ - Create a denial without authentication.
+    Validates reCAPTCHA token to prevent spam. Rate limited by DRF anon throttle.
+    """
+
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    @extend_schema(
+        request=serializers.AnonymousDenialRequestSerializer,
+        responses=serializers.DenialResponseInfoSerializer,
+    )
+    def create(self, request: Request) -> Response:
+        """Create an anonymous denial for the AMC wizard flow."""
+        serializer = serializers.AnonymousDenialRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        # Validate reCAPTCHA unless in test mode
+        recaptcha_token = data.pop("recaptcha_token", None)
+        recaptcha_testing = (
+            os.environ.get("RECAPTCHA_TESTING", "").lower() == "true"
+            or getattr(settings, "RECAPTCHA_TESTING", False)
+        )
+        if not recaptcha_testing:
+            if not recaptcha_token:
+                return Response(
+                    {"error": "reCAPTCHA token is required"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            # Validate using django-recaptcha
+            from django_recaptcha.fields import ReCaptchaField
+
+            field = ReCaptchaField()
+            try:
+                field.clean(recaptcha_token)
+            except Exception:
+                return Response(
+                    {"error": "reCAPTCHA validation failed"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        # Handle mailing list subscription
+        email = data["email"]
+        subscribe = data.pop("subscribe", False)
+        if subscribe and email:
+            try:
+                MailingListSubscriber.objects.get_or_create(
+                    email=email,
+                    defaults={"comments": "From AMC wizard"},
+                )
+            except Exception as e:
+                logger.debug(f"Error subscribing {email}: {e}")
+
+        # Create the denial
+        try:
+            denial_response = (
+                common_view_logic.DenialCreatorHelper.create_or_update_denial(
+                    email=data["email"],
+                    denial_text=data["denial_text"],
+                    zip=data.get("zip", ""),
+                    pii=data.get("pii", True),
+                    tos=data.get("tos", True),
+                    privacy=data.get("privacy", True),
+                    use_external_models=data.get("use_external_models", False),
+                    store_raw_email=data.get("store_raw_email", False),
+                    insurance_company=data.get("insurance_company"),
+                )
+            )
+        except Exception as e:
+            logger.error(f"Error creating denial: {e}")
+            return Response(
+                {"error": "Failed to create denial"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        # Store denial in session for WebSocket auth
+        request.session["denial_uuid"] = str(denial_response.uuid)
+        request.session["denial_id"] = denial_response.denial_id
+
+        response_serializer = serializers.DenialResponseInfoSerializer(
+            instance=denial_response
+        )
+        return Response(response_serializer.data, status=status.HTTP_201_CREATED)

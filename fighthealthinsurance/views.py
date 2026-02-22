@@ -1214,6 +1214,22 @@ class AMCInitialProcessView(InitialProcessView):
         return reverse("amc_scan")
 
 
+class AMCWizardView(generic.TemplateView):
+    """AMC React wizard - single page that loads the React SPA."""
+
+    template_name = "amc_wizard.html"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["recaptcha_site_key"] = getattr(
+            settings, "RECAPTCHA_PUBLIC_KEY", ""
+        )
+        context["ws_host"] = self.request.get_host()
+        context["privacy_url"] = reverse("privacy_policy")
+        context["tos_url"] = reverse("tos")
+        return context
+
+
 def build_back_url(
     url_name: str,
     denial_id,

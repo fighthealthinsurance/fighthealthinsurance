@@ -1,0 +1,32 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}{{ brand.name }} - Healthcare Appeal Helper{% endblock title %}
+{% block metatitle %}{{ brand.name }} - Healthcare Appeal Helper{% endblock metatitle %}
+{% block metadescription %}Generate professional appeal letters for denied insurance claims with AI assistance. Free, private, and effective.{% endblock metadescription %}
+
+{% block scriptmagic %}
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+{% endblock scriptmagic %}
+
+{% block extra_style %}
+<style>
+  body {
+    font-family: 'Manrope', sans-serif;
+    background-color: #f5f8fa;
+  }
+</style>
+{% endblock extra_style %}
+
+{% block content %}
+<div id="amc-wizard-root"
+     data-csrf-token="{{ csrf_token }}"
+     data-recaptcha-site-key="{{ recaptcha_site_key }}"
+     data-ws-host="{{ ws_host }}"
+     data-privacy-url="{{ privacy_url }}"
+     data-tos-url="{{ tos_url }}">
+</div>
+<script src="{% static 'js/dist/amc_wizard.bundle.js' %}" defer></script>
+{% endblock content %}

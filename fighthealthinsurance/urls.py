@@ -471,24 +471,22 @@ else:
     urlpatterns += [p for p in brandable_patterns if p.name != "root"]
 
 # AppealMyClaims path-based brand access
-# AMC uses its own landing page and AMC-styled scan template
+# AMC uses a React wizard SPA (not the FHI multi-step flow)
 urlpatterns += [
     path(
         "appealmyclaims/",
-        cache_control(public=True)(
-            cache_page(60 * 60 * 2)(views.AMCIndexView.as_view())
-        ),
+        views.AMCWizardView.as_view(),
         name="amc_root",
     ),
-    # AMC scan uses the AMC-styled intake form (not the default FHI scrub.html)
+    # Backward compat: /appealmyclaims/scan redirects to wizard
     path(
         "appealmyclaims/scan",
-        sensitive_post_parameters("email")(views.AMCInitialProcessView.as_view()),
+        RedirectView.as_view(url="/appealmyclaims/", permanent=False),
         name="amc_scan",
     ),
 ]
-# Add other AMC-branded URLs (about, privacy, etc.) with /appealmyclaims/ prefix
-# Note: amc_root and amc_scan are handled above, so filter them out to avoid duplication
+# Add AMC-branded support URLs (about, privacy, tos, etc.) with /appealmyclaims/ prefix
+# The wizard handles its own flow internally, so we only need static/info pages
 urlpatterns += add_brand_patterns(
     [p for p in brandable_patterns if p.name not in ("root", "scan")],
     "appealmyclaims/",

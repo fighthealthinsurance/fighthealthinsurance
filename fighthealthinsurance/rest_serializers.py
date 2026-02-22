@@ -58,6 +58,26 @@ class ChooseAppealRequestSerializer(serializers.Serializer):
     denial_id = serializers.CharField()
 
 
+class AnonymousDenialRequestSerializer(serializers.Serializer):
+    """Serializer for anonymous denial creation (AMC wizard)."""
+
+    email = serializers.EmailField()
+    denial_text = serializers.CharField()
+    zip = serializers.CharField(required=False, default="", allow_blank=True)
+    pii = serializers.BooleanField(required=False, default=True)
+    tos = serializers.BooleanField(required=False, default=True)
+    privacy = serializers.BooleanField(required=False, default=True)
+    use_external_models = serializers.BooleanField(required=False, default=False)
+    store_raw_email = serializers.BooleanField(required=False, default=False)
+    subscribe = serializers.BooleanField(required=False, default=False)
+    insurance_company = serializers.CharField(
+        required=False, default="", allow_blank=True
+    )
+    recaptcha_token = serializers.CharField(
+        required=False, default="", allow_blank=True
+    )
+
+
 class DenialResponseInfoSerializer(serializers.Serializer):
     """Serializer for denial creation/update response with extracted information."""
 
