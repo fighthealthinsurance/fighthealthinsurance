@@ -241,7 +241,7 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
         # For testing, we verify the button logic exists in the code
 
         # Check if the retry functionality is present by examining the page
-        retry_handler_exists = self.execute_script(
+        _retry_handler_exists = self.execute_script(
             """
             // Check if retry button would appear based on elapsed time logic
             // The actual button appears after 60 seconds in production
@@ -276,10 +276,10 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
         assert chat_root, "Chat interface root element should be present"
 
         # Verify WebSocket connection elements
-        ws_ready = self.execute_script(
+        _ws_ready = self.execute_script(
             """
             // Check if WebSocket logic is initialized
-            return typeof getSessionKey === 'function' || 
+            return typeof getSessionKey === 'function' ||
                    localStorage.getItem('fhi_chat_session_key') !== null;
         """
         )
@@ -348,7 +348,7 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
         self.wait(2)
 
         # Get initial chat ID
-        initial_chat_id = self.execute_script(
+        _initial_chat_id = self.execute_script(
             """
             return localStorage.getItem('fhi_chat_id');
         """
@@ -372,7 +372,7 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
                 self.wait(1)
 
                 # Verify chat ID was cleared/reset
-                chat_id_after = self.execute_script(
+                _chat_id_after = self.execute_script(
                     """
                     return localStorage.getItem('fhi_chat_id');
                 """
@@ -547,7 +547,7 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
 
             # The message should be sent - we can't easily verify WebSocket payload
             # but we can check that no errors occurred
-            error_exists = self.execute_script(
+            _error_exists = self.execute_script(
                 """
                 return document.body.innerHTML.includes('error') ||
                        document.body.innerHTML.includes('Error');

@@ -895,16 +895,17 @@ class FuzzAttemptAdmin(admin.ModelAdmin):
             "</div>"
         )
 
-        info = (
-            f"<pre style='max-width:600px;overflow:auto;background:#f5f5f5;padding:10px;'>"
-            f"Blob Size: {obj.encrypted_blob_size or 0} bytes\n"
-            f"Key Version: {obj.key_version}\n\n"
-            f"[Full decryption requires view_fuzz_capture permission\n"
-            f"and is available via management commands]"
-            f"</pre>"
+        return format_html(
+            warning
+            + "<pre style='max-width:600px;overflow:auto;background:#f5f5f5;padding:10px;'>"
+            "Blob Size: {} bytes\n"
+            "Key Version: {}\n\n"
+            "[Full decryption requires view_fuzz_capture permission\n"
+            "and is available via management commands]"
+            "</pre>",
+            obj.encrypted_blob_size or 0,
+            obj.key_version,
         )
-
-        return format_html(warning + info)
 
     @admin.action(description="Purge selected fuzz attempts")
     def purge_selected(self, request, queryset):
@@ -916,7 +917,9 @@ class FuzzAttemptAdmin(admin.ModelAdmin):
                 try:
                     obj.encrypted_blob.delete(save=False)
                 except Exception as e:
-                    logger.warning(f"Failed to delete encrypted_blob for FuzzAttempt {obj.id}: {e}")
+                    logger.warning(
+                        f"Failed to delete encrypted_blob for FuzzAttempt {obj.id}: {e}"
+                    )
         queryset.delete()
         self.message_user(request, f"Purged {count} fuzz attempt records.")
 

@@ -42,6 +42,7 @@ application = ProtocolTypeRouter(
 
 from django.conf import settings
 
+
 def before_send_filter(event, hint):
     """
     Filter out noisy infrastructure errors from Sentry:
@@ -78,9 +79,7 @@ def before_send_filter(event, hint):
     # Check for specific gRPC error messages from Ray
     message = event.get("message", "") or ""
     if "Logstream proxy failed to connect" in message:
-        logger.warning(
-            f"Ray logstream proxy connection failed (filtered from Sentry)"
-        )
+        logger.warning(f"Ray logstream proxy connection failed (filtered from Sentry)")
         return None
     if "Unrecoverable error in data channel" in message:
         logger.warning(f"Ray data channel error (filtered from Sentry)")

@@ -138,19 +138,28 @@ SQL_INJECTION_REGEX = re.compile("|".join(SQL_INJECTION_PATTERNS), re.IGNORECASE
 
 
 def get_client_ip(request: HttpRequest) -> str:
-    """Extract client IP from request, handling proxies."""
-    x_forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
-    if x_forwarded_for:
-        ip = str(x_forwarded_for).split(",")[0].strip()
-        if ip:
-            return ip
+    """Extract client IP from request, handling proxies.
 
-    x_real_ip = request.META.get("HTTP_X_REAL_IP")
-    if x_real_ip:
-        return str(x_real_ip).strip()
-
+    Only trusts X-Forwarded-For / X-Real-IP when the immediate peer
+    (REMOTE_ADDR) is in the configured TRUSTED_PROXIES list.
+    """
     remote_addr = request.META.get("REMOTE_ADDR", "0.0.0.0")
-    return str(remote_addr) if remote_addr else "0.0.0.0"
+    remote_addr = str(remote_addr) if remote_addr else "0.0.0.0"
+
+    trusted_proxies = getattr(settings, "TRUSTED_PROXIES", [])
+
+    if remote_addr in trusted_proxies:
+        x_forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
+        if x_forwarded_for:
+            ip = str(x_forwarded_for).split(",")[0].strip()
+            if ip:
+                return ip
+
+        x_real_ip = request.META.get("HTTP_X_REAL_IP")
+        if x_real_ip:
+            return str(x_real_ip).strip()
+
+    return remote_addr
 
 
 def hash_ip(ip: str, salt: str) -> str:
