@@ -840,7 +840,7 @@ class FuzzAttemptAdmin(admin.ModelAdmin):
         ),
     )
 
-    actions = ["purge_selected", "export_metadata_csv"]
+    actions = ("purge_selected", "export_metadata_csv")
 
     @admin.display(description="IP Hash")
     def ip_hash_short(self, obj):
@@ -872,7 +872,7 @@ class FuzzAttemptAdmin(admin.ModelAdmin):
                 )
         except (json.JSONDecodeError, TypeError):
             pass
-        return obj.reason
+        return escape(obj.reason or "")
 
     @admin.display(description="Capture Preview")
     def decrypted_preview(self, obj):
@@ -910,24 +910,45 @@ class FuzzAttemptAdmin(admin.ModelAdmin):
     @admin.action(description="Purge selected fuzz attempts")
     def purge_selected(self, request, queryset):
         """Admin action to purge selected fuzz attempts."""
-        count = queryset.count()
-        # Delete associated files first
+        deletable = []
+        skipped = []
+
+        # Delete associated files first and only delete DB records when blob deletion succeeds
         for obj in queryset:
             if obj.encrypted_blob:
                 try:
                     obj.encrypted_blob.delete(save=False)
+                    deletable.append(obj)
                 except Exception as e:
                     logger.warning(
                         f"Failed to delete encrypted_blob for FuzzAttempt {obj.id}: {e}"
                     )
-        queryset.delete()
-        self.message_user(request, f"Purged {count} fuzz attempt records.")
+                    skipped.append(obj)
+            else:
+                deletable.append(obj)
+
+        if deletable:
+            queryset.model.objects.filter(pk__in=[obj.pk for obj in deletable]).delete()
+
+        message = f"Purged {len(deletable)} fuzz attempt records."
+        if skipped:
+            message += f" Skipped {len(skipped)} records due to encrypted blob deletion errors."
+        self.message_user(request, message)
 
     @admin.action(description="Export metadata as CSV")
     def export_metadata_csv(self, request, queryset):
         """Export selected records as CSV (metadata only, no decrypted content)."""
         import csv
         from django.http import HttpResponse
+
+        def sanitize_csv_cell(value):
+            if value is None:
+                return ""
+            if not isinstance(value, str):
+                value = str(value)
+            if value.startswith(("=", "+", "-", "@")):
+                return f"'{value}"
+            return value
 
         response = HttpResponse(content_type="text/csv")
         response["Content-Disposition"] = 'attachment; filename="fuzz_attempts.csv"'
@@ -951,12 +972,12 @@ class FuzzAttemptAdmin(admin.ModelAdmin):
                 [
                     obj.id,
                     obj.created_at.isoformat(),
-                    obj.ip_prefix,
-                    obj.method,
-                    obj.path[:200],
+                    sanitize_csv_cell(obj.ip_prefix),
+                    sanitize_csv_cell(obj.method),
+                    sanitize_csv_cell((obj.path or "")[:200]),
                     obj.score,
                     obj.status_returned,
-                    obj.reason[:500],
+                    sanitize_csv_cell((obj.reason or "")[:500]),
                 ]
             )
 

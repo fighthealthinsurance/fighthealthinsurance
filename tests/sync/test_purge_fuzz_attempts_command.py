@@ -27,6 +27,7 @@ class TestPurgeFuzzAttemptsBasic(TestCase):
             status_returned=400,
             reason='["test"]',
             score=50,
+            encrypted_blob=None,
         )
         # Manually set created_at to 10 days ago
         old_created = timezone.now() - datetime.timedelta(days=10)
@@ -41,7 +42,7 @@ class TestPurgeFuzzAttemptsBasic(TestCase):
     def test_keeps_recent_records(self):
         """Should keep records newer than retention days."""
         # Create recent record
-        recent_attempt = FuzzAttempt.objects.create(
+        FuzzAttempt.objects.create(
             ip_hash="b" * 64,
             ip_prefix="192.168.1.0/24",
             method="GET",
@@ -49,6 +50,7 @@ class TestPurgeFuzzAttemptsBasic(TestCase):
             status_returned=400,
             reason='["test"]',
             score=50,
+            encrypted_blob=None,
         )
 
         out = StringIO()
@@ -59,29 +61,34 @@ class TestPurgeFuzzAttemptsBasic(TestCase):
 
     def test_mixed_old_and_new(self):
         """Should only delete old records, keeping new ones."""
-        # Create old record
-        old_attempt = FuzzAttempt.objects.create(
-            ip_hash="a" * 64,
-            ip_prefix="192.168.1.0/24",
-            method="GET",
-            path="/old",
-            status_returned=400,
-            reason='["test"]',
-            score=50,
+        # Create old and new records in one DB write to reduce sqlite flakiness.
+        records = FuzzAttempt.objects.bulk_create(
+            [
+                FuzzAttempt(
+                    ip_hash="a" * 64,
+                    ip_prefix="192.168.1.0/24",
+                    method="GET",
+                    path="/old",
+                    status_returned=400,
+                    reason='["test"]',
+                    score=50,
+                    encrypted_blob=None,
+                ),
+                FuzzAttempt(
+                    ip_hash="b" * 64,
+                    ip_prefix="192.168.2.0/24",
+                    method="GET",
+                    path="/new",
+                    status_returned=400,
+                    reason='["test"]',
+                    score=50,
+                    encrypted_blob=None,
+                ),
+            ]
         )
-        old_created = timezone.now() - datetime.timedelta(days=10)
-        FuzzAttempt.objects.filter(id=old_attempt.id).update(created_at=old_created)
 
-        # Create new record
-        new_attempt = FuzzAttempt.objects.create(
-            ip_hash="b" * 64,
-            ip_prefix="192.168.2.0/24",
-            method="GET",
-            path="/new",
-            status_returned=400,
-            reason='["test"]',
-            score=50,
-        )
+        old_created = timezone.now() - datetime.timedelta(days=10)
+        FuzzAttempt.objects.filter(id=records[0].id).update(created_at=old_created)
 
         out = StringIO()
         call_command("purge_fuzz_attempts", "--days=5", stdout=out)
@@ -106,6 +113,7 @@ class TestPurgeFuzzAttemptsSettings(TestCase):
             status_returned=400,
             reason='["test"]',
             score=50,
+            encrypted_blob=None,
         )
         old_created = timezone.now() - datetime.timedelta(days=5)
         FuzzAttempt.objects.filter(id=attempt.id).update(created_at=old_created)
@@ -128,6 +136,7 @@ class TestPurgeFuzzAttemptsSettings(TestCase):
             status_returned=400,
             reason='["test"]',
             score=50,
+            encrypted_blob=None,
         )
         old_created = timezone.now() - datetime.timedelta(days=5)
         FuzzAttempt.objects.filter(id=attempt.id).update(created_at=old_created)
@@ -153,6 +162,7 @@ class TestPurgeFuzzAttemptsDryRun(TestCase):
             status_returned=400,
             reason='["test"]',
             score=50,
+            encrypted_blob=None,
         )
         old_created = timezone.now() - datetime.timedelta(days=10)
         FuzzAttempt.objects.filter(id=attempt.id).update(created_at=old_created)
@@ -165,19 +175,24 @@ class TestPurgeFuzzAttemptsDryRun(TestCase):
 
     def test_dry_run_shows_count(self):
         """--dry-run should show how many would be deleted."""
-        # Create 3 old records
-        for i in range(3):
-            attempt = FuzzAttempt.objects.create(
-                ip_hash=chr(ord("a") + i) * 64,
-                ip_prefix=f"192.168.{i}.0/24",
-                method="GET",
-                path=f"/test/{i}",
-                status_returned=400,
-                reason='["test"]',
-                score=50,
+        # Create 3 old records with bulk operations to reduce sqlite churn.
+        old_created = timezone.now() - datetime.timedelta(days=10)
+        with patch("django.utils.timezone.now", return_value=old_created):
+            FuzzAttempt.objects.bulk_create(
+                [
+                    FuzzAttempt(
+                        ip_hash=chr(ord("a") + i) * 64,
+                        ip_prefix=f"192.168.{i}.0/24",
+                        method="GET",
+                        path=f"/test/{i}",
+                        status_returned=400,
+                        reason='["test"]',
+                        score=50,
+                        encrypted_blob=None,
+                    )
+                    for i in range(3)
+                ]
             )
-            old_created = timezone.now() - datetime.timedelta(days=10)
-            FuzzAttempt.objects.filter(id=attempt.id).update(created_at=old_created)
 
         out = StringIO()
         call_command("purge_fuzz_attempts", "--days=5", "--dry-run", stdout=out)
@@ -196,6 +211,7 @@ class TestPurgeFuzzAttemptsDryRun(TestCase):
             status_returned=400,
             reason='["test"]',
             score=50,
+            encrypted_blob=None,
         )
         old_created = timezone.now() - datetime.timedelta(days=10)
         FuzzAttempt.objects.filter(id=attempt.id).update(created_at=old_created)
@@ -221,6 +237,7 @@ class TestPurgeFuzzAttemptsBatchDeletion(TestCase):
                 status_returned=400,
                 reason='["test"]',
                 score=50,
+                encrypted_blob=None,
             )
             old_created = timezone.now() - datetime.timedelta(days=10)
             FuzzAttempt.objects.filter(id=attempt.id).update(created_at=old_created)
@@ -236,19 +253,24 @@ class TestPurgeFuzzAttemptsBatchDeletion(TestCase):
 
     def test_batch_size_argument(self):
         """--batch-size argument should control batch size."""
-        # Create 10 old records
-        for i in range(10):
-            attempt = FuzzAttempt.objects.create(
-                ip_hash=f"{i:064d}",
-                ip_prefix=f"192.168.{i}.0/24",
-                method="GET",
-                path=f"/test/{i}",
-                status_returned=400,
-                reason='["test"]',
-                score=50,
+        # Create 10 old records with bulk operations to reduce sqlite churn.
+        old_created = timezone.now() - datetime.timedelta(days=10)
+        with patch("django.utils.timezone.now", return_value=old_created):
+            FuzzAttempt.objects.bulk_create(
+                [
+                    FuzzAttempt(
+                        ip_hash=f"{i:064d}",
+                        ip_prefix=f"192.168.{i}.0/24",
+                        method="GET",
+                        path=f"/test/{i}",
+                        status_returned=400,
+                        reason='["test"]',
+                        score=50,
+                        encrypted_blob=None,
+                    )
+                    for i in range(10)
+                ]
             )
-            old_created = timezone.now() - datetime.timedelta(days=10)
-            FuzzAttempt.objects.filter(id=attempt.id).update(created_at=old_created)
 
         out = StringIO()
         call_command("purge_fuzz_attempts", "--days=5", "--batch-size=3", stdout=out)
@@ -277,6 +299,7 @@ class TestPurgeFuzzAttemptsNoRecords(TestCase):
             status_returned=400,
             reason='["test"]',
             score=50,
+            encrypted_blob=None,
         )
 
         out = StringIO()
@@ -298,6 +321,7 @@ class TestPurgeFuzzAttemptsOutput(TestCase):
             status_returned=400,
             reason='["test"]',
             score=50,
+            encrypted_blob=None,
         )
         old_created = timezone.now() - datetime.timedelta(days=10)
         FuzzAttempt.objects.filter(id=attempt.id).update(created_at=old_created)
@@ -318,6 +342,7 @@ class TestPurgeFuzzAttemptsOutput(TestCase):
             status_returned=400,
             reason='["test"]',
             score=50,
+            encrypted_blob=None,
         )
         old_created = timezone.now() - datetime.timedelta(days=10)
         FuzzAttempt.objects.filter(id=attempt.id).update(created_at=old_created)

@@ -285,12 +285,28 @@ def check_rate_limit(ip_hash: str) -> Tuple[bool, int]:
     rate_limit = getattr(settings, "FUZZ_GUARD_RATE_LIMIT_PER_MINUTE", 60)
     cache_key = f"fuzz_guard:rate:{ip_hash}"
 
-    # Get current count, increment
-    current = cache.get(cache_key, 0)
-    new_count = current + 1
-
-    # Set/update with 60 second TTL
-    cache.set(cache_key, new_count, timeout=60)
+    try:
+        # Fixed-window counter: set TTL only on first creation.
+        if cache.add(cache_key, 1, timeout=60):
+            new_count = 1
+        else:
+            try:
+                new_count = cache.incr(cache_key)
+            except ValueError:
+                # Key may expire between add() and incr(); retry once.
+                if cache.add(cache_key, 1, timeout=60):
+                    new_count = 1
+                else:
+                    new_count = cache.incr(cache_key)
+    except NotImplementedError:
+        # Fallback for backends without atomic add/incr support.
+        current = cache.get(cache_key, 0)
+        new_count = int(current) + 1
+        cache.set(cache_key, new_count, timeout=60)
+    except Exception as e:
+        # Conservative deny when rate-limit state cannot be trusted.
+        logger.warning(f"Rate limiter cache error, applying conservative deny: {e}")
+        return True, rate_limit + 1
 
     return new_count > rate_limit, new_count
 
@@ -300,20 +316,27 @@ def check_rate_limit(ip_hash: str) -> Tuple[bool, int]:
 # =============================================================================
 
 
-def generate_fuzz_response(
-    is_throttled: bool, teapot_prob: float = 0.10
-) -> HttpResponse:
-    """Generate appropriate response for blocked request."""
-    # Determine status code
-    if is_throttled:
-        status_code = 429
-    else:
-        # Configurable chance of 418 I'm a teapot
-        if random.random() < teapot_prob:
-            status_code = 418
-        else:
-            status_code = 400
+def determine_status_code(is_throttled: bool, teapot_prob: float = 0.10) -> int:
+    """Decide the HTTP status code for a blocked fuzz request.
 
+    Returns 429 when rate-limited, otherwise 418 or 400 based on teapot_prob.
+    """
+    if is_throttled:
+        return 429
+    if random.random() < teapot_prob:
+        return 418
+    return 400
+
+
+def generate_fuzz_response(
+    status_code: int, is_throttled: bool = False
+) -> HttpResponse:
+    """Generate appropriate response for blocked request.
+
+    Args:
+        status_code: The HTTP status code to return (from determine_status_code).
+        is_throttled: Whether the request was rate-limited (adds Retry-After header).
+    """
     response = HttpResponse(
         TEAPOT_MESSAGE,
         content_type="text/plain",
@@ -389,9 +412,10 @@ class FuzzGuardMiddleware(MiddlewareMixin):
                 f"ip_hash={ip_hash[:16]}... score={score} reasons={reasons}"
             )
 
-            # Generate response first so we log the actual status code returned
+            # Compute status code once, use for both storage and response
             teapot_prob = getattr(settings, "FUZZ_GUARD_TEAPOT_PROB", 0.10)
-            response = generate_fuzz_response(is_throttled, teapot_prob)
+            status_code = determine_status_code(is_throttled, teapot_prob)
+            response = generate_fuzz_response(status_code, is_throttled)
 
             self._store_fuzz_attempt(
                 request=request,
@@ -400,7 +424,7 @@ class FuzzGuardMiddleware(MiddlewareMixin):
                 score=score,
                 reasons=reasons,
                 request_id=request_id,
-                status_code=response.status_code,
+                status_code=status_code,
             )
 
             return response
@@ -508,9 +532,44 @@ class FuzzGuardMiddleware(MiddlewareMixin):
             payload = json.dumps(capture).encode("utf-8")
 
             # Enforce max size
-            max_size = getattr(settings, "FUZZ_GUARD_MAX_CAPTURE_SIZE", 64 * 1024)
+            try:
+                max_size = int(
+                    getattr(settings, "FUZZ_GUARD_MAX_CAPTURE_SIZE", 64 * 1024)
+                )
+            except (TypeError, ValueError):
+                max_size = 64 * 1024
+            if max_size < 1:
+                max_size = 1
             if len(payload) > max_size:
-                payload = payload[:max_size]
+                source_text = payload.decode("utf-8", errors="replace")
+                best_payload = None
+
+                # Binary search for a character-bounded payload that fits max_size.
+                left = 0
+                right = len(source_text)
+                while left <= right:
+                    mid = (left + right) // 2
+                    candidate = json.dumps(
+                        {
+                            "truncated": True,
+                            "payload": source_text[:mid],
+                        },
+                        ensure_ascii=False,
+                    ).encode("utf-8")
+                    if len(candidate) <= max_size:
+                        best_payload = candidate
+                        left = mid + 1
+                    else:
+                        right = mid - 1
+
+                if best_payload is None:
+                    # Always write valid UTF-8 JSON, even with very small size limits.
+                    for candidate in (b'{"truncated":true}', b"{}", b"0"):
+                        if len(candidate) <= max_size:
+                            best_payload = candidate
+                            break
+
+                payload = best_payload or b"{}"
 
             # Save to encrypted field (EncryptedFileField handles encryption)
             attempt.encrypted_blob.save(

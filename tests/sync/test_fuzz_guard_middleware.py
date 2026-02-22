@@ -3,7 +3,7 @@ Tests for FuzzGuardMiddleware scoring, rate limiting, and responses.
 """
 
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from django.test import RequestFactory, TestCase, override_settings
 
@@ -13,6 +13,7 @@ from fighthealthinsurance.middleware.FuzzGuardMiddleware import (
     PROBE_PATH_PATTERNS,
     SCANNER_UA_REGEX,
     SQL_INJECTION_REGEX,
+    determine_status_code,
     check_rate_limit,
     extract_denial_id,
     generate_fuzz_response,
@@ -367,14 +368,18 @@ class TestRateLimiting(TestCase):
             # Simulate a counter that increments
             counter = {"value": 0}
 
-            def mock_get(key, default=0):
+            def mock_add(key, value, timeout=None):
+                if counter["value"] == 0:
+                    counter["value"] = value
+                    return True
+                return False
+
+            def mock_incr(key):
+                counter["value"] += 1
                 return counter["value"]
 
-            def mock_set(key, value, timeout=None):
-                counter["value"] = value
-
-            mock_cache.get.side_effect = mock_get
-            mock_cache.set.side_effect = mock_set
+            mock_cache.add.side_effect = mock_add
+            mock_cache.incr.side_effect = mock_incr
 
             with override_settings(FUZZ_GUARD_RATE_LIMIT_PER_MINUTE=5):
                 ip_hash = "test-rate-limit-hash"
@@ -401,18 +406,18 @@ class TestRateLimiting(TestCase):
         ) as mock_cache:
             counters = {}
 
-            def mock_get(key, default=0):
-                return counters.get(key, default)
-
-            def mock_set(key, value, timeout=None):
+            def mock_add(key, value, timeout=None):
+                if key in counters:
+                    return False
                 counters[key] = value
+                return True
 
-            def mock_delete(key):
-                counters.pop(key, None)
+            def mock_incr(key):
+                counters[key] += 1
+                return counters[key]
 
-            mock_cache.get.side_effect = mock_get
-            mock_cache.set.side_effect = mock_set
-            mock_cache.delete.side_effect = mock_delete
+            mock_cache.add.side_effect = mock_add
+            mock_cache.incr.side_effect = mock_incr
 
             ip_hash_1 = "test-ip-1"
             ip_hash_2 = "test-ip-2"
@@ -427,35 +432,55 @@ class TestRateLimiting(TestCase):
             self.assertEqual(count, 1)
 
 
+class TestDetermineStatusCode(TestCase):
+    """Test status code determination."""
+
+    def test_throttled_returns_429(self):
+        """Rate-limited requests should always return 429."""
+        status = determine_status_code(is_throttled=True, teapot_prob=1.0)
+        self.assertEqual(status, 429)
+
+    def test_teapot_prob_1_returns_418(self):
+        """With teapot_prob=1.0, should return 418."""
+        status = determine_status_code(is_throttled=False, teapot_prob=1.0)
+        self.assertEqual(status, 418)
+
+    def test_teapot_prob_0_returns_400(self):
+        """With teapot_prob=0, should return 400."""
+        status = determine_status_code(is_throttled=False, teapot_prob=0)
+        self.assertEqual(status, 400)
+
+    def test_429_takes_precedence_over_teapot(self):
+        """Rate-limited requests should return 429 even with teapot_prob=1.0."""
+        status = determine_status_code(is_throttled=True, teapot_prob=1.0)
+        self.assertEqual(status, 429)
+
+
 class TestResponseGeneration(TestCase):
     """Test response generation."""
 
     def test_blocked_response_is_plain_text(self):
         """Blocked response should be text/plain."""
-        response = generate_fuzz_response(is_throttled=False, teapot_prob=0)
+        response = generate_fuzz_response(status_code=400)
         self.assertEqual(response["Content-Type"], "text/plain")
 
     def test_blocked_response_contains_message(self):
         """Blocked response should contain the friendly message."""
-        response = generate_fuzz_response(is_throttled=False, teapot_prob=0)
+        response = generate_fuzz_response(status_code=400)
         self.assertEqual(response.content.decode("utf-8"), TEAPOT_MESSAGE)
 
-    def test_teapot_response_418_when_random_hits(self):
-        """With teapot_prob=1.0, should return 418."""
-        response = generate_fuzz_response(is_throttled=False, teapot_prob=1.0)
-        self.assertEqual(response.status_code, 418)
-
-    def test_bad_request_400_when_teapot_misses(self):
-        """With teapot_prob=0, should return 400."""
-        response = generate_fuzz_response(is_throttled=False, teapot_prob=0)
-        self.assertEqual(response.status_code, 400)
-
-    def test_429_takes_precedence_over_teapot(self):
-        """Rate-limited requests should always return 429."""
-        response = generate_fuzz_response(is_throttled=True, teapot_prob=1.0)
-        self.assertEqual(response.status_code, 429)
+    def test_response_uses_provided_status_code(self):
+        """Response should use the explicit status code."""
+        for code in [400, 418, 429]:
+            response = generate_fuzz_response(status_code=code)
+            self.assertEqual(response.status_code, code)
 
     def test_429_includes_retry_after_header(self):
         """429 response should include Retry-After: 60 header."""
-        response = generate_fuzz_response(is_throttled=True, teapot_prob=0)
+        response = generate_fuzz_response(status_code=429, is_throttled=True)
         self.assertEqual(response.get("Retry-After"), "60")
+
+    def test_non_throttled_no_retry_after(self):
+        """Non-throttled response should not include Retry-After header."""
+        response = generate_fuzz_response(status_code=400)
+        self.assertIsNone(response.get("Retry-After"))

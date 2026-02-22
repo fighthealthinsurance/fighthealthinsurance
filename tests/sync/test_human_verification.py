@@ -5,6 +5,7 @@ Tests for human verification session tracking and mixin.
 from django.test import Client, RequestFactory, TestCase, override_settings
 from django.contrib.sessions.middleware import SessionMiddleware
 from django.http import HttpResponse
+from django.urls import reverse
 from django.views import View
 
 from fighthealthinsurance.human_verification import (
@@ -157,26 +158,26 @@ class TestDownstreamViewsRequireVerification(TestCase):
     def test_find_next_steps_requires_verification(self):
         """FindNextSteps should require human verification."""
         client = Client()
-        response = client.get("/find_next_steps")
+        response = client.get(reverse("find_next_steps"))
         # Should return 418 since no captcha was completed
         self.assertEqual(response.status_code, 418)
 
     def test_generate_appeal_requires_verification(self):
         """GenerateAppeal should require human verification."""
         client = Client()
-        response = client.get("/generate_appeal")
+        response = client.get(reverse("generate_appeal"))
         self.assertEqual(response.status_code, 418)
 
     def test_choose_appeal_requires_verification(self):
         """ChooseAppeal should require human verification."""
         client = Client()
-        response = client.post("/choose_appeal")
+        response = client.post(reverse("choose_appeal"))
         self.assertEqual(response.status_code, 418)
 
     def test_categorize_review_requires_verification(self):
         """CategorizeReview should require human verification."""
         client = Client()
-        response = client.get("/categorize_review")
+        response = client.get(reverse("categorize_review"))
         self.assertEqual(response.status_code, 418)
 
 
@@ -198,6 +199,8 @@ class TestCaptchaOnScanForm(TestCase):
         """scrub.html should render the captcha field area."""
         client = Client()
         response = client.get("/scan")
-        # The captcha should be rendered (either as hidden or real captcha)
-        # In test mode it will be hidden, so just check the page loads
         self.assertEqual(response.status_code, 200)
+        content = response.content.decode("utf-8")
+        self.assertTrue(
+            any(token in content for token in ("id_captcha", "recaptcha", "captcha"))
+        )

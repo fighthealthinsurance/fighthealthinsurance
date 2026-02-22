@@ -11,7 +11,7 @@ FUZZ_GUARD_RETENTION_DAYS setting, or 3 days if not set).
 import datetime
 from typing import Any
 
-from django.core.management.base import BaseCommand, CommandParser
+from django.core.management.base import BaseCommand, CommandError, CommandParser
 from django.utils import timezone
 
 
@@ -44,13 +44,23 @@ class Command(BaseCommand):
 
         # Determine retention days
         days_opt = options.get("days")
-        if days_opt is not None:
+        if days_opt is None:
+            days_opt = getattr(settings, "FUZZ_GUARD_RETENTION_DAYS", 3)
+        try:
             days = int(days_opt)
-        else:
-            days = int(getattr(settings, "FUZZ_GUARD_RETENTION_DAYS", 3))
+        except (TypeError, ValueError) as exc:
+            raise CommandError("--days must be a positive integer.") from exc
+        if days <= 0:
+            raise CommandError("--days must be greater than 0.")
 
         dry_run = options.get("dry_run", False)
-        batch_size = options.get("batch_size", 1000)
+        batch_size_opt = options.get("batch_size", 1000)
+        try:
+            batch_size = int(batch_size_opt)
+        except (TypeError, ValueError) as exc:
+            raise CommandError("--batch-size must be a positive integer.") from exc
+        if batch_size <= 0:
+            raise CommandError("--batch-size must be greater than 0.")
 
         # Calculate cutoff date
         cutoff = timezone.now() - datetime.timedelta(days=days)

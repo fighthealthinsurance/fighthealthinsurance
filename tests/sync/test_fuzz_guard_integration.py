@@ -11,7 +11,7 @@ from fighthealthinsurance.models import FuzzAttempt
 User = get_user_model()
 
 
-def get_response(request):
+def get_response(_request):
     """Dummy get_response for middleware testing."""
     return HttpResponse("OK")
 
@@ -24,7 +24,6 @@ class TestFuzzGuardEndToEnd(TestCase):
 
     def test_normal_request_passes(self):
         """Normal request should not trigger fuzz guard."""
-        initial_count = FuzzAttempt.objects.count()
         response = self.client.get(
             "/",
             HTTP_USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",

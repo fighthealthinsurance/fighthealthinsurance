@@ -79,10 +79,10 @@ def before_send_filter(event, hint):
     # Check for specific gRPC error messages from Ray
     message = event.get("message", "") or ""
     if "Logstream proxy failed to connect" in message:
-        logger.warning(f"Ray logstream proxy connection failed (filtered from Sentry)")
+        logger.warning("Ray logstream proxy connection failed (filtered from Sentry)")
         return None
     if "Unrecoverable error in data channel" in message:
-        logger.warning(f"Ray data channel error (filtered from Sentry)")
+        logger.warning("Ray data channel error (filtered from Sentry)")
         return None
 
     # Check exception values for Ray gRPC errors
