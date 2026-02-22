@@ -10,10 +10,7 @@ from fighthealthinsurance.common_view_logic import (
     NextStepInfo,
     DenialCreatorHelper,
 )
-from fighthealthinsurance.helpers import (
-    SendFaxHelper,
-    RemoveDataHelper
-)
+from fighthealthinsurance.helpers import SendFaxHelper, RemoveDataHelper
 from fighthealthinsurance.models import Denial, DenialTypes, Appeal, FaxesToSend
 import pytest
 from django.test import TestCase

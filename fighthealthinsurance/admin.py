@@ -1,5 +1,6 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
+from loguru import logger
 
 from fhi_users.audit import AuditLog
 from fhi_users.models import (
@@ -27,6 +28,7 @@ from fighthealthinsurance.models import (
     FollowUpDocuments,
     FollowUpSched,
     FollowUpType,
+    FuzzAttempt,
     GenericContextGeneration,
     GenericQuestionGeneration,
     InsuranceCompany,
@@ -734,4 +736,258 @@ class AuditLogAdmin(admin.ModelAdmin):
         return False
 
     def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(FuzzAttempt)
+class FuzzAttemptAdmin(admin.ModelAdmin):
+    """
+    Admin configuration for FuzzAttempt model.
+
+    Provides investigation interface for detected fuzzing/scanning attempts.
+    All fields are readonly - records are created by middleware only.
+    """
+
+    list_display = (
+        "id",
+        "created_at",
+        "ip_hash_short",
+        "ip_prefix",
+        "method",
+        "path_truncated",
+        "score",
+        "status_returned",
+        "is_authenticated",
+    )
+
+    list_filter = (
+        "created_at",
+        "status_returned",
+        "is_authenticated",
+        "method",
+    )
+
+    search_fields = (
+        "ip_hash",
+        "ip_prefix",
+        "path",
+        "reason",
+        "request_id",
+        "session_key",
+    )
+
+    readonly_fields = (
+        "id",
+        "created_at",
+        "ip_hash",
+        "ip_prefix",
+        "raw_ip",
+        "user",
+        "session_key",
+        "is_authenticated",
+        "method",
+        "path",
+        "status_returned",
+        "reason_formatted",
+        "score",
+        "request_id",
+        "encrypted_blob_size",
+        "key_version",
+        "decrypted_preview",
+    )
+
+    ordering = ("-created_at",)
+    date_hierarchy = "created_at"
+
+    fieldsets = (
+        (
+            "Request Info",
+            {
+                "fields": (
+                    "created_at",
+                    "method",
+                    "path",
+                    "status_returned",
+                    "request_id",
+                )
+            },
+        ),
+        (
+            "Detection",
+            {
+                "fields": ("score", "reason_formatted"),
+            },
+        ),
+        (
+            "Client Info",
+            {
+                "fields": (
+                    "ip_hash",
+                    "ip_prefix",
+                    "raw_ip",
+                    "user",
+                    "session_key",
+                    "is_authenticated",
+                ),
+            },
+        ),
+        (
+            "Encrypted Capture",
+            {
+                "fields": ("encrypted_blob_size", "key_version", "decrypted_preview"),
+                "classes": ("collapse",),
+            },
+        ),
+    )
+
+    actions = ("purge_selected", "export_metadata_csv")
+
+    @admin.display(description="IP Hash")
+    def ip_hash_short(self, obj):
+        """Show truncated IP hash."""
+        return f"{obj.ip_hash[:16]}..."
+
+    @admin.display(description="Path")
+    def path_truncated(self, obj):
+        """Show truncated path."""
+        max_len = 50
+        if len(obj.path) > max_len:
+            return obj.path[:max_len] + "..."
+        return obj.path
+
+    @admin.display(description="Reasons")
+    def reason_formatted(self, obj):
+        """Format reasons as readable list."""
+        from django.utils.html import escape, format_html
+        from django.utils.safestring import mark_safe
+        import json
+
+        try:
+            reasons = json.loads(obj.reason)
+            if isinstance(reasons, list):
+                # Escape each item to prevent XSS
+                items = "".join(f"<li>{escape(str(r))}</li>" for r in reasons)
+                return format_html(
+                    "<ul style='margin:0;padding-left:20px;'>{}</ul>",
+                    mark_safe(items),
+                )
+        except (json.JSONDecodeError, TypeError):
+            pass
+        return escape(obj.reason or "")
+
+    @admin.display(description="Capture Preview")
+    def decrypted_preview(self, obj):
+        """
+        Show encrypted capture preview.
+
+        Note: Actual decryption requires view_fuzz_capture permission
+        and is only shown to authorized users.
+        """
+        from django.utils.html import format_html
+
+        if not obj.encrypted_blob:
+            return "No capture available"
+
+        warning = (
+            '<div style="background:#fff3cd;border:1px solid #ffc107;'
+            'padding:10px;margin-bottom:10px;border-radius:4px;">'
+            "<strong>Warning:</strong> Encrypted blob may contain sensitive data "
+            "(Authorization headers, cookies, etc.). Handle with care."
+            "</div>"
+        )
+
+        return format_html(
+            warning
+            + "<pre style='max-width:600px;overflow:auto;background:#f5f5f5;padding:10px;'>"
+            "Blob Size: {} bytes\n"
+            "Key Version: {}\n\n"
+            "[Full decryption requires view_fuzz_capture permission\n"
+            "and is available via management commands]"
+            "</pre>",
+            obj.encrypted_blob_size or 0,
+            obj.key_version,
+        )
+
+    @admin.action(description="Purge selected fuzz attempts")
+    def purge_selected(self, request, queryset):
+        """Admin action to purge selected fuzz attempts."""
+        deletable = []
+        skipped = []
+
+        # Delete associated files first and only delete DB records when blob deletion succeeds
+        for obj in queryset:
+            if obj.encrypted_blob:
+                try:
+                    obj.encrypted_blob.delete(save=False)
+                    deletable.append(obj)
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to delete encrypted_blob for FuzzAttempt {obj.id}: {e}"
+                    )
+                    skipped.append(obj)
+            else:
+                deletable.append(obj)
+
+        if deletable:
+            queryset.model.objects.filter(pk__in=[obj.pk for obj in deletable]).delete()
+
+        message = f"Purged {len(deletable)} fuzz attempt records."
+        if skipped:
+            message += f" Skipped {len(skipped)} records due to encrypted blob deletion errors."
+        self.message_user(request, message)
+
+    @admin.action(description="Export metadata as CSV")
+    def export_metadata_csv(self, request, queryset):
+        """Export selected records as CSV (metadata only, no decrypted content)."""
+        import csv
+        from django.http import HttpResponse
+
+        def sanitize_csv_cell(value):
+            if value is None:
+                return ""
+            if not isinstance(value, str):
+                value = str(value)
+            if value.startswith(("=", "+", "-", "@")):
+                return f"'{value}"
+            return value
+
+        response = HttpResponse(content_type="text/csv")
+        response["Content-Disposition"] = 'attachment; filename="fuzz_attempts.csv"'
+
+        writer = csv.writer(response)
+        writer.writerow(
+            [
+                "id",
+                "created_at",
+                "ip_prefix",
+                "method",
+                "path",
+                "score",
+                "status_returned",
+                "reason",
+            ]
+        )
+
+        for obj in queryset:
+            writer.writerow(
+                [
+                    obj.id,
+                    obj.created_at.isoformat(),
+                    sanitize_csv_cell(obj.ip_prefix),
+                    sanitize_csv_cell(obj.method),
+                    sanitize_csv_cell((obj.path or "")[:200]),
+                    obj.score,
+                    obj.status_returned,
+                    sanitize_csv_cell((obj.reason or "")[:500]),
+                ]
+            )
+
+        return response
+
+    def has_add_permission(self, request):
+        """Prevent manual record creation."""
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        """Prevent record modification."""
         return False

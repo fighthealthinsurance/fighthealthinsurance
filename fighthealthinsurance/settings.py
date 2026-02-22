@@ -18,6 +18,7 @@ from functools import cached_property
 from pathlib import Path
 from typing import Optional
 
+from django.core.exceptions import ImproperlyConfigured
 from django.core.files.storage import Storage
 
 import minio as m
@@ -179,6 +180,7 @@ class Base(Configuration):
     MIDDLEWARE = [
         "fighthealthinsurance.middleware.CsrfCookieToHeaderMiddleware",
         "corsheaders.middleware.CorsMiddleware",
+        "fighthealthinsurance.middleware.FuzzGuardMiddleware",
         "django_prometheus.middleware.PrometheusBeforeMiddleware",
         "fighthealthinsurance.middleware.SessionMiddlewareDynamicDomain",
         "django.contrib.sessions.middleware.SessionMiddleware",
@@ -413,6 +415,55 @@ class Base(Configuration):
             self.EXTERNAL_STORAGE_C,
         )
 
+    # =============================================================================
+    # Fuzz Guard Configuration
+    # =============================================================================
+    # Detects and logs fuzzing/scanning attempts with configurable scoring
+
+    # Master enable/disable switch
+    FUZZ_GUARD_ENABLED = os.getenv("FUZZ_GUARD_ENABLED", "true").lower() == "true"
+
+    # Score threshold to trigger fuzz guard (requests scoring >= this are blocked)
+    FUZZ_GUARD_SCORE_THRESHOLD = int(os.getenv("FUZZ_GUARD_SCORE_THRESHOLD", "50"))
+
+    # Probability of returning 418 I'm a teapot instead of 400 (0.0-1.0)
+    FUZZ_GUARD_TEAPOT_PROB = float(os.getenv("FUZZ_GUARD_TEAPOT_PROB", "0.10"))
+
+    # Rate limiting: requests per minute per IP hash before auto-blocking
+    FUZZ_GUARD_RATE_LIMIT_PER_MINUTE = int(
+        os.getenv("FUZZ_GUARD_RATE_LIMIT_PER_MINUTE", "60")
+    )
+
+    # Request body capture settings
+    FUZZ_GUARD_CAPTURE_BODY_BYTES = int(os.getenv("FUZZ_GUARD_CAPTURE_BODY_BYTES", "0"))
+    FUZZ_GUARD_CAPTURE_MULTIPART = (
+        os.getenv("FUZZ_GUARD_CAPTURE_MULTIPART", "false").lower() == "true"
+    )
+    FUZZ_GUARD_MAX_CAPTURE_SIZE = 64 * 1024  # 64KB max capture
+
+    # Data retention (days) - old fuzz attempts are purged
+    FUZZ_GUARD_RETENTION_DAYS = int(os.getenv("FUZZ_GUARD_RETENTION_DAYS", "3"))
+
+    # Trusted proxy IPs - only trust X-Forwarded-For from these addresses
+    TRUSTED_PROXIES: list = [
+        p.strip()
+        for p in os.getenv("TRUSTED_PROXIES", "127.0.0.1").split(",")
+        if p.strip()
+    ]
+
+    # IP hashing salt (should be set to a unique value in production!)
+    FUZZ_GUARD_IP_SALT = os.getenv("FUZZ_GUARD_IP_SALT", "default-fuzz-salt-change-me")
+
+    # Store raw IP (only enable if legal/compliance allows)
+    FUZZ_GUARD_STORE_RAW_IP = (
+        os.getenv("FUZZ_GUARD_STORE_RAW_IP", "false").lower() == "true"
+    )
+
+    # Encryption keys for envelope encryption of request captures
+    # Should be base64-encoded 32-byte key for AES-256
+    FUZZ_LOG_MASTER_KEY = os.getenv("FUZZ_LOG_MASTER_KEY", "")
+    FUZZ_LOG_KEY_VERSION = os.getenv("FUZZ_LOG_KEY_VERSION", "v1")
+
     # Ignore some 404 errors
     IGNORABLE_404_URLS = [
         re.compile(r"\.(php|cgi)$"),
@@ -634,6 +685,16 @@ class Prod(Base):
     @property
     def SECRET_KEY(self):  # type: ignore
         return os.getenv("SECRET_KEY", "")
+
+    @property
+    def FUZZ_GUARD_IP_SALT(self):  # type: ignore
+        salt = os.getenv("FUZZ_GUARD_IP_SALT", "")
+        if not salt or salt == "default-fuzz-salt-change-me":
+            raise ImproperlyConfigured(
+                "FUZZ_GUARD_IP_SALT must be set to a unique value in production. "
+                "Set the FUZZ_GUARD_IP_SALT environment variable."
+            )
+        return salt
 
     @property
     def STRIPE_API_SECRET_KEY(self):

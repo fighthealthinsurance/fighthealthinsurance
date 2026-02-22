@@ -42,56 +42,70 @@ application = ProtocolTypeRouter(
 
 from django.conf import settings
 
+
+def before_send_filter(event, hint):
+    """
+    Filter out noisy infrastructure errors from Sentry:
+    - Ray client connection errors (transient, auto-recovered)
+    - Fuzz guard events (logged locally for investigation)
+    """
+    from loguru import logger
+
+    # Check logger name for Ray client internal loggers
+    logger_name = event.get("logger", "")
+    if logger_name in (
+        "ray.util.client.logsclient",
+        "ray.util.client.dataclient",
+    ):
+        logger.warning(
+            f"Ray client connection issue (filtered from Sentry): {event.get('message', 'unknown')}"
+        )
+        return None
+
+    # Filter fuzz guard module events (they're logged locally)
+    if "fuzz_guard" in logger_name.lower() or "fuzzguard" in logger_name.lower():
+        return None
+
+    # Check for fuzz_guard tag set by middleware
+    tags = event.get("tags", {})
+    if tags.get("fuzz_guard") is True:
+        return None
+
+    # Check transaction name for fuzz guard middleware
+    transaction = event.get("transaction", "")
+    if "FuzzGuardMiddleware" in transaction:
+        return None
+
+    # Check for specific gRPC error messages from Ray
+    message = event.get("message", "") or ""
+    if "Logstream proxy failed to connect" in message:
+        logger.warning("Ray logstream proxy connection failed (filtered from Sentry)")
+        return None
+    if "Unrecoverable error in data channel" in message:
+        logger.warning("Ray data channel error (filtered from Sentry)")
+        return None
+
+    # Check exception values for Ray gRPC errors
+    exception_values = event.get("exception", {}).get("values", [])
+    for exc in exception_values:
+        exc_value = exc.get("value", "") or ""
+        if "Logstream proxy failed to connect" in exc_value:
+            logger.warning(
+                f"Ray gRPC logstream error (filtered from Sentry): {exc_value[:200]}"
+            )
+            return None
+        if "grpc_status:5" in exc_value and "Channel for client" in exc_value:
+            logger.warning(
+                f"Ray gRPC channel error (filtered from Sentry): {exc_value[:200]}"
+            )
+            return None
+
+    return event
+
+
 if settings.SENTRY_ENDPOINT and not settings.DEBUG:
     import sentry_sdk
     from sentry_sdk.integrations.django import DjangoIntegration
-
-    def before_send_filter(event, hint):
-        """
-        Filter out Ray client connection errors that are transient infrastructure
-        issues. Ray handles reconnection automatically, so these are noisy but
-        not actionable in Sentry. They're logged locally for debugging.
-        """
-        from loguru import logger
-
-        # Check logger name for Ray client internal loggers
-        logger_name = event.get("logger", "")
-        if logger_name in (
-            "ray.util.client.logsclient",
-            "ray.util.client.dataclient",
-        ):
-            logger.warning(
-                f"Ray client connection issue (filtered from Sentry): {event.get('message', 'unknown')}"
-            )
-            return None
-
-        # Check for specific gRPC error messages from Ray
-        message = event.get("message", "") or ""
-        if "Logstream proxy failed to connect" in message:
-            logger.warning(
-                f"Ray logstream proxy connection failed (filtered from Sentry)"
-            )
-            return None
-        if "Unrecoverable error in data channel" in message:
-            logger.warning(f"Ray data channel error (filtered from Sentry)")
-            return None
-
-        # Check exception values for Ray gRPC errors
-        exception_values = event.get("exception", {}).get("values", [])
-        for exc in exception_values:
-            exc_value = exc.get("value", "") or ""
-            if "Logstream proxy failed to connect" in exc_value:
-                logger.warning(
-                    f"Ray gRPC logstream error (filtered from Sentry): {exc_value[:200]}"
-                )
-                return None
-            if "grpc_status:5" in exc_value and "Channel for client" in exc_value:
-                logger.warning(
-                    f"Ray gRPC channel error (filtered from Sentry): {exc_value[:200]}"
-                )
-                return None
-
-        return event
 
     sentry_sdk.init(
         dsn=settings.SENTRY_ENDPOINT,

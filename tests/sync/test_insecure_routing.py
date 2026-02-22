@@ -91,8 +91,17 @@ class EntityExtractViewTest(TestCase):
             semi_sekret="test-semi-sekret",
         )
 
+    def test_view_requires_human_verification(self):
+        """Test that the view requires human verification."""
+        response = self.client.get(reverse("eev"))
+        self.assertEqual(response.status_code, 418)
+
     def test_view_requires_session(self):
-        """Test that the view requires a session."""
+        """Test that the view requires a session after human verification."""
+        session = self.client.session
+        session["human_verified"] = True
+        session.save()
+
         response = self.client.get(reverse("eev"))
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response.url, reverse("process"))
@@ -100,6 +109,7 @@ class EntityExtractViewTest(TestCase):
     def test_view_with_session(self):
         """Test that the view works with a session."""
         session = self.client.session
+        session["human_verified"] = True
         session["denial_id"] = 12345
         session.save()
 
@@ -120,8 +130,17 @@ class PlanDocumentsViewTest(TestCase):
             semi_sekret="test-semi-sekret",
         )
 
+    def test_view_requires_human_verification(self):
+        """Test that the view requires human verification."""
+        response = self.client.get(reverse("hh"))
+        self.assertEqual(response.status_code, 418)
+
     def test_view_requires_session(self):
-        """Test that the view requires a session."""
+        """Test that the view requires a session after human verification."""
+        session = self.client.session
+        session["human_verified"] = True
+        session.save()
+
         response = self.client.get(reverse("hh"))
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response.url, reverse("process"))
@@ -129,6 +148,7 @@ class PlanDocumentsViewTest(TestCase):
     def test_view_with_session(self):
         """Test that the view works with a session."""
         session = self.client.session
+        session["human_verified"] = True
         session["denial_id"] = 12345
         session.save()
 
@@ -149,16 +169,25 @@ class DenialCollectedViewTest(TestCase):
             semi_sekret="test-semi-sekret",
         )
 
+    def test_view_requires_human_verification(self):
+        """Test that the view requires human verification."""
+        response = self.client.get(reverse("dvc"))
+        self.assertEqual(response.status_code, 418)
+
     def test_view_requires_session(self):
-        """Test that the view requires a session."""
+        """Test that the view requires a session after human verification."""
+        session = self.client.session
+        session["human_verified"] = True
+        session.save()
+
         response = self.client.get(reverse("dvc"))
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response.url, reverse("process"))
 
     def test_view_with_session(self):
         """Test that the view works with a session."""
-
         session = self.client.session
+        session["human_verified"] = True
         session["denial_id"] = 12345
         session.save()
 
