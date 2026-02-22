@@ -116,8 +116,9 @@ def canonical_url_context(request):
 
     # Strip /appealmyclaims prefix from path for canonical URL
     # (canonical should point to root path on brand's domain)
+    # e.g. /appealmyclaims/scan -> /scan, /appealmyclaims/ -> /
     if path.startswith("/appealmyclaims/"):
-        path = path[len("/appealmyclaims") :]
+        path = path.removeprefix("/appealmyclaims")  # /appealmyclaims/scan -> /scan
     elif path == "/appealmyclaims":
         path = "/"
 

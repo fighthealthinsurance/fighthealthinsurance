@@ -2125,12 +2125,7 @@ class StateHelpView(TemplateView):
         return context
 
 
-class AMCIndexView(InitialProcessView):
-    """
-    AppealMyClaims landing page with embedded upload form.
-
-    Single-page flow where users can upload and start their appeal
-    directly from the homepage without clicking through.
-    """
+class AMCIndexView(generic.TemplateView):
+    """AppealMyClaims landing page with CTAs linking to the scan flow."""
 
     template_name = "amc_index.html"

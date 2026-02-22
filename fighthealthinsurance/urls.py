@@ -453,7 +453,9 @@ else:
 urlpatterns += [
     path(
         "appealmyclaims/",
-        sensitive_post_parameters("email")(views.AMCIndexView.as_view()),
+        cache_control(public=True)(
+            cache_page(60 * 60 * 2)(views.AMCIndexView.as_view())
+        ),
         name="amc_root",
     )
 ]

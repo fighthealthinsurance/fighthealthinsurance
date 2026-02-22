@@ -13,12 +13,7 @@ import time
 
 import pytest
 from django.contrib.staticfiles.testing import StaticLiveServerTestCase
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.support.ui import WebDriverWait
 from seleniumbase import BaseCase
-
-from fighthealthinsurance.models import DenialTypes
 
 from .fhi_selenium_base import FHISeleniumBase
 
@@ -75,10 +70,11 @@ class SeleniumTestAMCBranding(FHISeleniumBase, StaticLiveServerTestCase):
         with pytest.raises(Exception):
             self.assert_element('a:contains("Resources/Blogs")')
 
-        # Should have the main CTA
-        self.assert_element('a:contains("Generate Appeal")') or self.assert_element(
-            'a:contains("Get Started")'
-        )
+        # Should have the main CTA (either "Generate Appeal" or "Get Started")
+        try:
+            self.assert_element('a:contains("Generate Appeal")')
+        except Exception:
+            self.assert_element('a:contains("Get Started")')
 
     def test_amc_has_powered_by_fhi_in_footer(self):
         """Test that AMC pages show 'Powered by Fight Health Insurance' in footer."""
