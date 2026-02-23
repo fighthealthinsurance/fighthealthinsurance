@@ -2064,10 +2064,11 @@ class UnderstandPolicyView(FormView):
         user_question = form.cleaned_data.get("user_question", "")
         uploaded_file = form.cleaned_data.get("policy_document")
 
-        # Mark consent as completed in the session
+        # Sanitize filename for display
+        safe_filename = re.sub(r"[^\w\s.\-]", "_", uploaded_file.name)[:200]
+
         self.request.session["consent_completed"] = True
         self.request.session["email"] = email
-        self.request.session.save()
 
         # Create PolicyDocument record
         try:
@@ -2079,17 +2080,16 @@ class UnderstandPolicyView(FormView):
             policy_doc = PolicyDocument.objects.create(
                 document=uploaded_file,
                 document_type=document_type,
-                filename=uploaded_file.name,
+                filename=safe_filename,
                 hashed_email=hashed_email,
                 session_key=session_key,
             )
 
-            logger.info(f"Created PolicyDocument {policy_doc.id} for {uploaded_file.name}")
+            logger.info(f"Created PolicyDocument {policy_doc.id} for {safe_filename}")
 
             # Store the document ID in session for chat to pick up
             self.request.session["policy_document_id"] = str(policy_doc.id)
             self.request.session["policy_document_question"] = user_question
-            self.request.session.save()
 
         except Exception as e:
             logger.opt(exception=True).error(f"Failed to save policy document: {e}")
@@ -2108,12 +2108,13 @@ class UnderstandPolicyView(FormView):
             except Exception as e:
                 logger.warning(f"Failed to create mailing list subscriber: {e}")
 
-        # Build initial message for chat
+        # Build initial message for chat — must match the regex in
+        # chat_interface._POLICY_ANALYSIS_REGEX so the chat handler picks it up.
         doc_type_display = dict(UnderstandPolicyForm.DOCUMENT_TYPE_CHOICES).get(
             document_type, "policy document"
         )
 
-        initial_message = f"I've uploaded my insurance {doc_type_display}: {uploaded_file.name}\n\n"
+        initial_message = f"I've uploaded my insurance {doc_type_display}: {safe_filename}\n\n"
 
         if user_question:
             initial_message += f"My question: {user_question}\n\n"
@@ -2126,13 +2127,8 @@ class UnderstandPolicyView(FormView):
             "4. Key quotes I could use in an appeal letter"
         )
 
-        # Store initial message in session for chat to use
-        self.request.session["policy_initial_message"] = initial_message
-        self.request.session.save()
-
-        # Render auto-submit form to POST to chat
         context = {
-            "denial_text": initial_message,  # Reuse the existing chat_redirect template
+            "denial_text": initial_message,
             "chat_url": reverse("chat"),
         }
         return render(self.request, "chat_redirect.html", context)

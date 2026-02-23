@@ -2193,15 +2193,13 @@ class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model)
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     document = models.FileField(upload_to="policy_docs/", blank=True)
-    document_enc = EncryptedFileField(upload_to="policy_docs_enc/", blank=True)
     document_type = models.CharField(
         max_length=50, choices=DOCUMENT_TYPE_CHOICES, default="other"
     )
     filename = models.CharField(max_length=255, blank=True)
-    hashed_email = models.CharField(max_length=200, blank=True, db_index=True)
-    session_key = models.CharField(max_length=100, blank=True, db_index=True)
+    hashed_email = models.CharField(max_length=200, blank=True)
+    session_key = models.CharField(max_length=100, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
-    raw_text = models.TextField(blank=True)  # Extracted text from PDF
 
     class Meta:
         indexes = [

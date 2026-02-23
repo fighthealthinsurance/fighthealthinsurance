@@ -3,6 +3,22 @@ from django import forms
 from fighthealthinsurance.forms import REFERRAL_SOURCE_CHOICES
 
 
+SUPPORTED_POLICY_EXTENSIONS = {".pdf", ".docx", ".doc", ".txt", ".rtf"}
+
+SUPPORTED_POLICY_CONTENT_TYPES = {
+    "application/pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/msword",
+    "text/plain",
+    "application/rtf",
+    "text/rtf",
+}
+
+# Magic bytes for file type validation
+_PDF_MAGIC = b"%PDF"
+_DOCX_MAGIC = b"PK"  # ZIP-based format
+
+
 class UnderstandPolicyForm(forms.Form):
     """Form for uploading policy documents with consent"""
 
@@ -18,7 +34,7 @@ class UnderstandPolicyForm(forms.Form):
             attrs={
                 "class": "form-control",
                 "id": "policy_document",
-                "accept": ".pdf",
+                "accept": ".pdf,.docx,.doc,.txt,.rtf",
             }
         ),
     )
@@ -104,18 +120,32 @@ class UnderstandPolicyForm(forms.Form):
     )
 
     def clean_policy_document(self):
-        """Validate the uploaded file is a PDF and not too large"""
+        """Validate the uploaded file type and size."""
         file = self.cleaned_data.get("policy_document")
         if file:
-            # Check file size (max 20MB)
             if file.size > 20 * 1024 * 1024:
                 raise forms.ValidationError(
                     "File size must be less than 20MB. Please upload a smaller file."
                 )
-            # Check file type
-            if not file.name.lower().endswith(".pdf"):
+            ext = "." + file.name.rsplit(".", 1)[-1].lower() if "." in file.name else ""
+            if ext not in SUPPORTED_POLICY_EXTENSIONS:
                 raise forms.ValidationError(
-                    "Only PDF files are supported. Please upload a PDF document."
+                    f"Unsupported file type. Please upload one of: {', '.join(sorted(SUPPORTED_POLICY_EXTENSIONS))}"
+                )
+            if file.content_type and file.content_type not in SUPPORTED_POLICY_CONTENT_TYPES:
+                raise forms.ValidationError(
+                    "The uploaded file does not appear to be a supported document type."
+                )
+            # Magic byte check for PDF and DOCX
+            header = file.read(8)
+            file.seek(0)
+            if ext == ".pdf" and not header.startswith(_PDF_MAGIC):
+                raise forms.ValidationError(
+                    "The file does not appear to be a valid PDF."
+                )
+            if ext == ".docx" and not header.startswith(_DOCX_MAGIC):
+                raise forms.ValidationError(
+                    "The file does not appear to be a valid DOCX document."
                 )
         return file
 

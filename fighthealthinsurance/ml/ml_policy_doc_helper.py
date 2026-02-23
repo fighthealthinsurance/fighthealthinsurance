@@ -2,7 +2,7 @@
 Helper for analyzing policy documents to extract relevant coverage information.
 
 Uses internal ML models to:
-1. Extract text from policy documents (Summary of Benefits, Medical Policy PDFs)
+1. Extract text from policy documents (Summary of Benefits, Medical Policy PDFs/DOCX)
 2. Identify exclusions and inclusions
 3. Find appeal-relevant clauses with page references
 4. Generate quotable summaries for use in appeals
@@ -11,7 +11,7 @@ Uses internal ML models to:
 import asyncio
 import json
 import re
-from typing import Optional, List, Dict, Any
+from typing import Optional, Dict, Any
 from loguru import logger
 
 import pymupdf
@@ -33,12 +33,9 @@ class MLPolicyDocHelper:
     TIMEOUT_SECONDS = 90
 
     @classmethod
-    def extract_text_from_pdf(cls, file_path: str) -> tuple[str, Dict[int, str]]:
+    def _extract_text_from_pdf(cls, file_path: str) -> tuple[str, Dict[int, str]]:
         """
         Extract text from a PDF file with page number tracking.
-
-        Args:
-            file_path: Path to the PDF file
 
         Returns:
             Tuple of (full_text, page_dict) where page_dict maps page numbers to text
@@ -59,6 +56,85 @@ class MLPolicyDocHelper:
         return full_text, page_dict
 
     @classmethod
+    def _extract_text_from_docx(cls, file_path: str) -> tuple[str, Dict[int, str]]:
+        """
+        Extract text from a DOCX file.
+
+        Returns:
+            Tuple of (full_text, page_dict). DOCX does not have reliable page
+            numbers, so page_dict uses paragraph-group indices as pseudo-pages.
+        """
+        full_text = ""
+        page_dict: Dict[int, str] = {}
+
+        try:
+            import docx
+
+            doc = docx.Document(file_path)
+            # Group paragraphs into pseudo-pages (~3000 chars each)
+            current_page = 1
+            current_page_text = ""
+            for para in doc.paragraphs:
+                text = para.text.strip()
+                if not text:
+                    continue
+                current_page_text += text + "\n"
+                if len(current_page_text) > 3000:
+                    page_dict[current_page] = current_page_text
+                    full_text += f"\n\n[Section {current_page}]\n{current_page_text}"
+                    current_page += 1
+                    current_page_text = ""
+            # Add remaining text
+            if current_page_text.strip():
+                page_dict[current_page] = current_page_text
+                full_text += f"\n\n[Section {current_page}]\n{current_page_text}"
+        except Exception as e:
+            logger.warning(f"Error extracting text from DOCX {file_path}: {e}")
+
+        return full_text, page_dict
+
+    @classmethod
+    def _extract_text_from_plaintext(cls, file_path: str) -> tuple[str, Dict[int, str]]:
+        """
+        Extract text from a plain text or RTF file.
+
+        Returns:
+            Tuple of (full_text, page_dict) with a single pseudo-page.
+        """
+        full_text = ""
+        page_dict: Dict[int, str] = {}
+
+        try:
+            with open(file_path, "r", errors="replace") as f:
+                content = f.read()
+            if content.strip():
+                page_dict[1] = content
+                full_text = f"\n\n[Section 1]\n{content}"
+        except Exception as e:
+            logger.warning(f"Error reading text file {file_path}: {e}")
+
+        return full_text, page_dict
+
+    @classmethod
+    def extract_text(cls, file_path: str) -> tuple[str, Dict[int, str]]:
+        """
+        Extract text from a document file, dispatching by file extension.
+
+        Returns:
+            Tuple of (full_text, page_dict)
+        """
+        lower_path = file_path.lower()
+        if lower_path.endswith(".pdf"):
+            return cls._extract_text_from_pdf(file_path)
+        elif lower_path.endswith(".docx"):
+            return cls._extract_text_from_docx(file_path)
+        elif lower_path.endswith((".txt", ".rtf", ".doc")):
+            return cls._extract_text_from_plaintext(file_path)
+        else:
+            logger.warning(f"Unsupported file type for text extraction: {file_path}")
+            return "", {}
+
+    @classmethod
     async def analyze_policy_document(
         cls,
         policy_document: PolicyDocument,
@@ -66,17 +142,9 @@ class MLPolicyDocHelper:
     ) -> Optional[PolicyDocumentAnalysis]:
         """
         Main entry point: Analyze a policy document and store the results.
-
-        Args:
-            policy_document: The PolicyDocument model instance
-            user_question: Optional specific question from the user
-
-        Returns:
-            PolicyDocumentAnalysis instance with the analysis results
         """
         try:
-            # Get the file path
-            file_field = policy_document.document_enc or policy_document.document
+            file_field = policy_document.document
             if not file_field:
                 logger.warning(f"No document file for PolicyDocument {policy_document.id}")
                 return None
@@ -84,16 +152,14 @@ class MLPolicyDocHelper:
             file_path = file_field.path
 
             async with asyncio.timeout(cls.TIMEOUT_SECONDS):
-                # Step 1: Extract text from PDF
-                full_text, page_dict = cls.extract_text_from_pdf(file_path)
+                # Step 1: Extract text (run sync I/O in a thread)
+                full_text, page_dict = await asyncio.to_thread(
+                    cls.extract_text, file_path
+                )
 
                 if not full_text or len(full_text.strip()) < 100:
                     logger.warning(f"Insufficient text extracted from {policy_document.filename}")
                     return None
-
-                # Store raw text on the document
-                policy_document.raw_text = full_text[:50000]  # Limit storage size
-                await policy_document.asave()
 
                 # Step 2: Analyze for exclusions, inclusions, and appeal clauses
                 analysis_results = await cls._analyze_document_content(
@@ -140,16 +206,7 @@ class MLPolicyDocHelper:
     ) -> Optional[Dict[str, Any]]:
         """
         Use LLM to analyze document content for exclusions, inclusions, and appeal clauses.
-
-        Args:
-            full_text: Full extracted text from the document
-            page_dict: Dict mapping page numbers to their text
-            user_question: Optional specific question from the user
-
-        Returns:
-            Dict with analysis results
         """
-        # Truncate text if needed
         text_for_analysis = full_text[:cls.MAX_CONTEXT_LENGTH]
 
         question_context = ""
@@ -229,7 +286,6 @@ Respond in JSON format with the following structure:
                 )
 
                 if result:
-                    # Try to parse JSON from the response
                     parsed = cls._parse_analysis_response(result)
                     if parsed:
                         logger.debug(f"Successfully analyzed document with {model}")
@@ -246,54 +302,46 @@ Respond in JSON format with the following structure:
     def _parse_analysis_response(cls, response: str) -> Optional[Dict[str, Any]]:
         """
         Parse the JSON response from the LLM.
-
-        Args:
-            response: Raw response string from LLM
-
-        Returns:
-            Parsed dict or None if parsing fails
+        Uses json.JSONDecoder.raw_decode to avoid greedy regex issues.
         """
         try:
-            # Try to find JSON in the response
-            json_match = re.search(r"\{[\s\S]*\}", response)
-            if json_match:
-                parsed = json.loads(json_match.group(0))
+            # First, try parsing the entire response as JSON
+            parsed = json.loads(response)
+            if cls._validate_analysis_structure(parsed):
+                return parsed
+        except (json.JSONDecodeError, ValueError):
+            pass
 
-                # Validate structure
-                required_keys = ["exclusions", "inclusions", "appeal_clauses", "summary"]
-                if all(key in parsed for key in required_keys):
-                    return parsed
-
-        except json.JSONDecodeError as e:
+        # Fall back to finding the first valid JSON object
+        try:
+            start = response.index("{")
+            decoder = json.JSONDecoder()
+            parsed, _ = decoder.raw_decode(response, start)
+            if isinstance(parsed, dict) and cls._validate_analysis_structure(parsed):
+                return parsed
+        except (ValueError, json.JSONDecodeError) as e:
             logger.debug(f"JSON parsing error: {e}")
-        except Exception as e:
-            logger.debug(f"Error parsing analysis response: {e}")
 
         return None
+
+    @classmethod
+    def _validate_analysis_structure(cls, parsed: dict) -> bool:
+        """Validate that parsed JSON has the expected top-level structure."""
+        required_keys = ["exclusions", "inclusions", "appeal_clauses", "summary"]
+        return all(key in parsed for key in required_keys)
 
     @classmethod
     def format_analysis_for_chat(
         cls, analysis: PolicyDocumentAnalysis, include_disclaimer: bool = True
     ) -> str:
-        """
-        Format the analysis results for display in chat.
-
-        Args:
-            analysis: The PolicyDocumentAnalysis instance
-            include_disclaimer: Whether to include the legal disclaimer
-
-        Returns:
-            Formatted markdown string
-        """
+        """Format the analysis results for display in chat."""
         output_parts = []
 
-        # Summary first
         if analysis.summary:
             output_parts.append("## Summary\n")
             output_parts.append(analysis.summary)
             output_parts.append("\n")
 
-        # Key exclusions
         if analysis.exclusions:
             output_parts.append("\n## Key Exclusions (What's NOT Covered)\n")
             for i, exc in enumerate(analysis.exclusions[:5], 1):
@@ -306,7 +354,6 @@ Respond in JSON format with the following structure:
                         output_parts.append(f"   - *{explanation}*")
                     output_parts.append("\n")
 
-        # Key inclusions
         if analysis.inclusions:
             output_parts.append("\n## Key Coverage (What IS Covered)\n")
             for i, inc in enumerate(analysis.inclusions[:5], 1):
@@ -315,7 +362,6 @@ Respond in JSON format with the following structure:
                     text = inc.get("text", inc.get("explanation", ""))
                     output_parts.append(f"{i}. **Page {page}**: {text}\n")
 
-        # Appeal-relevant clauses
         if analysis.appeal_clauses:
             output_parts.append("\n## Useful for Appeals\n")
             for i, clause in enumerate(analysis.appeal_clauses[:5], 1):
@@ -325,7 +371,6 @@ Respond in JSON format with the following structure:
                     clause_type = clause.get("type", "general")
                     output_parts.append(f"{i}. **{clause_type.replace('_', ' ').title()}** (Page {page}): \"{text}\"\n")
 
-        # Quotable sections
         if analysis.quotable_sections:
             output_parts.append("\n## Quotable Sections for Your Appeal\n")
             output_parts.append("You can use these exact quotes in your appeal letter:\n\n")
@@ -339,7 +384,6 @@ Respond in JSON format with the following structure:
                         output_parts.append(f"   - {relevance}\n")
                     output_parts.append("\n")
 
-        # Add disclaimer
         if include_disclaimer:
             output_parts.append("\n---\n")
             output_parts.append(POLICY_ANALYSIS_DISCLAIMER)
@@ -354,22 +398,18 @@ Respond in JSON format with the following structure:
     ) -> Optional[PolicyDocumentAnalysis]:
         """
         Get existing analysis or create a new one.
-
-        Args:
-            policy_document: The PolicyDocument to analyze
-            user_question: Optional specific question
-
-        Returns:
-            PolicyDocumentAnalysis instance
+        Includes user_question in cache lookup so different questions get fresh analysis.
         """
-        # Check for existing analysis
+        lookup = {"policy_document": policy_document}
+        if user_question:
+            lookup["user_question"] = user_question
+
         existing = await PolicyDocumentAnalysis.objects.filter(
-            policy_document=policy_document
+            **lookup
         ).afirst()
 
         if existing:
             logger.debug(f"Found existing analysis for document {policy_document.id}")
             return existing
 
-        # Create new analysis
         return await cls.analyze_policy_document(policy_document, user_question)

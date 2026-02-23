@@ -405,7 +405,9 @@ urlpatterns += [
     # Understand my Policy page (Issue #570)
     path(
         "understand-policy",
-        views.UnderstandPolicyView.as_view(),
+        sensitive_post_parameters("email")(
+            views.UnderstandPolicyView.as_view()
+        ),
         name="understand_policy",
     ),
 ]

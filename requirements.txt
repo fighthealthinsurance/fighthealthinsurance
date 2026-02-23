@@ -60,6 +60,7 @@ paramiko
 Pillow
 pyarrow
 pymupdf
+python-docx
 pyOpenSSL
 PyPDF2
 pyright
