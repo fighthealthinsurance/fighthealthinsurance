@@ -33,7 +33,7 @@ class Command(BaseCommand):
 
         if candidate_count == 0:
             self.stdout.write(
-                self.style.SUCCESS("No patient users need follow-up digests.")
+                self.style.SUCCESS("No patient users need follow-up digests. Sent 0.")
             )
             return
 
@@ -42,21 +42,22 @@ class Command(BaseCommand):
         )
 
         if dry_run:
-            self.stdout.write(self.style.WARNING("Dry run mode - not sending emails."))
+            self.stdout.write(self.style.WARNING("DRY RUN mode - not sending emails."))
             for candidate in candidates[:count] if count else candidates:
                 user = candidate.user
                 context = sender._generate_digest_context(candidate)
-                self.stdout.write(
-                    f"  Would send digest to: {user.email} "
-                    f"(Upcoming: {context['upcoming_count']}, "
-                    f"Overdue: {context['overdue_count']}, "
-                    f"Active: {context['active_count']})"
-                )
+                if context:
+                    self.stdout.write(
+                        f"  Would send digest to: {user.email} "
+                        f"(Upcoming: {context['upcoming_count']}, "
+                        f"Overdue: {context['overdue_count']}, "
+                        f"Active: {context['active_count']})"
+                    )
             return
 
-        sent_count = sender.send_all(count=count)
+        sent_count, skipped_count = sender.send_all(max_count=count)
         self.stdout.write(
             self.style.SUCCESS(
-                f"Successfully sent {sent_count} follow-up digest emails."
+                f"Sent {sent_count} follow-up digest emails."
             )
         )

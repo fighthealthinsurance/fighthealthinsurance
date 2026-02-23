@@ -62,17 +62,17 @@ class SeleniumPatientFlowsTests(FHISeleniumBase, StaticLiveServerTestCase):
         username = username or self.test_username
         password = password or self.test_password
 
-        # Navigate to login page
-        self.open(f"{self.live_server_url}/v0/auth/login")
+        # Navigate to patient login page
+        self.open(f"{self.live_server_url}/my/login")
 
         # Wait for page to load
         WebDriverWait(self.driver, 10).until(
-            EC.presence_of_element_located((By.ID, "id_username"))
+            EC.presence_of_element_located((By.ID, "inputEmail"))
         )
 
         # Enter credentials
-        self.type("#id_username", username)
-        self.type("#id_password", password)
+        self.type("#inputEmail", username)
+        self.type("#inputPassword", password)
 
         # Submit login form
         self.click('button[type="submit"]')

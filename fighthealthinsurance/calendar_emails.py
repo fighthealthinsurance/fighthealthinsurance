@@ -108,7 +108,7 @@ def send_calendar_email_with_attachment(
         return True
 
     except Exception as e:
-        logger.debug(f"Failed to send calendar email to {to_email}: {str(e)}")
+        logger.error(f"Failed to send calendar email to {to_email}: {str(e)}")
         return False
 
 
@@ -254,7 +254,9 @@ class CalendarReminderSender:
             raise Exception("One of email and calendar_reminder must be set.")
 
         # At this point calendar_reminder should be set
-        assert calendar_reminder is not None
+        if calendar_reminder is None:
+            logger.error("No unsent CalendarReminder found for the given email.")
+            return False
 
         email = calendar_reminder.email
         denial = calendar_reminder.denial
@@ -299,7 +301,7 @@ class CalendarReminderSender:
             return True
 
         except Exception as e:
-            logger.debug(
-                f"Failed to send calendar reminder to {email} for denial {denial.uuid}: {str(e)}"
+            logger.error(
+                f"Failed to send calendar reminder for denial {denial.uuid}: {str(e)}"
             )
             return False

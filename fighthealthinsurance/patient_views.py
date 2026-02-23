@@ -5,17 +5,18 @@ Views for logged-in patients to manage their appeals, call logs, and evidence.
 This provides a "pure FHI patient view" distinct from professional/provider interfaces.
 """
 
+import re
 import typing
 from datetime import date, timedelta
 
-from django.contrib.auth import get_user_model
+from django.contrib.auth import authenticate, get_user_model, login
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.core.files.uploadedfile import UploadedFile
 from django.core.paginator import Paginator
 from django.db.models import Q
 from django.http import Http404, HttpResponse, HttpResponseRedirect
-from django.shortcuts import get_object_or_404
-from django.urls import reverse_lazy
+from django.shortcuts import get_object_or_404, render
+from django.urls import reverse, reverse_lazy
 from django.views import View
 from django.views.generic import CreateView, TemplateView, UpdateView
 
@@ -34,6 +35,45 @@ if typing.TYPE_CHECKING:
     from django.contrib.auth.models import User
 else:
     User = get_user_model()
+
+
+class PatientLoginView(TemplateView):
+    """Login view for FHI patient users (email + password, no domain/phone)."""
+
+    template_name = "patient_login.html"
+
+    def get(self, request, *args, **kwargs):
+        if request.user.is_authenticated:
+            return HttpResponseRedirect(reverse("patient-dashboard"))
+        return super().get(request, *args, **kwargs)
+
+    def post(self, request, *args, **kwargs):
+        email = request.POST.get("email", "").strip()
+        password = request.POST.get("password", "")
+        context: dict[str, object] = {}
+
+        if not email or not password:
+            context["error"] = "Email and password are required."
+            return render(request, self.template_name, context)
+
+        # Try authenticating with email as username (patient user pattern)
+        user = authenticate(username=email, password=password)
+        if user is None:
+            # Also try looking up by email field in case username differs
+            try:
+                user_obj = User.objects.get(email=email)
+                user = authenticate(username=user_obj.username, password=password)
+            except User.DoesNotExist:
+                user = None
+
+        if user is None:
+            context["error"] = "Invalid email or password."
+            return render(request, self.template_name, context)
+
+        login(request, user)
+        # Redirect to ?next= if provided, otherwise dashboard
+        next_url = request.GET.get("next") or request.POST.get("next") or reverse("patient-dashboard")
+        return HttpResponseRedirect(next_url)
 
 
 class PatientRequiredMixin(LoginRequiredMixin):
@@ -67,8 +107,6 @@ class PatientRequiredMixin(LoginRequiredMixin):
         )
         if created:
             logger.info(f"Created PatientUser for user {request.user.id}")
-        elif not created:
-            logger.info(f"Reactivated/confirmed PatientUser for user {request.user.id}")
 
         return super().dispatch(request, *args, **kwargs)
 
@@ -187,8 +225,6 @@ class PatientDashboardView(PatientRequiredMixin, TemplateView):
         all_appeals = Appeal.filter_to_allowed_appeals(user)
 
         # Active appeals: not sent OR sent but no decision yet (success=None or False)
-        from django.db.models import Q
-
         active_appeals_count = all_appeals.filter(
             Q(sent=False)
             | Q(sent=True, success__isnull=True)
@@ -206,21 +242,19 @@ class PatientDashboardView(PatientRequiredMixin, TemplateView):
         won_appeals_count = all_appeals.filter(success=True).count()
 
         # Find appeals with overdue decisions
-        overdue_decisions = []
-        for appeal in all_appeals:
-            if (
-                appeal.decision_expected_date
-                and appeal.decision_expected_date < today
-                and appeal.appeal_status != "decision_received"
-                and not appeal.success
-                and not appeal.decision_received_date
-            ):
-                overdue_decisions.append(appeal)
+        overdue_decisions = list(
+            all_appeals.filter(
+                decision_expected_date__lt=today,
+                decision_received_date__isnull=True,
+            )
+            .exclude(appeal_status="decision_received")
+            .exclude(success=True)
+        )
 
         context.update(
             {
                 "appeals": appeals,
-                "appeals_count": appeals.count(),
+                "appeals_count": all_appeals.count(),
                 "call_logs": call_logs,
                 "call_logs_count": InsuranceCallLog.filter_to_allowed_call_logs(
                     user
@@ -451,14 +485,37 @@ class EvidenceDownloadView(PatientRequiredMixin, View):
             raise Http404("No file attached to this evidence")
 
         # Decrypt the file before returning
-        with evidence.file.open() as f:
-            decrypted_content = Cryptographer.decrypted(f.read())
+        try:
+            with evidence.file.open() as f:
+                decrypted_content = Cryptographer.decrypted(f.read())
+        except Exception:
+            logger.error(f"Failed to decrypt evidence file {uuid}")
+            raise Http404("Unable to retrieve file")
+
+        # Validate MIME type against allowlist to prevent XSS via content spoofing
+        ALLOWED_MIME_TYPES = {
+            "application/pdf",
+            "image/jpeg",
+            "image/png",
+            "image/gif",
+            "image/webp",
+            "application/msword",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "text/plain",
+        }
+        content_type = (
+            evidence.mime_type
+            if evidence.mime_type in ALLOWED_MIME_TYPES
+            else "application/octet-stream"
+        )
 
         response = HttpResponse(
             decrypted_content,
-            content_type=evidence.mime_type or "application/octet-stream",
+            content_type=content_type,
         )
+        # Sanitize filename to prevent header injection
+        safe_filename = re.sub(r'["\r\n\\]', "_", evidence.filename or "download")
         response["Content-Disposition"] = (
-            f'attachment; filename="{evidence.filename or "download"}"'
+            f'attachment; filename="{safe_filename}"'
         )
         return response

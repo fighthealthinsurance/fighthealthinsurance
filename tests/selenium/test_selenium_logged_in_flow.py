@@ -207,7 +207,7 @@ Denial-Happy Insurance Company"""
         # Step 18: Verify we're logged out
         # Should see Sign In link instead of My Dashboard
         time.sleep(1)
-        self.assert_element('a[href="/v0/auth/login"]')
+        self.assert_element('a[href="/my/login"]')
 
     def test_login_and_view_existing_appeals(self):
         """
@@ -246,18 +246,12 @@ Denial-Happy Insurance Company"""
         self.open(f"{self.live_server_url}/")
 
         # Click Sign In link
-        self.click('a[href="/v0/auth/login"]')
-        self.assert_title_eventually("Login")
+        self.click('a[href="/my/login"]')
+        self.assert_title_eventually("Log In")
 
-        # Login is for professional users with domain/phone
-        # For now, just verify the login page loads
-        # (Professional login flow is different from patient login)
-        self.assert_element("input#inputUsername")
+        # Verify patient login page loads with email + password fields
+        self.assert_element("input#inputEmail")
         self.assert_element("input#inputPassword")
-
-        # Note: This test verifies the login page exists
-        # The actual professional login flow requires domain/phone setup
-        # which is outside the scope of basic patient signup
 
     def test_optional_messaging_on_signup_page(self):
         """

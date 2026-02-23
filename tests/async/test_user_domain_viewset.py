@@ -34,7 +34,7 @@ class UserDomainViewSetTests(TestCase):
         # Admin user
         self.admin_password = "adminpass123"
         self.admin_user = User.objects.create_user(
-            username=f"adminuser🐼{self.domain.id}",
+            username=f"adminuser\U0001f43c{self.domain.id}",
             password=self.admin_password,
             email="admin@example.com",
             first_name="Admin",
@@ -57,7 +57,7 @@ class UserDomainViewSetTests(TestCase):
         # Regular user
         self.user_password = "userpass123"
         self.regular_user = User.objects.create_user(
-            username=f"regularuser🐼{self.domain.id}",
+            username=f"regularuser\U0001f43c{self.domain.id}",
             password=self.user_password,
             email="regular@example.com",
             first_name="Regular",
@@ -79,7 +79,7 @@ class UserDomainViewSetTests(TestCase):
 
     def test_user_domain_list(self) -> None:
         """Test listing domain info works for authenticated users."""
-        url = reverse("user_domain-list")
+        url = reverse("fhi_users:user_domain-list")
 
         # Unauthenticated request should fail
         response = self.client.get(url)
@@ -113,7 +113,7 @@ class UserDomainViewSetTests(TestCase):
 
     def test_user_domain_update_address(self) -> None:
         """Test updating domain info works for admin users only."""
-        url = reverse("user_domain-update-address")
+        url = reverse("fhi_users:user_domain-update-address")
         update_data = {
             "display_name": "Updated Domain Name",
             "office_fax": "5551234567",
@@ -173,7 +173,7 @@ class ProfessionalUserUpdateViewSetTests(TestCase):
         # Professional user
         self.password = "testpass123"
         self.user = User.objects.create_user(
-            username=f"testuser🐼{self.domain.id}",
+            username=f"testuser\U0001f43c{self.domain.id}",
             password=self.password,
             email="test@example.com",
             first_name="Test",
@@ -195,7 +195,7 @@ class ProfessionalUserUpdateViewSetTests(TestCase):
 
     def test_update_professional_profile(self) -> None:
         """Test updating professional profile works."""
-        url = reverse("professional_profile-update-profile")
+        url = reverse("fhi_users:professional_profile-update-profile")
         update_data = {
             "npi_number": "9876543210",
             "provider_type": "Specialist",
@@ -236,7 +236,7 @@ class PasswordViewSetTests(TestCase):
         # User
         self.password = "oldPassword123"
         self.user = User.objects.create_user(
-            username=f"testuser🐼{self.domain.id}",
+            username=f"testuser\U0001f43c{self.domain.id}",
             password=self.password,
             email="test@example.com",
             is_active=True,
@@ -244,7 +244,7 @@ class PasswordViewSetTests(TestCase):
 
     def test_change_password_correct(self) -> None:
         """Test changing password works."""
-        url = reverse("password-change-password")
+        url = reverse("fhi_users:password-change-password")
         new_password = "newPassword456"
         change_data = {
             "current_password": self.password,
@@ -274,7 +274,7 @@ class PasswordViewSetTests(TestCase):
 
     def test_change_password_with_incorrect_current_password(self) -> None:
         """Test changing password fails with incorrect current password."""
-        url = reverse("password-change-password")
+        url = reverse("fhi_users:password-change-password")
         change_data = {
             "current_password": "wrongPassword",
             "new_password": "newPassword456",

@@ -50,9 +50,10 @@ class FollowupDigestSender:
         for patient in candidates:
             user = patient.user
 
-            # Check for active appeals
-            active_appeals = Appeal.filter_to_allowed_appeals(user).filter(
-                sent=True, success__isnull=True
+            # Check for active appeals (any appeal without a final decision)
+            # success defaults to False (not None), so exclude True rather than filter isnull
+            active_appeals = Appeal.filter_to_allowed_appeals(user).exclude(
+                success=True
             )
 
             # Check for upcoming follow-ups
@@ -64,8 +65,7 @@ class FollowupDigestSender:
             overdue_appeals = Appeal.filter_to_allowed_appeals(user).filter(
                 decision_expected_date__lt=today,
                 appeal_status__in=["sent", "awaiting_decision"],
-                success__isnull=True,
-            )
+            ).exclude(success=True)
 
             if (
                 active_appeals.exists()
@@ -76,7 +76,7 @@ class FollowupDigestSender:
 
         return PatientUser.objects.filter(id__in=candidates_with_activity)
 
-    def _generate_digest_context(self, patient_user: PatientUser) -> dict:
+    def _generate_digest_context(self, patient_user: PatientUser) -> Optional[dict]:
         """Generate template context for a patient's weekly digest.
 
         Args:
@@ -84,6 +84,7 @@ class FollowupDigestSender:
 
         Returns:
             dict: Template context with upcoming_followups, overdue_decisions, etc.
+                  Returns None if there is no activity to report.
         """
         user = patient_user.user
         today = date.today()
@@ -102,16 +103,16 @@ class FollowupDigestSender:
             .filter(
                 decision_expected_date__lt=today,
                 appeal_status__in=["sent", "awaiting_decision"],
-                success__isnull=True,
             )
+            .exclude(success=True)
             .select_related("for_denial")
             .order_by("decision_expected_date")[:10]
         )
 
-        # Active appeals
+        # Active appeals (any appeal without a final decision)
         active_appeals = list(
             Appeal.filter_to_allowed_appeals(user)
-            .filter(sent=True, success__isnull=True)
+            .exclude(success=True)
             .select_related("for_denial")
             .order_by("-creation_date")[:5]
         )
@@ -124,14 +125,21 @@ class FollowupDigestSender:
             .order_by("-call_date")[:5]
         )
 
+        # Return None if nothing to report
+        if not upcoming_followups and not overdue_decisions and not active_appeals and not recent_calls:
+            return None
+
         # Dashboard URL
         dashboard_url = "https://www.fighthealthinsurance.com" + reverse(
             "patient-dashboard"
         )
 
+        patient_name = user.first_name or user.email.split("@")[0]
+
         return {
             "user": user,
             "patient_user": patient_user,
+            "patient_name": patient_name,
             "upcoming_followups": upcoming_followups,
             "overdue_decisions": overdue_decisions,
             "active_appeals": active_appeals,
@@ -143,11 +151,14 @@ class FollowupDigestSender:
             "active_count": len(active_appeals),
         }
 
-    def _send_digest_email(self, patient_user: PatientUser) -> bool:
+    def _send_digest_email(
+        self, patient_user: PatientUser, context: Optional[dict] = None
+    ) -> bool:
         """Send weekly digest email to a patient user.
 
         Args:
             patient_user: PatientUser to send digest to
+            context: Optional pre-generated digest context
 
         Returns:
             bool: True if email sent successfully, False otherwise
@@ -159,10 +170,11 @@ class FollowupDigestSender:
             return False
 
         try:
-            context = self._generate_digest_context(patient_user)
+            if context is None:
+                context = self._generate_digest_context(patient_user)
 
-            # Skip if nothing to report (should be caught by _find_candidates but double-check)
-            if (
+            # Skip if nothing to report
+            if context is None or (
                 context["upcoming_count"] == 0
                 and context["overdue_count"] == 0
                 and context["active_count"] == 0
@@ -183,13 +195,11 @@ class FollowupDigestSender:
             )
 
             # Create subject line
-            subject = "Your Weekly Appeal Follow-up Digest"
+            subject = "Your Weekly Follow-up Digest"
             if context["overdue_count"] > 0:
-                subject = f"⏰ {context['overdue_count']} Decision(s) Expected - Weekly Digest"
+                subject = f"Action Needed: {context['overdue_count']} Decision(s) Expected - Weekly Digest"
             elif context["upcoming_count"] > 0:
-                subject = (
-                    f"📅 {context['upcoming_count']} Follow-up(s) This Week - Digest"
-                )
+                subject = f"{context['upcoming_count']} Follow-up(s) This Week - Digest"
 
             # Create multipart email
             msg = EmailMultiAlternatives(
@@ -216,28 +226,42 @@ class FollowupDigestSender:
             logger.error(f"Failed to send follow-up digest to {to_email}: {e}")
             return False
 
-    def send_all(self, count: Optional[int] = None) -> int:
+    def send_all(
+        self,
+        count: Optional[int] = None,
+        dry_run: bool = False,
+        max_count: Optional[int] = None,
+    ) -> tuple:
         """Send digest emails to all candidate patient users.
 
         Args:
-            count: Optional maximum number of emails to send
+            count: Optional maximum number of emails to send (deprecated, use max_count)
+            dry_run: If True, find candidates but don't send emails
+            max_count: Optional maximum number of emails to send
 
         Returns:
-            int: Number of emails successfully sent
+            tuple: (sent_count, skipped_count)
         """
+        limit = max_count or count
         candidates = self._find_candidates()
         total = candidates.count()
 
         if total == 0:
             logger.info("No patient users need follow-up digests")
-            return 0
+            return (0, 0)
 
         logger.info(f"Found {total} patient users for follow-up digests")
 
+        if dry_run:
+            return (0, 0)
+
         sent_count = 0
-        for patient_user in candidates[:count] if count else candidates:
+        skipped_count = 0
+        for patient_user in candidates[:limit] if limit else candidates:
             if self._send_digest_email(patient_user):
                 sent_count += 1
+            else:
+                skipped_count += 1
 
         logger.info(f"Sent {sent_count} out of {total} follow-up digest emails")
-        return sent_count
+        return (sent_count, skipped_count)

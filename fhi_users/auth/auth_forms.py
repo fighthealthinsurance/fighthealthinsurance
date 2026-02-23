@@ -78,6 +78,14 @@ class PatientSignupForm(forms.Form):
         if password and confirm_password and password != confirm_password:
             raise forms.ValidationError("Passwords do not match")
 
+        if password:
+            from fhi_users.auth.auth_utils import validate_password
+
+            if not validate_password(password):
+                raise forms.ValidationError(
+                    "Password must be at least 8 characters and contain at least one digit."
+                )
+
         return cleaned_data
 
     def clean_email(self):

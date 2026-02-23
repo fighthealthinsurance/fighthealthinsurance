@@ -44,7 +44,7 @@ class RestAuthViewsTests(TestCase):
         )
         self.user_password = "testpass"
         self.user = User.objects.create_user(
-            username=f"testuser🐼{self.domain.id}",
+            username=f"testuser\U0001f43c{self.domain.id}",
             password=self.user_password,
             email="test@example.com",
         )
@@ -53,7 +53,7 @@ class RestAuthViewsTests(TestCase):
         ExtraUserProperties.objects.create(user=self.user, email_verified=True)
 
     def test_rest_login_view_with_domain(self) -> None:
-        url = reverse("rest_login-login")
+        url = reverse("fhi_users:rest_login-login")
         data = {
             "username": "testuser",
             "password": "testpass",
@@ -65,7 +65,7 @@ class RestAuthViewsTests(TestCase):
         self.assertEqual(response.json()["status"], "success")
 
     def test_rest_login_view_with_phone(self) -> None:
-        url = reverse("rest_login-login")
+        url = reverse("fhi_users:rest_login-login")
         data = {
             "username": "testuser",
             "password": "testpass",
@@ -77,7 +77,7 @@ class RestAuthViewsTests(TestCase):
         self.assertEqual(response.json()["status"], "success")
 
     def test_rest_login_view_with_domain_and_phone(self) -> None:
-        url = reverse("rest_login-login")
+        url = reverse("fhi_users:rest_login-login")
         data = {
             "username": "testuser",
             "password": "testpass",
@@ -89,7 +89,7 @@ class RestAuthViewsTests(TestCase):
         self.assertEqual(response.json()["status"], "success")
 
     def test_rest_login_view_without_domain_and_phone(self) -> None:
-        url = reverse("rest_login-login")
+        url = reverse("fhi_users:rest_login-login")
         data = {
             "username": "testuser",
             "password": "testpass",
@@ -100,7 +100,7 @@ class RestAuthViewsTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_rest_login_view_with_incorrect_credentials(self) -> None:
-        url = reverse("rest_login-login")
+        url = reverse("fhi_users:rest_login-login")
         data = {
             "username": "testuser",
             "password": "wrongpass",
@@ -111,7 +111,7 @@ class RestAuthViewsTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
     def test_create_patient_user_view(self) -> None:
-        url = reverse("patient_user-list")
+        url = reverse("fhi_users:patient_user-list")
         data = {
             "username": "newuser",
             "password": "newLongerPasswordMagicCheetoCheeto123",
@@ -142,7 +142,7 @@ class RestAuthViewsTests(TestCase):
             )
         )
         # Then make sure they can log in post verification
-        verify_url = reverse("rest_verify_email-verify")
+        verify_url = reverse("fhi_users:rest_verify_email-verify")
         print(f"Making verification for {new_user} w/pk {new_user.pk}")
         verify_data = {
             "token": VerificationToken.objects.get(user=new_user).token,
@@ -163,7 +163,7 @@ class RestAuthViewsTests(TestCase):
 
     def test_patient_user_creates_with_correct_name(self) -> None:
         """Test that patient user is created with the correct first and last name."""
-        url = reverse("patient_user-list")
+        url = reverse("fhi_users:patient_user-list")
         # Test with first_name and last_name
         data = {
             "username": "nameuser1@example.com",
@@ -189,7 +189,7 @@ class RestAuthViewsTests(TestCase):
         self.assertEqual(new_user1.last_name, "User")
 
     def test_verify_email_view(self) -> None:
-        url = reverse("rest_verify_email-verify")
+        url = reverse("fhi_users:rest_verify_email-verify")
         VerificationToken.objects.create(
             user=self.user, token=default_token_generator.make_token(self.user)
         )
@@ -206,7 +206,7 @@ class RestAuthViewsTests(TestCase):
         self.assertTrue(new_user_user_extra_properties.email_verified)
 
     def test_send_verification_email_after_user_creation(self) -> None:
-        url = reverse("patient_user-list")
+        url = reverse("fhi_users:patient_user-list")
         data = {
             "username": "newuser",
             "password": "newLongerPasswordMagicCheetoCheeto123",
@@ -231,7 +231,7 @@ class RestAuthViewsTests(TestCase):
         self.assertEqual(mail.outbox[0].subject, "Activate your account.")
 
     def test_email_confirmation_with_verification_token(self) -> None:
-        url = reverse("rest_verify_email-verify")
+        url = reverse("fhi_users:rest_verify_email-verify")
         self.user.is_active = False
         self.user.save()
         # Verify the user can not login until verification
@@ -257,7 +257,7 @@ class RestAuthViewsTests(TestCase):
         )
 
     def test_email_confirmation_with_invalid_token(self) -> None:
-        url = reverse("rest_verify_email-verify")
+        url = reverse("fhi_users:rest_verify_email-verify")
         data = {"token": "invalidtoken", "user_id": self.user.pk}
         response = self.client.post(url, data, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
@@ -265,7 +265,7 @@ class RestAuthViewsTests(TestCase):
         self.assertEqual(response.json()["message"], "Invalid activation link")
 
     def test_email_confirmation_with_expired_token(self) -> None:
-        url = reverse("rest_verify_email-verify")
+        url = reverse("fhi_users:rest_verify_email-verify")
         token = VerificationToken.objects.create(
             user=self.user,
             token=default_token_generator.make_token(self.user),
@@ -278,7 +278,7 @@ class RestAuthViewsTests(TestCase):
         self.assertEqual(response.json()["message"], "Activation link has expired")
 
     def test_create_professional_user_with_new_domain(self) -> None:
-        url = reverse("professional_user-list")
+        url = reverse("fhi_users:professional_user-list")
         data = {
             "user_signup_info": {
                 "username": "newprouser",
@@ -310,7 +310,7 @@ class RestAuthViewsTests(TestCase):
     def test_create_professional_user_with_existing_domain_name_but_create_set_to_true(
         self,
     ) -> None:
-        url = reverse("professional_user-list")
+        url = reverse("fhi_users:professional_user-list")
         data = {
             "user_signup_info": {
                 "username": "newprouser2",
@@ -341,7 +341,7 @@ class RestAuthViewsTests(TestCase):
     def test_create_professional_user_with_existing_domain_name_and_create_set_to_false(
         self,
     ) -> None:
-        url = reverse("professional_user-list")
+        url = reverse("fhi_users:professional_user-list")
         data = {
             "user_signup_info": {
                 "username": "newprouser2",
@@ -359,7 +359,7 @@ class RestAuthViewsTests(TestCase):
         self.assertIn(response.status_code, range(200, 300))
 
     def test_create_professional_user_with_existing_visible_phone_number(self) -> None:
-        url = reverse("professional_user-list")
+        url = reverse("fhi_users:professional_user-list")
         data = {
             "user_signup_info": {
                 "username": "newprouser3",
@@ -388,7 +388,7 @@ class RestAuthViewsTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_request_password_reset(self) -> None:
-        url = reverse("password_reset-request-reset")
+        url = reverse("fhi_users:password_reset-request-reset")
         data = {
             "username": "testuser",
             "domain": "testdomain",
@@ -400,7 +400,7 @@ class RestAuthViewsTests(TestCase):
         self.assertTrue(ResetToken.objects.filter(user=self.user).exists())
 
     def test_request_password_reset_with_phone(self) -> None:
-        url = reverse("password_reset-request-reset")
+        url = reverse("fhi_users:password_reset-request-reset")
         data = {
             "username": "testuser",
             "domain": "",
@@ -413,7 +413,7 @@ class RestAuthViewsTests(TestCase):
 
     def test_finish_password_reset_invalid(self) -> None:
         reset_token = ResetToken.objects.create(user=self.user, token=uuid.uuid4().hex)
-        url = reverse("password_reset-finish-reset")
+        url = reverse("fhi_users:password_reset-finish-reset")
         data = {
             "token": reset_token.token,
             "new_password": "newtestpass",
@@ -423,7 +423,7 @@ class RestAuthViewsTests(TestCase):
 
     def test_finish_password_reset_valid(self) -> None:
         reset_token = ResetToken.objects.create(user=self.user, token=uuid.uuid4().hex)
-        url = reverse("password_reset-finish-reset")
+        url = reverse("fhi_users:password_reset-finish-reset")
         data = {
             "token": reset_token.token,
             "new_password": "newtestpass111",
@@ -435,7 +435,7 @@ class RestAuthViewsTests(TestCase):
         self.assertTrue(self.user.check_password("newtestpass111"))
 
     def test_finish_password_reset_with_invalid_token(self) -> None:
-        url = reverse("password_reset-finish-reset")
+        url = reverse("fhi_users:password_reset-finish-reset")
         data = {
             "token": "invalidtoken",
             "new_password": "newtestpass",
@@ -451,7 +451,7 @@ class RestAuthViewsTests(TestCase):
             token=uuid.uuid4().hex,
             expires_at=timezone.now() - timezone.timedelta(hours=1),
         )
-        url = reverse("password_reset-finish-reset")
+        url = reverse("fhi_users:password_reset-finish-reset")
         data = {
             "token": reset_token.token,
             "new_password": "newtestpass",
@@ -463,7 +463,7 @@ class RestAuthViewsTests(TestCase):
         self.assertEqual(response.json()["error"], "Reset token has expired")
 
     def test_rest_login_view_with_nonexistent_domain(self) -> None:
-        url = reverse("rest_login-login")
+        url = reverse("fhi_users:rest_login-login")
         data = {
             "username": "testuser",
             "password": "testpass",
@@ -475,7 +475,7 @@ class RestAuthViewsTests(TestCase):
         self.assertEqual(response.json()["status"], "error")
 
     def test_rest_login_view_with_invalid_phone(self) -> None:
-        url = reverse("rest_login-login")
+        url = reverse("fhi_users:rest_login-login")
         data = {
             "username": "testuser",
             "password": "testpass",
@@ -489,7 +489,7 @@ class RestAuthViewsTests(TestCase):
     def test_rest_login_view_with_inactive_user(self) -> None:
         self.user.is_active = False
         self.user.save()
-        url = reverse("rest_login-login")
+        url = reverse("fhi_users:rest_login-login")
         data = {
             "username": "testuser",
             "password": "testpass",
@@ -509,7 +509,7 @@ class RestAuthViewsTests(TestCase):
         email_count_before = len(mail.outbox)
 
         # Attempt to login with inactive user
-        url = reverse("rest_login-login")
+        url = reverse("fhi_users:rest_login-login")
         data = {
             "username": "testuser",
             "password": self.user_password,
@@ -530,7 +530,7 @@ class RestAuthViewsTests(TestCase):
         self.assertIn(self.user.email, mail.outbox[-2].to)
 
     def test_verify_email_with_nonexistent_user(self) -> None:
-        url = reverse("rest_verify_email-verify")
+        url = reverse("fhi_users:rest_verify_email-verify")
         data = {
             "token": "sometoken",
             "user_id": 99999,
@@ -540,13 +540,13 @@ class RestAuthViewsTests(TestCase):
         self.assertEqual(response.json()["status"], "error")
 
     def test_verify_email_without_token(self) -> None:
-        url = reverse("rest_verify_email-verify")
+        url = reverse("fhi_users:rest_verify_email-verify")
         data = {"user_id": self.user.pk}
         response = self.client.post(url, data, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_create_professional_user_without_required_fields(self) -> None:
-        url = reverse("professional_user-list")
+        url = reverse("fhi_users:professional_user-list")
         data = {
             "user_signup_info": {
                 "username": "newprouser4",
@@ -561,7 +561,7 @@ class RestAuthViewsTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_create_professional_user_with_invalid_email(self) -> None:
-        url = reverse("professional_user-list")
+        url = reverse("fhi_users:professional_user-list")
         data = {
             "user_signup_info": {
                 "username": "newprouser5",
@@ -590,7 +590,7 @@ class RestAuthViewsTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_request_password_reset_nonexistent_user(self) -> None:
-        url = reverse("password_reset-request-reset")
+        url = reverse("fhi_users:password_reset-request-reset")
         data = {
             "username": "nonexistentuser",
             "domain": "testdomain",
@@ -603,7 +603,7 @@ class RestAuthViewsTests(TestCase):
 
     def test_whoami_view_authed(self):
         # Log in
-        url = reverse("rest_login-login")
+        url = reverse("fhi_users:rest_login-login")
         data = {
             "username": "testuser",
             "password": "testpass",
@@ -614,7 +614,7 @@ class RestAuthViewsTests(TestCase):
         self.assertIn(response.status_code, range(200, 300))
         self.assertEqual(response.json()["status"], "success")
         # Check whoami
-        url = reverse("whoami-list")
+        url = reverse("fhi_users:whoami-list")
         response = self.client.get(url, format="json")
         self.assertEqual(response.status_code, 200)
         data = response.json()[0]
@@ -625,7 +625,7 @@ class RestAuthViewsTests(TestCase):
 
     def test_whoami_view_beta_flag(self):
         # Log in
-        url = reverse("rest_login-login")
+        url = reverse("fhi_users:rest_login-login")
         data = {
             "username": "testuser",
             "password": "testpass",
@@ -636,7 +636,7 @@ class RestAuthViewsTests(TestCase):
         self.assertIn(response.status_code, range(200, 300))
         self.assertEqual(response.json()["status"], "success")
         # Check whoami
-        url = reverse("whoami-list")
+        url = reverse("fhi_users:whoami-list")
         response = self.client.get(url, format="json")
         self.assertEqual(response.status_code, 200)
         data = response.json()[0]
@@ -646,7 +646,7 @@ class RestAuthViewsTests(TestCase):
         self.assertTrue(data["beta"])  # Check beta flag
 
     def test_create_professional_user_with_short_password(self) -> None:
-        url = reverse("professional_user-list")
+        url = reverse("fhi_users:professional_user-list")
         data = {
             "user_signup_info": {
                 "username": "shortpass",
@@ -677,7 +677,7 @@ class RestAuthViewsTests(TestCase):
 
     def test_create_duplicate_patient_user_view(self) -> None:
         """Test that creating a patient user with an email that already exists fails correctly."""
-        url = reverse("patient_user-list")
+        url = reverse("fhi_users:patient_user-list")
         # Create first patient user
         data = {
             "username": "duplicate_patient@example.com",
@@ -719,7 +719,7 @@ class RestAuthViewsTests(TestCase):
         """Test that verification emails are not sent more than once within 10 minutes."""
         # Create a user for testing
         test_user = User.objects.create_user(
-            username=f"throttleuser🐼{self.domain.id}",
+            username=f"throttleuser\U0001f43c{self.domain.id}",
             password="testpass123",
             email="throttle@example.com",
         )
@@ -761,7 +761,7 @@ class RestAuthViewsTests(TestCase):
         """Test that first_only=True prevents sending any follow-up emails."""
         # Create a user for testing
         test_user = User.objects.create_user(
-            username=f"firstonlyuser🐼{self.domain.id}",
+            username=f"firstonlyuser\U0001f43c{self.domain.id}",
             password="testpass123",
             email="firstonly@example.com",
         )
@@ -798,7 +798,7 @@ class TestE2EProfessionalUserSignupFlow(TestCase):
     def test_end_to_end_happy_path(self):
         domain_name = "new_test_domain"
         phone_number = "1234567890"
-        signup_url = reverse("professional_user-list")
+        signup_url = reverse("fhi_users:professional_user-list")
         data = {
             "user_signup_info": {
                 "username": "testpro@example.com",
@@ -858,7 +858,7 @@ class TestE2EProfessionalUserSignupFlow(TestCase):
             self.client.login(username=new_user.username, password="temp12345")
         )
         # Check the verification
-        verify_url = reverse("rest_verify_email-verify")
+        verify_url = reverse("fhi_users:rest_verify_email-verify")
         token = VerificationToken.objects.get(user=new_user)
         response = self.client.post(
             verify_url, {"token": token.token, "user_id": new_user.pk}, format="json"
@@ -869,7 +869,7 @@ class TestE2EProfessionalUserSignupFlow(TestCase):
             self.client.login(username=new_user.username, password="temp12345")
         )
         # Ok but hit the rest endpoint for the login so we have a domain id
-        login_url = reverse("rest_login-login")
+        login_url = reverse("fhi_users:rest_login-login")
         data = {
             "username": "testpro@example.com",
             "password": "temp12345",
@@ -879,7 +879,7 @@ class TestE2EProfessionalUserSignupFlow(TestCase):
         self.assertIn(response.status_code, range(200, 300))
         self.assertEqual(response.json()["status"], "success")
         # Have the now logged in pro-user start to make an appeal
-        get_pending_url = reverse("patient_user-get-or-create-pending")
+        get_pending_url = reverse("fhi_users:patient_user-get-or-create-pending")
         data = {
             "username": "testpro@example.com",
             "first_name": "fname",
@@ -890,7 +890,7 @@ class TestE2EProfessionalUserSignupFlow(TestCase):
         self.assertIn(response.status_code, range(200, 300))
         patient_id = response.json()["id"]
 
-        # Let’s pretend to create a denial record via DenialFormSerializer
+        # Let's pretend to create a denial record via DenialFormSerializer
         denial_create_url = reverse("denials-list")
         denial_data = {
             "insurance_company": "Test Insurer",
@@ -917,7 +917,7 @@ class TestE2EProfessionalUserSignupFlow(TestCase):
         phone_number = "5551234567"
         email = "retry@example.com"
 
-        signup_url = reverse("professional_user-list")
+        signup_url = reverse("fhi_users:professional_user-list")
         data = {
             "user_signup_info": {
                 "username": email,
@@ -996,7 +996,7 @@ class TestE2EProfessionalUserSignupFlow(TestCase):
         phone_number = "5551111111"
         email = "active@example.com"
 
-        signup_url = reverse("professional_user-list")
+        signup_url = reverse("fhi_users:professional_user-list")
         data = {
             "user_signup_info": {
                 "username": email,
@@ -1044,7 +1044,7 @@ class TestE2EProfessionalUserSignupFlow(TestCase):
         phone_number = "5552222222"
         email = "first@example.com"
 
-        signup_url = reverse("professional_user-list")
+        signup_url = reverse("fhi_users:professional_user-list")
         data = {
             "user_signup_info": {
                 "username": email,
@@ -1092,7 +1092,7 @@ class TestE2EProfessionalUserSignupFlow(TestCase):
         phone_number = "5553333333"
         email = "session@example.com"
 
-        signup_url = reverse("professional_user-list")
+        signup_url = reverse("fhi_users:professional_user-list")
         data = {
             "user_signup_info": {
                 "username": email,
@@ -1161,7 +1161,7 @@ class ProfessionalInvitationTests(TestCase):
         )
         self.admin_password = "adminpass123"
         self.admin_user = User.objects.create_user(
-            username=f"adminuser🐼{self.domain.id}",
+            username=f"adminuser\U0001f43c{self.domain.id}",
             password=self.admin_password,
             email="admin@example.com",
             first_name="Admin",
@@ -1188,7 +1188,7 @@ class ProfessionalInvitationTests(TestCase):
         # Create non-admin user
         self.regular_password = "regularpass123"
         self.regular_user = User.objects.create_user(
-            username=f"regularuser🐼{self.domain.id}",
+            username=f"regularuser\U0001f43c{self.domain.id}",
             password=self.regular_password,
             email="regular@example.com",
             first_name="Regular",
@@ -1216,7 +1216,7 @@ class ProfessionalInvitationTests(TestCase):
 
     def test_invite_professional_as_admin(self):
         # Login as admin user
-        url = reverse("rest_login-login")
+        url = reverse("fhi_users:rest_login-login")
         data = {
             "username": "adminuser",
             "password": self.admin_password,
@@ -1228,7 +1228,7 @@ class ProfessionalInvitationTests(TestCase):
         self.assertEqual(response.json()["status"], "success")
 
         # Send invitation
-        invite_url = reverse("professional_user-invite")
+        invite_url = reverse("fhi_users:professional_user-invite")
         invite_data = {
             "user_email": "newinvite@example.com",
             "name": "New Professional",
@@ -1254,7 +1254,7 @@ class ProfessionalInvitationTests(TestCase):
 
     def test_invite_professional_as_non_admin(self):
         # Login as regular user
-        url = reverse("rest_login-login")
+        url = reverse("fhi_users:rest_login-login")
         data = {
             "username": "regularuser",
             "password": self.regular_password,
@@ -1265,7 +1265,7 @@ class ProfessionalInvitationTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
         # Try to send invitation
-        invite_url = reverse("professional_user-invite")
+        invite_url = reverse("fhi_users:professional_user-invite")
         invite_data = {
             "user_email": "newinvite@example.com",
             "name": "New Professional",
@@ -1279,7 +1279,7 @@ class ProfessionalInvitationTests(TestCase):
 
     def test_invite_professional_without_authentication(self):
         # Try to send invitation without logging in
-        invite_url = reverse("professional_user-invite")
+        invite_url = reverse("fhi_users:professional_user-invite")
         invite_data = {
             "user_email": "newinvite@example.com",
             "name": "New Professional",
@@ -1291,7 +1291,7 @@ class ProfessionalInvitationTests(TestCase):
     def test_delete_professional_as_admin(self):
         """Test that an admin can delete (mark as rejected) a professional in the domain"""
         # Login as admin user
-        url = reverse("rest_login-login")
+        url = reverse("fhi_users:rest_login-login")
         data = {
             "username": "adminuser",
             "password": self.admin_password,
@@ -1303,7 +1303,7 @@ class ProfessionalInvitationTests(TestCase):
         self.assertEqual(response.json()["status"], "success")
 
         # Delete the regular professional
-        delete_url = reverse("professional_user-delete")
+        delete_url = reverse("fhi_users:professional_user-delete")
         delete_data = {
             "professional_user_id": self.regular_professional.id,
             "domain_id": str(self.domain.id),
@@ -1319,7 +1319,7 @@ class ProfessionalInvitationTests(TestCase):
         self.assertTrue(self.regular_relation.rejected)
 
         # Check that listing active users no longer includes this professional
-        url = reverse("professional_user-list-active-in-domain")
+        url = reverse("fhi_users:professional_user-list-active-in-domain")
         response = self.client.post(url, format="json")
         active_data = response.json()
         professional_ids = [p["professional_user_id"] for p in active_data]
@@ -1328,7 +1328,7 @@ class ProfessionalInvitationTests(TestCase):
     def test_delete_professional_as_non_admin(self):
         """Test that a non-admin cannot delete a professional in the domain"""
         # Login as regular user
-        url = reverse("rest_login-login")
+        url = reverse("fhi_users:rest_login-login")
         data = {
             "username": "regularuser",
             "password": self.regular_password,
@@ -1339,7 +1339,7 @@ class ProfessionalInvitationTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
         # Try to delete another professional
-        delete_url = reverse("professional_user-delete")
+        delete_url = reverse("fhi_users:professional_user-delete")
         delete_data = {
             "professional_user_id": self.admin_professional.id,
             "domain_id": str(self.domain.id),
@@ -1360,7 +1360,7 @@ class ProfessionalInvitationTests(TestCase):
     def test_delete_professional_without_authentication(self):
         """Test that unauthenticated user cannot delete a professional in the domain"""
         # Try to delete without logging in
-        delete_url = reverse("professional_user-delete")
+        delete_url = reverse("fhi_users:professional_user-delete")
         delete_data = {
             "professional_user_id": self.admin_professional.id,
             "domain_id": str(self.domain.id),
@@ -1387,7 +1387,7 @@ class CreateProfessionalInDomainTests(TestCase):
         )
         self.admin_password = "adminpass123"
         self.admin_user = User.objects.create_user(
-            username=f"adminuser🐼{self.domain.id}",
+            username=f"adminuser\U0001f43c{self.domain.id}",
             password=self.admin_password,
             email="admin@example.com",
             first_name="Admin",
@@ -1414,7 +1414,7 @@ class CreateProfessionalInDomainTests(TestCase):
         # Create non-admin user
         self.regular_password = "regularpass123"
         self.regular_user = User.objects.create_user(
-            username=f"regularuser🐼{self.domain.id}",
+            username=f"regularuser\U0001f43c{self.domain.id}",
             password=self.regular_password,
             email="regular@example.com",
             first_name="Regular",
@@ -1442,7 +1442,7 @@ class CreateProfessionalInDomainTests(TestCase):
 
     def test_create_pro_as_admin(self):
         # Login as admin user
-        url = reverse("rest_login-login")
+        url = reverse("fhi_users:rest_login-login")
         data = {
             "username": "adminuser",
             "password": self.admin_password,
@@ -1454,7 +1454,7 @@ class CreateProfessionalInDomainTests(TestCase):
         self.assertEqual(response.json()["status"], "success")
 
         # Create provider
-        create_url = reverse("professional_user-create-professional-in-current-domain")
+        create_url = reverse("fhi_users:professional_user-create-professional-in-current-domain")
         provider_data = {
             "email": "newprovider@example.com",
             "first_name": "New",
@@ -1493,7 +1493,7 @@ class CreateProfessionalInDomainTests(TestCase):
         self.assertFalse(relation.admin)
 
         # Verify the newly created provider appears in the listing of active providers
-        list_url = reverse("professional_user-list-active-in-domain")
+        list_url = reverse("fhi_users:professional_user-list-active-in-domain")
         response = self.client.post(list_url, format="json")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
@@ -1527,7 +1527,7 @@ class UserDomainExistsTests(TestCase):
         )
 
     def test_domain_exists_by_name(self) -> None:
-        url = reverse("domain_exists-check")
+        url = reverse("fhi_users:domain_exists-check")
         data = {
             "domain_name": "testdomain",
         }
@@ -1536,7 +1536,7 @@ class UserDomainExistsTests(TestCase):
         self.assertTrue(response.json()["exists"])
 
     def test_domain_exists_by_phone(self) -> None:
-        url = reverse("domain_exists-check")
+        url = reverse("fhi_users:domain_exists-check")
         data = {
             "phone_number": "1234567890",
         }
@@ -1545,7 +1545,7 @@ class UserDomainExistsTests(TestCase):
         self.assertTrue(response.json()["exists"])
 
     def test_domain_does_not_exist(self) -> None:
-        url = reverse("domain_exists-check")
+        url = reverse("fhi_users:domain_exists-check")
         data = {
             "domain_name": "nonexistentdomain",
         }
@@ -1554,7 +1554,7 @@ class UserDomainExistsTests(TestCase):
         self.assertFalse(response.json()["exists"])
 
     def test_domain_does_not_exist_by_phone(self) -> None:
-        url = reverse("domain_exists-check")
+        url = reverse("fhi_users:domain_exists-check")
         data = {
             "phone_number": "9999999999",
         }
@@ -1563,7 +1563,7 @@ class UserDomainExistsTests(TestCase):
         self.assertFalse(response.json()["exists"])
 
     def test_missing_both_parameters(self) -> None:
-        url = reverse("domain_exists-check")
+        url = reverse("fhi_users:domain_exists-check")
         data = {}
         response = self.client.post(url, data, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
@@ -1588,7 +1588,7 @@ class GetBillingUrlTests(TestCase):
         )
         self.admin_password = "adminbillingpass"
         self.admin_user = User.objects.create_user(
-            username=f"adminbillinguser🐼{self.domain.id}",
+            username=f"adminbillinguser\U0001f43c{self.domain.id}",
             password=self.admin_password,
             email="adminbilling@example.com",
             first_name="Admin",
@@ -1609,7 +1609,7 @@ class GetBillingUrlTests(TestCase):
         )
         self.regular_password = "regularbillingpass"
         self.regular_user = User.objects.create_user(
-            username=f"regularbillinguser🐼{self.domain.id}",
+            username=f"regularbillinguser\U0001f43c{self.domain.id}",
             password=self.regular_password,
             email="regularbilling@example.com",
             first_name="Regular",
@@ -1635,7 +1635,7 @@ class GetBillingUrlTests(TestCase):
     def test_billing_url_for_admin(self, mock_stripe_portal):
         mock_stripe_portal.return_value.url = "https://billing.stripe.com/test_portal"
         # Login as admin
-        url = reverse("rest_login-login")
+        url = reverse("fhi_users:rest_login-login")
         data = {
             "username": "adminbillinguser",
             "password": self.admin_password,
@@ -1645,7 +1645,7 @@ class GetBillingUrlTests(TestCase):
         response = self.client.post(url, data, format="json")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         # Call get_billing_url
-        billing_url = reverse("professional_user-get-billing-url")
+        billing_url = reverse("fhi_users:professional_user-get-billing-url")
         response = self.client.post(billing_url, format="json")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn("next_url", response.json())
@@ -1656,7 +1656,7 @@ class GetBillingUrlTests(TestCase):
     @patch("stripe.billing_portal.Session.create")
     def test_billing_url_for_non_admin(self, mock_stripe_portal):
         # Login as regular user
-        url = reverse("rest_login-login")
+        url = reverse("fhi_users:rest_login-login")
         data = {
             "username": "regularbillinguser",
             "password": self.regular_password,
@@ -1666,7 +1666,7 @@ class GetBillingUrlTests(TestCase):
         response = self.client.post(url, data, format="json")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         # Call get_billing_url
-        billing_url = reverse("professional_user-get-billing-url")
+        billing_url = reverse("fhi_users:professional_user-get-billing-url")
         response = self.client.post(billing_url, format="json")
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
         self.assertIn("error", response.json())

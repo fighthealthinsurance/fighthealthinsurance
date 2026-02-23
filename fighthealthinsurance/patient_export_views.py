@@ -116,9 +116,11 @@ class CallLogExportView(PatientRequiredMixin, View):
                     log.wait_time_minutes or "",
                     "Yes" if log.include_in_appeal else "No",
                     (
-                        f"{log.appeal.for_denial.procedure} ({log.appeal.uuid})"
-                        if log.appeal
-                        else ""
+                        _sanitize_csv(
+                            f"{log.appeal.for_denial.procedure} ({log.appeal.uuid})"
+                        )
+                        if log.appeal and log.appeal.for_denial and log.appeal.for_denial.procedure
+                        else (str(log.appeal.uuid) if log.appeal else "")
                     ),
                 ]
             )
@@ -194,9 +196,11 @@ class EvidenceExportView(PatientRequiredMixin, View):
                     ),
                     "Yes" if item.include_in_appeal else "No",
                     (
-                        f"{item.appeal.for_denial.procedure} ({item.appeal.uuid})"
-                        if item.appeal
-                        else ""
+                        _sanitize_csv(
+                            f"{item.appeal.for_denial.procedure} ({item.appeal.uuid})"
+                        )
+                        if item.appeal and item.appeal.for_denial and item.appeal.for_denial.procedure
+                        else (str(item.appeal.uuid) if item.appeal else "")
                     ),
                 ]
             )

@@ -125,7 +125,7 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         name="followup-with-a-period",
     ),
     path(
-        "v0/followup/<uuid:uuid>/<slug:hashed_email>/<slug:followup_semi_sekret>/",
+        "v0/followup/<uuid:uuid>/<slug:hashed_email>/<slug:follow_up_semi_sekret>/",
         views.FollowUpView.as_view(),
         name="followup-with-trailing-slash",
     ),
@@ -418,7 +418,12 @@ urlpatterns += [
         views.ExplainDenialView.as_view(),
         name="explain_denial",
     ),
-    # Patient Dashboard - Logged-in patient views
+    # Patient auth and dashboard - Logged-in patient views
+    path(
+        "my/login",
+        patient_views.PatientLoginView.as_view(),
+        name="patient-login",
+    ),
     path(
         "my/dashboard",
         patient_views.PatientDashboardView.as_view(),

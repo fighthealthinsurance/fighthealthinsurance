@@ -40,7 +40,7 @@ class PaymentViewsTests(TestCase):
         )
         self.user_password = "testpass"
         self.user = User.objects.create_user(
-            username=f"testuser🐼{self.domain.id}",
+            username=f"testuser\U0001f43c{self.domain.id}",
             password=self.user_password,
             email="test@example.com",
         )
@@ -53,7 +53,7 @@ class PaymentViewsTests(TestCase):
         ExtraUserProperties.objects.create(user=self.user, email_verified=True)
 
     def test_finish_payment_view_get(self) -> None:
-        url = reverse("professional_user-finish-payment")
+        url = reverse("fhi_users:professional_user-finish-payment")
         params = {
             "domain_id": self.domain.id,
             "professional_user_id": int(self.pro_user.id),
@@ -64,7 +64,7 @@ class PaymentViewsTests(TestCase):
         self.assertIn("next_url", response.json())
 
     def test_complete_payment_view_post(self) -> None:
-        url = reverse("professional_user-finish-payment")
+        url = reverse("fhi_users:professional_user-finish-payment")
         data = {
             "domain_id": self.domain.id,
             "professional_user_id": self.pro_user.id,
@@ -76,7 +76,7 @@ class PaymentViewsTests(TestCase):
         self.assertIn("next_url", response.json())
 
     def test_complete_payment_view_missing_parameters(self) -> None:
-        url = reverse("professional_user-finish-payment")
+        url = reverse("fhi_users:professional_user-finish-payment")
         data = {
             "domain_id": self.domain.id,
         }
@@ -85,7 +85,7 @@ class PaymentViewsTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_complete_payment_view_invalid_domain(self) -> None:
-        url = reverse("professional_user-finish-payment")
+        url = reverse("fhi_users:professional_user-finish-payment")
         data = {
             "domain_id": 99999,
             "professional_user_id": self.user.id,
@@ -96,7 +96,7 @@ class PaymentViewsTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_complete_payment_view_invalid_professional_user(self) -> None:
-        url = reverse("professional_user-finish-payment")
+        url = reverse("fhi_users:professional_user-finish-payment")
         data = {
             "domain_id": self.domain.id,
             "professional_user_id": 99999,
