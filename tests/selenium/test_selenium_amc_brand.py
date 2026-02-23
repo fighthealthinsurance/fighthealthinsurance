@@ -1,18 +1,21 @@
 """
-Selenium tests for AppealMyClaims (AMC) brand UI and flow.
+Selenium tests for AppealMyClaims (AMC) brand UI and wizard flow.
 
 These tests verify that:
 1. AMC branding displays correctly (logo, colors, navigation)
-2. The appeal flow works end-to-end with AMC branding
+2. The 3-step React wizard loads and functions correctly
 3. "Powered by FHI" attribution appears in the right places
 4. Navigation is minimal (no extra links for AMC)
-5. Both path-based (/appealmyclaims/) and domain-based branding work
+5. FHI pages are unaffected by AMC changes
 """
 
 import time
 
 import pytest
 from django.contrib.staticfiles.testing import StaticLiveServerTestCase
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import WebDriverWait
 from seleniumbase import BaseCase
 
 from .fhi_selenium_base import FHISeleniumBase
@@ -39,68 +42,69 @@ class SeleniumTestAMCBranding(FHISeleniumBase, StaticLiveServerTestCase):
         super(StaticLiveServerTestCase, cls).tearDownClass()
         super(BaseCase, cls).tearDownClass()
 
+    def wait_for_wizard(self, timeout=15):
+        """Wait for the AMC React wizard to mount and render."""
+        WebDriverWait(self.driver, timeout).until(
+            EC.presence_of_element_located((By.ID, "amc-wizard-root"))
+        )
+        # Wait for React to render content inside the root
+        WebDriverWait(self.driver, timeout).until(
+            lambda d: len(
+                d.find_element(By.ID, "amc-wizard-root").find_elements(
+                    By.CSS_SELECTOR, "*"
+                )
+            )
+            > 0
+        )
+
     def test_amc_landing_page_shows_correct_branding(self):
         """Test that AMC landing page shows Appeal My Claims branding."""
         self.open(f"{self.live_server_url}/appealmyclaims/")
+        self.wait_for_wizard()
 
-        # Wait for page to load
-        time.sleep(1)
-
-        # Check page title contains Appeal My Claims or similar branding
+        # Check page title contains brand name
         title = self.get_title()
-        # Title should still mention insurance appeals but may vary
-        assert "insurance" in title.lower() or "appeal" in title.lower()
+        assert "Appeal My Claims" in title
 
-        # Check for Appeal My Claims text logo (since AMC uses text logo, not image)
+        # Check for Appeal My Claims text logo in server-side nav
         self.assert_text("Appeal My Claims")
 
-        # Check welcome header from real AMC site
+        # Check React wizard rendered with its title
         self.assert_text("Healthcare Appeal Helper")
 
-        # Check main headline from real AMC site
-        self.assert_text("Denied by your insurance?")
+        # Check wizard subtitle
+        self.assert_text("Generate a professional appeal letter")
 
         # Verify minimal navigation - should NOT have these FHI-specific links
-        with pytest.raises(Exception):
-            self.assert_element('a:contains("Chat")')
-        with pytest.raises(Exception):
-            self.assert_element('a:contains("Explain Denial")')
-        with pytest.raises(Exception):
-            self.assert_element('a:contains("How to Help")')
-        with pytest.raises(Exception):
-            self.assert_element('a:contains("Resources/Blogs")')
+        page_source = self.get_page_source()
+        assert 'class="nav-link">Chat</a>' not in page_source
+        assert 'class="nav-link">Explain Denial</a>' not in page_source
+        assert 'class="nav-link">How to Help</a>' not in page_source
+        assert 'class="nav-link">Resources/Blogs</a>' not in page_source
 
-        # Should have the main CTA (either "Generate Appeal" or "Get Started")
-        try:
-            self.assert_element('a:contains("Generate Appeal")')
-        except Exception:
-            self.assert_element('a:contains("Get Started")')
+        # Should have the "Generate Appeal" CTA in nav
+        self.assert_element('a:contains("Generate Appeal")')
 
-    def test_amc_has_powered_by_fhi_in_footer(self):
-        """Test that AMC pages show 'Powered by Fight Health Insurance' in footer."""
+    def test_amc_has_powered_by_fhi(self):
+        """Test that AMC pages show 'Powered by Fight Health Insurance'."""
         self.open(f"{self.live_server_url}/appealmyclaims/")
-        time.sleep(1)
+        self.wait_for_wizard()
 
         # Check for "Powered by Fight Health Insurance" text
+        # Present in both server-side footer and React wizard footer
         self.assert_text("Powered by")
         self.assert_text("Fight Health Insurance")
-
-        # Verify it's a link to FHI
-        fhi_link = self.find_element('a[href="https://www.fighthealthinsurance.com"]')
-        assert fhi_link is not None
 
     def test_amc_does_not_show_social_links(self):
         """Test that AMC pages don't show FHI social media links."""
         self.open(f"{self.live_server_url}/appealmyclaims/")
-        time.sleep(1)
+        self.wait_for_wizard()
 
-        # AMC should not have social media links (Instagram, LinkedIn, etc.)
-        with pytest.raises(Exception):
-            self.assert_element('a[aria-label="Instagram"]')
-        with pytest.raises(Exception):
-            self.assert_element('a[aria-label="LinkedIn"]')
-        with pytest.raises(Exception):
-            self.assert_element('a[aria-label="YouTube"]')
+        # AMC should not have social media links
+        page_source = self.get_page_source()
+        assert 'aria-label="Instagram"' not in page_source
+        assert 'aria-label="LinkedIn"' not in page_source
+        assert 'aria-label="YouTube"' not in page_source
 
     def test_fhi_landing_page_shows_fhi_branding(self):
         """Test that FHI landing page still shows Fight Health Insurance branding."""
@@ -110,12 +114,11 @@ class SeleniumTestAMCBranding(FHISeleniumBase, StaticLiveServerTestCase):
         # Check for FHI branding
         self.assert_text("Fight Health Insurance")
 
-        # FHI should have full navigation - check for nav links
-        # Use more flexible check since the exact structure may vary
+        # FHI should have full navigation
         page_source = self.get_page_source()
         assert "Chat" in page_source
-        assert "Explain" in page_source  # "Explain Denial" or similar
-        assert "Help" in page_source  # "How to Help" or similar
+        assert "Explain" in page_source
+        assert "Help" in page_source
 
         # Should NOT have "Powered by" (that's only for AMC)
         assert "Powered by Fight Health Insurance" not in page_source
@@ -125,13 +128,12 @@ class SeleniumTestAMCBranding(FHISeleniumBase, StaticLiveServerTestCase):
         self.open(f"{self.live_server_url}/")
         time.sleep(1)
 
-        # FHI should NOT have "Powered by FHI" (that would be redundant)
         with pytest.raises(Exception):
             self.assert_text("Powered by Fight Health Insurance")
 
 
-class SeleniumTestAMCAppealFlow(FHISeleniumBase, StaticLiveServerTestCase):
-    """Test complete appeal flow with AMC branding."""
+class SeleniumTestAMCWizardFlow(FHISeleniumBase, StaticLiveServerTestCase):
+    """Test the AMC 3-step React wizard flow."""
 
     fixtures = [
         "fighthealthinsurance/fixtures/initial.yaml",
@@ -149,72 +151,148 @@ class SeleniumTestAMCAppealFlow(FHISeleniumBase, StaticLiveServerTestCase):
         super(StaticLiveServerTestCase, cls).tearDownClass()
         super(BaseCase, cls).tearDownClass()
 
-    def test_amc_appeal_flow_from_landing_to_upload(self):
-        """Test navigating from AMC landing page to upload denial page."""
+    def wait_for_wizard(self, timeout=15):
+        """Wait for the AMC React wizard to mount and render."""
+        WebDriverWait(self.driver, timeout).until(
+            EC.presence_of_element_located((By.ID, "amc-wizard-root"))
+        )
+        WebDriverWait(self.driver, timeout).until(
+            lambda d: len(
+                d.find_element(By.ID, "amc-wizard-root").find_elements(
+                    By.CSS_SELECTOR, "*"
+                )
+            )
+            > 0
+        )
+
+    def test_amc_wizard_loads_with_stepper(self):
+        """Test that the wizard loads with the 3-step stepper."""
         self.open(f"{self.live_server_url}/appealmyclaims/")
-        time.sleep(2)
+        self.wait_for_wizard()
 
-        # Verify we're on AMC landing page first
-        page_source = self.get_page_source()
-        assert "Appeal My Claims" in page_source
+        # Check stepper step labels are present
+        self.assert_text("Patient Information")
+        self.assert_text("Denial Details")
+        self.assert_text("Appeal Letter")
 
-        # Navigate to scan page directly (clicking may have timing issues)
-        self.open(f"{self.live_server_url}/appealmyclaims/scan")
-        time.sleep(2)
-
-        # Should land on upload denial page
-        self.assert_title_eventually("Upload your Health Insurance Denial")
-
-        # Verify AMC branding persists
-        page_source = self.get_page_source()
-        assert "Appeal My Claims" in page_source
-
-    def test_amc_complete_appeal_flow_with_branding(self):
-        """Test complete appeal generation flow maintains AMC branding throughout."""
-        # Simplified test - just verify branding persists across pages
-
-        # Start from AMC landing page
+    def test_amc_wizard_step1_has_form_fields(self):
+        """Test that Step 1 renders the patient information form."""
         self.open(f"{self.live_server_url}/appealmyclaims/")
-        time.sleep(2)
-        page_source = self.get_page_source()
-        assert "Appeal My Claims" in page_source
+        self.wait_for_wizard()
 
-        # Navigate to scan page
-        self.open(f"{self.live_server_url}/appealmyclaims/scan")
-        time.sleep(2)
-        page_source = self.get_page_source()
-        assert "Appeal My Claims" in page_source
-        assert "Powered by" in page_source
+        # Check for Step 1 heading (React &apos; renders as plain apostrophe)
+        self.assert_text("start with some basic information")
 
-    def test_amc_appeal_completion_shows_powered_by_fhi(self):
-        """Test that appeal completion page shows 'Powered by FHI' for AMC."""
-        # This is a simplified test - full flow requires ML backend
-        # We'll test that the attribution appears on appeal templates
+        # Check for author type toggle
+        self.assert_text("Patient")
+        self.assert_text("Healthcare Provider")
 
-        self.open(f"{self.live_server_url}/appealmyclaims/scan")
+        # Check for form fields (Mantine renders labels as <label> elements)
+        self.assert_text("Full Name")
+        self.assert_text("Email")
+        self.assert_text("Insurance Company Name")
+        self.assert_text("Date of Denial")
+
+        # Check for navigation buttons
+        self.assert_text("Continue")
+        self.assert_text("Back")
+
+    def test_amc_wizard_step1_validation(self):
+        """Test that Step 1 validates required fields before advancing."""
+        self.open(f"{self.live_server_url}/appealmyclaims/")
+        self.wait_for_wizard()
+
+        # Click Continue without filling any fields
+        self.click('button:contains("Continue")')
+        time.sleep(0.5)
+
+        # Should show validation errors and stay on Step 1
+        self.assert_text("Patient name is required")
+        self.assert_text("Email is required")
+        self.assert_text("Insurance company is required")
+        self.assert_text("Denial date is required")
+
+        # Should still be on Step 1
+        self.assert_text("start with some basic information")
+
+    def test_amc_wizard_navigate_to_step2(self):
+        """Test navigating from Step 1 to Step 2 with valid data."""
+        self.open(f"{self.live_server_url}/appealmyclaims/")
+        self.wait_for_wizard()
+
+        # Fill in Step 1 required fields using Mantine's label-input relationship.
+        # Mantine wraps each input in a div with a <label> and an <input> as siblings.
+        # We use XPath to find inputs by their associated label text.
+        def fill_field_by_label(label_text, value):
+            """Find a Mantine input by its label text and fill it."""
+            # Mantine TextInput: label is a sibling or ancestor-sibling of the input
+            script = f"""
+                var labels = document.querySelectorAll('label');
+                for (var i = 0; i < labels.length; i++) {{
+                    if (labels[i].textContent.includes('{label_text}')) {{
+                        var wrapper = labels[i].closest('.mantine-TextInput-root, .mantine-InputWrapper-root');
+                        if (!wrapper) wrapper = labels[i].parentElement;
+                        var input = wrapper.querySelector('input');
+                        if (input) {{
+                            var nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+                                window.HTMLInputElement.prototype, 'value').set;
+                            nativeInputValueSetter.call(input, '{value}');
+                            input.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                            input.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                            return true;
+                        }}
+                    }}
+                }}
+                return false;
+            """
+            result = self.driver.execute_script(script)
+            assert result, f"Could not find input for label: {label_text}"
+
+        fill_field_by_label("Full Name", "John Doe")
+        fill_field_by_label("Email", "test@example.com")
+        fill_field_by_label("Insurance Company", "Aetna")
+        fill_field_by_label("Date of Denial", "2025-01-15")
+
+        # Click Continue
+        self.click('button:contains("Continue")')
         time.sleep(1)
 
-        # Verify we're on AMC version
-        self.assert_text("Appeal My Claims")
+        # Should now be on Step 2
+        self.assert_text("Tell us about the denied service")
+        self.assert_text("Reason for Denial")
+        self.assert_text("Description of Denied Service")
 
-        # The "Powered by FHI" should be present on this page too
-        # (we added it to scrub.html)
-        self.assert_text("Powered by")
-        self.assert_text("Fight Health Insurance")
-
-    def test_amc_categorize_page_shows_branding(self):
-        """Test that the categorize page maintains AMC branding."""
-        # Note: Categorize page requires session data, so we can't test it directly
-        # Instead, just verify the scan page has branding
+    def test_amc_scan_redirects_to_wizard(self):
+        """Test that /appealmyclaims/scan redirects to the wizard."""
         self.open(f"{self.live_server_url}/appealmyclaims/scan")
         time.sleep(2)
 
-        # Should show AMC branding
-        self.assert_text("Appeal My Claims")
+        # Should have been redirected to /appealmyclaims/
+        current_url = self.get_current_url()
+        assert "/appealmyclaims/" in current_url
+        assert "/scan" not in current_url
 
-        # Should have "Powered by FHI"
-        self.assert_text("Powered by")
-        self.assert_text("Fight Health Insurance")
+        # Wizard should be loaded
+        self.assert_text("Healthcare Appeal Helper")
+
+    def test_amc_wizard_has_config_data_attributes(self):
+        """Test that wizard root element has required config data attributes."""
+        self.open(f"{self.live_server_url}/appealmyclaims/")
+        self.wait_for_wizard()
+
+        root = self.driver.find_element(By.ID, "amc-wizard-root")
+        assert root.get_attribute("data-csrf-token") is not None
+        assert root.get_attribute("data-ws-host") is not None
+        assert root.get_attribute("data-privacy-url") is not None
+        assert root.get_attribute("data-tos-url") is not None
+
+    def test_amc_wizard_loads_manrope_font(self):
+        """Test that AMC wizard page loads the Manrope font."""
+        self.open(f"{self.live_server_url}/appealmyclaims/")
+        self.wait_for_wizard()
+
+        page_source = self.get_page_source()
+        assert "Manrope" in page_source
 
     def test_amc_privacy_and_tos_pages_accessible(self):
         """Test that AMC has access to privacy policy and TOS."""
@@ -235,8 +313,24 @@ class SeleniumTestAMCAppealFlow(FHISeleniumBase, StaticLiveServerTestCase):
         self.open(f"{self.live_server_url}/appealmyclaims/about-us")
         time.sleep(1)
         self.assert_text("Appeal My Claims")
-        # About page should have some content
         self.assert_text("About")
+
+    def test_fhi_scan_unchanged(self):
+        """Test that FHI scan page still works normally."""
+        self.open(f"{self.live_server_url}/scan")
+        time.sleep(2)
+
+        # FHI scan should show FHI branding
+        self.assert_text("Fight Health Insurance")
+
+        # FHI scan should NOT have the AMC wizard
+        page_source = self.get_page_source()
+        assert "amc-wizard-root" not in page_source
+        assert "Healthcare Appeal Helper" not in page_source
+
+        # FHI scan should have its standard form elements
+        self.assert_element("#submit")
+        self.assert_element('[name="denial_text"]')
 
 
 class SeleniumTestBrandColorScheme(FHISeleniumBase, StaticLiveServerTestCase):
@@ -258,18 +352,30 @@ class SeleniumTestBrandColorScheme(FHISeleniumBase, StaticLiveServerTestCase):
         super(StaticLiveServerTestCase, cls).tearDownClass()
         super(BaseCase, cls).tearDownClass()
 
-    def test_amc_has_blue_css_variable(self):
-        """Test that AMC pages inject blue color CSS variable."""
-        self.open(f"{self.live_server_url}/appealmyclaims/")
-        time.sleep(1)
+    def wait_for_wizard(self, timeout=15):
+        """Wait for the AMC React wizard to mount."""
+        WebDriverWait(self.driver, timeout).until(
+            EC.presence_of_element_located((By.ID, "amc-wizard-root"))
+        )
+        WebDriverWait(self.driver, timeout).until(
+            lambda d: len(
+                d.find_element(By.ID, "amc-wizard-root").find_elements(
+                    By.CSS_SELECTOR, "*"
+                )
+            )
+            > 0
+        )
 
-        # Check that the page has the CSS variable set
-        # The brand color is injected in a <style> tag in the head
+    def test_amc_has_blue_css_variable(self):
+        """Test that AMC pages inject blue brand color CSS variable."""
+        self.open(f"{self.live_server_url}/appealmyclaims/")
+        self.wait_for_wizard()
+
         page_source = self.get_page_source()
 
-        # Should contain the blue color for AMC (Material UI blue #1976d2)
+        # Should contain the blue color for AMC (#1976d2) in CSS variable
         assert "#1976d2" in page_source, "AMC blue color not found in page source"
-        assert "--mui-primary-main" in page_source, "Material UI CSS variable not found"
+        assert "--brand-primary-color" in page_source, "CSS variable not found"
 
     def test_fhi_has_green_css_variable(self):
         """Test that FHI pages inject green color CSS variable."""
@@ -283,11 +389,11 @@ class SeleniumTestBrandColorScheme(FHISeleniumBase, StaticLiveServerTestCase):
         assert "--brand-primary-color" in page_source, "CSS variable not found"
 
     def test_amc_text_logo_renders(self):
-        """Test that AMC renders text logo correctly."""
+        """Test that AMC renders text logo correctly in nav."""
         self.open(f"{self.live_server_url}/appealmyclaims/")
-        time.sleep(1)
+        self.wait_for_wizard()
 
-        # Check for logo-text span (AMC uses text logo)
+        # Check for logo-text span (AMC uses text logo in server-side nav)
         logo = self.find_element("span.logo-text")
         assert logo is not None
         assert "Appeal My Claims" in logo.text
@@ -322,24 +428,39 @@ class SeleniumTestBrandConsistency(FHISeleniumBase, StaticLiveServerTestCase):
         super(StaticLiveServerTestCase, cls).tearDownClass()
         super(BaseCase, cls).tearDownClass()
 
+    def wait_for_wizard(self, timeout=15):
+        """Wait for the AMC React wizard to mount."""
+        WebDriverWait(self.driver, timeout).until(
+            EC.presence_of_element_located((By.ID, "amc-wizard-root"))
+        )
+        WebDriverWait(self.driver, timeout).until(
+            lambda d: len(
+                d.find_element(By.ID, "amc-wizard-root").find_elements(
+                    By.CSS_SELECTOR, "*"
+                )
+            )
+            > 0
+        )
+
     def test_amc_brand_persists_through_navigation(self):
         """Test that navigating through AMC site maintains AMC branding."""
-        # Start at AMC landing
+        # Start at AMC wizard
         self.open(f"{self.live_server_url}/appealmyclaims/")
-        time.sleep(1)
+        self.wait_for_wizard()
         self.assert_text("Appeal My Claims")
-
-        # Navigate to scan
-        self.open(f"{self.live_server_url}/appealmyclaims/scan")
-        time.sleep(1)
-        self.assert_text("Appeal My Claims")
+        self.assert_text("Healthcare Appeal Helper")
 
         # Navigate to about
         self.open(f"{self.live_server_url}/appealmyclaims/about-us")
         time.sleep(1)
         self.assert_text("Appeal My Claims")
 
-        # All should show "Powered by FHI"
+        # Navigate to privacy policy
+        self.open(f"{self.live_server_url}/appealmyclaims/privacy_policy")
+        time.sleep(1)
+        self.assert_text("Appeal My Claims")
+
+        # All should show "Powered by FHI" in footer
         self.assert_text("Powered by")
 
     def test_fhi_brand_persists_through_navigation(self):
