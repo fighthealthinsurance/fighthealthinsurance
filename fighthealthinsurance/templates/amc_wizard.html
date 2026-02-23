@@ -1,32 +1,59 @@
-{% extends 'base.html' %}
 {% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Healthcare Appeal Helper</title>
+    <meta name="description" content="Generate professional appeal letters for denied insurance claims with AI assistance. Free, private, and effective.">
+    <meta name="title" content="Healthcare Appeal Helper">
+    {% if canonical_url %}<link rel="canonical" href="{{ canonical_url }}">{% endif %}
+    <link rel="icon" href="{% static 'images/amc/favicon.svg' %}" type="image/svg+xml">
 
-{% block title %}{{ brand.name }} - Healthcare Appeal Helper{% endblock title %}
-{% block metatitle %}{{ brand.name }} - Healthcare Appeal Helper{% endblock metatitle %}
-{% block metadescription %}Generate professional appeal letters for denied insurance claims with AI assistance. Free, private, and effective.{% endblock metadescription %}
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 
-{% block scriptmagic %}
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-{% endblock scriptmagic %}
+    <style>
+        :root {
+            --mui-primary-main: #1976d2;
+            --mui-secondary-main: #34a0a4;
+            --mui-error-main: #d32f2f;
+            --mui-success-main: #2e7d32;
+            --mui-background-default: #f5f8fa;
+            --mui-text-primary: rgba(0, 0, 0, .87);
+            --brand-primary-color: #1976d2;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        html { scroll-behavior: smooth; }
+        body {
+            font-family: 'Manrope', sans-serif;
+            line-height: 1.6;
+            background-color: var(--mui-background-default);
+            color: var(--mui-text-primary);
+            min-height: 100vh;
+        }
+    </style>
 
-{% block extra_style %}
-<style>
-  body {
-    font-family: 'Manrope', sans-serif;
-    background-color: #f5f8fa;
-  }
-</style>
-{% endblock extra_style %}
-
-{% block content %}
-<div id="amc-wizard-root"
-     data-csrf-token="{{ csrf_token }}"
-     data-recaptcha-site-key="{{ recaptcha_site_key }}"
-     data-ws-host="{{ ws_host }}"
-     data-privacy-url="{{ privacy_url }}"
-     data-tos-url="{{ tos_url }}">
-</div>
-<script src="{% static 'js/dist/amc_wizard.bundle.js' %}" defer></script>
-{% endblock content %}
+    <!-- Google tag (gtag.js) -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-JQNGR0JGVN"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-JQNGR0JGVN');
+    </script>
+    <!-- Microsoft UET tag -->
+    <script>(function(w,d,t,r,u){var f,n,i;w[u]=w[u]||[],f=function(){var o={ti:"187227448", enableAutoSpaTracking: true};o.q=w[u],w[u]=new UET(o),w[u].push("pageLoad")},n=d.createElement(t),n.src=r,n.async=1,n.onload=n.onreadystatechange=function(){var s=this.readyState;s&&s!=="loaded"&&s!=="complete"||(f(),n.onload=n.onreadystatechange=null)},i=d.getElementsByTagName(t)[0],i.parentNode.insertBefore(n,i)})(window,document,"script","//bat.bing.com/bat.js","uetq");</script>
+</head>
+<body>
+    <div id="amc-wizard-root"
+         data-csrf-token="{{ csrf_token }}"
+         data-recaptcha-site-key="{{ recaptcha_site_key }}"
+         data-ws-host="{{ ws_host }}"
+         data-privacy-url="{{ privacy_url }}"
+         data-tos-url="{{ tos_url }}">
+    </div>
+    <script src="{% static 'js/dist/amc_wizard.bundle.js' %}" defer></script>
+</body>
+</html>

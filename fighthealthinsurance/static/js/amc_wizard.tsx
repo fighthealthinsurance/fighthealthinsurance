@@ -1,33 +1,39 @@
 import React, { useState, useRef, useCallback } from "react";
 import { createRoot } from "react-dom/client";
 import {
+  Anchor,
+  Alert,
   Box,
   Button,
   Checkbox,
   Container,
+  CopyButton,
+  Divider,
   Group,
+  Loader,
   MantineProvider,
   NativeSelect,
   Paper,
+  SimpleGrid,
+  Stack,
   Stepper,
   Text,
   Textarea,
   TextInput,
   Title,
   createTheme,
-  Anchor,
-  Alert,
-  SegmentedControl,
-  CopyButton,
-  Loader,
-  Stack,
+  List,
 } from "@mantine/core";
 import { getCSRFToken } from "./shared";
 
-// AMC Theme
+// =============================================================================
+// Theme
+// =============================================================================
+
 const amcTheme = createTheme({
   fontFamily: "'Manrope', sans-serif",
   primaryColor: "blue",
+  defaultRadius: 8,
   colors: {
     blue: [
       "#e3f2fd",
@@ -44,18 +50,17 @@ const amcTheme = createTheme({
   },
 });
 
+// =============================================================================
 // Types
+// =============================================================================
+
 interface FormData {
-  authorType: "patient" | "provider";
   patientName: string;
   email: string;
   insuranceCompany: string;
   claimNumber: string;
   groupPolicyId: string;
   denialDate: string;
-  providerName: string;
-  providerTitle: string;
-  providerOrganization: string;
   denialReason: string;
   serviceDescription: string;
   justification: string;
@@ -83,16 +88,12 @@ const DENIAL_REASONS = [
 ];
 
 const initialFormData: FormData = {
-  authorType: "patient",
   patientName: "",
   email: "",
   insuranceCompany: "",
   claimNumber: "",
   groupPolicyId: "",
   denialDate: "",
-  providerName: "",
-  providerTitle: "",
-  providerOrganization: "",
   denialReason: "",
   serviceDescription: "",
   justification: "",
@@ -101,6 +102,70 @@ const initialFormData: FormData = {
   privacy: false,
   subscribe: false,
 };
+
+// =============================================================================
+// Inline SVG Icons
+// =============================================================================
+
+function ShieldIcon({ size = 24, color = "white" }: { size?: number; color?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill={color}>
+      <path d="M12 1 3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5z" />
+    </svg>
+  );
+}
+
+function GavelIcon({ size = 28, color = "#1976d2" }: { size?: number; color?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill={color}>
+      <path d="M1 21h12v2H1zM5.24 8.07l2.83-2.83 14.14 14.14-2.83 2.83zM12.32 1l5.66 5.66-2.83 2.83-5.66-5.66zM3.83 9.48l5.66 5.66-2.83 2.83L1 12.31z" />
+    </svg>
+  );
+}
+
+function TrendingUpIcon({ size = 28, color = "#1976d2" }: { size?: number; color?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill={color}>
+      <path d="m16 6 2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6z" />
+    </svg>
+  );
+}
+
+function InfoIcon({ size = 28, color = "#1976d2" }: { size?: number; color?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill={color}>
+      <path d="M11 7h2v2h-2zm0 4h2v6h-2zm1-9C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2m0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8" />
+    </svg>
+  );
+}
+
+function CheckCircleIcon({ size = 20, color = "#2e7d32" }: { size?: number; color?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill={color}>
+      <path d="M16.59 7.58 10 14.17l-3.59-3.58L5 12l5 5 8-8zM12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2m0 18c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8" />
+    </svg>
+  );
+}
+
+function ArrowForwardIcon() {
+  return (
+    <svg width={18} height={18} viewBox="0 0 24 24" fill="currentColor">
+      <path d="m12 4-1.41 1.41L16.17 11H4v2h12.17l-5.58 5.59L12 20l8-8z" />
+    </svg>
+  );
+}
+
+function ArrowBackIcon() {
+  return (
+    <svg width={18} height={18} viewBox="0 0 24 24" fill="currentColor">
+      <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20z" />
+    </svg>
+  );
+}
+
+// =============================================================================
+// Helper
+// =============================================================================
 
 function buildDenialText(data: FormData): string {
   const parts = [
@@ -113,16 +178,274 @@ function buildDenialText(data: FormData): string {
     "",
     `The insurance company has denied coverage for ${data.serviceDescription} stating the reason as: "${data.denialReason}".`,
     data.justification
-      ? `\nAdditional context from the ${data.authorType}: ${data.justification}`
-      : null,
-    data.authorType === "provider"
-      ? `\nThis appeal is being written by the healthcare provider: ${data.providerName}, ${data.providerTitle} at ${data.providerOrganization}.`
+      ? `\nAdditional context from the patient: ${data.justification}`
       : null,
   ];
   return parts.filter(Boolean).join("\n");
 }
 
+// =============================================================================
+// AMC Header
+// =============================================================================
+
+function AMCHeader() {
+  return (
+    <Box
+      component="header"
+      style={{
+        backgroundColor: "#1976d2",
+        color: "white",
+      }}
+    >
+      <Container size="lg" py="sm">
+        <Group gap="sm" align="center">
+          <ShieldIcon size={28} />
+          <Text fw={600} size="lg" style={{ color: "white", lineHeight: 1 }}>
+            Healthcare Appeal Helper
+          </Text>
+        </Group>
+      </Container>
+    </Box>
+  );
+}
+
+// =============================================================================
+// AMC Hero Section
+// =============================================================================
+
+function AMCHero() {
+  return (
+    <Box ta="center" py={48} px="md">
+      <Container size="md">
+        <Title
+          order={1}
+          style={{
+            color: "#1976d2",
+            fontSize: "2.4rem",
+            fontWeight: 700,
+            marginBottom: 8,
+            lineHeight: 1.2,
+          }}
+        >
+          Denied by your insurance?
+        </Title>
+        <Text
+          size="xl"
+          fw={500}
+          mb="xs"
+          style={{ fontSize: "1.3rem", lineHeight: 1.4 }}
+        >
+          You&apos;re not alone&mdash;and you can fight back.
+        </Text>
+        <Text size="lg" c="dimmed">
+          Over 80% of prior authorization appeals are successful. Let&apos;s
+          help you be one of them.
+        </Text>
+      </Container>
+    </Box>
+  );
+}
+
+// =============================================================================
+// AMC Info Cards
+// =============================================================================
+
+const cardStyle = {
+  border: "1px solid #e0e0e0",
+  boxShadow: "0 2px 8px rgba(0,0,0,0.08)",
+  borderRadius: 8,
+  height: "100%",
+};
+
+function AMCInfoCards() {
+  return (
+    <Container size="lg" mb="xl" px="md">
+      <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="md">
+        {/* Know Your Rights */}
+        <Paper p="lg" style={cardStyle}>
+          <Group gap="xs" mb="sm">
+            <GavelIcon />
+            <Title order={5} fw={600}>
+              Know Your Rights
+            </Title>
+          </Group>
+          <Stack gap={6}>
+            {[
+              "Every patient has the right to appeal a denied claim",
+              "You can request an external review by an independent party",
+              "Insurance companies must provide a written explanation for denials",
+            ].map((text) => (
+              <Group key={text} gap="xs" align="flex-start" wrap="nowrap">
+                <Box mt={2}>
+                  <CheckCircleIcon />
+                </Box>
+                <Text size="sm">{text}</Text>
+              </Group>
+            ))}
+          </Stack>
+        </Paper>
+
+        {/* Appeal Success Rates */}
+        <Paper p="lg" style={cardStyle}>
+          <Group gap="xs" mb="sm">
+            <TrendingUpIcon />
+            <Title order={5} fw={600}>
+              Appeal Success Rates
+            </Title>
+          </Group>
+          <Stack gap="sm">
+            <Box>
+              <Text fw={700} size="xl" style={{ color: "#1976d2" }}>
+                83%
+              </Text>
+              <Text size="sm">
+                of prior authorization appeals are fully or partially successful
+                according to Kaiser Family Foundation.
+              </Text>
+            </Box>
+            <Box>
+              <Text fw={700} size="xl" style={{ color: "#1976d2" }}>
+                50-60%
+              </Text>
+              <Text size="sm">
+                of claim denials can be overturned on the first appeal attempt.
+              </Text>
+            </Box>
+            <Text size="xs" c="dimmed">
+              Source: Kaiser Family Foundation
+            </Text>
+          </Stack>
+        </Paper>
+
+        {/* Need More Help? */}
+        <Paper p="lg" style={cardStyle}>
+          <Group gap="xs" mb="sm">
+            <InfoIcon />
+            <Title order={5} fw={600}>
+              Need More Help?
+            </Title>
+          </Group>
+          <Text size="sm" mb="sm">
+            These resources offer additional guidance for navigating insurance
+            appeals:
+          </Text>
+          <Stack gap="xs">
+            <Anchor
+              href="https://www.cms.gov/CCIIO/Resources/Files/external_appeals"
+              target="_blank"
+              size="sm"
+            >
+              External Appeals Information
+            </Anchor>
+            <Anchor
+              href="https://www.healthcare.gov/appeal-insurance-company-decision/appeals/"
+              target="_blank"
+              size="sm"
+            >
+              Healthcare.gov Appeals
+            </Anchor>
+            <Anchor
+              href="https://www.patientadvocate.org/"
+              target="_blank"
+              size="sm"
+            >
+              Patient Advocate Foundation
+            </Anchor>
+          </Stack>
+        </Paper>
+      </SimpleGrid>
+    </Container>
+  );
+}
+
+// =============================================================================
+// AMC Footer
+// =============================================================================
+
+function AMCFooter() {
+  return (
+    <Box
+      component="footer"
+      style={{
+        backgroundColor: "#1976d2",
+        color: "white",
+        marginTop: "auto",
+      }}
+      py="lg"
+    >
+      <Container size="lg">
+        <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="lg" mb="md">
+          <Box>
+            <Group gap="xs" mb="xs">
+              <ShieldIcon size={20} />
+              <Text fw={600} style={{ color: "white" }}>
+                Healthcare Appeal Helper
+              </Text>
+            </Group>
+            <Text size="sm" style={{ color: "rgba(255,255,255,0.8)" }}>
+              Helping patients successfully appeal denied insurance claims.
+            </Text>
+          </Box>
+          <Box>
+            <Text fw={600} mb="xs" style={{ color: "white" }}>
+              Resources
+            </Text>
+            <Stack gap={4}>
+              <Anchor
+                href="https://www.cms.gov/CCIIO/Resources/Files/external_appeals"
+                target="_blank"
+                size="sm"
+                style={{ color: "rgba(255,255,255,0.8)" }}
+              >
+                External Appeals Information
+              </Anchor>
+              <Anchor
+                href="https://www.healthcare.gov/appeal-insurance-company-decision/appeals/"
+                target="_blank"
+                size="sm"
+                style={{ color: "rgba(255,255,255,0.8)" }}
+              >
+                Healthcare.gov Appeals
+              </Anchor>
+              <Anchor
+                href="https://www.patientadvocate.org/"
+                target="_blank"
+                size="sm"
+                style={{ color: "rgba(255,255,255,0.8)" }}
+              >
+                Patient Advocate Foundation
+              </Anchor>
+            </Stack>
+          </Box>
+        </SimpleGrid>
+
+        <Divider style={{ borderColor: "rgba(255,255,255,0.2)" }} mb="md" />
+
+        <Group justify="space-between" wrap="wrap">
+          <Text size="sm" style={{ color: "rgba(255,255,255,0.8)" }}>
+            AI-enhanced letter generation
+          </Text>
+          <Text size="sm" style={{ color: "rgba(255,255,255,0.8)" }}>
+            Powered by{" "}
+            <Anchor
+              href="https://www.fighthealthinsurance.com"
+              target="_blank"
+              style={{ color: "white" }}
+              size="sm"
+            >
+              Fight Health Insurance
+            </Anchor>
+          </Text>
+        </Group>
+      </Container>
+    </Box>
+  );
+}
+
+// =============================================================================
 // Step 1: Patient Information
+// =============================================================================
+
 function Step1PatientInfo({
   formData,
   setFormData,
@@ -138,32 +461,14 @@ function Step1PatientInfo({
 
   return (
     <Stack gap="lg">
-      <Text size="lg" fw={500}>
-        Let&apos;s start with some basic information
-      </Text>
-
-      <Paper p="lg" withBorder>
-        <Text fw={600} mb="sm">
-          Who is writing this appeal?
-        </Text>
-        <SegmentedControl
-          fullWidth
-          value={formData.authorType}
-          onChange={(val) => update("authorType", val)}
-          data={[
-            { label: "Patient", value: "patient" },
-            { label: "Healthcare Provider", value: "provider" },
-          ]}
-          mb="xs"
-        />
-        <Text size="sm" c="dimmed">
-          {formData.authorType === "patient"
-            ? "The appeal will be written from the patient's perspective"
-            : "The appeal will be written from the healthcare provider's perspective on behalf of the patient"}
-        </Text>
-      </Paper>
-
-      <Paper p="lg" withBorder>
+      <Paper
+        p="lg"
+        style={{
+          border: "1px solid #e0e0e0",
+          boxShadow: "0 2px 8px rgba(0,0,0,0.08)",
+          borderRadius: 8,
+        }}
+      >
         <Text fw={600} mb="sm">
           Patient Information
         </Text>
@@ -187,39 +492,14 @@ function Step1PatientInfo({
         />
       </Paper>
 
-      {formData.authorType === "provider" && (
-        <Paper p="lg" withBorder>
-          <Text fw={600} mb="sm">
-            Provider Information
-          </Text>
-          <TextInput
-            label="Provider's Full Name"
-            required
-            value={formData.providerName}
-            onChange={(e) => update("providerName", e.target.value)}
-            error={errors.providerName}
-            mb="sm"
-          />
-          <TextInput
-            label="Provider's Title"
-            required
-            placeholder="e.g., MD, NP, PA, Physical Therapist"
-            value={formData.providerTitle}
-            onChange={(e) => update("providerTitle", e.target.value)}
-            error={errors.providerTitle}
-            mb="sm"
-          />
-          <TextInput
-            label="Healthcare Organization/Practice"
-            required
-            value={formData.providerOrganization}
-            onChange={(e) => update("providerOrganization", e.target.value)}
-            error={errors.providerOrganization}
-          />
-        </Paper>
-      )}
-
-      <Paper p="lg" withBorder>
+      <Paper
+        p="lg"
+        style={{
+          border: "1px solid #e0e0e0",
+          boxShadow: "0 2px 8px rgba(0,0,0,0.08)",
+          borderRadius: 8,
+        }}
+      >
         <Text fw={600} mb="sm">
           Insurance Information
         </Text>
@@ -257,7 +537,10 @@ function Step1PatientInfo({
   );
 }
 
+// =============================================================================
 // Step 2: Denial Details
+// =============================================================================
+
 function Step2DenialDetails({
   formData,
   setFormData,
@@ -275,11 +558,14 @@ function Step2DenialDetails({
 
   return (
     <Stack gap="lg">
-      <Text size="lg" fw={500}>
-        Tell us about the denied service
-      </Text>
-
-      <Paper p="lg" withBorder>
+      <Paper
+        p="lg"
+        style={{
+          border: "1px solid #e0e0e0",
+          boxShadow: "0 2px 8px rgba(0,0,0,0.08)",
+          borderRadius: 8,
+        }}
+      >
         <Text fw={600} mb="sm">
           Denial Details
         </Text>
@@ -307,14 +593,21 @@ function Step2DenialDetails({
         />
         <Textarea
           label="Additional Medical Justification (Optional)"
-          placeholder="Provide any additional information about why this service is medically necessary..."
+          placeholder="Add any medical reasons why this service is necessary, or why the denial reason doesn't apply."
           minRows={3}
           value={formData.justification}
           onChange={(e) => update("justification", e.target.value)}
         />
       </Paper>
 
-      <Paper p="lg" withBorder>
+      <Paper
+        p="lg"
+        style={{
+          border: "1px solid #e0e0e0",
+          boxShadow: "0 2px 8px rgba(0,0,0,0.08)",
+          borderRadius: 8,
+        }}
+      >
         <Text fw={600} mb="sm">
           Required Agreements
         </Text>
@@ -364,7 +657,10 @@ function Step2DenialDetails({
   );
 }
 
+// =============================================================================
 // Step 3: Appeal Letter
+// =============================================================================
+
 function Step3AppealLetter({
   appealText,
   setAppealText,
@@ -380,10 +676,8 @@ function Step3AppealLetter({
   error: string | null;
   onStartOver: () => void;
 }) {
-  const downloadPdf = useCallback(() => {
-    // Simple text-based PDF download using Blob
-    const content = appealText;
-    const blob = new Blob([content], { type: "text/plain" });
+  const downloadTxt = useCallback(() => {
+    const blob = new Blob([appealText], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -395,7 +689,7 @@ function Step3AppealLetter({
   if (isGenerating) {
     return (
       <Stack align="center" gap="md" py="xl">
-        <Loader size="lg" />
+        <Loader size="lg" color="blue" />
         <Title order={3}>Generating Your Appeal Letter...</Title>
         <Text c="dimmed">{statusMessage || "Connecting to AI backend..."}</Text>
       </Stack>
@@ -408,8 +702,12 @@ function Step3AppealLetter({
         <Alert color="red" title="Error">
           {error}
         </Alert>
-        <Button onClick={onStartOver} variant="outline">
-          Start Over
+        <Button
+          onClick={onStartOver}
+          variant="outline"
+          leftSection={<ArrowBackIcon />}
+        >
+          Go Back and Try Again
         </Button>
       </Stack>
     );
@@ -417,15 +715,24 @@ function Step3AppealLetter({
 
   return (
     <Stack gap="lg">
-      <Text size="lg" fw={500}>
-        Your Appeal Letter is Ready
-      </Text>
-      <Text size="sm" c="dimmed">
-        Review the letter below, then copy or download it to send to your
-        insurance company.
-      </Text>
+      <Box>
+        <Text size="lg" fw={600} mb={4}>
+          Your Appeal Letter is Ready
+        </Text>
+        <Text size="sm" c="dimmed">
+          Review the letter below, then copy or download it to send to your
+          insurance company.
+        </Text>
+      </Box>
 
-      <Paper p="lg" withBorder>
+      <Paper
+        p="lg"
+        style={{
+          border: "1px solid #e0e0e0",
+          boxShadow: "0 2px 8px rgba(0,0,0,0.08)",
+          borderRadius: 8,
+        }}
+      >
         <Textarea
           value={appealText}
           onChange={(e) => setAppealText(e.target.value)}
@@ -441,7 +748,7 @@ function Step3AppealLetter({
         />
       </Paper>
 
-      <Group justify="center">
+      <Group justify="center" gap="md">
         <CopyButton value={appealText}>
           {({ copied, copy }) => (
             <Button
@@ -453,7 +760,7 @@ function Step3AppealLetter({
             </Button>
           )}
         </CopyButton>
-        <Button variant="outline" onClick={downloadPdf}>
+        <Button variant="outline" onClick={downloadTxt}>
           Download as Text
         </Button>
         <Button variant="filled" onClick={onStartOver}>
@@ -464,7 +771,10 @@ function Step3AppealLetter({
   );
 }
 
+// =============================================================================
 // Main Wizard Component
+// =============================================================================
+
 function AMCWizard({ config }: { config: RootConfig }) {
   const [activeStep, setActiveStep] = useState(0);
   const [formData, setFormData] = useState<FormData>(initialFormData);
@@ -483,14 +793,6 @@ function AMCWizard({ config }: { config: RootConfig }) {
     if (!formData.insuranceCompany.trim())
       newErrors.insuranceCompany = "Insurance company is required";
     if (!formData.denialDate) newErrors.denialDate = "Denial date is required";
-    if (formData.authorType === "provider") {
-      if (!formData.providerName.trim())
-        newErrors.providerName = "Provider name is required";
-      if (!formData.providerTitle.trim())
-        newErrors.providerTitle = "Provider title is required";
-      if (!formData.providerOrganization.trim())
-        newErrors.providerOrganization = "Organization is required";
-    }
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -593,9 +895,11 @@ function AMCWizard({ config }: { config: RootConfig }) {
           timeoutHandle = setTimeout(() => {
             if (!appealFound) {
               ws.close();
-              reject(new Error("Appeal generation timed out. Please try again."));
+              reject(
+                new Error("Appeal generation timed out. Please try again.")
+              );
             }
-          }, 120000); // 2 minute timeout
+          }, 120000);
         };
 
         ws.onopen = () => {
@@ -613,9 +917,8 @@ function AMCWizard({ config }: { config: RootConfig }) {
           resetTimeout();
           buffer += event.data;
 
-          // Try to parse complete JSON lines
           const lines = buffer.split("\n");
-          buffer = lines.pop() || ""; // Keep incomplete last line
+          buffer = lines.pop() || "";
 
           for (const line of lines) {
             const trimmed = line.trim();
@@ -631,12 +934,10 @@ function AMCWizard({ config }: { config: RootConfig }) {
                 setStatusMessage(parsed.message);
                 continue;
               }
-              // Appeal content - take the first complete appeal
               if (parsed.appeal_text && !appealFound) {
                 appealFound = true;
                 setAppealText(parsed.appeal_text);
                 setIsGenerating(false);
-                // Don't close yet - let it finish naturally
               } else if (
                 typeof parsed === "string" &&
                 parsed.length > 100 &&
@@ -647,7 +948,6 @@ function AMCWizard({ config }: { config: RootConfig }) {
                 setIsGenerating(false);
               }
             } catch {
-              // Could be a raw text appeal
               if (trimmed.length > 100 && !appealFound) {
                 appealFound = true;
                 setAppealText(trimmed);
@@ -659,11 +959,9 @@ function AMCWizard({ config }: { config: RootConfig }) {
 
         ws.onclose = () => {
           if (timeoutHandle) clearTimeout(timeoutHandle);
-          // If we got an appeal, resolve successfully
           if (appealFound) {
             resolve();
           } else if (buffer.trim().length > 100) {
-            // Check if there's remaining content in the buffer
             setAppealText(buffer.trim());
             setIsGenerating(false);
             resolve();
@@ -694,91 +992,91 @@ function AMCWizard({ config }: { config: RootConfig }) {
   };
 
   return (
-    <Container size="md" py="xl">
-      {/* Header */}
-      <Box ta="center" mb="xl">
-        <Title order={1} mb="xs">
-          Healthcare Appeal Helper
-        </Title>
-        <Text c="dimmed" size="lg">
-          Generate a professional appeal letter for your denied insurance claim
-        </Text>
-      </Box>
+    <Box style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}>
+      <AMCHeader />
 
-      {/* Stepper */}
-      <Stepper
-        active={activeStep}
-        mb="xl"
-        color="blue"
-        styles={{
-          separator: { marginLeft: 4, marginRight: 4 },
-        }}
-      >
-        <Stepper.Step label="Patient Information" />
-        <Stepper.Step label="Denial Details" />
-        <Stepper.Step label="Appeal Letter" />
-      </Stepper>
+      <Box style={{ flex: 1 }}>
+        {/* Hero and Info Cards only on initial step */}
+        {activeStep === 0 && (
+          <>
+            <AMCHero />
+            <AMCInfoCards />
+          </>
+        )}
 
-      {/* Step Content */}
-      {activeStep === 0 && (
-        <Step1PatientInfo
-          formData={formData}
-          setFormData={setFormData}
-          errors={errors}
-        />
-      )}
-      {activeStep === 1 && (
-        <Step2DenialDetails
-          formData={formData}
-          setFormData={setFormData}
-          errors={errors}
-          config={config}
-        />
-      )}
-      {activeStep === 2 && (
-        <Step3AppealLetter
-          appealText={appealText}
-          setAppealText={setAppealText}
-          isGenerating={isGenerating}
-          statusMessage={statusMessage}
-          error={generationError}
-          onStartOver={handleStartOver}
-        />
-      )}
-
-      {/* Navigation Buttons */}
-      {activeStep < 2 && (
-        <Group justify="space-between" mt="xl">
-          <Button
-            variant="outline"
-            onClick={handleBack}
-            disabled={activeStep === 0}
+        <Container size="md" py="xl" px="md">
+          {/* Stepper */}
+          <Stepper
+            active={activeStep}
+            mb="xl"
+            color="blue"
+            styles={{
+              separator: { marginLeft: 4, marginRight: 4 },
+            }}
           >
-            Back
-          </Button>
-          <Button onClick={handleNext}>
-            {activeStep === 1 ? "Generate Appeal Letter" : "Continue"}
-          </Button>
-        </Group>
-      )}
+            <Stepper.Step label="Patient Information" />
+            <Stepper.Step label="Denial Details" />
+            <Stepper.Step label="Appeal Letter" />
+          </Stepper>
 
-      {/* Footer */}
-      <Box ta="center" mt="xl" pt="md" style={{ borderTop: "1px solid #e5e7eb" }}>
-        <Text size="xs" c="dimmed">
-          Powered by{" "}
-          <Anchor href="/" size="xs">
-            Fight Health Insurance
-          </Anchor>
-        </Text>
-        <Text size="xs" c="dimmed" mt={4}>
-          AI-enhanced letter generation
-        </Text>
+          {/* Step Content */}
+          {activeStep === 0 && (
+            <Step1PatientInfo
+              formData={formData}
+              setFormData={setFormData}
+              errors={errors}
+            />
+          )}
+          {activeStep === 1 && (
+            <Step2DenialDetails
+              formData={formData}
+              setFormData={setFormData}
+              errors={errors}
+              config={config}
+            />
+          )}
+          {activeStep === 2 && (
+            <Step3AppealLetter
+              appealText={appealText}
+              setAppealText={setAppealText}
+              isGenerating={isGenerating}
+              statusMessage={statusMessage}
+              error={generationError}
+              onStartOver={handleStartOver}
+            />
+          )}
+
+          {/* Navigation Buttons */}
+          {activeStep < 2 && (
+            <Group justify="space-between" mt="xl">
+              <Button
+                variant="outline"
+                onClick={handleBack}
+                disabled={activeStep === 0}
+                leftSection={<ArrowBackIcon />}
+              >
+                Back
+              </Button>
+              <Button
+                onClick={handleNext}
+                rightSection={activeStep === 0 ? <ArrowForwardIcon /> : undefined}
+              >
+                {activeStep === 1 ? "Generate Appeal Letter" : "Continue"}
+              </Button>
+            </Group>
+          )}
+        </Container>
       </Box>
-    </Container>
+
+      <AMCFooter />
+    </Box>
   );
 }
 
-// Mount the wizard
+// =============================================================================
+// Mount
+// =============================================================================
+
 document.addEventListener("DOMContentLoaded", () => {
   const root = document.getElementById("amc-wizard-root");
   if (root) {

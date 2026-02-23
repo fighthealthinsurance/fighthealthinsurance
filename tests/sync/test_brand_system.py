@@ -240,7 +240,11 @@ class AMCWizardTest(TestCase):
         self.assertContains(response, "amc_wizard.bundle.js")
 
     def test_amc_wizard_has_brand_context(self):
-        """Test that wizard has correct AMC brand context."""
+        """Test that wizard has correct AMC brand context.
+
+        Even though amc_wizard.html is a standalone template (not extending base.html),
+        context processors still run and inject brand info into the context.
+        """
         response = self.client.get("/appealmyclaims/")
         self.assertEqual(response.context["brand"].slug, "amc")
         self.assertTrue(response.context["is_amc"])
