@@ -861,7 +861,9 @@ class ChatInterface:
                             if await chat.appeals.aexists():
                                 appeal = await chat.appeals.afirst()
                                 if appeal:
-                                    linked_denial = await sync_to_async(lambda x: x.denial)(appeal)
+                                    linked_denial = await sync_to_async(
+                                        lambda x: x.denial
+                                    )(appeal)
                                     if linked_denial:
                                         rag_state = linked_denial.state
 

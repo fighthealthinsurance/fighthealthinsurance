@@ -155,10 +155,18 @@ class RAGClient:
 
             return RAGContextResult(
                 denial_response=_flatten_section(context.get("denial_response", "")),
-                medical_guidelines=_flatten_section(context.get("medical_guidelines", "")),
-                regulatory_requirements=_flatten_section(context.get("regulatory_requirements", "")),
-                procedure_specific=_flatten_section(context.get("procedure_specific", "")),
-                diagnosis_specific=_flatten_section(context.get("diagnosis_specific", "")),
+                medical_guidelines=_flatten_section(
+                    context.get("medical_guidelines", "")
+                ),
+                regulatory_requirements=_flatten_section(
+                    context.get("regulatory_requirements", "")
+                ),
+                procedure_specific=_flatten_section(
+                    context.get("procedure_specific", "")
+                ),
+                diagnosis_specific=_flatten_section(
+                    context.get("diagnosis_specific", "")
+                ),
                 total_sources=data.get("total_sources", 0),
             )
 
