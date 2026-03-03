@@ -14,6 +14,8 @@ import {
   Loader,
   Alert,
   ScrollArea,
+  Checkbox,
+  Anchor,
 } from "@mantine/core";
 import ErrorBoundary from "./ErrorBoundary";
 import { THEME } from "./theme";
@@ -169,6 +171,7 @@ const ChooserInterface: React.FC = () => {
     taskType: null,
   });
   const [isSkipping, setIsSkipping] = useState(false);
+  const [hasAcceptedTos, setHasAcceptedTos] = useState(false);
 
   const fetchNextTask = useCallback(async (taskType: "appeal" | "chat") => {
     setState((prev) => ({ ...prev, mode: "loading", error: null, taskType }));
@@ -321,14 +324,40 @@ const ChooserInterface: React.FC = () => {
 	      No real patient data or actual insurance cases are used in this interface.
 	    </Text>
 	  </Paper>
+	  <Paper shadow="sm" p="md" radius="md" withBorder style={{ width: "100%", maxWidth: "760px" }}>
+	    <Checkbox
+	      aria-label="Agree to Terms of Service"
+	      checked={hasAcceptedTos}
+	      onChange={(event) => setHasAcceptedTos(event.currentTarget.checked)}
+	      label={
+		<Text size="sm">
+		  I agree to the{" "}
+		  <Anchor href="/tos" target="_blank" rel="noopener noreferrer">
+		    Terms of Service
+		  </Anchor>{" "}
+		  and understand this chooser is for improving AI response quality.
+		</Text>
+	      }
+	    />
+	  </Paper>
+	  {!hasAcceptedTos && (
+	    <Text size="sm" c="orange" ta="center">
+	      Please accept the Terms of Service before scoring responses.
+	    </Text>
+	  )}
 	  <Group gap="lg" mt="xl">
 	    <Button
 	      size="xl"
 	      radius="md"
+	      disabled={!hasAcceptedTos}
 	      onClick={() => fetchNextTask("appeal")}
 	      style={{
-		background: THEME.buttonSharedStyles.background,
-		color: THEME.buttonSharedStyles.color,
+		background: hasAcceptedTos
+		  ? THEME.buttonSharedStyles.background
+		  : "#cccccc",
+		color: hasAcceptedTos
+		  ? THEME.buttonSharedStyles.color
+		  : "#666666",
 	      }}
 	    >
 	      Score Appeal Letters
@@ -336,10 +365,15 @@ const ChooserInterface: React.FC = () => {
 	    <Button
 	      size="xl"
 	      radius="md"
+	      disabled={!hasAcceptedTos}
 	      onClick={() => fetchNextTask("chat")}
 	      style={{
-		background: THEME.buttonSharedStyles.background,
-		color: THEME.buttonSharedStyles.color,
+		background: hasAcceptedTos
+		  ? THEME.buttonSharedStyles.background
+		  : "#cccccc",
+		color: hasAcceptedTos
+		  ? THEME.buttonSharedStyles.color
+		  : "#666666",
 	      }}
 	    >
 	      Score Chat Responses
