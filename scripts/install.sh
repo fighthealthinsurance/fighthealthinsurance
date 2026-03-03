@@ -18,7 +18,7 @@ fi
 
 install_package() {
 	package_name=$1
-	${package_command} "${package_name}" || sudo "${package_command}" "${package_name}" ||
+	${package_command} "${package_name}" || sudo ${package_command} "${package_name}" ||
 		(printf 'Can not install %s. Please install it manually.\n' "${package_name}" >/dev/stderr &&
 			exit 1)
 }
