@@ -1120,8 +1120,18 @@ class OCRView(View):
                     # Fail closed to empty OCR text so users can continue manually.
                     return ""
 
-                result = easy_ocr_reader.readtext(x.read())
-                return " ".join([text for _, text, _ in result])
+                try:
+                    x.seek(0)
+                except Exception:
+                    # Fall through and let readtext fail closed below.
+                    pass
+
+                try:
+                    result = easy_ocr_reader.readtext(x.read())
+                    return " ".join([text for _, text, _ in result])
+                except Exception:
+                    # EasyOCR can fail during inference or if stream handling is invalid.
+                    return ""
 
         texts = map(ocr_upload, uploader)
         return "\n".join(texts)
