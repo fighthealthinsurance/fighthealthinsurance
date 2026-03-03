@@ -22,7 +22,7 @@
   "license": "Apache-2.0",
   "dependencies": {
     "@emotion/react": "^11.14.0",
-    "@huggingface/transformers": "^3.7.2",
+    "@huggingface/transformers": "4.0.0-next.5",
     "@mantine/core": "^8.0.1",
     "@mantine/hooks": "^8.0.1",
     "@mdx-js/loader": "^3.1.1",
@@ -44,6 +44,7 @@
     "lodash.clonedeep": "^4.5.0",
     "marked": "^12.0.0",
     "npm-watch": "^0.11.0",
+    "onnxruntime-web": "^1.22.0",
     "pdf.js": "^0.1.0",
     "pdfjs-dist": "^5.4.149",
     "react": "^19.1.0",
