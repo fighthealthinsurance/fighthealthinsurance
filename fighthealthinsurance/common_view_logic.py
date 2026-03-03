@@ -2119,11 +2119,27 @@ class AppealsBackendHelper:
                 timeout=40,
             )
 
+            # Extract CPT/ICD codes from denial text for RAG search
+            rag_procedure_codes = None
+            rag_diagnosis_codes = None
+            denial_text_for_rag = denial.denial_text or ""
+            if denial_text_for_rag:
+                cpt_re = re.compile(r"[\(\s:,]+(\d{4}[A-Z0-9])[\s:\.\),]", re.M | re.UNICODE)
+                icd_re = re.compile(r"[\(\s:\.,]+([A-TV-Z][0-9][0-9AB]\.?[0-9A-TV-Z]{0,4})[\s:\.\),]", re.M | re.UNICODE)
+                cpt_matches = list(set(m.group(1) for m in cpt_re.finditer(denial_text_for_rag)))
+                icd_matches = list(set(m.group(1) for m in icd_re.finditer(denial_text_for_rag)))
+                if cpt_matches:
+                    rag_procedure_codes = cpt_matches
+                if icd_matches:
+                    rag_diagnosis_codes = icd_matches
+
             # Get RAG context from magic-rag-service
             rag_context_awaitable = asyncio.wait_for(
                 get_rag_context_for_denial(
-                    denial_text=denial.denial_text or "",
+                    denial_text=denial_text_for_rag,
                     state=denial.state,
+                    procedure_codes=rag_procedure_codes,
+                    diagnosis_codes=rag_diagnosis_codes,
                 ),
                 timeout=30,
             )

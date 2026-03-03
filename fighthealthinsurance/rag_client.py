@@ -4,6 +4,7 @@ Provides an async client for calling the Magic RAG Service
 to retrieve evidence-based context for insurance appeal generation.
 """
 
+import threading
 import time
 from dataclasses import dataclass
 from typing import Optional
@@ -11,7 +12,20 @@ from typing import Optional
 import httpx
 from loguru import logger
 
-from fighthealthinsurance.utils import get_env_variable
+from fighthealthinsurance.env_utils import get_env_variable
+
+
+def _flatten_section(section_data) -> str:
+    """Flatten a context section from list-of-dicts to a plain string.
+
+    The RAG service returns context sections as list[dict] where each dict
+    has a 'content' key. This extracts and joins the content strings.
+    """
+    if isinstance(section_data, list):
+        return "\n\n".join(
+            item.get("content", "") for item in section_data if item.get("content")
+        )
+    return str(section_data) if section_data else ""
 
 
 @dataclass
@@ -121,7 +135,12 @@ class RAGClient:
             if state:
                 payload["state"] = state
 
-            logger.debug(f"Requesting RAG context with payload: {payload}")
+            logger.debug(
+                f"Requesting RAG context: state={state}, "
+                f"procedure_codes={procedure_codes}, "
+                f"diagnosis_codes={diagnosis_codes}, "
+                f"denial_reason_len={len(denial_reason)}"
+            )
 
             response = await client.post("/api/v1/appeal-context/", json=payload)
 
@@ -135,11 +154,11 @@ class RAGClient:
             context = data.get("context", {})
 
             return RAGContextResult(
-                denial_response=context.get("denial_response", ""),
-                medical_guidelines=context.get("medical_guidelines", ""),
-                regulatory_requirements=context.get("regulatory_requirements", ""),
-                procedure_specific=context.get("procedure_specific", ""),
-                diagnosis_specific=context.get("diagnosis_specific", ""),
+                denial_response=_flatten_section(context.get("denial_response", "")),
+                medical_guidelines=_flatten_section(context.get("medical_guidelines", "")),
+                regulatory_requirements=_flatten_section(context.get("regulatory_requirements", "")),
+                procedure_specific=_flatten_section(context.get("procedure_specific", "")),
+                diagnosis_specific=_flatten_section(context.get("diagnosis_specific", "")),
                 total_sources=data.get("total_sources", 0),
             )
 
@@ -156,15 +175,18 @@ class RAGClient:
             return None
 
 
-# Global client instance (lazy initialization)
+# Global client instance with thread-safe initialization
 _rag_client: Optional[RAGClient] = None
+_rag_client_lock = threading.Lock()
 
 
 def get_rag_client() -> RAGClient:
-    """Get the global RAG client instance."""
+    """Get the global RAG client instance (thread-safe)."""
     global _rag_client
     if _rag_client is None:
-        _rag_client = RAGClient()
+        with _rag_client_lock:
+            if _rag_client is None:
+                _rag_client = RAGClient()
     return _rag_client
 
 

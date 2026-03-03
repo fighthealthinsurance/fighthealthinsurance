@@ -856,8 +856,18 @@ class ChatInterface:
                                 )
                             rag_query = " - ".join(rag_query_parts)
 
+                            # Try to get state from a linked denial if available
+                            rag_state = None
+                            if await chat.appeals.aexists():
+                                appeal = await chat.appeals.afirst()
+                                if appeal:
+                                    linked_denial = await sync_to_async(lambda x: x.denial)(appeal)
+                                    if linked_denial:
+                                        rag_state = linked_denial.state
+
                             rag_awaitable = get_rag_context_for_denial(
                                 denial_text=rag_query,
+                                state=rag_state,
                             )
 
                             results = await asyncio.gather(
