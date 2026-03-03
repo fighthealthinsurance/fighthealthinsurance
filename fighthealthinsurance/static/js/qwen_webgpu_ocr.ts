@@ -42,20 +42,25 @@ function getGeneratedText(result: GeneratedTextResult[] | GeneratedTextResult): 
 }
 
 async function detectWebGPUAvailability(): Promise<WebGpuAvailability> {
-  if (typeof navigator === "undefined" || !("gpu" in navigator)) {
-    return { available: false, reason: "navigator.gpu unavailable" };
+  try {
+    if (typeof navigator === "undefined" || !("gpu" in navigator)) {
+      return { available: false, reason: "navigator.gpu unavailable" };
+    }
+
+    const gpuNavigator = navigator as Navigator & {
+      gpu?: { requestAdapter: () => Promise<unknown | null> };
+    };
+
+    const adapter = await gpuNavigator.gpu?.requestAdapter();
+    if (!adapter) {
+      return { available: false, reason: "No WebGPU adapter" };
+    }
+
+    return { available: true };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    return { available: false, reason: `WebGPU detection error: ${reason}` };
   }
-
-  const gpuNavigator = navigator as Navigator & {
-    gpu?: { requestAdapter: () => Promise<unknown | null> };
-  };
-
-  const adapter = await gpuNavigator.gpu?.requestAdapter();
-  if (!adapter) {
-    return { available: false, reason: "No WebGPU adapter" };
-  }
-
-  return { available: true };
 }
 
 async function loadQwenOCRPipelineRaw(): Promise<ImageToTextCallable | null> {
