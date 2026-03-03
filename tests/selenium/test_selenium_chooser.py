@@ -116,7 +116,8 @@ class SeleniumTestChooserPageLoad(FHISeleniumBase, StaticLiveServerTestCase):
         self.assert_text("I agree to the", timeout=10)
         self.assert_text("Terms of Service")
         self.assert_element("input[type='checkbox']")
-        self.assert_attribute("a:contains('Terms of Service')", "href", "/tos")
+        href = self.get_attribute("a:contains('Terms of Service')", "href")
+        self.assertTrue(href.rstrip("/").endswith("/tos"))
         self.assert_attribute("button:contains('Score Appeal Letters')", "disabled")
         self.assert_attribute("button:contains('Score Chat Responses')", "disabled")
 

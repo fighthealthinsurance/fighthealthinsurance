@@ -330,15 +330,17 @@ const ChooserInterface: React.FC = () => {
 	      checked={hasAcceptedTos}
 	      onChange={(event) => setHasAcceptedTos(event.currentTarget.checked)}
 	      label={
-		<Text size="sm">
-		  I agree to the{" "}
-		  <Anchor href="/tos" target="_blank" rel="noopener noreferrer">
-		    Terms of Service
-		  </Anchor>{" "}
-		  and understand this chooser is for improving AI response quality.
-		</Text>
+	        <Text size="sm">
+	          I agree to the Terms of Service and understand this chooser is for
+	          improving AI response quality.
+	        </Text>
 	      }
 	    />
+	    <Text size="xs" mt="xs">
+	      <Anchor href="/tos" target="_blank" rel="noopener noreferrer">
+	        Read Terms of Service (opens in a new tab)
+	      </Anchor>
+	    </Text>
 	  </Paper>
 	  {!hasAcceptedTos && (
 	    <Text size="sm" c="orange" ta="center">
