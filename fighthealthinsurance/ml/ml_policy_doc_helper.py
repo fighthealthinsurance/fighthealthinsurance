@@ -9,12 +9,14 @@ Uses internal ML models to:
 """
 
 import asyncio
+import io
 import json
-import re
 from typing import Optional, Dict, Any
 from loguru import logger
 
 import pymupdf
+
+from django_encrypted_filefield.crypt import Cryptographer
 
 from fighthealthinsurance.models import PolicyDocument, PolicyDocumentAnalysis
 from fighthealthinsurance.ml.ml_router import ml_router
@@ -33,9 +35,34 @@ class MLPolicyDocHelper:
     TIMEOUT_SECONDS = 90
 
     @classmethod
-    def _extract_text_from_pdf(cls, file_path: str) -> tuple[str, Dict[int, str]]:
+    def _read_and_decrypt_file(cls, file_field) -> Optional[bytes]:
         """
-        Extract text from a PDF file with page number tracking.
+        Read and decrypt bytes from an EncryptedFileField.
+
+        Returns:
+            Decrypted bytes if successful, None on failure.
+        """
+        try:
+            with file_field.open() as f:
+                encrypted_bytes: bytes = f.read()
+                if not encrypted_bytes:
+                    return None
+                try:
+                    return Cryptographer.decrypted(encrypted_bytes)
+                except Exception:
+                    # Decryption failed — file may have been stored unencrypted
+                    logger.debug(
+                        "Decryption failed, returning raw bytes as fallback"
+                    )
+                    return encrypted_bytes
+        except Exception as e:
+            logger.warning(f"Error reading encrypted file: {e}")
+            return None
+
+    @classmethod
+    def _extract_text_from_pdf_bytes(cls, data: bytes) -> tuple[str, Dict[int, str]]:
+        """
+        Extract text from PDF bytes with page number tracking.
 
         Returns:
             Tuple of (full_text, page_dict) where page_dict maps page numbers to text
@@ -44,21 +71,21 @@ class MLPolicyDocHelper:
         page_dict: Dict[int, str] = {}
 
         try:
-            with pymupdf.open(file_path) as doc:
+            with pymupdf.open(stream=data, filetype="pdf") as doc:
                 for page_num, page in enumerate(doc, start=1):
                     page_text = page.get_text()
                     if page_text.strip():
                         page_dict[page_num] = page_text
                         full_text += f"\n\n[Page {page_num}]\n{page_text}"
         except Exception as e:
-            logger.warning(f"Error extracting text from PDF {file_path}: {e}")
+            logger.warning(f"Error extracting text from PDF bytes: {e}")
 
         return full_text, page_dict
 
     @classmethod
-    def _extract_text_from_docx(cls, file_path: str) -> tuple[str, Dict[int, str]]:
+    def _extract_text_from_docx_bytes(cls, data: bytes) -> tuple[str, Dict[int, str]]:
         """
-        Extract text from a DOCX file.
+        Extract text from DOCX bytes.
 
         Returns:
             Tuple of (full_text, page_dict). DOCX does not have reliable page
@@ -70,7 +97,7 @@ class MLPolicyDocHelper:
         try:
             import docx
 
-            doc = docx.Document(file_path)
+            doc = docx.Document(io.BytesIO(data))
             # Group paragraphs into pseudo-pages (~3000 chars each)
             current_page = 1
             current_page_text = ""
@@ -89,14 +116,14 @@ class MLPolicyDocHelper:
                 page_dict[current_page] = current_page_text
                 full_text += f"\n\n[Section {current_page}]\n{current_page_text}"
         except Exception as e:
-            logger.warning(f"Error extracting text from DOCX {file_path}: {e}")
+            logger.warning(f"Error extracting text from DOCX bytes: {e}")
 
         return full_text, page_dict
 
     @classmethod
-    def _extract_text_from_plaintext(cls, file_path: str) -> tuple[str, Dict[int, str]]:
+    def _extract_text_from_plaintext_bytes(cls, data: bytes) -> tuple[str, Dict[int, str]]:
         """
-        Extract text from a plain text or RTF file.
+        Extract text from plain text file bytes.
 
         Returns:
             Tuple of (full_text, page_dict) with a single pseudo-page.
@@ -105,33 +132,38 @@ class MLPolicyDocHelper:
         page_dict: Dict[int, str] = {}
 
         try:
-            with open(file_path, "r", errors="replace") as f:
-                content = f.read()
+            content = data.decode("utf-8", errors="replace")
             if content.strip():
                 page_dict[1] = content
                 full_text = f"\n\n[Section 1]\n{content}"
         except Exception as e:
-            logger.warning(f"Error reading text file {file_path}: {e}")
+            logger.warning(f"Error reading plaintext bytes: {e}")
 
         return full_text, page_dict
 
     @classmethod
-    def extract_text(cls, file_path: str) -> tuple[str, Dict[int, str]]:
+    def extract_text_from_bytes(cls, data: bytes, filename: str) -> tuple[str, Dict[int, str]]:
         """
-        Extract text from a document file, dispatching by file extension.
+        Extract text from document bytes, dispatching by filename extension.
 
         Returns:
             Tuple of (full_text, page_dict)
         """
-        lower_path = file_path.lower()
-        if lower_path.endswith(".pdf"):
-            return cls._extract_text_from_pdf(file_path)
-        elif lower_path.endswith(".docx"):
-            return cls._extract_text_from_docx(file_path)
-        elif lower_path.endswith((".txt", ".rtf", ".doc")):
-            return cls._extract_text_from_plaintext(file_path)
+        lower_name = filename.lower()
+        if lower_name.endswith(".pdf"):
+            return cls._extract_text_from_pdf_bytes(data)
+        elif lower_name.endswith(".docx"):
+            return cls._extract_text_from_docx_bytes(data)
+        elif lower_name.endswith(".txt"):
+            return cls._extract_text_from_plaintext_bytes(data)
+        elif lower_name.endswith((".doc", ".rtf")):
+            logger.warning(
+                f"Unsupported legacy format for text extraction: {filename}. "
+                "Only .pdf, .docx, and .txt files are supported."
+            )
+            return "", {}
         else:
-            logger.warning(f"Unsupported file type for text extraction: {file_path}")
+            logger.warning(f"Unsupported file type for text extraction: {filename}")
             return "", {}
 
     @classmethod
@@ -144,30 +176,45 @@ class MLPolicyDocHelper:
         Main entry point: Analyze a policy document and store the results.
         """
         try:
-            file_field = policy_document.document
+            file_field = policy_document.document_enc
             if not file_field:
-                logger.warning(f"No document file for PolicyDocument {policy_document.id}")
+                logger.warning(
+                    f"No document file for PolicyDocument {policy_document.id}"
+                )
                 return None
 
-            file_path = file_field.path
-
             async with asyncio.timeout(cls.TIMEOUT_SECONDS):
-                # Step 1: Extract text (run sync I/O in a thread)
-                full_text, page_dict = await asyncio.to_thread(
-                    cls.extract_text, file_path
+                # Step 1: Read and decrypt the file, then extract text
+                decrypted_bytes = await asyncio.to_thread(
+                    cls._read_and_decrypt_file, file_field
+                )
+                if not decrypted_bytes:
+                    logger.warning(
+                        f"Could not read/decrypt document for PolicyDocument {policy_document.id}"
+                    )
+                    return None
+
+                full_text, _ = await asyncio.to_thread(
+                    cls.extract_text_from_bytes,
+                    decrypted_bytes,
+                    policy_document.filename,
                 )
 
                 if not full_text or len(full_text.strip()) < 100:
-                    logger.warning(f"Insufficient text extracted from {policy_document.filename}")
+                    logger.warning(
+                        f"Insufficient text extracted from {policy_document.filename}"
+                    )
                     return None
 
                 # Step 2: Analyze for exclusions, inclusions, and appeal clauses
                 analysis_results = await cls._analyze_document_content(
-                    full_text, page_dict, user_question
+                    full_text, user_question
                 )
 
                 if not analysis_results:
-                    logger.warning(f"No analysis results for {policy_document.filename}")
+                    logger.warning(
+                        f"No analysis results for {policy_document.filename}"
+                    )
                     return None
 
                 # Step 3: Create and save the analysis record
@@ -187,9 +234,7 @@ class MLPolicyDocHelper:
                 return analysis
 
         except asyncio.TimeoutError:
-            logger.warning(
-                f"Timeout analyzing policy document {policy_document.id}"
-            )
+            logger.warning(f"Timeout analyzing policy document {policy_document.id}")
         except Exception as e:
             logger.opt(exception=True).warning(
                 f"Error analyzing policy document {policy_document.id}: {e}"
@@ -201,13 +246,13 @@ class MLPolicyDocHelper:
     async def _analyze_document_content(
         cls,
         full_text: str,
-        page_dict: Dict[int, str],
         user_question: Optional[str] = None,
+        remaining_timeout: Optional[float] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Use LLM to analyze document content for exclusions, inclusions, and appeal clauses.
         """
-        text_for_analysis = full_text[:cls.MAX_CONTEXT_LENGTH]
+        text_for_analysis = full_text[: cls.MAX_CONTEXT_LENGTH]
 
         question_context = ""
         if user_question:
@@ -268,6 +313,13 @@ Respond in JSON format with the following structure:
 """
 
         models = ml_router.internal_models_by_cost[:3]
+        num_models = len(models)
+
+        # Compute per-model timeout from remaining outer budget
+        if remaining_timeout and remaining_timeout > 0:
+            per_model_timeout = remaining_timeout / max(num_models, 1)
+        else:
+            per_model_timeout = cls.TIMEOUT_SECONDS / max(num_models, 1)
 
         for model in models:
             try:
@@ -282,7 +334,7 @@ Respond in JSON format with the following structure:
                         prompt=prompt,
                         temperature=0.2,
                     ),
-                    timeout=60,
+                    timeout=per_model_timeout,
                 )
 
                 if result:
@@ -306,7 +358,7 @@ Respond in JSON format with the following structure:
         """
         try:
             # First, try parsing the entire response as JSON
-            parsed = json.loads(response)
+            parsed: Dict[str, Any] = json.loads(response)
             if cls._validate_analysis_structure(parsed):
                 return parsed
         except (json.JSONDecodeError, ValueError):
@@ -369,17 +421,21 @@ Respond in JSON format with the following structure:
                     page = clause.get("page", "?")
                     text = clause.get("text", "")
                     clause_type = clause.get("type", "general")
-                    output_parts.append(f"{i}. **{clause_type.replace('_', ' ').title()}** (Page {page}): \"{text}\"\n")
+                    output_parts.append(
+                        f"{i}. **{clause_type.replace('_', ' ').title()}** (Page {page}): \"{text}\"\n"
+                    )
 
         if analysis.quotable_sections:
             output_parts.append("\n## Quotable Sections for Your Appeal\n")
-            output_parts.append("You can use these exact quotes in your appeal letter:\n\n")
-            for i, quote in enumerate(analysis.quotable_sections[:5], 1):
+            output_parts.append(
+                "You can use these exact quotes in your appeal letter:\n\n"
+            )
+            for quote in analysis.quotable_sections[:5]:
                 if isinstance(quote, dict):
                     quote_text = quote.get("quote", "")
                     page = quote.get("page", "?")
                     relevance = quote.get("relevance", "")
-                    output_parts.append(f"> \"{quote_text}\" *(Page {page})*\n")
+                    output_parts.append(f'> "{quote_text}" *(Page {page})*\n')
                     if relevance:
                         output_parts.append(f"   - {relevance}\n")
                     output_parts.append("\n")
@@ -399,14 +455,23 @@ Respond in JSON format with the following structure:
         """
         Get existing analysis or create a new one.
         Includes user_question in cache lookup so different questions get fresh analysis.
+        When user_question is None, prefer a generic (no-question) analysis.
         """
-        lookup = {"policy_document": policy_document}
+        lookup: Dict[str, Any] = {"policy_document": policy_document}
         if user_question:
             lookup["user_question"] = user_question
+        else:
+            lookup["user_question__isnull"] = True
 
-        existing = await PolicyDocumentAnalysis.objects.filter(
-            **lookup
-        ).afirst()
+        existing = await PolicyDocumentAnalysis.objects.filter(**lookup).afirst()
+
+        # Fallback: if no null-question analysis exists, try empty string
+        if not existing and not user_question:
+            existing = (
+                await PolicyDocumentAnalysis.objects.filter(
+                    policy_document=policy_document, user_question=""
+                ).afirst()
+            )
 
         if existing:
             logger.debug(f"Found existing analysis for document {policy_document.id}")

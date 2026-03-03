@@ -2192,13 +2192,13 @@ class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model)
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    document = models.FileField(upload_to="policy_docs/", blank=True)
+    document_enc = EncryptedFileField(null=True, storage=settings.COMBINED_STORAGE)
     document_type = models.CharField(
         max_length=50, choices=DOCUMENT_TYPE_CHOICES, default="other"
     )
     filename = models.CharField(max_length=255, blank=True)
-    hashed_email = models.CharField(max_length=200, blank=True)
-    session_key = models.CharField(max_length=100, blank=True)
+    hashed_email = models.CharField(max_length=200, null=True, blank=True)
+    session_key = models.CharField(max_length=100, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -2229,10 +2229,16 @@ class PolicyDocumentAnalysis(ExportModelOperationsMixin("PolicyDocumentAnalysis"
     inclusions = models.JSONField(default=list)  # List of coverage/inclusion clauses
     appeal_clauses = models.JSONField(default=list)  # Clauses relevant to appeals
     summary = models.TextField(blank=True)  # Overall summary
-    quotable_sections = models.JSONField(default=list)  # Formatted quotes with page refs
+    quotable_sections = models.JSONField(
+        default=list
+    )  # Formatted quotes with page refs
     created_at = models.DateTimeField(auto_now_add=True)
     chat = models.ForeignKey(
-        "OngoingChat", on_delete=models.SET_NULL, null=True, blank=True, related_name="policy_analyses"
+        "OngoingChat",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="policy_analyses",
     )
 
     class Meta:

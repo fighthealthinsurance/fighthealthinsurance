@@ -1254,17 +1254,21 @@ class ChatInterface:
 
             if session_key:
                 from django.contrib.sessions.backends.db import SessionStore
-                session = SessionStore(session_key=session_key)
-                doc_id = session.get("policy_document_id")
+
+                def _get_session_doc_id(sk: str) -> Optional[str]:
+                    session = SessionStore(session_key=sk)
+                    return session.get("policy_document_id")
+
+                doc_id = await sync_to_async(_get_session_doc_id)(session_key)
                 if doc_id:
-                    policy_doc = await PolicyDocument.objects.filter(
-                        id=doc_id
-                    ).afirst()
+                    policy_doc = await PolicyDocument.objects.filter(id=doc_id).afirst()
 
             if not policy_doc and session_key:
-                policy_doc = await PolicyDocument.objects.filter(
-                    session_key=session_key
-                ).order_by("-created_at").afirst()
+                policy_doc = (
+                    await PolicyDocument.objects.filter(session_key=session_key)
+                    .order_by("-created_at")
+                    .afirst()
+                )
 
             if not policy_doc:
                 logger.debug(f"No policy document found for session {session_key}")
@@ -1291,7 +1295,18 @@ class ChatInterface:
                 analysis.chat = chat
                 await analysis.asave()
 
-                formatted_analysis = MLPolicyDocHelper.format_analysis_for_chat(analysis)
+                formatted_analysis = MLPolicyDocHelper.format_analysis_for_chat(
+                    analysis
+                )
+
+                # Refresh from DB to avoid clobbering concurrent updates
+                # (e.g., background microsite context task)
+                try:
+                    db_chat = await OngoingChat.objects.aget(id=chat.id)
+                    chat.summary_for_next_call = db_chat.summary_for_next_call
+                    chat.chat_history = db_chat.chat_history
+                except OngoingChat.DoesNotExist:
+                    pass
 
                 # Add the analysis as context to the chat's summary
                 if not isinstance(chat.summary_for_next_call, list):
@@ -1299,10 +1314,6 @@ class ChatInterface:
                 chat.summary_for_next_call.append(
                     f"Policy document analysis for {policy_doc.filename}:\n{formatted_analysis[:4000]}"
                 )
-                await chat.asave()
-
-                await self.send_status_message("Policy analysis complete!")
-                await self.send_message_to_client(formatted_analysis)
 
                 # Add to chat history
                 if not isinstance(chat.chat_history, list):
@@ -1322,6 +1333,9 @@ class ChatInterface:
                     }
                 )
                 await chat.asave()
+
+                await self.send_status_message("Policy analysis complete!")
+                await self.send_message_to_client(formatted_analysis)
 
                 logger.info(f"Policy analysis completed for chat {chat.id}")
                 return True

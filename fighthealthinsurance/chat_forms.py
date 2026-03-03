@@ -132,7 +132,10 @@ class UnderstandPolicyForm(forms.Form):
                 raise forms.ValidationError(
                     f"Unsupported file type. Please upload one of: {', '.join(sorted(SUPPORTED_POLICY_EXTENSIONS))}"
                 )
-            if file.content_type and file.content_type not in SUPPORTED_POLICY_CONTENT_TYPES:
+            if (
+                file.content_type
+                and file.content_type not in SUPPORTED_POLICY_CONTENT_TYPES
+            ):
                 raise forms.ValidationError(
                     "The uploaded file does not appear to be a supported document type."
                 )

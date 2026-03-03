@@ -2075,10 +2075,12 @@ class UnderstandPolicyView(FormView):
             from fighthealthinsurance.models import Denial
 
             hashed_email = Denial.get_hashed_email(email) if email else ""
+            if not self.request.session.session_key:
+                self.request.session.save()
             session_key = self.request.session.session_key or ""
 
             policy_doc = PolicyDocument.objects.create(
-                document=uploaded_file,
+                document_enc=uploaded_file,
                 document_type=document_type,
                 filename=safe_filename,
                 hashed_email=hashed_email,
@@ -2114,7 +2116,9 @@ class UnderstandPolicyView(FormView):
             document_type, "policy document"
         )
 
-        initial_message = f"I've uploaded my insurance {doc_type_display}: {safe_filename}\n\n"
+        initial_message = (
+            f"I've uploaded my insurance {doc_type_display}: {safe_filename}\n\n"
+        )
 
         if user_question:
             initial_message += f"My question: {user_question}\n\n"
