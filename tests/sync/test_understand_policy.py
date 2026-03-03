@@ -1,8 +1,7 @@
 """Tests for the Understand My Policy feature: form validation, view, and text extraction."""
 
+import io
 import json
-import os
-import tempfile
 
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
@@ -198,100 +197,69 @@ class TextExtractionTest(TestCase):
         """Create a minimal PDF with pymupdf and verify extraction."""
         import pymupdf
 
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
-            doc = pymupdf.open()
-            page = doc.new_page()
-            page.insert_text((72, 72), "This is test coverage text for page one.")
-            doc.save(f.name)
-            doc.close()
-            tmp_path = f.name
+        doc = pymupdf.open()
+        page = doc.new_page()
+        page.insert_text((72, 72), "This is test coverage text for page one.")
+        pdf_bytes = doc.tobytes()
+        doc.close()
 
-        try:
-            full_text, page_dict = MLPolicyDocHelper._extract_text_from_pdf(tmp_path)
-            self.assertIn("test coverage text", full_text)
-            self.assertIn(1, page_dict)
-            self.assertIn("test coverage text", page_dict[1])
-        finally:
-            os.unlink(tmp_path)
+        full_text, page_dict = MLPolicyDocHelper._extract_text_from_pdf_bytes(pdf_bytes)
+        self.assertIn("test coverage text", full_text)
+        self.assertIn(1, page_dict)
+        self.assertIn("test coverage text", page_dict[1])
 
     def test_extract_text_from_docx(self):
         """Create a minimal DOCX and verify extraction."""
         import docx
 
-        with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as f:
-            tmp_path = f.name
+        doc = docx.Document()
+        doc.add_paragraph("Summary of Benefits and Coverage")
+        doc.add_paragraph("This plan covers preventive care at no cost.")
+        buffer = io.BytesIO()
+        doc.save(buffer)
+        docx_bytes = buffer.getvalue()
 
-        try:
-            doc = docx.Document()
-            doc.add_paragraph("Summary of Benefits and Coverage")
-            doc.add_paragraph("This plan covers preventive care at no cost.")
-            doc.save(tmp_path)
-
-            full_text, page_dict = MLPolicyDocHelper._extract_text_from_docx(tmp_path)
-            self.assertIn("Summary of Benefits", full_text)
-            self.assertIn("preventive care", full_text)
-            self.assertTrue(len(page_dict) >= 1)
-        finally:
-            os.unlink(tmp_path)
+        full_text, page_dict = MLPolicyDocHelper._extract_text_from_docx_bytes(docx_bytes)
+        self.assertIn("Summary of Benefits", full_text)
+        self.assertIn("preventive care", full_text)
+        self.assertTrue(len(page_dict) >= 1)
 
     def test_extract_text_from_plaintext(self):
-        """Verify extraction from a plain text file."""
-        with tempfile.NamedTemporaryFile(
-            suffix=".txt", delete=False, mode="w"
-        ) as f:
-            f.write("Exclusions: Cosmetic surgery is not covered.\n")
-            f.write("Appeals: You may appeal within 180 days.\n")
-            tmp_path = f.name
+        """Verify extraction from plain text bytes."""
+        text_bytes = (
+            b"Exclusions: Cosmetic surgery is not covered.\n"
+            b"Appeals: You may appeal within 180 days.\n"
+        )
 
-        try:
-            full_text, page_dict = MLPolicyDocHelper._extract_text_from_plaintext(
-                tmp_path
-            )
-            self.assertIn("Cosmetic surgery", full_text)
-            self.assertIn("180 days", full_text)
-            self.assertIn(1, page_dict)
-        finally:
-            os.unlink(tmp_path)
+        full_text, page_dict = MLPolicyDocHelper._extract_text_from_plaintext_bytes(
+            text_bytes
+        )
+        self.assertIn("Cosmetic surgery", full_text)
+        self.assertIn("180 days", full_text)
+        self.assertIn(1, page_dict)
 
     def test_extract_text_dispatches_by_extension(self):
-        """The extract_text() dispatcher picks the right method."""
-        with tempfile.NamedTemporaryFile(
-            suffix=".txt", delete=False, mode="w"
-        ) as f:
-            f.write("Hello from txt dispatch test")
-            tmp_path = f.name
+        """The extract_text_from_bytes() dispatcher picks the right method."""
+        text_bytes = b"Hello from txt dispatch test"
 
-        try:
-            full_text, _ = MLPolicyDocHelper.extract_text(tmp_path)
-            self.assertIn("Hello from txt dispatch test", full_text)
-        finally:
-            os.unlink(tmp_path)
+        full_text, _ = MLPolicyDocHelper.extract_text_from_bytes(text_bytes, "test.txt")
+        self.assertIn("Hello from txt dispatch test", full_text)
 
     def test_extract_text_unsupported_extension(self):
         """Unsupported extensions return empty results."""
-        with tempfile.NamedTemporaryFile(suffix=".xyz", delete=False) as f:
-            f.write(b"some content")
-            tmp_path = f.name
-
-        try:
-            full_text, page_dict = MLPolicyDocHelper.extract_text(tmp_path)
-            self.assertEqual(full_text, "")
-            self.assertEqual(page_dict, {})
-        finally:
-            os.unlink(tmp_path)
+        full_text, page_dict = MLPolicyDocHelper.extract_text_from_bytes(
+            b"some content", "file.xyz"
+        )
+        self.assertEqual(full_text, "")
+        self.assertEqual(page_dict, {})
 
     def test_extract_text_corrupt_pdf(self):
         """Corrupt PDF returns empty without crashing."""
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
-            f.write(b"this is not a pdf")
-            tmp_path = f.name
-
-        try:
-            full_text, page_dict = MLPolicyDocHelper._extract_text_from_pdf(tmp_path)
-            self.assertEqual(full_text, "")
-            self.assertEqual(page_dict, {})
-        finally:
-            os.unlink(tmp_path)
+        full_text, page_dict = MLPolicyDocHelper._extract_text_from_pdf_bytes(
+            b"this is not a pdf"
+        )
+        self.assertEqual(full_text, "")
+        self.assertEqual(page_dict, {})
 
 
 # --- JSON parsing tests ---

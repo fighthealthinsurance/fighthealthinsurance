@@ -2188,7 +2188,7 @@ class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model)
     DOCUMENT_TYPE_CHOICES = [
         ("summary_of_benefits", "Summary of Benefits"),
         ("medical_policy", "Medical Policy"),
-        ("other", "Other"),
+        ("other", "Other Policy Document"),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
