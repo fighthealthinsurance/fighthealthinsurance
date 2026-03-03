@@ -72,7 +72,11 @@ class PatientLoginView(TemplateView):
 
         login(request, user)
         # Redirect to ?next= if provided, otherwise dashboard
-        next_url = request.GET.get("next") or request.POST.get("next") or reverse("patient-dashboard")
+        next_url = (
+            request.GET.get("next")
+            or request.POST.get("next")
+            or reverse("patient-dashboard")
+        )
         return HttpResponseRedirect(next_url)
 
 
@@ -515,7 +519,5 @@ class EvidenceDownloadView(PatientRequiredMixin, View):
         )
         # Sanitize filename to prevent header injection
         safe_filename = re.sub(r'["\r\n\\]', "_", evidence.filename or "download")
-        response["Content-Disposition"] = (
-            f'attachment; filename="{safe_filename}"'
-        )
+        response["Content-Disposition"] = f'attachment; filename="{safe_filename}"'
         return response

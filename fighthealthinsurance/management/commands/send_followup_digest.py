@@ -57,7 +57,5 @@ class Command(BaseCommand):
 
         sent_count, skipped_count = sender.send_all(max_count=count)
         self.stdout.write(
-            self.style.SUCCESS(
-                f"Sent {sent_count} follow-up digest emails."
-            )
+            self.style.SUCCESS(f"Sent {sent_count} follow-up digest emails.")
         )

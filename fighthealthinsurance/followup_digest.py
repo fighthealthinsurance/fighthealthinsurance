@@ -62,10 +62,14 @@ class FollowupDigestSender:
             ).filter(follow_up_date__gte=today, follow_up_date__lte=next_week)
 
             # Check for overdue decisions
-            overdue_appeals = Appeal.filter_to_allowed_appeals(user).filter(
-                decision_expected_date__lt=today,
-                appeal_status__in=["sent", "awaiting_decision"],
-            ).exclude(success=True)
+            overdue_appeals = (
+                Appeal.filter_to_allowed_appeals(user)
+                .filter(
+                    decision_expected_date__lt=today,
+                    appeal_status__in=["sent", "awaiting_decision"],
+                )
+                .exclude(success=True)
+            )
 
             if (
                 active_appeals.exists()
@@ -126,7 +130,12 @@ class FollowupDigestSender:
         )
 
         # Return None if nothing to report
-        if not upcoming_followups and not overdue_decisions and not active_appeals and not recent_calls:
+        if (
+            not upcoming_followups
+            and not overdue_decisions
+            and not active_appeals
+            and not recent_calls
+        ):
             return None
 
         # Dashboard URL

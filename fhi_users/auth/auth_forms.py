@@ -72,6 +72,8 @@ class PatientSignupForm(forms.Form):
 
     def clean(self):
         cleaned_data = super().clean()
+        if cleaned_data is None:
+            return cleaned_data
         password = cleaned_data.get("password")
         confirm_password = cleaned_data.get("confirm_password")
 

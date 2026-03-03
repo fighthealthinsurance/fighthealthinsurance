@@ -109,12 +109,11 @@ class PatientSignupView(generic.FormView):
         # Link anonymous appeals to the new account if emails match
         try:
             from fighthealthinsurance.models import Denial
-            from fighthealthinsurance.utils import hash_for_link
             import logging
 
             logger = logging.getLogger(__name__)
 
-            hashed = hash_for_link(email)
+            hashed = Denial.get_hashed_email(email)
             anonymous_denials = Denial.objects.filter(
                 hashed_email=hashed, patient_user__isnull=True
             )

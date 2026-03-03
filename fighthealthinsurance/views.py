@@ -651,7 +651,7 @@ class RemoveDataView(View):
 
             send_fallback_email(
                 subject="Confirm Data Deletion - Fight Health Insurance",
-                template_name="emails/deletion_confirmation",
+                template_name="deletion_confirmation",
                 context={"confirmation_url": confirmation_url},
                 to_email=email,
             )

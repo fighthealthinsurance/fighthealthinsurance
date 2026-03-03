@@ -119,7 +119,9 @@ class CallLogExportView(PatientRequiredMixin, View):
                         _sanitize_csv(
                             f"{log.appeal.for_denial.procedure} ({log.appeal.uuid})"
                         )
-                        if log.appeal and log.appeal.for_denial and log.appeal.for_denial.procedure
+                        if log.appeal
+                        and log.appeal.for_denial
+                        and log.appeal.for_denial.procedure
                         else (str(log.appeal.uuid) if log.appeal else "")
                     ),
                 ]
@@ -199,7 +201,9 @@ class EvidenceExportView(PatientRequiredMixin, View):
                         _sanitize_csv(
                             f"{item.appeal.for_denial.procedure} ({item.appeal.uuid})"
                         )
-                        if item.appeal and item.appeal.for_denial and item.appeal.for_denial.procedure
+                        if item.appeal
+                        and item.appeal.for_denial
+                        and item.appeal.for_denial.procedure
                         else (str(item.appeal.uuid) if item.appeal else "")
                     ),
                 ]

@@ -71,7 +71,7 @@ class SeleniumPatientFlowsTests(FHISeleniumBase, StaticLiveServerTestCase):
         )
 
         # Enter credentials
-        self.type("#inputEmail", username)
+        self.type("#inputEmail", self.test_email)
         self.type("#inputPassword", password)
 
         # Submit login form
@@ -106,7 +106,7 @@ class SeleniumPatientFlowsTests(FHISeleniumBase, StaticLiveServerTestCase):
         self.login_as_patient()
 
         # Navigate to dashboard
-        self.open(f"{self.live_server_url}/patient-dashboard")
+        self.open(f"{self.live_server_url}/my/dashboard")
 
         # Verify dashboard title/header
         self.assert_element("h2:contains('My Dashboard')")
@@ -148,7 +148,7 @@ class SeleniumPatientFlowsTests(FHISeleniumBase, StaticLiveServerTestCase):
         self.login_as_patient()
 
         # Navigate to dashboard
-        self.open(f"{self.live_server_url}/patient-dashboard")
+        self.open(f"{self.live_server_url}/my/dashboard")
 
         # Click to Call Log tab
         self.click("#call-logs-tab")
@@ -220,7 +220,7 @@ class SeleniumPatientFlowsTests(FHISeleniumBase, StaticLiveServerTestCase):
         self.login_as_patient()
 
         # Navigate to dashboard
-        self.open(f"{self.live_server_url}/patient-dashboard")
+        self.open(f"{self.live_server_url}/my/dashboard")
 
         # Click to Call Log tab
         self.click("#call-logs-tab")
@@ -281,7 +281,7 @@ class SeleniumPatientFlowsTests(FHISeleniumBase, StaticLiveServerTestCase):
         self.login_as_patient()
 
         # Navigate to dashboard
-        self.open(f"{self.live_server_url}/patient-dashboard")
+        self.open(f"{self.live_server_url}/my/dashboard")
 
         # Click to Evidence tab
         self.click("#evidence-tab")
@@ -356,7 +356,7 @@ class SeleniumPatientFlowsTests(FHISeleniumBase, StaticLiveServerTestCase):
         self.login_as_patient()
 
         # Navigate to dashboard
-        self.open(f"{self.live_server_url}/patient-dashboard")
+        self.open(f"{self.live_server_url}/my/dashboard")
 
         # Click to Evidence tab
         self.click("#evidence-tab")

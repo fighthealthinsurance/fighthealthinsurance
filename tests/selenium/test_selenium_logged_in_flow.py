@@ -71,7 +71,7 @@ class SeleniumLoggedInPatientFlow(FHISeleniumBase, StaticLiveServerTestCase):
         self.click("button[type='submit']")
 
         # Step 5: Should be redirected to dashboard after signup
-        self.assert_title_eventually("My Dashboard")
+        self.assert_title_eventually("My Dashboard - Fight Health Insurance")
         self.assert_text("John", "body")  # First name should appear
 
         # Verify user and patient were created in database
@@ -159,7 +159,7 @@ Denial-Happy Insurance Company"""
 
         # Step 14: Navigate to dashboard to verify appeal appears
         self.click('a[href="/my/dashboard"]')
-        self.assert_title_eventually("My Dashboard")
+        self.assert_title_eventually("My Dashboard - Fight Health Insurance")
 
         # Step 15: Verify appeal appears in dashboard
         # The appeal should show the procedure name
@@ -195,7 +195,7 @@ Denial-Happy Insurance Company"""
             self.click("button[type='submit']")
 
             # Should redirect back to dashboard
-            self.assert_title_eventually("My Dashboard")
+            self.assert_title_eventually("My Dashboard - Fight Health Insurance")
 
             # Verify call log appears
             self.assert_text("Jane Doe", "body")
@@ -304,6 +304,9 @@ Denial-Happy Insurance Company"""
         self.assert_title_eventually("Optional: Add Plan Documents")
         self.click("button#next")
         self.assert_title_eventually("Categorize Your Denial")
+        self.select_option_by_value("select#id_denial_type", "2")
+        self.type("input#id_procedure", "Treatment")
+        self.type("input#id_diagnosis", "Condition")
         self.click("button#submit_cat")
         self.assert_title_eventually("Additional Resources & Questions")
         self.type("input#id_medical_reason", "Medical necessity")
@@ -389,18 +392,18 @@ Stingy Insurance Co"""
         # Verify anonymous denial was created
         anon_denial = Denial.objects.get(
             hashed_email=Denial.get_hashed_email(anon_email),
-            patient_user__isnull=True  # No patient_user = anonymous
+            procedure="X-Ray",
         )
-        self.assertEqual(anon_denial.procedure, "X-Ray")
+        self.assertIsNone(anon_denial.patient_user)
 
-        # Give appeal time to generate
-        time.sleep(2)
+        # Poll for appeal generation (up to 10 seconds)
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            if Appeal.objects.filter(for_denial=anon_denial).exists():
+                break
+            time.sleep(0.5)
 
-        # Verify anonymous appeal exists
-        anon_appeals = Appeal.objects.filter(
-            for_denial=anon_denial,
-            patient_user__isnull=True
-        )
+        anon_appeals = Appeal.objects.filter(for_denial=anon_denial)
         self.assertGreater(anon_appeals.count(), 0, "Anonymous appeal should exist")
 
         # Step 6: See the account creation prompt banner
@@ -422,7 +425,7 @@ Stingy Insurance Co"""
         self.click("button[type='submit']")
 
         # Step 9: Should be redirected to dashboard
-        self.assert_title_eventually("My Dashboard")
+        self.assert_title_eventually("My Dashboard - Fight Health Insurance")
 
         # Verify user and patient were created
         from django.contrib.auth import get_user_model
@@ -436,13 +439,12 @@ Stingy Insurance Co"""
         # The dashboard should be empty or show a message about no appeals
 
         # Check that X-Ray appeal is NOT visible in dashboard
-        try:
-            # If we can't find "X-Ray" text, that's good - it means it's not showing
-            self.assert_text("X-Ray", "body")
-            self.fail("Anonymous appeal should NOT appear in dashboard after account creation")
-        except AssertionError:
-            # This is expected - the anonymous appeal should not be visible
-            pass
+        page_source = self.get_page_source()
+        self.assertNotIn(
+            "X-Ray",
+            page_source,
+            "Anonymous appeal should NOT appear in dashboard after account creation",
+        )
 
         # Step 11: Generate a NEW appeal while logged in
         self.click('a[href="/scan"]')
@@ -506,7 +508,7 @@ Stingy Insurance Co"""
 
         # Step 12: Navigate to dashboard
         self.click('a[href="/my/dashboard"]')
-        self.assert_title_eventually("My Dashboard")
+        self.assert_title_eventually("My Dashboard - Fight Health Insurance")
 
         # Step 13: Verify NEW appeal (MRI Scan) DOES appear in dashboard
         self.assert_text("MRI Scan", "body")
