@@ -26,6 +26,10 @@ type SettledState<T> =
   | { status: "fulfilled"; value: T }
   | { status: "rejected"; reason: unknown };
 
+function isUsableOCRState(state: SettledState<string>): boolean {
+  return state.status === "fulfilled" && state.value.trim().length > 0;
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
@@ -57,21 +61,42 @@ async function runDualOCRWithGrace(
   if (firstSettled.who === "tesseract") {
     tesseractState = firstSettled.state;
 
-    const qwenResult = await Promise.race([
-      trackedQwen.then((state) => ({ timedOut: false as const, state })),
-      sleep(OCR_GRACE_PERIOD_MS).then(() => ({ timedOut: true as const })),
-    ]);
+    if (isUsableOCRState(tesseractState)) {
+      const qwenResult = await Promise.race([
+        trackedQwen
+          .catch((reason): SettledState<string> => ({ status: "rejected", reason }))
+          .then((state) => ({ timedOut: false as const, state })),
+        sleep(OCR_GRACE_PERIOD_MS).then(() => ({ timedOut: true as const })),
+      ]);
 
-    if (!qwenResult.timedOut) {
-      qwenState = qwenResult.state;
+      if (!qwenResult.timedOut && isUsableOCRState(qwenResult.state)) {
+        qwenState = qwenResult.state;
+      }
+    } else {
+      qwenState = await trackedQwen.catch(
+        (reason): SettledState<string> => ({ status: "rejected", reason }),
+      );
     }
   } else {
     qwenState = firstSettled.state;
 
-    // If Qwen finishes first, do NOT time-box the baseline Tesseract path.
-    // Browsers without WebGPU often resolve Qwen quickly with empty text while
-    // Tesseract still needs substantial time on larger documents.
-    tesseractState = await trackedTesseract;
+    if (isUsableOCRState(qwenState)) {
+      const tesseractResult = await Promise.race([
+        trackedTesseract
+          .catch((reason): SettledState<string> => ({ status: "rejected", reason }))
+          .then((state) => ({ timedOut: false as const, state })),
+        sleep(OCR_GRACE_PERIOD_MS).then(() => ({ timedOut: true as const })),
+      ]);
+
+      if (!tesseractResult.timedOut && isUsableOCRState(tesseractResult.state)) {
+        tesseractState = tesseractResult.state;
+      }
+    } else {
+      // If Qwen settles first but with empty/error output, do NOT time-box baseline OCR.
+      tesseractState = await trackedTesseract.catch(
+        (reason): SettledState<string> => ({ status: "rejected", reason }),
+      );
+    }
   }
 
   if (tesseractState?.status === "rejected") {
