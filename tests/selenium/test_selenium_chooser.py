@@ -108,6 +108,18 @@ class SeleniumTestChooserPageLoad(FHISeleniumBase, StaticLiveServerTestCase):
         # Should explain what the user is doing
         self.assert_text("Help Us Improve Our AI Responses", timeout=10)
 
+
+    def test_chooser_page_requires_tos_agreement(self):
+        """Verify chooser entry buttons are gated behind an explicit Terms of Service agreement."""
+        self.open(f"{self.live_server_url}/chooser/")
+
+        self.assert_text("I agree to the", timeout=10)
+        self.assert_text("Terms of Service")
+        self.assert_element("input[type='checkbox']")
+        self.assert_attribute("a:contains('Terms of Service')", "href", "/tos/")
+        self.assert_attribute("button:contains('Score Appeal Letters')", "disabled")
+        self.assert_attribute("button:contains('Score Chat Responses')", "disabled")
+
     def test_chooser_page_has_privacy_disclaimer(self):
         """
         Verify the chooser page displays the privacy disclaimer stating data is synthetic/anonymized for training purposes.
