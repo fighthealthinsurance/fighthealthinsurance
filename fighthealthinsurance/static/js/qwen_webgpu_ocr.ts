@@ -4,7 +4,7 @@
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const memoizeOne = require("async-memoize-one");
 
-const QWEN_VL_MODEL_ID = "Qwen/Qwen3.5-VL-4B-Instruct";
+const QWEN_VL_MODEL_ID = "onnx-community/Qwen3.5-0.8B-ONNX";
 
 export interface WebGpuAvailability {
   available: boolean;
@@ -22,7 +22,17 @@ type ImageToTextCallable = (
 ) => Promise<GeneratedTextResult[] | GeneratedTextResult>;
 
 interface TransformersModule {
-  env: { allowLocalModels: boolean };
+  env: {
+    allowLocalModels: boolean;
+    backends?: {
+      onnx?: {
+        wasm?: {
+          // Ensure browser runtime backend paths are web-compatible.
+          wasmPaths?: string;
+        };
+      };
+    };
+  };
   pipeline: (
     task: string,
     model: string,
@@ -74,6 +84,12 @@ async function loadQwenOCRPipelineRaw(): Promise<ImageToTextCallable | null> {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const transformers = require("@huggingface/transformers") as TransformersModule;
     transformers.env.allowLocalModels = false;
+
+    // Explicitly target web ONNX runtime assets.
+    if (transformers.env.backends?.onnx?.wasm) {
+      transformers.env.backends.onnx.wasm.wasmPaths =
+        "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/";
+    }
 
     const pipe = (await transformers.pipeline("image-to-text", QWEN_VL_MODEL_ID, {
       device: "webgpu",
