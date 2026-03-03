@@ -332,7 +332,7 @@ const ChooserInterface: React.FC = () => {
 	      label={
 		<Text size="sm">
 		  I agree to the{" "}
-		  <Anchor href="/tos/" target="_blank" rel="noopener noreferrer">
+		  <Anchor href="/tos" target="_blank" rel="noopener noreferrer">
 		    Terms of Service
 		  </Anchor>{" "}
 		  and understand this chooser is for improving AI response quality.
