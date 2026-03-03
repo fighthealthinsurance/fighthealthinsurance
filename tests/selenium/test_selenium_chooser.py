@@ -116,9 +116,14 @@ class SeleniumTestChooserPageLoad(FHISeleniumBase, StaticLiveServerTestCase):
         self.assert_text("I agree to the", timeout=10)
         self.assert_text("Terms of Service")
         self.assert_element("input[type='checkbox']")
-        self.assert_attribute("a:contains('Terms of Service')", "href", "/tos/")
+        self.assert_attribute("a:contains('Terms of Service')", "href", "/tos")
         self.assert_attribute("button:contains('Score Appeal Letters')", "disabled")
         self.assert_attribute("button:contains('Score Chat Responses')", "disabled")
+
+        # Check the checkbox and verify the buttons become enabled
+        self.click("input[type='checkbox']")
+        self.assert_element_not_visible("button:contains('Score Appeal Letters')[disabled]")
+        self.assert_element_not_visible("button:contains('Score Chat Responses')[disabled]")
 
     def test_chooser_page_has_privacy_disclaimer(self):
         """
