@@ -68,18 +68,10 @@ async function runDualOCRWithGrace(
   } else {
     qwenState = firstSettled.state;
 
-    const tesseractResult = await Promise.race([
-      trackedTesseract.then((state) => ({ timedOut: false as const, state })),
-      sleep(OCR_GRACE_PERIOD_MS).then(() => ({ timedOut: true as const })),
-    ]);
-
-    if (tesseractResult.timedOut) {
-      console.warn(
-        `[TesseractOCR] Timed out after ${OCR_GRACE_PERIOD_MS}ms grace period; using available OCR result`,
-      );
-    } else {
-      tesseractState = tesseractResult.state;
-    }
+    // If Qwen finishes first, do NOT time-box the baseline Tesseract path.
+    // Browsers without WebGPU often resolve Qwen quickly with empty text while
+    // Tesseract still needs substantial time on larger documents.
+    tesseractState = await trackedTesseract;
   }
 
   if (tesseractState?.status === "rejected") {
