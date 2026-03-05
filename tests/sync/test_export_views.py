@@ -5,7 +5,7 @@ import os
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase, override_settings
+from django.test import TestCase
 from django.urls import reverse
 
 from fighthealthinsurance.models import (
@@ -18,6 +18,7 @@ from fighthealthinsurance.models import (
     GenericQuestionGeneration,
     OngoingChat,
     ProposedAppeal,
+    PubMedArticleSummarized,
 )
 
 User = get_user_model()
@@ -66,6 +67,13 @@ class ExportEnvVarGatingTest(TestCase):
             )
         self.assertEqual(response.status_code, 403)
 
+    def test_pubmed_article_blocked_without_env(self):
+        with patch.dict(os.environ, {}, clear=True):
+            response = self.client.get(
+                reverse("charts:pubmed_article_export")
+            )
+        self.assertEqual(response.status_code, 403)
+
     def test_chooser_export_allowed_with_env(self):
         with patch.dict(os.environ, {"EXPORT_ENABLED": "1"}):
             response = self.client.get(reverse("charts:chooser_ranked_export"))
@@ -79,6 +87,27 @@ class ExportEnvVarGatingTest(TestCase):
     def test_chat_export_allowed_with_env(self):
         with patch.dict(os.environ, {"EXPORT_ENABLED": "1"}):
             response = self.client.get(reverse("charts:chat_export"))
+        self.assertEqual(response.status_code, 200)
+
+    def test_questions_by_procedure_allowed_with_env(self):
+        with patch.dict(os.environ, {"EXPORT_ENABLED": "1"}):
+            response = self.client.get(
+                reverse("charts:questions_by_procedure_export")
+            )
+        self.assertEqual(response.status_code, 200)
+
+    def test_denial_questions_allowed_with_env(self):
+        with patch.dict(os.environ, {"EXPORT_ENABLED": "1"}):
+            response = self.client.get(
+                reverse("charts:denial_questions_export")
+            )
+        self.assertEqual(response.status_code, 200)
+
+    def test_pubmed_article_allowed_with_env(self):
+        with patch.dict(os.environ, {"EXPORT_ENABLED": "1"}):
+            response = self.client.get(
+                reverse("charts:pubmed_article_export")
+            )
         self.assertEqual(response.status_code, 200)
 
 
@@ -99,6 +128,7 @@ class ExportStaffOnlyTest(TestCase):
             reverse("charts:chat_export"),
             reverse("charts:questions_by_procedure_export"),
             reverse("charts:denial_questions_export"),
+            reverse("charts:pubmed_article_export"),
         ]
         with patch.dict(os.environ, {"EXPORT_ENABLED": "1"}):
             for url in urls:
@@ -507,7 +537,7 @@ class DenialQuestionsExportContentTest(TestCase):
         self.assertEqual(content.strip(), "")
 
     def test_denial_questions_export_uses_verified_fields(self):
-        denial = self._create_denial(
+        self._create_denial(
             verified_procedure="Verified MRI",
             verified_diagnosis="Verified back pain",
         )
@@ -522,3 +552,118 @@ class DenialQuestionsExportContentTest(TestCase):
         record = lines[0]
         self.assertEqual(record["procedure"], "Verified MRI")
         self.assertEqual(record["diagnosis"], "Verified back pain")
+
+
+class PubMedArticleExportContentTest(TestCase):
+    """Test the content of the PubMed article summaries export."""
+
+    def setUp(self):
+        self.staff_user = User.objects.create_user(
+            username="staffuser", password="testpass123", is_staff=True
+        )
+        self.client.login(username="staffuser", password="testpass123")
+
+    def test_pubmed_article_export_content(self):
+        PubMedArticleSummarized.objects.create(
+            pmid="12345678",
+            doi="10.1234/test",
+            query="MRI back pain",
+            title="Efficacy of MRI for Back Pain Diagnosis",
+            abstract="This study evaluates...",
+            basic_summary="MRI is effective for diagnosing back pain.",
+            says_effective=True,
+            article_url="https://pubmed.ncbi.nlm.nih.gov/12345678/",
+        )
+
+        with patch.dict(os.environ, {"EXPORT_ENABLED": "1"}):
+            response = self.client.get(
+                reverse("charts:pubmed_article_export")
+            )
+
+        self.assertEqual(response.status_code, 200)
+        content = b"".join(response.streaming_content).decode()
+        lines = [json.loads(line) for line in content.strip().split("\n")]
+        self.assertEqual(len(lines), 1)
+
+        record = lines[0]
+        self.assertEqual(record["pmid"], "12345678")
+        self.assertEqual(record["doi"], "10.1234/test")
+        self.assertEqual(record["title"], "Efficacy of MRI for Back Pain Diagnosis")
+        self.assertEqual(
+            record["basic_summary"], "MRI is effective for diagnosing back pain."
+        )
+        self.assertTrue(record["says_effective"])
+
+    def test_pubmed_article_export_excludes_unsummarized(self):
+        """Articles without summaries should not be exported."""
+        PubMedArticleSummarized.objects.create(
+            pmid="99999999",
+            query="test query",
+            title="Unsummarized Article",
+            basic_summary=None,
+        )
+        PubMedArticleSummarized.objects.create(
+            pmid="88888888",
+            query="test query 2",
+            title="Empty Summary Article",
+            basic_summary="",
+        )
+
+        with patch.dict(os.environ, {"EXPORT_ENABLED": "1"}):
+            response = self.client.get(
+                reverse("charts:pubmed_article_export")
+            )
+
+        content = b"".join(response.streaming_content).decode()
+        self.assertEqual(content.strip(), "")
+
+    def test_pubmed_article_export_empty(self):
+        with patch.dict(os.environ, {"EXPORT_ENABLED": "1"}):
+            response = self.client.get(
+                reverse("charts:pubmed_article_export")
+            )
+
+        self.assertEqual(response.status_code, 200)
+        content = b"".join(response.streaming_content).decode()
+        self.assertEqual(content.strip(), "")
+
+
+class RunExportsCommandTest(TestCase):
+    """Test the run_exports management command."""
+
+    def test_run_exports_creates_files(self):
+        import tempfile
+        from django.core.management import call_command
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            call_command("run_exports", output_dir=tmpdir)
+
+            # Check that all expected files were created
+            expected_files = [
+                "de_identified.jsonl",
+                "chooser_ranked.jsonl",
+                "denial_appeal.jsonl",
+                "chat.jsonl",
+                "questions_by_procedure.jsonl",
+                "denial_questions.jsonl",
+                "pubmed_articles.jsonl",
+            ]
+            for filename in expected_files:
+                filepath = os.path.join(tmpdir, filename)
+                self.assertTrue(
+                    os.path.exists(filepath),
+                    f"Expected export file {filename} to exist",
+                )
+
+    def test_run_exports_selective(self):
+        import tempfile
+        from django.core.management import call_command
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            call_command("run_exports", output_dir=tmpdir, exports=["chat"])
+
+            # Only chat file should exist
+            self.assertTrue(os.path.exists(os.path.join(tmpdir, "chat.jsonl")))
+            self.assertFalse(
+                os.path.exists(os.path.join(tmpdir, "de_identified.jsonl"))
+            )

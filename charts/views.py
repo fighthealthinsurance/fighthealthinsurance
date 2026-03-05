@@ -18,6 +18,7 @@ from fighthealthinsurance.models import (
     InterestedProfessional,
     OngoingChat,
     ProposedAppeal,
+    PubMedArticleSummarized,
     ChooserTask,
     ChooserCandidate,
     ChooserVote,
@@ -218,11 +219,8 @@ def incomplete_signups_csv(request):
     return response
 
 
-@staff_member_required
-@export_enabled_required
-def de_identified_export(request):
-    # Exclude test emails
-    limit = request.GET.get("limit")
+def generate_de_identified_lines(limit=None):
+    """Yield JSONL lines of de-identified denial data."""
     hashed_farts = Denial.get_hashed_email("farts@farts.com")
     hashed_pcf = Denial.get_hashed_email("holden@pigscanfly.ca")
     hashed_gmail = Denial.get_hashed_email("holden.karau@gmail.com")
@@ -247,102 +245,100 @@ def de_identified_export(request):
         "appeal_fax_number",
     )
     if limit:
-        safe_denials = safe_denials[0 : int(limit)]
+        safe_denials = safe_denials[0:int(limit)]
 
-    def stream_json_lines(queryset):
-        for record in queryset.iterator():
-            yield json.dumps(record, default=str) + "\n"
-
-    return StreamingHttpResponse(
-        streaming_content=stream_json_lines(safe_denials),
-        content_type="application/x-ndjson",
-    )
+    for record in safe_denials.iterator():
+        yield json.dumps(record, default=str) + "\n"
 
 
 @staff_member_required
 @export_enabled_required
-def chooser_ranked_export(request):
-    """Export the highest-ranked candidate for each chooser task as JSONL."""
-    # Get all tasks that have at least one vote, annotated with vote count
+def de_identified_export(request):
+    limit = request.GET.get("limit")
+    return StreamingHttpResponse(
+        streaming_content=generate_de_identified_lines(limit=limit),
+        content_type="application/x-ndjson",
+    )
+
+
+def generate_chooser_ranked_lines():
+    """Yield JSONL lines of highest-ranked candidate for each chooser task."""
     tasks_with_votes = (
         ChooserTask.objects.filter(votes__isnull=False)
         .distinct()
         .prefetch_related("candidates")
     )
 
-    def stream_json_lines():
-        for task in tasks_with_votes.iterator(chunk_size=100):
-            # Count votes per candidate for this task
-            candidate_vote_counts = (
-                ChooserVote.objects.filter(task=task)
-                .values("chosen_candidate_id")
-                .annotate(vote_count=Count("id"))
-                .order_by("-vote_count")
-            )
+    for task in tasks_with_votes:
+        candidate_vote_counts = (
+            ChooserVote.objects.filter(task=task)
+            .values("chosen_candidate_id")
+            .annotate(vote_count=Count("id"))
+            .order_by("-vote_count")
+        )
 
-            if not candidate_vote_counts:
-                continue
+        if not candidate_vote_counts:
+            continue
 
-            # Build lookup from prefetched candidates
-            candidates_by_id = {c.id: c for c in task.candidates.all()}
+        candidates_by_id = {c.id: c for c in task.candidates.all()}
 
-            # The top-voted candidate
-            top = candidate_vote_counts[0]
-            chosen = candidates_by_id.get(top["chosen_candidate_id"])
-            if chosen is None:
-                continue
+        top = candidate_vote_counts[0]
+        chosen = candidates_by_id.get(top["chosen_candidate_id"])
+        if chosen is None:
+            continue
 
-            total_votes = sum(c["vote_count"] for c in candidate_vote_counts)
+        total_votes = sum(c["vote_count"] for c in candidate_vote_counts)
 
-            # All candidates for context
-            all_candidates = [
-                {
-                    "id": c.id,
-                    "candidate_index": c.candidate_index,
-                    "kind": c.kind,
-                    "model_name": c.model_name,
-                    "content": c.content,
-                    "metadata": c.metadata,
-                }
-                for c in task.candidates.filter(is_active=True).order_by(
-                    "candidate_index"
-                )
-            ]
-
-            record = {
-                "task_id": task.id,
-                "task_type": task.task_type,
-                "context": task.context_json,
-                "source": task.source,
-                "chosen_candidate": {
-                    "id": chosen.id,
-                    "candidate_index": chosen.candidate_index,
-                    "kind": chosen.kind,
-                    "model_name": chosen.model_name,
-                    "content": chosen.content,
-                },
-                "vote_count": top["vote_count"],
-                "total_votes": total_votes,
-                "all_candidates": all_candidates,
+        all_candidates = [
+            {
+                "id": c.id,
+                "candidate_index": c.candidate_index,
+                "kind": c.kind,
+                "model_name": c.model_name,
+                "content": c.content,
+                "metadata": c.metadata,
             }
-            yield json.dumps(record, default=str) + "\n"
+            for c in candidates_by_id.values()
+            if c.is_active
+        ]
+        all_candidates.sort(key=lambda c: c["candidate_index"])
 
-    return StreamingHttpResponse(
-        streaming_content=stream_json_lines(),
-        content_type="application/x-ndjson",
-    )
+        record = {
+            "task_id": task.id,
+            "task_type": task.task_type,
+            "context": task.context_json,
+            "source": task.source,
+            "chosen_candidate": {
+                "id": chosen.id,
+                "candidate_index": chosen.candidate_index,
+                "kind": chosen.kind,
+                "model_name": chosen.model_name,
+                "content": chosen.content,
+            },
+            "vote_count": top["vote_count"],
+            "total_votes": total_votes,
+            "all_candidates": all_candidates,
+        }
+        yield json.dumps(record, default=str) + "\n"
 
 
 @staff_member_required
 @export_enabled_required
-def denial_appeal_export(request):
-    """Export de-identified denial + chosen appeal pairs as JSONL (non-pro users only)."""
+def chooser_ranked_export(request):
+    """Export the highest-ranked candidate for each chooser task as JSONL."""
+    return StreamingHttpResponse(
+        streaming_content=generate_chooser_ranked_lines(),
+        content_type="application/x-ndjson",
+    )
+
+
+def generate_denial_appeal_lines():
+    """Yield JSONL lines of de-identified denial + chosen appeal pairs (non-pro only)."""
     hashed_farts = Denial.get_hashed_email("farts@farts.com")
     hashed_pcf = Denial.get_hashed_email("holden@pigscanfly.ca")
     hashed_gmail = Denial.get_hashed_email("holden.karau@gmail.com")
     exclude_emails = [hashed_farts, hashed_pcf, hashed_gmail]
 
-    # Non-pro denials that have a chosen ProposedAppeal or a finalized Appeal
     has_chosen_proposed = Exists(
         ProposedAppeal.objects.filter(for_denial=OuterRef("pk"), chosen=True)
     )
@@ -359,64 +355,64 @@ def denial_appeal_export(request):
         .prefetch_related("proposedappeal_set", "appeal_set")
     )
 
-    def stream_json_lines():
-        for denial in denials.iterator(chunk_size=100):
-            # Prefer manual de-identified text if available
-            denial_text = (
-                denial.manual_deidentified_denial
-                if denial.manual_deidentified_denial
-                else denial.denial_text
-            )
-            procedure = (
-                denial.verified_procedure
-                if denial.verified_procedure
-                else denial.procedure
-            )
-            diagnosis = (
-                denial.verified_diagnosis
-                if denial.verified_diagnosis
-                else denial.diagnosis
-            )
+    for denial in denials:
+        denial_text = (
+            denial.manual_deidentified_denial
+            if denial.manual_deidentified_denial
+            else denial.denial_text
+        )
+        procedure = (
+            denial.verified_procedure
+            if denial.verified_procedure
+            else denial.procedure
+        )
+        diagnosis = (
+            denial.verified_diagnosis
+            if denial.verified_diagnosis
+            else denial.diagnosis
+        )
 
-            # Get appeal text: prefer manual de-id, then chosen ProposedAppeal, then Appeal
-            appeal_text = None
-            if denial.manual_deidentified_appeal:
-                appeal_text = denial.manual_deidentified_appeal
+        appeal_text = None
+        if denial.manual_deidentified_appeal:
+            appeal_text = denial.manual_deidentified_appeal
+        else:
+            chosen_proposed = denial.proposedappeal_set.filter(chosen=True).first()
+            if chosen_proposed:
+                appeal_text = chosen_proposed.appeal_text
             else:
-                chosen_proposed = denial.proposedappeal_set.filter(chosen=True).first()
-                if chosen_proposed:
-                    appeal_text = chosen_proposed.appeal_text
-                else:
-                    appeal = denial.appeal_set.first()
-                    if appeal:
-                        appeal_text = appeal.appeal_text
+                appeal = denial.appeal_set.first()
+                if appeal:
+                    appeal_text = appeal.appeal_text
 
-            if not appeal_text:
-                continue
+        if not appeal_text:
+            continue
 
-            record = {
-                "denial_id": denial.denial_id,
-                "denial_text": denial_text,
-                "procedure": procedure,
-                "diagnosis": diagnosis,
-                "insurance_company": denial.insurance_company,
-                "appeal_text": appeal_text,
-                "references": denial.references,
-                "generated_questions": denial.generated_questions,
-                "ml_citation_context": denial.ml_citation_context,
-            }
-            yield json.dumps(record, default=str) + "\n"
-
-    return StreamingHttpResponse(
-        streaming_content=stream_json_lines(),
-        content_type="application/x-ndjson",
-    )
+        record = {
+            "denial_id": str(denial.denial_id),
+            "denial_text": denial_text,
+            "procedure": procedure,
+            "diagnosis": diagnosis,
+            "insurance_company": denial.insurance_company,
+            "appeal_text": appeal_text,
+            "references": denial.references,
+            "generated_questions": denial.generated_questions,
+            "ml_citation_context": denial.ml_citation_context,
+        }
+        yield json.dumps(record, default=str) + "\n"
 
 
 @staff_member_required
 @export_enabled_required
-def chat_export(request):
-    """Export de-identified chat histories as JSONL (non-pro users only)."""
+def denial_appeal_export(request):
+    """Export de-identified denial + chosen appeal pairs as JSONL (non-pro users only)."""
+    return StreamingHttpResponse(
+        streaming_content=generate_denial_appeal_lines(),
+        content_type="application/x-ndjson",
+    )
+
+
+def generate_chat_lines():
+    """Yield JSONL lines of de-identified chat histories (non-pro only)."""
     hashed_farts = Denial.get_hashed_email("farts@farts.com")
     hashed_pcf = Denial.get_hashed_email("holden@pigscanfly.ca")
     hashed_gmail = Denial.get_hashed_email("holden.karau@gmail.com")
@@ -433,24 +429,28 @@ def chat_export(request):
         .prefetch_related("appeals")
     )
 
-    def stream_json_lines():
-        for chat in chats.iterator(chunk_size=100):
-            appeal_texts = [
-                a.appeal_text
-                for a in chat.appeals.all()
-                if a.appeal_text
-            ]
-            record = {
-                "chat_id": str(chat.id),
-                "chat_history": chat.chat_history,
-                "denied_item": chat.denied_item,
-                "denied_reason": chat.denied_reason,
-                "appeal_texts": appeal_texts,
-            }
-            yield json.dumps(record, default=str) + "\n"
+    for chat in chats:
+        appeal_texts = [
+            a.appeal_text
+            for a in chat.appeals.all()
+            if a.appeal_text
+        ]
+        record = {
+            "chat_id": str(chat.id),
+            "chat_history": chat.chat_history,
+            "denied_item": chat.denied_item,
+            "denied_reason": chat.denied_reason,
+            "appeal_texts": appeal_texts,
+        }
+        yield json.dumps(record, default=str) + "\n"
 
+
+@staff_member_required
+@export_enabled_required
+def chat_export(request):
+    """Export de-identified chat histories as JSONL (non-pro users only)."""
     return StreamingHttpResponse(
-        streaming_content=stream_json_lines(),
+        streaming_content=generate_chat_lines(),
         content_type="application/x-ndjson",
     )
 
@@ -728,31 +728,31 @@ def users_by_day(request):
     )
 
 
+def generate_questions_by_procedure_lines():
+    """Yield JSONL lines of generated questions by procedure + diagnosis."""
+    queryset = GenericQuestionGeneration.objects.all().order_by("procedure", "diagnosis")
+
+    for row in queryset.iterator(chunk_size=200):
+        record = {
+            "procedure": row.procedure,
+            "diagnosis": row.diagnosis,
+            "generated_questions": row.generated_questions,
+        }
+        yield json.dumps(record, default=str) + "\n"
+
+
 @staff_member_required
 @export_enabled_required
 def questions_by_procedure_export(request):
     """Export generated questions keyed by procedure + diagnosis as JSONL."""
-    queryset = GenericQuestionGeneration.objects.all().order_by("procedure", "diagnosis")
-
-    def stream_json_lines():
-        for row in queryset.iterator(chunk_size=200):
-            record = {
-                "procedure": row.procedure,
-                "diagnosis": row.diagnosis,
-                "generated_questions": row.generated_questions,
-            }
-            yield json.dumps(record, default=str) + "\n"
-
     return StreamingHttpResponse(
-        streaming_content=stream_json_lines(),
+        streaming_content=generate_questions_by_procedure_lines(),
         content_type="application/x-ndjson",
     )
 
 
-@staff_member_required
-@export_enabled_required
-def denial_questions_export(request):
-    """Export denial questions with answer status as JSONL (non-pro only)."""
+def generate_denial_questions_lines():
+    """Yield JSONL lines of denial questions with answer status (non-pro only)."""
     hashed_farts = Denial.get_hashed_email("farts@farts.com")
     hashed_pcf = Denial.get_hashed_email("holden@pigscanfly.ca")
     hashed_gmail = Denial.get_hashed_email("holden.karau@gmail.com")
@@ -767,54 +767,94 @@ def denial_questions_export(request):
             generated_questions__isnull=False,
         )
         .filter(Q(flag_for_exclude=False) | Q(flag_for_exclude__isnull=True))
+        .exclude(generated_questions=[])
     )
 
-    def stream_json_lines():
-        for denial in denials.iterator(chunk_size=100):
-            if not denial.generated_questions:
-                continue
+    # Batch-fetch all answered questions to avoid N+1
+    denial_ids = list(denials.values_list("denial_id", flat=True))
+    answered_by_denial = {}
+    for qa in DenialQA.objects.filter(denial_id__in=denial_ids).values_list(
+        "denial_id", "question"
+    ):
+        answered_by_denial.setdefault(qa[0], set()).add(qa[1])
 
-            # Get questions that were answered via DenialQA
-            answered_questions = set(
-                DenialQA.objects.filter(denial=denial).values_list(
-                    "question", flat=True
-                )
+    for denial in denials.iterator(chunk_size=100):
+        if not denial.generated_questions:
+            continue
+
+        answered_questions = answered_by_denial.get(denial.denial_id, set())
+
+        questions = []
+        for question_text, default_answer in denial.generated_questions:
+            questions.append(
+                {
+                    "question": question_text,
+                    "default_answer": default_answer,
+                    "was_answered": question_text in answered_questions,
+                }
             )
 
-            questions = []
-            for question_text, default_answer in denial.generated_questions:
-                questions.append(
-                    {
-                        "question": question_text,
-                        "default_answer": default_answer,
-                        "was_answered": question_text in answered_questions,
-                    }
-                )
+        # Sort: answered first, then unanswered
+        questions.sort(key=lambda q: (not q["was_answered"], q["question"]))
 
-            # Sort: answered first, then unanswered
-            questions.sort(key=lambda q: (not q["was_answered"], q["question"]))
+        procedure = (
+            denial.verified_procedure
+            if denial.verified_procedure
+            else denial.procedure
+        )
+        diagnosis = (
+            denial.verified_diagnosis
+            if denial.verified_diagnosis
+            else denial.diagnosis
+        )
 
-            procedure = (
-                denial.verified_procedure
-                if denial.verified_procedure
-                else denial.procedure
-            )
-            diagnosis = (
-                denial.verified_diagnosis
-                if denial.verified_diagnosis
-                else denial.diagnosis
-            )
+        record = {
+            "denial_id": str(denial.denial_id),
+            "procedure": procedure,
+            "diagnosis": diagnosis,
+            "questions": questions,
+        }
+        yield json.dumps(record, default=str) + "\n"
 
-            record = {
-                "denial_id": str(denial.denial_id),
-                "procedure": procedure,
-                "diagnosis": diagnosis,
-                "questions": questions,
-            }
-            yield json.dumps(record, default=str) + "\n"
 
+@staff_member_required
+@export_enabled_required
+def denial_questions_export(request):
+    """Export denial questions with answer status as JSONL (non-pro only)."""
     return StreamingHttpResponse(
-        streaming_content=stream_json_lines(),
+        streaming_content=generate_denial_questions_lines(),
+        content_type="application/x-ndjson",
+    )
+
+
+def generate_pubmed_article_lines():
+    """Yield JSONL lines of summarized PubMed articles."""
+    queryset = (
+        PubMedArticleSummarized.objects.exclude(basic_summary__isnull=True)
+        .exclude(basic_summary="")
+        .values(
+            "pmid",
+            "doi",
+            "query",
+            "title",
+            "abstract",
+            "basic_summary",
+            "says_effective",
+            "publication_date",
+            "article_url",
+        )
+    )
+
+    for record in queryset.iterator(chunk_size=200):
+        yield json.dumps(record, default=str) + "\n"
+
+
+@staff_member_required
+@export_enabled_required
+def pubmed_article_export(request):
+    """Export summarized PubMed articles as JSONL."""
+    return StreamingHttpResponse(
+        streaming_content=generate_pubmed_article_lines(),
         content_type="application/x-ndjson",
     )
 

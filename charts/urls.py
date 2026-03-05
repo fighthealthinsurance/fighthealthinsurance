@@ -18,6 +18,7 @@ from .views import (
     chat_export,
     questions_by_procedure_export,
     denial_questions_export,
+    pubmed_article_export,
     incomplete_signups_csv,
     procedures_denied_chart,
 )
@@ -51,6 +52,11 @@ urlpatterns = [
         "denial_questions_export",
         denial_questions_export,
         name="denial_questions_export",
+    ),
+    path(
+        "pubmed_article_export",
+        pubmed_article_export,
+        name="pubmed_article_export",
     ),
     path("pro_signups_csv", pro_signups_csv, name="pro_signups_csv"),
     path(
