@@ -1,3 +1,4 @@
+import datetime
 import hashlib
 import os
 import re
@@ -2176,3 +2177,22 @@ class ChooserSkip(ExportModelOperationsMixin("ChooserSkip"), models.Model):  # t
             str: A string in the form "Skip of Task {task_id} by {session_key}".
         """
         return f"Skip of Task {self.task_id} by {self.session_key}"
+
+
+class DeleteToken(models.Model):
+    """Token for confirming data deletion requests from non-authenticated users."""
+
+    email = models.CharField(max_length=255)
+    token = models.CharField(max_length=255, default=uuid.uuid4)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+
+    def save(self, *args, **kwargs):
+        if not self.expires_at:
+            from django.utils import timezone as tz
+
+            if self.created_at:
+                self.expires_at = self.created_at + datetime.timedelta(hours=24)
+            else:
+                self.expires_at = tz.now() + datetime.timedelta(hours=24)
+        super().save(*args, **kwargs)

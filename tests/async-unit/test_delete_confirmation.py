@@ -3,11 +3,11 @@ from unittest.mock import patch
 
 import pytest
 from django.core import mail
-from django.test import TestCase, RequestFactory
+from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
-from fhi_users.models import DeleteToken
+from fighthealthinsurance.models import DeleteToken
 
 
 @pytest.mark.django_db
@@ -108,60 +108,3 @@ class TestConfirmDeleteDataView(TestCase):
         )
         assert response.status_code == 200
         assert b"Invalid or already used" in response.content
-
-
-@pytest.mark.django_db
-class TestDataRemovalRestAPI(TestCase):
-    """Test the REST API data removal endpoints."""
-
-    def test_delete_sends_confirmation_email(self):
-        url = reverse("dataremoval-list")
-        response = self.client.delete(
-            url,
-            data={"email": "test@example.com"},
-            content_type="application/json",
-        )
-        # DeleteMixin.delete() always returns 204
-        assert response.status_code == 204
-        assert len(mail.outbox) >= 1
-        assert mail.outbox[0].subject == "Confirm Data Deletion Request"
-        assert DeleteToken.objects.filter(email="test@example.com").exists()
-
-    @patch("fighthealthinsurance.rest_views.RemoveDataHelper.remove_data_for_email")
-    def test_confirm_delete_with_valid_token(self, mock_remove):
-        # Create a token first
-        token = DeleteToken(email="test@example.com")
-        token.save()
-
-        url = reverse("dataremoval-confirm-delete")
-        response = self.client.post(
-            url,
-            data={"token": str(token.token), "email": "test@example.com"},
-            content_type="application/json",
-        )
-        assert response.status_code == 204
-        mock_remove.assert_called_once_with("test@example.com")
-        assert not DeleteToken.objects.filter(email="test@example.com").exists()
-
-    def test_confirm_delete_with_invalid_token(self):
-        url = reverse("dataremoval-confirm-delete")
-        response = self.client.post(
-            url,
-            data={"token": "bad-token", "email": "test@example.com"},
-            content_type="application/json",
-        )
-        assert response.status_code == 400
-
-    def test_confirm_delete_with_expired_token(self):
-        token = DeleteToken(email="test@example.com")
-        token.expires_at = timezone.now() - datetime.timedelta(hours=1)
-        token.save()
-
-        url = reverse("dataremoval-confirm-delete")
-        response = self.client.post(
-            url,
-            data={"token": str(token.token), "email": "test@example.com"},
-            content_type="application/json",
-        )
-        assert response.status_code == 400
-        assert not DeleteToken.objects.filter(email="test@example.com").exists()

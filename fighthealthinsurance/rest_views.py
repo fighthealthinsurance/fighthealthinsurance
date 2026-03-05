@@ -27,8 +27,7 @@ from rest_framework.views import APIView
 from stopit import ThreadingTimeout as Timeout
 
 from fhi_users.auth import auth_utils
-from fhi_users.emails import send_delete_confirmation_email
-from fhi_users.models import DeleteToken, PatientUser, ProfessionalUser, UserDomain
+from fhi_users.models import PatientUser, ProfessionalUser, UserDomain
 from fighthealthinsurance import common_view_logic, rest_serializers as serializers
 from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
 from fighthealthinsurance.helpers.fax_helpers import SendFaxHelper
@@ -182,69 +181,17 @@ class ChatViewSet(viewsets.ViewSet):
 class DataRemovalViewSet(viewsets.ViewSet, DeleteMixin, DeleteOnlyMixin):
     """
     ViewSet for handling data removal requests.
-    Sends a confirmation email instead of immediately deleting data.
+    Allows users to request deletion of all their data by email address.
     """
 
     serializer_class = serializers.DeleteDataFormSerializer
 
     @extend_schema(
-        responses={200: serializers.SuccessSerializer, 400: serializers.ErrorSerializer}
+        responses={204: serializers.SuccessSerializer, 400: serializers.ErrorSerializer}
     )
     def perform_delete(self, request: Request, serializer):
         email: str = serializer.validated_data["email"]
-        # Delete any existing tokens for this email
-        DeleteToken.objects.filter(email=email).delete()
-        # Create a new token
-        delete_token = DeleteToken(email=email)
-        delete_token.save()
-        # Send confirmation email
-        send_delete_confirmation_email(email, str(delete_token.token))
-        return Response(
-            serializers.SuccessSerializer(
-                {
-                    "message": "If we have data for that email, a confirmation link has been sent. Please check your inbox."
-                }
-            ).data,
-            status=status.HTTP_200_OK,
-        )
-
-    @extend_schema(
-        request=serializers.ConfirmDeleteDataSerializer,
-        responses={
-            204: serializers.SuccessSerializer,
-            400: serializers.ErrorSerializer,
-        },
-    )
-    @action(detail=False, methods=["post"], url_path="confirm")
-    def confirm_delete(self, request: Request):
-        serializer = serializers.ConfirmDeleteDataSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        token = serializer.validated_data["token"]
-        email = serializer.validated_data["email"]
-
-        try:
-            delete_token = DeleteToken.objects.get(token=token, email=email)
-        except DeleteToken.DoesNotExist:
-            return Response(
-                serializers.ErrorSerializer(
-                    {"error": "Invalid or already used confirmation token."}
-                ).data,
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        if delete_token.expires_at < timezone.now():
-            delete_token.delete()
-            return Response(
-                serializers.ErrorSerializer(
-                    {
-                        "error": "Confirmation token has expired. Please request a new one."
-                    }
-                ).data,
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
         RemoveDataHelper.remove_data_for_email(email)
-        delete_token.delete()
         return Response(
             serializers.SuccessSerializer(
                 {"message": "Data deleted successfully"}

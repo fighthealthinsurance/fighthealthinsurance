@@ -334,23 +334,6 @@ class ResetToken(models.Model):
         super().save(*args, **kwargs)
 
 
-class DeleteToken(models.Model):
-    email = models.CharField(max_length=255)
-    token = models.CharField(max_length=255, default=uuid.uuid4)
-    created_at = models.DateTimeField(auto_now_add=True)
-    expires_at = models.DateTimeField()
-
-    def save(self, *args, **kwargs):
-        if not self.expires_at:
-            from django.utils import timezone as tz
-
-            if self.created_at:
-                self.expires_at = self.created_at + datetime.timedelta(hours=24)
-            else:
-                self.expires_at = tz.now() + datetime.timedelta(hours=24)
-        super().save(*args, **kwargs)
-
-
 class PendingProStripeCheckoutSession(models.Model):
     """
     Track Stripe checkout sessions for professional user signups and other purchases.

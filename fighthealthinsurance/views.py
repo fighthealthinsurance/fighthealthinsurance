@@ -38,10 +38,9 @@ from fighthealthinsurance import common_view_logic, forms as core_forms, models
 from fighthealthinsurance.chat_forms import UserConsentForm
 from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
 from fighthealthinsurance.helpers.stripe_helpers import StripeWebhookHelper
-from fighthealthinsurance.models import StripeRecoveryInfo
+from fighthealthinsurance.models import DeleteToken, StripeRecoveryInfo
 from fighthealthinsurance.type_utils import User
-from fhi_users.emails import send_delete_confirmation_email
-from fhi_users.models import DeleteToken
+from fighthealthinsurance.utils import send_fallback_email
 from django.utils import timezone
 
 
@@ -599,6 +598,18 @@ class ShareAppealView(View):
             )
             pa.save()
             return render(request, "thankyou.html")
+
+
+def send_delete_confirmation_email(email: str, token: str) -> None:
+    """Send email asking user to confirm data deletion request."""
+    params = urlencode({"token": token, "email": email})
+    confirmation_link = f"https://www.fightpaperwork.com/confirm-delete?{params}"
+    send_fallback_email(
+        "Confirm Data Deletion Request",
+        "delete_data_confirmation",
+        {"confirmation_link": confirmation_link, "email": email},
+        email,
+    )
 
 
 class RemoveDataView(View):
