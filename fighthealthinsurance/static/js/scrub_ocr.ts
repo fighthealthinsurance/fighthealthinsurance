@@ -193,12 +193,18 @@ function mergeOCRTexts({ tesseractText, qwenText }: OCRResults): string {
   return cleanQwen.length > cleanTesseract.length ? cleanQwen : cleanTesseract;
 }
 
+function isAdvancedOCREnabled(): boolean {
+  const checkbox = document.getElementById("advanced_ocr_enabled") as HTMLInputElement | null;
+  // Default to true when the checkbox is absent (non-scrub pages).
+  return checkbox ? checkbox.checked : true;
+}
+
 async function recognizeImageText(file: Blob | File | string): Promise<OCRResults> {
   const worker = await getTesseractWorker();
   const tesseractPromise = worker
     .recognize(file)
     .then((result: Tesseract.RecognizeResult) => result.data.text);
-  const qwenPromise = recognizeWithQwenWebGPU(file);
+  const qwenPromise = isAdvancedOCREnabled() ? recognizeWithQwenWebGPU(file) : Promise.resolve("");
   const result = await runDualOCRWithGrace(tesseractPromise, qwenPromise);
 
   if (result.usedFallback) {

@@ -10,6 +10,43 @@ import {
   validateScrubForm,
 } from "./scrub_client_side_form";
 
+import { detectWebGPUAvailability } from "./qwen_webgpu_ocr";
+
+// Network Information API (not yet in standard TypeScript lib types).
+interface NetworkInformation {
+  type?: string;
+  effectiveType?: string;
+  saveData?: boolean;
+}
+
+function isLikelyMobileOrMeteredNetwork(): boolean {
+  const connection = (navigator as Navigator & { connection?: NetworkInformation }).connection;
+  if (!connection) return false;
+  return (
+    connection.saveData === true ||
+    connection.type === "cellular" ||
+    connection.effectiveType === "2g" ||
+    connection.effectiveType === "slow-2g"
+  );
+}
+
+async function initAdvancedOCRCheckbox(): Promise<void> {
+  const checkbox = document.getElementById("advanced_ocr_enabled") as HTMLInputElement | null;
+  if (!checkbox) return;
+
+  // Disable by default on metered/mobile connections.
+  if (isLikelyMobileOrMeteredNetwork()) {
+    checkbox.checked = false;
+    return;
+  }
+
+  // Disable by default when WebGPU is unavailable.
+  const webGpu = await detectWebGPUAvailability();
+  if (!webGpu.available) {
+    checkbox.checked = false;
+  }
+}
+
 const recognizeEvent = async function (evt: Event) {
   const input = evt.target as HTMLInputElement;
   const files = input.files;
@@ -35,6 +72,11 @@ function setupScrub(): void {
       setPersistenceEnabled(target.checked);
     });
   }
+
+  // Auto-detect capabilities and update the advanced OCR checkbox default.
+  initAdvancedOCRCheckbox().catch((err) => {
+    console.warn("[AdvancedOCR] Could not determine default state:", err);
+  });
 
   // Restore previous local values
   var input = document.getElementsByTagName("input");

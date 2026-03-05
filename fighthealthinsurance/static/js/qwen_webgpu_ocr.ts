@@ -51,7 +51,7 @@ function getGeneratedText(result: GeneratedTextResult[] | GeneratedTextResult): 
   return (result.generated_text ?? result.text ?? "").trim();
 }
 
-async function detectWebGPUAvailability(): Promise<WebGpuAvailability> {
+export async function detectWebGPUAvailability(): Promise<WebGpuAvailability> {
   try {
     if (typeof navigator === "undefined" || !("gpu" in navigator)) {
       return { available: false, reason: "navigator.gpu unavailable" };
