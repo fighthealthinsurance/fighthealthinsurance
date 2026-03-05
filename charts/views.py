@@ -6,7 +6,13 @@ from django.contrib.admin.views.decorators import staff_member_required
 from django.db.models import Count, Q
 from django.utils import timezone
 from datetime import timedelta
-from fighthealthinsurance.models import Denial, InterestedProfessional
+from fighthealthinsurance.models import (
+    Denial,
+    InterestedProfessional,
+    ChooserTask,
+    ChooserCandidate,
+    ChooserVote,
+)
 from fhi_users.models import ProfessionalDomainRelation
 from bokeh.plotting import figure
 from bokeh.embed import components
@@ -229,6 +235,77 @@ def de_identified_export(request):
 
     return StreamingHttpResponse(
         streaming_content=stream_json_lines(safe_denials),
+        content_type="application/x-ndjson",
+    )
+
+
+@staff_member_required
+def chooser_ranked_export(request):
+    """Export the highest-ranked candidate for each chooser task as JSONL."""
+    # Get all tasks that have at least one vote, annotated with vote count
+    tasks_with_votes = (
+        ChooserTask.objects.filter(votes__isnull=False)
+        .distinct()
+        .prefetch_related("candidates", "votes")
+    )
+
+    def stream_json_lines():
+        for task in tasks_with_votes.iterator():
+            # Count votes per candidate for this task
+            candidate_vote_counts = (
+                ChooserVote.objects.filter(task=task)
+                .values("chosen_candidate_id")
+                .annotate(vote_count=Count("id"))
+                .order_by("-vote_count")
+            )
+
+            if not candidate_vote_counts:
+                continue
+
+            # The top-voted candidate
+            top = candidate_vote_counts[0]
+            try:
+                chosen = ChooserCandidate.objects.get(id=top["chosen_candidate_id"])
+            except ChooserCandidate.DoesNotExist:
+                continue
+
+            total_votes = sum(c["vote_count"] for c in candidate_vote_counts)
+
+            # All candidates for context
+            all_candidates = [
+                {
+                    "id": c.id,
+                    "candidate_index": c.candidate_index,
+                    "kind": c.kind,
+                    "model_name": c.model_name,
+                    "content": c.content,
+                    "metadata": c.metadata,
+                }
+                for c in task.candidates.filter(is_active=True).order_by(
+                    "candidate_index"
+                )
+            ]
+
+            record = {
+                "task_id": task.id,
+                "task_type": task.task_type,
+                "context": task.context_json,
+                "source": task.source,
+                "chosen_candidate": {
+                    "id": chosen.id,
+                    "candidate_index": chosen.candidate_index,
+                    "kind": chosen.kind,
+                    "model_name": chosen.model_name,
+                    "content": chosen.content,
+                },
+                "vote_count": top["vote_count"],
+                "total_votes": total_votes,
+                "all_candidates": all_candidates,
+            }
+            yield json.dumps(record, default=str) + "\n"
+
+    return StreamingHttpResponse(
+        streaming_content=stream_json_lines(),
         content_type="application/x-ndjson",
     )
 

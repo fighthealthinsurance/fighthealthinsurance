@@ -13,6 +13,7 @@ from .views import (
     AllDenialEmailSansProCSV,
     MailingListSubscriberCSV,
     de_identified_export,
+    chooser_ranked_export,
     incomplete_signups_csv,
     procedures_denied_chart,
 )
@@ -22,6 +23,11 @@ urlpatterns = [
     path("users_by_day", users_by_day, name="users_by_day"),
     path("sf_signups", sf_signups, name="sf_signups"),
     path("de_identified", de_identified_export, name="de_identified_export"),
+    path(
+        "chooser_ranked_export",
+        chooser_ranked_export,
+        name="chooser_ranked_export",
+    ),
     path("pro_signups_csv", pro_signups_csv, name="pro_signups_csv"),
     path(
         "pro_signups_csv_single_lines",
